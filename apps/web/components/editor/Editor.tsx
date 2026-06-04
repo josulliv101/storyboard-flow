@@ -2473,6 +2473,8 @@ function EditorInner() {
   const [reviewContentMode, setReviewContentMode] = React.useState<'notes' | 'dialog'>('notes');
   const [verticalTimeScale, setVerticalTimeScale] = React.useState(1);
 
+
+
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [pendingType, setPendingType] = React.useState<ClipType | null>(null);
 

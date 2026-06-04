@@ -12,3 +12,9 @@ coverage/
 *.mp4
 *.tsbuildinfo
 screenshots/
+
+# Python virtual environments & caches
+apps/backend/venv/
+apps/backend/.venv/
+__pycache__/
+*.pyc

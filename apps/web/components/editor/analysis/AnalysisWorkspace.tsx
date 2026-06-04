@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Sparkles,
   MessageSquare,
@@ -36,6 +36,8 @@ import ChatConsole from "./ChatConsole";
 import { ScreenplayReport, LogEntry, SceneAnalysis } from "./types";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+
 
 interface AnalysisWorkspaceProps {
   selectedVideoFile: File | null;
@@ -96,6 +98,7 @@ export function AnalysisWorkspace({
     characters,
     fps,
     updateClip,
+    setCurrentFrame,
   } = useTimeline();
 
   const activeScene = scenes.find((s) => s.id === activeSceneId) || scenes[0];
@@ -141,6 +144,8 @@ export function AnalysisWorkspace({
     },
   ]);
 
+
+
   // Selected Beat State
   const [activeSceneIndex, setActiveSceneIndex] = useState(0);
   const [scrollTrigger, setScrollTrigger] = useState(0);
@@ -178,6 +183,7 @@ export function AnalysisWorkspace({
   useEffect(() => {
     void checkDiagnostics();
   }, []);
+
 
   const checkDiagnostics = async () => {
     setIsCheckingDiagnostics(true);
@@ -514,6 +520,62 @@ export function AnalysisWorkspace({
     }
   }, [activeSceneIndex, report]);
 
+  const executeChatAction = (action: { type: string; payload?: any }) => {
+    switch (action.type) {
+      case "SELECT_BEAT": {
+        const idx = action.payload?.index;
+        if (report?.scenes && typeof idx === "number" && idx >= 0 && idx < report.scenes.length) {
+          setActiveSceneIndex(idx);
+          setScrollTrigger((prev) => prev + 1); // Scroll the beat list item into view!
+          const start = report.scenes[idx].start ?? 0;
+          setCurrentFrame(Math.round(start * fps)); // Move the global playhead & sync main preview video!
+          if (videoRef.current) {
+            videoRef.current.currentTime = start;
+          }
+        }
+        break;
+      }
+      case "SELECT_HIGHEST_METRIC": {
+        const metric = action.payload?.metric;
+        if (report?.scenes && report.scenes.length > 0 && typeof metric === "string") {
+          let maxVal = -1;
+          let targetIdx = 0;
+          report.scenes.forEach((scene, index) => {
+            let val = 0;
+            if (metric === "tension") val = scene.metrics.tension;
+            else if (metric === "suspense") val = scene.metrics.suspense;
+            else if (metric === "anticipation") val = scene.metrics.anticipation;
+            
+            if (val > maxVal) {
+              maxVal = val;
+              targetIdx = index;
+            }
+          });
+          setActiveSceneIndex(targetIdx);
+          setScrollTrigger((prev) => prev + 1); // Scroll the beat list item into view!
+          const start = report.scenes[targetIdx].start ?? 0;
+          setCurrentFrame(Math.round(start * fps)); // Move the global playhead & sync main preview video!
+          if (videoRef.current && report.scenes[targetIdx]) {
+            videoRef.current.currentTime = start;
+          }
+        }
+        break;
+      }
+      case "SEEK_TIME": {
+        const time = action.payload?.time;
+        if (typeof time === "number" && !isNaN(time)) {
+          setCurrentFrame(Math.round(time * fps)); // Move the global playhead & sync main preview video!
+          if (videoRef.current) {
+            videoRef.current.currentTime = time;
+          }
+        }
+        break;
+      }
+      default:
+        console.warn("Unknown chat action type:", action.type);
+    }
+  };
+
   // Chat Submission Handler
   const handleChatSubmit = async (customMessage?: string) => {
     const textToSend = customMessage || chatInput;
@@ -549,6 +611,11 @@ export function AnalysisWorkspace({
       
       if (chatEngine === "doctor") {
         setDoctorMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+        
+        // Execute tool calling actions if returned by the backend
+        if (data.actions && Array.isArray(data.actions)) {
+          data.actions.forEach((act: any) => executeChatAction(act));
+        }
       } else {
         setOllamaMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
       }

@@ -54,13 +54,9 @@ export default function ScriptBeatsList({
     if (!container) return;
     const activeItem = container.querySelector(`#beat-item-${activeSceneIndex}`) as HTMLElement;
     if (activeItem) {
-      const containerTop = container.getBoundingClientRect().top;
-      const activeItemTop = activeItem.getBoundingClientRect().top;
-      const targetScrollTop = container.scrollTop + activeItemTop - containerTop;
-      
-      container.scrollTo({
-        top: targetScrollTop,
-        behavior: "smooth"
+      activeItem.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest"
       });
     }
   }, [activeSceneIndex, beatListRef, scrollTrigger]);

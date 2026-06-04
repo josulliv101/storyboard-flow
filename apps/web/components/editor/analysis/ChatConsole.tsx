@@ -88,7 +88,11 @@ export default function ChatConsole({
             <div className="relative">
               <span className="absolute bottom-0 right-0 w-2 h-2 bg-emerald-500 rounded-full border-2 border-[#0c0c0e] animate-pulse"></span>
               <div className="w-8 h-8 rounded bg-indigo-950 flex items-center justify-center border border-indigo-900/30 shadow-lg shadow-indigo-950/50">
-                <Sparkles size={14} className="text-indigo-400" />
+                {chatEngine === "ollama" ? (
+                  <MessageSquare size={14} className="text-indigo-400" />
+                ) : (
+                  <Sparkles size={14} className="text-indigo-400" />
+                )}
               </div>
             </div>
             <div>
@@ -100,7 +104,7 @@ export default function ChatConsole({
                   {chatEngine === "doctor" ? "Story Doctor" : "Ollama"}
                 </span>
               </div>
-              <p className="text-[9px] text-zinc-500 font-mono mt-0.5 uppercase tracking-wider">
+              <p className="text-[9px] text-zinc-500 mt-0.5 uppercase tracking-wider">
                 {chatEngine === "doctor"
                   ? "Narrative Consultant | Online"
                   : "Direct Local Model | Online"}
@@ -126,7 +130,7 @@ export default function ChatConsole({
             }`}
           >
             <Sparkles size={10} />
-            <span>Story Doctor</span>
+            <span>Doctor</span>
           </button>
           <button
             onClick={() => setChatEngine("ollama")}
@@ -137,7 +141,7 @@ export default function ChatConsole({
             }`}
           >
             <MessageSquare size={10} />
-            <span>Local Chat</span>
+            <span>Ollama</span>
           </button>
         </div>
 
@@ -170,7 +174,7 @@ export default function ChatConsole({
         )}
 
         {/* Messages Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6 scrollbar-thin scrollbar-thumb-zinc-800 bg-transparent">
+        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6 scrollbar-thin scrollbar-thumb-zinc-800 bg-transparent flex flex-col">
           {chatMessages.map((msg, idx) => {
             const isUser = msg.role === "user";
             return (
@@ -331,7 +335,7 @@ export default function ChatConsole({
 
         {/* ChatKit Prompt Actions/Chips Carousel */}
         <div className="px-5 py-3 border-t border-zinc-900 bg-zinc-950/20 flex flex-col space-y-2 select-none">
-          <span className="text-[9px] font-mono text-zinc-550 uppercase tracking-widest font-semibold">
+          <span className="text-[9px] font-mono text-zinc-555 uppercase tracking-widest font-semibold">
             Consultant Prompts
           </span>
           <div className="flex space-x-2 overflow-x-auto pb-1.5 scrollbar-thin scrollbar-thumb-zinc-900 scroll-smooth -mx-2 px-2">
@@ -381,7 +385,7 @@ export default function ChatConsole({
             <button
               type="submit"
               disabled={isChatLoading || !chatInput.trim()}
-              className="ml-2 p-1.5 bg-indigo-650 hover:bg-indigo-600 text-white rounded shadow-sm disabled:opacity-40 disabled:hover:bg-indigo-650 transition-all cursor-pointer flex items-center justify-center"
+              className="ml-2 p-1.5 bg-indigo-655 hover:bg-indigo-600 text-white rounded shadow-sm disabled:opacity-40 disabled:hover:bg-indigo-650 transition-all cursor-pointer flex items-center justify-center"
             >
               <Send size={11} />
             </button>
