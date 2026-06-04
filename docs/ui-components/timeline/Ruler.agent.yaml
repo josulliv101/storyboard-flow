@@ -1,0 +1,59 @@
+component: Ruler
+
+category: timeline
+
+purpose: >
+  Non-interactive horizontal timeline tick ruler based on total duration, frames per second, and zoom.
+
+inputs:
+  - totalDuration from timeline context
+  - zoom from timeline context
+  - fps from timeline context
+
+outputs:
+  - visual second markers
+  - visual sub-second markers
+
+dependencies:
+  - useTimeline
+
+always:
+  - position markers by frame multiplied by zoom
+  - keep the ruler non-interactive
+  - let TimelineRoot own timeline click and pointer behavior
+
+never:
+  - add current-frame state here
+  - add pointer handlers here
+  - use seconds directly for pixel positioning
+
+accessibility:
+  - keep ruler visual-only unless adding an explicit accessible timeline navigation feature
+  - do not expose decorative ticks as noisy screen reader content
+
+performance:
+  - be mindful that marker count scales with totalDuration
+  - increase intervals or virtualize if timelines become very long
+
+common_mistakes:
+  - confusing this with ReviewWorkspace vertical time ruler
+  - changing tick intervals without verifying long durations
+
+related_components:
+  - TimelineRoot
+  - Playhead
+
+extension_points:
+  - change tick density by adjusting marker loops
+  - add labels for alternate time formats if context supports them
+
+agent_summary:
+  critical_rules:
+    - use frame times zoom positioning
+    - stay non-interactive
+  safe_modifications:
+    - adjust marker density
+    - add passive visual labels
+  risky_modifications:
+    - adding input handling that duplicates TimelineRoot
+    - rendering too many ticks for long timelines

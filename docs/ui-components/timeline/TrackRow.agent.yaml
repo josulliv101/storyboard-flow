@@ -1,0 +1,78 @@
+component: TrackRow
+
+category: timeline
+
+purpose: >
+  Renders one timeline lane or graph lane, including clip insertion, drag/drop import, gap insertion,
+  context menus, graph point editing, graph lasso selection, and graph node editor behavior.
+
+inputs:
+  - track prop
+  - optional sceneClips
+  - optional sceneTracks
+  - optional sceneId
+  - timeline context state
+
+outputs:
+  - new clips through addClip
+  - graph point updates through updateTrack
+  - active scene changes
+  - graph node selection and deletion
+
+dependencies:
+  - useTimeline
+  - ClipItem
+  - DropdownMenu
+  - Button
+  - graph-style helpers
+  - lucide-react
+
+always:
+  - use sceneClips and sceneTracks when provided
+  - update graph points immutably through updateTrack
+  - clamp graph values to graph min and max
+  - preserve generated bar graph points from barIntervalSeconds
+
+never:
+  - mutate track.graph.points in place
+  - delete line graph endpoints at frame 0 or totalDuration
+  - accept unsupported file types during row drag/drop
+  - ignore the sceneId activation path in multi-scene mode
+
+accessibility:
+  - keep row actions available through menu items
+  - preserve labels on graph editor inputs
+  - add keyboard alternatives before making graph editing the only critical path
+
+performance:
+  - keep graph pointer handlers lightweight
+  - memoize sorted graph points and gap calculations
+  - avoid large state updates during drag except required graph/clip updates
+
+common_mistakes:
+  - using context clips instead of provided sceneClips
+  - forgetting bar graphs cannot add arbitrary nodes
+  - deleting protected graph endpoints
+
+related_components:
+  - TimelineRoot
+  - ClipItem
+  - Preview
+  - ReviewWorkspace
+
+extension_points:
+  - add clip types by updating row menus and all ClipType consumers
+  - extend graph node editor with validated fields
+  - add row-level actions through context menu items
+
+agent_summary:
+  critical_rules:
+    - preserve immutable graph updates
+    - respect scene-specific props
+    - keep graph endpoints protected
+  safe_modifications:
+    - add validated graph metadata fields
+    - add insertion menu items with matching clip defaults
+  risky_modifications:
+    - changing graph pointer behavior without tests
+    - altering row height or clip positioning assumptions

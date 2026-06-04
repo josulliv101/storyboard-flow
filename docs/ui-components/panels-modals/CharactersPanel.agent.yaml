@@ -1,0 +1,72 @@
+component: CharactersPanel
+
+category: editor
+
+purpose: >
+  Side-panel component for character CRUD: add character, inline rename, image upload, and delete.
+
+inputs:
+  - characters from timeline context
+  - addCharacter callback from context
+  - updateCharacter callback from context
+  - deleteCharacter callback from context
+  - image file input
+
+outputs:
+  - character creation
+  - character rename updates
+  - character image updates
+  - character deletion and context-managed clip cleanup
+
+dependencies:
+  - useTimeline
+  - Button
+  - motion/react
+  - lucide-react
+  - cn utility
+
+always:
+  - use context character actions
+  - keep rename input state local
+  - pass selected image files to updateCharacter
+  - let context handle character deletion cleanup
+
+never:
+  - mutate the characters array locally
+  - implement image persistence inside the panel
+  - delete characters without using deleteCharacter
+
+accessibility:
+  - preserve native button behavior
+  - preserve file input accept=image/*
+  - keep inline rename input keyboard-committable
+
+performance:
+  - no special memoization required for normal character counts
+  - avoid expensive image processing in the panel
+
+common_mistakes:
+  - forgetting deleteCharacter clears clip characterId references
+  - trying to convert images locally instead of using context storage behavior
+
+related_components:
+  - Editor
+  - ClipItem
+  - Preview
+  - ScriptClipEditorModal
+
+extension_points:
+  - add character fields by updating Character type, context, panel, preview, and serialization
+  - add validation before updateCharacter
+  - add passive character metadata display
+
+agent_summary:
+  critical_rules:
+    - use context actions for all character mutations
+    - do not handle image persistence locally
+  safe_modifications:
+    - add character metadata fields with context support
+    - improve rename validation
+  risky_modifications:
+    - changing deletion behavior without clip cleanup tests
+    - changing image storage outside context

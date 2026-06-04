@@ -1,0 +1,66 @@
+component: Playhead
+
+category: timeline
+
+purpose: >
+  Current-frame indicator and optional draggable handle for the timeline header or content area.
+
+inputs:
+  - containerRef prop
+  - optional mode prop
+  - currentFrame from timeline context
+  - zoom from timeline context
+
+outputs:
+  - setCurrentFrame calls during handle drag
+  - visual playhead handle
+  - visual playhead line
+
+dependencies:
+  - useTimeline
+  - React refs
+  - cn utility
+
+always:
+  - use the correct containerRef for pointer-to-frame math
+  - include container scrollLeft when computing frame
+  - remove window pointer listeners on pointer up
+  - position by currentFrame multiplied by zoom
+
+never:
+  - position by seconds
+  - use the header ref for the content line or the content ref for the header handle
+  - leave global pointer listeners attached
+
+accessibility:
+  - add keyboard controls before treating the handle as keyboard-accessible
+  - keep pointer-only behavior clear and backed by other playback/frame controls
+
+performance:
+  - keep pointer move handler small
+  - avoid derived work during drag
+
+common_mistakes:
+  - mismatching mode and container ref
+  - forgetting scrollLeft in frame calculation
+  - changing mode behavior without updating TimelineRoot's two-playhead composition
+
+related_components:
+  - TimelineRoot
+  - Ruler
+  - Toolbar
+
+extension_points:
+  - add keyboard frame stepping to the handle
+  - add mode-specific styling without changing frame math
+
+agent_summary:
+  critical_rules:
+    - frame math must include scrollLeft
+    - cleanup global listeners
+  safe_modifications:
+    - add accessible keyboard stepping
+    - adjust handle visuals
+  risky_modifications:
+    - changing coordinate math
+    - merging header and content playhead roles

@@ -1,0 +1,67 @@
+component: ResponsiveAspectFrame
+
+category: layout
+
+purpose: >
+  Utility layout component that measures its container and sizes an inner frame to preserve a supported aspect ratio.
+
+inputs:
+  - aspectRatio prop
+  - cellClassName prop
+  - frameClassName prop
+  - children
+  - optional test ids
+  - optional frame data attributes
+  - optional frameStyle
+
+outputs:
+  - measured outer cell
+  - sized inner aspect-ratio frame
+
+dependencies:
+  - React
+  - ResizeObserver
+  - CSS container queries
+
+always:
+  - pass stable cell and frame class names
+  - expect unsupported aspectRatio values to fall back to 16:9
+  - preserve ResizeObserver and resize fallback cleanup
+
+never:
+  - rely on this component to add accessibility semantics
+  - use unsupported ratios without updating aspectRatioOptions
+  - remove measured sizing fallback styles
+
+accessibility:
+  - caller must provide roles and labels when needed
+  - do not add semantics that conflict with arbitrary children
+
+performance:
+  - resize state updates only when the container changes size
+  - avoid unnecessary large numbers of nested measured frames
+
+common_mistakes:
+  - expecting arbitrary custom ratios to work
+  - overriding frameStyle in a way that breaks computed aspect sizing
+
+related_components:
+  - Preview
+  - DialogPreviewLayout stories
+  - PreviewTagGrid stories
+
+extension_points:
+  - add supported ratios in aspectRatioOptions
+  - add test data attributes through frameDataAttributes
+  - add frame styling through frameStyle
+
+agent_summary:
+  critical_rules:
+    - unsupported ratios fall back to 16:9
+    - caller owns semantics
+  safe_modifications:
+    - add ratios centrally
+    - add passive layout data attributes
+  risky_modifications:
+    - changing measurement logic
+    - removing ResizeObserver cleanup

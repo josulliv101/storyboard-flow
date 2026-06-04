@@ -1,0 +1,77 @@
+component: ClipItem
+
+category: timeline
+
+purpose: >
+  Interactive timeline clip block for selection, multi-selection, dragging, resizing, snapping,
+  type display, media thumbnail display, character display, and graph-linked note indicators.
+
+inputs:
+  - clip prop
+  - optional sceneClips
+  - optional sceneTracks
+  - optional sceneId
+  - timeline context state
+
+outputs:
+  - selectClip calls
+  - updateClip calls for startFrame, duration, and trackId
+  - snap line updates
+  - interaction state updates
+  - active scene changes
+
+dependencies:
+  - useTimeline
+  - graph-style helpers
+  - motion/react
+  - lucide-react
+
+always:
+  - update clips through updateClip
+  - keep clip duration at least one frame
+  - clear snapLineFrame and isInteracting on pointer up
+  - use sceneClips and sceneTracks when provided
+
+never:
+  - mutate the clip prop directly
+  - change tracks during multi-drag when selected clips span multiple tracks
+  - use context clips for snapping when sceneClips are passed
+  - remove resize handle event guards
+
+accessibility:
+  - preserve visible clip labels and type cues
+  - add keyboard move and resize support before relying on ClipItem for keyboard-accessible editing
+  - keep media thumbnails decorative unless they become interactive
+
+performance:
+  - keep drag and resize handlers lightweight
+  - avoid expensive effects tied to currentFrame or pointer movement
+  - memoize linked character and graph color derivations
+
+common_mistakes:
+  - breaking multi-scene snapping by ignoring scene overrides
+  - allowing duration to become zero or negative
+  - forgetting to reset interaction state after pointer operations
+
+related_components:
+  - TrackRow
+  - TimelineRoot
+  - Preview
+  - ClipPropertiesPanel
+
+extension_points:
+  - add new clip badges by deriving from clip metadata
+  - extend drag snapping rules through getSnapFrames
+  - add clip type styling after updating ClipType consumers
+
+agent_summary:
+  critical_rules:
+    - all mutations go through updateClip or selectClip
+    - duration must remain positive
+    - scene-specific data must be respected
+  safe_modifications:
+    - add passive visual indicators
+    - adjust snap thresholds with drag tests
+  risky_modifications:
+    - changing drag math or visible track order assumptions
+    - adding stateful media behavior inside each clip block

@@ -1,0 +1,79 @@
+component: Preview
+
+category: media
+
+purpose: >
+  Live visual output renderer for the current timeline frame, including media, overlays, dialog,
+  notes, graph values, compact tags, and multi-scene or multi-group preview layouts.
+
+inputs:
+  - currentFrame
+  - scenes and activeSceneId
+  - previewSceneIds and previewSceneMode
+  - clips and tracks
+  - disabledTrackIds and mutedTrackIds
+  - preview and analytics display settings
+  - noteTagFilter
+
+outputs:
+  - preview DOM
+  - media playback synchronization
+  - graph and note overlays
+  - dialog overlays
+
+dependencies:
+  - useTimeline
+  - ResponsiveAspectFrame
+  - render-layout helpers
+  - graph-style helpers
+  - motion/react
+  - timeline-preview-play-request event
+
+always:
+  - keep note and graph filtering aligned with Toolbar and ReviewWorkspace
+  - branch rendering by clip.type
+  - preserve video sync with currentFrame, fps, playbackRate, isPlaying, and mute state
+  - use graph-style helpers for graph labels and colors
+
+never:
+  - assume every clip with src is an image or video without checking type
+  - add expensive per-frame recalculation without memoization
+  - ignore muted parent groups for video audio
+  - duplicate filter rules that drift from ReviewWorkspace
+
+accessibility:
+  - keep media alt text meaningful when images represent content
+  - keep decorative character images non-disruptive to screen readers
+  - avoid making preview-only visual overlays required for interaction
+
+performance:
+  - memoize derived active clips, groups, graph values, and note overlays
+  - keep ResizeObserver and animation frame measurement cleanup intact
+  - avoid excessive layout measurement on playback frames
+
+common_mistakes:
+  - desynchronizing video playback from timeline frame
+  - breaking graph-linked note tag matching
+  - adding overlay text that overflows the preview frame
+
+related_components:
+  - Toolbar
+  - ReviewWorkspace
+  - ResponsiveAspectFrame
+  - ClipItem
+
+extension_points:
+  - add overlay styles through context settings and preview branches
+  - add graph visual treatments using graph-style helpers
+  - add preview layout modes through render-layout and Storybook contracts
+
+agent_summary:
+  critical_rules:
+    - playback synchronization must remain frame-driven
+    - filtering must match Toolbar and ReviewWorkspace
+  safe_modifications:
+    - add memoized overlay variants
+    - add layout stories for new preview modes
+  risky_modifications:
+    - changing media playback effects
+    - changing graph note matching without tests

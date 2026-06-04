@@ -1,0 +1,79 @@
+component: ScriptClipEditorModal
+
+category: editor
+
+purpose: >
+  Bulk script-style text editor for dialog or note clips, including clip filtering, block parsing,
+  tag editing, graph linking for notes, and save-to-clips behavior.
+
+inputs:
+  - selectedClip prop
+  - clips prop
+  - tracks prop
+  - characters prop
+  - fps prop
+  - updateClip callback
+  - addClip callback
+  - onClose callback
+
+outputs:
+  - updated dialog or note clips
+  - newly added dialog or note clips
+  - modal close events
+  - focused textarea block state
+
+dependencies:
+  - TimelineClip type
+  - useTimeline-derived tracks and characters
+  - Button
+  - motion/react
+  - graph-style helpers
+  - script parser and formatter helpers in Editor.tsx
+
+always:
+  - keep formatter and parser syntax aligned
+  - convert seconds to frames with fps
+  - match dialog character names case-insensitively
+  - scope saves to visible filtered clips
+
+never:
+  - use for non-dialog or non-note clips
+  - apply text edits to clips outside the visible filtered set
+  - add parser behavior without updating caret/focus and stories
+  - assume text blocks contain persistent clip ids
+
+accessibility:
+  - preserve textarea focus behavior for selected clips
+  - preserve close and save buttons
+  - consider dialog roles if hardening modal accessibility
+
+performance:
+  - keep script clip and filter derivations memoized
+  - avoid reparsing all blocks on every keystroke beyond needed derived text blocks
+
+common_mistakes:
+  - applying note tags to every filtered note unintentionally
+  - changing block syntax in parser but not formatter
+  - forgetting extra blocks create new clips by order
+
+related_components:
+  - Editor
+  - ReviewWorkspace
+  - CharactersPanel
+  - ClipPropertiesPanel
+
+extension_points:
+  - add note metadata fields with parser, formatter, and save support
+  - add filters through activeFilter and getClipsForFilter
+  - add graph-link controls for note workflows
+
+agent_summary:
+  critical_rules:
+    - parser and formatter must stay aligned
+    - saves are scoped by visible clip order
+  safe_modifications:
+    - add validated metadata controls
+    - add tests for parser and focus behavior
+  risky_modifications:
+    - changing script syntax without stories/tests
+    - adding id-based behavior without explicit text format changes

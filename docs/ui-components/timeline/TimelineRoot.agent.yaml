@@ -1,0 +1,86 @@
+component: TimelineRoot
+
+category: timeline
+
+purpose: >
+  Main timeline editing surface with ruler, grouped track sidebar, layer sections, scrollable track rows,
+  lasso selection, layer actions, copy/paste, and graph configuration.
+
+inputs:
+  - scenes
+  - activeSceneId
+  - previewSceneIds
+  - tracks
+  - clips
+  - currentFrame
+  - zoom
+  - collapsedTrackIds
+  - disabledTrackIds
+  - mutedTrackIds
+
+outputs:
+  - current frame updates
+  - selected clip id updates
+  - track group and layer mutations
+  - graph track creation and configuration
+  - layer copy/paste actions
+
+dependencies:
+  - useTimeline
+  - TrackRow
+  - Ruler
+  - Playhead
+  - DropdownMenu
+  - Button
+  - sonner
+  - graph-style helpers
+
+always:
+  - preserve media, dialog, notes, and graph layer grouping
+  - pass scene-specific clips and tracks to TrackRow in multi-scene mode
+  - validate graph editor values before saving
+  - keep sidebar and content scroll synchronized
+
+never:
+  - bypass timeline context actions for track or clip mutations
+  - allow graph max to be less than or equal to min
+  - treat graph tracks as ordinary media tracks
+  - change row height assumptions without updating lasso and ClipItem drag math
+
+accessibility:
+  - keep track and layer actions reachable through buttons and menus
+  - preserve rename input keyboard behavior
+  - preserve graph editor form labels and validation errors
+
+performance:
+  - memoize scene and layer grouping calculations
+  - keep lasso selection calculations scoped to visible tracks
+  - avoid expensive work during pointer movement
+
+common_mistakes:
+  - using global tracks/clips instead of scene-specific tracks/clips in multi-scene rendering
+  - forgetting synthetic layer section collapse ids
+  - allowing invalid graph colors or ranges
+
+related_components:
+  - TrackRow
+  - ClipItem
+  - Ruler
+  - Playhead
+  - ReviewWorkspace
+
+extension_points:
+  - add new layer sections by extending LayerSectionId, LAYER_SECTIONS, getLayerKind, icons, and menus
+  - add track actions through existing DropdownMenu patterns
+  - add graph settings through GraphEditorState and context updateTrack/addGraphTrack
+
+agent_summary:
+  critical_rules:
+    - preserve layer grouping and row height math
+    - validate graph config before context mutation
+  safe_modifications:
+    - add menu actions using context methods
+    - extend graph editor with validated fields
+  risky_modifications:
+    - changing grouping rules without Preview and ReviewWorkspace updates
+    - changing row heights without drag/lasso tests

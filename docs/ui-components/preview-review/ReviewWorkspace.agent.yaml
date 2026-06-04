@@ -1,0 +1,82 @@
+component: ReviewWorkspace
+
+category: editor
+
+purpose: >
+  Scroll-synchronized review view for notes and dialog, with per-lane markers, vertical time ruler,
+  preview integration, content-mode switching, and vertical time scale controls.
+
+inputs:
+  - onOpenScriptEditor callback
+  - showPreviewTagUi
+  - setShowPreviewTagUi callback
+  - contentMode
+  - setContentMode callback
+  - verticalTimeScale
+  - setVerticalTimeScale callback
+  - timeline context state
+
+outputs:
+  - currentFrame updates from scroll and marker clicks
+  - playback state changes from manual scroll intent
+  - content mode changes
+  - script editor open callback calls
+
+dependencies:
+  - Preview
+  - useTimeline
+  - scheduleReviewMomentExpansions
+  - graph-style helpers
+  - Badge
+  - Slider
+  - Button
+  - DropdownMenu
+
+always:
+  - guard scroll and frame synchronization with refs to prevent update loops
+  - preserve moment expansion behavior for simultaneous notes
+  - keep note filtering aligned with Preview
+  - clean up animation frames, observers, and timeouts
+
+never:
+  - update currentFrame directly inside render calculations
+  - remove ResizeObserver or IntersectionObserver cleanup
+  - mix multi-scene lane logic with single-scene parent-group lane logic
+  - mutate positioned lane data in place
+
+accessibility:
+  - preserve aria-labels on timeline marker buttons
+  - keep time ruler labeled as Timeline seconds
+  - keep card buttons focusable when they open script editing
+
+performance:
+  - memoize lane derivation and positioned item calculations
+  - keep ReviewTimelineContent memoized
+  - throttle scroll-to-frame updates through requestAnimationFrame
+
+common_mistakes:
+  - causing scroll/currentFrame feedback loops
+  - breaking dense note readability by removing moment expansions
+  - forgetting manual scroll stops playback
+
+related_components:
+  - Preview
+  - Editor
+  - ScriptClipEditorModal
+  - review-note-layout
+
+extension_points:
+  - add review content types by extending ReviewContentMode and lane derivation
+  - add marker treatments through getReviewTimelineMarkers
+  - add card metadata while preserving positioning constants
+
+agent_summary:
+  critical_rules:
+    - guard scroll synchronization
+    - preserve cleanup for observers and animation frames
+  safe_modifications:
+    - add card metadata fields
+    - add controls that update existing review state props
+  risky_modifications:
+    - changing scroll math
+    - altering lane derivation without multi-scene tests

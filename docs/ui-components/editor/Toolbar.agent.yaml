@@ -1,0 +1,78 @@
+component: Toolbar
+
+category: editor
+
+purpose: >
+  Top editor control bar for playback, clip insertion, preview filters, note tag filtering, graph visibility,
+  aspect ratio selection, time display, deletion, and zoom.
+
+inputs:
+  - timeline context state
+  - selected clip ids
+  - preview scenes
+  - graph tracks
+  - note tag filters
+  - hidden media file input
+
+outputs:
+  - playback state changes
+  - timeline-preview-play-request event
+  - new clip creation
+  - note and graph filter changes
+  - zoom and aspect ratio changes
+  - selected clip deletion
+
+dependencies:
+  - useTimeline
+  - Button
+  - Slider
+  - Tooltip
+  - DropdownMenu
+  - lucide-react
+  - graph-style helpers
+
+always:
+  - dispatch timeline-preview-play-request before starting playback
+  - keep preview filter state shared through timeline context
+  - clean stale note filters when available tags change
+  - use context setters for zoom, aspect, playback, and filters
+
+never:
+  - create toolbar-only state for preview-wide behavior
+  - bypass deleteClip when deleting selected clips
+  - hard-code new clip behavior without checking track lookup and clip type defaults
+
+accessibility:
+  - preserve aria-label on filter trigger
+  - use aria-pressed for toggle-style filter buttons
+  - keep icon controls backed by tooltips or visible labels
+
+performance:
+  - memoize note tag counts and graph layer summaries
+  - avoid recalculating scene-wide filters outside memoized selectors
+
+common_mistakes:
+  - updating Toolbar filters without updating Preview and ReviewWorkspace consumers
+  - forgetting playback video startup requires a user-initiated event
+
+related_components:
+  - Editor
+  - Preview
+  - ReviewWorkspace
+  - TimelineRoot
+
+extension_points:
+  - add preview controls through timeline context and export/import config
+  - add clip insertion options by updating ClipType consumers
+  - add filter menu sections using existing DropdownMenu structure
+
+agent_summary:
+  critical_rules:
+    - playback start must dispatch timeline-preview-play-request
+    - filter state must remain context-backed
+  safe_modifications:
+    - add context-backed filter toggles
+    - add menu actions that call existing context actions
+  risky_modifications:
+    - changing clip insertion defaults without updating TrackRow and Preview
+    - localizing shared preview state inside Toolbar

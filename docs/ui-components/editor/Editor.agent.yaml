@@ -1,0 +1,85 @@
+component: Editor
+
+category: editor
+
+purpose: >
+  Full storyboard timeline application shell. Provides the TimelineProvider boundary and composes the toolbar,
+  side panels, preview, timeline, review workspace, import/export, render, analysis, and saved-scene flows.
+
+inputs:
+  - no props
+  - TimelineProvider-owned state
+  - browser file inputs for media and project JSON
+  - local and remote saved-scene data
+
+outputs:
+  - full editor UI
+  - scene, track, clip, and character mutations through timeline context
+  - render, import, export, analysis, and saved-scene side effects
+
+dependencies:
+  - TimelineProvider
+  - useTimeline
+  - Toolbar
+  - Preview
+  - ReviewWorkspace
+  - TimelineRoot
+  - CharactersPanel
+  - ScriptClipEditorModal
+  - shadcn UI primitives
+  - motion/react
+  - sonner
+  - lib/db
+  - "@vercel/blob/client"
+
+always:
+  - keep Editor as the outer TimelineProvider boundary for editor children
+  - use timeline context actions for clip, track, scene, and character changes
+  - preserve TimelineProjectJson normalization and runtime URL stripping
+  - route destructive saved-scene actions through existing confirmation flows
+
+never:
+  - render Editor inside another TimelineProvider
+  - store blob: or data: runtime URLs in exported project JSON
+  - mutate scenes, clips, tracks, or characters directly in UI code
+  - bypass context blob cleanup when deleting clips, tracks, scenes, or characters
+
+accessibility:
+  - preserve AlertDialog usage for destructive confirmations
+  - keep icon-only controls labeled by visible text, aria attributes, or tooltip context
+  - preserve focus behavior in modals and side panels
+
+performance:
+  - memoize derived clip, scene, graph, and saved-scene data
+  - avoid effects that rescan all media or all clips on every render
+  - keep playback-sensitive state updates scoped
+
+common_mistakes:
+  - treating internal components in Editor.tsx as standalone public APIs
+  - adding a setting only to the UI without updating context persistence and export/import config
+  - bypassing timeline context actions for convenience
+
+related_components:
+  - Toolbar
+  - Preview
+  - ReviewWorkspace
+  - TimelineRoot
+  - CharactersPanel
+  - ScriptClipEditorModal
+
+extension_points:
+  - add new editor settings through lib/timeline-context.tsx and wire controls in Editor
+  - add new side panel tabs by extending SidebarTab and panel rendering
+  - add new import/export fields through TimelineProjectJson normalization
+
+agent_summary:
+  critical_rules:
+    - keep the TimelineProvider boundary intact
+    - use context actions instead of direct state mutation
+    - preserve import/export normalization and blob cleanup
+  safe_modifications:
+    - add context-backed settings with matching controls and serialization
+    - add side panel sections using existing sidebar patterns
+  risky_modifications:
+    - changing TimelineProjectJson shape without normalization updates
+    - splitting Editor.tsx internals without preserving prop and context contracts
