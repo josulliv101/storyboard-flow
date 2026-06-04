@@ -3,6 +3,12 @@ import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-r
 import { ScreenplayReport } from "./types";
 import { useTimeline } from "@/lib/timeline-context";
 
+const formatTime = (time: number) => {
+  const mins = Math.floor(time / 60);
+  const secs = Math.floor(time % 60);
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+};
+
 interface ScriptBeatsListProps {
   report: ScreenplayReport;
   activeSceneIndex: number;
@@ -10,6 +16,7 @@ interface ScriptBeatsListProps {
   beatListRef: React.RefObject<HTMLDivElement | null>;
   handleListScroll: () => void;
   height?: number;
+  scrollTrigger?: number;
 }
 
 export default function ScriptBeatsList({
@@ -19,9 +26,24 @@ export default function ScriptBeatsList({
   beatListRef,
   handleListScroll,
   height,
+  scrollTrigger,
 }: ScriptBeatsListProps) {
   const [activeTab, setActiveTab] = useState<string>("all");
+  const [isScrolled, setIsScrolled] = useState(false);
   const { isPlaying } = useTimeline();
+
+  React.useEffect(() => {
+    if (beatListRef.current) {
+      beatListRef.current.scrollTop = 0;
+      setIsScrolled(false);
+    }
+  }, [report, beatListRef]);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    setIsScrolled(target.scrollTop > 10);
+    handleListScroll();
+  };
 
   React.useEffect(() => {
     const container = beatListRef.current;
@@ -37,7 +59,7 @@ export default function ScriptBeatsList({
         behavior: "smooth"
       });
     }
-  }, [activeSceneIndex, beatListRef]);
+  }, [activeSceneIndex, beatListRef, scrollTrigger]);
 
   // Determine available tabs dynamically from graph tags
   const tabs = React.useMemo(() => {
@@ -64,7 +86,7 @@ export default function ScriptBeatsList({
   return (
     <div
       className="w-full bg-zinc-950/60 border border-zinc-800 rounded-2xl p-5 shadow-xl backdrop-blur flex flex-col"
-      style={{ height: height ?? 280 }}
+      style={{ height: height ?? 450 }}
     >
       {/* Title & Tabs Navigation */}
       <div className="flex items-center justify-between border-b border-zinc-900/60 pb-3 mb-3 select-none flex-wrap gap-2">
@@ -103,10 +125,18 @@ export default function ScriptBeatsList({
         <div className="flex bg-zinc-900/40 p-0.5 rounded-lg border border-zinc-850 space-x-0.5">
           {/* Skip to Start */}
           <button
-            onClick={() => setActiveSceneIndex(0)}
-            disabled={isPlaying || activeSceneIndex === 0}
+            onClick={() => {
+              setActiveSceneIndex(0);
+              if (beatListRef.current) {
+                beatListRef.current.scrollTo({
+                  top: 0,
+                  behavior: "smooth"
+                });
+              }
+            }}
+            disabled={isPlaying || (activeSceneIndex === 0 && !isScrolled)}
             className={`p-1.5 rounded transition-all cursor-pointer ${
-              isPlaying || activeSceneIndex === 0
+              isPlaying || (activeSceneIndex === 0 && !isScrolled)
                 ? "opacity-25 cursor-not-allowed text-zinc-650"
                 : "text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800"
             }`}
@@ -162,7 +192,7 @@ export default function ScriptBeatsList({
       {/* Beat List */}
       <div
         ref={beatListRef}
-        onScroll={handleListScroll}
+        onScroll={handleScroll}
         className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-zinc-800"
       >
         {report.scenes.map((scene, idx) => {
@@ -216,14 +246,16 @@ export default function ScriptBeatsList({
               }`}
             >
               <div className="flex justify-between items-start mb-1.5">
-                <span className="text-[10px] font-mono text-indigo-400 font-semibold uppercase tracking-wider">
-                  Beat {scene.scene_number}
+                <span className="text-[10px] font-mono text-indigo-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                  <span>Beat {scene.scene_number}</span>
+                  {scene.start !== undefined && scene.end !== undefined && (
+                    <span className="text-zinc-500 font-normal normal-case">
+                      ({formatTime(scene.start)} - {formatTime(scene.end)})
+                    </span>
+                  )}
                 </span>
                 {activeBadge}
               </div>
-              <h4 className="text-base font-bold text-zinc-100 mb-1 leading-snug">
-                {scene.title}
-              </h4>
               <p className="text-sm text-zinc-300 leading-relaxed">
                 {displayedSummary}
               </p>

@@ -21,7 +21,8 @@ import {
   UploadCloud,
   X,
   HelpCircle,
-  Play
+  Play,
+  User
 } from "lucide-react";
 import { useTimeline } from "@/lib/timeline-context";
 import { getGraphColor } from "@/lib/graph-style";
@@ -140,8 +141,14 @@ export function AnalysisWorkspace({
 
   // Selected Beat State
   const [activeSceneIndex, setActiveSceneIndex] = useState(0);
+  const [scrollTrigger, setScrollTrigger] = useState(0);
   const beatListRef = useRef<HTMLDivElement | null>(null);
-  const [beatsListHeight, setBeatsListHeight] = useState<number>(280);
+  const [beatsListHeight, setBeatsListHeight] = useState<number>(450);
+
+  const handleSelectScene = (idx: number) => {
+    setActiveSceneIndex(idx);
+    setScrollTrigger((prev) => prev + 1);
+  };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -210,7 +217,15 @@ export function AnalysisWorkspace({
       .sort((a, b) => a.startFrame - b.startFrame);
 
     if (noteClips.length === 0) {
-      return savedReport || null;
+      if (!savedReport) return null;
+      const dur = videoDuration || (activeScene.duration ? activeScene.duration / fps : 180);
+      const count = savedReport.scenes.length || 1;
+      const scenes = savedReport.scenes.map((scene: any, idx: number) => {
+        const start = scene.start !== undefined ? scene.start : (idx * (dur / count));
+        const end = scene.end !== undefined ? scene.end : ((idx + 1) * (dur / count));
+        return { ...scene, start, end };
+      });
+      return { ...savedReport, scenes };
     }
 
     const tensionTrack = tracks.find((t) => t.id === "graph-dramatic-tension" || t.name.toLowerCase().includes("tension"));
@@ -409,7 +424,7 @@ export function AnalysisWorkspace({
       model_used: activeScene.analysisModel || savedReport?.model_used || "Heuristic Analysis Layer",
       is_llm: Boolean(activeScene.analysisModel || savedReport?.is_llm),
     };
-  }, [clips, tracks, characters, activeScene, fps]);
+  }, [clips, tracks, characters, activeScene, fps, videoDuration]);
 
   // Handle active beat scroll/click synchronization
   const chartData = useMemo(() => {
@@ -426,6 +441,20 @@ export function AnalysisWorkspace({
   }, [report]);
 
   const activeBeat = report?.scenes[activeSceneIndex];
+
+  const activeBeatDialogClips = useMemo(() => {
+    if (!activeBeat || !clips) return [];
+    const beatStartFrame = Math.round((activeBeat.start ?? 0) * fps);
+    const beatEndFrame = Math.round((activeBeat.end ?? 0) * fps);
+    return clips
+      .filter(
+        (c) =>
+          c.type === "dialog" &&
+          c.startFrame >= beatStartFrame &&
+          c.startFrame < beatEndFrame
+      )
+      .sort((a, b) => a.startFrame - b.startFrame);
+  }, [activeBeat, clips, fps]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -744,6 +773,74 @@ export function AnalysisWorkspace({
     );
   };
 
+  const renderActiveBeatDialogue = () => {
+    return (
+      <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col select-none animate-fade-in">
+        <div className="flex items-center justify-between pb-3 border-b border-zinc-900 mb-3.5">
+          <div className="flex items-center space-x-2">
+            <MessageSquare size={13} className="text-indigo-400" />
+            <span className="text-[10px] font-mono font-bold tracking-widest text-zinc-400 uppercase">
+              Dialogue in Beat {activeBeat?.scene_number}
+            </span>
+          </div>
+          <span className="text-[8.5px] font-mono text-zinc-550 uppercase tracking-wider font-semibold">
+            {activeBeatDialogClips.length} {activeBeatDialogClips.length === 1 ? 'Line' : 'Lines'}
+          </span>
+        </div>
+
+        <div className="max-h-[300px] overflow-y-auto space-y-2.5 pr-1 scrollbar-thin scrollbar-thumb-zinc-800">
+          {activeBeatDialogClips.map((clip) => {
+            const char = characters.find(
+              (ch) =>
+                ch.id === clip.characterId ||
+                ch.name.toLowerCase() === clip.character?.toLowerCase()
+            );
+            const charName = char?.name || clip.character || "Hero";
+            const charImage = char?.image;
+
+            return (
+              <div 
+                key={clip.id}
+                className="flex items-start gap-3 bg-zinc-900/20 border border-zinc-900/60 rounded-xl p-3 transition-colors hover:border-zinc-800 hover:bg-zinc-900/30"
+              >
+                {/* Character Headshot */}
+                <div className="w-16 h-16 rounded-full bg-zinc-950 border border-zinc-800 overflow-hidden flex items-center justify-center shrink-0 shadow-inner">
+                  {charImage ? (
+                    <img src={charImage} alt={charName} className="w-full h-full object-cover" />
+                  ) : (
+                    <User className="w-8 h-8 text-zinc-500" />
+                  )}
+                </div>
+
+                {/* Speech Bubble */}
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-mono font-bold text-indigo-400 uppercase tracking-wider">
+                    {charName}
+                  </div>
+                  <p className="text-sm text-zinc-200 mt-1.5 leading-relaxed pl-0.5 select-text">
+                    {clip.description || clip.name}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+
+          {activeBeatDialogClips.length === 0 && (
+            <div className="py-8 flex flex-col items-center justify-center text-center gap-2 select-none">
+              <MessageSquare className="w-8 h-8 text-zinc-800 animate-pulse" />
+              <div className="text-[9.5px] font-mono text-zinc-650 uppercase tracking-widest mt-1">
+                No dialogue registered
+              </div>
+              <p className="text-[8px] text-zinc-700 max-w-[200px] leading-relaxed">
+                Add dialogue clips in the editor timeline to visualize speech bubbles in this beat.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex-1 overflow-y-auto bg-zinc-950 p-6 relative">
       {/* Sleek top gradient */}
@@ -816,6 +913,8 @@ export function AnalysisWorkspace({
               </div>
             )}
 
+            {activeSceneVideoSrc && renderActiveBeatDialogue()}
+
             {/* Collapsible Video Analyzer Drawer */}
             <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 shadow-xl select-none">
               <div 
@@ -869,6 +968,7 @@ export function AnalysisWorkspace({
               beatListRef={beatListRef}
               handleListScroll={handleListScroll}
               height={beatsListHeight}
+              scrollTrigger={scrollTrigger}
             />
 
             {/* Resizable Divider */}
@@ -889,7 +989,7 @@ export function AnalysisWorkspace({
             <TensionChart
               data={chartData}
               activeIndex={activeSceneIndex}
-              onSelectScene={(idx) => setActiveSceneIndex(idx)}
+              onSelectScene={handleSelectScene}
             />
           </section>
         </div>

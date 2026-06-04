@@ -45,9 +45,16 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={data}
-            onClick={(state) => {
-              if (state && typeof state.activeTooltipIndex === "number") {
-                onSelectScene(state.activeTooltipIndex);
+            onClick={(state: any) => {
+              if (state) {
+                if (typeof state.activeTooltipIndex === "number") {
+                  onSelectScene(state.activeTooltipIndex);
+                } else if (state.activePayload && state.activePayload.length > 0) {
+                  const sceneIndex = state.activePayload[0].payload?.sceneIndex;
+                  if (typeof sceneIndex === "number") {
+                    onSelectScene(sceneIndex);
+                  }
+                }
               }
             }}
             margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
@@ -109,7 +116,13 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
               name="Tension"
               stroke="#f43f5e"
               strokeWidth={3}
-              dot={(props) => {
+              onClick={(data: any, index: any) => {
+                const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
+                if (targetIndex !== undefined) {
+                  onSelectScene(targetIndex);
+                }
+              }}
+              dot={(props: any) => {
                 const isActive = props.index === activeIndex;
                 return (
                   <circle
@@ -120,6 +133,10 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
                     stroke="#f43f5e"
                     strokeWidth={ isActive ? 3 : 2}
                     className="cursor-pointer transition-all duration-200"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectScene(props.index);
+                    }}
                   />
                 );
               }}
@@ -133,7 +150,13 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
               name="Suspense"
               stroke="#a855f7"
               strokeWidth={3}
-              dot={(props) => {
+              onClick={(data: any, index: any) => {
+                const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
+                if (targetIndex !== undefined) {
+                  onSelectScene(targetIndex);
+                }
+              }}
+              dot={(props: any) => {
                 const isActive = props.index === activeIndex;
                 return (
                   <circle
@@ -144,6 +167,10 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
                     stroke="#a855f7"
                     strokeWidth={isActive ? 3 : 2}
                     className="cursor-pointer transition-all duration-200"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectScene(props.index);
+                    }}
                   />
                 );
               }}
@@ -157,7 +184,13 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
               name="Anticipation"
               stroke="#06b6d4"
               strokeWidth={3}
-              dot={(props) => {
+              onClick={(data: any, index: any) => {
+                const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
+                if (targetIndex !== undefined) {
+                  onSelectScene(targetIndex);
+                }
+              }}
+              dot={(props: any) => {
                 const isActive = props.index === activeIndex;
                 return (
                   <circle
@@ -168,6 +201,10 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
                     stroke="#06b6d4"
                     strokeWidth={isActive ? 3 : 2}
                     className="cursor-pointer transition-all duration-200"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectScene(props.index);
+                    }}
                   />
                 );
               }}
