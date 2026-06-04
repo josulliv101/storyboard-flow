@@ -324,7 +324,7 @@ export function AnalysisWorkspace({
         .filter(({ isLinked }) => isLinked)
         .map(({ track, graphIndex }) => {
           const graphColor = getGraphColor(track.graph, graphIndex);
-          const rawValue = getGraphValueAtFrame(track.graph, beat.startFrame);
+          const rawValue = getGraphValueAtFrame(track, beat.startFrame);
           // Divide by 2 because timeline metrics are 0-10, dashboard uses 0-5
           const value = track.graph && track.graph.showValue !== false
             ? Math.min(5, Math.max(0, Math.round(rawValue / 2)))
@@ -441,6 +441,32 @@ export function AnalysisWorkspace({
         }))
       : [];
   }, [report]);
+
+  const chartColors = useMemo(() => {
+    const graphTracks = tracks.filter((track) => track.type === "graph" && track.graph);
+    const getLineColor = (track: typeof graphTracks[number] | undefined) => {
+      if (!track?.graph) return undefined;
+      const graphIndex = Math.max(0, graphTracks.findIndex((item) => item.id === track.id));
+      const graphColor = getGraphColor(track.graph, graphIndex);
+      return graphColor.line || graphColor.accent;
+    };
+
+    const tensionTrack = graphTracks.find((track) => (
+      track.id === "graph-dramatic-tension" || track.name.toLowerCase().includes("tension")
+    ));
+    const suspenseTrack = graphTracks.find((track) => (
+      track.id === "graph-anticipatory-suspense" || track.name.toLowerCase().includes("suspense")
+    ));
+    const stakesTrack = graphTracks.find((track) => (
+      track.id === "graph-operational-stakes" || track.name.toLowerCase().includes("stakes") || track.name.toLowerCase().includes("conflict")
+    ));
+
+    return {
+      tension: getLineColor(tensionTrack),
+      suspense: getLineColor(suspenseTrack),
+      anticipation: getLineColor(stakesTrack),
+    };
+  }, [tracks]);
 
   const activeBeat = report?.scenes[activeSceneIndex];
 
@@ -1009,6 +1035,7 @@ export function AnalysisWorkspace({
               data={chartData}
               activeIndex={activeSceneIndex}
               onSelectScene={handleSelectScene}
+              colors={chartColors}
             />
           </section>
         </div>

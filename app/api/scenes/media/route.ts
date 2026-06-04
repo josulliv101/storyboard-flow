@@ -8,8 +8,8 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   const pathname = new URL(request.url).searchParams.get('pathname');
 
-  if (!pathname || !pathname.startsWith('timeline-videos/')) {
-    return NextResponse.json({ error: 'Invalid hosted video path.' }, { status: 400 });
+  if (!pathname || (!pathname.startsWith('timeline-videos/') && !pathname.startsWith('timeline-thumbnails/'))) {
+    return NextResponse.json({ error: 'Invalid hosted media path.' }, { status: 400 });
   }
 
   try {
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     // Stream the file stream directly
     return new NextResponse(fileStream as any, {
       headers: {
-        'Cache-Control': 'private, no-cache',
+      'Cache-Control': pathname.startsWith('timeline-thumbnails/') ? 'public, max-age=31536000, immutable' : 'private, no-cache',
         'Content-Length': String(stat.size),
         'Content-Type': contentType,
       },

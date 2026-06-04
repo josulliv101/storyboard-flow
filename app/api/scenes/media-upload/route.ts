@@ -18,8 +18,11 @@ export async function POST(request: Request) {
     // Clean up filename to prevent path traversal
     const safeFilename = path.basename(filename);
     
-    // Ensure destination directory exists in public/timeline-videos
-    const uploadDir = path.join(process.cwd(), 'public', 'timeline-videos');
+    const isThumbnail = safeFilename.toLowerCase().endsWith('.jpg') || safeFilename.toLowerCase().endsWith('.jpeg') || safeFilename.toLowerCase().endsWith('.png');
+    const mediaDir = isThumbnail ? 'timeline-thumbnails' : 'timeline-videos';
+
+    // Ensure destination directory exists in public media storage
+    const uploadDir = path.join(process.cwd(), 'public', mediaDir);
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
@@ -30,8 +33,8 @@ export async function POST(request: Request) {
     fs.writeFileSync(filePath, buffer);
 
     return NextResponse.json({
-      pathname: `timeline-videos/${safeFilename}`,
-      url: `/api/scenes/media?pathname=timeline-videos/${safeFilename}`
+      pathname: `${mediaDir}/${safeFilename}`,
+      url: `/api/scenes/media?pathname=${mediaDir}/${safeFilename}`
     });
   } catch (error) {
     console.error('[LOCAL_UPLOAD_ERROR]', error);

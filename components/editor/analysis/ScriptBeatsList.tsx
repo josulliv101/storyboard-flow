@@ -9,6 +9,10 @@ const formatTime = (time: number) => {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 };
 
+const formatTagValue = (value: number) => (
+  Number.isInteger(value) ? value.toString() : value.toFixed(1)
+);
+
 interface ScriptBeatsListProps {
   report: ScreenplayReport;
   activeSceneIndex: number;
@@ -220,13 +224,18 @@ export default function ScriptBeatsList({
               displayedSummary = matchingTag.reasoning || displayedSummary;
               activeBadge = (
                 <span
-                  className="text-[10px] font-bold font-mono px-2 py-0.5 rounded text-white border border-white/5"
+                  className="inline-flex items-center gap-1.5 rounded border border-white/10 px-1.5 py-0.5 text-[10px] font-bold font-mono text-white shadow-sm"
                   style={{
                     backgroundColor: matchingTag.color,
                     boxShadow: `0 0 6px color-mix(in srgb, ${matchingTag.color} 30%, transparent)`,
                   }}
                 >
-                  {matchingTag.label} {matchingTag.value !== undefined ? `(${matchingTag.value})` : ""}
+                  <span className="[text-box:trim-both_cap_alphabetic]">{matchingTag.label}</span>
+                  {matchingTag.value !== undefined && (
+                    <span className="inline-flex min-w-6 items-center justify-center rounded bg-black/25 px-1.5 py-0.5 tabular-nums text-white/95 ring-1 ring-white/15 [text-box:trim-both_cap_alphabetic]">
+                      {formatTagValue(matchingTag.value)}
+                    </span>
+                  )}
                 </span>
               );
             } else {

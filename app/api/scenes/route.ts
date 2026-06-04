@@ -19,7 +19,11 @@ function isTimelineProjectJson(project: unknown): project is TimelineProjectJson
 }
 
 function storageErrorResponse(error: unknown) {
-  const message = error instanceof Error && error.message.startsWith('Scene storage is not configured')
+  const message = error instanceof Error && (
+    error.message.startsWith('Scene storage is not configured')
+    || error.message.startsWith('Unable to connect to scene storage')
+    || error.message.includes('timed out')
+  )
     ? error.message
     : 'Unable to access saved scenes.';
   console.error('[SAVED_SCENES_ERROR]', error);

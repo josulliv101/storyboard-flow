@@ -211,6 +211,7 @@ function PreviewVideo({
   return <video 
     ref={videoRef} 
     src={clip.src} 
+    data-preview-clip-id={clip.id}
     className="absolute"
     style={mediaStyle}
     preload="auto"
@@ -709,8 +710,9 @@ function GraphTopOverlay({
           ? cn("h-full flex-col flex-wrap overflow-visible", useInsetRail ? "w-full justify-end content-end items-stretch" : "content-start items-start")
           : "items-start flex-wrap"
       )}>
-        {valueTracks.map((track, graphIndex) => {
+        {valueTracks.map((track) => {
           const graph = track.graph!;
+          const graphIndex = Math.max(0, graphTracks.findIndex(item => item.id === track.id));
           const graphColor = getGraphColor(graph, graphIndex);
           const graphHasValueAxis = shouldShowGraphValue(graph);
           const graphValue = getGraphValueAtFrame(graph, currentFrame);
@@ -1789,16 +1791,19 @@ function MultiScenePreview({
           .sort(comparePreviewGraphNotes);
         const graphDuration = getGraphDisplayDuration(graphTracks, fps);
         const graphValues = graphTracks
-          .map((track, graphIndex) => ({
-            id: track.id,
-            label: getGraphDisplayLabel(track.graph!),
-            value: getGraphValueAtFrame(track.graph!, currentFrame),
-            progress: getGraphProgressAtFrame(track.graph!, currentFrame),
-            min: track.graph!.min,
-            max: track.graph!.max,
-            points: track.graph!.points,
-            color: getGraphColor(track.graph!, graphIndex),
-          }));
+          .map((track) => {
+            const graphIndex = Math.max(0, allGraphTracks.findIndex(item => item.id === track.id));
+            return {
+              id: track.id,
+              label: getGraphDisplayLabel(track.graph!),
+              value: getGraphValueAtFrame(track.graph!, currentFrame),
+              progress: getGraphProgressAtFrame(track.graph!, currentFrame),
+              min: track.graph!.min,
+              max: track.graph!.max,
+              points: track.graph!.points,
+              color: getGraphColor(track.graph!, graphIndex),
+            };
+          });
 
         return {
           ...parent,
@@ -1907,7 +1912,7 @@ function MultiScenePreview({
                               <PreviewMediaBackdrop mediaLayout={previewMediaLayout} />
                             )}
                             {clip.type === 'video' && clip.src && (
-                              <PreviewVideo clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={isSceneMuted || mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
+                              <PreviewVideo key={`${clip.id}-${clip.src || 'missing-src'}`} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={isSceneMuted || mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
                             )}
                             {clip.type === 'image' && clip.src && (
                               <img src={clip.src} alt={clip.name} className="absolute" style={mediaStyle} />
@@ -1987,7 +1992,7 @@ function MultiScenePreview({
                       )}
                     >
                       {clip.type === 'image' && clip.src && <img src={clip.src} alt={clip.name} className="max-h-full max-w-full object-contain" />}
-                      {clip.type === 'video' && clip.src && <PreviewVideo clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={isSceneMuted || mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />}
+                      {clip.type === 'video' && clip.src && <PreviewVideo key={`${clip.id}-${clip.src || 'missing-src'}`} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={isSceneMuted || mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />}
                     </motion.div>
                   ))}
                 </div>
@@ -2103,16 +2108,19 @@ export function Preview({
         .sort(comparePreviewGraphNotes);
       const graphDuration = getGraphDisplayDuration(graphTracks, fps);
       const graphValues = graphTracks
-        .map((track, graphIndex) => ({
-          id: track.id,
-          label: getGraphDisplayLabel(track.graph!),
-          value: getGraphValueAtFrame(track.graph!, currentFrame),
-          progress: getGraphProgressAtFrame(track.graph!, currentFrame),
-          min: track.graph!.min,
-          max: track.graph!.max,
-          points: track.graph!.points,
-          color: getGraphColor(track.graph!, graphIndex),
-        }));
+        .map((track) => {
+          const graphIndex = Math.max(0, allGraphTracks.findIndex(item => item.id === track.id));
+          return {
+            id: track.id,
+            label: getGraphDisplayLabel(track.graph!),
+            value: getGraphValueAtFrame(track.graph!, currentFrame),
+            progress: getGraphProgressAtFrame(track.graph!, currentFrame),
+            min: track.graph!.min,
+            max: track.graph!.max,
+            points: track.graph!.points,
+            color: getGraphColor(track.graph!, graphIndex),
+          };
+        });
       return {
         ...p,
         gridClips: getAnimatedGridLayout(clipsInGroup, currentFrame, childTrackIds),
@@ -2307,16 +2315,19 @@ export function Preview({
         .sort(comparePreviewGraphNotes);
       const groupGraphDuration = getGraphDisplayDuration(groupGraphTracks, fps);
       const groupGraphValues = groupGraphTracks
-        .map((track, graphIndex) => ({
-          id: track.id,
-          label: getGraphDisplayLabel(track.graph!),
-          value: getGraphValueAtFrame(track.graph!, currentFrame),
-          progress: getGraphProgressAtFrame(track.graph!, currentFrame),
-          min: track.graph!.min,
-          max: track.graph!.max,
-          points: track.graph!.points,
-          color: getGraphColor(track.graph!, graphIndex),
-        }));
+        .map((track) => {
+          const graphIndex = Math.max(0, allGroupGraphTracks.findIndex(item => item.id === track.id));
+          return {
+            id: track.id,
+            label: getGraphDisplayLabel(track.graph!),
+            value: getGraphValueAtFrame(track.graph!, currentFrame),
+            progress: getGraphProgressAtFrame(track.graph!, currentFrame),
+            min: track.graph!.min,
+            max: track.graph!.max,
+            points: track.graph!.points,
+            color: getGraphColor(track.graph!, graphIndex),
+          };
+        });
       return {
         id: parent.id,
         name: parent.name,
@@ -2403,7 +2414,7 @@ export function Preview({
                                 <PreviewMediaBackdrop mediaLayout={previewMediaLayout} />
                               )}
                               {clip.type === 'video' && clip.src && (
-                                <PreviewVideo clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
+                                <PreviewVideo key={`${clip.id}-${clip.src || 'missing-src'}`} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
                               )}
                               {clip.type === 'image' && clip.src && (
                                 <img src={clip.src} alt={clip.name} className="absolute" style={getPreviewMediaStyle(previewMediaLayout)} />
@@ -2487,7 +2498,7 @@ export function Preview({
                   <div className="absolute inset-x-1.5 bottom-1.5 z-10 w-auto min-w-0 max-w-full space-y-2 overflow-hidden">
                     {group.graphTracks.map((track, graphIndex) => {
                       const graph = track.graph!;
-                      const graphColor = getGraphColor(graph, graphIndex);
+                      const graphColor = group.graphValues.find(item => item.id === track.id)?.color ?? getGraphColor(graph, graphIndex);
                       const isBarGraph = graph.type === 'bar';
                       const graphHasValueAxis = shouldShowGraphValue(graph);
                       const points = [...graph.points].sort((a, b) => a.frame - b.frame);
@@ -2679,7 +2690,7 @@ export function Preview({
                                  {clip.type === 'video' && (
                                    <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
                                       <div className="relative h-full w-full flex-shrink-0">
-                                        <PreviewVideo clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
+                                        <PreviewVideo key={`${clip.id}-${clip.src || 'missing-src'}`} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
                                       </div>
                                    </div>
                                  )}
@@ -2819,7 +2830,7 @@ export function Preview({
                          {clip.src ? (
                            <>
                              {clip.type === 'video' && (
-                               <PreviewVideo clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
+                               <PreviewVideo key={`${clip.id}-${clip.src || 'missing-src'}`} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
                              )}
                              {clip.type === 'image' && (
                                <motion.img 

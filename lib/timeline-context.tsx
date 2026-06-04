@@ -75,6 +75,7 @@ export interface Scene {
   id: string;
   name: string;
   description?: string;
+  thumbnailUrl?: string;
   clips: TimelineClip[];
   tracks: TimelineTrack[];
   duration?: number;
@@ -213,6 +214,7 @@ const PREVIEW_SCENE_MODES = ['active', 'all'] as const;
 const PREVIEW_MEDIA_LAYOUTS = ['inset', 'full'] as const;
 const ANALYTICS_OVERLAY_STYLES = ['compact', 'analysis'] as const;
 const APP_SETTINGS_STORAGE_KEY = 'timeline-app-settings';
+const SCENE_THUMBNAIL_BLOB_PREFIX = 'scene-thumbnail';
 
 const isAspectRatio = (value: unknown): value is TimelineProjectJson['config']['aspectRatio'] => (
   typeof value === 'string' && ASPECT_RATIOS.includes(value as TimelineProjectJson['config']['aspectRatio'])
@@ -259,6 +261,7 @@ const isLocalRuntimeMediaUrl = (value: string | undefined) => (
 
 const stripRuntimeUrlsFromScenes = (sourceScenes: Scene[]) => sourceScenes.map(scene => ({
   ...scene,
+  thumbnailUrl: isLocalRuntimeMediaUrl(scene.thumbnailUrl) ? undefined : scene.thumbnailUrl,
   clips: scene.clips.map(({ src, ...clip }) => (
     isLocalRuntimeMediaUrl(src) ? clip : { ...clip, src }
   ))
@@ -674,8 +677,10 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
               if (blob) return normalizeDialogClip({ ...clip, src: URL.createObjectURL(blob) });
               return normalizeDialogClip(clip);
             }));
+            const thumbnailBlob = await loadBlob(`${SCENE_THUMBNAIL_BLOB_PREFIX}-${scene.id}`);
             return {
               ...scene,
+              thumbnailUrl: thumbnailBlob ? URL.createObjectURL(thumbnailBlob) : scene.thumbnailUrl,
               clips: hydratedClips,
               tracks: normalizeTrackSettingsInScene(scene.tracks, legacyDialogGridEnabled),
             };
@@ -1028,6 +1033,7 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
       const sceneToDelete = prev.find(s => s.id === id);
       if (sceneToDelete) {
         sceneToDelete.clips.forEach(c => deleteBlob(c.id));
+        deleteBlob(`${SCENE_THUMBNAIL_BLOB_PREFIX}-${sceneToDelete.id}`);
       }
       const filtered = prev.filter(s => s.id !== id);
       if (activeSceneId === id) setActiveSceneId(filtered[0].id);
@@ -1158,15 +1164,9 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     setPlaying(false);
 
     const hydrate = async () => {
-      const hydratedScenes = await Promise.all(remappedProject.scenes.map(async scene => {
-        const hydratedClips = await Promise.all(scene.clips.map(async clip => {
-          let blob = await loadBlob(clip.id);
-          if (!blob && clip.type === 'video') {
-            blob = await loadBlob("clip-media-video");
-            if (blob) {
-              await saveBlob(clip.id, blob);
-            }
-          }
+    const hydratedScenes = await Promise.all(remappedProject.scenes.map(async scene => {
+      const hydratedClips = await Promise.all(scene.clips.map(async clip => {
+          const blob = await loadBlob(clip.id);
           if (blob) return normalizeDialogClip({ ...clip, src: URL.createObjectURL(blob) });
           return normalizeDialogClip(clip);
         }));

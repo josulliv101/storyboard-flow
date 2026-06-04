@@ -21,6 +21,7 @@ import {
   ChevronDown, 
   Trash2,
   Clapperboard,
+  Camera,
   Users,
   MapPin,
   GripVertical,
@@ -116,6 +117,7 @@ type RenderGroupOption = {
 type PendingProjectImport = {
   fileName: string;
   project: TimelineProjectJson;
+  savedSceneId?: string;
 };
 
 type SavedSceneSummary = {
@@ -123,9 +125,11 @@ type SavedSceneSummary = {
   name: string;
   createdAt: string;
   updatedAt: string;
+  thumbnailUrl?: string;
 };
 
 const MAX_SAVED_SCENE_NAME_LENGTH = 120;
+const SCENE_THUMBNAIL_BLOB_PREFIX = 'scene-thumbnail';
 
 function getSuggestedSavedSceneName(scene?: { name: string; analysisModel?: string }) {
   const baseName = scene?.name.trim() || 'Untitled Scene';
@@ -143,6 +147,38 @@ function getSuggestedSavedSceneName(scene?: { name: string; analysisModel?: stri
   const availableBaseLength = Math.max(0, MAX_SAVED_SCENE_NAME_LENGTH - suffix.length);
   return `${baseName.slice(0, availableBaseLength).trimEnd()}${suffix}`.slice(0, MAX_SAVED_SCENE_NAME_LENGTH);
 }
+
+const normalizeSceneLookupName = (value?: string) => (
+  (value || '')
+    .toLowerCase()
+    .replace(/\s*\(imported\)\s*$/i, '')
+    .replace(/\s+-\s+gemini.*$/i, '')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+);
+
+const findMatchingSavedSceneId = (savedScenes: SavedSceneSummary[], scene?: { name?: string }, savedSceneName?: string) => {
+  const lookupNames = [
+    normalizeSceneLookupName(savedSceneName),
+    normalizeSceneLookupName(scene?.name),
+  ].filter(Boolean);
+
+  if (lookupNames.length === 0) return undefined;
+
+  const exactMatch = savedScenes.find(savedScene => {
+    const savedName = normalizeSceneLookupName(savedScene.name);
+    return lookupNames.some(name => savedName === name);
+  });
+  if (exactMatch) return exactMatch.id;
+
+  const fuzzyMatches = savedScenes.filter(savedScene => {
+    const savedName = normalizeSceneLookupName(savedScene.name);
+    return lookupNames.some(name => savedName.includes(name) || name.includes(savedName));
+  });
+
+  return fuzzyMatches.length === 1 ? fuzzyMatches[0].id : undefined;
+};
 
 const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
   const reader = new FileReader();
@@ -163,6 +199,123 @@ const runtimeSrcToRenderSrc = async (src?: string) => {
     return undefined;
   }
 };
+
+const captureVideoThumbnail = async (videoBlob: Blob, targetTimeSeconds = 0.35): Promise<Blob | null> => {
+  const sourceUrl = URL.createObjectURL(videoBlob);
+  const video = document.createElement('video');
+  video.muted = true;
+  video.preload = 'auto';
+  video.playsInline = true;
+
+  const waitForVideoReady = () => new Promise<void>((resolve, reject) => {
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      resolve();
+      return;
+    }
+
+    const handleReady = () => resolve();
+    const handleError = () => reject(new Error('Could not decode the selected video for thumbnail capture.'));
+    video.addEventListener('loadeddata', handleReady, { once: true });
+    video.addEventListener('error', handleError, { once: true });
+  });
+
+  const seekTo = (time: number) => new Promise<void>((resolve, reject) => {
+    if (Math.abs(video.currentTime - time) < 0.01 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      resolve();
+      return;
+    }
+
+    const handleSeek = () => resolve();
+    const handleError = () => reject(new Error('Could not seek the selected video for thumbnail capture.'));
+    video.addEventListener('seeked', handleSeek, { once: true });
+    video.addEventListener('error', handleError, { once: true });
+    video.currentTime = time;
+  });
+
+  try {
+    video.src = sourceUrl;
+    await waitForVideoReady();
+
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
+    await seekTo(Math.min(Math.max(0, targetTimeSeconds), Math.max(0, duration - 0.05)));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 360;
+    const context = canvas.getContext('2d');
+    if (!context) return null;
+
+    context.fillStyle = '#000';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    const scale = Math.max(canvas.width / Math.max(1, video.videoWidth), canvas.height / Math.max(1, video.videoHeight));
+    const width = video.videoWidth * scale;
+    const height = video.videoHeight * scale;
+    context.drawImage(video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+
+    return await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.78));
+  } catch {
+    return null;
+  } finally {
+    video.removeAttribute('src');
+    video.load();
+    URL.revokeObjectURL(sourceUrl);
+  }
+};
+
+const captureVideoElementThumbnail = async (video: HTMLVideoElement): Promise<Blob | null> => {
+  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth <= 0 || video.videoHeight <= 0) {
+    return null;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 360;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+
+  context.fillStyle = '#000';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const scale = Math.max(canvas.width / Math.max(1, video.videoWidth), canvas.height / Math.max(1, video.videoHeight));
+  const width = video.videoWidth * scale;
+  const height = video.videoHeight * scale;
+  context.drawImage(video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+
+  return new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.78));
+};
+
+const getPreviewVideoElementForClip = (clipId: string) => (
+  Array.from(document.querySelectorAll<HTMLVideoElement>('video[data-preview-clip-id]'))
+    .find(video => video.dataset.previewClipId === clipId && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
+);
+
+function SavedSceneThumbnail({ scene }: { scene: SavedSceneSummary }) {
+  return (
+    <div className="relative aspect-video overflow-hidden rounded border border-zinc-800 bg-black shadow-inner">
+      {scene.thumbnailUrl ? (
+        <img
+          src={scene.thumbnailUrl}
+          className="h-full w-full object-cover"
+          alt={`${scene.name} thumbnail`}
+          loading="lazy"
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.18),rgba(9,9,11,0.95)_55%)]">
+          <Clapperboard className="h-8 w-8 text-zinc-700" />
+        </div>
+      )}
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-between px-2 py-1 opacity-60">
+        {Array.from({ length: 7 }).map((_, index) => (
+          <span key={index} className="h-1.5 w-2 rounded-[1px] bg-black/70 ring-1 ring-white/10" />
+        ))}
+      </div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent px-3 pb-2 pt-8">
+        <div className="truncate text-[10px] font-black uppercase tracking-widest text-white">{scene.name}</div>
+      </div>
+    </div>
+  );
+}
 
 const captureVideoAnalysisFrames = async (file: File): Promise<Blob[]> => {
   const sourceUrl = URL.createObjectURL(file);
@@ -2299,12 +2452,17 @@ function EditorInner() {
   const [scriptEditorClipId, setScriptEditorClipId] = React.useState<string | null>(null);
   const [renderGroupOptions, setRenderGroupOptions] = React.useState<RenderGroupOption[] | null>(null);
   const [pendingProjectImport, setPendingProjectImport] = React.useState<PendingProjectImport | null>(null);
+  const [isSaveSceneOpen, setIsSaveSceneOpen] = React.useState(false);
   const [isSceneLibraryOpen, setIsSceneLibraryOpen] = React.useState(false);
   const [savedSceneName, setSavedSceneName] = React.useState('');
   const [savedScenes, setSavedScenes] = React.useState<SavedSceneSummary[]>([]);
   const [isLoadingSavedScenes, setIsLoadingSavedScenes] = React.useState(false);
+  const [savedScenesLoadError, setSavedScenesLoadError] = React.useState<string | null>(null);
   const [isSavingScene, setIsSavingScene] = React.useState(false);
+  const [isCapturingSceneThumbnail, setIsCapturingSceneThumbnail] = React.useState(false);
   const [sceneSaveStatus, setSceneSaveStatus] = React.useState<string | null>(null);
+  const [activeSavedSceneId, setActiveSavedSceneId] = React.useState<string | null>(null);
+  const [sceneThumbnailPreviewUrls, setSceneThumbnailPreviewUrls] = React.useState<Record<string, string>>({});
   const [loadingSavedSceneId, setLoadingSavedSceneId] = React.useState<string | null>(null);
   const [pendingSavedSceneDelete, setPendingSavedSceneDelete] = React.useState<SavedSceneSummary | null>(null);
   const [deletingSavedSceneId, setDeletingSavedSceneId] = React.useState<string | null>(null);
@@ -2319,6 +2477,14 @@ function EditorInner() {
   const [pendingType, setPendingType] = React.useState<ClipType | null>(null);
 
   const normalizeTagKey = React.useCallback((value: string | undefined) => value?.trim().toLowerCase() || '', []);
+  const activeVideoClipAtCurrentFrame = React.useMemo(() => (
+    activeScene?.clips
+      .filter(clip => clip.type === 'video' && clip.src)
+      .find(clip => currentFrame >= clip.startFrame && currentFrame < clip.startFrame + clip.duration)
+  ), [activeScene, currentFrame]);
+  const activeSceneThumbnailPreviewUrl = activeScene
+    ? sceneThumbnailPreviewUrls[activeScene.id] || activeScene.thumbnailUrl
+    : undefined;
 
   const previewScenes = React.useMemo(() => {
     const previewSceneIdSet = previewSceneIds.length > 0 ? new Set(previewSceneIds) : undefined;
@@ -2609,7 +2775,7 @@ function EditorInner() {
     
     const videoClip = activeScene.clips.find(c => 
       c.type === 'video' && 
-      (c.id.includes('clip-media-video') || c.id.includes('imported-clip')) &&
+      c.id.includes('clip-media-video') &&
       (!c.src || c.src === '')
     );
     
@@ -3112,8 +3278,9 @@ function EditorInner() {
     }
   };
 
-  const loadSavedScenes = React.useCallback(async () => {
+  const loadSavedScenes = React.useCallback(async (options?: { silent?: boolean }) => {
     setIsLoadingSavedScenes(true);
+    setSavedScenesLoadError(null);
     try {
       const response = await fetch('/api/scenes', { cache: 'no-store' });
       const result = await response.json().catch(() => ({})) as { scenes?: SavedSceneSummary[]; error?: string };
@@ -3123,18 +3290,35 @@ function EditorInner() {
       setSavedScenes(result.scenes || []);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load recent scenes.';
-      toast.error(message);
+      setSavedScenesLoadError(message);
+      if (!options?.silent) {
+        toast.error(message);
+      }
     } finally {
       setIsLoadingSavedScenes(false);
     }
   }, []);
 
-  const openSceneLibrary = () => {
+  React.useEffect(() => {
+    void loadSavedScenes({ silent: true });
+  }, [loadSavedScenes]);
+
+  const openSaveSceneModal = () => {
     const activeScene = scenes.find(scene => scene.id === activeSceneId) || scenes[0];
     setSavedSceneName(getSuggestedSavedSceneName(activeScene));
+    setIsSaveSceneOpen(true);
+  };
+
+  const openSceneLibrary = () => {
     setIsSceneLibraryOpen(true);
     void loadSavedScenes();
   };
+
+  const sceneLibraryCountLabel = isLoadingSavedScenes
+    ? '...'
+    : savedScenesLoadError
+      ? '!'
+      : String(savedScenes.length);
 
   const uploadSceneVideo = async (clipName: string, video: Blob) => {
     const fileName = (clipName || 'scene-video.mp4')
@@ -3146,6 +3330,111 @@ function EditorInner() {
     setSceneSaveStatus(`Uploading ${fileName} (100%)`);
 
     return `/api/scenes/media?pathname=${encodeURIComponent(hostedVideo.pathname)}`;
+  };
+
+  const uploadSceneThumbnail = async (sceneName: string, thumbnail: Blob) => {
+    const baseName = (sceneName || 'scene-thumbnail')
+      .replace(/\.[^/.]+$/, '')
+      .replace(/[^a-zA-Z0-9._-]/g, '-')
+      .slice(0, 80);
+    const fileName = `${baseName || 'scene'}-thumbnail-${Date.now()}.jpg`;
+    const file = new File([thumbnail], fileName, { type: 'image/jpeg' });
+    setSceneSaveStatus(`Uploading scene thumbnail (${fileName})...`);
+    const hostedImage = await localUpload(fileName, file);
+
+    return `/api/scenes/media?pathname=${encodeURIComponent(hostedImage.pathname)}`;
+  };
+
+  const getVideoBlobForClip = async (clip: TimelineClip, runtimeClip?: TimelineClip) => {
+    if (clip.src?.startsWith('http') || clip.src?.startsWith('/api/scenes/media?')) {
+      const response = await fetch(clip.src);
+      return response.blob();
+    }
+
+    const localBlob = await loadBlob(clip.id);
+    if (localBlob) return localBlob;
+
+    if (runtimeClip?.src?.startsWith('blob:')) {
+      const response = await fetch(runtimeClip.src);
+      return response.blob();
+    }
+
+    if (runtimeClip?.src) {
+      const response = await fetch(runtimeClip.src);
+      return response.blob();
+    }
+
+    return undefined;
+  };
+
+  const handleCaptureCurrentFrameThumbnail = async () => {
+    if (!activeScene || !activeVideoClipAtCurrentFrame || isPlaying || isCapturingSceneThumbnail) return;
+
+    const capturedFrame = currentFrame;
+    const capturedClip = activeVideoClipAtCurrentFrame;
+    const capturedSceneId = activeScene.id;
+    const savedSceneId = activeSavedSceneId;
+    setIsCapturingSceneThumbnail(true);
+    try {
+      const runtimeClip = scenes
+        .find(scene => scene.id === activeSceneId)
+        ?.clips.find(clip => clip.id === capturedClip.id);
+      const previewVideo = getPreviewVideoElementForClip(capturedClip.id);
+      let thumbnail = previewVideo ? await captureVideoElementThumbnail(previewVideo) : null;
+
+      if (!thumbnail) {
+        const video = await getVideoBlobForClip(capturedClip, runtimeClip);
+
+        if (!video) {
+          throw new Error('No video media is available at the current frame.');
+        }
+
+        const targetTime = Math.max(0, (capturedFrame - capturedClip.startFrame) / fps);
+        thumbnail = await captureVideoThumbnail(video, targetTime);
+      }
+
+      if (!thumbnail) {
+        throw new Error('Unable to capture a thumbnail from this frame.');
+      }
+
+      await saveBlob(`${SCENE_THUMBNAIL_BLOB_PREFIX}-${capturedSceneId}`, thumbnail);
+      const localThumbnailUrl = URL.createObjectURL(thumbnail);
+      setSceneThumbnailPreviewUrls(previous => ({ ...previous, [capturedSceneId]: localThumbnailUrl }));
+      setCurrentFrame(capturedFrame);
+
+      const hostedThumbnailUrl = await uploadSceneThumbnail(activeScene.name, thumbnail);
+      setSceneThumbnailPreviewUrls(previous => ({ ...previous, [capturedSceneId]: hostedThumbnailUrl }));
+
+      const thumbnailSavedSceneId = savedSceneId || findMatchingSavedSceneId(savedScenes, activeScene, savedSceneName);
+
+      if (thumbnailSavedSceneId) {
+        const response = await fetch(`/api/scenes/${thumbnailSavedSceneId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thumbnailUrl: hostedThumbnailUrl }),
+        });
+        const result = await response.json().catch(() => ({})) as { scene?: SavedSceneSummary; error?: string };
+
+        if (!response.ok || !result.scene) {
+          throw new Error(result.error || 'Thumbnail captured locally, but could not update the saved scene.');
+        }
+
+        const updatedScene = result.scene;
+        setSavedScenes(previous => previous.map(scene => (
+          scene.id === thumbnailSavedSceneId ? { ...updatedScene, thumbnailUrl: hostedThumbnailUrl } : scene
+        )));
+        setActiveSavedSceneId(thumbnailSavedSceneId);
+      }
+
+      toast.success('Scene thumbnail saved to public/timeline-thumbnails');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to capture thumbnail.';
+      toast.error(message);
+    } finally {
+      setCurrentFrame(capturedFrame);
+      setSceneSaveStatus(null);
+      setIsCapturingSceneThumbnail(false);
+    }
   };
 
   const handleSaveScene = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -3163,24 +3452,38 @@ function EditorInner() {
     setSceneSaveStatus('Preparing scene snapshot...');
     try {
       const portableClips = [];
+      let thumbnailBlob: Blob | undefined = await loadBlob(`${SCENE_THUMBNAIL_BLOB_PREFIX}-${activeScene.id}`);
 
       for (const clip of activeScene.clips) {
-        if (
-          clip.type !== 'video'
-          || clip.src?.startsWith('http')
-          || clip.src?.startsWith('/api/scenes/media?')
-        ) {
+        if (clip.type !== 'video') {
           portableClips.push(clip);
           continue;
         }
 
-        const localBlob = await loadBlob(clip.id);
         const runtimeClip = runtimeScene?.clips.find(runtimeItem => runtimeItem.id === clip.id);
-        let video = localBlob;
+        let video: Blob | undefined;
+        const isHostedVideo = clip.src?.startsWith('http') || clip.src?.startsWith('/api/scenes/media?');
 
-        if (!video && runtimeClip?.src?.startsWith('blob:')) {
-          const response = await fetch(runtimeClip.src);
-          video = await response.blob();
+        if (!thumbnailBlob && activeVideoClipAtCurrentFrame?.id === clip.id) {
+          const previewVideo = getPreviewVideoElementForClip(clip.id);
+          thumbnailBlob = previewVideo ? await captureVideoElementThumbnail(previewVideo) ?? undefined : undefined;
+        }
+
+        if (!thumbnailBlob || !isHostedVideo) {
+          try {
+            video = await getVideoBlobForClip(clip, runtimeClip);
+          } catch {
+            video = undefined;
+          }
+        }
+
+        if (!thumbnailBlob && video) {
+          thumbnailBlob = await captureVideoThumbnail(video) ?? undefined;
+        }
+
+        if (isHostedVideo) {
+          portableClips.push(clip);
+          continue;
         }
 
         if (!video && runtimeClip?.src) {
@@ -3197,9 +3500,17 @@ function EditorInner() {
         portableClips.push({ ...clip, src: publicUrl });
       }
 
+      if (!thumbnailBlob && activeScene.clips.some(clip => clip.type === 'video')) {
+        throw new Error('Scene thumbnail was not saved because no video frame could be captured. Pause on a visible video frame, then try Save Scene again.');
+      }
+
+      const thumbnailUrl = thumbnailBlob
+        ? await uploadSceneThumbnail(name, thumbnailBlob)
+        : activeSceneThumbnailPreviewUrl;
+
       const sceneSnapshot: TimelineProjectJson = {
         ...project,
-        scenes: [{ ...activeScene, clips: portableClips }],
+        scenes: [{ ...activeScene, thumbnailUrl, clips: portableClips }],
         activeSceneId: activeScene.id,
         config: {
           ...project.config,
@@ -3220,7 +3531,9 @@ function EditorInner() {
       }
       const savedScene = result.scene;
       setSavedScenes(previous => [savedScene, ...previous.filter(scene => scene.id !== savedScene.id)]);
+      setActiveSavedSceneId(savedScene.id);
       toast.success('Scene and hosted video saved to your cloud library');
+      setIsSaveSceneOpen(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to save the scene.';
       toast.error(message);
@@ -3247,6 +3560,7 @@ function EditorInner() {
       setPendingProjectImport({
         fileName: `${result.scene.name} (cloud scene)`,
         project: result.scene.project,
+        savedSceneId: scene.id,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load the saved scene.';
@@ -3274,6 +3588,7 @@ function EditorInner() {
       }
 
       setSavedScenes(previous => previous.filter(savedScene => savedScene.id !== scene.id));
+      setActiveSavedSceneId(previous => previous === scene.id ? null : previous);
       setPendingSavedSceneDelete(null);
       setIsSceneLibraryOpen(true);
       toast.success(result.deletedVideoCount
@@ -3290,6 +3605,7 @@ function EditorInner() {
   const appendPendingProjectImport = () => {
     if (!pendingProjectImport) return;
     importProjectIntoCurrent(pendingProjectImport.project);
+    setActiveSavedSceneId(null);
     setPendingProjectImport(null);
     setActiveTab('scenes');
     toast.success('Imported into current project without changing existing work');
@@ -3298,6 +3614,7 @@ function EditorInner() {
   const replaceWithPendingProjectImport = () => {
     if (!pendingProjectImport) return;
     importProject(pendingProjectImport.project);
+    setActiveSavedSceneId(pendingProjectImport.savedSceneId || null);
     setPendingProjectImport(null);
     setActiveTab('scenes');
     toast.success('Opened imported JSON as project');
@@ -4201,45 +4518,82 @@ function EditorInner() {
       />
 
       <AnimatePresence>
-        {isSceneLibraryOpen && (
+        {isSaveSceneOpen && (
           <motion.div
-            key="scene-library"
+            key="save-scene"
             className="fixed inset-0 z-[330] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onPointerDown={() => setIsSceneLibraryOpen(false)}
+            onPointerDown={() => setIsSaveSceneOpen(false)}
           >
             <motion.section
               role="dialog"
               aria-modal="true"
-              aria-labelledby="cloud-scenes-title"
+              aria-labelledby="save-scene-title"
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
-              className="flex max-h-[min(680px,calc(100vh-2rem))] w-full max-w-lg flex-col rounded-lg border border-zinc-800 bg-[#111114] shadow-2xl"
+              className="flex w-full max-w-lg flex-col rounded-lg border border-zinc-800 bg-[#111114] shadow-2xl"
               onPointerDown={(event) => event.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-4 border-b border-zinc-800 p-4">
                 <div>
-                  <h2 id="cloud-scenes-title" className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-200">
+                  <h2 id="save-scene-title" className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-200">
                     <Cloud className="h-4 w-4 text-indigo-300" />
-                    Cloud Scenes
+                    Save Scene
                   </h2>
-                  <p className="mt-1 text-[10px] text-zinc-500">Save the active scene or load a recent scene snapshot.</p>
+                  <p className="mt-1 text-[10px] text-zinc-500">Save the active scene snapshot to the cloud library.</p>
                 </div>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7 shrink-0 text-zinc-500 hover:text-white"
-                  onClick={() => setIsSceneLibraryOpen(false)}
-                  aria-label="Close saved scenes"
+                  onClick={() => setIsSaveSceneOpen(false)}
+                  aria-label="Close save scene"
                 >
                   <X className="h-4 w-4" />
                 </Button>
               </div>
 
-              <form className="space-y-3 border-b border-zinc-800 p-4" onSubmit={handleSaveScene}>
+              <form className="space-y-3 p-4" onSubmit={handleSaveScene}>
+                <div className="grid gap-3 rounded-md border border-zinc-800 bg-zinc-950/60 p-3 sm:grid-cols-[8rem_1fr]">
+                  <div className="relative aspect-video overflow-hidden rounded border border-zinc-800 bg-black">
+                    {activeSceneThumbnailPreviewUrl ? (
+                      <img src={activeSceneThumbnailPreviewUrl} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.18),rgba(9,9,11,0.95)_55%)]">
+                        <Clapperboard className="h-7 w-7 text-zinc-700" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex min-w-0 flex-col justify-center gap-2">
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Scene Thumbnail</div>
+                      <p className="mt-1 text-[10px] leading-relaxed text-zinc-600">
+                        Pause on a video frame, then capture it as the static library thumbnail.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-fit border-zinc-700 bg-zinc-900 text-[10px] font-bold uppercase tracking-widest text-zinc-300 hover:border-indigo-500/40 hover:bg-indigo-500/10 hover:text-indigo-100"
+                      onClick={() => void handleCaptureCurrentFrameThumbnail()}
+                      disabled={isPlaying || isCapturingSceneThumbnail || !activeVideoClipAtCurrentFrame}
+                      title={
+                        isPlaying
+                          ? 'Pause playback before capturing a thumbnail.'
+                          : !activeVideoClipAtCurrentFrame
+                            ? 'Move the playhead over a video clip to capture a thumbnail.'
+                            : 'Use the current paused frame as the thumbnail.'
+                      }
+                    >
+                      {isCapturingSceneThumbnail ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+                      Capture Current Frame
+                    </Button>
+                  </div>
+                </div>
                 <label htmlFor="saved-scene-name" className="block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
                   Active Scene Name
                 </label>
@@ -4271,10 +4625,56 @@ function EditorInner() {
                   <p className="text-[10px] font-mono text-indigo-300" aria-live="polite">{sceneSaveStatus}</p>
                 )}
               </form>
+            </motion.section>
+          </motion.div>
+        )}
+
+        {isSceneLibraryOpen && (
+          <motion.div
+            key="scene-library"
+            className="fixed inset-0 z-[330] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onPointerDown={() => setIsSceneLibraryOpen(false)}
+          >
+            <motion.section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cloud-scenes-title"
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="flex max-h-[min(760px,calc(100vh-2rem))] w-full max-w-4xl flex-col rounded-lg border border-zinc-800 bg-[#111114] shadow-2xl"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-zinc-800 p-4">
+                <div>
+                  <h2 id="cloud-scenes-title" className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-200">
+                    <Cloud className="h-4 w-4 text-indigo-300" />
+                    Scene Library
+                  </h2>
+                  <p className="mt-1 text-[10px] text-zinc-500">Load a saved scene snapshot into the current project.</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-zinc-500 hover:text-white"
+                  onClick={() => setIsSceneLibraryOpen(false)}
+                  aria-label="Close saved scenes"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
 
               <div className="flex min-h-0 flex-1 flex-col p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Recent Saved Scenes</h3>
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Available Scenes</h3>
+                    <p className="mt-1 text-[10px] font-mono uppercase tracking-widest text-zinc-700">
+                      {savedScenesLoadError ? 'Unable to load' : `${savedScenes.length} ${savedScenes.length === 1 ? 'scene' : 'scenes'}`}
+                    </p>
+                  </div>
                   <Button
                     type="button"
                     variant="ghost"
@@ -4287,49 +4687,61 @@ function EditorInner() {
                     Refresh
                   </Button>
                 </div>
-                <div className="min-h-0 space-y-2 overflow-y-auto pr-1">
+                <div className="min-h-0 overflow-y-auto pr-1">
                   {isLoadingSavedScenes && savedScenes.length === 0 ? (
                     <div className="flex items-center justify-center gap-2 rounded-md border border-zinc-800 py-8 text-xs text-zinc-500">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Loading saved scenes...
                     </div>
+                  ) : savedScenesLoadError ? (
+                    <div className="rounded-md border border-red-500/20 bg-red-500/5 px-4 py-6 text-center">
+                      <div className="text-xs font-semibold text-red-200">{savedScenesLoadError}</div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-4 border-red-500/30 bg-red-500/10 text-xs text-red-100 hover:bg-red-500/20"
+                        onClick={() => void loadSavedScenes()}
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        Try Again
+                      </Button>
+                    </div>
                   ) : savedScenes.length === 0 ? (
                     <div className="rounded-md border border-dashed border-zinc-800 py-8 text-center text-xs text-zinc-500">
                       No cloud scenes saved yet.
                     </div>
-                  ) : savedScenes.map(scene => (
-                    <div key={scene.id} className="flex items-center justify-between gap-3 rounded-md border border-zinc-800 bg-zinc-950/60 p-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-zinc-200">{scene.name}</div>
-                        <div className="mt-1 text-[10px] font-mono uppercase tracking-widest text-zinc-600">
-                          {new Date(scene.updatedAt).toLocaleString()}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="border-zinc-700 bg-zinc-900 text-xs text-zinc-200 hover:bg-zinc-800"
-                          onClick={() => void handleLoadSavedScene(scene)}
-                          disabled={loadingSavedSceneId !== null || deletingSavedSceneId !== null}
+                  ) : (
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      {savedScenes.map(scene => (
+                        <article
+                          key={scene.id}
+                          className="group overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/80 shadow-xl shadow-black/25 transition-colors hover:border-indigo-500/40"
                         >
-                          {loadingSavedSceneId === scene.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                          Load
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="destructive"
-                          size="icon-sm"
-                          onClick={() => confirmSavedSceneDelete(scene)}
-                          disabled={loadingSavedSceneId !== null || deletingSavedSceneId !== null}
-                          aria-label={`Delete saved scene ${scene.name}`}
-                        >
-                          <Trash2 />
-                        </Button>
-                      </div>
+                          <SavedSceneThumbnail scene={scene} />
+                          <div className="space-y-3 p-3">
+                            <div className="min-w-0">
+                              <h4 className="truncate text-sm font-semibold text-zinc-100">{scene.name}</h4>
+                              <div className="mt-1 text-[10px] font-mono uppercase tracking-widest text-zinc-600">
+                                {new Date(scene.updatedAt).toLocaleString()}
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="w-full border-zinc-700 bg-zinc-900 text-xs text-zinc-200 hover:border-indigo-500/40 hover:bg-indigo-500/10 hover:text-indigo-100"
+                              onClick={() => void handleLoadSavedScene(scene)}
+                              disabled={loadingSavedSceneId !== null || deletingSavedSceneId !== null}
+                            >
+                              {loadingSavedSceneId === scene.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                              Load Scene
+                            </Button>
+                          </div>
+                        </article>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
             </motion.section>
@@ -4505,13 +4917,13 @@ function EditorInner() {
                   <button
                     type="button"
                     onClick={() => {
-                      openSceneLibrary();
+                      openSaveSceneModal();
                       setIsFileMenuOpen(false);
                     }}
                     className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 hover:text-white"
                   >
                     <Cloud className="h-4 w-4" />
-                    Save / Load Scenes
+                    Save Scene
                   </button>
                   <div className="-mx-1 my-1 h-px bg-zinc-800" />
                   <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-bold select-none">Project JSON</div>
@@ -4542,6 +4954,45 @@ function EditorInner() {
               )}
             </div>
             <span className="hover:text-zinc-300 cursor-pointer transition-colors text-[11px] font-bold uppercase tracking-widest">Project</span>
+            <button
+              type="button"
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] font-bold uppercase tracking-widest transition-colors",
+                !isPlaying && activeVideoClipAtCurrentFrame
+                  ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-200 hover:border-indigo-400/50 hover:bg-indigo-500/20 hover:text-indigo-100"
+                  : "cursor-not-allowed border-zinc-800 bg-zinc-950/60 text-zinc-700"
+              )}
+              onClick={() => void handleCaptureCurrentFrameThumbnail()}
+              disabled={isPlaying || isCapturingSceneThumbnail || !activeVideoClipAtCurrentFrame}
+              aria-label="Capture current paused video frame as scene thumbnail"
+              title={
+                isPlaying
+                  ? 'Pause playback before capturing a scene thumbnail.'
+                  : !activeVideoClipAtCurrentFrame
+                    ? 'Move the playhead over a video clip to capture a scene thumbnail.'
+                    : 'Capture the current frame as the scene thumbnail.'
+              }
+            >
+              {isCapturingSceneThumbnail ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+              <span>Set Thumbnail</span>
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-zinc-500 transition-colors hover:text-zinc-200"
+              onClick={openSceneLibrary}
+              aria-label={savedScenesLoadError ? 'Open scene library, scenes could not be loaded' : `Open scene library with ${savedScenes.length} scenes`}
+              title={savedScenesLoadError || undefined}
+            >
+              <span>Scene Library</span>
+              <span aria-hidden="true" className="text-zinc-700">(</span>
+              <span className={cn(
+                "rounded border bg-zinc-950 px-1.5 py-0.5 font-mono text-[9px] tabular-nums",
+                savedScenesLoadError ? "border-red-500/30 text-red-300" : "border-zinc-800 text-zinc-400"
+              )}>
+                {sceneLibraryCountLabel}
+              </span>
+              <span aria-hidden="true" className="text-zinc-700">)</span>
+            </button>
           </div>
         </div>
 

@@ -25,10 +25,22 @@ interface TensionChartProps {
   data: ChartDataPoint[];
   activeIndex: number;
   onSelectScene: (index: number) => void;
+  colors?: Partial<Record<"tension" | "suspense" | "anticipation", string>>;
 }
 
-export default function TensionChart({ data, activeIndex, onSelectScene }: TensionChartProps) {
+const DEFAULT_COLORS = {
+  tension: "#f43f5e",
+  suspense: "#a855f7",
+  anticipation: "#06b6d4",
+};
+
+export default function TensionChart({ data, activeIndex, onSelectScene, colors }: TensionChartProps) {
   if (!data || data.length === 0) return null;
+
+  const chartColors = {
+    ...DEFAULT_COLORS,
+    ...colors,
+  };
 
   return (
     <div className="w-full h-80 bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-xl backdrop-blur-md">
@@ -114,7 +126,7 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
               type="monotone"
               dataKey="tension"
               name="Tension"
-              stroke="#f43f5e"
+              stroke={chartColors.tension}
               strokeWidth={3}
               onClick={(data: any, index: any) => {
                 const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
@@ -129,8 +141,8 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
                     cx={props.cx}
                     cy={props.cy}
                     r={isActive ? 6 : 4}
-                    fill={isActive ? "#f43f5e" : "#18181b"}
-                    stroke="#f43f5e"
+                    fill={isActive ? chartColors.tension : "#18181b"}
+                    stroke={chartColors.tension}
                     strokeWidth={ isActive ? 3 : 2}
                     className="cursor-pointer transition-all duration-200"
                     onClick={(e) => {
@@ -140,7 +152,7 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
                   />
                 );
               }}
-              activeDot={{ r: 8, fill: "#f43f5e", stroke: "#fff", strokeWidth: 2 }}
+              activeDot={{ r: 8, fill: chartColors.tension, stroke: "#fff", strokeWidth: 2 }}
             />
             
             {/* Suspense Line */}
@@ -148,7 +160,7 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
               type="monotone"
               dataKey="suspense"
               name="Suspense"
-              stroke="#a855f7"
+              stroke={chartColors.suspense}
               strokeWidth={3}
               onClick={(data: any, index: any) => {
                 const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
@@ -163,8 +175,8 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
                     cx={props.cx}
                     cy={props.cy}
                     r={isActive ? 6 : 4}
-                    fill={isActive ? "#a855f7" : "#18181b"}
-                    stroke="#a855f7"
+                    fill={isActive ? chartColors.suspense : "#18181b"}
+                    stroke={chartColors.suspense}
                     strokeWidth={isActive ? 3 : 2}
                     className="cursor-pointer transition-all duration-200"
                     onClick={(e) => {
@@ -174,7 +186,7 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
                   />
                 );
               }}
-              activeDot={{ r: 8, fill: "#a855f7", stroke: "#fff", strokeWidth: 2 }}
+              activeDot={{ r: 8, fill: chartColors.suspense, stroke: "#fff", strokeWidth: 2 }}
             />
             
             {/* Anticipation Line */}
@@ -182,7 +194,7 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
               type="monotone"
               dataKey="anticipation"
               name="Anticipation"
-              stroke="#06b6d4"
+              stroke={chartColors.anticipation}
               strokeWidth={3}
               onClick={(data: any, index: any) => {
                 const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
@@ -197,8 +209,8 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
                     cx={props.cx}
                     cy={props.cy}
                     r={isActive ? 6 : 4}
-                    fill={isActive ? "#06b6d4" : "#18181b"}
-                    stroke="#06b6d4"
+                    fill={isActive ? chartColors.anticipation : "#18181b"}
+                    stroke={chartColors.anticipation}
                     strokeWidth={isActive ? 3 : 2}
                     className="cursor-pointer transition-all duration-200"
                     onClick={(e) => {
@@ -208,7 +220,7 @@ export default function TensionChart({ data, activeIndex, onSelectScene }: Tensi
                   />
                 );
               }}
-              activeDot={{ r: 8, fill: "#06b6d4", stroke: "#fff", strokeWidth: 2 }}
+              activeDot={{ r: 8, fill: chartColors.anticipation, stroke: "#fff", strokeWidth: 2 }}
             />
           </LineChart>
         </ResponsiveContainer>
