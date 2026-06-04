@@ -60,6 +60,7 @@ interface AnalysisWorkspaceProps {
   storyAnalyzeConfrontation: boolean;
   setStoryAnalyzeConfrontation: (val: boolean) => void;
   runVideoAnalysis: () => Promise<void>;
+  onOpenScriptEditor?: (clipId: string, sceneId: string) => void;
 }
 
 export function AnalysisWorkspace({
@@ -85,6 +86,7 @@ export function AnalysisWorkspace({
   storyAnalyzeConfrontation,
   setStoryAnalyzeConfrontation,
   runVideoAnalysis,
+  onOpenScriptEditor,
 }: AnalysisWorkspaceProps) {
   const {
     scenes,
@@ -776,16 +778,33 @@ export function AnalysisWorkspace({
   const renderActiveBeatDialogue = () => {
     return (
       <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col select-none animate-fade-in">
-        <div className="flex items-center justify-between pb-3 border-b border-zinc-900 mb-3.5">
+        <div className="flex items-center justify-between gap-3 pb-3 border-b border-zinc-900 mb-3.5">
           <div className="flex items-center space-x-2">
             <MessageSquare size={13} className="text-indigo-400" />
             <span className="text-[10px] font-mono font-bold tracking-widest text-zinc-400 uppercase">
               Dialogue in Beat {activeBeat?.scene_number}
             </span>
           </div>
-          <span className="text-[8.5px] font-mono text-zinc-550 uppercase tracking-wider font-semibold">
-            {activeBeatDialogClips.length} {activeBeatDialogClips.length === 1 ? 'Line' : 'Lines'}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[8.5px] font-mono text-zinc-550 uppercase tracking-wider font-semibold">
+              {activeBeatDialogClips.length} {activeBeatDialogClips.length === 1 ? 'Line' : 'Lines'}
+            </span>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              disabled={!onOpenScriptEditor || !activeScene?.id || activeBeatDialogClips.length === 0}
+              onClick={() => {
+                const dialogClip = activeBeatDialogClips[0];
+                if (!dialogClip || !activeScene?.id) return;
+                onOpenScriptEditor?.(dialogClip.id, activeScene.id);
+              }}
+              className="border-indigo-500/30 bg-indigo-500/10 text-[9px] font-mono font-bold uppercase tracking-widest text-indigo-200 hover:bg-indigo-500/20 hover:text-indigo-100"
+            >
+              <ScrollText data-icon="inline-start" />
+              Dialog Editor
+            </Button>
+          </div>
         </div>
 
         <div className="max-h-[300px] overflow-y-auto space-y-2.5 pr-1 scrollbar-thin scrollbar-thumb-zinc-800">

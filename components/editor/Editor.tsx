@@ -5326,6 +5326,7 @@ function EditorInner() {
               storyAnalyzeConfrontation={storyAnalyzeConfrontation}
               setStoryAnalyzeConfrontation={setStoryAnalyzeConfrontation}
               runVideoAnalysis={runVideoAnalysis}
+              onOpenScriptEditor={openScriptEditorForClip}
             />
           ) : workspaceViewMode === 'review' ? (
             <ReviewWorkspace 
