@@ -4826,65 +4826,68 @@ function EditorInner() {
               )}
 
               {/* Centered Playback Block (100% PERSISTENT & STATIONARY) */}
-              <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
-                <Tooltip>
-                  <TooltipTrigger
-                    className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 text-zinc-500 hover:text-zinc-300")}
-                    onClick={() => setCurrentFrame(0)}
+              {workspaceViewMode !== 'analysis' && (
+                <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2">
+                  <Tooltip>
+                    <TooltipTrigger
+                      className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 text-zinc-500 hover:text-zinc-300")}
+                      onClick={() => setCurrentFrame(0)}
+                    >
+                      <SkipBack className="h-4 w-4" />
+                    </TooltipTrigger>
+                    <TooltipContent>Reset to Start</TooltipContent>
+                  </Tooltip>
+
+                  <Button 
+                    variant="secondary" 
+                    size="icon" 
+                    className="h-8 w-8 rounded-full bg-white text-black hover:bg-zinc-200 transition-all shadow-[0_0_15px_rgba(255,255,255,0.1)]"
+                    onClick={() => {
+                      if (!isPlaying) {
+                        window.dispatchEvent(new Event('timeline-preview-play-request'));
+                      }
+                      setPlaying(!isPlaying);
+                    }}
                   >
-                    <SkipBack className="h-4 w-4" />
-                  </TooltipTrigger>
-                  <TooltipContent>Reset to Start</TooltipContent>
-                </Tooltip>
+                    {isPlaying ? <Pause className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4 ml-0.5 fill-current" />}
+                  </Button>
 
-                <Button 
-                  variant="secondary" 
-                  size="icon" 
-                  className="h-8 w-8 rounded-full bg-white text-black hover:bg-zinc-200 transition-all shadow-[0_0_15px_rgba(255,255,255,0.1)]"
-                  onClick={() => {
-                    if (!isPlaying) {
-                      window.dispatchEvent(new Event('timeline-preview-play-request'));
-                    }
-                    setPlaying(!isPlaying);
-                  }}
-                >
-                  {isPlaying ? <Pause className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4 ml-0.5 fill-current" />}
-                </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-8 min-w-14 justify-center border-zinc-800 bg-[#0a0a0b] px-2 font-mono text-[10px] font-bold text-zinc-300 hover:bg-zinc-900 hover:text-white")}
+                    >
+                      {playbackRate.toFixed(playbackRate % 1 === 0 ? 0 : 2)}x
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-28 bg-[#111114] border-zinc-800 text-zinc-300 z-50">
+                      <div className="px-2 py-1 text-[9px] uppercase tracking-widest text-zinc-500 font-bold select-none cursor-default">Speed</div>
+                      {[0.25, 0.5, 0.75, 1, 1.25, 1.5].map((rate) => (
+                        <DropdownMenuItem
+                          key={rate}
+                          onClick={() => setPlaybackRate(rate)}
+                          className="justify-between font-mono text-xs focus:bg-zinc-800 focus:text-white"
+                        >
+                          {rate.toFixed(rate % 1 === 0 ? 0 : 2)}x
+                          {playbackRate === rate && <span className="text-indigo-300">•</span>}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
 
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-8 min-w-14 justify-center border-zinc-800 bg-[#0a0a0b] px-2 font-mono text-[10px] font-bold text-zinc-300 hover:bg-zinc-900 hover:text-white")}
-                  >
-                    {playbackRate.toFixed(playbackRate % 1 === 0 ? 0 : 2)}x
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-28 bg-[#111114] border-zinc-800 text-zinc-300 z-50">
-                    <div className="px-2 py-1 text-[9px] uppercase tracking-widest text-zinc-500 font-bold select-none cursor-default">Speed</div>
-                    {[0.25, 0.5, 0.75, 1, 1.25, 1.5].map((rate) => (
-                      <DropdownMenuItem
-                        key={rate}
-                        onClick={() => setPlaybackRate(rate)}
-                        className="justify-between font-mono text-xs focus:bg-zinc-800 focus:text-white"
-                      >
-                        {rate.toFixed(rate % 1 === 0 ? 0 : 2)}x
-                        {playbackRate === rate && <span className="text-indigo-300">•</span>}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                <div className="flex items-center gap-3 ml-4">
-                  <span className="text-sm font-mono text-indigo-400 font-bold tabular-nums">
-                    {workspaceViewMode === 'review' ? formatReviewTime(currentFrame, fps) : formatTime(currentFrame)}
-                  </span>
-                  <div className="h-4 w-px bg-zinc-800" />
-                  <span className="text-[10px] text-zinc-600 font-mono tracking-widest uppercase">
-                     {currentFrame} / {totalDuration} FR
-                  </span>
+                  <div className="flex items-center gap-3 ml-4">
+                    <span className="text-sm font-mono text-indigo-400 font-bold tabular-nums">
+                      {workspaceViewMode === 'review' ? formatReviewTime(currentFrame, fps) : formatTime(currentFrame)}
+                    </span>
+                    <div className="h-4 w-px bg-zinc-800" />
+                    <span className="text-[10px] text-zinc-600 font-mono tracking-widest uppercase">
+                       {currentFrame} / {totalDuration} FR
+                    </span>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Right aligned block */}
-              {workspaceViewMode === 'review' ? (
+              {workspaceViewMode !== 'analysis' && (
+                workspaceViewMode === 'review' ? (
                 <div className="flex flex-1 items-center justify-end gap-4 pl-4">
                   <div role="group" aria-label="Preview overlays" className="flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950 p-0.5 shrink-0">
                     <button
@@ -5293,7 +5296,8 @@ function EditorInner() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
-              )}
+              )
+            )}
             </div>
           </TooltipProvider>
 
