@@ -27,6 +27,12 @@
       "@/*": [
         "./*"
       ],
+      "@storyboard/db": [
+        "../../packages/db"
+      ],
+      "@storyboard/db/*": [
+        "../../packages/db/*"
+      ],
       "@storyboard/ui": [
         "../../packages/ui"
       ],
