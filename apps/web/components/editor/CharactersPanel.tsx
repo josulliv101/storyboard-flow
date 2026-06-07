@@ -3,7 +3,7 @@
 import React from 'react';
 import { useTimeline, Character } from '@/lib/timeline-context';
 import { Plus, Trash2, Upload, User, Pencil, Save, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button } from '@storyboard/ui';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 

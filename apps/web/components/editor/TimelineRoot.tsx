@@ -32,8 +32,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
-import { Button } from '@/components/ui/button';
+  Button,
+} from "@storyboard/ui";
 import { cn } from '@/lib/utils';
 import { toast } from "sonner";
 

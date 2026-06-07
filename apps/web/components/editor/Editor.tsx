@@ -1,6 +1,8 @@
 'use client';
 
 import React from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { TimelineProvider } from '@/lib/timeline-context';
 import { Toolbar } from './Toolbar';
 import { Preview } from './Preview';
@@ -12,6 +14,9 @@ import {
   Layers, 
   Settings, 
   Share2, 
+  LogOut,
+  Shield,
+  Lock, 
   Download, 
   Menu, 
   Upload, 
@@ -55,8 +60,9 @@ import {
   Video,
   Image as ImageIcon
 } from 'lucide-react';
-import { Button, buttonVariants } from '@/components/ui/button';
 import {
+  Button,
+  buttonVariants,
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -65,27 +71,25 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { 
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
-import { Slider } from '@/components/ui/slider';
+  Slider,
+} from "@storyboard/ui";
 import { useTimeline, TimelineClip, TimelineProjectJson, ClipType } from '@/lib/timeline-context';
 import { loadBlob, saveBlob } from '@/lib/db';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { getGraphColor, getGraphDisplayLabel, getGraphShortLabel } from '@/lib/graph-style';
+import { captureVideoAnalysisFrames, extractCharacterAvatarFromVideo, extractBeatThumbnailFromVideo } from '@/lib/video-helpers';
+import ThemeToggle from '@/components/ThemeToggle';
 
 async function localUpload(filename: string, file: Blob): Promise<{ pathname: string }> {
   const formData = new FormData();
@@ -118,6 +122,7 @@ type PendingProjectImport = {
   fileName: string;
   project: TimelineProjectJson;
   savedSceneId?: string;
+  isPublished?: boolean;
 };
 
 type SavedSceneSummary = {
@@ -126,6 +131,7 @@ type SavedSceneSummary = {
   createdAt: string;
   updatedAt: string;
   thumbnailUrl?: string;
+  isPublished: boolean;
 };
 
 const MAX_SAVED_SCENE_NAME_LENGTH = 120;
@@ -317,75 +323,7 @@ function SavedSceneThumbnail({ scene }: { scene: SavedSceneSummary }) {
   );
 }
 
-const captureVideoAnalysisFrames = async (file: File): Promise<Blob[]> => {
-  const sourceUrl = URL.createObjectURL(file);
-  const video = document.createElement('video');
-  video.muted = true;
-  video.preload = 'auto';
-  video.playsInline = true;
-
-  const waitForVideoReady = () => new Promise<void>((resolve, reject) => {
-    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-      resolve();
-      return;
-    }
-
-    const handleReady = () => resolve();
-    const handleError = () => reject(new Error('Could not decode the selected video for local analysis.'));
-    video.addEventListener('loadeddata', handleReady, { once: true });
-    video.addEventListener('error', handleError, { once: true });
-  });
-
-  const seekTo = (time: number) => new Promise<void>((resolve, reject) => {
-    if (Math.abs(video.currentTime - time) < 0.01 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-      resolve();
-      return;
-    }
-
-    const handleSeek = () => resolve();
-    const handleError = () => reject(new Error('Could not sample a video frame for local analysis.'));
-    video.addEventListener('seeked', handleSeek, { once: true });
-    video.addEventListener('error', handleError, { once: true });
-    video.currentTime = time;
-  });
-
-  try {
-    video.src = sourceUrl;
-    await waitForVideoReady();
-
-    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
-    const frameCount = Math.min(6, Math.max(3, Math.ceil(duration / 6)));
-    const maxWidth = 768;
-    const scale = Math.min(1, maxWidth / Math.max(1, video.videoWidth));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-    const context = canvas.getContext('2d');
-
-    if (!context) {
-      throw new Error('Could not initialize frame sampling for local analysis.');
-    }
-
-    const frames: Blob[] = [];
-    for (let index = 0; index < frameCount; index++) {
-      const time = Math.min(duration - 0.01, duration * ((index + 0.5) / frameCount));
-      await seekTo(Math.max(0, time));
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const frame = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.75));
-      if (frame) frames.push(frame);
-    }
-
-    if (frames.length === 0) {
-      throw new Error('No video frames could be prepared for local analysis.');
-    }
-
-    return frames;
-  } finally {
-    video.removeAttribute('src');
-    video.load();
-    URL.revokeObjectURL(sourceUrl);
-  }
-};
+// captureVideoAnalysisFrames helper is imported from '@/lib/video-helpers'
 
 interface ClipPropertiesPanelProps {
   selectedClip: TimelineClip;
@@ -2130,260 +2068,16 @@ const ANALYSIS_JSON_TEMPLATE = {
     showNoteOverlayIcons: true
   }
 };
-const detectLetterbox = (video: HTMLVideoElement): { top: number; bottom: number } => {
-  const vWidth = video.videoWidth;
-  const vHeight = video.videoHeight;
-  const topDefault = 0;
-  const bottomDefault = vHeight;
 
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 3;
-    canvas.height = vHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return { top: topDefault, bottom: bottomDefault };
-
-    const cols = [
-      Math.floor(vWidth * 0.25),
-      Math.floor(vWidth * 0.5),
-      Math.floor(vWidth * 0.75)
-    ];
-
-    // Draw three 1px columns from the video
-    for (let c = 0; c < 3; c++) {
-      ctx.drawImage(video, cols[c], 0, 1, vHeight, c, 0, 1, vHeight);
-    }
-
-    const imgData = ctx.getImageData(0, 0, 3, vHeight);
-    const data = imgData.data;
-
-    let minTop = vHeight;
-    let maxBottom = 0;
-
-    // Scan each of the 3 columns
-    for (let c = 0; c < 3; c++) {
-      let colTop = 0;
-      for (let y = 0; y < vHeight; y++) {
-        const idx = (y * 3 + c) * 4;
-        const r = data[idx];
-        const g = data[idx + 1];
-        const b = data[idx + 2];
-        if (r > 18 || g > 18 || b > 18) {
-          colTop = y;
-          break;
-        }
-      }
-      minTop = Math.min(minTop, colTop);
-
-      let colBottom = vHeight;
-      for (let y = vHeight - 1; y >= 0; y--) {
-        const idx = (y * 3 + c) * 4;
-        const r = data[idx];
-        const g = data[idx + 1];
-        const b = data[idx + 2];
-        if (r > 18 || g > 18 || b > 18) {
-          colBottom = y + 1;
-          break;
-        }
-      }
-      maxBottom = Math.max(maxBottom, colBottom);
-    }
-
-    const activeHeight = maxBottom - minTop;
-    if (activeHeight < vHeight * 0.2 || minTop >= maxBottom) {
-      return { top: topDefault, bottom: bottomDefault };
-    }
-
-    return { top: minTop, bottom: maxBottom };
-  } catch (e) {
-    console.warn("Letterbox detection failed:", e);
-    return { top: topDefault, bottom: bottomDefault };
-  }
-};
-
-const extractCharacterAvatarFromVideo = (
-  videoFile: File,
-  timestampSeconds: number,
-  boundingBox?: [number, number, number, number] // [ymin, xmin, ymax, xmax] 0 to 100
-): Promise<Blob> => {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.muted = true;
-    video.playsInline = true;
-    video.preload = 'auto';
-    video.style.position = 'absolute';
-    video.style.left = '-9999px';
-    video.style.top = '-9999px';
-    video.style.width = '100px';
-    video.style.height = '100px';
-    video.style.visibility = 'hidden';
-
-    // Set up a safety timeout (6 seconds to allow self-healing retry seeks)
-    const timeoutId = setTimeout(() => {
-      cleanup();
-      reject(new Error("Timeout waiting for video seek"));
-    }, 6000);
-
-    const cleanup = () => {
-      clearTimeout(timeoutId);
-      if (video.parentNode) {
-        document.body.removeChild(video);
-      }
-      if (video.src) {
-        URL.revokeObjectURL(video.src);
-      }
-    };
-
-    let seekRetries = 0;
-    const maxSeekRetries = 3;
-
-    const performSeek = (time: number) => {
-      const targetTime = isNaN(time) ? 2.0 : Math.max(0, Math.min(time, video.duration - 0.1));
-      video.currentTime = targetTime;
-    };
-
-    video.onloadedmetadata = () => {
-      performSeek(timestampSeconds);
-    };
-
-    const processFrame = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          cleanup();
-          reject(new Error("Could not get canvas context"));
-          return;
-        }
-
-        const vWidth = video.videoWidth;
-        const vHeight = video.videoHeight;
-
-        // --- SELF-HEALING BLACK FRAME DETECTION ---
-        // Draw to a tiny 8x8 canvas to analyze brightness
-        const analyzeCanvas = document.createElement('canvas');
-        analyzeCanvas.width = 8;
-        analyzeCanvas.height = 8;
-        const analyzeCtx = analyzeCanvas.getContext('2d');
-        if (analyzeCtx) {
-          analyzeCtx.drawImage(video, 0, 0, 8, 8);
-          const imgData = analyzeCtx.getImageData(0, 0, 8, 8);
-          const data = imgData.data;
-          let totalBrightness = 0;
-          for (let i = 0; i < data.length; i += 4) {
-            totalBrightness += (data[i] + data[i+1] + data[i+2]) / 3;
-          }
-          const avgBrightness = totalBrightness / 64;
-
-          // If frame is extremely dark (e.g. avg pixel brightness < 18), it's likely a black frame
-          if (avgBrightness < 18 && seekRetries < maxSeekRetries) {
-            seekRetries++;
-            // Shift seek target forward by 0.5s (or backward if we are near the end)
-            const shift = video.currentTime + 0.5 > video.duration ? -0.5 : 0.5;
-            const newTime = video.currentTime + shift;
-            console.log(`[AVATAR_SELF_HEAL] Detected dark/empty frame (brightness ${avgBrightness.toFixed(1)}). Retrying seek to ${newTime.toFixed(2)}s...`);
-            performSeek(newTime);
-            return;
-          }
-        }
-
-        const size = 256;
-        canvas.width = size;
-        canvas.height = size;
-
-        // Detect active cinematic video bounds (ignoring black letterbox margins)
-        const { top: topLetterbox, bottom: bottomLetterbox } = detectLetterbox(video);
-        const activeHeight = bottomLetterbox - topLetterbox;
-
-        let sx = 0;
-        let sy = 0;
-        let sWidth = 0;
-        let sHeight = 0;
-
-        // Validate bounding box
-        let isBoxValid = false;
-        if (boundingBox && boundingBox.length === 4) {
-          const [ymin, xmin, ymax, xmax] = boundingBox;
-          const widthPct = xmax - xmin;
-          const heightPct = ymax - ymin;
-          // Box is valid if it has positive area and isn't a single point or edge glitch
-          if (widthPct > 0.5 && heightPct > 0.5 && xmin < 100 && ymin < 100) {
-            isBoxValid = true;
-          }
-        }
-
-        if (isBoxValid && boundingBox) {
-          const [ymin, xmin, ymax, xmax] = boundingBox;
-          const boxX = (xmin / 100) * vWidth;
-          const boxY = (ymin / 100) * vHeight;
-          const boxW = ((xmax - xmin) / 100) * vWidth;
-          const boxH = ((ymax - ymin) / 100) * vHeight;
-
-          const centerX = boxX + boxW / 2;
-          const centerY = boxY + boxH / 2;
-
-          // Strategy: Use a generous close-up margin (2.5x the max dimension of the face box)
-          // to guarantee the head is not sliced off, even if coordinates are slightly shifted.
-          const faceMaxDim = Math.max(boxW, boxH);
-          const maxAllowedSize = Math.min(vWidth, activeHeight);
-          sWidth = Math.min(faceMaxDim * 2.5, maxAllowedSize);
-          sHeight = sWidth;
-
-          // Clamp coordinates safely
-          sx = Math.max(0, Math.min(centerX - sWidth / 2, vWidth - sWidth));
-          sy = Math.max(topLetterbox, Math.min(centerY - sHeight * 0.45, bottomLetterbox - sHeight));
-        } else {
-          // Fallback Center-Widescreen crop:
-          // Center horizontally, but shift slightly UPWARDS (y-center at 42% of active height)
-          // In standard close-ups and medium dialogue shots, this framing perfectly captures the head and face!
-          const cropSize = Math.min(vWidth, activeHeight);
-          sWidth = cropSize;
-          sHeight = cropSize;
-          sx = (vWidth - cropSize) / 2;
-          
-          // Artistically frame the top of the headshot (around 42% of active height is the golden center for heads)
-          const targetCenterY = topLetterbox + activeHeight * 0.42;
-          sy = Math.max(topLetterbox, Math.min(targetCenterY - cropSize / 2, bottomLetterbox - cropSize));
-        }
-
-        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, size, size);
-
-        canvas.toBlob((blob) => {
-          cleanup();
-          if (blob) {
-            resolve(blob);
-          } else {
-            reject(new Error("Canvas toBlob returned null"));
-          }
-        }, 'image/png');
-      } catch (err) {
-        cleanup();
-        reject(err);
-      }
-    };
-
-    video.onseeked = () => {
-      // Use a robust settle delay to guarantee execution even when the video element is
-      // offscreen or hidden (where requestVideoFrameCallback gets suspended by the browser).
-      setTimeout(() => {
-        processFrame();
-      }, 150);
-    };
-
-    video.onerror = () => {
-      cleanup();
-      reject(new Error("Error loading video element"));
-    };
-
-    // Append to DOM to ensure decoding pipeline starts
-    document.body.appendChild(video);
-    
-    // Set src AFTER events are bound to prevent race conditions
-    video.src = URL.createObjectURL(videoFile);
-  });
-};
+// detectLetterbox, extractCharacterAvatarFromVideo, extractBeatThumbnailFromVideo are imported from '@/lib/video-helpers'
 
 function EditorInner() {
+  // Routing integrations
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const sceneIdParam = searchParams?.get('sceneId');
+
   const { 
     zoom, 
     setZoom,
@@ -2441,8 +2135,17 @@ function EditorInner() {
     compactNoteOverlays,
     setCompactNoteOverlays,
     disabledTrackIds,
-    toggleTrackDisable
+    toggleTrackDisable,
+    currentUser,
+    setCurrentUser,
+    isAuthChecking,
+    activeSavedSceneId,
+    setActiveSavedSceneId,
+    activeSavedScenePublished,
+    setActiveSavedScenePublished
   } = useTimeline();
+
+  const isSceneLoading = !!(sceneIdParam && activeSavedSceneId !== sceneIdParam);
   
   const selectedClip = clips.find(c => c.id === selectedClipIds[selectedClipIds.length - 1]);
   const activeScene = scenes.find(scene => scene.id === activeSceneId) || scenes[0];
@@ -2458,10 +2161,131 @@ function EditorInner() {
   const [savedScenes, setSavedScenes] = React.useState<SavedSceneSummary[]>([]);
   const [isLoadingSavedScenes, setIsLoadingSavedScenes] = React.useState(false);
   const [savedScenesLoadError, setSavedScenesLoadError] = React.useState<string | null>(null);
+
+  // Authentication & Authorization Role States
+  const [isAuthModalOpen, setIsAuthModalOpen] = React.useState(false);
+  const [isAdminModalOpen, setIsAdminModalOpen] = React.useState(false);
+  const [authMode, setAuthMode] = React.useState<'login' | 'signup'>('login');
+  const [authUsername, setAuthUsername] = React.useState('');
+  const [authPassword, setAuthPassword] = React.useState('');
+  const [authLoading, setAuthLoading] = React.useState(false);
+  const [authError, setAuthError] = React.useState('');
+  const [allUsers, setAllUsers] = React.useState<{ id: string; username: string; role: 'viewer' | 'editor' | 'admin'; createdAt: string }[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = React.useState(false);
+
+  // Enforce authentication: redirect anonymous users back to landing homepage
+  React.useEffect(() => {
+    if (!isAuthChecking && !isSceneLoading) {
+      if (!currentUser) {
+        const isPublicAnalysis = pathname === '/analysis' && sceneIdParam && activeSavedScenePublished;
+        if (!isPublicAnalysis) {
+          toast.error('You must be logged in to access the workspace.', { id: 'auth-redirect-toast' });
+          router.push('/');
+        }
+      }
+    }
+  }, [isAuthChecking, isSceneLoading, currentUser, router, pathname, sceneIdParam, activeSavedScenePublished]);
+
+  const handleLogout = async () => {
+    try {
+      const res = await fetch('/api/auth/logout', { method: 'POST' });
+      if (res.ok) {
+        setCurrentUser(null);
+        toast.success('Successfully logged out.');
+        // Refresh scene library
+        void loadSavedScenes({ silent: true });
+      }
+    } catch (err) {
+      console.error('Logout error:', err);
+      toast.error('Failed to log out.');
+    }
+  };
+
+  const handleLoadUsers = async () => {
+    setIsLoadingUsers(true);
+    try {
+      const res = await fetch('/api/auth/users');
+      if (res.ok) {
+        const data = await res.json();
+        setAllUsers(data.users || []);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.error || 'Failed to load user list.');
+      }
+    } catch (err) {
+      console.error('Error loading users:', err);
+      toast.error('Error loading user list.');
+    } finally {
+      setIsLoadingUsers(false);
+    }
+  };
+
+  const handleUpdateUserRole = async (userId: string, role: 'viewer' | 'editor' | 'admin') => {
+    try {
+      const res = await fetch('/api/auth/users', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, role }),
+      });
+      if (res.ok) {
+        toast.success('User role updated successfully.');
+        void handleLoadUsers();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.error || 'Failed to update user role.');
+      }
+    } catch (err) {
+      console.error('Error updating user role:', err);
+      toast.error('Error updating user role.');
+    }
+  };
+
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    if (!authUsername.trim() || !authPassword) {
+      setAuthError('All fields are required.');
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: authUsername.trim(), password: authPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (authMode === 'signup') {
+          toast.success('Account created successfully! You can now log in.');
+          setAuthMode('login');
+          setAuthPassword('');
+          setAuthLoading(false);
+          return;
+        }
+        
+        setCurrentUser(data.user);
+        setIsAuthModalOpen(false);
+        setAuthUsername('');
+        setAuthPassword('');
+        toast.success(`Welcome back, ${data.user.username}!`);
+        // Refresh scene library
+        void loadSavedScenes({ silent: true });
+      } else {
+        setAuthError(data.error || 'Authentication failed.');
+      }
+    } catch (err) {
+      console.error('Auth error:', err);
+      setAuthError('An error occurred. Please try again.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const [isSavingScene, setIsSavingScene] = React.useState(false);
   const [isCapturingSceneThumbnail, setIsCapturingSceneThumbnail] = React.useState(false);
   const [sceneSaveStatus, setSceneSaveStatus] = React.useState<string | null>(null);
-  const [activeSavedSceneId, setActiveSavedSceneId] = React.useState<string | null>(null);
   const [sceneThumbnailPreviewUrls, setSceneThumbnailPreviewUrls] = React.useState<Record<string, string>>({});
   const [loadingSavedSceneId, setLoadingSavedSceneId] = React.useState<string | null>(null);
   const [pendingSavedSceneDelete, setPendingSavedSceneDelete] = React.useState<SavedSceneSummary | null>(null);
@@ -2472,6 +2296,50 @@ function EditorInner() {
   const [reviewShowPreviewTagUi, setReviewShowPreviewTagUi] = React.useState(true);
   const [reviewContentMode, setReviewContentMode] = React.useState<'notes' | 'dialog'>('notes');
   const [verticalTimeScale, setVerticalTimeScale] = React.useState(1);
+
+
+
+  // Synchronize route pathname with workspaceViewMode
+  React.useEffect(() => {
+    if (pathname === '/analysis') {
+      if (workspaceViewMode !== 'analysis') setWorkspaceViewMode('analysis');
+    } else if (pathname === '/review') {
+      if (workspaceViewMode !== 'review') setWorkspaceViewMode('review');
+    } else if (pathname === '/editor' || pathname === '/') {
+      if (workspaceViewMode !== 'editor') setWorkspaceViewMode('editor');
+    }
+  }, [pathname, workspaceViewMode, setWorkspaceViewMode]);
+
+  // Synchronize search params sceneId with context activeSavedSceneId on mount/change
+  React.useEffect(() => {
+    if (sceneIdParam) {
+      if (sceneIdParam !== activeSavedSceneId) {
+        const loadSceneFromUrl = async () => {
+          try {
+            const response = await fetch(`/api/scenes/${sceneIdParam}`, { cache: 'no-store' });
+            const result = await response.json().catch(() => ({})) as {
+              scene?: SavedSceneSummary & { project: TimelineProjectJson };
+              error?: string;
+            };
+            if (response.ok && result.scene && result.scene.project) {
+              importProject(result.scene.project);
+              setActiveSavedSceneId(sceneIdParam);
+              setActiveSavedScenePublished(!!result.scene.isPublished);
+            }
+          } catch (error) {
+            console.error('Failed to load scene from URL parameter:', error);
+          }
+        };
+        void loadSceneFromUrl();
+      }
+    } else {
+      // No sceneId in URL: clear active saved scene state to start fresh/blank
+      if (activeSavedSceneId !== null) {
+        setActiveSavedSceneId(null);
+        setActiveSavedScenePublished(false);
+      }
+    }
+  }, [sceneIdParam, activeSavedSceneId, importProject, setActiveSavedSceneId, setActiveSavedScenePublished]);
 
 
 
@@ -2768,6 +2636,83 @@ function EditorInner() {
     };
   }, [videoObjectURL]);
 
+  // Synchronize selectedVideoFile and videoObjectURL from the active scene's video clip when scene changes or on mount
+  React.useEffect(() => {
+    const activeScene = scenes.find(s => s.id === activeSceneId);
+    if (!activeScene) return;
+
+    const videoClip = activeScene.clips.find(c => c.type === 'video' && c.src);
+    if (videoClip && videoClip.src) {
+      // If we already have the correct object URL set, don't do anything
+      if (videoObjectURL === videoClip.src) return;
+
+      // Fetch the blob and reconstruct the File object
+      const syncVideoFile = async () => {
+        try {
+          // 1. Try loading from IndexedDB first (most reliable for reloads/sessions)
+          const localBlob = await loadBlob(videoClip.id);
+          if (localBlob) {
+            const rawName = videoClip.name || "scene-video.mp4";
+            const sanitizedName = rawName.replace(/[^a-zA-Z0-9._-]/g, '-');
+            const file = new File([localBlob], sanitizedName, { type: localBlob.type || "video/mp4" });
+            
+            const newObjectUrl = URL.createObjectURL(localBlob);
+            setSelectedVideoFile(file);
+            setVideoObjectURL(newObjectUrl);
+            
+            // If the URL in the clip state was different (e.g. an old expired blob URL), update it
+            if (videoClip.src !== newObjectUrl) {
+              updateClip(videoClip.id, { src: newObjectUrl });
+            }
+            return;
+          }
+
+          // 2. Fall back to fetching the src if it's not a blob: URL (e.g., remote URL or api path)
+          // If it is a blob URL and we didn't find it in loadBlob, it's expired/invalid, so don't try to fetch it.
+          if (videoClip.src!.startsWith('blob:')) {
+            console.warn(`Video blob URL has expired and was not found in IndexedDB: ${videoClip.src}`);
+            return;
+          }
+
+          const res = await fetch(videoClip.src!);
+          if (!res.ok) {
+            throw new Error(`Fetch returned status ${res.status}`);
+          }
+          const blob = await res.blob();
+          const rawName = videoClip.name || "scene-video.mp4";
+          const sanitizedName = rawName.replace(/[^a-zA-Z0-9._-]/g, '-');
+          const file = new File([blob], sanitizedName, { type: blob.type });
+          setSelectedVideoFile(file);
+          setVideoObjectURL(videoClip.src!);
+
+          if (rawName !== sanitizedName) {
+            updateClip(videoClip.id, { name: sanitizedName });
+            if (activeScene.name === rawName) {
+              updateScene(activeScene.id, { name: sanitizedName });
+            }
+            if (activeScene.analysisReport && activeScene.analysisReport.title === rawName) {
+              updateScene(activeScene.id, {
+                analysisReport: {
+                  ...activeScene.analysisReport,
+                  title: sanitizedName
+                }
+              });
+            }
+          }
+        } catch (err) {
+          console.error("Failed to sync video file from active scene:", err);
+        }
+      };
+      void syncVideoFile();
+    } else {
+      // If there is no video clip in the active scene, reset the state
+      if (selectedVideoFile || videoObjectURL) {
+        setSelectedVideoFile(null);
+        setVideoObjectURL('');
+      }
+    }
+  }, [activeSceneId, scenes, updateClip, updateScene]);
+
   // Dynamic Visual Media Hydration & Persistence Effect for AI Analyzed Scene
   React.useEffect(() => {
     if (!selectedVideoFile || !videoObjectURL) return;
@@ -2800,6 +2745,10 @@ function EditorInner() {
   }, [graphTracksInActiveScene]);
 
   const runVideoAnalysis = React.useCallback(async () => {
+    if (!currentUser || currentUser.role === 'viewer') {
+      toast.error('You are in read-only viewer mode. Log in as an editor or admin to analyze videos.');
+      return;
+    }
     if (!selectedVideoFile || isAnalyzing) return;
     
     setIsAnalyzing(true);
@@ -3068,6 +3017,45 @@ function EditorInner() {
                 .filter((c) => c.type === "note" && (c.name === "Analysis" || c.tags?.includes("Analysis") || c.name.toLowerCase().includes("beat")))
                 .sort((a, b) => a.startFrame - b.startFrame);
 
+              // Extract storyboard beat thumbnails dynamically from the local video file
+              setAnalysisLogs(prev => [...prev, "[SYSTEM] Extracting visual storyboard thumbnails for each narrative beat..."]);
+              for (const beat of noteClips) {
+                const midFrame = beat.startFrame + Math.floor(beat.duration / 2);
+                const timestamp = midFrame / fps;
+
+                try {
+                  setAnalysisLogs(prev => [...prev, `[SYSTEM] Seeking video to extract storyboard thumbnail for "${beat.name}"...`]);
+                  
+                  // Extract widescreen 16:9 frame
+                  const thumbnailBlob = await extractBeatThumbnailFromVideo(selectedVideoFile, timestamp);
+                  
+                  const filename = `timeline-videos/beat-thumb-${beat.id}-${Date.now()}.jpg`;
+                  setAnalysisLogs(prev => [...prev, `[SYSTEM] Uploading "${beat.name}" storyboard thumbnail to cloud storage...`]);
+                  
+                  try {
+                    const uploadPromise = localUpload(filename, thumbnailBlob);
+                    const timeoutPromise = new Promise<never>((_, reject) => {
+                      setTimeout(() => reject(new Error("Local upload timed out (8s limit)")), 8000);
+                    });
+                    const hostedBlob = await Promise.race([uploadPromise, timeoutPromise]);
+                    
+                    // Attach cloud hosted URL
+                    (beat as any).thumbnailUrl = `/api/scenes/media?pathname=${encodeURIComponent(hostedBlob.pathname)}`;
+                    setAnalysisLogs(prev => [...prev, `[SUCCESS] Persistent storyboard thumbnail created for "${beat.name}"!`]);
+                  } catch (uploadErr) {
+                    console.warn(`[UPLOAD_FAILED] Beat thumbnail upload failed for "${beat.name}":`, uploadErr);
+                    setAnalysisLogs(prev => [...prev, `[WARNING] Persistent upload failed for "${beat.name}". Using local fallback.`]);
+                    (beat as any).thumbnailUrl = URL.createObjectURL(thumbnailBlob);
+                  }
+                  
+                  // Save locally in IndexedDB for instant reload hydration
+                  await saveBlob(`beat-thumb-${beat.id}`, thumbnailBlob);
+                } catch (thumbErr) {
+                  console.error(`[THUMBNAIL_EXTRACTION_FAILED] for beat ${beat.name}:`, thumbErr);
+                  setAnalysisLogs(prev => [...prev, `[WARNING] Failed to extract custom storyboard thumbnail for "${beat.name}".`]);
+                }
+              }
+
               const tensionTrack = mergedTracks.find((t) => t.id === "graph-dramatic-tension" || t.name.toLowerCase().includes("tension"));
               const suspenseTrack = mergedTracks.find((t) => t.id === "graph-anticipatory-suspense" || t.name.toLowerCase().includes("suspense"));
               const stakesTrack = mergedTracks.find((t) => t.id === "graph-operational-stakes" || t.name.toLowerCase().includes("stakes"));
@@ -3119,6 +3107,7 @@ function EditorInner() {
                   text_segment: beat.description || "",
                   summary: beat.description || "Narrative beat summary.",
                   characters: speakerNames,
+                  thumbnailUrl: (beat as any).thumbnailUrl,
                   metrics: {
                     tension,
                     suspense,
@@ -3498,8 +3487,9 @@ function EditorInner() {
           continue;
         }
 
-        const publicUrl = await uploadSceneVideo(clip.name || 'scene-video.mp4', video);
-        portableClips.push({ ...clip, src: publicUrl });
+        const sanitizedClipName = (clip.name || 'scene-video.mp4').replace(/[^a-zA-Z0-9._-]/g, '-');
+        const publicUrl = await uploadSceneVideo(sanitizedClipName, video);
+        portableClips.push({ ...clip, name: sanitizedClipName, src: publicUrl });
       }
 
       if (!thumbnailBlob && activeScene.clips.some(clip => clip.type === 'video')) {
@@ -3510,9 +3500,19 @@ function EditorInner() {
         ? await uploadSceneThumbnail(name, thumbnailBlob)
         : activeSceneThumbnailPreviewUrl;
 
+      const sanitizedSceneName = (name || activeScene.name || 'scene-video.mp4').replace(/[^a-zA-Z0-9._-]/g, '-');
       const sceneSnapshot: TimelineProjectJson = {
         ...project,
-        scenes: [{ ...activeScene, thumbnailUrl, clips: portableClips }],
+        scenes: [{ 
+          ...activeScene, 
+          name: sanitizedSceneName, 
+          thumbnailUrl, 
+          clips: portableClips,
+          analysisReport: activeScene.analysisReport ? {
+            ...activeScene.analysisReport,
+            title: sanitizedSceneName
+          } : undefined
+        }],
         activeSceneId: activeScene.id,
         config: {
           ...project.config,
@@ -3525,7 +3525,7 @@ function EditorInner() {
       const response = await fetch('/api/scenes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, project: sceneSnapshot }),
+        body: JSON.stringify({ name: sanitizedSceneName, project: sceneSnapshot }),
       });
       const result = await response.json().catch(() => ({})) as { scene?: SavedSceneSummary; error?: string };
       if (!response.ok || !result.scene) {
@@ -3534,6 +3534,12 @@ function EditorInner() {
       const savedScene = result.scene;
       setSavedScenes(previous => [savedScene, ...previous.filter(scene => scene.id !== savedScene.id)]);
       setActiveSavedSceneId(savedScene.id);
+      setActiveSavedScenePublished(!!savedScene.isPublished);
+      
+      const currentParams = new URLSearchParams(window.location.search);
+      currentParams.set('sceneId', savedScene.id);
+      router.replace(`${pathname}?${currentParams.toString()}`);
+
       toast.success('Scene and hosted video saved to your cloud library');
       setIsSaveSceneOpen(false);
     } catch (error) {
@@ -3563,6 +3569,7 @@ function EditorInner() {
         fileName: `${result.scene.name} (cloud scene)`,
         project: result.scene.project,
         savedSceneId: scene.id,
+        isPublished: !!result.scene.isPublished,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to load the saved scene.';
@@ -3572,7 +3579,36 @@ function EditorInner() {
     }
   };
 
+  const handleTogglePublish = async () => {
+    if (!activeSavedSceneId || currentUser?.role !== 'admin') return;
+
+    const newPublishStatus = !activeSavedScenePublished;
+    toast.loading(newPublishStatus ? 'Publishing scene...' : 'Unpublishing scene...', { id: 'publish-scene' });
+    try {
+      const response = await fetch(`/api/scenes/${activeSavedSceneId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isPublished: newPublishStatus }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to update scene publication status.');
+      }
+      setActiveSavedScenePublished(newPublishStatus);
+      toast.success(newPublishStatus ? 'Scene published successfully! It is now public.' : 'Scene unpublished.', { id: 'publish-scene' });
+    } catch (err: any) {
+      console.error('Error toggling publish:', err);
+      toast.error(err.message || 'Failed to update publication status.', { id: 'publish-scene' });
+    } finally {
+      setIsFileMenuOpen(false);
+    }
+  };
+
   const confirmSavedSceneDelete = (scene: SavedSceneSummary) => {
+    if (!currentUser || currentUser.role === 'viewer') {
+      toast.error('You are in read-only viewer mode. Log in as an editor or admin to delete scenes.');
+      return;
+    }
     setIsSceneLibraryOpen(false);
     setPendingSavedSceneDelete(scene);
   };
@@ -3608,6 +3644,12 @@ function EditorInner() {
     if (!pendingProjectImport) return;
     importProjectIntoCurrent(pendingProjectImport.project);
     setActiveSavedSceneId(null);
+    setActiveSavedScenePublished(false);
+
+    const currentParams = new URLSearchParams(window.location.search);
+    currentParams.delete('sceneId');
+    router.replace(`${pathname}?${currentParams.toString()}`);
+
     setPendingProjectImport(null);
     setActiveTab('scenes');
     toast.success('Imported into current project without changing existing work');
@@ -3617,6 +3659,16 @@ function EditorInner() {
     if (!pendingProjectImport) return;
     importProject(pendingProjectImport.project);
     setActiveSavedSceneId(pendingProjectImport.savedSceneId || null);
+    setActiveSavedScenePublished(!!pendingProjectImport.isPublished);
+
+    const currentParams = new URLSearchParams(window.location.search);
+    if (pendingProjectImport.savedSceneId) {
+      currentParams.set('sceneId', pendingProjectImport.savedSceneId);
+    } else {
+      currentParams.delete('sceneId');
+    }
+    router.replace(`${pathname}?${currentParams.toString()}`);
+
     setPendingProjectImport(null);
     setActiveTab('scenes');
     toast.success('Opened imported JSON as project');
@@ -3655,11 +3707,20 @@ function EditorInner() {
           ? await blobToDataUrl(blob)
           : await runtimeSrcToRenderSrc(runtimeClipSrcById.get(clip.id) || clip.src);
 
-        if (!renderSrc) return clip;
+        let thumbnailUrl = clip.thumbnailUrl;
+        if (clip.type === 'note' && (clip.name === "Analysis" || clip.tags?.includes("Analysis") || clip.name.toLowerCase().includes("beat"))) {
+          const thumbBlob = await loadBlob(`beat-thumb-${clip.id}`);
+          if (thumbBlob) {
+            thumbnailUrl = await blobToDataUrl(thumbBlob);
+          }
+        }
+
+        if (!renderSrc && thumbnailUrl === clip.thumbnailUrl) return clip;
 
         return {
           ...clip,
-          src: renderSrc,
+          ...(renderSrc ? { src: renderSrc } : {}),
+          thumbnailUrl,
         };
       })).then(sceneClips => (
         group ? sceneClips.filter(clip => group.trackIds.includes(clip.trackId)) : sceneClips
@@ -3953,8 +4014,11 @@ function EditorInner() {
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) {
-                          setSelectedVideoFile(file);
-                          const url = URL.createObjectURL(file);
+                          // Sanitizing filename: replaces characters not in a-zA-Z0-9._- with '-' to match disk storage naming
+                          const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+                          const sanitizedFile = new File([file], sanitizedName, { type: file.type });
+                          setSelectedVideoFile(sanitizedFile);
+                          const url = URL.createObjectURL(sanitizedFile);
                           setVideoObjectURL(url);
                           setIsAnalysisComplete(false);
                           setAnalysisLogs([]);
@@ -4509,6 +4573,33 @@ function EditorInner() {
     );
   };
 
+  const isPublicAnalysis = pathname === '/analysis' && sceneIdParam && activeSavedScenePublished;
+  const isGated = !currentUser && !isPublicAnalysis;
+
+  if (isAuthChecking || isGated || isSceneLoading) {
+    return (
+      <div className="flex flex-col h-screen w-screen bg-[#0a0a0b] items-center justify-center text-zinc-300 font-sans relative overflow-hidden">
+        {/* Background Decorative Glow */}
+        <div className="absolute top-[-10%] left-[-20%] w-[60vw] h-[60vw] rounded-full bg-gradient-to-br from-indigo-600/10 via-transparent to-transparent blur-3xl pointer-events-none" />
+        <div className="absolute bottom-[-10%] right-[-20%] w-[60vw] h-[60vw] rounded-full bg-gradient-to-tl from-violet-600/10 via-transparent to-transparent blur-3xl pointer-events-none" />
+        
+        <div className="flex flex-col items-center gap-4 z-10">
+          <div className="w-12 h-12 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-sans font-black text-base leading-none shadow-lg shadow-indigo-500/20 animate-pulse select-none">S</div>
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
+            <span className="text-xs font-bold uppercase tracking-widest text-zinc-400">
+              {isAuthChecking 
+                ? "Verifying Session..." 
+                : isGated 
+                  ? "Redirecting..." 
+                  : "Loading Project..."}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-[#0a0a0b] text-zinc-300 font-sans overflow-hidden">
       <input
@@ -4723,28 +4814,266 @@ function EditorInner() {
                           <SavedSceneThumbnail scene={scene} />
                           <div className="space-y-3 p-3">
                             <div className="min-w-0">
-                              <h4 className="truncate text-sm font-semibold text-zinc-100">{scene.name}</h4>
+                              <div className="flex items-center justify-between gap-2">
+                                <h4 className="truncate text-sm font-semibold text-zinc-100">{scene.name}</h4>
+                                {scene.isPublished && (
+                                  <span className="px-1.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                                    Public
+                                  </span>
+                                )}
+                              </div>
                               <div className="mt-1 text-[10px] font-mono uppercase tracking-widest text-zinc-600">
                                 {new Date(scene.updatedAt).toLocaleString()}
                               </div>
                             </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="w-full border-zinc-700 bg-zinc-900 text-xs text-zinc-200 hover:border-indigo-500/40 hover:bg-indigo-500/10 hover:text-indigo-100"
-                              onClick={() => void handleLoadSavedScene(scene)}
-                              disabled={loadingSavedSceneId !== null || deletingSavedSceneId !== null}
-                            >
-                              {loadingSavedSceneId === scene.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                              Load Scene
-                            </Button>
+                            <div className="flex gap-2 select-none">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="flex-1 border-zinc-700 bg-zinc-900 text-xs text-zinc-200 hover:border-indigo-500/40 hover:bg-indigo-500/10 hover:text-indigo-100"
+                                onClick={() => void handleLoadSavedScene(scene)}
+                                disabled={loadingSavedSceneId !== null || deletingSavedSceneId !== null}
+                              >
+                                {loadingSavedSceneId === scene.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                                Load Scene
+                              </Button>
+                              {currentUser && currentUser.role !== 'viewer' && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-zinc-500 hover:text-red-400 hover:bg-red-400/10 shrink-0 border border-zinc-900"
+                                  onClick={() => confirmSavedSceneDelete(scene)}
+                                  disabled={loadingSavedSceneId !== null || deletingSavedSceneId !== null}
+                                  title="Delete Saved Scene"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
                           </div>
                         </article>
                       ))}
                     </div>
                   )}
                 </div>
+              </div>
+            </motion.section>
+          </motion.div>
+        )}
+
+        {isAuthModalOpen && (
+          <motion.div
+            key="auth-modal"
+            className="fixed inset-0 z-[330] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onPointerDown={() => setIsAuthModalOpen(false)}
+          >
+            <motion.section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="auth-title"
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="flex w-full max-w-sm flex-col rounded-lg border border-zinc-800 bg-[#111114] shadow-2xl"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-zinc-800 p-4">
+                <div>
+                  <h2 id="auth-title" className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-200">
+                    <Lock className="h-4 w-4 text-indigo-300" />
+                    {authMode === 'login' ? 'Sign In' : 'Create Account'}
+                  </h2>
+                  <p className="mt-1 text-[10px] text-zinc-500">
+                    {authMode === 'login' ? 'Access your saved scenes and editing permissions.' : 'Join and get default viewer permissions.'}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-zinc-550 hover:text-white"
+                  onClick={() => setIsAuthModalOpen(false)}
+                  aria-label="Close auth dialog"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Tabs */}
+              <div className="grid grid-cols-2 border-b border-zinc-850 p-1 bg-zinc-950/40">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setAuthError('');
+                  }}
+                  className={cn(
+                    "py-2 rounded text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer font-mono text-center",
+                    authMode === 'login'
+                      ? "bg-zinc-900 text-indigo-300 border border-zinc-850 shadow"
+                      : "text-zinc-500 hover:text-zinc-350"
+                  )}
+                >
+                  Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('signup');
+                    setAuthError('');
+                  }}
+                  className={cn(
+                    "py-2 rounded text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer font-mono text-center",
+                    authMode === 'signup'
+                      ? "bg-zinc-900 text-indigo-300 border border-zinc-850 shadow"
+                      : "text-zinc-500 hover:text-zinc-350"
+                  )}
+                >
+                  Create Account
+                </button>
+              </div>
+
+              <form className="space-y-4 p-5" onSubmit={handleAuthSubmit}>
+                {authError && (
+                  <div className="rounded border border-red-500/20 bg-red-500/10 p-2.5 text-xs text-red-200">
+                    {authError}
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <label htmlFor="auth-username" className="block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                    Username
+                  </label>
+                  <input
+                    id="auth-username"
+                    type="text"
+                    required
+                    value={authUsername}
+                    onChange={(e) => setAuthUsername(e.target.value)}
+                    className="h-9 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-200 outline-none transition-colors placeholder:text-zinc-700 focus:border-indigo-400"
+                    placeholder="e.g. editor_pro"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor="auth-password" className="block text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                    Password
+                  </label>
+                  <input
+                    id="auth-password"
+                    type="password"
+                    required
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    className="h-9 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-200 outline-none transition-colors placeholder:text-zinc-700 focus:border-indigo-400"
+                    placeholder="••••••••"
+                  />
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={authLoading}
+                  className="w-full h-10 bg-indigo-650 hover:bg-indigo-500 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-indigo-900/30"
+                >
+                  {authLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : authMode === 'login' ? 'Sign In' : 'Create Account'}
+                </Button>
+              </form>
+            </motion.section>
+          </motion.div>
+        )}
+
+        {isAdminModalOpen && (
+          <motion.div
+            key="admin-modal"
+            className="fixed inset-0 z-[330] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onPointerDown={() => setIsAdminModalOpen(false)}
+          >
+            <motion.section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="admin-title"
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="flex max-h-[min(560px,calc(100vh-4rem))] w-full max-w-2xl flex-col rounded-lg border border-zinc-800 bg-[#111114] shadow-2xl"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-zinc-800 p-4">
+                <div>
+                  <h2 id="admin-title" className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-zinc-200">
+                    <Shield className="h-4 w-4 text-indigo-300" />
+                    User Management Panel
+                  </h2>
+                  <p className="mt-1 text-[10px] text-zinc-500">Review system users and promote roles (viewer, editor, admin).</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 text-zinc-550 hover:text-white"
+                  onClick={() => setIsAdminModalOpen(false)}
+                  aria-label="Close admin panel"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-zinc-850">
+                {isLoadingUsers ? (
+                  <div className="flex py-12 items-center justify-center">
+                    <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
+                  </div>
+                ) : (
+                  <div className="overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/40">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-zinc-850 bg-zinc-950 text-[10px] font-bold uppercase tracking-widest text-zinc-550 font-mono">
+                          <th className="p-3">Username</th>
+                          <th className="p-3">Role</th>
+                          <th className="p-3">Created At</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allUsers.map((user) => {
+                          const isSelf = user.id === currentUser?.id;
+                          return (
+                            <tr key={user.id} className="border-b border-zinc-850 hover:bg-zinc-900/40 transition-colors">
+                              <td className="p-3 font-semibold text-zinc-200">
+                                {user.username} {isSelf && <span className="text-[9px] text-zinc-500 font-mono font-normal">(you)</span>}
+                              </td>
+                              <td className="p-3">
+                                <select
+                                  disabled={isSelf}
+                                  value={user.role}
+                                  onChange={(e) => void handleUpdateUserRole(user.id, e.target.value as any)}
+                                  className={cn(
+                                    "bg-zinc-950 border text-xs rounded px-2 py-1 outline-none font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
+                                    user.role === 'admin' ? "border-indigo-500/30 text-indigo-300 focus:border-indigo-400" :
+                                    user.role === 'editor' ? "border-emerald-500/30 text-emerald-300 focus:border-emerald-400" :
+                                    "border-zinc-800 text-zinc-400 focus:border-zinc-700"
+                                  )}
+                                >
+                                  <option value="viewer">Viewer</option>
+                                  <option value="editor">Editor</option>
+                                  <option value="admin">Admin</option>
+                                </select>
+                              </td>
+                              <td className="p-3 text-zinc-500 font-mono text-[10px]">
+                                {new Date(user.createdAt).toLocaleDateString()}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </motion.section>
           </motion.div>
@@ -4899,10 +5228,11 @@ function EditorInner() {
       {/* Header Rail */}
       <header className="h-12 border-b border-zinc-800 bg-[#111114] flex items-center justify-between px-4 shrink-0 overflow-visible relative z-[200]">
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-indigo-600 rounded flex items-center justify-center text-white font-bold text-xs shadow-lg shadow-indigo-500/20">R</div>
-            <span className="font-semibold text-sm text-zinc-100 tracking-tight">Remotion <span className="text-zinc-500 font-normal">Timeline</span></span>
-          </div>
+          <Link href="/" className="flex items-center gap-2 hover:opacity-90 transition-opacity" title="Back to Homepage">
+            <div className="w-8 h-8 rounded-lg bg-[#f2f2ef] border border-zinc-200 flex items-center justify-center font-sans font-bold text-sm text-[#242c31] select-none shadow-sm">
+              S/W
+            </div>
+          </Link>
           <div className="flex items-center gap-4 text-xs font-medium text-zinc-500">
             <div ref={fileMenuRef} className="relative">
               <button
@@ -4918,15 +5248,32 @@ function EditorInner() {
                   <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-bold select-none">Cloud Library</div>
                   <button
                     type="button"
+                    disabled={!currentUser || currentUser.role === 'viewer'}
                     onClick={() => {
                       openSaveSceneModal();
                       setIsFileMenuOpen(false);
                     }}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 hover:text-white"
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
+                      (!currentUser || currentUser.role === 'viewer')
+                        ? "text-zinc-650 cursor-not-allowed bg-transparent"
+                        : "hover:bg-zinc-800 hover:text-white"
+                    )}
+                    title={(!currentUser || currentUser.role === 'viewer') ? "Log in as an editor or admin to save scenes" : undefined}
                   >
                     <Cloud className="h-4 w-4" />
                     Save Scene
                   </button>
+                  {currentUser?.role === 'admin' && activeSavedSceneId && (
+                    <button
+                      type="button"
+                      onClick={handleTogglePublish}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-zinc-800 hover:text-white"
+                    >
+                      <Share2 className="h-4 w-4 text-indigo-400" />
+                      {activeSavedScenePublished ? 'Unpublish Scene' : 'Publish Scene'}
+                    </button>
+                  )}
                   <div className="-mx-1 my-1 h-px bg-zinc-800" />
                   <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-bold select-none">Project JSON</div>
                   <button
@@ -4956,28 +5303,7 @@ function EditorInner() {
               )}
             </div>
             <span className="hover:text-zinc-300 cursor-pointer transition-colors text-[11px] font-bold uppercase tracking-widest">Project</span>
-            <button
-              type="button"
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] font-bold uppercase tracking-widest transition-colors",
-                !isPlaying && activeVideoClipAtCurrentFrame
-                  ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-200 hover:border-indigo-400/50 hover:bg-indigo-500/20 hover:text-indigo-100"
-                  : "cursor-not-allowed border-zinc-800 bg-zinc-950/60 text-zinc-700"
-              )}
-              onClick={() => void handleCaptureCurrentFrameThumbnail()}
-              disabled={isPlaying || isCapturingSceneThumbnail || !activeVideoClipAtCurrentFrame}
-              aria-label="Capture current paused video frame as scene thumbnail"
-              title={
-                isPlaying
-                  ? 'Pause playback before capturing a scene thumbnail.'
-                  : !activeVideoClipAtCurrentFrame
-                    ? 'Move the playhead over a video clip to capture a scene thumbnail.'
-                    : 'Capture the current frame as the scene thumbnail.'
-              }
-            >
-              {isCapturingSceneThumbnail ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
-              <span>Set Thumbnail</span>
-            </button>
+
             <button
               type="button"
               className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-zinc-500 transition-colors hover:text-zinc-200"
@@ -4999,7 +5325,7 @@ function EditorInner() {
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="px-2 py-1 bg-zinc-800 rounded text-[10px] text-zinc-400 font-mono tracking-widest">BUILD 4.12</div>
+
           <div className="flex bg-zinc-950/60 rounded border border-zinc-800 p-0.5 shrink-0 select-none">
             <button
               type="button"
@@ -5009,24 +5335,15 @@ function EditorInner() {
                   ? "bg-indigo-600 text-white shadow"
                   : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
               )}
-              onClick={() => setWorkspaceViewMode('editor')}
+              onClick={() => {
+                const sId = activeSavedSceneId ? `?sceneId=${activeSavedSceneId}` : '';
+                router.push('/editor' + sId);
+              }}
             >
               <Layers className="h-3.5 w-3.5" />
               Editor
             </button>
-            <button
-              type="button"
-              className={cn(
-                "inline-flex h-7 items-center gap-1.5 rounded px-2.5 text-[9px] font-black uppercase tracking-widest transition-colors cursor-pointer",
-                workspaceViewMode === 'review'
-                  ? "bg-indigo-600 text-white shadow"
-                  : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
-              )}
-              onClick={() => setWorkspaceViewMode('review')}
-            >
-              <ScrollText className="h-3.5 w-3.5" />
-              Review
-            </button>
+
             <button
               type="button"
               className={cn(
@@ -5035,25 +5352,81 @@ function EditorInner() {
                   ? "bg-indigo-600 text-white shadow"
                   : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200"
               )}
-              onClick={() => setWorkspaceViewMode('analysis')}
+              onClick={() => {
+                if (activeSavedSceneId) {
+                  router.push(`/analysis?sceneId=${activeSavedSceneId}`);
+                } else {
+                  router.push('/analysis/new');
+                }
+              }}
             >
               <Activity className="h-3.5 w-3.5" />
-              Analysys
+              Analysis
             </button>
+
           </div>
-          <Button
-            size="sm"
-            className="h-8 px-4 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black uppercase tracking-widest rounded shadow-lg shadow-indigo-900/40 transition-all disabled:opacity-60"
-            disabled={isRendering}
-            onClick={handleRenderProject}
-          >
-            {isRendering ? (
-              <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
-            ) : (
-              <Download className="h-3.5 w-3.5 mr-2" />
-            )}
-            {isRendering ? 'Rendering' : 'Render'}
-          </Button>
+
+          <ThemeToggle />
+
+          {/* Visual Divider */}
+          <div className="h-4 w-px bg-zinc-800" />
+
+          {/* Auth Status / Controls */}
+          {currentUser ? (
+            <div className="flex items-center gap-3">
+              <div className="flex flex-col items-end">
+                <span className="text-[10px] font-bold text-zinc-200">{currentUser.username}</span>
+                <span className={cn(
+                  "mt-0.5 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-sm border leading-none",
+                  currentUser.role === 'admin' && "bg-indigo-500/10 text-indigo-300 border-indigo-500/20 shadow-[0_0_8px_rgba(99,102,241,0.1)]",
+                  currentUser.role === 'editor' && "bg-emerald-500/10 text-emerald-300 border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.1)]",
+                  currentUser.role === 'viewer' && "bg-zinc-800/40 text-zinc-400 border-zinc-800/80"
+                )}>
+                  {currentUser.role}
+                </span>
+              </div>
+              
+              {currentUser.role === 'admin' && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-zinc-500 hover:text-white hover:bg-zinc-850 rounded"
+                  onClick={() => {
+                    void handleLoadUsers();
+                    setIsAdminModalOpen(true);
+                  }}
+                  title="Admin User Management"
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+              )}
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-zinc-500 hover:text-red-400 hover:bg-red-400/10 rounded"
+                onClick={handleLogout}
+                title="Log Out"
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setAuthMode('login');
+                setAuthError('');
+                setIsAuthModalOpen(true);
+              }}
+              className="h-8 border-zinc-800 bg-zinc-950 px-3 text-[10px] font-black uppercase tracking-widest text-zinc-300 hover:border-indigo-500/50 hover:bg-indigo-500/10 hover:text-white"
+            >
+              <UserCircle className="h-3.5 w-3.5 mr-1 text-indigo-400" />
+              Sign In
+            </Button>
+          )}
+
         </div>
       </header>
 
@@ -5722,6 +6095,22 @@ function EditorInner() {
 
                   <div className="h-4 w-px bg-zinc-800 mx-1" />
 
+                  <Button
+                    size="sm"
+                    className="h-8 px-4 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black uppercase tracking-widest rounded shadow-lg shadow-indigo-900/40 transition-all disabled:opacity-60"
+                    disabled={isRendering}
+                    onClick={handleRenderProject}
+                  >
+                    {isRendering ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5 mr-2" />
+                    )}
+                    {isRendering ? 'Rendering' : 'Render'}
+                  </Button>
+
+                  <div className="h-4 w-px bg-zinc-800 mx-1" />
+
                   <DropdownMenu>
                     <DropdownMenuTrigger
                       className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-8 gap-2 bg-indigo-600 border-indigo-500 text-white hover:bg-indigo-500 hover:text-white")}
@@ -5780,6 +6169,11 @@ function EditorInner() {
               setStoryAnalyzeConfrontation={setStoryAnalyzeConfrontation}
               runVideoAnalysis={runVideoAnalysis}
               onOpenScriptEditor={openScriptEditorForClip}
+              handleCaptureCurrentFrameThumbnail={handleCaptureCurrentFrameThumbnail}
+              isCapturingSceneThumbnail={isCapturingSceneThumbnail}
+              activeVideoClipAtCurrentFrame={activeVideoClipAtCurrentFrame}
+              isPlaying={isPlaying}
+              isReadOnly={!currentUser || currentUser.role === 'viewer'}
             />
           ) : workspaceViewMode === 'review' ? (
             <ReviewWorkspace 
@@ -5829,9 +6223,5 @@ function EditorInner() {
 
 
 export function Editor() {
-  return (
-    <TimelineProvider>
-      <EditorInner />
-    </TimelineProvider>
-  );
+  return <EditorInner />;
 }

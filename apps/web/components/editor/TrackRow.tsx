@@ -11,10 +11,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
   DropdownMenuGroup,
-} from "@/components/ui/dropdown-menu";
+  Button,
+} from "@storyboard/ui";
 import { Activity, Type, Image as ImageIcon, Video, Plus, Check, Trash2, X, MessageSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
 import { getGraphColor, getGraphDisplayLabel } from '@/lib/graph-style';
 
 interface TrackRowProps {

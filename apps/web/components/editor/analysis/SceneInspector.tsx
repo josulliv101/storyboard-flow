@@ -1,6 +1,7 @@
 import React from "react";
 import { Flame, CheckCircle } from "lucide-react";
 import { SceneAnalysis } from "./types";
+import { MetricSymbol } from "./MetricSymbol";
 
 interface SceneInspectorProps {
   activeScene?: SceneAnalysis;
@@ -39,7 +40,10 @@ export default function SceneInspector({ activeScene }: SceneInspectorProps) {
             {/* Tension Bar */}
             <div>
               <div className="flex justify-between text-[10px] mb-1 font-mono select-none">
-                <span className="text-rose-450 font-medium">Tension</span>
+                <span className="text-rose-450 font-medium flex items-center gap-1.5">
+                  <MetricSymbol name="tension" className="w-[11px] h-[11px] shrink-0" style={{ color: "#f43f5e" }} />
+                  <span>Tension</span>
+                </span>
                 <span className="text-zinc-400 font-bold">{activeScene.metrics.tension}/5</span>
               </div>
               <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden">
@@ -59,7 +63,10 @@ export default function SceneInspector({ activeScene }: SceneInspectorProps) {
             {/* Suspense Bar */}
             <div>
               <div className="flex justify-between text-[10px] mb-1 font-mono select-none">
-                <span className="text-purple-450 font-medium">Suspense</span>
+                <span className="text-purple-450 font-medium flex items-center gap-1.5">
+                  <MetricSymbol name="suspense" className="w-[11px] h-[11px] shrink-0" style={{ color: "#a855f7" }} />
+                  <span>Suspense</span>
+                </span>
                 <span className="text-zinc-400 font-bold">{activeScene.metrics.suspense}/5</span>
               </div>
               <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden">
@@ -79,7 +86,10 @@ export default function SceneInspector({ activeScene }: SceneInspectorProps) {
             {/* Anticipation Bar */}
             <div>
               <div className="flex justify-between text-[10px] mb-1 font-mono select-none">
-                <span className="text-cyan-450 font-medium">Anticipation</span>
+                <span className="text-cyan-450 font-medium flex items-center gap-1.5">
+                  <MetricSymbol name="anticipation" className="w-[11px] h-[11px] shrink-0" style={{ color: "#06b6d4" }} />
+                  <span>Anticipation</span>
+                </span>
                 <span className="text-zinc-400 font-bold">{activeScene.metrics.anticipation}/5</span>
               </div>
               <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden">

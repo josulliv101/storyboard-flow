@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server';
 import type { TimelineProjectJson } from '@/lib/timeline-context';
 import { listSavedScenes, saveScene } from '@/lib/saved-scenes-store';
 
+import { getAuthUser } from '@/lib/auth-store';
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -32,7 +34,9 @@ function storageErrorResponse(error: unknown) {
 
 export async function GET() {
   try {
-    return NextResponse.json({ scenes: await listSavedScenes() });
+    const user = await getAuthUser();
+    const onlyPublished = !user;
+    return NextResponse.json({ scenes: await listSavedScenes(onlyPublished) });
   } catch (error) {
     return storageErrorResponse(error);
   }
@@ -40,6 +44,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const user = await getAuthUser();
+    if (!user || user.role === 'viewer') {
+      return NextResponse.json({ error: 'Forbidden. Editing access required.' }, { status: 403 });
+    }
+
     const body = await request.json() as { name?: unknown; project?: unknown };
     const name = typeof body.name === 'string' ? body.name.trim() : '';
 

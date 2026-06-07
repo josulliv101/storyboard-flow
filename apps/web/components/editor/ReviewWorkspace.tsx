@@ -5,15 +5,16 @@ import { Preview } from './Preview';
 import { useTimeline, Scene, TimelineClip, TimelineTrack } from '@/lib/timeline-context';
 import { cn } from '@/lib/utils';
 import { getGraphColor, getGraphDisplayLabel, getGraphShortLabel } from '@/lib/graph-style';
-import { Badge } from '@/components/ui/badge';
-import { Slider } from '@/components/ui/slider';
-import { Button, buttonVariants } from '@/components/ui/button';
 import {
+  Badge,
+  Slider,
+  Button,
+  buttonVariants,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@storyboard/ui";
 import { MessageSquare, Pause, PencilLine, Play, SkipBack, StickyNote, Tags } from 'lucide-react';
 import { scheduleReviewMomentExpansions, type ReviewMomentExpansion } from './review-note-layout';
 

@@ -1,6 +1,6 @@
 import * as React from "react"
 
-import { cn } from "@/lib/utils"
+import { cn } from "../lib/utils"
 
 function Card({
   className,
@@ -79,6 +79,7 @@ function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+// Rename this CardFooter so it doesn't conflict with anything
 function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div

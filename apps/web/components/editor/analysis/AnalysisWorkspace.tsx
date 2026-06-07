@@ -16,15 +16,21 @@ import {
   RotateCcw,
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  GripVertical,
   Layers,
   ScrollText,
   UploadCloud,
   X,
   HelpCircle,
   Play,
-  User
+  User,
+  Camera,
+  MoreVertical
 } from "lucide-react";
 import { useTimeline } from "@/lib/timeline-context";
+import { extractBeatThumbnailFromVideo } from "@/lib/video-helpers";
 import { getGraphColor } from "@/lib/graph-style";
 import TensionChart from "./TensionChart";
 import ScriptBeatsList from "./ScriptBeatsList";
@@ -34,10 +40,79 @@ import DiagnosticsPanel from "./DiagnosticsPanel";
 import AgentLogs from "./AgentLogs";
 import ChatConsole from "./ChatConsole";
 import { ScreenplayReport, LogEntry, SceneAnalysis } from "./types";
-import { Button } from "@/components/ui/button";
+import { MetricSymbol } from "./MetricSymbol";
+import { Button } from "@storyboard/ui";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
+const detectLetterbox = (video: HTMLVideoElement): { top: number; bottom: number } => {
+  const vWidth = video.videoWidth;
+  const vHeight = video.videoHeight;
+  const topDefault = 0;
+  const bottomDefault = vHeight;
 
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 3;
+    canvas.height = vHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { top: topDefault, bottom: bottomDefault };
+
+    const cols = [
+      Math.floor(vWidth * 0.25),
+      Math.floor(vWidth * 0.5),
+      Math.floor(vWidth * 0.75)
+    ];
+
+    for (let c = 0; c < 3; c++) {
+      ctx.drawImage(video, cols[c], 0, 1, vHeight, c, 0, 1, vHeight);
+    }
+
+    const imgData = ctx.getImageData(0, 0, 3, vHeight);
+    const data = imgData.data;
+
+    let minTop = vHeight;
+    let maxBottom = 0;
+
+    for (let c = 0; c < 3; c++) {
+      let colTop = 0;
+      for (let y = 0; y < vHeight; y++) {
+        const idx = (y * 3 + c) * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        if (r > 18 || g > 18 || b > 18) {
+          colTop = y;
+          break;
+        }
+      }
+      minTop = Math.min(minTop, colTop);
+
+      let colBottom = vHeight;
+      for (let y = vHeight - 1; y >= 0; y--) {
+        const idx = (y * 3 + c) * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        if (r > 18 || g > 18 || b > 18) {
+          colBottom = y + 1;
+          break;
+        }
+      }
+      maxBottom = Math.max(maxBottom, colBottom);
+    }
+
+    const activeHeight = maxBottom - minTop;
+    if (activeHeight < vHeight * 0.2 || minTop >= maxBottom) {
+      return { top: topDefault, bottom: bottomDefault };
+    }
+
+    return { top: minTop, bottom: maxBottom };
+  } catch (e) {
+    console.warn("Letterbox detection failed:", e);
+    return { top: topDefault, bottom: bottomDefault };
+  }
+};
 
 interface AnalysisWorkspaceProps {
   selectedVideoFile: File | null;
@@ -63,6 +138,11 @@ interface AnalysisWorkspaceProps {
   setStoryAnalyzeConfrontation: (val: boolean) => void;
   runVideoAnalysis: () => Promise<void>;
   onOpenScriptEditor?: (clipId: string, sceneId: string) => void;
+  handleCaptureCurrentFrameThumbnail?: () => Promise<void>;
+  isCapturingSceneThumbnail?: boolean;
+  activeVideoClipAtCurrentFrame?: any;
+  isPlaying?: boolean;
+  isReadOnly?: boolean;
 }
 
 export function AnalysisWorkspace({
@@ -89,6 +169,11 @@ export function AnalysisWorkspace({
   setStoryAnalyzeConfrontation,
   runVideoAnalysis,
   onOpenScriptEditor,
+  handleCaptureCurrentFrameThumbnail,
+  isCapturingSceneThumbnail = false,
+  activeVideoClipAtCurrentFrame,
+  isPlaying = false,
+  isReadOnly = false,
 }: AnalysisWorkspaceProps) {
   const {
     scenes,
@@ -98,7 +183,9 @@ export function AnalysisWorkspace({
     characters,
     fps,
     updateClip,
+    updateTrack,
     setCurrentFrame,
+    setWorkspaceViewMode,
   } = useTimeline();
 
   const activeScene = scenes.find((s) => s.id === activeSceneId) || scenes[0];
@@ -118,6 +205,18 @@ export function AnalysisWorkspace({
 
   // Panel Collapsible State
   const [isAnalyzerOpen, setIsAnalyzerOpen] = useState(false);
+
+  // Preview mode (video or static storyboard image)
+  const [previewMode, setPreviewMode] = useState<'video' | 'storyboard'>('video');
+  const [showDialogueOverlay, setShowDialogueOverlay] = useState(true);
+  const [activeTab, setActiveTab] = useState<string>("all");
+
+  const [isJsonViewOpen, setIsJsonViewOpen] = useState(false);
+  const [jsonTab, setJsonTab] = useState<'analysis' | 'timeline'>('analysis');
+  const [copied, setCopied] = useState(false);
+
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isCapturingThumbnail, setIsCapturingThumbnail] = useState(false);
 
   // Chat States
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -151,14 +250,119 @@ export function AnalysisWorkspace({
   const [scrollTrigger, setScrollTrigger] = useState(0);
   const beatListRef = useRef<HTMLDivElement | null>(null);
   const [beatsListHeight, setBeatsListHeight] = useState<number>(450);
+  const [dialogueHeight, setDialogueHeight] = useState<number>(240);
 
-  const handleSelectScene = (idx: number) => {
-    setActiveSceneIndex(idx);
-    setScrollTrigger((prev) => prev + 1);
+  // Drag and drop states for dashboard items reordering
+  const [dashboardLayout, setDashboardLayout] = useState<{
+    left: string[];
+    right: string[];
+  }>({
+    left: ['preview', 'analysis'],
+    right: ['beatsList', 'chart'],
+  });
+  const [draggedItem, setDraggedItem] = useState<string | null>(null);
+  const [draggedSourceCol, setDraggedSourceCol] = useState<'left' | 'right' | null>(null);
+  const [isDraggable, setIsDraggable] = useState<string | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, id: string, col: 'left' | 'right') => {
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedItem(id);
+    setDraggedSourceCol(col);
+  };
+
+  const handleDragOverCard = (e: React.DragEvent, targetId: string, targetCol: 'left' | 'right') => {
+    e.preventDefault();
+    if (!draggedItem || draggedItem === targetId) return;
+
+    setDashboardLayout((prev) => {
+      // Find source column and remove item
+      const sourceCol = prev.left.includes(draggedItem) ? 'left' : 'right';
+      const sourceItems = prev[sourceCol].filter((x) => x !== draggedItem);
+
+      // Find target column and insert before targetId
+      const targetItems = [...prev[targetCol]];
+      const targetFiltered = sourceCol === targetCol ? sourceItems : targetItems;
+      const targetIdx = targetFiltered.indexOf(targetId);
+      if (targetIdx === -1) return prev;
+
+      const newTarget = [...targetFiltered];
+      newTarget.splice(targetIdx, 0, draggedItem);
+
+      return {
+        left: targetCol === 'left' ? newTarget : (sourceCol === 'left' ? sourceItems : prev.left),
+        right: targetCol === 'right' ? newTarget : (sourceCol === 'right' ? sourceItems : prev.right),
+      };
+    });
+  };
+
+  const handleDragOverColumn = (e: React.DragEvent, col: 'left' | 'right') => {
+    e.preventDefault();
+    if (!draggedItem) return;
+
+    setDashboardLayout((prev) => {
+      const isAlreadyInCol = prev[col].includes(draggedItem);
+      if (isAlreadyInCol) return prev;
+
+      const sourceCol = prev.left.includes(draggedItem) ? 'left' : 'right';
+      const sourceItems = prev[sourceCol].filter((x) => x !== draggedItem);
+      const targetItems = [...prev[col], draggedItem];
+
+      return {
+        left: col === 'left' ? targetItems : (sourceCol === 'left' ? sourceItems : prev.left),
+        right: col === 'right' ? targetItems : (sourceCol === 'right' ? sourceItems : prev.right),
+      };
+    });
+  };
+
+  const handleDragEnd = () => {
+    setDraggedItem(null);
+    setDraggedSourceCol(null);
+    setIsDraggable(null);
+  };
+
+  const activeSceneData = useMemo(() => {
+    return {
+      id: activeScene.id,
+      name: activeScene.name,
+      description: activeScene.description,
+      duration: activeScene.duration,
+      clips: clips.map(c => ({
+        id: c.id,
+        name: c.name,
+        type: c.type,
+        startFrame: c.startFrame,
+        duration: c.duration,
+        trackId: c.trackId,
+        tags: c.tags,
+        linkedGraphTrackIds: c.linkedGraphTrackIds
+      })),
+      tracks: tracks.map(t => ({
+        id: t.id,
+        name: t.name,
+        parentId: t.parentId,
+        type: t.type,
+        graph: t.graph ? {
+          type: t.graph.type,
+          label: t.graph.label,
+          min: t.graph.min,
+          max: t.graph.max,
+          pointsCount: t.graph.points?.length
+        } : undefined
+      }))
+    };
+  }, [activeScene, clips, tracks]);
+
+  const handleCopyJson = () => {
+    const dataToCopy = jsonTab === 'analysis' ? report : activeSceneData;
+    navigator.clipboard.writeText(JSON.stringify(dataToCopy, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
+    const tracker = e.currentTarget;
+    tracker.setPointerCapture(e.pointerId);
     const startY = e.clientY;
     const startHeight = beatsListHeight;
 
@@ -168,7 +372,39 @@ export function AnalysisWorkspace({
       setBeatsListHeight(newHeight);
     };
 
-    const handlePointerUp = () => {
+    const handlePointerUp = (upEvent: PointerEvent) => {
+      try {
+        tracker.releasePointerCapture(upEvent.pointerId);
+      } catch (err) {
+        // ignore
+      }
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", handlePointerUp);
+    };
+
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", handlePointerUp);
+  };
+
+  const handleDialogueResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const tracker = e.currentTarget;
+    tracker.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startHeight = dialogueHeight;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      const newHeight = Math.max(100, Math.min(500, startHeight + deltaY));
+      setDialogueHeight(newHeight);
+    };
+
+    const handlePointerUp = (upEvent: PointerEvent) => {
+      try {
+        tracker.releasePointerCapture(upEvent.pointerId);
+      } catch (err) {
+        // ignore
+      }
       document.removeEventListener("pointermove", handlePointerMove);
       document.removeEventListener("pointerup", handlePointerUp);
     };
@@ -275,9 +511,9 @@ export function AnalysisWorkspace({
       const stakesVal = getGraphValueAtFrame(stakesTrack, beat.startFrame);
 
       // Divide by 2 because timeline metrics are 0-10, dashboard uses 0-5
-      const tension = Math.min(5, Math.max(0, Math.round(tensionVal / 2)));
-      const suspense = Math.min(5, Math.max(0, Math.round(suspenseVal / 2)));
-      const anticipation = Math.min(5, Math.max(0, Math.round(stakesVal / 2)));
+      const tension = Math.min(5, Math.max(0, tensionVal / 2));
+      const suspense = Math.min(5, Math.max(0, suspenseVal / 2));
+      const anticipation = Math.min(5, Math.max(0, stakesVal / 2));
 
       // Extract details
       const tReasoning = clips.find((c) => c.type === "note" && c.startFrame === beat.startFrame && c.name.toLowerCase().includes("tension"))?.description;
@@ -362,6 +598,7 @@ export function AnalysisWorkspace({
         text_segment: beat.description || "",
         summary: beat.description || "Narrative beat summary.",
         characters: speakerNames,
+        thumbnailUrl: (beat as any).thumbnailUrl,
         metrics: {
           tension,
           suspense,
@@ -434,6 +671,64 @@ export function AnalysisWorkspace({
     };
   }, [clips, tracks, characters, activeScene, fps, videoDuration]);
 
+  const handleSelectScene = (idx: number) => {
+    if (!report?.scenes || idx < 0 || idx >= report.scenes.length) return;
+    setActiveSceneIndex(idx);
+    setScrollTrigger((prev) => prev + 1);
+    const start = report.scenes[idx].start ?? 0;
+    setCurrentFrame(Math.round(start * fps));
+  };
+
+  const handleUpdateMetricValue = useCallback((sceneIndex: number, metric: 'tension' | 'suspense' | 'anticipation', newValue: number) => {
+    if (!report?.scenes) return;
+    const beat = report.scenes[sceneIndex];
+    if (!beat) return;
+
+    let trackId = "";
+    if (metric === 'tension') {
+      const track = tracks.find((t) => t.id === "graph-dramatic-tension" || t.name.toLowerCase().includes("tension"));
+      trackId = track?.id || "";
+    } else if (metric === 'suspense') {
+      const track = tracks.find((t) => t.id === "graph-anticipatory-suspense" || t.name.toLowerCase().includes("suspense"));
+      trackId = track?.id || "";
+    } else if (metric === 'anticipation') {
+      const track = tracks.find((t) => t.id === "graph-operational-stakes" || t.name.toLowerCase().includes("stakes") || t.name.toLowerCase().includes("conflict"));
+      trackId = track?.id || "";
+    }
+
+    if (!trackId) return;
+
+    const track = tracks.find(t => t.id === trackId);
+    if (!track || !track.graph) return;
+
+    // Convert chart value [0..5] to timeline value [0..10]
+    const timelineValue = Math.min(10, Math.max(0, Math.round(newValue * 2)));
+
+    const targetFrame = Math.round((beat.start ?? 0) * fps);
+    const existingPoints = track.graph.points || [];
+    
+    let updatedPoints = [...existingPoints];
+    const exactPtIdx = updatedPoints.findIndex(pt => pt.frame === targetFrame);
+
+    if (exactPtIdx !== -1) {
+      updatedPoints[exactPtIdx] = { ...updatedPoints[exactPtIdx], value: timelineValue };
+    } else {
+      updatedPoints.push({ frame: targetFrame, value: timelineValue });
+      updatedPoints.sort((a, b) => a.frame - b.frame);
+    }
+
+    updateTrack(trackId, {
+      graph: {
+        ...track.graph,
+        points: updatedPoints
+      }
+    });
+
+    toast.success(`Updated ${metric} to ${newValue} for "${beat.title || `Beat ${beat.scene_number}`}"`, {
+      id: `metric-update-${metric}-${sceneIndex}`
+    });
+  }, [report, tracks, fps, updateTrack]);
+
   // Handle active beat scroll/click synchronization
   const chartData = useMemo(() => {
     return report
@@ -502,6 +797,297 @@ export function AnalysisWorkspace({
       if (idx !== -1 && idx !== activeSceneIndex) {
         setActiveSceneIndex(idx);
       }
+    }
+  };
+
+  const handleSetThumbnail = async () => {
+    setIsMenuOpen(false);
+    
+    const video = videoRef.current;
+    if (!video) {
+      toast.error("Video player not available");
+      return;
+    }
+
+    // Identify corresponding timeline note clip
+    const noteClips = clips
+      .filter((c) => c.type === "note" && (c.name === "Analysis" || c.tags?.includes("Analysis") || c.name.toLowerCase().includes("beat")))
+      .sort((a, b) => a.startFrame - b.startFrame);
+      
+    const activeBeatClip = noteClips[activeSceneIndex];
+    if (!activeBeatClip) {
+      toast.error("No active beat timeline clip found");
+      return;
+    }
+
+    toast.loading("Capturing beat thumbnail...", { id: "set-thumb" });
+    setIsCapturingThumbnail(true);
+
+    try {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error("Could not get canvas context");
+
+      const vWidth = video.videoWidth;
+      const vHeight = video.videoHeight;
+
+      // 16:9 target size
+      const width = 640;
+      const height = 360;
+      canvas.width = width;
+      canvas.height = height;
+
+      // Detect letterboxing
+      const { top: topLetterbox, bottom: bottomLetterbox } = detectLetterbox(video);
+      const activeHeight = bottomLetterbox - topLetterbox;
+
+      const srcAspect = vWidth / activeHeight;
+      const destAspect = width / height;
+
+      let sx = 0;
+      let sy = topLetterbox;
+      let sWidth = vWidth;
+      let sHeight = activeHeight;
+
+      if (srcAspect > destAspect) {
+        sWidth = activeHeight * destAspect;
+        sx = (vWidth - sWidth) / 2;
+      } else if (srcAspect < destAspect) {
+        sHeight = vWidth / destAspect;
+        sy = topLetterbox + (activeHeight - sHeight) / 2;
+      }
+
+      ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, width, height);
+
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          toast.error("Failed to convert frame to blob", { id: "set-thumb" });
+          setIsCapturingThumbnail(false);
+          return;
+        }
+
+        try {
+          const filename = `timeline-videos/beat-thumb-${activeBeatClip.id}-${Date.now()}.jpg`;
+          const formData = new FormData();
+          formData.append('file', blob);
+          formData.append('filename', filename);
+
+          // Upload to persistent store
+          const uploadRes = await fetch('/api/scenes/media-upload', {
+            method: 'POST',
+            body: formData,
+          });
+
+          let thumbnailUrl = "";
+          if (uploadRes.ok) {
+            const data = await uploadRes.json();
+            thumbnailUrl = `/api/scenes/media?pathname=${encodeURIComponent(data.pathname)}`;
+          } else {
+            console.warn("Cloud upload failed, falling back to local blob URL");
+            thumbnailUrl = URL.createObjectURL(blob);
+          }
+
+          // Save locally in IndexedDB using lib/db saveBlob
+          const { saveBlob } = await import('@/lib/db');
+          await saveBlob(`beat-thumb-${activeBeatClip.id}`, blob);
+
+          // Update timeline context clip
+          updateClip(activeBeatClip.id, { thumbnailUrl });
+
+          toast.success("Successfully set current frame as beat thumbnail!", { id: "set-thumb" });
+        } catch (err: any) {
+          console.error("Failed to save beat thumbnail:", err);
+          toast.error("Error saving thumbnail: " + err.message, { id: "set-thumb" });
+        } finally {
+          setIsCapturingThumbnail(false);
+        }
+      }, 'image/jpeg', 0.85);
+
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Failed to capture thumbnail", { id: "set-thumb" });
+      setIsCapturingThumbnail(false);
+    }
+  };
+
+  const handleUpdateBeatThumbnail = async (
+    idx: number,
+    source: 'current' | 'center' | 'file',
+    customFile?: File
+  ) => {
+    // Identify corresponding timeline note clip
+    const noteClips = clips
+      .filter((c) => c.type === "note" && (c.name === "Analysis" || c.tags?.includes("Analysis") || c.name.toLowerCase().includes("beat")))
+      .sort((a, b) => a.startFrame - b.startFrame);
+      
+    const beatClip = noteClips[idx];
+    if (!beatClip) {
+      toast.error("No beat timeline clip found", { id: `set-thumb-${idx}` });
+      return;
+    }
+
+    if (source === 'file') {
+      if (!customFile) return;
+      toast.loading("Uploading custom image...", { id: `set-thumb-${idx}` });
+      try {
+        const filename = `timeline-videos/beat-thumb-${beatClip.id}-${Date.now()}.jpg`;
+        const formData = new FormData();
+        formData.append('file', customFile);
+        formData.append('filename', filename);
+
+        const uploadRes = await fetch('/api/scenes/media-upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        let thumbnailUrl = "";
+        if (uploadRes.ok) {
+          const data = await uploadRes.json();
+          thumbnailUrl = `/api/scenes/media?pathname=${encodeURIComponent(data.pathname)}`;
+        } else {
+          console.warn("Cloud upload failed, falling back to local blob URL");
+          thumbnailUrl = URL.createObjectURL(customFile);
+        }
+
+        const { saveBlob } = await import('@/lib/db');
+        await saveBlob(`beat-thumb-${beatClip.id}`, customFile);
+
+        updateClip(beatClip.id, { thumbnailUrl });
+        toast.success(`Updated Beat ${idx + 1} thumbnail with custom image!`, { id: `set-thumb-${idx}` });
+      } catch (err: any) {
+        console.error(err);
+        toast.error("Failed to save custom thumbnail: " + err.message, { id: `set-thumb-${idx}` });
+      }
+      return;
+    }
+
+    if (source === 'current') {
+      const video = videoRef.current;
+      if (!video) {
+        toast.error("Video player not available to capture frame", { id: `set-thumb-${idx}` });
+        return;
+      }
+
+      toast.loading(`Capturing current frame for Beat ${idx + 1}...`, { id: `set-thumb-${idx}` });
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error("Could not get canvas context");
+
+        const vWidth = video.videoWidth;
+        const vHeight = video.videoHeight;
+        const width = 640;
+        const height = 360;
+        canvas.width = width;
+        canvas.height = height;
+
+        const { top: topLetterbox, bottom: bottomLetterbox } = detectLetterbox(video);
+        const activeHeight = bottomLetterbox - topLetterbox;
+
+        const srcAspect = vWidth / activeHeight;
+        const destAspect = width / height;
+
+        let sx = 0;
+        let sy = topLetterbox;
+        let sWidth = vWidth;
+        let sHeight = activeHeight;
+
+        if (srcAspect > destAspect) {
+          sWidth = activeHeight * destAspect;
+          sx = (vWidth - sWidth) / 2;
+        } else if (srcAspect < destAspect) {
+          sHeight = vWidth / destAspect;
+          sy = topLetterbox + (activeHeight - sHeight) / 2;
+        }
+
+        ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, width, height);
+
+        canvas.toBlob(async (blob) => {
+          if (!blob) {
+            toast.error("Failed to convert frame to blob", { id: `set-thumb-${idx}` });
+            return;
+          }
+
+          try {
+            const filename = `timeline-videos/beat-thumb-${beatClip.id}-${Date.now()}.jpg`;
+            const formData = new FormData();
+            formData.append('file', blob);
+            formData.append('filename', filename);
+
+            const uploadRes = await fetch('/api/scenes/media-upload', {
+              method: 'POST',
+              body: formData,
+            });
+
+            let thumbnailUrl = "";
+            if (uploadRes.ok) {
+              const data = await uploadRes.json();
+              thumbnailUrl = `/api/scenes/media?pathname=${encodeURIComponent(data.pathname)}`;
+            } else {
+              console.warn("Cloud upload failed, falling back to local blob URL");
+              thumbnailUrl = URL.createObjectURL(blob);
+            }
+
+            const { saveBlob } = await import('@/lib/db');
+            await saveBlob(`beat-thumb-${beatClip.id}`, blob);
+
+            updateClip(beatClip.id, { thumbnailUrl });
+            toast.success(`Updated Beat ${idx + 1} thumbnail to current frame!`, { id: `set-thumb-${idx}` });
+          } catch (err: any) {
+            console.error("Failed to save beat thumbnail:", err);
+            toast.error("Error saving thumbnail: " + err.message, { id: `set-thumb-${idx}` });
+          }
+        }, 'image/jpeg', 0.85);
+
+      } catch (err: any) {
+        console.error(err);
+        toast.error(err.message || "Failed to capture thumbnail", { id: `set-thumb-${idx}` });
+      }
+      return;
+    }
+
+    if (source === 'center') {
+      if (!selectedVideoFile) {
+        toast.error("No video file loaded to extract from", { id: `set-thumb-${idx}` });
+        return;
+      }
+
+      const midFrame = beatClip.startFrame + Math.floor(beatClip.duration / 2);
+      const timestamp = midFrame / fps;
+
+      toast.loading(`Extracting beat center frame for Beat ${idx + 1}...`, { id: `set-thumb-${idx}` });
+      try {
+        const thumbnailBlob = await extractBeatThumbnailFromVideo(selectedVideoFile, timestamp);
+
+        const filename = `timeline-videos/beat-thumb-${beatClip.id}-${Date.now()}.jpg`;
+        const formData = new FormData();
+        formData.append('file', thumbnailBlob);
+        formData.append('filename', filename);
+
+        const uploadRes = await fetch('/api/scenes/media-upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        let thumbnailUrl = "";
+        if (uploadRes.ok) {
+          const data = await uploadRes.json();
+          thumbnailUrl = `/api/scenes/media?pathname=${encodeURIComponent(data.pathname)}`;
+        } else {
+          console.warn("Cloud upload failed, falling back to local blob URL");
+          thumbnailUrl = URL.createObjectURL(thumbnailBlob);
+        }
+
+        const { saveBlob } = await import('@/lib/db');
+        await saveBlob(`beat-thumb-${beatClip.id}`, thumbnailBlob);
+
+        updateClip(beatClip.id, { thumbnailUrl });
+        toast.success(`Updated Beat ${idx + 1} thumbnail to center frame!`, { id: `set-thumb-${idx}` });
+      } catch (err: any) {
+        console.error(err);
+        toast.error("Failed to extract center thumbnail: " + err.message, { id: `set-thumb-${idx}` });
+      }
+      return;
     }
   };
 
@@ -668,8 +1254,11 @@ export function AnalysisWorkspace({
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) {
-                    setSelectedVideoFile(file);
-                    const url = URL.createObjectURL(file);
+                    // Sanitizing filename: replaces characters not in a-zA-Z0-9._- with '-' to match disk storage naming
+                    const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+                    const sanitizedFile = new File([file], sanitizedName, { type: file.type });
+                    setSelectedVideoFile(sanitizedFile);
+                    const url = URL.createObjectURL(sanitizedFile);
                     setVideoObjectURL(url);
                     setIsAnalysisComplete(false);
                     
@@ -824,10 +1413,11 @@ export function AnalysisWorkspace({
             {!isAnalysisComplete && !isAnalyzing && (
               <Button
                 onClick={runVideoAnalysis}
-                className="w-full bg-gradient-to-r from-indigo-650 to-violet-650 hover:from-indigo-600 hover:to-violet-600 text-white text-[10px] font-black uppercase tracking-widest h-9 shadow-lg shadow-indigo-950/20 transition-all border border-indigo-500/20 cursor-pointer"
+                disabled={isReadOnly}
+                className="w-full bg-gradient-to-r from-indigo-650 to-violet-650 hover:from-indigo-600 hover:to-violet-600 text-white text-[10px] font-black uppercase tracking-widest h-9 shadow-lg shadow-indigo-950/20 transition-all border border-indigo-500/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Sparkles className="w-3.5 h-3.5 mr-2 animate-pulse text-indigo-300" />
-                Analyze Recording
+                {isReadOnly ? 'Read-Only (Viewer)' : 'Analyze Recording'}
               </Button>
             )}
 
@@ -868,29 +1458,461 @@ export function AnalysisWorkspace({
     );
   };
 
-  const renderActiveBeatDialogue = () => {
+  const renderDashboardItem = (item: string, col: 'left' | 'right') => {
+    if (!report) return null;
+    switch (item) {
+      case 'preview':
+        return (
+          activeSceneVideoSrc && (
+            <div 
+              key="preview"
+              draggable={isDraggable === 'preview'}
+              onDragStart={(e) => handleDragStart(e, 'preview', col)}
+              onDragOver={(e) => handleDragOverCard(e, 'preview', col)}
+              onDragEnd={handleDragEnd}
+              className={cn(
+                "bg-zinc-950 border border-zinc-800 rounded-2xl p-4 shadow-xl select-none transition-all duration-300",
+                draggedItem === 'preview' ? "opacity-35 border-indigo-500/35" : ""
+              )}
+            >
+              <div className="flex justify-between items-center mb-3">
+                <div className="flex items-center gap-2">
+                  {!isReadOnly && (
+                    <div
+                      onMouseDown={() => setIsDraggable('preview')}
+                      onMouseUp={() => setIsDraggable(null)}
+                      className="cursor-grab active:cursor-grabbing p-1 text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-900 transition-colors select-none"
+                      title="Drag to reorder"
+                    >
+                      <GripVertical size={13} />
+                    </div>
+                  )}
+                  <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider font-bold">Scene Preview</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsJsonViewOpen(true)}
+                    className="px-2 py-0.5 bg-zinc-900/60 hover:bg-zinc-800 text-zinc-450 hover:text-zinc-200 border border-zinc-800 rounded font-mono text-[9px] uppercase font-bold tracking-wider cursor-pointer transition-all"
+                    title="View Raw JSON Data"
+                  >
+                    Raw JSON
+                  </button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex bg-zinc-900/50 p-0.5 rounded-lg border border-zinc-800/60 space-x-0.5 select-none">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewMode('video')}
+                      className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider font-mono transition-all cursor-pointer ${
+                        previewMode === 'video'
+                          ? "bg-zinc-800 text-zinc-100 shadow-sm font-extrabold"
+                          : "text-zinc-500 hover:text-zinc-300"
+                      }`}
+                    >
+                      🎥 Video
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewMode('storyboard')}
+                      className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider font-mono transition-all cursor-pointer ${
+                        previewMode === 'storyboard'
+                          ? "bg-zinc-800 text-zinc-100 shadow-sm font-extrabold"
+                          : "text-zinc-500 hover:text-zinc-300"
+                      }`}
+                    >
+                      🖼️ Storyboard
+                    </button>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowDialogueOverlay(prev => !prev)}
+                    className={cn(
+                      "!px-2.5 !py-1.5 !rounded-lg !text-[10px] font-bold uppercase tracking-wider font-mono border",
+                      showDialogueOverlay
+                        ? "!bg-indigo-650/25 !border-indigo-500/40 !text-indigo-300 shadow-sm"
+                        : "!bg-zinc-900/40 !border-zinc-800/80 !text-zinc-500 hover:!text-zinc-400"
+                    )}
+                    title={showDialogueOverlay ? "Hide dialogue overlay" : "Show dialogue overlay"}
+                  >
+                    <MessageSquare size={11} className={showDialogueOverlay ? "text-indigo-400" : "text-zinc-550"} />
+                    <span>Dialogue</span>
+                  </Button>
+
+                  {/* 3 dots menu button */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setIsMenuOpen(!isMenuOpen)}
+                      disabled={isCapturingThumbnail}
+                      className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 rounded transition-colors cursor-pointer flex items-center justify-center disabled:opacity-50"
+                      title="More options"
+                    >
+                      <MoreVertical size={14} />
+                    </button>
+                    
+                    {isMenuOpen && (
+                      <>
+                        <div 
+                          className="fixed inset-0 z-30 cursor-default" 
+                          onClick={() => setIsMenuOpen(false)} 
+                        />
+                        <div className="absolute right-0 mt-1 w-44 bg-zinc-950 border border-zinc-800 rounded-lg shadow-xl py-1 z-40 select-none">
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              onClick={handleSetThumbnail}
+                              className="w-full text-left px-3 py-2 text-[10px] font-mono text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900/80 transition-colors flex items-center gap-2 cursor-pointer font-bold uppercase tracking-wider"
+                            >
+                              <span>📸</span>
+                              <span>Set Beat Thumbnail</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsMenuOpen(false);
+                              setIsJsonViewOpen(true);
+                            }}
+                            className="w-full text-left px-3 py-2 text-[10px] font-mono text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900/80 transition-colors flex items-center gap-2 cursor-pointer font-bold uppercase tracking-wider border-t border-zinc-900"
+                          >
+                            <span>🔍</span>
+                            <span>View Raw JSON</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="relative aspect-video rounded overflow-hidden bg-black border border-zinc-900 shadow">
+                {previewMode === 'video' ? (
+                  <video 
+                    ref={videoRef}
+                    onTimeUpdate={handleVideoTimeUpdate}
+                    src={activeSceneVideoSrc} 
+                    className="w-full h-full object-contain" 
+                    controls 
+                    preload="metadata" 
+                  />
+                ) : (
+                  <div className="w-full h-full relative bg-zinc-950 flex flex-col items-center justify-center">
+                    {activeBeat?.thumbnailUrl ? (
+                      <img 
+                        src={activeBeat.thumbnailUrl} 
+                        className="w-full h-full object-contain"
+                        alt={`Storyboard beat ${activeBeat.scene_number}`}
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-2 text-zinc-500 p-4 text-center">
+                        <span className="text-[20px]">🖼️</span>
+                        <span className="text-[10px] font-mono font-semibold uppercase tracking-wider">No Beat Thumbnail</span>
+                        <span className="text-[10px] text-zinc-650 max-w-[200px] leading-normal font-medium">
+                          Run AI Video Analysis to automatically capture a storyboard thumbnail for each beat.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Graph Bars Overlay */}
+                {activeBeat && (
+                  <div className="absolute top-1 right-1 z-30 flex items-end gap-2 bg-black/60 backdrop-blur-xs p-1.5 rounded select-none">
+                    {/* Tension Bar */}
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="w-2.5 h-[40px] bg-transparent border-none rounded-none flex items-end relative" title={`Dramatic Tension: ${activeBeat.metrics.tension}/5`}>
+                        <div 
+                          className="w-full rounded-none transition-all duration-500 ease-out"
+                          style={{
+                            height: `${(activeBeat.metrics.tension / 5) * 100}%`,
+                            backgroundColor: chartColors.tension || "#f43f5e"
+                          }}
+                        />
+                      </div>
+                      <MetricSymbol 
+                        name="tension" 
+                        className="w-3 h-3 mt-1 shrink-0" 
+                        style={{ color: chartColors.tension || "#f43f5e" }} 
+                      />
+                    </div>
+
+                    {/* Suspense Bar */}
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="w-2.5 h-[40px] bg-transparent border-none rounded-none flex items-end relative" title={`Anticipatory Suspense: ${activeBeat.metrics.suspense}/5`}>
+                        <div 
+                          className="w-full rounded-none transition-all duration-500 ease-out"
+                          style={{
+                            height: `${(activeBeat.metrics.suspense / 5) * 100}%`,
+                            backgroundColor: chartColors.suspense || "#a855f7"
+                          }}
+                        />
+                      </div>
+                      <MetricSymbol 
+                        name="suspense" 
+                        className="w-3 h-3 mt-1 shrink-0" 
+                        style={{ color: chartColors.suspense || "#a855f7" }} 
+                      />
+                    </div>
+
+                    {/* Anticipation Bar */}
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="w-2.5 h-[40px] bg-transparent border-none rounded-none flex items-end relative" title={`Operational Stakes/Anticipation: ${activeBeat.metrics.anticipation}/5`}>
+                        <div 
+                          className="w-full rounded-none transition-all duration-500 ease-out"
+                          style={{
+                            height: `${(activeBeat.metrics.anticipation / 5) * 100}%`,
+                            backgroundColor: chartColors.anticipation || "#06b6d4"
+                          }}
+                        />
+                      </div>
+                      <MetricSymbol 
+                        name="anticipation" 
+                        className="w-3 h-3 mt-1 shrink-0" 
+                        style={{ color: chartColors.anticipation || "#06b6d4" }} 
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Dialogue Overlay */}
+                {showDialogueOverlay && activeBeat && activeBeatDialogClips.length > 0 && (
+                  <div className="absolute bottom-10 left-3 right-3 bg-zinc-950/85 backdrop-blur-md border border-zinc-800/80 rounded-xl p-2.5 z-20 flex flex-col gap-1.5 max-h-[38%] shadow-2xl overflow-hidden select-text pointer-events-auto">
+                    {/* Header */}
+                    <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-1 shrink-0">
+                      <div className="flex items-center gap-1.5">
+                        <MessageSquare size={11} className="text-indigo-400" />
+                        <span className="text-[9px] font-mono font-bold tracking-widest text-zinc-300 uppercase">Dialogue Overlay</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-wider font-semibold">
+                          {activeBeatDialogClips.length} {activeBeatDialogClips.length === 1 ? 'Line' : 'Lines'}
+                        </span>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          disabled={(!onOpenScriptEditor && !setWorkspaceViewMode) || !activeScene?.id}
+                          onClick={() => {
+                            const dialogClip = activeBeatDialogClips[0];
+                            if (dialogClip && activeScene?.id) {
+                              onOpenScriptEditor?.(dialogClip.id, activeScene.id);
+                            } else {
+                              setWorkspaceViewMode?.('editor');
+                            }
+                          }}
+                          className="h-5 px-1.5 text-[8px] font-mono font-bold uppercase tracking-widest text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 rounded"
+                        >
+                          Edit
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Scrollable list of dialogue lines */}
+                    <div className="overflow-y-auto space-y-1.5 pr-0.5 scrollbar-thin scrollbar-thumb-zinc-800 max-h-full">
+                      {activeBeatDialogClips.map((clip) => {
+                        const char = characters.find(
+                          (ch) =>
+                            ch.id === clip.characterId ||
+                            ch.name.toLowerCase() === clip.character?.toLowerCase()
+                        );
+                        const charName = char?.name || clip.character || "Hero";
+                        const charImage = char?.image;
+
+                        return (
+                          <div 
+                            key={clip.id}
+                            className="flex items-start gap-2 bg-zinc-900/35 border border-zinc-900/50 rounded-lg p-1.5 transition-colors hover:border-zinc-850 hover:bg-zinc-900/50"
+                          >
+                            {/* Character Headshot */}
+                            <div className="w-6 h-6 rounded-full bg-zinc-950 border border-zinc-850 overflow-hidden flex items-center justify-center shrink-0 shadow-inner">
+                              {charImage ? (
+                                <img src={charImage} alt={charName} className="w-full h-full object-cover" />
+                              ) : (
+                                <User className="w-3.5 h-3.5 text-zinc-550" />
+                              )}
+                            </div>
+
+                            {/* Speech Bubble */}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[9px] font-mono font-bold text-indigo-350 uppercase tracking-wider flex items-center gap-1">
+                                {charName}
+                              </div>
+                              <p className="text-[10.5px] text-zinc-200 mt-0.5 leading-normal select-text">
+                                {clip.description || clip.name}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 flex items-center justify-between text-[10px] font-mono text-zinc-400 px-1 font-semibold border-t border-zinc-900 pt-3">
+                <span className="truncate max-w-[200px]">{selectedVideoFile?.name || activeScene?.name || "scene-video.mp4"}</span>
+                <span className="text-[8px] text-zinc-550 uppercase tracking-wider font-bold">Active Recording</span>
+              </div>
+            </div>
+          )
+        );
+      case 'analysis':
+        return (
+          activeSceneVideoSrc && activeBeat && (
+            <div 
+              key="analysis"
+              draggable={isDraggable === 'analysis'}
+              onDragStart={(e) => handleDragStart(e, 'analysis', col)}
+              onDragOver={(e) => handleDragOverCard(e, 'analysis', col)}
+              onDragEnd={handleDragEnd}
+              className={cn(
+                "transition-all duration-300",
+                draggedItem === 'analysis' ? "opacity-35" : ""
+              )}
+            >
+              {renderActiveBeatAnalysis()}
+            </div>
+          )
+        );
+      case 'beatsList':
+        return (
+          <div 
+            key="beatsList"
+            draggable={isDraggable === 'beatsList'}
+            onDragStart={(e) => handleDragStart(e, 'beatsList', col)}
+            onDragOver={(e) => handleDragOverCard(e, 'beatsList', col)}
+            onDragEnd={handleDragEnd}
+            className={cn(
+              "bg-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4 select-none relative transition-all duration-300",
+              draggedItem === 'beatsList' ? "opacity-35 border-indigo-500/35" : ""
+            )}
+          >
+            <div className="flex items-center justify-between pb-3.5 border-b border-zinc-900 mb-1">
+              <div className="flex items-center gap-2">
+                {!isReadOnly && (
+                  <div
+                    onMouseDown={() => setIsDraggable('beatsList')}
+                    onMouseUp={() => setIsDraggable(null)}
+                    className="cursor-grab active:cursor-grabbing p-1 text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-900 transition-colors select-none"
+                    title="Drag to reorder"
+                  >
+                    <GripVertical size={13} />
+                  </div>
+                )}
+                <span className="text-[10px] font-mono font-bold tracking-widest text-zinc-400 uppercase">
+                  Script Beats & Timeline Arcs
+                </span>
+              </div>
+            </div>
+            
+            <ScriptBeatsList
+              report={report}
+              activeSceneIndex={activeSceneIndex}
+              setActiveSceneIndex={setActiveSceneIndex}
+              beatListRef={beatListRef}
+              handleListScroll={handleListScroll}
+              height={beatsListHeight}
+              scrollTrigger={scrollTrigger}
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              onUpdateBeatThumbnail={handleUpdateBeatThumbnail}
+              selectedVideoFile={selectedVideoFile}
+              isReadOnly={isReadOnly}
+            />
+            
+            <div
+              onPointerDown={handlePointerDown}
+              draggable={false}
+              onDragStart={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              className="w-full py-2 flex items-center justify-center cursor-ns-resize group select-none relative z-20"
+            >
+              <div className="w-full h-[1px] bg-zinc-850 group-hover:bg-indigo-500/50 group-active:bg-indigo-500 transition-colors" />
+              <div className="absolute px-2.5 py-0.5 bg-zinc-950 border border-zinc-850 rounded-full flex items-center justify-center space-x-1 opacity-70 group-hover:opacity-100 transition-all shadow-md">
+                <span className="w-1 h-1 rounded-full bg-zinc-650" />
+                <span className="w-1 h-1 rounded-full bg-zinc-650" />
+                <span className="w-1 h-1 rounded-full bg-zinc-650" />
+              </div>
+            </div>
+          </div>
+        );
+      case 'chart':
+        return (
+          <div 
+            key="chart"
+            draggable={isDraggable === 'chart'}
+            onDragStart={(e) => handleDragStart(e, 'chart', col)}
+            onDragOver={(e) => handleDragOverCard(e, 'chart', col)}
+            onDragEnd={handleDragEnd}
+            className={cn(
+              "bg-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4 select-none relative transition-all duration-300",
+              draggedItem === 'chart' ? "opacity-35 border-indigo-500/35" : ""
+            )}
+          >
+            <div className="flex items-center justify-between pb-3.5 border-b border-zinc-900 mb-1">
+              <div className="flex items-center gap-2">
+                {!isReadOnly && (
+                  <div
+                    onMouseDown={() => setIsDraggable('chart')}
+                    onMouseUp={() => setIsDraggable(null)}
+                    className="cursor-grab active:cursor-grabbing p-1 text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-900 transition-colors select-none"
+                    title="Drag to reorder"
+                  >
+                    <GripVertical size={13} />
+                  </div>
+                )}
+                <span className="text-[10px] font-mono font-bold tracking-widest text-zinc-400 uppercase">
+                  Narrative Arcs Visualization
+                </span>
+              </div>
+            </div>
+
+            <TensionChart
+              data={chartData}
+              activeIndex={activeSceneIndex}
+              onSelectScene={handleSelectScene}
+              colors={chartColors}
+              activeTab={activeTab}
+              onUpdateValue={handleUpdateMetricValue}
+            />
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const renderActiveBeatDialogueOnly = () => {
+    if (!activeBeat) return null;
+
     return (
-      <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col select-none animate-fade-in">
-        <div className="flex items-center justify-between gap-3 pb-3 border-b border-zinc-900 mb-3.5">
+      <div className="flex flex-col gap-3 border-t border-zinc-900 pt-5 mt-4">
+        <div className="flex items-center justify-between gap-3 mb-1">
           <div className="flex items-center space-x-2">
             <MessageSquare size={13} className="text-indigo-400" />
             <span className="text-[10px] font-mono font-bold tracking-widest text-zinc-400 uppercase">
-              Dialogue in Beat {activeBeat?.scene_number}
+              Dialogue Transcript
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[8.5px] font-mono text-zinc-550 uppercase tracking-wider font-semibold">
+            <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider font-semibold">
               {activeBeatDialogClips.length} {activeBeatDialogClips.length === 1 ? 'Line' : 'Lines'}
             </span>
             <Button
               type="button"
               size="xs"
               variant="outline"
-              disabled={!onOpenScriptEditor || !activeScene?.id || activeBeatDialogClips.length === 0}
+              disabled={(!onOpenScriptEditor && !setWorkspaceViewMode) || !activeScene?.id}
               onClick={() => {
                 const dialogClip = activeBeatDialogClips[0];
-                if (!dialogClip || !activeScene?.id) return;
-                onOpenScriptEditor?.(dialogClip.id, activeScene.id);
+                if (dialogClip && activeScene?.id) {
+                  onOpenScriptEditor?.(dialogClip.id, activeScene.id);
+                } else {
+                  setWorkspaceViewMode?.('editor');
+                }
               }}
               className="border-indigo-500/30 bg-indigo-500/10 text-[9px] font-mono font-bold uppercase tracking-widest text-indigo-200 hover:bg-indigo-500/20 hover:text-indigo-100"
             >
@@ -900,55 +1922,235 @@ export function AnalysisWorkspace({
           </div>
         </div>
 
-        <div className="max-h-[300px] overflow-y-auto space-y-2.5 pr-1 scrollbar-thin scrollbar-thumb-zinc-800">
-          {activeBeatDialogClips.map((clip) => {
-            const char = characters.find(
-              (ch) =>
-                ch.id === clip.characterId ||
-                ch.name.toLowerCase() === clip.character?.toLowerCase()
-            );
-            const charName = char?.name || clip.character || "Hero";
-            const charImage = char?.image;
+        {activeBeatDialogClips.length > 0 ? (
+          <div 
+            style={{ height: `${dialogueHeight}px` }}
+            className="overflow-y-auto space-y-3 pr-1 scrollbar-thin scrollbar-thumb-zinc-800"
+          >
+            {activeBeatDialogClips.map((clip) => {
+              const char = characters.find(
+                (ch) =>
+                  ch.id === clip.characterId ||
+                  ch.name.toLowerCase() === clip.character?.toLowerCase()
+              );
+              const charName = char?.name || clip.character || "Hero";
+              const charImage = char?.image;
 
-            return (
-              <div 
-                key={clip.id}
-                className="flex items-start gap-3 bg-zinc-900/20 border border-zinc-900/60 rounded-xl p-3 transition-colors hover:border-zinc-800 hover:bg-zinc-900/30"
-              >
-                {/* Character Headshot */}
-                <div className="w-16 h-16 rounded-full bg-zinc-950 border border-zinc-800 overflow-hidden flex items-center justify-center shrink-0 shadow-inner">
-                  {charImage ? (
-                    <img src={charImage} alt={charName} className="w-full h-full object-cover" />
-                  ) : (
-                    <User className="w-8 h-8 text-zinc-500" />
-                  )}
-                </div>
-
-                {/* Speech Bubble */}
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-mono font-bold text-indigo-400 uppercase tracking-wider">
-                    {charName}
+              return (
+                <div 
+                  key={clip.id}
+                  className="flex items-start gap-3 bg-zinc-900/30 border border-zinc-900/60 rounded-xl p-3.5 transition-colors hover:border-zinc-800 hover:bg-zinc-900/45"
+                >
+                  {/* Character Headshot */}
+                  <div className="w-11 h-11 rounded-full bg-zinc-950 border border-zinc-800 overflow-hidden flex items-center justify-center shrink-0 shadow-inner">
+                    {charImage ? (
+                      <img src={charImage} alt={charName} className="w-full h-full object-cover" />
+                    ) : (
+                      <User className="w-5 h-5 text-zinc-500" />
+                    )}
                   </div>
-                  <p className="text-sm text-zinc-200 mt-1.5 leading-relaxed pl-0.5 select-text">
-                    {clip.description || clip.name}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
 
-          {activeBeatDialogClips.length === 0 && (
-            <div className="py-8 flex flex-col items-center justify-center text-center gap-2 select-none">
-              <MessageSquare className="w-8 h-8 text-zinc-800 animate-pulse" />
-              <div className="text-[9.5px] font-mono text-zinc-650 uppercase tracking-widest mt-1">
-                No dialogue registered
-              </div>
-              <p className="text-[8px] text-zinc-700 max-w-[200px] leading-relaxed">
-                Add dialogue clips in the editor timeline to visualize speech bubbles in this beat.
-              </p>
-            </div>
-          )}
+                  {/* Speech Bubble */}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] font-mono font-bold text-indigo-350 uppercase tracking-wider">
+                      {charName}
+                    </div>
+                    <p className="text-xs text-zinc-200 mt-1 leading-relaxed select-text">
+                      {clip.description || clip.name}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-[10px] text-zinc-550 italic px-1 py-1 font-mono">
+            No dialogue in this beat.
+          </div>
+        )}
+
+        {/* Horizontal Resize Divider */}
+        <div
+          onPointerDown={handleDialogueResizePointerDown}
+          draggable={false}
+          onDragStart={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          className="w-full py-2 flex items-center justify-center cursor-ns-resize group select-none relative z-20"
+        >
+          <div className="w-full h-[1px] bg-zinc-850 group-hover:bg-indigo-500/50 group-active:bg-indigo-500 transition-colors" />
+          <div className="absolute px-2.5 py-0.5 bg-zinc-950 border border-zinc-850 rounded-full flex items-center justify-center space-x-1 opacity-70 group-hover:opacity-100 transition-all shadow-md">
+            <span className="w-1 h-1 rounded-full bg-zinc-650" />
+            <span className="w-1 h-1 rounded-full bg-zinc-650" />
+            <span className="w-1 h-1 rounded-full bg-zinc-650" />
+          </div>
         </div>
+      </div>
+    );
+  };
+
+  const renderActiveBeatAnalysis = () => {
+    if (!activeBeat) return null;
+
+    const plotPoint = activeBeat.narrative_elements?.plot_point;
+    const summaryText = activeBeat.summary || activeBeat.text_segment || "";
+    const speakers = activeBeat.characters || [];
+    const startTime = activeBeat.start ?? 0;
+    const endTime = activeBeat.end ?? 0;
+
+    return (
+      <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-6 select-none animate-fade-in">
+        {/* Header Title & Plot Point badge */}
+        <div className="flex flex-col gap-2 pb-4 border-b border-zinc-900">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              {/* Drag Handle */}
+              {!isReadOnly && (
+                <div
+                  onMouseDown={() => setIsDraggable('analysis')}
+                  onMouseUp={() => setIsDraggable(null)}
+                  className="cursor-grab active:cursor-grabbing p-1 text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-900 transition-colors select-none"
+                  title="Drag to reorder"
+                >
+                  <GripVertical size={13} />
+                </div>
+              )}
+              <span className="text-[11px] font-mono font-bold tracking-widest text-indigo-400 uppercase">
+                Beat {activeBeat.scene_number} Inspector
+              </span>
+
+              {/* Beat Navigation Arrows */}
+              <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded px-1.5 py-0.5 select-none gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleSelectScene(activeSceneIndex - 1)}
+                  disabled={activeSceneIndex === 0}
+                  className="p-0.5 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent disabled:text-zinc-650 rounded transition-colors cursor-pointer flex items-center justify-center"
+                  title="Previous Beat"
+                >
+                  <ChevronLeft size={11} />
+                </button>
+                <span className="text-[9px] font-mono text-zinc-500 font-bold px-1 select-none">
+                  {activeSceneIndex + 1}/{report?.scenes?.length || 0}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSelectScene(activeSceneIndex + 1)}
+                  disabled={!report?.scenes || activeSceneIndex >= report.scenes.length - 1}
+                  className="p-0.5 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent disabled:text-zinc-650 rounded transition-colors cursor-pointer flex items-center justify-center"
+                  title="Next Beat"
+                >
+                  <ChevronRight size={11} />
+                </button>
+              </div>
+            </div>
+            {plotPoint && (
+              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-indigo-500/15 text-indigo-300 border border-indigo-500/25 shadow-[0_0_8px_rgba(99,102,241,0.15)]">
+                {plotPoint}
+              </span>
+            )}
+          </div>
+          <h3 className="text-base font-extrabold text-white tracking-tight mt-1 select-text">
+            {activeBeat.title || `Beat ${activeBeat.scene_number}`}
+          </h3>
+          <div className="flex flex-wrap items-center gap-3 text-[10px] font-mono text-zinc-400 mt-1 uppercase">
+            <span className="bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded">
+              Time: {startTime.toFixed(1)}s - {endTime.toFixed(1)}s
+            </span>
+            {speakers.length > 0 && (
+              <span className="bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded">
+                Speakers: {speakers.join(', ')}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Narrative Summary Description */}
+        {summaryText && (
+          <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+            <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest font-mono mb-2 flex items-center gap-2">
+              <ScrollText size={12} className="text-indigo-400" />
+              Narrative Summary
+            </h4>
+            <p className="text-xs text-zinc-200 leading-relaxed font-sans select-text">
+              {summaryText}
+            </p>
+          </div>
+        )}
+
+        {/* Analytics & Metrics Stack */}
+        <div className="space-y-3">
+          <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest font-mono px-1">
+            Metrics & Reasoning
+          </h4>
+
+          {/* Tension Metric */}
+          <div className="bg-zinc-900/20 border border-zinc-800 rounded-xl p-3 flex flex-col gap-2 transition-all">
+            <div className="flex items-center justify-between gap-2 border-b border-zinc-900/60 pb-1.5">
+              <span className="text-[10.5px] font-bold text-zinc-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
+                <MetricSymbol name="tension" className="w-2.5 h-2.5 shrink-0" style={{ color: chartColors.tension || "#f43f5e" }} />
+                Dramatic Tension
+              </span>
+              <span className="text-xs font-black bg-rose-500/10 text-rose-455 border border-rose-500/20 px-2 py-0.5 rounded font-mono">
+                {activeBeat.metrics?.tension}/5
+              </span>
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed select-text">
+              {activeBeat.metrics?.tension_reasoning || "No tension details available."}
+            </p>
+          </div>
+
+          {/* Suspense Metric */}
+          <div className="bg-zinc-900/20 border border-zinc-800 rounded-xl p-3 flex flex-col gap-2 transition-all">
+            <div className="flex items-center justify-between gap-2 border-b border-zinc-900/60 pb-1.5">
+              <span className="text-[10.5px] font-bold text-zinc-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
+                <MetricSymbol name="suspense" className="w-2.5 h-2.5 shrink-0" style={{ color: chartColors.suspense || "#a855f7" }} />
+                Anticipatory Suspense
+              </span>
+              <span className="text-xs font-black bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-0.5 rounded font-mono">
+                {activeBeat.metrics?.suspense}/5
+              </span>
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed select-text">
+              {activeBeat.metrics?.suspense_reasoning || "No suspense details available."}
+            </p>
+          </div>
+
+          {/* Stakes / Anticipation Metric */}
+          <div className="bg-zinc-900/20 border border-zinc-800 rounded-xl p-3 flex flex-col gap-2 transition-all">
+            <div className="flex items-center justify-between gap-2 border-b border-zinc-900/60 pb-1.5">
+              <span className="text-[10.5px] font-bold text-zinc-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
+                <MetricSymbol name="anticipation" className="w-2.5 h-2.5 shrink-0" style={{ color: chartColors.anticipation || "#06b6d4" }} />
+                Operational Stakes
+              </span>
+              <span className="text-xs font-black bg-cyan-500/10 text-cyan-455 border border-cyan-500/20 px-2 py-0.5 rounded font-mono">
+                {activeBeat.metrics?.anticipation}/5
+              </span>
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed select-text">
+              {activeBeat.metrics?.anticipation_reasoning || "No stakes details available."}
+            </p>
+          </div>
+        </div>
+
+        {/* Narrative Elements Stakes Raised */}
+        {activeBeat.narrative_elements?.stakes_reasoning && (
+          <div className="bg-zinc-900/30 border border-zinc-800 rounded-xl p-4">
+            <h4 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest font-mono mb-2 flex items-center gap-2">
+              <AlertTriangle size={13} className={cn(activeBeat.narrative_elements.stakes_raised ? "text-amber-450 animate-pulse" : "text-zinc-500")} />
+              Stakes Dynamics
+              {activeBeat.narrative_elements.stakes_raised && (
+                <span className="text-[8px] bg-amber-500/15 text-amber-400 border border-amber-500/25 px-1.5 py-0.5 rounded ml-1 font-mono font-bold uppercase tracking-wider">
+                  Raised
+                </span>
+              )}
+            </h4>
+            <p className="text-xs text-zinc-300 leading-relaxed select-text">
+              {activeBeat.narrative_elements.stakes_reasoning}
+            </p>
+          </div>
+        )}
       </div>
     );
   };
@@ -962,11 +2164,21 @@ export function AnalysisWorkspace({
         /* Standby State with Integrated Uploader Dashboard */
         <div className="max-w-6xl mx-auto my-6 grid grid-cols-1 md:grid-cols-12 gap-8 items-start relative z-10">
           <div className="md:col-span-5 bg-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-2xl">
-            <div className="flex items-center space-x-2 pb-3.5 border-b border-zinc-900 mb-4">
-              <Sparkles size={14} className="text-indigo-400" />
-              <h2 className="text-xs font-bold text-zinc-200 uppercase tracking-widest font-mono">
-                Multimodal Narrative Analyzer
-              </h2>
+            <div className="flex items-center justify-between pb-3.5 border-b border-zinc-900 mb-4">
+              <div className="flex items-center space-x-2">
+                <Sparkles size={14} className="text-indigo-400" />
+                <h2 className="text-xs font-bold text-zinc-200 uppercase tracking-widest font-mono">
+                  Multimodal Narrative Analyzer
+                </h2>
+              </div>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => setIsJsonViewOpen(true)}
+                className="border-zinc-850 hover:bg-zinc-900 text-zinc-400 hover:text-zinc-200 text-[9px] font-mono uppercase font-bold tracking-widest h-6 cursor-pointer"
+              >
+                Raw JSON
+              </Button>
             </div>
             {renderAnalyzerUI()}
           </div>
@@ -1004,106 +2216,26 @@ export function AnalysisWorkspace({
       ) : (
         /* Active Dashboard Grid */
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 relative z-10">
-          {/* Left Column: Metrics, Analyzer Collapsible & Logs */}
-          <section className="lg:col-span-5 flex flex-col space-y-6">
-            {activeSceneVideoSrc && (
-              <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 shadow-xl select-none">
-                <div className="relative aspect-video rounded overflow-hidden bg-black border border-zinc-900 shadow">
-                  <video 
-                    ref={videoRef}
-                    onTimeUpdate={handleVideoTimeUpdate}
-                    src={activeSceneVideoSrc} 
-                    className="w-full h-full object-contain" 
-                    controls 
-                    preload="metadata" 
-                  />
-                </div>
-                <div className="mt-2.5 flex items-center justify-between text-[10px] font-mono text-zinc-400 px-1 font-semibold">
-                  <span className="truncate max-w-[200px]">{selectedVideoFile?.name || activeScene?.name || "scene-video.mp4"}</span>
-                  <span className="text-[8px] text-zinc-550 uppercase tracking-wider font-bold">Active Recording</span>
-                </div>
-              </div>
+          {/* Left Column: Draggable Widgets Area */}
+          <section 
+            onDragOver={(e) => handleDragOverColumn(e, 'left')}
+            className={cn(
+              "lg:col-span-5 flex flex-col space-y-6 min-h-[600px] rounded-2xl transition-all duration-300",
+              draggedItem ? "bg-zinc-950/25 border border-dashed border-zinc-850/60 p-2.5 -m-2.5" : ""
             )}
-
-            {activeSceneVideoSrc && renderActiveBeatDialogue()}
-
-            {/* Collapsible Video Analyzer Drawer */}
-            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 shadow-xl select-none">
-              <div 
-                className="flex items-center justify-between cursor-pointer pb-0.5"
-                onClick={() => setIsAnalyzerOpen(!isAnalyzerOpen)}
-              >
-                <div className="flex items-center space-x-2">
-                  <Sparkles size={14} className="text-indigo-400" />
-                  <span className="text-[10px] font-mono font-bold tracking-widest text-zinc-400 uppercase">
-                    AI Video Analyzer
-                  </span>
-                </div>
-                <div className="flex items-center space-x-1.5">
-                  <span className="text-[9px] font-mono text-zinc-500 truncate max-w-[120px]">
-                    {selectedVideoFile ? selectedVideoFile.name : "Ready to analyze"}
-                  </span>
-                  {isAnalyzerOpen ? <ChevronUp size={12} className="text-zinc-500" /> : <ChevronDown size={12} className="text-zinc-550" />}
-                </div>
-              </div>
-              
-              {(isAnalyzerOpen || isAnalyzing) && (
-                <div className="mt-4 pt-4 border-t border-zinc-900 select-text">
-                  {renderAnalyzerUI()}
-                </div>
-              )}
-            </div>
-
-            <SceneInspector activeScene={activeBeat} />
-            <ExecutiveSummary report={report} />
-            <AgentLogs logs={report.agent_logs} isLoading={isAnalyzing} elapsedTime={elapsedTime} />
-            <DiagnosticsPanel
-              apiHealth={apiHealth}
-              ollamaStatus={ollamaStatus}
-              isCheckingDiagnostics={isCheckingDiagnostics}
-              isDiagnosticsOpen={isDiagnosticsOpen}
-              setIsDiagnosticsOpen={setIsDiagnosticsOpen}
-              elapsedTime={elapsedTime}
-              isLoading={isAnalyzing}
-              checkDiagnostics={checkDiagnostics}
-              selectedOllamaModel={selectedOllamaModel}
-              setSelectedOllamaModel={setSelectedOllamaModel}
-            />
+          >
+            {dashboardLayout.left.map((item) => renderDashboardItem(item, 'left'))}
           </section>
 
-          {/* Right Column: Chart & Beats List */}
-          <section className="lg:col-span-7 flex flex-col">
-            <ScriptBeatsList
-              report={report}
-              activeSceneIndex={activeSceneIndex}
-              setActiveSceneIndex={setActiveSceneIndex}
-              beatListRef={beatListRef}
-              handleListScroll={handleListScroll}
-              height={beatsListHeight}
-              scrollTrigger={scrollTrigger}
-            />
-
-            {/* Resizable Divider */}
-            <div
-              onPointerDown={handlePointerDown}
-              className="w-full py-4 flex items-center justify-center cursor-ns-resize group select-none relative z-20"
-            >
-              {/* Divider Line */}
-              <div className="w-full h-[1px] bg-zinc-800/80 group-hover:bg-indigo-500/50 group-active:bg-indigo-500 transition-colors" />
-              {/* Grab Handle */}
-              <div className="absolute px-3 py-1 bg-zinc-950 border border-zinc-850 rounded-full flex items-center justify-center space-x-1 opacity-70 group-hover:opacity-100 group-hover:border-indigo-500/30 group-active:border-indigo-500 transition-all shadow-md">
-                <span className="w-1.5 h-1.5 rounded-full bg-zinc-650 group-hover:bg-indigo-400 animate-pulse" />
-                <span className="w-1.5 h-1.5 rounded-full bg-zinc-650 group-hover:bg-indigo-400" />
-                <span className="w-1.5 h-1.5 rounded-full bg-zinc-650 group-hover:bg-indigo-400" />
-              </div>
-            </div>
-
-            <TensionChart
-              data={chartData}
-              activeIndex={activeSceneIndex}
-              onSelectScene={handleSelectScene}
-              colors={chartColors}
-            />
+          {/* Right Column: Draggable Widgets Area */}
+          <section 
+            onDragOver={(e) => handleDragOverColumn(e, 'right')}
+            className={cn(
+              "lg:col-span-7 flex flex-col space-y-6 min-h-[600px] rounded-2xl transition-all duration-300",
+              draggedItem ? "bg-zinc-950/25 border border-dashed border-zinc-850/60 p-2.5 -m-2.5" : ""
+            )}
+          >
+            {dashboardLayout.right.map((item) => renderDashboardItem(item, 'right'))}
           </section>
         </div>
       )}
@@ -1141,6 +2273,94 @@ export function AnalysisWorkspace({
         report={report}
         handleChatSubmit={handleChatSubmit}
       />
+
+      {/* Raw JSON Viewer Modal */}
+      {isJsonViewOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in select-text">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-black/70 backdrop-blur-xs cursor-pointer" 
+            onClick={() => setIsJsonViewOpen(false)}
+          />
+          {/* Modal Content */}
+          <div className="relative bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-3xl h-[600px] flex flex-col shadow-2xl z-10 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b border-zinc-900 select-none">
+              <div>
+                <h3 className="text-xs font-bold text-zinc-200 uppercase tracking-widest font-mono">
+                  Raw Scene JSON Data
+                </h3>
+                <p className="text-[9px] text-zinc-550 font-mono mt-0.5">
+                  Inspect or copy timeline context clips, tracks, and analysis reports
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsJsonViewOpen(false)}
+                className="p-1 hover:bg-zinc-900 rounded text-zinc-400 hover:text-zinc-200 transition-all cursor-pointer flex items-center justify-center border border-transparent hover:border-zinc-850"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Tabs & Toolbar */}
+            <div className="flex items-center justify-between px-5 py-3 bg-zinc-900/10 border-b border-zinc-900 select-none">
+              <div className="flex bg-zinc-900/50 p-0.5 rounded-lg border border-zinc-800/60 space-x-0.5">
+                <button
+                  type="button"
+                  onClick={() => setJsonTab('analysis')}
+                  className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider font-mono transition-all cursor-pointer ${
+                    jsonTab === 'analysis'
+                      ? "bg-zinc-800 text-zinc-100 shadow-sm font-extrabold"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  📊 Analysis Report JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setJsonTab('timeline')}
+                  className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider font-mono transition-all cursor-pointer ${
+                    jsonTab === 'timeline'
+                      ? "bg-zinc-800 text-zinc-100 shadow-sm font-extrabold"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  }`}
+                >
+                  🎬 Timeline Layout JSON
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCopyJson}
+                className="px-3.5 py-1.5 bg-indigo-650 hover:bg-indigo-500 text-white rounded text-[10px] font-mono font-bold uppercase tracking-widest cursor-pointer transition-all flex items-center gap-1.5 shadow"
+              >
+                {copied ? (
+                  <>
+                    <Check size={11} />
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-xs">📋</span>
+                    <span>Copy JSON</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Code Body */}
+            <div className="flex-1 overflow-auto p-5 bg-black/40 font-mono text-[11px] text-zinc-400 leading-relaxed scrollbar-thin scrollbar-thumb-zinc-850">
+              <pre className="whitespace-pre-wrap select-text selection:bg-indigo-500/30">
+                {jsonTab === 'analysis' 
+                  ? JSON.stringify(report, null, 2) 
+                  : JSON.stringify(activeSceneData, null, 2)
+                }
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

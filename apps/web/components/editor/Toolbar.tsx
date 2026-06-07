@@ -2,18 +2,14 @@
 
 import React, { useEffect } from 'react';
 import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Plus, Trash2, Video, Image as ImageIcon, MessageSquare, User, ChevronDown, Monitor, Filter, Activity, Tags, Type } from 'lucide-react';
-import { Button, buttonVariants } from '@/components/ui/button';
-import { Slider } from '@/components/ui/slider';
-import { useTimeline, TimelineClip, ClipType } from '@/lib/timeline-context';
-import { cn } from '@/lib/utils';
-import { getGraphDisplayLabel, getGraphShortLabel } from '@/lib/graph-style';
-import { 
+import {
+  Button,
+  buttonVariants,
+  Slider,
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -21,7 +17,10 @@ import {
   DropdownMenuGroup,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
+} from "@storyboard/ui";
+import { useTimeline, TimelineClip, ClipType } from '@/lib/timeline-context';
+import { cn } from '@/lib/utils';
+import { getGraphDisplayLabel, getGraphShortLabel } from '@/lib/graph-style';
 
 const NOTE_TAG_FILTER_NONE = '__NO_NOTE_TAGS_VISIBLE__';
 const normalizeTagKey = (value: string | undefined) => value?.trim().toLowerCase() || '';

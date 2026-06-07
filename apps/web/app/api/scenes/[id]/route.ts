@@ -2,7 +2,8 @@ import { del, list } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 
 import type { TimelineProjectJson } from '@/lib/timeline-context';
-import { deleteSavedScene, getOtherSavedSceneProjects, getSavedScene, updateSavedSceneThumbnail } from '@/lib/saved-scenes-store';
+import { deleteSavedScene, getOtherSavedSceneProjects, getSavedScene, updateSavedSceneThumbnail, updateSavedScenePublishStatus } from '@/lib/saved-scenes-store';
+import { getAuthUser } from '@/lib/auth-store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -63,9 +64,14 @@ export async function GET(
       return NextResponse.json({ error: 'Invalid saved scene id.' }, { status: 400 });
     }
 
+    const user = await getAuthUser();
     const scene = await getSavedScene(id);
     if (!scene) {
       return NextResponse.json({ error: 'Saved scene was not found.' }, { status: 404 });
+    }
+
+    if (!user && !scene.isPublished) {
+      return NextResponse.json({ error: 'Forbidden. You must be logged in to view this scene.' }, { status: 403 });
     }
 
     return NextResponse.json({ scene });
@@ -80,15 +86,32 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const user = await getAuthUser();
+    if (!user || user.role === 'viewer') {
+      return NextResponse.json({ error: 'Forbidden. Editing access required.' }, { status: 403 });
+    }
+
     const { id } = await params;
 
     if (!isValidSceneId(id)) {
       return NextResponse.json({ error: 'Invalid saved scene id.' }, { status: 400 });
     }
 
-    const body = await request.json().catch(() => ({})) as { thumbnailUrl?: unknown };
-    const thumbnailUrl = typeof body.thumbnailUrl === 'string' ? body.thumbnailUrl.trim() : '';
+    const body = await request.json().catch(() => ({})) as { thumbnailUrl?: unknown; isPublished?: unknown };
 
+    if ('isPublished' in body) {
+      if (user.role !== 'admin') {
+        return NextResponse.json({ error: 'Forbidden. Admin role required to publish/unpublish scenes.' }, { status: 403 });
+      }
+      const isPublished = !!body.isPublished;
+      const scene = await updateSavedScenePublishStatus(id, isPublished);
+      if (!scene) {
+        return NextResponse.json({ error: 'Saved scene was not found.' }, { status: 404 });
+      }
+      return NextResponse.json({ scene });
+    }
+
+    const thumbnailUrl = typeof body.thumbnailUrl === 'string' ? body.thumbnailUrl.trim() : '';
     if (!thumbnailUrl || thumbnailUrl.length > 2048) {
       return NextResponse.json({ error: 'A valid thumbnail URL is required.' }, { status: 400 });
     }
@@ -100,8 +123,8 @@ export async function PATCH(
 
     return NextResponse.json({ scene });
   } catch (error) {
-    console.error('[SAVED_SCENE_THUMBNAIL_ERROR]', error);
-    return NextResponse.json({ error: savedSceneStorageErrorMessage(error, 'Unable to update the saved scene thumbnail.') }, { status: 500 });
+    console.error('[SAVED_SCENE_PATCH_ERROR]', error);
+    return NextResponse.json({ error: savedSceneStorageErrorMessage(error, 'Unable to update the saved scene metadata.') }, { status: 500 });
   }
 }
 
@@ -110,6 +133,11 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const user = await getAuthUser();
+    if (!user || user.role === 'viewer') {
+      return NextResponse.json({ error: 'Forbidden. Editing access required.' }, { status: 403 });
+    }
+
     const { id } = await params;
 
     if (!isValidSceneId(id)) {

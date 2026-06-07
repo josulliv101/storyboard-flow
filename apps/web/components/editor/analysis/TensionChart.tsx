@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -10,7 +10,9 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  useYAxisInverseScale,
 } from "recharts";
+import { MetricSymbol } from "./MetricSymbol";
 
 interface ChartDataPoint {
   name: string;
@@ -26,6 +28,8 @@ interface TensionChartProps {
   activeIndex: number;
   onSelectScene: (index: number) => void;
   colors?: Partial<Record<"tension" | "suspense" | "anticipation", string>>;
+  activeTab?: string;
+  onUpdateValue?: (sceneIndex: number, metric: 'tension' | 'suspense' | 'anticipation', newValue: number) => void;
 }
 
 const DEFAULT_COLORS = {
@@ -34,13 +38,96 @@ const DEFAULT_COLORS = {
   anticipation: "#06b6d4",
 };
 
-export default function TensionChart({ data, activeIndex, onSelectScene, colors }: TensionChartProps) {
+interface ChartDragHandlerProps {
+  draggingState: { index: number; metric: 'tension' | 'suspense' | 'anticipation' } | null;
+  onUpdateValue: (index: number, metric: 'tension' | 'suspense' | 'anticipation', val: number) => void;
+  onStopDrag: () => void;
+  data: ChartDataPoint[];
+}
+
+const ChartDragHandler = ({ draggingState, onUpdateValue, onStopDrag, data }: ChartDragHandlerProps) => {
+  const yInverse = useYAxisInverseScale();
+  const ref = useRef<SVGGElement>(null);
+
+  useEffect(() => {
+    if (!draggingState) return;
+
+    const initialPoint = data[draggingState.index];
+    let lastValue = initialPoint ? initialPoint[draggingState.metric] : null;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const element = ref.current;
+      if (!element || !yInverse) return;
+
+      const wrapper = element.closest(".recharts-wrapper");
+      if (!wrapper) return;
+
+      const rect = wrapper.getBoundingClientRect();
+      const chartY = e.clientY - rect.top;
+
+      const rawValue = yInverse(chartY) as number;
+      const snappedValue = Math.min(5, Math.max(0, Math.round(rawValue * 2) / 2));
+
+      if (snappedValue !== lastValue) {
+        lastValue = snappedValue;
+        onUpdateValue(draggingState.index, draggingState.metric, snappedValue);
+      }
+    };
+
+    const handleMouseUp = () => {
+      onStopDrag();
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [draggingState, yInverse, onUpdateValue, onStopDrag, data]);
+
+  return <g ref={ref} />;
+};
+
+const renderCustomLegend = (props: any) => {
+  const { payload } = props;
+  if (!payload) return null;
+  return (
+    <div className="flex justify-center items-center gap-6 mb-4 select-none">
+      {payload.map((entry: any, index: number) => {
+        const name = entry.value; // "Tension", "Suspense", "Anticipation"
+        return (
+          <div key={`legend-item-${index}`} className="flex items-center gap-2">
+            <MetricSymbol 
+              name={name} 
+              className="w-3.5 h-3.5 shrink-0 animate-fade-in" 
+              style={{ color: entry.color }} 
+            />
+            <span className="text-[10px] text-zinc-400 font-mono uppercase font-bold tracking-wider">
+              {name}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+export default function TensionChart({ data, activeIndex, onSelectScene, colors, activeTab, onUpdateValue }: TensionChartProps) {
   if (!data || data.length === 0) return null;
+
+  const [draggingState, setDraggingState] = useState<{ index: number; metric: 'tension' | 'suspense' | 'anticipation' } | null>(null);
 
   const chartColors = {
     ...DEFAULT_COLORS,
     ...colors,
   };
+
+  const activeLabel = activeTab?.startsWith("graph-") ? activeTab.replace("graph-", "") : null;
+  const showTension = !activeLabel || activeLabel === "tension";
+  const showSuspense = !activeLabel || activeLabel === "suspense";
+  const showAnticipation = !activeLabel || activeLabel === "anticipation" || activeLabel === "stakes";
 
   return (
     <div className="w-full h-80 bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-xl backdrop-blur-md">
@@ -113,115 +200,143 @@ export default function TensionChart({ data, activeIndex, onSelectScene, colors 
               }}
               cursor={{ stroke: "#3f3f46", strokeWidth: 1, strokeDasharray: "4 4" }}
             />
-            <Legend 
-              verticalAlign="top" 
-              height={36} 
-              iconType="circle"
-              iconSize={8}
-              wrapperStyle={{ fontSize: "10px", color: "#71717a", fontFamily: "monospace", textTransform: "uppercase" }}
-            />
+            <Legend content={renderCustomLegend} />
             
             {/* Tension Line */}
-            <Line
-              type="monotone"
-              dataKey="tension"
-              name="Tension"
-              stroke={chartColors.tension}
-              strokeWidth={3}
-              onClick={(data: any, index: any) => {
-                const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
-                if (targetIndex !== undefined) {
-                  onSelectScene(targetIndex);
-                }
-              }}
-              dot={(props: any) => {
-                const isActive = props.index === activeIndex;
-                return (
-                  <circle
-                    cx={props.cx}
-                    cy={props.cy}
-                    r={isActive ? 6 : 4}
-                    fill={isActive ? chartColors.tension : "#18181b"}
-                    stroke={chartColors.tension}
-                    strokeWidth={ isActive ? 3 : 2}
-                    className="cursor-pointer transition-all duration-200"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectScene(props.index);
-                    }}
-                  />
-                );
-              }}
-              activeDot={{ r: 8, fill: chartColors.tension, stroke: "#fff", strokeWidth: 2 }}
-            />
+            {showTension && (
+              <Line
+                type="monotone"
+                dataKey="tension"
+                name="Tension"
+                stroke={chartColors.tension}
+                strokeWidth={3}
+                onClick={(data: any, index: any) => {
+                  const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
+                  if (targetIndex !== undefined) {
+                    onSelectScene(targetIndex);
+                  }
+                }}
+                dot={(props: any) => {
+                  const isActive = props.index === activeIndex;
+                  return (
+                    <circle
+                      cx={props.cx}
+                      cy={props.cy}
+                      r={isActive ? 6 : 4}
+                      fill={isActive ? chartColors.tension : "#18181b"}
+                      stroke={chartColors.tension}
+                      strokeWidth={isActive ? 3 : 2}
+                      className={onUpdateValue ? "cursor-ns-resize" : "cursor-pointer"}
+                      onMouseDown={(e) => {
+                        if (!onUpdateValue) return;
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setDraggingState({ index: props.index, metric: 'tension' });
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectScene(props.index);
+                      }}
+                    />
+                  );
+                }}
+                activeDot={false}
+              />
+            )}
             
             {/* Suspense Line */}
-            <Line
-              type="monotone"
-              dataKey="suspense"
-              name="Suspense"
-              stroke={chartColors.suspense}
-              strokeWidth={3}
-              onClick={(data: any, index: any) => {
-                const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
-                if (targetIndex !== undefined) {
-                  onSelectScene(targetIndex);
-                }
-              }}
-              dot={(props: any) => {
-                const isActive = props.index === activeIndex;
-                return (
-                  <circle
-                    cx={props.cx}
-                    cy={props.cy}
-                    r={isActive ? 6 : 4}
-                    fill={isActive ? chartColors.suspense : "#18181b"}
-                    stroke={chartColors.suspense}
-                    strokeWidth={isActive ? 3 : 2}
-                    className="cursor-pointer transition-all duration-200"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectScene(props.index);
-                    }}
-                  />
-                );
-              }}
-              activeDot={{ r: 8, fill: chartColors.suspense, stroke: "#fff", strokeWidth: 2 }}
-            />
+            {showSuspense && (
+              <Line
+                type="monotone"
+                dataKey="suspense"
+                name="Suspense"
+                stroke={chartColors.suspense}
+                strokeWidth={3}
+                onClick={(data: any, index: any) => {
+                  const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
+                  if (targetIndex !== undefined) {
+                    onSelectScene(targetIndex);
+                  }
+                }}
+                dot={(props: any) => {
+                  const isActive = props.index === activeIndex;
+                  const h = isActive ? 6.5 : 4.5;
+                  const { cx, cy } = props;
+                  const points = `${cx},${cy - h} ${cx + h},${cy} ${cx},${cy + h} ${cx - h},${cy}`;
+                  return (
+                    <polygon
+                      points={points}
+                      fill={isActive ? chartColors.suspense : "#18181b"}
+                      stroke={chartColors.suspense}
+                      strokeWidth={isActive ? 3 : 2}
+                      className={onUpdateValue ? "cursor-ns-resize" : "cursor-pointer"}
+                      onMouseDown={(e) => {
+                        if (!onUpdateValue) return;
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setDraggingState({ index: props.index, metric: 'suspense' });
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectScene(props.index);
+                      }}
+                    />
+                  );
+                }}
+                activeDot={false}
+              />
+            )}
             
             {/* Anticipation Line */}
-            <Line
-              type="monotone"
-              dataKey="anticipation"
-              name="Anticipation"
-              stroke={chartColors.anticipation}
-              strokeWidth={3}
-              onClick={(data: any, index: any) => {
-                const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
-                if (targetIndex !== undefined) {
-                  onSelectScene(targetIndex);
-                }
-              }}
-              dot={(props: any) => {
-                const isActive = props.index === activeIndex;
-                return (
-                  <circle
-                    cx={props.cx}
-                    cy={props.cy}
-                    r={isActive ? 6 : 4}
-                    fill={isActive ? chartColors.anticipation : "#18181b"}
-                    stroke={chartColors.anticipation}
-                    strokeWidth={isActive ? 3 : 2}
-                    className="cursor-pointer transition-all duration-200"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectScene(props.index);
-                    }}
-                  />
-                );
-              }}
-              activeDot={{ r: 8, fill: chartColors.anticipation, stroke: "#fff", strokeWidth: 2 }}
-            />
+            {showAnticipation && (
+              <Line
+                type="monotone"
+                dataKey="anticipation"
+                name="Anticipation"
+                stroke={chartColors.anticipation}
+                strokeWidth={3}
+                onClick={(data: any, index: any) => {
+                  const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
+                  if (targetIndex !== undefined) {
+                    onSelectScene(targetIndex);
+                  }
+                }}
+                dot={(props: any) => {
+                  const isActive = props.index === activeIndex;
+                  const h = isActive ? 6.5 : 4.5;
+                  const { cx, cy } = props;
+                  const points = `${cx},${cy - h} ${cx + h},${cy + h} ${cx - h},${cy + h}`;
+                  return (
+                    <polygon
+                      points={points}
+                      fill={isActive ? chartColors.anticipation : "#18181b"}
+                      stroke={chartColors.anticipation}
+                      strokeWidth={isActive ? 3 : 2}
+                      className={onUpdateValue ? "cursor-ns-resize" : "cursor-pointer"}
+                      onMouseDown={(e) => {
+                        if (!onUpdateValue) return;
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setDraggingState({ index: props.index, metric: 'anticipation' });
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectScene(props.index);
+                      }}
+                    />
+                  );
+                }}
+                activeDot={false}
+              />
+            )}
+            {onUpdateValue && (
+              <ChartDragHandler
+                draggingState={draggingState}
+                onUpdateValue={onUpdateValue}
+                onStopDrag={() => setDraggingState(null)}
+                data={data}
+              />
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>

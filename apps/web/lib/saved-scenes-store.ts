@@ -11,6 +11,7 @@ export type SavedSceneSummary = {
   createdAt: string;
   updatedAt: string;
   thumbnailUrl?: string;
+  isPublished: boolean;
 };
 
 export type SavedScene = SavedSceneSummary & {
@@ -23,6 +24,7 @@ type SavedSceneRow = {
   project: TimelineProjectJson;
   created_at: Date | string;
   updated_at: Date | string;
+  is_published: boolean;
 };
 
 type SavedSceneSummaryRow = Omit<SavedSceneRow, 'project'> & {
@@ -37,7 +39,7 @@ const globals = globalThis as typeof globalThis & {
 };
 
 const SCENE_STORAGE_TIMEOUT_MS = 8_000;
-const SCENE_STORAGE_GLOBAL_VERSION = 2;
+const SCENE_STORAGE_GLOBAL_VERSION = 4;
 
 async function withSceneStorageTimeout<T>(operation: Promise<T>, label: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -93,7 +95,7 @@ function createSql(connectionString: string) {
   });
 }
 
-function getSql() {
+export function getSql() {
   if (!globals.savedScenesSql) {
     const [firstConnection] = getRequiredConnectionStrings();
     globals.savedScenesSql = createSql(firstConnection.connectionString);
@@ -111,7 +113,7 @@ async function closeSql(sql: ReturnType<typeof postgres>) {
   }
 }
 
-async function ensureSceneTable() {
+export async function ensureSceneTable() {
   if (globals.savedScenesStorageVersion !== SCENE_STORAGE_GLOBAL_VERSION) {
     const previousSql = globals.savedScenesSql;
     globals.savedScenesSql = undefined;
@@ -142,6 +144,16 @@ async function ensureSceneTable() {
               updated_at timestamptz not null default now()
             )
           `, `Scene storage initialization (${candidate.label})`);
+
+          // Migrate is_published column
+          await withSceneStorageTimeout(sql`
+            alter table timeline_private.saved_scenes
+            add column if not exists is_published boolean not null default false
+          `, `Migrating is_published column (${candidate.label})`).catch(() => {});
+
+          // Initialize auth tables as well to keep user and session schema verified
+          const { ensureAuthTables } = await import('./auth-store');
+          await withSceneStorageTimeout(ensureAuthTables(sql), `Auth storage initialization (${candidate.label})`);
 
           if (globals.savedScenesSql && globals.savedScenesSql !== sql) {
             await closeSql(globals.savedScenesSql);
@@ -186,10 +198,11 @@ function toSummary(row: SavedSceneSummaryRow): SavedSceneSummary {
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
     thumbnailUrl: row.thumbnail_url || undefined,
+    isPublished: !!row.is_published,
   };
 }
 
-export async function listSavedScenes(): Promise<SavedSceneSummary[]> {
+export async function listSavedScenes(onlyPublished = false): Promise<SavedSceneSummary[]> {
   await ensureSceneTable();
   const sql = getSql();
   const rows = await withSceneStorageTimeout(sql<SavedSceneSummaryRow[]>`
@@ -197,9 +210,11 @@ export async function listSavedScenes(): Promise<SavedSceneSummary[]> {
       id,
       name,
       project #>> '{scenes,0,thumbnailUrl}' as thumbnail_url,
+      is_published,
       created_at,
       updated_at
     from timeline_private.saved_scenes
+    ${onlyPublished ? sql`where is_published = true` : sql``}
     order by updated_at desc
     limit 30
   `, 'Loading saved scenes');
@@ -212,12 +227,13 @@ export async function saveScene(name: string, project: TimelineProjectJson): Pro
   const sql = getSql();
   const serializedProject = JSON.parse(JSON.stringify(project)) as postgres.JSONValue;
   const rows = await withSceneStorageTimeout(sql<SavedSceneSummaryRow[]>`
-    insert into timeline_private.saved_scenes (id, name, project)
-    values (${randomUUID()}, ${name}, ${sql.json(serializedProject)})
+    insert into timeline_private.saved_scenes (id, name, project, is_published)
+    values (${randomUUID()}, ${name}, ${sql.json(serializedProject)}, false)
     returning
       id,
       name,
       project #>> '{scenes,0,thumbnailUrl}' as thumbnail_url,
+      is_published,
       created_at,
       updated_at
   `, 'Saving scene');
@@ -229,7 +245,7 @@ export async function getSavedScene(id: string): Promise<SavedScene | null> {
   await ensureSceneTable();
   const sql = getSql();
   const rows = await withSceneStorageTimeout(sql<SavedSceneRow[]>`
-    select id, name, project, created_at, updated_at
+    select id, name, project, is_published, created_at, updated_at
     from timeline_private.saved_scenes
     where id = ${id}
     limit 1
@@ -239,7 +255,7 @@ export async function getSavedScene(id: string): Promise<SavedScene | null> {
   if (!row) return null;
 
   return {
-    ...toSummary({ ...row, thumbnail_url: getSceneThumbnailUrl(row.project) }),
+    ...toSummary({ ...row, thumbnail_url: getSceneThumbnailUrl(row.project), is_published: row.is_published }),
     project: row.project,
   };
 }
@@ -257,9 +273,31 @@ export async function updateSavedSceneThumbnail(id: string, thumbnailUrl: string
       id,
       name,
       project #>> '{scenes,0,thumbnailUrl}' as thumbnail_url,
+      is_published,
       created_at,
       updated_at
   `, 'Updating saved scene thumbnail');
+
+  return rows[0] ? toSummary(rows[0]) : null;
+}
+
+export async function updateSavedScenePublishStatus(id: string, isPublished: boolean): Promise<SavedSceneSummary | null> {
+  await ensureSceneTable();
+  const sql = getSql();
+  const rows = await withSceneStorageTimeout(sql<SavedSceneSummaryRow[]>`
+    update timeline_private.saved_scenes
+    set
+      is_published = ${isPublished},
+      updated_at = now()
+    where id = ${id}
+    returning
+      id,
+      name,
+      project #>> '{scenes,0,thumbnailUrl}' as thumbnail_url,
+      is_published,
+      created_at,
+      updated_at
+  `, 'Updating saved scene publish status');
 
   return rows[0] ? toSummary(rows[0]) : null;
 }

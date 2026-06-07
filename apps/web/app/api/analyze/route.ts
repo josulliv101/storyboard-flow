@@ -6,6 +6,7 @@ import path from "path";
 import os from "os";
 import { randomUUID } from "crypto";
 import { jsonrepair } from "jsonrepair";
+import { getAuthUser } from "@/lib/auth-store";
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -718,6 +719,11 @@ Each reason or description must be brief.`;
 }
 
 export async function POST(req: NextRequest) {
+  const user = await getAuthUser();
+  if (!user || user.role === 'viewer') {
+    return NextResponse.json({ error: 'Forbidden. Editing access required.' }, { status: 403 });
+  }
+
   let tempFilePath = "";
   try {
     let fileType = "video/mp4"; // Default

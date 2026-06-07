@@ -33,6 +33,7 @@ export interface SceneAnalysis {
   narrative_elements: NarrativeElements;
   start?: number;
   end?: number;
+  thumbnailUrl?: string;
   graph_tags?: GraphTag[];
   display_tags?: string[];
 }

@@ -18,6 +18,7 @@ export interface TimelineClip {
   characterId?: string; // Reference to character
   character?: string; // Legacy support
   thumbnail?: string;
+  thumbnailUrl?: string;
   src?: string;
   linkedGraphTrackIds?: string[];
   tags?: string[];
@@ -203,6 +204,13 @@ interface TimelineContextType extends TimelineState {
   moveClipToLast: (id: string) => void;
   tracks: TimelineTrack[];
   clips: TimelineClip[];
+  currentUser: { id: string; username: string; role: 'viewer' | 'editor' | 'admin' } | null;
+  setCurrentUser: React.Dispatch<React.SetStateAction<{ id: string; username: string; role: 'viewer' | 'editor' | 'admin' } | null>>;
+  isAuthChecking: boolean;
+  activeSavedSceneId: string | null;
+  setActiveSavedSceneId: React.Dispatch<React.SetStateAction<string | null>>;
+  activeSavedScenePublished: boolean;
+  setActiveSavedScenePublished: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const TimelineContext = createContext<TimelineContextType | undefined>(undefined);
@@ -259,13 +267,34 @@ const isLocalRuntimeMediaUrl = (value: string | undefined) => (
   value?.startsWith('blob:') || value?.startsWith('data:')
 );
 
-const stripRuntimeUrlsFromScenes = (sourceScenes: Scene[]) => sourceScenes.map(scene => ({
-  ...scene,
-  thumbnailUrl: isLocalRuntimeMediaUrl(scene.thumbnailUrl) ? undefined : scene.thumbnailUrl,
-  clips: scene.clips.map(({ src, ...clip }) => (
-    isLocalRuntimeMediaUrl(src) ? clip : { ...clip, src }
-  ))
-}));
+const stripRuntimeUrlsFromScenes = (sourceScenes: Scene[]) => sourceScenes.map(scene => {
+  let cleanedReport = scene.analysisReport;
+  if (cleanedReport?.scenes && Array.isArray(cleanedReport.scenes)) {
+    cleanedReport = {
+      ...cleanedReport,
+      scenes: cleanedReport.scenes.map((s: any) => ({
+        ...s,
+        thumbnailUrl: isLocalRuntimeMediaUrl(s.thumbnailUrl) ? undefined : s.thumbnailUrl
+      }))
+    };
+  }
+
+  return {
+    ...scene,
+    thumbnailUrl: isLocalRuntimeMediaUrl(scene.thumbnailUrl) ? undefined : scene.thumbnailUrl,
+    analysisReport: cleanedReport,
+    clips: scene.clips.map(({ src, thumbnailUrl, ...clip }) => {
+      const nextClip = { ...clip } as TimelineClip;
+      if (src && !isLocalRuntimeMediaUrl(src)) {
+        nextClip.src = src;
+      }
+      if (thumbnailUrl && !isLocalRuntimeMediaUrl(thumbnailUrl)) {
+        nextClip.thumbnailUrl = thumbnailUrl;
+      }
+      return nextClip;
+    })
+  };
+});
 
 const stripRuntimeUrlsFromCharacters = (sourceCharacters: Character[]) => sourceCharacters.map(({ image, ...character }) => (
   isLocalRuntimeMediaUrl(image) ? character : { ...character, image }
@@ -630,6 +659,30 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
   const [noteTagFilter, setNoteTagFilter] = useState<string[]>([]);
   const [workspaceViewMode, setWorkspaceViewMode] = useState<WorkspaceViewMode>('editor');
 
+  const [currentUser, setCurrentUser] = useState<{ id: string; username: string; role: 'viewer' | 'editor' | 'admin' } | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [activeSavedSceneId, setActiveSavedSceneId] = useState<string | null>(null);
+  const [activeSavedScenePublished, setActiveSavedScenePublished] = useState<boolean>(false);
+
+  useEffect(() => {
+    const fetchMe = async () => {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.user) {
+            setCurrentUser(data.user);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching user in provider:', err);
+      } finally {
+        setIsAuthChecking(false);
+      }
+    };
+    fetchMe();
+  }, []);
+
   const activeScene = useMemo(() => 
     scenes.find(s => s.id === activeSceneId) || scenes[0], 
   [scenes, activeSceneId]);
@@ -640,15 +693,10 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
   // Hydration
   useEffect(() => {
     async function hydrate() {
-      const savedScenesJson = localStorage.getItem('timeline-scenes');
-      const savedCharactersJson = localStorage.getItem('timeline-characters');
-      const savedActiveSceneId = localStorage.getItem('timeline-active-scene-id');
       const savedConfigJson = localStorage.getItem('timeline-config');
       const savedAppSettingsJson = localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
       let savedConfig: Record<string, unknown> | undefined;
       let savedAppSettings: Record<string, unknown> | undefined;
-      let hydratedSceneIds = INITIAL_SCENES.map(scene => scene.id);
-      let hydratedScenesForState: Scene[] = INITIAL_SCENES;
 
       if (savedConfigJson) {
         try {
@@ -666,68 +714,6 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      if (savedScenesJson) {
-        try {
-          const parsedScenes: Scene[] = JSON.parse(savedScenesJson);
-          hydratedSceneIds = parsedScenes.map(scene => scene.id);
-          const legacyDialogGridEnabled = savedConfig?.dedicatedDialogPanel === true;
-          const hydratedScenes = await Promise.all(parsedScenes.map(async scene => {
-            const hydratedClips = await Promise.all(scene.clips.map(async clip => {
-              const blob = await loadBlob(clip.id);
-              if (blob) return normalizeDialogClip({ ...clip, src: URL.createObjectURL(blob) });
-              return normalizeDialogClip(clip);
-            }));
-            const thumbnailBlob = await loadBlob(`${SCENE_THUMBNAIL_BLOB_PREFIX}-${scene.id}`);
-            return {
-              ...scene,
-              thumbnailUrl: thumbnailBlob ? URL.createObjectURL(thumbnailBlob) : scene.thumbnailUrl,
-              clips: hydratedClips,
-              tracks: normalizeTrackSettingsInScene(scene.tracks, legacyDialogGridEnabled),
-            };
-          }));
-          hydratedScenesForState = hydratedScenes;
-          setScenes(hydratedScenes);
-        } catch (e) {
-          console.error('Failed to hydrate scenes', e);
-        }
-      }
-
-      if (savedCharactersJson) {
-        try {
-          const parsedCharacters: Character[] = JSON.parse(savedCharactersJson);
-          const hydratedCharacters = await Promise.all(parsedCharacters.map(async char => {
-            const blob = await loadBlob(`char-${char.id}`);
-            if (blob) return { ...char, image: URL.createObjectURL(blob) };
-            return char;
-          }));
-          setCharacters(hydratedCharacters);
-        } catch (e) {
-          console.error('Failed to hydrate characters', e);
-        }
-      }
-
-      if (savedActiveSceneId) setActiveSceneId(savedActiveSceneId);
-
-      const savedCollapsedJson = localStorage.getItem('timeline-collapsed-tracks');
-      const savedDisabledJson = localStorage.getItem('timeline-disabled-tracks');
-      const savedMutedJson = localStorage.getItem('timeline-muted-tracks');
-      if (savedCollapsedJson) setCollapsedTrackIds(JSON.parse(savedCollapsedJson));
-      if (savedDisabledJson) {
-        const parsedDisabledTrackIds = JSON.parse(savedDisabledJson);
-        const disabledIds = Array.isArray(parsedDisabledTrackIds)
-          ? parsedDisabledTrackIds.filter((id): id is string => typeof id === 'string')
-          : [];
-        const hasOutputParent = hydratedScenesForState.some(scene =>
-          scene.tracks.some(track => !track.parentId)
-        );
-        const hasEnabledOutputParent = hydratedScenesForState.some(scene =>
-          scene.tracks.some(track => !track.parentId && !disabledIds.includes(track.id))
-        );
-
-        setDisabledTrackIds(hasOutputParent && !hasEnabledOutputParent ? [] : disabledIds);
-      }
-      if (savedMutedJson) setMutedTrackIds(JSON.parse(savedMutedJson));
-      
       const savedSettings = savedAppSettings || savedConfig;
       if (savedSettings) {
         if (isAspectRatio(savedSettings.aspectRatio)) setAspectRatio(savedSettings.aspectRatio);
@@ -738,10 +724,6 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
         if (isPreviewGroupLayout(savedSettings.previewGroupLayout)) setPreviewGroupLayout(savedSettings.previewGroupLayout);
         if (isPreviewSceneMode(savedSettings.previewSceneMode)) setPreviewSceneMode(savedSettings.previewSceneMode);
         if (isPreviewMediaLayout(savedSettings.previewMediaLayout)) setPreviewMediaLayout(savedSettings.previewMediaLayout);
-        if (Array.isArray(savedSettings.previewSceneIds)) {
-          const sceneIdSet = new Set(hydratedSceneIds);
-          setPreviewSceneIds(savedSettings.previewSceneIds.filter((id): id is string => typeof id === 'string' && sceneIdSet.has(id)));
-        }
         if (isAnalyticsOverlayStyle(savedSettings.analyticsOverlayStyle)) setAnalyticsOverlayStyle(savedSettings.analyticsOverlayStyle);
         if (typeof savedSettings.showNoteOverlayIcons === 'boolean') setShowNoteOverlayIcons(savedSettings.showNoteOverlayIcons);
         if (typeof savedSettings.compactNoteOverlays === 'boolean') setCompactNoteOverlays(savedSettings.compactNoteOverlays);
@@ -758,16 +740,10 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
   // Sync to local storage
   useEffect(() => {
     if (!isHydrated) return;
-    setLocalStorageItem('timeline-scenes', stripRuntimeUrlsFromScenes(normalizeDialogClipsInScenes(scenes)));
-    setLocalStorageItem('timeline-characters', stripRuntimeUrlsFromCharacters(characters));
-    setLocalStorageItem('timeline-active-scene-id', activeSceneId);
-    setLocalStorageItem('timeline-collapsed-tracks', collapsedTrackIds);
-    setLocalStorageItem('timeline-disabled-tracks', disabledTrackIds);
-    setLocalStorageItem('timeline-muted-tracks', mutedTrackIds);
     const appSettings = { aspectRatio, zoom, fps, playbackRate, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, workspaceViewMode };
     setLocalStorageItem('timeline-config', appSettings);
     setLocalStorageItem(APP_SETTINGS_STORAGE_KEY, appSettings);
-  }, [scenes, characters, activeSceneId, aspectRatio, zoom, fps, playbackRate, isHydrated, collapsedTrackIds, disabledTrackIds, mutedTrackIds, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, workspaceViewMode]);
+  }, [aspectRatio, zoom, fps, playbackRate, isHydrated, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, workspaceViewMode]);
 
   const playbackScenes = useMemo(() => {
     const previewSceneIdSet = previewSceneIds.length > 0 ? new Set(previewSceneIds) : undefined;
@@ -953,6 +929,7 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
       return { ...scene, clips: scene.clips.filter(c => c.id !== id) };
     }));
     deleteBlob(id);
+    deleteBlob(`beat-thumb-${id}`);
     setSelectedClipIds(prev => prev.filter(cid => cid !== id));
   }, []);
 
@@ -1032,7 +1009,10 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
       if (prev.length <= 1) return prev;
       const sceneToDelete = prev.find(s => s.id === id);
       if (sceneToDelete) {
-        sceneToDelete.clips.forEach(c => deleteBlob(c.id));
+        sceneToDelete.clips.forEach(c => {
+          deleteBlob(c.id);
+          deleteBlob(`beat-thumb-${c.id}`);
+        });
         deleteBlob(`${SCENE_THUMBNAIL_BLOB_PREFIX}-${sceneToDelete.id}`);
       }
       const filtered = prev.filter(s => s.id !== id);
@@ -1106,9 +1086,18 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     const hydrate = async () => {
       const hydratedScenes = await Promise.all(normalizedProject.scenes.map(async scene => {
         const hydratedClips = await Promise.all(scene.clips.map(async clip => {
+          let updatedClip = { ...clip };
           const blob = await loadBlob(clip.id);
-          if (blob) return normalizeDialogClip({ ...clip, src: URL.createObjectURL(blob) });
-          return normalizeDialogClip(clip);
+          if (blob) {
+            updatedClip.src = URL.createObjectURL(blob);
+          }
+          if (clip.type === 'note') {
+            const thumbBlob = await loadBlob(`beat-thumb-${clip.id}`);
+            if (thumbBlob) {
+              updatedClip.thumbnailUrl = URL.createObjectURL(thumbBlob);
+            }
+          }
+          return normalizeDialogClip(updatedClip);
         }));
         return {
           ...scene,
@@ -1166,9 +1155,18 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     const hydrate = async () => {
     const hydratedScenes = await Promise.all(remappedProject.scenes.map(async scene => {
       const hydratedClips = await Promise.all(scene.clips.map(async clip => {
+          let updatedClip = { ...clip };
           const blob = await loadBlob(clip.id);
-          if (blob) return normalizeDialogClip({ ...clip, src: URL.createObjectURL(blob) });
-          return normalizeDialogClip(clip);
+          if (blob) {
+            updatedClip.src = URL.createObjectURL(blob);
+          }
+          if (clip.type === 'note') {
+            const thumbBlob = await loadBlob(`beat-thumb-${clip.id}`);
+            if (thumbBlob) {
+              updatedClip.thumbnailUrl = URL.createObjectURL(thumbBlob);
+            }
+          }
+          return normalizeDialogClip(updatedClip);
         }));
         return {
           ...scene,
@@ -1328,6 +1326,9 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     await Promise.all(clipIdPairs.map(async ({ sourceId, targetId }) => {
       const blob = await loadBlob(sourceId);
       if (blob) await saveBlob(targetId, blob);
+
+      const thumbBlob = await loadBlob(`beat-thumb-${sourceId}`);
+      if (thumbBlob) await saveBlob(`beat-thumb-${targetId}`, thumbBlob);
     }));
   }, [scenes]);
 
@@ -1367,7 +1368,10 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
       });
 
       const clipsToDelete = scene.clips.filter(c => tracksToDelete.includes(c.trackId));
-      clipsToDelete.forEach(c => deleteBlob(c.id));
+      clipsToDelete.forEach(c => {
+        deleteBlob(c.id);
+        deleteBlob(`beat-thumb-${c.id}`);
+      });
 
       return {
         ...scene,
@@ -1514,14 +1518,22 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     moveClipToFirst,
     moveClipToLast,
     clips,
-    tracks
+    tracks,
+    currentUser,
+    setCurrentUser,
+    isAuthChecking,
+    activeSavedSceneId,
+    setActiveSavedSceneId,
+    activeSavedScenePublished,
+    setActiveSavedScenePublished
   }), [
     isHydrated, currentFrame, totalDuration, fps, playbackRate, zoom, scenes, activeSceneId,
     selectedClipIds, isPlaying, collapsedTrackIds, disabledTrackIds, mutedTrackIds, aspectRatio,
     snapLineFrame, isInteracting, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, workspaceViewMode, updateClip, selectClip, addClip, deleteClip, toggleTrackCollapse,
     toggleTrackDisable, toggleTrackMute, addScene, deleteScene, setActiveScene, updateScene,
     reorderScenes, exportProject, importProject, importProjectIntoCurrent, addTrack, addGraphTrack, addTrackGroup, duplicateTrackGroup, updateTrack, deleteTrack, moveClipToFirst, moveClipToLast, clips, tracks,
-    characters, addCharacter, updateCharacter, deleteCharacter, setAddGridItemPosition, setPreviewGroupLayout, setPreviewSceneMode, setPreviewSceneIds, setPreviewMediaLayout, togglePreviewScene, setAnalyticsOverlayStyle, setShowNoteOverlayIcons, setCompactNoteOverlays, setShowDialogPreviewUi, setShowSceneTitleUi, setNoteTagFilter, setWorkspaceViewMode, setPlaybackRate
+    characters, addCharacter, updateCharacter, deleteCharacter, setAddGridItemPosition, setPreviewGroupLayout, setPreviewSceneMode, setPreviewSceneIds, setPreviewMediaLayout, togglePreviewScene, setAnalyticsOverlayStyle, setShowNoteOverlayIcons, setCompactNoteOverlays, setShowDialogPreviewUi, setShowSceneTitleUi, setNoteTagFilter, setWorkspaceViewMode, setPlaybackRate,
+    currentUser, isAuthChecking, activeSavedSceneId, activeSavedScenePublished
   ]);
 
   return <TimelineContext.Provider value={value}>{children}</TimelineContext.Provider>;
