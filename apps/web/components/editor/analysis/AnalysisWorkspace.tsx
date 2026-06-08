@@ -19,6 +19,7 @@ import {
   ChevronLeft,
   ChevronRight,
   GripVertical,
+  GripHorizontal,
   Layers,
   ScrollText,
   UploadCloud,
@@ -257,7 +258,7 @@ export function AnalysisWorkspace({
     left: string[];
     right: string[];
   }>({
-    left: ['preview', 'analysis'],
+    left: ['preview', 'dialogue'],
     right: ['beatsList', 'chart'],
   });
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
@@ -1674,80 +1675,6 @@ export function AnalysisWorkspace({
                     </div>
                   </div>
                 )}
-
-                {/* Dialogue Overlay */}
-                {showDialogueOverlay && activeBeat && activeBeatDialogClips.length > 0 && (
-                  <div className="absolute bottom-10 left-3 right-3 bg-zinc-950/85 backdrop-blur-md border border-zinc-800/80 rounded-xl p-2.5 z-20 flex flex-col gap-1.5 max-h-[38%] shadow-2xl overflow-hidden select-text pointer-events-auto">
-                    {/* Header */}
-                    <div className="flex items-center justify-between gap-2 border-b border-zinc-900 pb-1 shrink-0">
-                      <div className="flex items-center gap-1.5">
-                        <MessageSquare size={11} className="text-indigo-400" />
-                        <span className="text-[9px] font-mono font-bold tracking-widest text-zinc-300 uppercase">Dialogue Overlay</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-wider font-semibold">
-                          {activeBeatDialogClips.length} {activeBeatDialogClips.length === 1 ? 'Line' : 'Lines'}
-                        </span>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="ghost"
-                          disabled={(!onOpenScriptEditor && !setWorkspaceViewMode) || !activeScene?.id}
-                          onClick={() => {
-                            const dialogClip = activeBeatDialogClips[0];
-                            if (dialogClip && activeScene?.id) {
-                              onOpenScriptEditor?.(dialogClip.id, activeScene.id);
-                            } else {
-                              setWorkspaceViewMode?.('editor');
-                            }
-                          }}
-                          className="h-5 px-1.5 text-[8px] font-mono font-bold uppercase tracking-widest text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 rounded"
-                        >
-                          Edit
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Scrollable list of dialogue lines */}
-                    <div className="overflow-y-auto space-y-1.5 pr-0.5 scrollbar-thin scrollbar-thumb-zinc-800 max-h-full">
-                      {activeBeatDialogClips.map((clip) => {
-                        const char = characters.find(
-                          (ch) =>
-                            ch.id === clip.characterId ||
-                            ch.name.toLowerCase() === clip.character?.toLowerCase()
-                        );
-                        const charName = char?.name || clip.character || "Hero";
-                        const charImage = char?.image;
-
-                        return (
-                          <div 
-                            key={clip.id}
-                            className="flex items-start gap-2 bg-zinc-900/35 border border-zinc-900/50 rounded-lg p-1.5 transition-colors hover:border-zinc-850 hover:bg-zinc-900/50"
-                          >
-                            {/* Character Headshot */}
-                            <div className="w-6 h-6 rounded-full bg-zinc-950 border border-zinc-850 overflow-hidden flex items-center justify-center shrink-0 shadow-inner">
-                              {charImage ? (
-                                <img src={charImage} alt={charName} className="w-full h-full object-cover" />
-                              ) : (
-                                <User className="w-3.5 h-3.5 text-zinc-550" />
-                              )}
-                            </div>
-
-                            {/* Speech Bubble */}
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[9px] font-mono font-bold text-indigo-350 uppercase tracking-wider flex items-center gap-1">
-                                {charName}
-                              </div>
-                              <p className="text-[10.5px] text-zinc-200 mt-0.5 leading-normal select-text">
-                                {clip.description || clip.name}
-                              </p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
               </div>
 
               <div className="mt-4 flex items-center justify-between text-[10px] font-mono text-zinc-400 px-1 font-semibold border-t border-zinc-900 pt-3">
@@ -1777,50 +1704,51 @@ export function AnalysisWorkspace({
         );
       case 'beatsList':
         return (
-          <div 
-            key="beatsList"
-            draggable={isDraggable === 'beatsList'}
-            onDragStart={(e) => handleDragStart(e, 'beatsList', col)}
-            onDragOver={(e) => handleDragOverCard(e, 'beatsList', col)}
-            onDragEnd={handleDragEnd}
-            className={cn(
-              "bg-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4 select-none relative transition-all duration-300",
-              draggedItem === 'beatsList' ? "opacity-35 border-indigo-500/35" : ""
-            )}
-          >
-            <div className="flex items-center justify-between pb-3.5 border-b border-zinc-900 mb-1">
-              <div className="flex items-center gap-2">
-                {!isReadOnly && (
-                  <div
-                    onMouseDown={() => setIsDraggable('beatsList')}
-                    onMouseUp={() => setIsDraggable(null)}
-                    className="cursor-grab active:cursor-grabbing p-1 text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-900 transition-colors select-none"
-                    title="Drag to reorder"
-                  >
-                    <GripVertical size={13} />
-                  </div>
-                )}
-                <span className="text-[10px] font-mono font-bold tracking-widest text-zinc-400 uppercase">
-                  Script Beats & Timeline Arcs
-                </span>
+          <React.Fragment key={item}>
+            <div 
+              draggable={isDraggable === 'beatsList'}
+              onDragStart={(e) => handleDragStart(e, 'beatsList', col)}
+              onDragOver={(e) => handleDragOverCard(e, 'beatsList', col)}
+              onDragEnd={handleDragEnd}
+              className={cn(
+                "bg-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4 select-none relative transition-all duration-300",
+                draggedItem === 'beatsList' ? "opacity-35 border-indigo-500/35" : ""
+              )}
+            >
+              <div className="flex items-center justify-between pb-3.5 border-b border-zinc-900 mb-1">
+                <div className="flex items-center gap-2">
+                  {!isReadOnly && (
+                    <div
+                      onMouseDown={() => setIsDraggable('beatsList')}
+                      onMouseUp={() => setIsDraggable(null)}
+                      className="cursor-grab active:cursor-grabbing p-1 text-zinc-500 hover:text-zinc-300 rounded hover:bg-zinc-900 transition-colors select-none"
+                      title="Drag to reorder"
+                    >
+                      <GripVertical size={13} />
+                    </div>
+                  )}
+                  <span className="text-[10px] font-mono font-bold tracking-widest text-zinc-400 uppercase">
+                    Script Beats & Timeline Arcs
+                  </span>
+                </div>
               </div>
+              
+              <ScriptBeatsList
+                report={report}
+                activeSceneIndex={activeSceneIndex}
+                setActiveSceneIndex={setActiveSceneIndex}
+                beatListRef={beatListRef}
+                handleListScroll={handleListScroll}
+                height={beatsListHeight}
+                scrollTrigger={scrollTrigger}
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                onUpdateBeatThumbnail={handleUpdateBeatThumbnail}
+                selectedVideoFile={selectedVideoFile}
+                isReadOnly={isReadOnly}
+              />
             </div>
-            
-            <ScriptBeatsList
-              report={report}
-              activeSceneIndex={activeSceneIndex}
-              setActiveSceneIndex={setActiveSceneIndex}
-              beatListRef={beatListRef}
-              handleListScroll={handleListScroll}
-              height={beatsListHeight}
-              scrollTrigger={scrollTrigger}
-              activeTab={activeTab}
-              setActiveTab={setActiveTab}
-              onUpdateBeatThumbnail={handleUpdateBeatThumbnail}
-              selectedVideoFile={selectedVideoFile}
-              isReadOnly={isReadOnly}
-            />
-            
+
             <div
               onPointerDown={handlePointerDown}
               draggable={false}
@@ -1828,16 +1756,14 @@ export function AnalysisWorkspace({
                 e.preventDefault();
                 e.stopPropagation();
               }}
-              className="w-full py-2 flex items-center justify-center cursor-ns-resize group select-none relative z-20"
+              className="w-full py-1 flex items-center justify-center cursor-ns-resize group select-none relative z-20 -my-4 animate-fade-in"
             >
-              <div className="w-full h-[1px] bg-zinc-850 group-hover:bg-indigo-500/50 group-active:bg-indigo-500 transition-colors" />
-              <div className="absolute px-2.5 py-0.5 bg-zinc-950 border border-zinc-850 rounded-full flex items-center justify-center space-x-1 opacity-70 group-hover:opacity-100 transition-all shadow-md">
-                <span className="w-1 h-1 rounded-full bg-zinc-650" />
-                <span className="w-1 h-1 rounded-full bg-zinc-650" />
-                <span className="w-1 h-1 rounded-full bg-zinc-650" />
+              <div className="w-full h-[1px] bg-zinc-850 group-hover:bg-indigo-500/50 group-active:bg-indigo-505 transition-colors" />
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 p-1 bg-zinc-950 border border-zinc-850/80 rounded-md flex items-center justify-center opacity-60 group-hover:opacity-100 transition-all shadow-md">
+                <GripHorizontal size={10} className="text-zinc-500 group-hover:text-zinc-350" />
               </div>
             </div>
-          </div>
+          </React.Fragment>
         );
       case 'chart':
         return (
@@ -1880,113 +1806,132 @@ export function AnalysisWorkspace({
             />
           </div>
         );
+      case 'dialogue':
+        return (
+          showDialogueOverlay && activeBeat && (
+            <div 
+              key="dialogue"
+              draggable={isDraggable === 'dialogue'}
+              onDragStart={(e) => handleDragStart(e, 'dialogue', col)}
+              onDragOver={(e) => handleDragOverCard(e, 'dialogue', col)}
+              onDragEnd={handleDragEnd}
+              className={cn(
+                "bg-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4 select-none relative transition-all duration-300",
+                draggedItem === 'dialogue' ? "opacity-35 border-indigo-500/35" : ""
+              )}
+            >
+              <div className="flex items-center justify-between pb-3.5 border-b border-zinc-900 mb-1 flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  {!isReadOnly && (
+                    <div
+                      onMouseDown={() => setIsDraggable('dialogue')}
+                      onMouseUp={() => setIsDraggable(null)}
+                      className="cursor-grab active:cursor-grabbing p-1 text-zinc-555 hover:text-zinc-350 rounded hover:bg-zinc-900 transition-colors select-none"
+                      title="Drag to reorder"
+                    >
+                      <GripVertical size={13} />
+                    </div>
+                  )}
+                  <span className="text-[10px] font-mono font-bold tracking-widest text-zinc-400 uppercase">
+                    Dialogue Transcript
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider font-semibold">
+                    {activeBeatDialogClips.length} {activeBeatDialogClips.length === 1 ? 'Line' : 'Lines'}
+                  </span>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={(!onOpenScriptEditor && !setWorkspaceViewMode) || !activeScene?.id}
+                    onClick={() => {
+                      const dialogClip = activeBeatDialogClips[0];
+                      if (dialogClip && activeScene?.id) {
+                        onOpenScriptEditor?.(dialogClip.id, activeScene.id);
+                      } else {
+                        setWorkspaceViewMode?.('editor');
+                      }
+                    }}
+                    className="border-indigo-500/30 bg-indigo-500/10 text-[9px] font-mono font-bold uppercase tracking-widest text-indigo-200 hover:bg-indigo-500/20 hover:text-indigo-100"
+                  >
+                    <ScrollText size={11} className="text-indigo-300 mr-1 shrink-0" />
+                    Dialog Editor
+                  </Button>
+                </div>
+              </div>
+
+              {activeBeatDialogClips.length > 0 ? (
+                <div 
+                  style={{ height: `${dialogueHeight}px` }}
+                  className="overflow-y-auto space-y-3 pr-1 scrollbar-thin scrollbar-thumb-zinc-800 select-text"
+                >
+                  {activeBeatDialogClips.map((clip) => {
+                    const char = characters.find(
+                      (ch) =>
+                        ch.id === clip.characterId ||
+                        ch.name.toLowerCase() === clip.character?.toLowerCase()
+                    );
+                    const charName = char?.name || clip.character || "Hero";
+                    const charImage = char?.image;
+
+                    return (
+                      <div 
+                        key={clip.id}
+                        className="flex items-start gap-4 bg-zinc-900/30 border border-zinc-900/60 rounded-xl p-3.5 transition-colors hover:border-zinc-850 hover:bg-zinc-900/45 animate-fade-in"
+                      >
+                        {/* Character Headshot */}
+                        <div className="w-14 h-14 rounded-full bg-zinc-950 border border-zinc-800 overflow-hidden flex items-center justify-center shrink-0 shadow-inner">
+                          {charImage ? (
+                            <img src={charImage} alt={charName} className="w-full h-full object-cover" />
+                          ) : (
+                            <User className="w-7 h-7 text-zinc-500" />
+                          )}
+                        </div>
+
+                        {/* Speech Bubble */}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[11px] font-mono font-bold text-indigo-350 uppercase tracking-wider">
+                            {charName}
+                          </div>
+                          <p className="text-sm text-zinc-100 mt-1 leading-relaxed select-text font-sans">
+                            {clip.description || clip.name}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-[10px] text-zinc-555 italic px-1 py-1 font-mono">
+                  No dialogue in this beat.
+                </div>
+              )}
+
+              {/* Horizontal Resize Divider */}
+              <div
+                onPointerDown={handleDialogueResizePointerDown}
+                draggable={false}
+                onDragStart={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                className="w-full py-2 flex items-center justify-center cursor-ns-resize group select-none relative z-20"
+              >
+                <div className="w-full h-[1px] bg-zinc-850 group-hover:bg-indigo-500/50 group-active:bg-indigo-500 transition-colors" />
+                <div className="absolute px-2.5 py-0.5 bg-zinc-950 border border-zinc-850 rounded-full flex items-center justify-center space-x-1 opacity-70 group-hover:opacity-100 transition-all shadow-md">
+                  <span className="w-1 h-1 rounded-full bg-zinc-650" />
+                  <span className="w-1 h-1 rounded-full bg-zinc-650" />
+                  <span className="w-1 h-1 rounded-full bg-zinc-650" />
+                </div>
+              </div>
+            </div>
+          )
+        );
       default:
         return null;
     }
-  };
-
-  const renderActiveBeatDialogueOnly = () => {
-    if (!activeBeat) return null;
-
-    return (
-      <div className="flex flex-col gap-3 border-t border-zinc-900 pt-5 mt-4">
-        <div className="flex items-center justify-between gap-3 mb-1">
-          <div className="flex items-center space-x-2">
-            <MessageSquare size={13} className="text-indigo-400" />
-            <span className="text-[10px] font-mono font-bold tracking-widest text-zinc-400 uppercase">
-              Dialogue Transcript
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider font-semibold">
-              {activeBeatDialogClips.length} {activeBeatDialogClips.length === 1 ? 'Line' : 'Lines'}
-            </span>
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              disabled={(!onOpenScriptEditor && !setWorkspaceViewMode) || !activeScene?.id}
-              onClick={() => {
-                const dialogClip = activeBeatDialogClips[0];
-                if (dialogClip && activeScene?.id) {
-                  onOpenScriptEditor?.(dialogClip.id, activeScene.id);
-                } else {
-                  setWorkspaceViewMode?.('editor');
-                }
-              }}
-              className="border-indigo-500/30 bg-indigo-500/10 text-[9px] font-mono font-bold uppercase tracking-widest text-indigo-200 hover:bg-indigo-500/20 hover:text-indigo-100"
-            >
-              <ScrollText data-icon="inline-start" />
-              Dialog Editor
-            </Button>
-          </div>
-        </div>
-
-        {activeBeatDialogClips.length > 0 ? (
-          <div 
-            style={{ height: `${dialogueHeight}px` }}
-            className="overflow-y-auto space-y-3 pr-1 scrollbar-thin scrollbar-thumb-zinc-800"
-          >
-            {activeBeatDialogClips.map((clip) => {
-              const char = characters.find(
-                (ch) =>
-                  ch.id === clip.characterId ||
-                  ch.name.toLowerCase() === clip.character?.toLowerCase()
-              );
-              const charName = char?.name || clip.character || "Hero";
-              const charImage = char?.image;
-
-              return (
-                <div 
-                  key={clip.id}
-                  className="flex items-start gap-3 bg-zinc-900/30 border border-zinc-900/60 rounded-xl p-3.5 transition-colors hover:border-zinc-800 hover:bg-zinc-900/45"
-                >
-                  {/* Character Headshot */}
-                  <div className="w-11 h-11 rounded-full bg-zinc-950 border border-zinc-800 overflow-hidden flex items-center justify-center shrink-0 shadow-inner">
-                    {charImage ? (
-                      <img src={charImage} alt={charName} className="w-full h-full object-cover" />
-                    ) : (
-                      <User className="w-5 h-5 text-zinc-500" />
-                    )}
-                  </div>
-
-                  {/* Speech Bubble */}
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[11px] font-mono font-bold text-indigo-350 uppercase tracking-wider">
-                      {charName}
-                    </div>
-                    <p className="text-xs text-zinc-200 mt-1 leading-relaxed select-text">
-                      {clip.description || clip.name}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="text-[10px] text-zinc-550 italic px-1 py-1 font-mono">
-            No dialogue in this beat.
-          </div>
-        )}
-
-        {/* Horizontal Resize Divider */}
-        <div
-          onPointerDown={handleDialogueResizePointerDown}
-          draggable={false}
-          onDragStart={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          className="w-full py-2 flex items-center justify-center cursor-ns-resize group select-none relative z-20"
-        >
-          <div className="w-full h-[1px] bg-zinc-850 group-hover:bg-indigo-500/50 group-active:bg-indigo-500 transition-colors" />
-          <div className="absolute px-2.5 py-0.5 bg-zinc-950 border border-zinc-850 rounded-full flex items-center justify-center space-x-1 opacity-70 group-hover:opacity-100 transition-all shadow-md">
-            <span className="w-1 h-1 rounded-full bg-zinc-650" />
-            <span className="w-1 h-1 rounded-full bg-zinc-650" />
-            <span className="w-1 h-1 rounded-full bg-zinc-650" />
-          </div>
-        </div>
-      </div>
+  };/div>
     );
   };
 

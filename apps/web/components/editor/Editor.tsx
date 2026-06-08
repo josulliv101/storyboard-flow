@@ -5230,7 +5230,7 @@ function EditorInner() {
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2 hover:opacity-90 transition-opacity" title="Back to Homepage">
             <div className="w-8 h-8 rounded-lg bg-[#f2f2ef] border border-zinc-200 flex items-center justify-center font-sans font-bold text-sm text-[#242c31] select-none shadow-sm">
-              S/W
+              S/<span className="text-indigo-600 dark:text-indigo-400">W</span>
             </div>
           </Link>
           <div className="flex items-center gap-4 text-xs font-medium text-zinc-500">

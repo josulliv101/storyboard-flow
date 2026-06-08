@@ -156,7 +156,7 @@ export default function HomePage() {
       <header className="h-16 border-b border-zinc-200 dark:border-zinc-900 bg-white/60 dark:bg-zinc-950/60 backdrop-blur-md flex items-center justify-between px-6 md:px-12 shrink-0 z-20">
         <Link href="/" className="flex items-center gap-2.5 hover:opacity-90 transition-opacity">
           <div className="w-9.5 h-9.5 rounded-xl bg-[#f2f2ef] border border-zinc-200 flex items-center justify-center font-sans font-bold text-base text-[#242c31] select-none shadow-sm">
-            S/W
+            S/<span className="text-indigo-600 dark:text-indigo-400">W</span>
           </div>
           <span className="font-bold text-base text-zinc-800 dark:text-zinc-100 tracking-tight">Storyboard <span className="text-indigo-600 dark:text-indigo-400">Workbench</span></span>
         </Link>
