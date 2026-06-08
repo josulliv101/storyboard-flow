@@ -252,6 +252,20 @@ export function AnalysisWorkspace({
   const beatListRef = useRef<HTMLDivElement | null>(null);
   const [beatsListHeight, setBeatsListHeight] = useState<number>(450);
   const [dialogueHeight, setDialogueHeight] = useState<number>(240);
+  const [highlightedBeatNumbers, setHighlightedBeatNumbers] = useState<Set<string>>(new Set());
+
+  const toggleHighlightBeat = useCallback((sceneNumber: number, key = "summary") => {
+    const highlightKey = `${sceneNumber}-${key}`;
+    setHighlightedBeatNumbers((prev) => {
+      const next = new Set(prev);
+      if (next.has(highlightKey)) {
+        next.delete(highlightKey);
+      } else {
+        next.add(highlightKey);
+      }
+      return next;
+    });
+  }, []);
 
   // Drag and drop states for dashboard items reordering
   const [dashboardLayout, setDashboardLayout] = useState<{
@@ -1745,6 +1759,8 @@ export function AnalysisWorkspace({
                 setActiveTab={setActiveTab}
                 onUpdateBeatThumbnail={handleUpdateBeatThumbnail}
                 selectedVideoFile={selectedVideoFile}
+                highlightedBeatNumbers={highlightedBeatNumbers}
+                toggleHighlightBeat={toggleHighlightBeat}
                 isReadOnly={isReadOnly}
               />
             </div>
@@ -1931,8 +1947,6 @@ export function AnalysisWorkspace({
       default:
         return null;
     }
-  };/div>
-    );
   };
 
   const renderActiveBeatAnalysis = () => {

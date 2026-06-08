@@ -267,6 +267,10 @@ const isLocalRuntimeMediaUrl = (value: string | undefined) => (
   value?.startsWith('blob:') || value?.startsWith('data:')
 );
 
+const shouldHydrateClipFromIndexedDb = (clip: TimelineClip) => (
+  !clip.src || isLocalRuntimeMediaUrl(clip.src)
+);
+
 const stripRuntimeUrlsFromScenes = (sourceScenes: Scene[]) => sourceScenes.map(scene => {
   let cleanedReport = scene.analysisReport;
   if (cleanedReport?.scenes && Array.isArray(cleanedReport.scenes)) {
@@ -1087,7 +1091,7 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
       const hydratedScenes = await Promise.all(normalizedProject.scenes.map(async scene => {
         const hydratedClips = await Promise.all(scene.clips.map(async clip => {
           let updatedClip = { ...clip };
-          const blob = await loadBlob(clip.id);
+          const blob = shouldHydrateClipFromIndexedDb(clip) ? await loadBlob(clip.id) : undefined;
           if (blob) {
             updatedClip.src = URL.createObjectURL(blob);
           }
@@ -1156,7 +1160,7 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     const hydratedScenes = await Promise.all(remappedProject.scenes.map(async scene => {
       const hydratedClips = await Promise.all(scene.clips.map(async clip => {
           let updatedClip = { ...clip };
-          const blob = await loadBlob(clip.id);
+          const blob = shouldHydrateClipFromIndexedDb(clip) ? await loadBlob(clip.id) : undefined;
           if (blob) {
             updatedClip.src = URL.createObjectURL(blob);
           }

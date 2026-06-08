@@ -90,6 +90,7 @@ import { toast } from 'sonner';
 import { getGraphColor, getGraphDisplayLabel, getGraphShortLabel } from '@/lib/graph-style';
 import { captureVideoAnalysisFrames, extractCharacterAvatarFromVideo, extractBeatThumbnailFromVideo } from '@/lib/video-helpers';
 import ThemeToggle from '@/components/ThemeToggle';
+import LogoMark from '@/components/LogoMark';
 
 async function localUpload(filename: string, file: Blob): Promise<{ pathname: string }> {
   const formData = new FormData();
@@ -2638,8 +2639,11 @@ function EditorInner() {
 
   // Synchronize selectedVideoFile and videoObjectURL from the active scene's video clip when scene changes or on mount
   React.useEffect(() => {
+    let isCurrent = true;
     const activeScene = scenes.find(s => s.id === activeSceneId);
-    if (!activeScene) return;
+    if (!activeScene) return () => {
+      isCurrent = false;
+    };
 
     const videoClip = activeScene.clips.find(c => c.type === 'video' && c.src);
     if (videoClip && videoClip.src) {
@@ -2650,8 +2654,10 @@ function EditorInner() {
       const syncVideoFile = async () => {
         try {
           // 1. Try loading from IndexedDB first (most reliable for reloads/sessions)
-          const localBlob = await loadBlob(videoClip.id);
+          const shouldUseLocalBlob = videoClip.src?.startsWith('blob:') || videoClip.src?.startsWith('data:');
+          const localBlob = shouldUseLocalBlob ? await loadBlob(videoClip.id) : undefined;
           if (localBlob) {
+            if (!isCurrent) return;
             const rawName = videoClip.name || "scene-video.mp4";
             const sanitizedName = rawName.replace(/[^a-zA-Z0-9._-]/g, '-');
             const file = new File([localBlob], sanitizedName, { type: localBlob.type || "video/mp4" });
@@ -2675,10 +2681,28 @@ function EditorInner() {
           }
 
           const res = await fetch(videoClip.src!);
+          if (!isCurrent) return;
           if (!res.ok) {
+            const isHostedSceneMedia = (() => {
+              try {
+                const sourceUrl = new URL(videoClip.src!, window.location.origin);
+                return sourceUrl.pathname === "/api/scenes/media";
+              } catch {
+                return false;
+              }
+            })();
+
+            if (res.status === 404 && isHostedSceneMedia) {
+              console.warn(`Hosted video is no longer available: ${videoClip.src}`);
+              setVideoObjectURL('');
+              setSelectedVideoFile(null);
+              return;
+            }
+
             throw new Error(`Fetch returned status ${res.status}`);
           }
           const blob = await res.blob();
+          if (!isCurrent) return;
           const rawName = videoClip.name || "scene-video.mp4";
           const sanitizedName = rawName.replace(/[^a-zA-Z0-9._-]/g, '-');
           const file = new File([blob], sanitizedName, { type: blob.type });
@@ -2711,7 +2735,10 @@ function EditorInner() {
         setVideoObjectURL('');
       }
     }
-  }, [activeSceneId, scenes, updateClip, updateScene]);
+    return () => {
+      isCurrent = false;
+    };
+  }, [activeSceneId, scenes, selectedVideoFile, updateClip, updateScene, videoObjectURL]);
 
   // Dynamic Visual Media Hydration & Persistence Effect for AI Analyzed Scene
   React.useEffect(() => {
@@ -5229,9 +5256,7 @@ function EditorInner() {
       <header className="h-12 border-b border-zinc-800 bg-[#111114] flex items-center justify-between px-4 shrink-0 overflow-visible relative z-[200]">
         <div className="flex items-center gap-6">
           <Link href="/" className="flex items-center gap-2 hover:opacity-90 transition-opacity" title="Back to Homepage">
-            <div className="w-8 h-8 rounded-lg bg-[#f2f2ef] border border-zinc-200 flex items-center justify-center font-sans font-bold text-sm text-[#242c31] select-none shadow-sm">
-              S/<span className="text-indigo-600 dark:text-indigo-400">W</span>
-            </div>
+            <LogoMark size="sm" />
           </Link>
           <div className="flex items-center gap-4 text-xs font-medium text-zinc-500">
             <div ref={fileMenuRef} className="relative">
