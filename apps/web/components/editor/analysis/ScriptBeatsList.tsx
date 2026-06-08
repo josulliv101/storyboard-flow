@@ -15,6 +15,18 @@ const formatTagValue = (value: number) => (
   Number.isInteger(value) ? value.toString() : value.toFixed(1)
 );
 
+const clipOverlapsFrameRange = (
+  clip: { startFrame: number; duration: number },
+  rangeStartFrame: number,
+  rangeEndFrame: number
+) => {
+  const clipStartFrame = clip.startFrame;
+  const clipEndFrame = clip.startFrame + Math.max(1, clip.duration);
+  const normalizedRangeEndFrame = Math.max(rangeStartFrame + 1, rangeEndFrame);
+
+  return clipStartFrame < normalizedRangeEndFrame && clipEndFrame > rangeStartFrame;
+};
+
 interface ScriptBeatsListProps {
   report: ScreenplayReport;
   activeSceneIndex: number;
@@ -738,10 +750,18 @@ export default function ScriptBeatsList({
           }
 
           const hasDialogue = clips && fps && clips.some(
-            (c) =>
-              c.type === "dialog" &&
-              c.startFrame >= Math.round((scene.start ?? 0) * fps) &&
-              c.startFrame < Math.round((scene.end ?? 0) * fps)
+            (c) => {
+              const sceneStartSeconds = scene.start ?? 0;
+              const nextSceneStartSeconds = report.scenes[idx + 1]?.start;
+              const sceneEndSeconds = scene.end ?? nextSceneStartSeconds ?? sceneStartSeconds;
+              const sceneStartFrame = Math.round(sceneStartSeconds * fps);
+              const sceneEndFrame = Math.round(sceneEndSeconds * fps);
+
+              return (
+                c.type === "dialog" &&
+                clipOverlapsFrameRange(c, sceneStartFrame, sceneEndFrame)
+              );
+            }
           );
 
           return (

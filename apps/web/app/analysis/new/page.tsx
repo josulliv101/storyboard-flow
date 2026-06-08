@@ -47,6 +47,18 @@ async function localUpload(filename: string, file: Blob): Promise<{ pathname: st
   throw new Error("Local upload failed");
 }
 
+const clipOverlapsFrameRange = (
+  clip: { startFrame: number; duration: number },
+  rangeStartFrame: number,
+  rangeEndFrame: number
+) => {
+  const clipStartFrame = clip.startFrame;
+  const clipEndFrame = clip.startFrame + Math.max(1, clip.duration);
+  const normalizedRangeEndFrame = Math.max(rangeStartFrame + 1, rangeEndFrame);
+
+  return clipStartFrame < normalizedRangeEndFrame && clipEndFrame > rangeStartFrame;
+};
+
 export default function NewAnalysisPage() {
   const router = useRouter();
   const { currentUser, isAuthChecking } = useTimeline();
@@ -408,7 +420,9 @@ export default function NewAnalysisPage() {
                 const end = (beat.startFrame + beat.duration) / fps;
 
                 const overlappingClips = mergedClips.filter(
-                  (c) => c.type === "dialog" && c.startFrame >= beat.startFrame && c.startFrame < beat.startFrame + beat.duration
+                  (c) =>
+                    c.type === "dialog" &&
+                    clipOverlapsFrameRange(c, beat.startFrame, beat.startFrame + beat.duration)
                 );
                 const speakerNames = Array.from(
                   new Set(

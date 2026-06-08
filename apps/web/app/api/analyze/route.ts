@@ -417,8 +417,9 @@ function convertSegmentsToWorkspace(segments: any[], fileName: string, durationI
       }
 
       // 8. Dialog Clips
-      if (Array.isArray(segment.dialog)) {
-        segment.dialog.forEach((d: any, dIdx: number) => {
+      const dialogEntries = normalizeDialogEntries(segment);
+      if (dialogEntries.length > 0) {
+        dialogEntries.forEach((d: any, dIdx: number) => {
           const speaker = d.speaker || "Unknown";
           let charId = charactersMap.get(speaker);
           if (!charId) {
@@ -446,12 +447,18 @@ function convertSegmentsToWorkspace(segments: any[], fileName: string, durationI
             }
           }
 
+          const dialogStartSec = typeof d.start === "number" ? d.start : startSec;
+          const dialogEndSec = typeof d.end === "number" ? d.end : endSec;
+          const dialogStartFrame = Math.max(0, Math.round(dialogStartSec * 30));
+          const dialogDuration = Math.max(1, Math.round((dialogEndSec - dialogStartSec) * 30));
+
           clips.push({
             id: `clip-dialogue-${index}-${dIdx}`,
             name: d.text || "...",
+            description: d.description || d.text || "...",
             type: "dialog",
-            startFrame,
-            duration,
+            startFrame: dialogStartFrame,
+            duration: dialogDuration,
             trackId: "track-verbatim-dialogue",
             color: "bg-purple-600",
             layoutType: "overlay",
@@ -587,7 +594,7 @@ function getUsableAnalysisSegments(output: unknown): any[] {
     (
       typeof segment.analysis === 'string' && segment.analysis.trim().length > 0 ||
       typeof segment.audio === 'string' && segment.audio.trim().length > 0 ||
-      Array.isArray(segment.dialog) && segment.dialog.length > 0 ||
+      normalizeDialogEntries(segment).length > 0 ||
       Array.isArray(segment.events) && segment.events.length > 0 ||
       Array.isArray(segment.story_elements) && segment.story_elements.length > 0 ||
       typeof segment.tension?.value === 'number' ||
@@ -601,6 +608,87 @@ function getUsableAnalysisSegments(output: unknown): any[] {
   }
 
   return segments;
+}
+
+function parseDialogString(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const speakerMatch = trimmed.match(/^([^:\n]{1,48}):\s*(.+)$/);
+  if (speakerMatch) {
+    return {
+      speaker: speakerMatch[1].trim() || "Unknown",
+      text: speakerMatch[2].trim(),
+    };
+  }
+
+  return {
+    speaker: "Unknown",
+    text: trimmed,
+  };
+}
+
+function normalizeDialogEntries(segment: any) {
+  const rawSources = [
+    segment.dialog,
+    segment.dialogue,
+    segment.dialogues,
+    segment.transcript,
+    segment.transcript_lines,
+    segment.speech,
+    segment.lines,
+  ];
+
+  const rawEntries = rawSources.flatMap((source) => {
+    if (!source) return [];
+    if (Array.isArray(source)) return source;
+    if (typeof source === "string") return source.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return [];
+  });
+
+  return rawEntries
+    .map((entry) => {
+      if (typeof entry === "string") return parseDialogString(entry);
+      if (!entry || typeof entry !== "object") return null;
+
+      const text = (
+        entry.text ||
+        entry.line ||
+        entry.dialogue ||
+        entry.dialog ||
+        entry.transcript ||
+        entry.caption ||
+        entry.content ||
+        entry.quote ||
+        ""
+      ).toString().trim();
+
+      if (!text) return null;
+
+      const description = (
+        entry.description ||
+        entry.analysis ||
+        entry.context ||
+        entry.intent ||
+        entry.subtext ||
+        ""
+      ).toString().trim();
+
+      return {
+        ...entry,
+        speaker: (
+          entry.speaker ||
+          entry.character ||
+          entry.character_name ||
+          entry.name ||
+          entry.role ||
+          "Unknown"
+        ).toString().trim(),
+        text,
+        description: description || undefined,
+      };
+    })
+    .filter(Boolean);
 }
 
 async function queryLocalGemma(
@@ -635,7 +723,9 @@ async function queryLocalGemma(
   const prompt = `Analyze ${images.length} chronological video frames sampled from "${fileName}" (${durationInSeconds.toFixed(2)} seconds total).
 Return a JSON array of chronological scene segments covering 0 to ${durationInSeconds.toFixed(2)} seconds.
 For each segment provide start, end, concise analysis, and only applicable tension, suspense, stakes, events, story_elements, or dialog.
-If subtitles, captions, speech bubbles, or dialogue text are visible, include dialog entries with that readable text and any visible speaker name.
+If subtitles, captions, speech bubbles, or dialogue text are visible, include EVERY readable line as a separate dialog item.
+When useful, add a brief description explaining the line's intent, context, or subtext.
+Do not summarize multiple dialogue lines into one item. Keep each line distinct and chronological.
 Do not invent spoken transcript when dialogue is not visibly readable in the frames.
 Each reason or description must be brief.`;
 
@@ -673,7 +763,13 @@ Each reason or description must be brief.`;
           type: 'array',
           items: {
             type: 'object',
-            properties: { speaker: { type: 'string' }, text: { type: 'string' } }
+            properties: {
+              speaker: { type: 'string' },
+              text: { type: 'string' },
+              description: { type: 'string' },
+              start: { type: 'number' },
+              end: { type: 'number' }
+            }
           }
         }
       }
@@ -877,6 +973,8 @@ CRITICAL: Because this is a continuous story, your analysis for each segment MUS
 
 Make ALL text descriptions (reasons, events, dialog texts, and analysis) EXTREMELY succinct. No single string or array item should exceed 80 characters in length. Be brief and direct to ensure fast generation.
 
+CRITICAL DIALOGUE REQUIREMENT: Capture every distinct spoken or visibly readable dialogue line you can detect. Do NOT summarize dialogue, merge adjacent lines, or include only the most important quote. Each line must be its own object in the segment's "dialog" array, in chronological order. If useful, add a brief "description" for the line's intent, context, or subtext. If you can estimate line timing, include "start" and "end" seconds for that specific line; otherwise omit them.
+
 Additionally, pay close attention to the background music, audio cues, or deliberate silence/lack of music. You MUST evaluate how these auditory elements directly influence or amplify the metrics (tension, suspense, etc.) and mention it in the analysis or reasoning for the segments where it is impactful.
 
 Metrics should be evaluated on a scale from 0 to 10. For each metric, provide a direct analysis/reason explaining WHY it is at that level or why it changed:
@@ -911,6 +1009,9 @@ Respond EXACTLY in this JSON format, purely as an array of objects. Do not inclu
        { 
          "speaker": "Character Name", 
          "text": "What they said...",
+         "description": "Brief intent, context, or subtext for this line.",
+         "start": 1.2,
+         "end": 2.4,
          "face_timestamp": 1.8,
          "face_box_ymin_xmin_ymax_xmax": [20, 35, 55, 60]
        }

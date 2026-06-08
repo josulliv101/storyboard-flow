@@ -116,6 +116,18 @@ const detectLetterbox = (video: HTMLVideoElement): { top: number; bottom: number
   }
 };
 
+const clipOverlapsFrameRange = (
+  clip: { startFrame: number; duration: number },
+  rangeStartFrame: number,
+  rangeEndFrame: number
+) => {
+  const clipStartFrame = clip.startFrame;
+  const clipEndFrame = clip.startFrame + Math.max(1, clip.duration);
+  const normalizedRangeEndFrame = Math.max(rangeStartFrame + 1, rangeEndFrame);
+
+  return clipStartFrame < normalizedRangeEndFrame && clipEndFrame > rangeStartFrame;
+};
+
 interface AnalysisWorkspaceProps {
   selectedVideoFile: File | null;
   setSelectedVideoFile: (file: File | null) => void;
@@ -512,7 +524,9 @@ export function AnalysisWorkspace({
 
       // Find overlapping dialog characters
       const overlappingClips = clips.filter(
-        (c) => c.type === "dialog" && c.startFrame >= beat.startFrame && c.startFrame < beat.startFrame + beat.duration
+        (c) =>
+          c.type === "dialog" &&
+          clipOverlapsFrameRange(c, beat.startFrame, beat.startFrame + beat.duration)
       );
       const speakerNames = Array.from(
         new Set(
@@ -821,17 +835,19 @@ export function AnalysisWorkspace({
 
   const activeBeatDialogClips = useMemo(() => {
     if (!activeBeat || !clips) return [];
-    const beatStartFrame = Math.round((activeBeat.start ?? 0) * fps);
-    const beatEndFrame = Math.round((activeBeat.end ?? 0) * fps);
+    const beatStartSeconds = activeBeat.start ?? 0;
+    const nextBeatStartSeconds = report?.scenes[activeSceneIndex + 1]?.start;
+    const beatEndSeconds = activeBeat.end ?? nextBeatStartSeconds ?? videoDuration ?? beatStartSeconds;
+    const beatStartFrame = Math.round(beatStartSeconds * fps);
+    const beatEndFrame = Math.round(beatEndSeconds * fps);
     return clips
       .filter(
         (c) =>
           c.type === "dialog" &&
-          c.startFrame >= beatStartFrame &&
-          c.startFrame < beatEndFrame
+          clipOverlapsFrameRange(c, beatStartFrame, beatEndFrame)
       )
       .sort((a, b) => a.startFrame - b.startFrame);
-  }, [activeBeat, clips, fps]);
+  }, [activeBeat, activeSceneIndex, clips, fps, report, videoDuration]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -1536,57 +1552,8 @@ export function AnalysisWorkspace({
                     </div>
                   )}
                   <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider font-bold">Scene Preview</span>
-                  <button
-                    type="button"
-                    onClick={() => setIsJsonViewOpen(true)}
-                    className="px-2 py-0.5 bg-zinc-900/60 hover:bg-zinc-800 text-zinc-450 hover:text-zinc-200 border border-zinc-800 rounded font-mono text-[9px] uppercase font-bold tracking-wider cursor-pointer transition-all"
-                    title="View Raw JSON Data"
-                  >
-                    Raw JSON
-                  </button>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <div className="flex bg-zinc-900/50 p-0.5 rounded-lg border border-zinc-800/60 space-x-0.5 select-none">
-                    <button
-                      type="button"
-                      onClick={() => setPreviewMode('video')}
-                      className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider font-mono transition-all cursor-pointer ${
-                        previewMode === 'video'
-                          ? "bg-zinc-800 text-zinc-100 shadow-sm font-extrabold"
-                          : "text-zinc-500 hover:text-zinc-300"
-                      }`}
-                    >
-                      🎥 Video
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewMode('storyboard')}
-                      className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider font-mono transition-all cursor-pointer ${
-                        previewMode === 'storyboard'
-                          ? "bg-zinc-800 text-zinc-100 shadow-sm font-extrabold"
-                          : "text-zinc-500 hover:text-zinc-300"
-                      }`}
-                    >
-                      🖼️ Storyboard
-                    </button>
-                  </div>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowDialogueOverlay(prev => !prev)}
-                    className={cn(
-                      "!px-2.5 !py-1.5 !rounded-lg !text-[10px] font-bold uppercase tracking-wider font-mono border",
-                      showDialogueOverlay
-                        ? "!bg-indigo-650/25 !border-indigo-500/40 !text-indigo-300 shadow-sm"
-                        : "!bg-zinc-900/40 !border-zinc-800/80 !text-zinc-500 hover:!text-zinc-400"
-                    )}
-                    title={showDialogueOverlay ? "Hide dialogue overlay" : "Show dialogue overlay"}
-                  >
-                    <MessageSquare size={11} className={showDialogueOverlay ? "text-indigo-400" : "text-zinc-550"} />
-                    <span>Dialogue</span>
-                  </Button>
-
                   {/* 3 dots menu button */}
                   <div className="relative">
                     <button
@@ -1616,6 +1583,42 @@ export function AnalysisWorkspace({
                               <span>Set Beat Thumbnail</span>
                             </button>
                           )}
+                          <div className="border-t border-zinc-900 my-1" />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPreviewMode('video');
+                              setIsMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-[10px] font-mono text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900/80 transition-colors flex items-center gap-2 cursor-pointer font-bold uppercase tracking-wider"
+                          >
+                            <FileVideo size={12} className="text-zinc-500" />
+                            <span>Video</span>
+                            {previewMode === 'video' && <Check size={12} className="ml-auto text-indigo-400" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPreviewMode('storyboard');
+                              setIsMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-[10px] font-mono text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900/80 transition-colors flex items-center gap-2 cursor-pointer font-bold uppercase tracking-wider"
+                          >
+                            <Camera size={12} className="text-zinc-500" />
+                            <span>Storyboard</span>
+                            {previewMode === 'storyboard' && <Check size={12} className="ml-auto text-indigo-400" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowDialogueOverlay(prev => !prev);
+                              setIsMenuOpen(false);
+                            }}
+                            className="w-full text-left px-3 py-2 text-[10px] font-mono text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900/80 transition-colors flex items-center gap-2 cursor-pointer font-bold uppercase tracking-wider"
+                          >
+                            <MessageSquare size={12} className={showDialogueOverlay ? "text-indigo-400" : "text-zinc-500"} />
+                            <span>{showDialogueOverlay ? "Hide Dialogue" : "Show Dialogue"}</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => {
@@ -2046,6 +2049,12 @@ export function AnalysisWorkspace({
                     );
                     const charName = char?.name || clip.character || "Hero";
                     const charImage = char?.image;
+                    const dialogLine = (clip.name || "").trim();
+                    const dialogDescription = (clip.description || "").trim();
+                    const hasDistinctDescription = Boolean(
+                      dialogDescription &&
+                      dialogDescription.toLowerCase() !== dialogLine.toLowerCase()
+                    );
 
                     return (
                       <div 
@@ -2067,8 +2076,13 @@ export function AnalysisWorkspace({
                             {charName}
                           </div>
                           <p className="text-sm text-zinc-100 mt-1 leading-relaxed select-text font-sans">
-                            {clip.description || clip.name}
+                            {dialogLine || dialogDescription}
                           </p>
+                          {hasDistinctDescription && (
+                            <p className="mt-2 border-l border-indigo-500/30 pl-2.5 text-[11px] leading-relaxed text-zinc-400 font-sans select-text">
+                              {dialogDescription}
+                            </p>
+                          )}
                         </div>
                       </div>
                     );
