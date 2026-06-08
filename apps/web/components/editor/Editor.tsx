@@ -5253,9 +5253,9 @@ function EditorInner() {
       </AnimatePresence>
 
       {/* Header Rail */}
-      <header className="h-12 border-b border-zinc-800 bg-[#111114] flex items-center justify-between px-4 shrink-0 overflow-visible relative z-[200]">
-        <div className="flex items-center gap-6">
-          <Link href="/" className="flex items-center gap-2 hover:opacity-90 transition-opacity" title="Back to Homepage">
+      <header className="h-12 border-b border-zinc-800 bg-[#111114] flex items-center justify-between pr-4 pl-0 shrink-0 overflow-visible relative z-[200]">
+        <div className="flex items-center gap-4">
+          <Link href="/" className="w-12 h-12 flex items-center justify-center border-r border-zinc-800 hover:opacity-90 transition-opacity" title="Back to Homepage">
             <LogoMark size="sm" />
           </Link>
           <div className="flex items-center gap-4 text-xs font-medium text-zinc-500">

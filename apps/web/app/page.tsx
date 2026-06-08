@@ -154,13 +154,13 @@ export default function HomePage() {
       <div className="absolute bottom-[-10%] right-[-20%] w-[60vw] h-[60vw] rounded-full bg-gradient-to-tl from-violet-600/5 dark:from-violet-600/10 via-transparent to-transparent blur-3xl pointer-events-none" />
 
       {/* Header */}
-      <header className="h-16 border-b border-zinc-200 dark:border-zinc-900 bg-white/60 dark:bg-zinc-950/60 backdrop-blur-md flex items-center justify-between px-6 md:px-12 shrink-0 z-20">
-        <Link href="/" className="flex items-center gap-2.5 hover:opacity-90 transition-opacity">
-          <LogoMark className="h-12 w-12" />
-          <span className="font-bold text-base text-zinc-800 dark:text-zinc-100 tracking-tight">Storyboard <span className="text-indigo-600 dark:text-indigo-400">Workbench</span></span>
+      <header className="h-20 border-b border-zinc-200 dark:border-zinc-900 bg-white/60 dark:bg-zinc-950/60 backdrop-blur-md flex items-center justify-center px-6 md:px-12 shrink-0 z-20 relative">
+        <Link href="/" className="flex items-center gap-3 hover:opacity-90 transition-opacity">
+          <LogoMark className="h-12 w-12" variant="horizontal" />
+          <span className="font-coiny text-xl md:text-2xl text-zinc-800 dark:text-zinc-100 tracking-wide leading-none mt-0.5">Storyboard <span className="text-indigo-600 dark:text-indigo-400">Workbench</span></span>
         </Link>
 
-        <div className="flex items-center gap-3 md:gap-4">
+        <div className="absolute right-6 md:right-12 flex items-center gap-3 md:gap-4">
           <ThemeToggle />
           {currentUser ? (
             <div className="flex items-center gap-3">

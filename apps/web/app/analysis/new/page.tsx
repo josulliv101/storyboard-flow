@@ -595,9 +595,9 @@ export default function NewAnalysisPage() {
 
       {/* Header */}
       <header className="h-16 border-b border-zinc-200 dark:border-zinc-900 bg-white/60 dark:bg-zinc-950/60 backdrop-blur-md flex items-center justify-between px-6 md:px-12 shrink-0 z-25 relative">
-        <Link href="/" className="flex items-center gap-2.5 hover:opacity-90 transition-opacity">
-          <LogoMark />
-          <span className="font-bold text-base text-zinc-800 dark:text-zinc-100 tracking-tight">Storyboard <span className="text-indigo-600 dark:text-indigo-400">Workbench</span></span>
+        <Link href="/" className="flex items-center gap-2 hover:opacity-90 transition-opacity">
+          <LogoMark className="h-10 w-10" />
+          <span className="font-coiny text-lg text-zinc-800 dark:text-zinc-100 tracking-wide leading-none mt-0.5">Storyboard <span className="text-indigo-600 dark:text-indigo-400">Workbench</span></span>
         </Link>
         <div className="flex items-center gap-3">
           <ThemeToggle />

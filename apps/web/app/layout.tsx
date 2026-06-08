@@ -1,9 +1,15 @@
 import type {Metadata} from 'next';
 import './globals.css';
-import { Outfit } from "next/font/google";
+import { Outfit, Coiny } from "next/font/google";
 import { cn } from "@/lib/utils";
 
 const outfit = Outfit({subsets:['latin'],variable:'--font-sans'});
+const coiny = Coiny({
+  weight: "400",
+  subsets: ["latin"],
+  variable: "--font-coiny",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: 'Storyboard Workbench',
@@ -16,7 +22,7 @@ import { ThemeProvider } from '@/components/theme-provider';
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
-    <html lang="en" className={cn("font-sans", outfit.variable)} suppressHydrationWarning>
+    <html lang="en" className={cn("font-sans", outfit.variable, coiny.variable)} suppressHydrationWarning>
       <body suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
           <TimelineProvider>

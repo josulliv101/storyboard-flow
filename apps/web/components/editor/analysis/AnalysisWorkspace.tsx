@@ -28,7 +28,8 @@ import {
   Play,
   User,
   Camera,
-  MoreVertical
+  MoreVertical,
+  Star
 } from "lucide-react";
 import { useTimeline } from "@/lib/timeline-context";
 import { extractBeatThumbnailFromVideo } from "@/lib/video-helpers";
@@ -686,13 +687,45 @@ export function AnalysisWorkspace({
     };
   }, [clips, tracks, characters, activeScene, fps, videoDuration]);
 
-  const handleSelectScene = (idx: number) => {
+  const handleSelectScene = useCallback((idx: number) => {
     if (!report?.scenes || idx < 0 || idx >= report.scenes.length) return;
     setActiveSceneIndex(idx);
     setScrollTrigger((prev) => prev + 1);
     const start = report.scenes[idx].start ?? 0;
     setCurrentFrame(Math.round(start * fps));
-  };
+  }, [report, fps, setActiveSceneIndex, setScrollTrigger, setCurrentFrame]);
+
+  // Keyboard Arrow Navigation for moving through beats
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if focus is in an input or textarea or contenteditable element
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      if (!report?.scenes || report.scenes.length === 0) return;
+
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const nextIdx = Math.min(report.scenes.length - 1, activeSceneIndex + 1);
+        handleSelectScene(nextIdx);
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const prevIdx = Math.max(0, activeSceneIndex - 1);
+        handleSelectScene(prevIdx);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [report, activeSceneIndex, handleSelectScene]);
 
   const handleUpdateMetricValue = useCallback((sceneIndex: number, metric: 'tension' | 'suspense' | 'anticipation', newValue: number) => {
     if (!report?.scenes) return;
@@ -1631,64 +1664,162 @@ export function AnalysisWorkspace({
                   </div>
                 )}
 
+                {/* Beat Label & Star Overlay */}
+                {activeBeat && (() => {
+                  const isStarred = highlightedBeatNumbers.has(`${activeBeat.scene_number}-summary`);
+                  return (
+                    <div className="absolute top-2 left-2 z-30 flex items-center gap-2.5 bg-black/70 backdrop-blur-md border border-zinc-800/80 px-3 py-1.5 rounded-lg select-none">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleHighlightBeat(activeBeat.scene_number, "summary");
+                        }}
+                        className="focus:outline-none transition-transform duration-200 hover:scale-110 active:scale-95 cursor-pointer flex items-center justify-center p-0.5 rounded hover:bg-zinc-900/50"
+                        title={isStarred ? "Remove Star" : "Star Beat"}
+                      >
+                        <Star 
+                          className={cn(
+                            "w-4 h-4 transition-all duration-200", 
+                            isStarred 
+                              ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_4px_rgba(251,191,36,0.5)]" 
+                              : "text-zinc-500 hover:text-zinc-350 fill-transparent"
+                          )} 
+                        />
+                      </button>
+                      <div className="flex flex-col border-l border-zinc-800/80 pl-2">
+                        <span className="text-[9px] font-mono font-bold text-indigo-400 uppercase tracking-widest leading-none">
+                          Beat {activeBeat.scene_number}
+                        </span>
+                        <span className="text-[11px] font-extrabold text-white tracking-tight leading-tight mt-0.5 max-w-[150px] sm:max-w-[200px] truncate" title={activeBeat.title}>
+                          {activeBeat.title || `Scene Beat`}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Graph Bars Overlay */}
-                {activeBeat && (
-                  <div className="absolute top-1 right-1 z-30 flex items-end gap-2 bg-black/60 backdrop-blur-xs p-1.5 rounded select-none">
-                    {/* Tension Bar */}
-                    <div className="flex flex-col items-center gap-1">
-                      <div className="w-2.5 h-[40px] bg-transparent border-none rounded-none flex items-end relative" title={`Dramatic Tension: ${activeBeat.metrics.tension}/5`}>
-                        <div 
-                          className="w-full rounded-none transition-all duration-500 ease-out"
-                          style={{
-                            height: `${(activeBeat.metrics.tension / 5) * 100}%`,
-                            backgroundColor: chartColors.tension || "#f43f5e"
+                {activeBeat && (() => {
+                  const isTensionStarred = highlightedBeatNumbers.has(`${activeBeat.scene_number}-tension`);
+                  const isSuspenseStarred = highlightedBeatNumbers.has(`${activeBeat.scene_number}-suspense`);
+                  const isStakesStarred = highlightedBeatNumbers.has(`${activeBeat.scene_number}-stakes`);
+                  return (
+                    <div className="absolute top-1 right-1 z-30 flex items-end gap-2.5 bg-black/75 backdrop-blur-md border border-zinc-800/80 p-2 rounded-lg select-none">
+                      {/* Tension Bar */}
+                      <div className="flex flex-col items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleHighlightBeat(activeBeat.scene_number, "tension");
                           }}
+                          className="focus:outline-none hover:scale-110 active:scale-95 cursor-pointer flex items-center justify-center p-0.5 rounded hover:bg-zinc-900/50"
+                          title={isTensionStarred ? "Starred Tension" : "Star Tension"}
+                        >
+                          <Star 
+                            className={cn(
+                              "w-2.5 h-2.5 transition-all duration-200", 
+                              isTensionStarred 
+                                ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_2px_rgba(251,191,36,0.5)]" 
+                                : "text-zinc-650 hover:text-zinc-400 fill-transparent"
+                            )} 
+                          />
+                        </button>
+                        <div className="w-2.5 h-[35px] bg-zinc-900/40 border border-zinc-800/40 rounded-sm flex items-end relative" title={`Dramatic Tension: ${activeBeat.metrics.tension}/5`}>
+                          <div 
+                            className="w-full rounded-b-sm transition-all duration-500 ease-out"
+                            style={{
+                              height: `${(activeBeat.metrics.tension / 5) * 100}%`,
+                              backgroundColor: chartColors.tension || "#f43f5e"
+                            }}
+                          />
+                        </div>
+                        <MetricSymbol 
+                          name="tension" 
+                          className="w-3 h-3 mt-0.5 shrink-0" 
+                          style={{ color: chartColors.tension || "#f43f5e" }} 
                         />
                       </div>
-                      <MetricSymbol 
-                        name="tension" 
-                        className="w-3 h-3 mt-1 shrink-0" 
-                        style={{ color: chartColors.tension || "#f43f5e" }} 
-                      />
-                    </div>
 
-                    {/* Suspense Bar */}
-                    <div className="flex flex-col items-center gap-1">
-                      <div className="w-2.5 h-[40px] bg-transparent border-none rounded-none flex items-end relative" title={`Anticipatory Suspense: ${activeBeat.metrics.suspense}/5`}>
-                        <div 
-                          className="w-full rounded-none transition-all duration-500 ease-out"
-                          style={{
-                            height: `${(activeBeat.metrics.suspense / 5) * 100}%`,
-                            backgroundColor: chartColors.suspense || "#a855f7"
+                      {/* Suspense Bar */}
+                      <div className="flex flex-col items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleHighlightBeat(activeBeat.scene_number, "suspense");
                           }}
+                          className="focus:outline-none hover:scale-110 active:scale-95 cursor-pointer flex items-center justify-center p-0.5 rounded hover:bg-zinc-900/50"
+                          title={isSuspenseStarred ? "Starred Suspense" : "Star Suspense"}
+                        >
+                          <Star 
+                            className={cn(
+                              "w-2.5 h-2.5 transition-all duration-200", 
+                              isSuspenseStarred 
+                                ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_2px_rgba(251,191,36,0.5)]" 
+                                : "text-zinc-650 hover:text-zinc-400 fill-transparent"
+                            )} 
+                          />
+                        </button>
+                        <div className="w-2.5 h-[35px] bg-zinc-900/40 border border-zinc-800/40 rounded-sm flex items-end relative" title={`Anticipatory Suspense: ${activeBeat.metrics.suspense}/5`}>
+                          <div 
+                            className="w-full rounded-b-sm transition-all duration-500 ease-out"
+                            style={{
+                              height: `${(activeBeat.metrics.suspense / 5) * 100}%`,
+                              backgroundColor: chartColors.suspense || "#a855f7"
+                            }}
+                          />
+                        </div>
+                        <MetricSymbol 
+                          name="suspense" 
+                          className="w-3 h-3 mt-0.5 shrink-0" 
+                          style={{ color: chartColors.suspense || "#a855f7" }} 
                         />
                       </div>
-                      <MetricSymbol 
-                        name="suspense" 
-                        className="w-3 h-3 mt-1 shrink-0" 
-                        style={{ color: chartColors.suspense || "#a855f7" }} 
-                      />
-                    </div>
 
-                    {/* Anticipation Bar */}
-                    <div className="flex flex-col items-center gap-1">
-                      <div className="w-2.5 h-[40px] bg-transparent border-none rounded-none flex items-end relative" title={`Operational Stakes/Anticipation: ${activeBeat.metrics.anticipation}/5`}>
-                        <div 
-                          className="w-full rounded-none transition-all duration-500 ease-out"
-                          style={{
-                            height: `${(activeBeat.metrics.anticipation / 5) * 100}%`,
-                            backgroundColor: chartColors.anticipation || "#06b6d4"
+                      {/* Anticipation Bar */}
+                      <div className="flex flex-col items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleHighlightBeat(activeBeat.scene_number, "stakes");
                           }}
+                          className="focus:outline-none hover:scale-110 active:scale-95 cursor-pointer flex items-center justify-center p-0.5 rounded hover:bg-zinc-900/50"
+                          title={isStakesStarred ? "Starred Stakes" : "Star Stakes"}
+                        >
+                          <Star 
+                            className={cn(
+                              "w-2.5 h-2.5 transition-all duration-200", 
+                              isStakesStarred 
+                                ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_2px_rgba(251,191,36,0.5)]" 
+                                : "text-zinc-650 hover:text-zinc-400 fill-transparent"
+                            )} 
+                          />
+                        </button>
+                        <div className="w-2.5 h-[35px] bg-zinc-900/40 border border-zinc-800/40 rounded-sm flex items-end relative" title={`Operational Stakes/Anticipation: ${activeBeat.metrics.anticipation}/5`}>
+                          <div 
+                            className="w-full rounded-b-sm transition-all duration-500 ease-out"
+                            style={{
+                              height: `${(activeBeat.metrics.anticipation / 5) * 100}%`,
+                              backgroundColor: chartColors.anticipation || "#06b6d4"
+                            }}
+                          />
+                        </div>
+                        <MetricSymbol 
+                          name="anticipation" 
+                          className="w-3 h-3 mt-0.5 shrink-0" 
+                          style={{ color: chartColors.anticipation || "#06b6d4" }} 
                         />
                       </div>
-                      <MetricSymbol 
-                        name="anticipation" 
-                        className="w-3 h-3 mt-1 shrink-0" 
-                        style={{ color: chartColors.anticipation || "#06b6d4" }} 
-                      />
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
 
               <div className="mt-4 flex items-center justify-between text-[10px] font-mono text-zinc-400 px-1 font-semibold border-t border-zinc-900 pt-3">
@@ -1745,12 +1876,37 @@ export function AnalysisWorkspace({
                     Script Beats & Timeline Arcs
                   </span>
                 </div>
+
+                {/* Beat Navigation Arrows */}
+                <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded px-1.5 py-0.5 select-none gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectScene(activeSceneIndex - 1)}
+                    disabled={activeSceneIndex === 0}
+                    className="p-0.5 hover:bg-zinc-850 text-zinc-400 hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent disabled:text-zinc-650 rounded transition-colors cursor-pointer flex items-center justify-center border-0 outline-none"
+                    title="Previous Beat"
+                  >
+                    <ChevronLeft size={11} />
+                  </button>
+                  <span className="text-[9px] font-mono text-zinc-500 font-bold px-1 select-none">
+                    {activeSceneIndex + 1}/{report?.scenes?.length || 0}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectScene(activeSceneIndex + 1)}
+                    disabled={!report?.scenes || activeSceneIndex >= report.scenes.length - 1}
+                    className="p-0.5 hover:bg-zinc-850 text-zinc-400 hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent disabled:text-zinc-650 rounded transition-colors cursor-pointer flex items-center justify-center border-0 outline-none"
+                    title="Next Beat"
+                  >
+                    <ChevronRight size={11} />
+                  </button>
+                </div>
               </div>
               
               <ScriptBeatsList
                 report={report}
                 activeSceneIndex={activeSceneIndex}
-                setActiveSceneIndex={setActiveSceneIndex}
+                setActiveSceneIndex={handleSelectScene}
                 beatListRef={beatListRef}
                 handleListScroll={handleListScroll}
                 height={beatsListHeight}
