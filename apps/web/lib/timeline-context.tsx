@@ -187,6 +187,7 @@ interface TimelineContextType extends TimelineState {
   deleteCharacter: (id: string) => void;
   // Scene actions
   addScene: (name: string) => void;
+  resetToBlankScene: (name?: string) => void;
   deleteScene: (id: string) => void;
   setActiveScene: (id: string) => void;
   updateScene: (id: string, updates: Partial<Scene>) => void;
@@ -628,6 +629,13 @@ const createDefaultSceneTracks = (timestamp = Date.now()): TimelineTrack[] => {
   ];
 };
 
+const createBlankScene = (name = 'Untitled Scene', timestamp = Date.now()): Scene => ({
+  id: `scene-${timestamp}`,
+  name,
+  clips: [],
+  tracks: createDefaultSceneTracks(timestamp),
+});
+
 const INITIAL_SCENES: Scene[] = [
   { id: 'scene-1', name: 'Introduction', clips: INITIAL_CLIPS, tracks: INITIAL_TRACKS },
   { id: 'scene-2', name: 'Main Content', clips: [], tracks: INITIAL_TRACKS },
@@ -998,14 +1006,25 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
 
   const addScene = useCallback((name: string) => {
     const timestamp = Date.now();
-    const newScene: Scene = {
-      id: `scene-${timestamp}`,
-      name,
-      clips: [],
-      tracks: createDefaultSceneTracks(timestamp)
-    };
+    const newScene = createBlankScene(name, timestamp);
     setScenes(prev => [...prev, newScene]);
     setActiveSceneId(newScene.id);
+  }, []);
+
+  const resetToBlankScene = useCallback((name = 'Untitled Scene') => {
+    const blankScene = createBlankScene(name);
+    setPlaying(false);
+    setScenes([blankScene]);
+    setCharacters([]);
+    setActiveSceneId(blankScene.id);
+    setCurrentFrame(0);
+    setSelectedClipIds([]);
+    setCollapsedTrackIds([]);
+    setDisabledTrackIds([]);
+    setMutedTrackIds([]);
+    setPreviewSceneIds([]);
+    setActiveSavedSceneId(null);
+    setActiveSavedScenePublished(false);
   }, []);
 
   const deleteScene = useCallback((id: string) => {
@@ -1506,6 +1525,7 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     updateCharacter,
     deleteCharacter,
     addScene,
+    resetToBlankScene,
     deleteScene,
     setActiveScene,
     updateScene,
@@ -1534,7 +1554,7 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     isHydrated, currentFrame, totalDuration, fps, playbackRate, zoom, scenes, activeSceneId,
     selectedClipIds, isPlaying, collapsedTrackIds, disabledTrackIds, mutedTrackIds, aspectRatio,
     snapLineFrame, isInteracting, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, workspaceViewMode, updateClip, selectClip, addClip, deleteClip, toggleTrackCollapse,
-    toggleTrackDisable, toggleTrackMute, addScene, deleteScene, setActiveScene, updateScene,
+    toggleTrackDisable, toggleTrackMute, addScene, resetToBlankScene, deleteScene, setActiveScene, updateScene,
     reorderScenes, exportProject, importProject, importProjectIntoCurrent, addTrack, addGraphTrack, addTrackGroup, duplicateTrackGroup, updateTrack, deleteTrack, moveClipToFirst, moveClipToLast, clips, tracks,
     characters, addCharacter, updateCharacter, deleteCharacter, setAddGridItemPosition, setPreviewGroupLayout, setPreviewSceneMode, setPreviewSceneIds, setPreviewMediaLayout, togglePreviewScene, setAnalyticsOverlayStyle, setShowNoteOverlayIcons, setCompactNoteOverlays, setShowDialogPreviewUi, setShowSceneTitleUi, setNoteTagFilter, setWorkspaceViewMode, setPlaybackRate,
     currentUser, isAuthChecking, activeSavedSceneId, activeSavedScenePublished

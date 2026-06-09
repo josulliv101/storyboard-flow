@@ -1,7 +1,7 @@
 import React from "react";
 import { Flame, CheckCircle } from "lucide-react";
 import { SceneAnalysis } from "./types";
-import { MetricSymbol } from "./MetricSymbol";
+import { MetricSymbol } from "@storyboard/ui/charts";
 
 interface SceneInspectorProps {
   activeScene?: SceneAnalysis;

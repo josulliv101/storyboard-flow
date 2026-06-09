@@ -34,7 +34,6 @@ import {
 import { useTimeline } from "@/lib/timeline-context";
 import { extractBeatThumbnailFromVideo } from "@/lib/video-helpers";
 import { getGraphColor } from "@/lib/graph-style";
-import TensionChart from "./TensionChart";
 import ScriptBeatsList from "./ScriptBeatsList";
 import SceneInspector from "./SceneInspector";
 import ExecutiveSummary from "./ExecutiveSummary";
@@ -42,8 +41,8 @@ import DiagnosticsPanel from "./DiagnosticsPanel";
 import AgentLogs from "./AgentLogs";
 import ChatConsole from "./ChatConsole";
 import { ScreenplayReport, LogEntry, SceneAnalysis } from "./types";
-import { MetricSymbol } from "./MetricSymbol";
 import { Button } from "@storyboard/ui";
+import { MetricSymbol, TensionChart } from "@storyboard/ui/charts";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -223,7 +222,8 @@ export function AnalysisWorkspace({
   // Preview mode (video or static storyboard image)
   const [previewMode, setPreviewMode] = useState<'video' | 'storyboard'>('video');
   const [showDialogueOverlay, setShowDialogueOverlay] = useState(true);
-  const [activeTab, setActiveTab] = useState<string>("all");
+  const [videoLoadError, setVideoLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<string>("beats");
 
   const [isJsonViewOpen, setIsJsonViewOpen] = useState(false);
   const [jsonTab, setJsonTab] = useState<'analysis' | 'timeline'>('analysis');
@@ -256,6 +256,10 @@ export function AnalysisWorkspace({
       content: "Hello! This is a direct connection to your local Ollama instance. Ask me anything about your project.",
     },
   ]);
+
+  useEffect(() => {
+    setVideoLoadError(null);
+  }, [activeSceneVideoSrc]);
 
 
 
@@ -1642,6 +1646,8 @@ export function AnalysisWorkspace({
                   <video 
                     ref={videoRef}
                     onTimeUpdate={handleVideoTimeUpdate}
+                    onLoadedData={() => setVideoLoadError(null)}
+                    onError={() => setVideoLoadError('Saved media file not found. Re-upload or re-save this scene with the original video available.')}
                     src={activeSceneVideoSrc} 
                     className="w-full h-full object-contain" 
                     controls 
@@ -1664,6 +1670,17 @@ export function AnalysisWorkspace({
                         </span>
                       </div>
                     )}
+                  </div>
+                )}
+                {previewMode === 'video' && videoLoadError && (
+                  <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 bg-black/85 p-5 text-center">
+                    <FileVideo size={20} className="text-zinc-500" />
+                    <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-zinc-200">
+                      Video Unavailable
+                    </span>
+                    <span className="max-w-[260px] text-[10px] font-medium leading-normal text-zinc-500">
+                      {videoLoadError}
+                    </span>
                   </div>
                 )}
 

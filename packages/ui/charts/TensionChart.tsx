@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { MetricSymbol } from "./MetricSymbol";
 
-interface ChartDataPoint {
+export interface ChartDataPoint {
   name: string;
   tension: number;
   suspense: number;
@@ -23,7 +23,7 @@ interface ChartDataPoint {
   timestamp: number;
 }
 
-interface TensionChartProps {
+export interface TensionChartProps {
   data: ChartDataPoint[];
   activeIndex: number;
   onSelectScene: (index: number) => void;
@@ -114,7 +114,7 @@ const renderCustomLegend = (props: any) => {
   );
 };
 
-export default function TensionChart({ data, activeIndex, onSelectScene, colors, activeTab, onUpdateValue }: TensionChartProps) {
+export function TensionChart({ data, activeIndex, onSelectScene, colors, activeTab, onUpdateValue }: TensionChartProps) {
   if (!data || data.length === 0) return null;
 
   const [draggingState, setDraggingState] = useState<{ index: number; metric: 'tension' | 'suspense' | 'anticipation' } | null>(null);
@@ -140,8 +140,8 @@ export default function TensionChart({ data, activeIndex, onSelectScene, colors,
         </span>
       </div>
       
-      <div className="w-full h-64">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="h-64 min-h-64 w-full" style={{ height: 256, minHeight: 256 }}>
+        <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 990, height: 256 }}>
           <LineChart
             data={data}
             onClick={(state: any) => {
@@ -343,3 +343,5 @@ export default function TensionChart({ data, activeIndex, onSelectScene, colors,
     </div>
   );
 }
+
+export default TensionChart;

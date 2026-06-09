@@ -1,0 +1,6 @@
+@import url("https://fonts.googleapis.com/css2?family=Coiny&family=Outfit:wght@400;500;600;700;800;900&display=swap");
+@import "../../web/app/globals.css";
+
+@source "../../web/app";
+@source "../../web/components";
+@source "../../../packages/ui";

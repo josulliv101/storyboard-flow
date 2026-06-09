@@ -2118,6 +2118,7 @@ function EditorInner() {
     exportProject,
     importProject,
     importProjectIntoCurrent,
+    resetToBlankScene,
     workspaceViewMode,
     setWorkspaceViewMode,
     currentFrame,
@@ -2147,6 +2148,7 @@ function EditorInner() {
   } = useTimeline();
 
   const isSceneLoading = !!(sceneIdParam && activeSavedSceneId !== sceneIdParam);
+  const isNewSceneParam = searchParams.get('new') === '1';
   
   const selectedClip = clips.find(c => c.id === selectedClipIds[selectedClipIds.length - 1]);
   const activeScene = scenes.find(scene => scene.id === activeSceneId) || scenes[0];
@@ -2313,6 +2315,11 @@ function EditorInner() {
 
   // Synchronize search params sceneId with context activeSavedSceneId on mount/change
   React.useEffect(() => {
+    if (isNewSceneParam && !sceneIdParam) {
+      resetToBlankScene();
+      return;
+    }
+
     if (sceneIdParam) {
       if (sceneIdParam !== activeSavedSceneId) {
         const loadSceneFromUrl = async () => {
@@ -2340,7 +2347,7 @@ function EditorInner() {
         setActiveSavedScenePublished(false);
       }
     }
-  }, [sceneIdParam, activeSavedSceneId, importProject, setActiveSavedSceneId, setActiveSavedScenePublished]);
+  }, [sceneIdParam, isNewSceneParam, activeSavedSceneId, importProject, resetToBlankScene, setActiveSavedSceneId, setActiveSavedScenePublished]);
 
 
 

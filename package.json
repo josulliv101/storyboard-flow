@@ -7,6 +7,8 @@
     "packages/*"
   ],
   "scripts": {
+    "storybook": "npm run storybook --workspace=apps/storybook",
+    "build-storybook": "npm run build-storybook --workspace=apps/storybook",
     "dev:frontend": "npm run dev --workspace=apps/web",
     "dev:backend": "npm run dev --workspace=apps/backend",
     "setup:backend": "npm run setup --workspace=apps/backend"

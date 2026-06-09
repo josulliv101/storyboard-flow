@@ -2,7 +2,6 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import {
   Sparkles,
   Clapperboard,
@@ -14,8 +13,6 @@ import {
   ArrowRight,
   Upload,
   Activity,
-  UserCircle,
-  LogOut,
   Loader2,
   X,
   FileVideo,
@@ -29,8 +26,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTimeline } from '@/lib/timeline-context';
-import ThemeToggle from '@/components/ThemeToggle';
-import LogoMark from '@/components/LogoMark';
+import { HomeTopNav } from '@/components/home/HomeTopNav';
 
 export default function HomePage() {
   const router = useRouter();
@@ -147,6 +143,132 @@ export default function HomePage() {
     router.push(`${targetPath}?sceneId=${sceneId}`);
   };
 
+  const communityPublishedScenes = React.useMemo(
+    () => savedScenes.filter((scene) => scene.isPublished),
+    [savedScenes]
+  );
+
+  const originalScenes = React.useMemo(
+    () => savedScenes.filter((scene) => !scene.isPublished),
+    [savedScenes]
+  );
+
+  const renderSceneCard = (scene: any) => (
+    <article
+      key={scene.id}
+      className="group w-[min(82vw,22rem)] sm:w-[22rem] lg:w-[24rem] shrink-0 snap-start scroll-mx-6 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-900 bg-white dark:bg-zinc-950/60 shadow-sm dark:shadow-xl hover:border-indigo-500/30 transition-all hover:bg-zinc-50/50 dark:hover:bg-zinc-950/90 flex flex-col justify-between"
+    >
+      <div>
+        <div className="relative aspect-video overflow-hidden bg-black border-b border-zinc-200 dark:border-zinc-900 flex items-center justify-center select-none">
+          {scene.thumbnailUrl ? (
+            <img src={scene.thumbnailUrl} alt="" className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.1),transparent_70%)]">
+              <Clapperboard className="h-8 w-8 text-zinc-800" />
+            </div>
+          )}
+          <div className="absolute top-2 left-2 rounded bg-black/60 border border-zinc-200/20 dark:border-zinc-800/80 px-2 py-0.5 text-[8.5px] font-mono uppercase text-zinc-200 dark:text-zinc-400 tracking-wider">
+            {scene.isPublished ? 'Community Published' : 'Original Scene'}
+          </div>
+        </div>
+
+        <div className="p-4 space-y-2">
+          <h4 className="text-sm font-bold text-zinc-800 dark:text-zinc-200 truncate group-hover:text-indigo-650 dark:group-hover:text-indigo-300 transition-colors">{scene.name}</h4>
+          {scene.isPublished ? (
+            <div className="space-y-1 text-[10px] text-zinc-500 dark:text-zinc-400 leading-relaxed font-mono uppercase">
+              <p>Publisher: {scene.publisherName || 'Community'}</p>
+              <p>Date Published: {new Date(scene.publishedAt || scene.updatedAt).toLocaleString()}</p>
+            </div>
+          ) : (
+            <p className="text-[10px] text-zinc-500 dark:text-zinc-400 leading-relaxed font-mono uppercase">
+              Last Updated: {new Date(scene.updatedAt).toLocaleString()}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="p-4 pt-0 flex gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="flex-1 border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 hover:bg-indigo-500/5 dark:hover:bg-indigo-500/10 hover:border-indigo-500/30 text-[10px] font-black uppercase tracking-widest text-zinc-650 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-200"
+          onClick={() => void handleOpenScene(scene.id, '/editor', scene.isPublished)}
+        >
+          <Layers className="h-3.5 w-3.5 mr-1" />
+          Edit Timeline
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="flex-1 border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 hover:bg-violet-500/5 dark:hover:bg-violet-500/10 hover:border-violet-500/30 text-[10px] font-black uppercase tracking-widest text-zinc-650 dark:text-zinc-300 hover:text-violet-600 dark:hover:text-violet-200"
+          onClick={() => void handleOpenScene(scene.id, '/analysis', scene.isPublished)}
+        >
+          <Activity className="h-3.5 w-3.5 mr-1" />
+          AI Analysis
+        </Button>
+      </div>
+    </article>
+  );
+
+  const renderSceneSection = ({
+    title,
+    description,
+    scenes,
+    emptyTitle,
+    emptyDescription,
+    actionLabel,
+    onAction,
+  }: {
+    title: string;
+    description: string;
+    scenes: any[];
+    emptyTitle: string;
+    emptyDescription: string;
+    actionLabel: string;
+    onAction: () => void;
+  }) => (
+    <div className="space-y-5">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <div>
+          <h3 className="text-[11px] font-black uppercase tracking-widest text-zinc-750 dark:text-zinc-250 font-mono">{title}</h3>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-450 max-w-xl leading-relaxed">{description}</p>
+        </div>
+        <span className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+          {scenes.length} {scenes.length === 1 ? 'Scene' : 'Scenes'}
+        </span>
+      </div>
+
+      {scenes.length > 0 ? (
+        <div
+          className="-mx-6 flex snap-x snap-mandatory gap-5 overflow-x-auto overscroll-x-contain px-6 pb-4 pt-1 touch-pan-x md:-mx-2 md:px-2 [scrollbar-width:thin]"
+          aria-label={`${title} carousel`}
+        >
+          {scenes.map(renderSceneCard)}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed border-zinc-250 dark:border-zinc-800 py-10 px-5 text-center flex flex-col items-center justify-center gap-4 bg-zinc-100/30 dark:bg-zinc-900/10">
+          <Clapperboard className="h-7 w-7 text-zinc-400 dark:text-zinc-600" />
+          <div>
+            <div className="text-xs font-bold text-zinc-650 dark:text-zinc-400 uppercase tracking-widest">{emptyTitle}</div>
+            <p className="text-[10px] text-zinc-500 dark:text-zinc-500 mt-1 max-w-[320px] leading-relaxed">
+              {emptyDescription}
+            </p>
+          </div>
+          <Button
+            onClick={onAction}
+            variant="outline"
+            size="sm"
+            className="border-zinc-250 dark:border-zinc-800 hover:border-indigo-500/50 hover:bg-indigo-500/5 dark:hover:bg-indigo-500/10 text-[10px] font-bold uppercase tracking-widest text-zinc-650 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-white"
+          >
+            {actionLabel}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-[#0a0a0b] text-zinc-850 dark:text-zinc-100 flex flex-col font-sans selection:bg-indigo-500/30 relative overflow-hidden">
       {/* Background Decorative Glow */}
@@ -154,55 +276,15 @@ export default function HomePage() {
       <div className="absolute bottom-[-10%] right-[-20%] w-[60vw] h-[60vw] rounded-full bg-gradient-to-tl from-violet-600/5 dark:from-violet-600/10 via-transparent to-transparent blur-3xl pointer-events-none" />
 
       {/* Header */}
-      <header className="h-20 border-b border-zinc-200 dark:border-zinc-900 bg-white/60 dark:bg-zinc-950/60 backdrop-blur-md flex items-center justify-center px-6 md:px-12 shrink-0 z-20 relative">
-        <Link href="/" className="flex items-center gap-3 hover:opacity-90 transition-opacity">
-          <LogoMark className="h-12 w-12" variant="horizontal" />
-          <span className="font-coiny text-xl md:text-2xl text-zinc-800 dark:text-zinc-100 tracking-wide leading-none mt-0.5">Storyboard <span className="text-indigo-600 dark:text-indigo-400">Workbench</span></span>
-        </Link>
-
-        <div className="absolute right-6 md:right-12 flex items-center gap-3 md:gap-4">
-          <ThemeToggle />
-          {currentUser ? (
-            <div className="flex items-center gap-3">
-              <div className="flex flex-col items-end">
-                <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">{currentUser.username}</span>
-                <span className={cn(
-                  "mt-0.5 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-full border leading-none",
-                  currentUser.role === 'admin' && "bg-indigo-500/10 text-indigo-300 border-indigo-500/20 shadow-[0_0_8px_rgba(99,102,241,0.1)]",
-                  currentUser.role === 'editor' && "bg-emerald-500/10 text-emerald-300 border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.1)]",
-                  currentUser.role === 'viewer' && "bg-zinc-100 dark:bg-zinc-800/40 text-zinc-500 dark:text-zinc-400 border-zinc-250 dark:border-zinc-800/80"
-                )}>
-                  {currentUser.role}
-                </span>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-zinc-500 dark:text-zinc-400 hover:text-red-650 dark:hover:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-400/10 rounded-full"
-                onClick={handleLogout}
-                title="Log Out"
-              >
-                <LogOut className="h-4 w-4" />
-              </Button>
-            </div>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setAuthMode('login');
-                setAuthError('');
-                setIsAuthModalOpen(true);
-              }}
-              className="h-9 border-zinc-250 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-4 text-xs font-bold uppercase tracking-widest text-zinc-650 dark:text-zinc-300 hover:border-indigo-500/40 hover:bg-indigo-500/5 dark:hover:bg-indigo-500/10 hover:text-indigo-650 dark:hover:text-white rounded-md transition-all duration-300"
-            >
-              <UserCircle className="h-4 w-4 mr-1.5 text-indigo-500 dark:text-indigo-400" />
-              Sign In
-            </Button>
-          )}
-        </div>
-      </header>
-
+      <HomeTopNav
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onSignIn={() => {
+          setAuthMode('login');
+          setAuthError('');
+          setIsAuthModalOpen(true);
+        }}
+      />
       {/* Main Container */}
       <main className="flex-1 flex flex-col z-10">
         {/* Hero Section */}
@@ -265,80 +347,27 @@ export default function HomePage() {
               <div className="rounded-md border border-red-500/20 bg-red-500/5 py-8 text-center text-xs text-red-300">
                 {scenesError}
               </div>
-            ) : savedScenes.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-zinc-250 dark:border-zinc-800 py-16 text-center max-w-lg mx-auto flex flex-col items-center justify-center gap-4 bg-zinc-100/30 dark:bg-zinc-900/10">
-                <Clapperboard className="h-8 w-8 text-zinc-400 dark:text-zinc-600" />
-                <div>
-                  <div className="text-xs font-bold text-zinc-650 dark:text-zinc-400 uppercase tracking-widest">No Cloud Scenes Yet</div>
-                  <p className="text-[10px] text-zinc-500 dark:text-zinc-500 mt-1 max-w-[280px] leading-relaxed">
-                    Open the editor canvas, connect a scene, and click "Save Scene" in the File menu to compile to the cloud.
-                  </p>
-                </div>
-                <Button
-                  onClick={() => router.push('/editor')}
-                  variant="outline"
-                  size="sm"
-                  className="border-zinc-250 dark:border-zinc-800 hover:border-indigo-500/50 hover:bg-indigo-500/5 dark:hover:bg-indigo-500/10 text-[10px] font-bold uppercase tracking-widest text-zinc-650 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-white"
-                >
-                  Create New Scene
-                </Button>
-              </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {savedScenes.map((scene) => (
-                  <article
-                    key={scene.id}
-                    className="group overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-900 bg-white dark:bg-zinc-950/60 shadow-sm dark:shadow-xl hover:border-indigo-500/30 transition-all hover:bg-zinc-50/50 dark:hover:bg-zinc-950/90 flex flex-col justify-between"
-                  >
-                    <div>
-                      {/* Image Preview Block */}
-                      <div className="relative aspect-video overflow-hidden bg-black border-b border-zinc-200 dark:border-zinc-900 flex items-center justify-center select-none">
-                        {scene.thumbnailUrl ? (
-                          <img src={scene.thumbnailUrl} alt="" className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.1),transparent_70%)]">
-                            <Clapperboard className="h-8 w-8 text-zinc-800" />
-                          </div>
-                        )}
-                        <div className="absolute top-2 left-2 rounded bg-black/60 border border-zinc-200/20 dark:border-zinc-800/80 px-2 py-0.5 text-[8.5px] font-mono uppercase text-zinc-200 dark:text-zinc-400 tracking-wider">
-                          Scene Link
-                        </div>
-                      </div>
+              <div className="space-y-12">
+                {renderSceneSection({
+                  title: 'Community Published Scenes',
+                  description: 'Published scenes available to browse from the shared community library.',
+                  scenes: communityPublishedScenes,
+                  emptyTitle: 'No community scenes yet',
+                  emptyDescription: 'Publish a scene to make it available in the community library.',
+                  actionLabel: 'Create New Scene',
+                  onAction: () => verifyAuthAndNavigate('/editor?new=1'),
+                })}
 
-                      {/* Content block */}
-                      <div className="p-4 space-y-2">
-                        <h4 className="text-sm font-bold text-zinc-800 dark:text-zinc-200 truncate group-hover:text-indigo-650 dark:group-hover:text-indigo-300 transition-colors">{scene.name}</h4>
-                        <p className="text-[10px] text-zinc-500 dark:text-zinc-400 leading-relaxed font-mono uppercase">
-                          Last Updated: {new Date(scene.updatedAt).toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Actions bar */}
-                    <div className="p-4 pt-0 flex gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 hover:bg-indigo-500/5 dark:hover:bg-indigo-500/10 hover:border-indigo-500/30 text-[10px] font-black uppercase tracking-widest text-zinc-650 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-200"
-                        onClick={() => void handleOpenScene(scene.id, '/editor', scene.isPublished)}
-                      >
-                        <Layers className="h-3.5 w-3.5 mr-1" />
-                        Edit Timeline
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 hover:bg-violet-500/5 dark:hover:bg-violet-500/10 hover:border-violet-500/30 text-[10px] font-black uppercase tracking-widest text-zinc-650 dark:text-zinc-300 hover:text-violet-600 dark:hover:text-violet-200"
-                        onClick={() => void handleOpenScene(scene.id, '/analysis', scene.isPublished)}
-                      >
-                        <Activity className="h-3.5 w-3.5 mr-1" />
-                        AI Analysis
-                      </Button>
-                    </div>
-                  </article>
-                ))}
+                {renderSceneSection({
+                  title: 'Original Scenes',
+                  description: 'Private original scene snapshots you created and saved to your library.',
+                  scenes: originalScenes,
+                  emptyTitle: 'No original scenes yet',
+                  emptyDescription: 'Open the editor canvas, build a scene, and save it to your cloud library.',
+                  actionLabel: 'Create New Scene',
+                  onAction: () => verifyAuthAndNavigate('/editor?new=1'),
+                })}
               </div>
             )}
           </div>

@@ -8,7 +8,7 @@ const globals = globalThis as typeof globalThis & {
 };
 
 const SCENE_STORAGE_TIMEOUT_MS = 8_000;
-const SCENE_STORAGE_GLOBAL_VERSION = 4;
+const SCENE_STORAGE_GLOBAL_VERSION = 5;
 
 export async function withSceneStorageTimeout<T>(operation: Promise<T>, label: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -119,6 +119,16 @@ export async function ensureSceneTable() {
             alter table timeline_private.saved_scenes
             add column if not exists is_published boolean not null default false
           `, `Migrating is_published column (${candidate.label})`).catch(() => {});
+
+          await withSceneStorageTimeout(sql`
+            alter table timeline_private.saved_scenes
+            add column if not exists published_at timestamptz
+          `, `Migrating published_at column (${candidate.label})`).catch(() => {});
+
+          await withSceneStorageTimeout(sql`
+            alter table timeline_private.saved_scenes
+            add column if not exists published_by_user_id text
+          `, `Migrating published_by_user_id column (${candidate.label})`).catch(() => {});
 
           // Initialize auth tables as well to keep user and session schema verified
           const { ensureAuthTables } = await import('./auth-service');

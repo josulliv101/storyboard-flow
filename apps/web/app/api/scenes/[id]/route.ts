@@ -104,7 +104,7 @@ export async function PATCH(
         return NextResponse.json({ error: 'Forbidden. Admin role required to publish/unpublish scenes.' }, { status: 403 });
       }
       const isPublished = !!body.isPublished;
-      const scene = await updateSavedScenePublishStatus(id, isPublished);
+      const scene = await updateSavedScenePublishStatus(id, isPublished, user.id);
       if (!scene) {
         return NextResponse.json({ error: 'Saved scene was not found.' }, { status: 404 });
       }

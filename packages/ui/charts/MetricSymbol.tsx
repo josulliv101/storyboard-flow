@@ -1,6 +1,6 @@
 import React from "react";
 
-interface MetricSymbolProps {
+export interface MetricSymbolProps {
   name: string;
   className?: string;
   style?: React.CSSProperties;

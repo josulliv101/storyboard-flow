@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, MessageSquare, Camera, ScrollText, AlertTriangle, Star, Pencil, Trash2, Check, X } from "lucide-react";
 import { ScreenplayReport } from "./types";
-import { MetricSymbol } from "./MetricSymbol";
+import { MetricSymbol } from "@storyboard/ui/charts";
 import { useTimeline } from "@/lib/timeline-context";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@storyboard/ui";
 
