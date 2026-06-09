@@ -46,6 +46,7 @@ import {
   ScrollText,
   Sparkles,
   Cloud,
+  CloudOff,
   RefreshCw,
   Play,
   Pause,
@@ -57,6 +58,7 @@ import {
   Monitor,
   Tags,
   Type,
+  Star,
   Video,
   Image as ImageIcon
 } from 'lucide-react';
@@ -134,6 +136,8 @@ type SavedSceneSummary = {
   thumbnailUrl?: string;
   isPublished: boolean;
 };
+
+type AutosaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
 
 const MAX_SAVED_SCENE_NAME_LENGTH = 120;
 const SCENE_THUMBNAIL_BLOB_PREFIX = 'scene-thumbnail';
@@ -2130,6 +2134,8 @@ function EditorInner() {
     totalDuration,
     noteTagFilter,
     setNoteTagFilter,
+    showStarredNoteOverlaysOnly,
+    setShowStarredNoteOverlaysOnly,
     showDialogPreviewUi,
     setShowDialogPreviewUi,
     showSceneTitleUi,
@@ -2293,6 +2299,10 @@ function EditorInner() {
   const [loadingSavedSceneId, setLoadingSavedSceneId] = React.useState<string | null>(null);
   const [pendingSavedSceneDelete, setPendingSavedSceneDelete] = React.useState<SavedSceneSummary | null>(null);
   const [deletingSavedSceneId, setDeletingSavedSceneId] = React.useState<string | null>(null);
+  const [autosaveStatus, setAutosaveStatus] = React.useState<AutosaveStatus>('idle');
+  const [autosaveMessage, setAutosaveMessage] = React.useState('Autosave ready');
+  const autosaveSceneIdRef = React.useRef<string | null>(null);
+  const lastAutosaveSnapshotRef = React.useRef<string | null>(null);
   const isDraggingRef = React.useRef(false);
   const workspaceRef = React.useRef<HTMLDivElement>(null);
   const [previewPanelPercent, setPreviewPanelPercent] = React.useState(56);
@@ -2348,6 +2358,94 @@ function EditorInner() {
       }
     }
   }, [sceneIdParam, isNewSceneParam, activeSavedSceneId, importProject, resetToBlankScene, setActiveSavedSceneId, setActiveSavedScenePublished]);
+
+
+  const getAutosaveSnapshot = React.useCallback(() => {
+    const project = exportProject();
+    const comparableProject = { ...project, exportedAt: '' };
+    return {
+      project,
+      serialized: JSON.stringify(comparableProject),
+    };
+  }, [exportProject]);
+
+  React.useEffect(() => {
+    if (!activeSavedSceneId || isSceneLoading) {
+      autosaveSceneIdRef.current = null;
+      lastAutosaveSnapshotRef.current = null;
+      setAutosaveStatus('idle');
+      setAutosaveMessage('Autosave ready');
+      return;
+    }
+
+    if (autosaveSceneIdRef.current !== activeSavedSceneId) {
+      autosaveSceneIdRef.current = activeSavedSceneId;
+      lastAutosaveSnapshotRef.current = getAutosaveSnapshot().serialized;
+      setAutosaveStatus('saved');
+      setAutosaveMessage('Saved');
+    }
+  }, [activeSavedSceneId, getAutosaveSnapshot, isSceneLoading]);
+
+  React.useEffect(() => {
+    if (
+      !activeSavedSceneId ||
+      isSceneLoading ||
+      !currentUser ||
+      currentUser.role === 'viewer' ||
+      isSavingScene ||
+      isCapturingSceneThumbnail
+    ) {
+      return;
+    }
+
+    const { project, serialized } = getAutosaveSnapshot();
+    if (serialized === lastAutosaveSnapshotRef.current) return;
+
+    const controller = new AbortController();
+    setAutosaveStatus('pending');
+    setAutosaveMessage('Autosave pending...');
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        setAutosaveStatus('saving');
+        setAutosaveMessage('Autosaving...');
+        const response = await fetch(`/api/scenes/${activeSavedSceneId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project }),
+          signal: controller.signal,
+        });
+        const result = await response.json().catch(() => ({})) as { scene?: SavedSceneSummary; error?: string };
+
+        if (!response.ok || !result.scene) {
+          throw new Error(result.error || 'Autosave failed.');
+        }
+
+        lastAutosaveSnapshotRef.current = serialized;
+        setSavedScenes(previous => previous.map(scene => (
+          scene.id === activeSavedSceneId ? { ...scene, ...result.scene } : scene
+        )));
+        setAutosaveStatus('saved');
+        setAutosaveMessage('Saved');
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.error('Autosave scene error:', error);
+        setAutosaveStatus('error');
+        setAutosaveMessage('Autosave failed');
+      }
+    }, 900);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [
+    activeSavedSceneId,
+    currentUser,
+    getAutosaveSnapshot,
+    isCapturingSceneThumbnail,
+    isSavingScene,
+    isSceneLoading,
+  ]);
 
 
 
@@ -2515,12 +2613,15 @@ function EditorInner() {
     : noteTags.length;
 
   const selectedFilterLabels = React.useMemo(() => {
-    if (noteTagFilter.includes(NOTE_TAG_FILTER_NONE)) return ['No notes'];
+    if (noteTagFilter.includes(NOTE_TAG_FILTER_NONE)) return showStarredNoteOverlaysOnly ? ['Starred only', 'No notes'] : ['No notes'];
     if (noteTags.length === 0) return [];
-    if (noteTagFilter.length === 0) return ['All tags'];
-    if (enabledNoteTagSet.size === 0) return ['None'];
-    return noteTags.filter(tag => enabledNoteTagSet.has(tag.toLowerCase()));
-  }, [enabledNoteTagSet, noteTagFilter, noteTags]);
+    const labels = noteTagFilter.length === 0
+      ? ['All tags']
+      : enabledNoteTagSet.size === 0
+        ? ['None']
+        : noteTags.filter(tag => enabledNoteTagSet.has(tag.toLowerCase()));
+    return showStarredNoteOverlaysOnly ? ['Starred only', ...labels] : labels;
+  }, [enabledNoteTagSet, noteTagFilter, noteTags, showStarredNoteOverlaysOnly]);
 
   const filterSummaryLabel = selectedFilterLabels.length > 2
     ? `${selectedFilterLabels.slice(0, 2).join(', ')} +${selectedFilterLabels.length - 2}`
@@ -4609,10 +4710,20 @@ function EditorInner() {
 
   const isPublicAnalysis = pathname === '/analysis' && sceneIdParam && activeSavedScenePublished;
   const isGated = !currentUser && !isPublicAnalysis;
+  const showAutosaveIndicator = Boolean(activeSavedSceneId && currentUser && currentUser.role !== 'viewer');
+  const autosaveToneClass = cn(
+    autosaveStatus === 'error'
+      ? 'border-red-500/25 bg-red-500/10 text-red-300'
+      : autosaveStatus === 'saved'
+        ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+        : autosaveStatus === 'saving' || autosaveStatus === 'pending'
+          ? 'border-indigo-500/25 bg-indigo-500/10 text-indigo-300'
+          : 'border-zinc-800 bg-zinc-950/60 text-zinc-500'
+  );
 
   if (isAuthChecking || isGated || isSceneLoading) {
     return (
-      <div className="flex flex-col h-screen w-screen bg-[#0a0a0b] items-center justify-center text-zinc-300 font-sans relative overflow-hidden">
+      <div className="workbench-shell flex flex-col h-screen w-screen bg-[#0a0a0b] items-center justify-center text-zinc-300 font-sans relative overflow-hidden">
         {/* Background Decorative Glow */}
         <div className="absolute top-[-10%] left-[-20%] w-[60vw] h-[60vw] rounded-full bg-gradient-to-br from-indigo-600/10 via-transparent to-transparent blur-3xl pointer-events-none" />
         <div className="absolute bottom-[-10%] right-[-20%] w-[60vw] h-[60vw] rounded-full bg-gradient-to-tl from-violet-600/10 via-transparent to-transparent blur-3xl pointer-events-none" />
@@ -4635,7 +4746,7 @@ function EditorInner() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#0a0a0b] text-zinc-300 font-sans overflow-hidden">
+    <div className="workbench-shell flex flex-col h-screen bg-[#0a0a0b] text-zinc-300 font-sans overflow-hidden">
       <input
         ref={projectImportInputRef}
         type="file"
@@ -5357,6 +5468,28 @@ function EditorInner() {
         </div>
 
         <div className="flex items-center gap-3">
+          {showAutosaveIndicator && (
+            <div
+              className={cn(
+                "hidden h-7 items-center gap-1.5 rounded border px-2 text-[9px] font-black uppercase tracking-widest sm:inline-flex",
+                autosaveToneClass
+              )}
+              aria-live="polite"
+              aria-atomic="true"
+              title={autosaveMessage}
+            >
+              {autosaveStatus === 'saving' || autosaveStatus === 'pending' ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : autosaveStatus === 'error' ? (
+                <CloudOff className="h-3.5 w-3.5" />
+              ) : autosaveStatus === 'saved' ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <Cloud className="h-3.5 w-3.5" />
+              )}
+              <span>{autosaveMessage}</span>
+            </div>
+          )}
 
           <div className="flex bg-zinc-950/60 rounded border border-zinc-800 p-0.5 shrink-0 select-none">
             <button
@@ -5811,12 +5944,12 @@ function EditorInner() {
                       className={cn(
                         buttonVariants({ variant: "ghost", size: "icon" }),
                         "relative text-zinc-500 hover:text-zinc-300",
-                        noteTagFilter.length > 0 && "text-indigo-300 hover:text-indigo-200"
+                        (noteTagFilter.length > 0 || showStarredNoteOverlaysOnly) && "text-indigo-300 hover:text-indigo-200"
                       )}
                       aria-label="Filter notes"
                     >
                       <Filter className="h-4 w-4" />
-                      {noteTagFilter.length > 0 && (
+                      {(noteTagFilter.length > 0 || showStarredNoteOverlaysOnly) && (
                         <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-indigo-400" />
                       )}
                     </DropdownMenuTrigger>
@@ -5941,6 +6074,36 @@ function EditorInner() {
                               className={cn(
                                 "absolute top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full transition-transform",
                                 compactNoteOverlays ? "translate-x-3.5 bg-indigo-200" : "translate-x-0.5 bg-zinc-600"
+                              )}
+                            />
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={showStarredNoteOverlaysOnly}
+                          className={cn(
+                            "flex items-center justify-between gap-3 rounded-md border px-2.5 py-2 text-left transition-colors",
+                            showStarredNoteOverlaysOnly
+                              ? "border-amber-400/50 bg-amber-400/10 text-amber-100"
+                              : "border-zinc-800 bg-zinc-950/80 text-zinc-500 hover:border-zinc-700 hover:text-zinc-200"
+                          )}
+                          onClick={() => setShowStarredNoteOverlaysOnly(!showStarredNoteOverlaysOnly)}
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <Star className={cn("h-3.5 w-3.5 shrink-0", showStarredNoteOverlaysOnly && "fill-amber-300 text-amber-300")} />
+                            <span className="truncate text-[10px] font-bold uppercase tracking-wider">Starred Notes Only</span>
+                          </span>
+                          <span
+                            className={cn(
+                              "relative h-4 w-7 shrink-0 rounded-full border transition-colors",
+                              showStarredNoteOverlaysOnly ? "border-amber-300/60 bg-amber-300/25" : "border-zinc-700 bg-zinc-900"
+                            )}
+                            aria-hidden="true"
+                          >
+                            <span
+                              className={cn(
+                                "absolute top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full transition-transform",
+                                showStarredNoteOverlaysOnly ? "translate-x-3.5 bg-amber-100" : "translate-x-0.5 bg-zinc-600"
                               )}
                             />
                           </span>

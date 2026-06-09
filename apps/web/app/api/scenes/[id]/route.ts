@@ -2,7 +2,7 @@ import { del, list } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 
 import type { TimelineProjectJson } from '@/lib/timeline-context';
-import { deleteSavedScene, getOtherSavedSceneProjects, getSavedScene, updateSavedSceneThumbnail, updateSavedScenePublishStatus } from '@/lib/saved-scenes-store';
+import { deleteSavedScene, getOtherSavedSceneProjects, getSavedScene, updateSavedSceneProject, updateSavedSceneThumbnail, updateSavedScenePublishStatus } from '@/lib/saved-scenes-store';
 import { getAuthUser } from '@/lib/auth-store';
 
 export const runtime = 'nodejs';
@@ -97,7 +97,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid saved scene id.' }, { status: 400 });
     }
 
-    const body = await request.json().catch(() => ({})) as { thumbnailUrl?: unknown; isPublished?: unknown };
+    const body = await request.json().catch(() => ({})) as { thumbnailUrl?: unknown; isPublished?: unknown; project?: unknown };
 
     if ('isPublished' in body) {
       if (user.role !== 'admin') {
@@ -105,6 +105,19 @@ export async function PATCH(
       }
       const isPublished = !!body.isPublished;
       const scene = await updateSavedScenePublishStatus(id, isPublished, user.id);
+      if (!scene) {
+        return NextResponse.json({ error: 'Saved scene was not found.' }, { status: 404 });
+      }
+      return NextResponse.json({ scene });
+    }
+
+    if ('project' in body) {
+      const project = body.project as TimelineProjectJson;
+      if (!project || typeof project !== 'object' || !Array.isArray(project.scenes) || project.scenes.length === 0) {
+        return NextResponse.json({ error: 'A valid timeline project is required.' }, { status: 400 });
+      }
+
+      const scene = await updateSavedSceneProject(id, project);
       if (!scene) {
         return NextResponse.json({ error: 'Saved scene was not found.' }, { status: 404 });
       }

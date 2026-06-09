@@ -162,6 +162,38 @@ export async function updateSavedSceneThumbnail(id: string, thumbnailUrl: string
   return rows[0] ? toSummary(rows[0]) : null;
 }
 
+export async function updateSavedSceneProject(id: string, project: TimelineProjectJson): Promise<SavedSceneSummary | null> {
+  await ensureSceneTable();
+  const sql = getSql();
+  const serializedProject = JSON.parse(JSON.stringify(project)) as postgres.JSONValue;
+  const rows = await withSceneStorageTimeout(sql<SavedSceneSummaryRow[]>`
+    update timeline_private.saved_scenes
+    set
+      name = coalesce(${typeof project?.scenes?.[0]?.name === 'string' ? project.scenes[0].name : null}, name),
+      project = ${sql.json(serializedProject)},
+      updated_at = now()
+    where id = ${id}
+    returning
+      id,
+      name,
+      project #>> '{scenes,0,thumbnailUrl}' as thumbnail_url,
+      project #>> '{scenes,0,analysisModel}' as analysis_model,
+      project #> '{scenes,0,analysisReport}' as analysis_report,
+      is_published,
+      published_at,
+      published_by_user_id,
+      (
+        select username
+        from timeline_private.users
+        where users.id = timeline_private.saved_scenes.published_by_user_id
+      ) as publisher_name,
+      created_at,
+      updated_at
+  `, 'Updating saved scene project');
+
+  return rows[0] ? toSummary(rows[0]) : null;
+}
+
 export async function updateSavedScenePublishStatus(id: string, isPublished: boolean, publisherUserId?: string): Promise<SavedSceneSummary | null> {
   await ensureSceneTable();
   const sql = getSql();

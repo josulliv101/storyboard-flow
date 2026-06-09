@@ -5,6 +5,13 @@ export interface SceneMetrics {
   tension_reasoning: string;
   suspense_reasoning: string;
   anticipation_reasoning: string;
+  custom?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    value: number;
+    reasoning?: string;
+  }>;
 }
 
 export interface NarrativeElements {
@@ -17,6 +24,7 @@ export interface NarrativeElements {
 
 export interface GraphTag {
   id: string;
+  metricId?: string;
   label: string;
   color: string;
   value?: number;
@@ -48,6 +56,12 @@ export interface ScreenplayReport {
   title: string;
   overall_summary: string;
   scenes: SceneAnalysis[];
+  metric_definitions?: Array<{
+    id: string;
+    name?: string;
+    label?: string;
+    description?: string;
+  }>;
   average_tension: number;
   average_suspense: number;
   average_anticipation: number;

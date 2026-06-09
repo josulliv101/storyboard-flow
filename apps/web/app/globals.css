@@ -149,3 +149,90 @@
     background: rgba(255, 255, 255, 0.2);
   }
 }
+
+.workbench-shell {
+  color-scheme: dark;
+}
+
+html:not(.dark) .workbench-shell {
+  color-scheme: light;
+  background: #f4f6f8;
+  color: #27272a;
+}
+
+html:not(.dark) .workbench-shell [class~="bg-[#0a0a0b]"],
+html:not(.dark) .workbench-shell [class~="bg-[#111114]"],
+html:not(.dark) .workbench-shell [class~="bg-[#18181b]"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-950"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-950/80"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-950/70"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-950/60"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-950/40"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-900"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-900/80"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-900/70"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-900/60"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-900/40"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-900/30"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-900/10"] {
+  background-color: #ffffff !important;
+}
+
+html:not(.dark) .workbench-shell [class~="bg-black"],
+html:not(.dark) .workbench-shell [class~="bg-black/85"],
+html:not(.dark) .workbench-shell [class~="bg-black/75"],
+html:not(.dark) .workbench-shell [class~="bg-black/70"],
+html:not(.dark) .workbench-shell [class~="bg-black/60"] {
+  background-color: rgb(255 255 255 / 0.9) !important;
+}
+
+html:not(.dark) .workbench-shell [class~="border-zinc-950"],
+html:not(.dark) .workbench-shell [class~="border-zinc-900"],
+html:not(.dark) .workbench-shell [class~="border-zinc-850"],
+html:not(.dark) .workbench-shell [class~="border-zinc-800"],
+html:not(.dark) .workbench-shell [class~="border-zinc-800/80"],
+html:not(.dark) .workbench-shell [class~="border-zinc-800/60"],
+html:not(.dark) .workbench-shell [class~="border-zinc-800/50"],
+html:not(.dark) .workbench-shell [class~="border-zinc-800/40"],
+html:not(.dark) .workbench-shell [class~="border-zinc-700"] {
+  border-color: #d8dde5 !important;
+}
+
+html:not(.dark) .workbench-shell [class~="text-white"],
+html:not(.dark) .workbench-shell [class~="text-zinc-100"],
+html:not(.dark) .workbench-shell [class~="text-zinc-200"],
+html:not(.dark) .workbench-shell [class~="text-zinc-250"],
+html:not(.dark) .workbench-shell [class~="text-zinc-300"],
+html:not(.dark) .workbench-shell [class~="text-zinc-350"],
+html:not(.dark) .workbench-shell [class~="text-zinc-400"] {
+  color: #27272a !important;
+}
+
+html:not(.dark) .workbench-shell [class~="text-zinc-450"],
+html:not(.dark) .workbench-shell [class~="text-zinc-500"],
+html:not(.dark) .workbench-shell [class~="text-zinc-550"],
+html:not(.dark) .workbench-shell [class~="text-zinc-555"],
+html:not(.dark) .workbench-shell [class~="text-zinc-600"],
+html:not(.dark) .workbench-shell [class~="text-zinc-650"],
+html:not(.dark) .workbench-shell [class~="text-zinc-700"] {
+  color: #5f6673 !important;
+}
+
+html:not(.dark) .workbench-shell [class~="bg-indigo-600"],
+html:not(.dark) .workbench-shell [class~="bg-indigo-650"],
+html:not(.dark) .workbench-shell [class~="bg-violet-650"],
+html:not(.dark) .workbench-shell [class~="bg-gradient-to-r"] {
+  color: #ffffff !important;
+}
+
+html:not(.dark) .workbench-shell [class~="shadow-black/50"],
+html:not(.dark) .workbench-shell [class~="shadow-indigo-900/40"],
+html:not(.dark) .workbench-shell [class~="shadow-indigo-950/20"] {
+  --tw-shadow-color: rgb(15 23 42 / 0.12) !important;
+}
+
+html:not(.dark) .workbench-shell input,
+html:not(.dark) .workbench-shell select,
+html:not(.dark) .workbench-shell textarea {
+  color-scheme: light;
+}

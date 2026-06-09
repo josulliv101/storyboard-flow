@@ -13,6 +13,12 @@ const sampleData: ChartDataPoint[] = [
   { name: 'Aftermath', tension: 2.1, suspense: 1.8, anticipation: 2.4, sceneIndex: 7, timestamp: 312 },
 ];
 
+const customMetricData: ChartDataPoint[] = sampleData.map((point, index) => ({
+  ...point,
+  moral_pressure: Math.min(5, 1.5 + index * 0.45),
+  visual_clarity: Math.max(0.5, 4.8 - index * 0.38),
+}));
+
 type ChartStoryProps = React.ComponentProps<typeof TensionChart>;
 
 function ChartFrame(props: Partial<ChartStoryProps>) {
@@ -96,4 +102,17 @@ export const CustomColors: Story = {
 
 export const EditableValues: Story = {
   render: () => <EditableChartFrame />,
+};
+
+export const CustomMetrics: Story = {
+  render: () => (
+    <ChartFrame
+      data={customMetricData}
+      metrics={[
+        { id: 'moral_pressure', label: 'Moral Pressure', color: '#f59e0b' },
+        { id: 'visual_clarity', label: 'Visual Clarity', color: '#14b8a6' },
+      ]}
+      activeIndex={4}
+    />
+  ),
 };

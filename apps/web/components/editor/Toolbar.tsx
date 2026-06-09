@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Plus, Trash2, Video, Image as ImageIcon, MessageSquare, User, ChevronDown, Monitor, Filter, Activity, Tags, Type } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Plus, Trash2, Video, Image as ImageIcon, MessageSquare, User, ChevronDown, Monitor, Filter, Activity, Tags, Type, Star } from 'lucide-react';
 import {
   Button,
   buttonVariants,
@@ -45,7 +45,8 @@ export function Toolbar() {
     compactNoteOverlays, setCompactNoteOverlays,
     showDialogPreviewUi, setShowDialogPreviewUi,
     showSceneTitleUi, setShowSceneTitleUi,
-    noteTagFilter, setNoteTagFilter
+    noteTagFilter, setNoteTagFilter,
+    showStarredNoteOverlaysOnly, setShowStarredNoteOverlaysOnly
   } = useTimeline();
 
   const previewScenes = React.useMemo(() => {
@@ -120,12 +121,15 @@ export function Toolbar() {
     ? noteTags.filter(tag => enabledNoteTagSet.has(tag.toLowerCase())).length
     : noteTags.length;
   const selectedFilterLabels = React.useMemo(() => {
-    if (noteTagFilter.includes(NOTE_TAG_FILTER_NONE)) return ['No notes'];
+    if (noteTagFilter.includes(NOTE_TAG_FILTER_NONE)) return showStarredNoteOverlaysOnly ? ['Starred only', 'No notes'] : ['No notes'];
     if (noteTags.length === 0) return [];
-    if (noteTagFilter.length === 0) return ['All tags'];
-    if (enabledNoteTagSet.size === 0) return ['None'];
-    return noteTags.filter(tag => enabledNoteTagSet.has(tag.toLowerCase()));
-  }, [enabledNoteTagSet, noteTagFilter, noteTags]);
+    const labels = noteTagFilter.length === 0
+      ? ['All tags']
+      : enabledNoteTagSet.size === 0
+        ? ['None']
+        : noteTags.filter(tag => enabledNoteTagSet.has(tag.toLowerCase()));
+    return showStarredNoteOverlaysOnly ? ['Starred only', ...labels] : labels;
+  }, [enabledNoteTagSet, noteTagFilter, noteTags, showStarredNoteOverlaysOnly]);
   const filterSummaryLabel = selectedFilterLabels.length > 2
     ? `${selectedFilterLabels.slice(0, 2).join(', ')} +${selectedFilterLabels.length - 2}`
     : selectedFilterLabels.join(', ');
@@ -303,12 +307,12 @@ export function Toolbar() {
               className={cn(
                 buttonVariants({ variant: "ghost", size: "icon" }),
                 "relative text-zinc-500 hover:text-zinc-300",
-                noteTagFilter.length > 0 && "text-indigo-300 hover:text-indigo-200"
+                (noteTagFilter.length > 0 || showStarredNoteOverlaysOnly) && "text-indigo-300 hover:text-indigo-200"
               )}
               aria-label="Filter notes"
             >
               <Filter className="h-4 w-4" />
-              {noteTagFilter.length > 0 && (
+              {(noteTagFilter.length > 0 || showStarredNoteOverlaysOnly) && (
                 <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-indigo-400" />
               )}
             </DropdownMenuTrigger>
@@ -433,6 +437,36 @@ export function Toolbar() {
                       className={cn(
                         "absolute top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full transition-transform",
                         compactNoteOverlays ? "translate-x-3.5 bg-indigo-200" : "translate-x-0.5 bg-zinc-600"
+                      )}
+                    />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={showStarredNoteOverlaysOnly}
+                  className={cn(
+                    "flex items-center justify-between gap-3 rounded-md border px-2.5 py-2 text-left transition-colors",
+                    showStarredNoteOverlaysOnly
+                      ? "border-amber-400/50 bg-amber-400/10 text-amber-100"
+                      : "border-zinc-800 bg-zinc-950/80 text-zinc-500 hover:border-zinc-700 hover:text-zinc-200"
+                  )}
+                  onClick={() => setShowStarredNoteOverlaysOnly(!showStarredNoteOverlaysOnly)}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Star className={cn("h-3.5 w-3.5 shrink-0", showStarredNoteOverlaysOnly && "fill-amber-300 text-amber-300")} />
+                    <span className="truncate text-[10px] font-bold uppercase tracking-wider">Starred Notes Only</span>
+                  </span>
+                  <span
+                    className={cn(
+                      "relative h-4 w-7 shrink-0 rounded-full border transition-colors",
+                      showStarredNoteOverlaysOnly ? "border-amber-300/60 bg-amber-300/25" : "border-zinc-700 bg-zinc-900"
+                    )}
+                    aria-hidden="true"
+                  >
+                    <span
+                      className={cn(
+                        "absolute top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full transition-transform",
+                        showStarredNoteOverlaysOnly ? "translate-x-3.5 bg-amber-100" : "translate-x-0.5 bg-zinc-600"
                       )}
                     />
                   </span>

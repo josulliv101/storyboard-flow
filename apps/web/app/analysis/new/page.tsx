@@ -17,7 +17,9 @@ import {
   ArrowRight,
   Layers,
   Users,
-  Film
+  Film,
+  Plus,
+  X
 } from 'lucide-react';
 import { Button } from '@storyboard/ui';
 import { cn } from '@/lib/utils';
@@ -59,6 +61,53 @@ const clipOverlapsFrameRange = (
   return clipStartFrame < normalizedRangeEndFrame && clipEndFrame > rangeStartFrame;
 };
 
+type AnalysisMetricDraft = {
+  id: string;
+  name: string;
+  description: string;
+};
+
+const DEFAULT_ANALYSIS_METRICS: AnalysisMetricDraft[] = [
+  {
+    id: 'metric-tension',
+    name: 'Tension',
+    description: 'Sense of strain, pressure, anticipation, or unease in the moment.',
+  },
+  {
+    id: 'metric-suspense',
+    name: 'Suspense',
+    description: 'Withholding of information, ticking clocks, and anticipation of outcome.',
+  },
+  {
+    id: 'metric-stakes',
+    name: 'Stakes',
+    description: 'How much is at risk for the characters or situation right now.',
+  },
+];
+
+const createMetricDraft = (): AnalysisMetricDraft => ({
+  id: `metric-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  name: '',
+  description: '',
+});
+
+const getUsableMetricDrafts = (metrics: AnalysisMetricDraft[]) => (
+  metrics
+    .map(metric => ({
+      name: metric.name.trim(),
+      description: metric.description.trim(),
+    }))
+    .filter(metric => metric.name.length > 0)
+);
+
+const slugifyMetricId = (value: string) => (
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'metric'
+);
+
 export default function NewAnalysisPage() {
   const router = useRouter();
   const { currentUser, isAuthChecking } = useTimeline();
@@ -77,10 +126,7 @@ export default function NewAnalysisPage() {
   const [duration, setDuration] = React.useState<number>(0);
   const [model, setModel] = React.useState<'gemini' | 'gemma'>('gemini');
   
-  // Custom checkpoints
-  const [plotPoints, setPlotPoints] = React.useState(true);
-  const [stakes, setStakes] = React.useState(true);
-  const [confrontation, setConfrontation] = React.useState(true);
+  const [analysisMetrics, setAnalysisMetrics] = React.useState<AnalysisMetricDraft[]>(DEFAULT_ANALYSIS_METRICS);
 
   // Analysis state
   const [isAnalyzing, setIsAnalyzing] = React.useState(false);
@@ -127,6 +173,11 @@ export default function NewAnalysisPage() {
       return;
     }
     if (!selectedFile || isAnalyzing) return;
+    const usableMetrics = getUsableMetricDrafts(analysisMetrics);
+    if (usableMetrics.length === 0) {
+      toast.error('Add at least one analysis metric before running analysis.');
+      return;
+    }
 
     setIsAnalyzing(true);
     setProgress(0);
@@ -139,6 +190,7 @@ export default function NewAnalysisPage() {
     formData.append('fileName', selectedFile.name);
     formData.append('duration', String(duration));
     formData.append('model', model);
+    formData.append('analysisMetrics', JSON.stringify(usableMetrics));
 
     if (model === 'gemma') {
       try {
@@ -181,12 +233,13 @@ export default function NewAnalysisPage() {
         requestError = err instanceof Error ? err.message : 'Unknown analysis error';
       });
 
+    const metricLogLabel = usableMetrics.map(metric => metric.name).join(', ');
     const steps = model === 'gemma'
       ? [
           { percent: 10, delay: 500, log: "[SYSTEM] Connecting to local Ollama analysis endpoint..." },
           { percent: 35, delay: 900, log: "[STAGE 1] Sending sampled video frames to Gemma vision..." },
           { percent: 65, delay: 1100, log: "[STAGE 2] Extracting visual narrative beats and scene text..." },
-          { percent: 90, delay: 1100, log: "[STAGE 3] Building narrative graphs and preview notes..." }
+          { percent: 90, delay: 1100, log: `[STAGE 3] Building metric graphs (${metricLogLabel}) and preview notes...` }
         ]
       : [
           { percent: 10, delay: 800, log: "[SYSTEM] Connecting to AI analysis endpoint..." },
@@ -194,7 +247,7 @@ export default function NewAnalysisPage() {
           { percent: 45, delay: 2000, log: "[STAGE 2] Polling Files API for model ingestion & safety checks..." },
           { percent: 65, delay: 2500, log: "[STAGE 3] Running shot-boundary detection & semantic dialogue mapping..." },
           { percent: 80, delay: 2500, log: "[STAGE 4] Querying gemini-3.5-flash with structured story schema..." },
-          { percent: 90, delay: 2000, log: "[STAGE 5] Generating narrative graphs (Tension, Suspense, Stakes)..." }
+          { percent: 90, delay: 2000, log: `[STAGE 5] Generating narrative metric graphs (${metricLogLabel})...` }
         ];
 
     let currentIdx = 0;
@@ -443,6 +496,34 @@ export default function NewAnalysisPage() {
                 const tReasoning = mergedClips.find((c) => c.type === "note" && c.startFrame === beat.startFrame && c.name.toLowerCase().includes("tension"))?.description;
                 const sReasoning = mergedClips.find((c) => c.type === "note" && c.startFrame === beat.startFrame && c.name.toLowerCase().includes("suspense"))?.description;
                 const stReasoning = mergedClips.find((c) => c.type === "note" && c.startFrame === beat.startFrame && c.name.toLowerCase().includes("stakes"))?.description;
+                const configuredMetrics = usableMetrics.map(metric => {
+                  const metricId = slugifyMetricId(metric.name);
+                  const track = mergedTracks.find((trackItem) => {
+                    const t = trackItem as any;
+                    return (
+                    t.id === `graph-metric-${metricId}` ||
+                    t.name.toLowerCase() === metric.name.toLowerCase() ||
+                    t.graph?.label?.toLowerCase() === metric.name.toLowerCase()
+                    );
+                  });
+                  const rawValue = getGraphValueAtFrame(track, beat.startFrame);
+                  const value = Math.min(5, Math.max(0, Math.round(rawValue / 2)));
+                  const reasoning = mergedClips.find((c) => (
+                    c.type === "note" &&
+                    c.startFrame === beat.startFrame &&
+                    (
+                      c.linkedGraphTrackIds?.includes(`graph-metric-${metricId}`) ||
+                      c.name.toLowerCase().includes(metric.name.toLowerCase())
+                    )
+                  ))?.description;
+                  return {
+                    id: metricId,
+                    name: metric.name,
+                    description: metric.description,
+                    value,
+                    reasoning: reasoning || `${metric.name} assessed at ${value}/5.`,
+                  };
+                });
 
                 return {
                   scene_number: idx + 1,
@@ -458,6 +539,7 @@ export default function NewAnalysisPage() {
                     tension_reasoning: tReasoning || `Tension metric assessed at ${tension}/5.`,
                     suspense_reasoning: sReasoning || `Suspense metric assessed at ${suspense}/5.`,
                     anticipation_reasoning: stReasoning || `Anticipation metric assessed at ${anticipation}/5.`,
+                    custom: configuredMetrics,
                   },
                   narrative_elements: {
                     plot_point: beat.tags?.[0] || beat.name.replace(" Beat", ""),
@@ -501,6 +583,11 @@ export default function NewAnalysisPage() {
                 title: selectedFile.name,
                 overall_summary: "The active timeline contains parsed narrative beats, detailing dialogue bubbles and emotional tracking. Select individual beats to check metrics.",
                 scenes: parsedBeats,
+                metric_definitions: usableMetrics.map(metric => ({
+                  id: slugifyMetricId(metric.name),
+                  name: metric.name,
+                  description: metric.description,
+                })),
                 average_tension: avgT,
                 average_suspense: avgS,
                 average_anticipation: avgA,
@@ -742,44 +829,82 @@ export default function NewAnalysisPage() {
 
                   {/* Target configuration parameters */}
                   <div className="space-y-2.5">
-                    <h5 className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest px-1 font-mono">Analysis Parameters</h5>
+                    <div className="flex items-center justify-between gap-3 px-1">
+                      <h5 className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Analysis Metrics</h5>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={isAnalyzing}
+                        onClick={() => setAnalysisMetrics(prev => [...prev, createMetricDraft()])}
+                        className="h-7 border-zinc-250 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-2 text-[9px] font-black uppercase tracking-widest text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                      >
+                        <Plus className="mr-1.5 h-3 w-3" />
+                        Add
+                      </Button>
+                    </div>
                     <div className="space-y-2 rounded border border-zinc-200 dark:border-zinc-900 bg-zinc-100 dark:bg-zinc-950 p-3">
-                      <label className="flex items-center gap-2.5 cursor-pointer select-none group text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300">
-                        <input
-                          type="checkbox"
-                          checked={plotPoints}
-                          disabled={isAnalyzing}
-                          onChange={(e) => setPlotPoints(e.target.checked)}
-                          className="rounded border-zinc-300 dark:border-zinc-800 bg-white dark:bg-[#0a0a0b] text-indigo-600 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5 accent-indigo-650 cursor-pointer"
-                        />
-                        <span className="text-[10px] font-semibold font-sans text-zinc-700 dark:text-zinc-300">
-                          Identify Scene Plot Points
-                        </span>
-                      </label>
-                      <label className="flex items-center gap-2.5 cursor-pointer select-none group text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300">
-                        <input
-                          type="checkbox"
-                          checked={stakes}
-                          disabled={isAnalyzing}
-                          onChange={(e) => setStakes(e.target.checked)}
-                          className="rounded border-zinc-300 dark:border-zinc-800 bg-white dark:bg-[#0a0a0b] text-indigo-600 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5 accent-indigo-650 cursor-pointer"
-                        />
-                        <span className="text-[10px] font-semibold font-sans text-zinc-700 dark:text-zinc-300">
-                          Map Stakes & Suspense Curves
-                        </span>
-                      </label>
-                      <label className="flex items-center gap-2.5 cursor-pointer select-none group text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300">
-                        <input
-                          type="checkbox"
-                          checked={confrontation}
-                          disabled={isAnalyzing}
-                          onChange={(e) => setConfrontation(e.target.checked)}
-                          className="rounded border-zinc-300 dark:border-zinc-800 bg-white dark:bg-[#0a0a0b] text-indigo-600 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5 accent-indigo-650 cursor-pointer"
-                        />
-                        <span className="text-[10px] font-semibold font-sans text-zinc-700 dark:text-zinc-300">
-                          Extract Headshot Avatars
-                        </span>
-                      </label>
+                      {analysisMetrics.map((metric, index) => (
+                        <div
+                          key={metric.id}
+                          className="rounded-lg border border-zinc-200 dark:border-zinc-850 bg-white/80 dark:bg-[#0a0a0b] p-2.5 shadow-sm"
+                        >
+                          <div className="flex items-start gap-2">
+                            <div className="min-w-0 flex-1 space-y-2">
+                              <label className="block">
+                                <span className="mb-1 block text-[8px] font-black uppercase tracking-widest text-zinc-500">Metric Name</span>
+                                <input
+                                  type="text"
+                                  value={metric.name}
+                                  disabled={isAnalyzing}
+                                  maxLength={48}
+                                  placeholder="e.g. Moral Pressure"
+                                  onChange={(event) => {
+                                    const value = event.target.value;
+                                    setAnalysisMetrics(prev => prev.map(item => (
+                                      item.id === metric.id ? { ...item, name: value } : item
+                                    )));
+                                  }}
+                                  className="h-8 w-full rounded border border-zinc-250 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-2 text-xs font-semibold text-zinc-800 dark:text-zinc-200 outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-700 focus:border-indigo-500"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1 block text-[8px] font-black uppercase tracking-widest text-zinc-500">Analyzer Description</span>
+                                <textarea
+                                  value={metric.description}
+                                  disabled={isAnalyzing}
+                                  maxLength={180}
+                                  rows={2}
+                                  placeholder="Tell the analyzer what this metric should measure."
+                                  onChange={(event) => {
+                                    const value = event.target.value;
+                                    setAnalysisMetrics(prev => prev.map(item => (
+                                      item.id === metric.id ? { ...item, description: value } : item
+                                    )));
+                                  }}
+                                  className="w-full resize-none rounded border border-zinc-250 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-2 py-1.5 text-[10px] leading-relaxed text-zinc-700 dark:text-zinc-300 outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-700 focus:border-indigo-500"
+                                />
+                              </label>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              disabled={isAnalyzing}
+                              aria-label={`Remove metric ${metric.name || index + 1}`}
+                              onClick={() => setAnalysisMetrics(prev => prev.filter(item => item.id !== metric.id))}
+                              className="h-7 w-7 shrink-0 rounded-full border border-zinc-200 dark:border-zinc-850 text-zinc-500 hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      {analysisMetrics.length === 0 && (
+                        <div className="rounded border border-dashed border-zinc-300 dark:border-zinc-800 px-3 py-4 text-center text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
+                          Add at least one metric
+                        </div>
+                      )}
                     </div>
                   </div>
 

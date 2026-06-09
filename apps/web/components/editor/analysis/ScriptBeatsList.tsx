@@ -186,7 +186,11 @@ export default function ScriptBeatsList({
       <div className="flex flex-col gap-2 w-full mt-1 animate-fade-in" onClick={(e) => e.stopPropagation()}>
         <textarea
           value={editText}
-          onChange={(e) => setEditText(e.target.value)}
+          onChange={(e) => {
+            const nextText = e.target.value;
+            setEditText(nextText);
+            onEditBeatText?.(sceneIdx, nextText, subKey);
+          }}
           className="w-full min-h-[60px] bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-[11px] text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 resize-y leading-relaxed font-sans"
           placeholder="Enter note details..."
           autoFocus
@@ -195,9 +199,6 @@ export default function ScriptBeatsList({
           <button
             type="button"
             onClick={() => {
-              if (onEditBeatText && editText.trim()) {
-                onEditBeatText(sceneIdx, editText.trim(), subKey);
-              }
               setEditingIdx(null);
               setEditingKey(null);
             }}
@@ -994,7 +995,11 @@ export default function ScriptBeatsList({
                   <div className="flex flex-col gap-2 w-full mt-1.5 animate-fade-in" onClick={(e) => e.stopPropagation()}>
                     <textarea
                       value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
+                      onChange={(e) => {
+                        const nextText = e.target.value;
+                        setEditText(nextText);
+                        onEditBeatText?.(idx, nextText, getActiveKey());
+                      }}
                       className="w-full min-h-[80px] bg-zinc-900 border border-zinc-800 rounded-lg p-2.5 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-indigo-500/50 resize-y leading-relaxed font-sans"
                       placeholder="Enter beat description..."
                       autoFocus
@@ -1003,9 +1008,6 @@ export default function ScriptBeatsList({
                       <button
                         type="button"
                         onClick={() => {
-                          if (onEditBeatText && editText.trim()) {
-                            onEditBeatText(idx, editText.trim(), getActiveKey());
-                          }
                           setEditingIdx(null);
                           setEditingKey(null);
                         }}

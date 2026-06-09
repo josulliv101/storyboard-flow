@@ -115,6 +115,8 @@ export interface TimelineProjectJson {
     showDialogPreviewUi?: boolean;
     showSceneTitleUi?: boolean;
     noteTagFilter?: string[];
+    showStarredNoteOverlaysOnly?: boolean;
+    highlightedBeatKeys?: string[];
     workspaceViewMode?: WorkspaceViewMode;
     dedicatedDialogPanel?: boolean;
   };
@@ -148,6 +150,8 @@ interface TimelineState {
   showDialogPreviewUi: boolean;
   showSceneTitleUi: boolean;
   noteTagFilter: string[];
+  showStarredNoteOverlaysOnly: boolean;
+  highlightedBeatKeys: string[];
   workspaceViewMode: WorkspaceViewMode;
 }
 
@@ -170,6 +174,8 @@ interface TimelineContextType extends TimelineState {
   setShowDialogPreviewUi: (show: boolean) => void;
   setShowSceneTitleUi: (show: boolean) => void;
   setNoteTagFilter: React.Dispatch<React.SetStateAction<string[]>>;
+  setShowStarredNoteOverlaysOnly: (show: boolean) => void;
+  setHighlightedBeatKeys: React.Dispatch<React.SetStateAction<string[]>>;
   setWorkspaceViewMode: (mode: WorkspaceViewMode) => void;
   updateClip: (id: string, updates: Partial<TimelineClip>) => void;
   selectClip: (id: string | null, multi?: boolean) => void;
@@ -519,6 +525,8 @@ const normalizeImportedProject = (input: TimelineProjectJson): TimelineProjectJs
       showDialogPreviewUi: typeof config.showDialogPreviewUi === 'boolean' ? config.showDialogPreviewUi : true,
       showSceneTitleUi: typeof config.showSceneTitleUi === 'boolean' ? config.showSceneTitleUi : true,
       noteTagFilter: Array.isArray(config.noteTagFilter) ? config.noteTagFilter.filter((tag): tag is string => typeof tag === 'string') : [],
+      showStarredNoteOverlaysOnly: typeof config.showStarredNoteOverlaysOnly === 'boolean' ? config.showStarredNoteOverlaysOnly : false,
+      highlightedBeatKeys: Array.isArray(config.highlightedBeatKeys) ? config.highlightedBeatKeys.filter((key): key is string => typeof key === 'string') : [],
       workspaceViewMode: isWorkspaceViewMode(config.workspaceViewMode) ? config.workspaceViewMode : 'editor',
     }
   };
@@ -669,6 +677,8 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
   const [showDialogPreviewUi, setShowDialogPreviewUi] = useState(true);
   const [showSceneTitleUi, setShowSceneTitleUi] = useState(true);
   const [noteTagFilter, setNoteTagFilter] = useState<string[]>([]);
+  const [showStarredNoteOverlaysOnly, setShowStarredNoteOverlaysOnly] = useState(false);
+  const [highlightedBeatKeys, setHighlightedBeatKeys] = useState<string[]>([]);
   const [workspaceViewMode, setWorkspaceViewMode] = useState<WorkspaceViewMode>('editor');
 
   const [currentUser, setCurrentUser] = useState<{ id: string; username: string; role: 'viewer' | 'editor' | 'admin' } | null>(null);
@@ -742,6 +752,7 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
         if (typeof savedSettings.showDialogPreviewUi === 'boolean') setShowDialogPreviewUi(savedSettings.showDialogPreviewUi);
         if (typeof savedSettings.showSceneTitleUi === 'boolean') setShowSceneTitleUi(savedSettings.showSceneTitleUi);
         if (Array.isArray(savedSettings.noteTagFilter)) setNoteTagFilter(savedSettings.noteTagFilter.filter((tag): tag is string => typeof tag === 'string'));
+        if (typeof savedSettings.showStarredNoteOverlaysOnly === 'boolean') setShowStarredNoteOverlaysOnly(savedSettings.showStarredNoteOverlaysOnly);
         if (isWorkspaceViewMode(savedSettings.workspaceViewMode)) setWorkspaceViewMode(savedSettings.workspaceViewMode);
       }
       setIsHydrated(true);
@@ -752,10 +763,10 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
   // Sync to local storage
   useEffect(() => {
     if (!isHydrated) return;
-    const appSettings = { aspectRatio, zoom, fps, playbackRate, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, workspaceViewMode };
+    const appSettings = { aspectRatio, zoom, fps, playbackRate, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, showStarredNoteOverlaysOnly, workspaceViewMode };
     setLocalStorageItem('timeline-config', appSettings);
     setLocalStorageItem(APP_SETTINGS_STORAGE_KEY, appSettings);
-  }, [aspectRatio, zoom, fps, playbackRate, isHydrated, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, workspaceViewMode]);
+  }, [aspectRatio, zoom, fps, playbackRate, isHydrated, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, showStarredNoteOverlaysOnly, workspaceViewMode]);
 
   const playbackScenes = useMemo(() => {
     const previewSceneIdSet = previewSceneIds.length > 0 ? new Set(previewSceneIds) : undefined;
@@ -1023,6 +1034,7 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     setDisabledTrackIds([]);
     setMutedTrackIds([]);
     setPreviewSceneIds([]);
+    setHighlightedBeatKeys([]);
     setActiveSavedSceneId(null);
     setActiveSavedScenePublished(false);
   }, []);
@@ -1097,9 +1109,11 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
       showDialogPreviewUi,
       showSceneTitleUi,
       noteTagFilter,
+      showStarredNoteOverlaysOnly,
+      highlightedBeatKeys,
       workspaceViewMode,
     }
-  }), [scenes, characters, activeSceneId, collapsedTrackIds, disabledTrackIds, mutedTrackIds, aspectRatio, zoom, fps, playbackRate, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, workspaceViewMode]);
+  }), [scenes, characters, activeSceneId, collapsedTrackIds, disabledTrackIds, mutedTrackIds, aspectRatio, zoom, fps, playbackRate, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, showStarredNoteOverlaysOnly, highlightedBeatKeys, workspaceViewMode]);
 
   const importProject = useCallback((project: TimelineProjectJson) => {
     const normalizedProject = normalizeImportedProject(project);
@@ -1158,6 +1172,8 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     setShowDialogPreviewUi(normalizedProject.config.showDialogPreviewUi ?? true);
     setShowSceneTitleUi(normalizedProject.config.showSceneTitleUi ?? true);
     setNoteTagFilter(normalizedProject.config.noteTagFilter ?? []);
+    setShowStarredNoteOverlaysOnly(normalizedProject.config.showStarredNoteOverlaysOnly ?? false);
+    setHighlightedBeatKeys(normalizedProject.config.highlightedBeatKeys ?? []);
     setWorkspaceViewMode(normalizedProject.config.workspaceViewMode ?? 'editor');
     setCurrentFrame(0);
     setSelectedClipIds([]);
@@ -1492,6 +1508,8 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     showDialogPreviewUi,
     showSceneTitleUi,
     noteTagFilter,
+    showStarredNoteOverlaysOnly,
+    highlightedBeatKeys,
     workspaceViewMode,
     setCurrentFrame,
     setZoom,
@@ -1510,6 +1528,8 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
     setShowDialogPreviewUi,
     setShowSceneTitleUi,
     setNoteTagFilter,
+    setShowStarredNoteOverlaysOnly,
+    setHighlightedBeatKeys,
     setWorkspaceViewMode,
     updateClip,
     selectClip,
@@ -1553,10 +1573,10 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
   }), [
     isHydrated, currentFrame, totalDuration, fps, playbackRate, zoom, scenes, activeSceneId,
     selectedClipIds, isPlaying, collapsedTrackIds, disabledTrackIds, mutedTrackIds, aspectRatio,
-    snapLineFrame, isInteracting, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, workspaceViewMode, updateClip, selectClip, addClip, deleteClip, toggleTrackCollapse,
+    snapLineFrame, isInteracting, addGridItemPosition, previewGroupLayout, previewSceneMode, previewSceneIds, previewMediaLayout, analyticsOverlayStyle, showNoteOverlayIcons, compactNoteOverlays, showDialogPreviewUi, showSceneTitleUi, noteTagFilter, showStarredNoteOverlaysOnly, highlightedBeatKeys, workspaceViewMode, updateClip, selectClip, addClip, deleteClip, toggleTrackCollapse,
     toggleTrackDisable, toggleTrackMute, addScene, resetToBlankScene, deleteScene, setActiveScene, updateScene,
     reorderScenes, exportProject, importProject, importProjectIntoCurrent, addTrack, addGraphTrack, addTrackGroup, duplicateTrackGroup, updateTrack, deleteTrack, moveClipToFirst, moveClipToLast, clips, tracks,
-    characters, addCharacter, updateCharacter, deleteCharacter, setAddGridItemPosition, setPreviewGroupLayout, setPreviewSceneMode, setPreviewSceneIds, setPreviewMediaLayout, togglePreviewScene, setAnalyticsOverlayStyle, setShowNoteOverlayIcons, setCompactNoteOverlays, setShowDialogPreviewUi, setShowSceneTitleUi, setNoteTagFilter, setWorkspaceViewMode, setPlaybackRate,
+    characters, addCharacter, updateCharacter, deleteCharacter, setAddGridItemPosition, setPreviewGroupLayout, setPreviewSceneMode, setPreviewSceneIds, setPreviewMediaLayout, togglePreviewScene, setAnalyticsOverlayStyle, setShowNoteOverlayIcons, setCompactNoteOverlays, setShowDialogPreviewUi, setShowSceneTitleUi, setNoteTagFilter, setShowStarredNoteOverlaysOnly, setHighlightedBeatKeys, setWorkspaceViewMode, setPlaybackRate,
     currentUser, isAuthChecking, activeSavedSceneId, activeSavedScenePublished
   ]);
 

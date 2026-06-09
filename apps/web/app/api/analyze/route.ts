@@ -12,7 +12,118 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-function createDynamicFallback(fileName: string, durationInSeconds: number, durationInFrames: number) {
+type AnalysisMetricConfig = {
+  id: string;
+  label: string;
+  description: string;
+  color: string;
+  shortLabel: string;
+};
+
+const DEFAULT_ANALYSIS_METRICS: AnalysisMetricConfig[] = [
+  {
+    id: "tension",
+    label: "Tension",
+    description: "Sense of strain, pressure, anticipation, or unease in the moment.",
+    color: "#ec2727",
+    shortLabel: "T",
+  },
+  {
+    id: "suspense",
+    label: "Suspense",
+    description: "Withholding of information, ticking clocks, and anticipation of outcome.",
+    color: "#32c0ec",
+    shortLabel: "S",
+  },
+  {
+    id: "stakes",
+    label: "Stakes",
+    description: "How much is at risk for the characters or situation right now.",
+    color: "#27be45",
+    shortLabel: "ST",
+  },
+];
+
+const METRIC_COLORS = ["#ec2727", "#32c0ec", "#27be45", "#a855f7", "#f59e0b", "#14b8a6", "#f97316", "#e879f9"];
+
+const slugifyMetricId = (value: string) => {
+  const slug = value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug || "metric";
+};
+
+const normalizeMetricConfigs = (input: unknown): AnalysisMetricConfig[] => {
+  const rawItems = Array.isArray(input) ? input : [];
+  const seenIds = new Set<string>();
+  const metrics = rawItems
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as { name?: unknown; label?: unknown; description?: unknown };
+      const label = String(record.name || record.label || "").trim().slice(0, 48);
+      if (!label) return null;
+      const baseId = slugifyMetricId(label);
+      let id = baseId;
+      let suffix = 2;
+      while (seenIds.has(id)) {
+        id = `${baseId}_${suffix}`;
+        suffix += 1;
+      }
+      seenIds.add(id);
+      return {
+        id,
+        label,
+        description: String(record.description || "").trim().slice(0, 220),
+        color: METRIC_COLORS[index % METRIC_COLORS.length],
+        shortLabel: label.split(/\s+/).map(part => part[0]).join("").slice(0, 3).toUpperCase() || "M",
+      };
+    })
+    .filter((metric): metric is AnalysisMetricConfig => Boolean(metric))
+    .slice(0, 8);
+
+  return metrics.length > 0 ? metrics : DEFAULT_ANALYSIS_METRICS;
+};
+
+const parseAnalysisMetrics = (value: unknown) => {
+  if (Array.isArray(value)) return normalizeMetricConfigs(value);
+  if (typeof value !== "string" || !value.trim()) return DEFAULT_ANALYSIS_METRICS;
+  try {
+    return normalizeMetricConfigs(JSON.parse(value));
+  } catch {
+    return DEFAULT_ANALYSIS_METRICS;
+  }
+};
+
+const getSegmentMetric = (segment: any, metric: AnalysisMetricConfig) => {
+  const candidates = [
+    metric.id,
+    metric.label,
+    slugifyMetricId(metric.label),
+    metric.label.toLowerCase(),
+  ];
+  for (const key of candidates) {
+    const value = segment?.[key];
+    if (value && typeof value === "object" && typeof value.value === "number") return value;
+  }
+  return undefined;
+};
+
+const getMetricTrackId = (metric: AnalysisMetricConfig) => `graph-metric-${metric.id}`;
+
+const getMetricPromptLines = (metrics: AnalysisMetricConfig[]) => (
+  metrics.map(metric => `- "${metric.id}" (${metric.label}): ${metric.description || `Evaluate ${metric.label}.`}`).join("\n")
+);
+
+const getMetricJsonExample = (metrics: AnalysisMetricConfig[]) => (
+  metrics
+    .slice(0, 2)
+    .map((metric, index) => `    "${metric.id}": { "value": ${index === 0 ? 4 : 3}, "reason": "${metric.label} shifts because of visible story pressure." },`)
+    .join("\n")
+);
+
+function createDynamicFallback(fileName: string, durationInSeconds: number, durationInFrames: number, metrics: AnalysisMetricConfig[] = DEFAULT_ANALYSIS_METRICS) {
   const expoEnd = Math.round(durationInFrames * 0.2);
   const incidentEnd = Math.round(durationInFrames * 0.35);
   const risingEnd = Math.round(durationInFrames * 0.75);
@@ -51,7 +162,7 @@ function createDynamicFallback(fileName: string, durationInSeconds: number, dura
     {
       id: "clip-analysis-note-rising",
       name: "Rising Action Beat",
-      description: "Obstacles multiply and stakes grow higher. Anticipation and tension build up.",
+      description: `Obstacles multiply as ${metrics.map(metric => metric.label).slice(0, 2).join(" and ") || "story pressure"} builds.`,
       type: "note" as const,
       startFrame: incidentEnd,
       duration: risingEnd - incidentEnd,
@@ -117,7 +228,7 @@ function createDynamicFallback(fileName: string, durationInSeconds: number, dura
     },
     {
       id: "clip-dialogue-fallback-3",
-      name: "We've come too far to turn back now. Look at these tension spikes!",
+      name: "We've come too far to turn back now. Look at these story spikes!",
       description: "Protagonist resolves to finish the analysis.",
       type: "dialog" as const,
       startFrame: Math.round(durationInFrames * 0.78),
@@ -154,85 +265,35 @@ function createDynamicFallback(fileName: string, durationInSeconds: number, dura
       name: "Structural Analysis Notes",
       parentId: "group-story-analytics"
     },
-    {
-      id: "graph-dramatic-tension",
-      name: "Dramatic Tension",
-      parentId: "group-story-analytics",
-      type: "graph",
-      graph: {
-        type: "line",
-        label: "Tension",
-        min: 0,
-        max: 10,
-        increment: 1,
-        barIntervalSeconds: 0.5,
-        showValue: true,
-        color: "#ec2727",
-        points: [
-          { frame: 0, value: 2 },
-          { frame: expoEnd, value: 4 },
-          { frame: incidentEnd, value: 5 },
-          { frame: Math.round((incidentEnd + risingEnd) / 2), value: 7 },
-          { frame: risingEnd, value: 9 },
-          { frame: climaxEnd, value: 3 },
-          { frame: resolutionEnd, value: 1 }
-        ],
-        shortLabel: "T",
-        noteDurationSeconds: 3
-      }
-    },
-    {
-      id: "graph-anticipatory-suspense",
-      name: "Anticipatory Suspense",
-      parentId: "group-story-analytics",
-      type: "graph",
-      graph: {
-        type: "line",
-        label: "Suspense",
-        min: 0,
-        max: 10,
-        increment: 1,
-        barIntervalSeconds: 0.5,
-        showValue: true,
-        color: "#32c0ec",
-        points: [
-          { frame: 0, value: 1 },
-          { frame: expoEnd, value: 2 },
-          { frame: incidentEnd, value: 4 },
-          { frame: risingEnd, value: 8 },
-          { frame: climaxEnd, value: 4 },
-          { frame: resolutionEnd, value: 1 }
-        ],
-        shortLabel: "S",
-        noteDurationSeconds: 3
-      }
-    },
-    {
-      id: "graph-operational-stakes",
-      name: "Stakes / Conflict",
-      parentId: "group-story-analytics",
-      type: "graph",
-      graph: {
-        type: "line",
-        label: "Stakes",
-        min: 0,
-        max: 10,
-        increment: 1,
-        barIntervalSeconds: 0.5,
-        showValue: true,
-        color: "#27be45",
-        points: [
-          { frame: 0, value: 1 },
-          { frame: expoEnd, value: 5 },
-          { frame: incidentEnd, value: 6 },
-          { frame: risingEnd, value: 8 },
-          { frame: climaxEnd, value: 5 },
-          { frame: resolutionEnd, value: 2 }
-        ],
-        shortLabel: "ST",
-        noteDurationSeconds: 3
-      }
-    }
+    ...metrics.map((metric, index) => {
+      const offset = index % 3;
+      return {
+        id: getMetricTrackId(metric),
+        name: metric.label,
+        parentId: "group-story-analytics",
+        type: "graph" as const,
+        graph: {
+          type: "line" as const,
+          label: metric.label,
+          min: 0,
+          max: 10,
+          increment: 1,
+          barIntervalSeconds: 0.5,
+          showValue: true,
+          color: metric.color,
+          points: [
+            { frame: 0, value: Math.max(1, 2 - offset) },
+            { frame: expoEnd, value: 3 + offset },
+            { frame: incidentEnd, value: 5 + offset },
+            { frame: risingEnd, value: 8 },
+            { frame: climaxEnd, value: Math.max(2, 5 - offset) },
+            { frame: resolutionEnd, value: Math.max(1, 2 - offset) }
+          ],
+          shortLabel: metric.shortLabel,
+          noteDurationSeconds: 3
+        }
+      };
+    })
   ];
 
   return {
@@ -251,7 +312,13 @@ function createDynamicFallback(fileName: string, durationInSeconds: number, dura
   };
 }
 
-function convertSegmentsToWorkspace(segments: any[], fileName: string, durationInSeconds: number, durationInFrames: number) {
+function convertSegmentsToWorkspace(
+  segments: any[],
+  fileName: string,
+  durationInSeconds: number,
+  durationInFrames: number,
+  metrics: AnalysisMetricConfig[] = DEFAULT_ANALYSIS_METRICS,
+) {
   const baseName = fileName.replace(/\.[^/.]+$/, ""); // strip extension
 
   const charactersMap = new Map<string, string>();
@@ -265,9 +332,7 @@ function convertSegmentsToWorkspace(segments: any[], fileName: string, durationI
 
   const clips: any[] = [];
   
-  const tensionPoints: any[] = [];
-  const suspensePoints: any[] = [];
-  const stakesPoints: any[] = [];
+  const metricPoints = new Map(metrics.map(metric => [metric.id, [] as any[]]));
 
   if (Array.isArray(segments)) {
     segments.forEach((segment, index) => {
@@ -277,18 +342,14 @@ function convertSegmentsToWorkspace(segments: any[], fileName: string, durationI
       const duration = Math.max(1, Math.round((endSec - startSec) * 30));
 
       // Graph points
-      if (segment.tension && typeof segment.tension.value === 'number') {
-        tensionPoints.push({ frame: startFrame, value: segment.tension.value });
-        tensionPoints.push({ frame: startFrame + duration, value: segment.tension.value });
-      }
-      if (segment.suspense && typeof segment.suspense.value === 'number') {
-        suspensePoints.push({ frame: startFrame, value: segment.suspense.value });
-        suspensePoints.push({ frame: startFrame + duration, value: segment.suspense.value });
-      }
-      if (segment.stakes && typeof segment.stakes.value === 'number') {
-        stakesPoints.push({ frame: startFrame, value: segment.stakes.value });
-        stakesPoints.push({ frame: startFrame + duration, value: segment.stakes.value });
-      }
+      metrics.forEach(metric => {
+        const segmentMetric = getSegmentMetric(segment, metric);
+        if (typeof segmentMetric?.value === 'number') {
+          const points = metricPoints.get(metric.id);
+          points?.push({ frame: startFrame, value: segmentMetric.value });
+          points?.push({ frame: startFrame + duration, value: segmentMetric.value });
+        }
+      });
 
       // 1. General Analysis Clip
       if (segment.analysis) {
@@ -307,59 +368,25 @@ function convertSegmentsToWorkspace(segments: any[], fileName: string, durationI
         });
       }
 
-      // 2. Tension Reasoning Note Clip
-      if (segment.tension?.reason) {
-        clips.push({
-          id: `clip-tension-${index}`,
-          name: "Tension Reasoning",
-          description: segment.tension.reason,
-          type: "note",
-          startFrame,
-          duration,
-          trackId: "track-structural-analysis",
-          color: "bg-red-600",
-          layoutType: "overlay",
-          anchorPoint: "bottom",
-          linkedGraphTrackIds: ["graph-dramatic-tension"],
-          tags: ["Tension"]
-        });
-      }
-
-      // 3. Suspense Reasoning Note Clip
-      if (segment.suspense?.reason) {
-        clips.push({
-          id: `clip-suspense-${index}`,
-          name: "Suspense Reasoning",
-          description: segment.suspense.reason,
-          type: "note",
-          startFrame,
-          duration,
-          trackId: "track-structural-analysis",
-          color: "bg-amber-500",
-          layoutType: "overlay",
-          anchorPoint: "bottom",
-          linkedGraphTrackIds: ["graph-anticipatory-suspense"],
-          tags: ["Suspense"]
-        });
-      }
-
-      // 4. Stakes Reasoning Note Clip
-      if (segment.stakes?.reason) {
-        clips.push({
-          id: `clip-stakes-${index}`,
-          name: "Stakes Reasoning",
-          description: segment.stakes.reason,
-          type: "note",
-          startFrame,
-          duration,
-          trackId: "track-structural-analysis",
-          color: "bg-emerald-600",
-          layoutType: "overlay",
-          anchorPoint: "bottom",
-          linkedGraphTrackIds: ["graph-operational-stakes"],
-          tags: ["Stakes"]
-        });
-      }
+      metrics.forEach(metric => {
+        const segmentMetric = getSegmentMetric(segment, metric);
+        if (segmentMetric?.reason) {
+          clips.push({
+            id: `clip-metric-${metric.id}-${index}`,
+            name: `${metric.label} Reasoning`,
+            description: segmentMetric.reason,
+            type: "note",
+            startFrame,
+            duration,
+            trackId: "track-structural-analysis",
+            color: "bg-indigo-600",
+            layoutType: "overlay",
+            anchorPoint: "bottom",
+            linkedGraphTrackIds: [getMetricTrackId(metric)],
+            tags: [metric.label]
+          });
+        }
+      });
 
       // 5. Audio Note Clip
       if (segment.audio) {
@@ -511,63 +538,25 @@ function convertSegmentsToWorkspace(segments: any[], fileName: string, durationI
       name: "Structural Analysis Notes",
       parentId: "group-story-analytics"
     },
-    {
-      id: "graph-dramatic-tension",
-      name: "Dramatic Tension",
+    ...metrics.map((metric, index) => ({
+      id: getMetricTrackId(metric),
+      name: metric.label,
       parentId: "group-story-analytics",
-      type: "graph",
+      type: "graph" as const,
       graph: {
-        type: "line",
-        label: "Tension",
+        type: "line" as const,
+        label: metric.label,
         min: 0,
         max: 10,
         increment: 1,
         barIntervalSeconds: 0.5,
         showValue: true,
-        color: "#ec2727",
-        points: ensureBoundaryPoints(tensionPoints, 4),
-        shortLabel: "T",
+        color: metric.color,
+        points: ensureBoundaryPoints(metricPoints.get(metric.id) || [], Math.max(1, Math.min(8, 4 + index))),
+        shortLabel: metric.shortLabel,
         noteDurationSeconds: 3
       }
-    },
-    {
-      id: "graph-anticipatory-suspense",
-      name: "Anticipatory Suspense",
-      parentId: "group-story-analytics",
-      type: "graph",
-      graph: {
-        type: "line",
-        label: "Suspense",
-        min: 0,
-        max: 10,
-        increment: 1,
-        barIntervalSeconds: 0.5,
-        showValue: true,
-        color: "#32c0ec",
-        points: ensureBoundaryPoints(suspensePoints, 3),
-        shortLabel: "S",
-        noteDurationSeconds: 3
-      }
-    },
-    {
-      id: "graph-operational-stakes",
-      name: "Stakes / Conflict",
-      parentId: "group-story-analytics",
-      type: "graph",
-      graph: {
-        type: "line",
-        label: "Stakes",
-        min: 0,
-        max: 10,
-        increment: 1,
-        barIntervalSeconds: 0.5,
-        showValue: true,
-        color: "#27be45",
-        points: ensureBoundaryPoints(stakesPoints, 3),
-        shortLabel: "ST",
-        noteDurationSeconds: 3
-      }
-    }
+    }))
   ];
 
   return {
@@ -581,7 +570,7 @@ function convertSegmentsToWorkspace(segments: any[], fileName: string, durationI
   };
 }
 
-function getUsableAnalysisSegments(output: unknown): any[] {
+function getUsableAnalysisSegments(output: unknown, metrics: AnalysisMetricConfig[] = DEFAULT_ANALYSIS_METRICS): any[] {
   const segments = Array.isArray(output)
     ? output
     : output && typeof output === 'object' && Array.isArray((output as { segments?: unknown }).segments)
@@ -597,9 +586,7 @@ function getUsableAnalysisSegments(output: unknown): any[] {
       normalizeDialogEntries(segment).length > 0 ||
       Array.isArray(segment.events) && segment.events.length > 0 ||
       Array.isArray(segment.story_elements) && segment.story_elements.length > 0 ||
-      typeof segment.tension?.value === 'number' ||
-      typeof segment.suspense?.value === 'number' ||
-      typeof segment.stakes?.value === 'number'
+      metrics.some(metric => typeof getSegmentMetric(segment, metric)?.value === 'number')
     )
   ));
 
@@ -696,6 +683,7 @@ async function queryLocalGemma(
   durationInSeconds: number,
   durationInFrames: number,
   images: string[],
+  metrics: AnalysisMetricConfig[] = DEFAULT_ANALYSIS_METRICS,
 ) {
   const ollamaUrl = process.env.OLLAMA_HOST || 'http://localhost:11434';
   
@@ -722,7 +710,9 @@ async function queryLocalGemma(
 
   const prompt = `Analyze ${images.length} chronological video frames sampled from "${fileName}" (${durationInSeconds.toFixed(2)} seconds total).
 Return a JSON array of chronological scene segments covering 0 to ${durationInSeconds.toFixed(2)} seconds.
-For each segment provide start, end, concise analysis, and only applicable tension, suspense, stakes, events, story_elements, or dialog.
+For each segment provide start, end, concise analysis, and only applicable metric objects, events, story_elements, or dialog.
+Evaluate only these user-configured metrics, on a 0 to 10 scale:
+${getMetricPromptLines(metrics)}
 If subtitles, captions, speech bubbles, or dialogue text are visible, include EVERY readable line as a separate dialog item.
 When useful, add a brief description explaining the line's intent, context, or subtext.
 Do not summarize multiple dialogue lines into one item. Keep each line distinct and chronological.
@@ -739,18 +729,13 @@ Each reason or description must be brief.`;
         start: { type: 'number' },
         end: { type: 'number' },
         analysis: { type: 'string' },
-        tension: {
-          type: 'object',
-          properties: { value: { type: 'number' }, reason: { type: 'string' } }
-        },
-        suspense: {
-          type: 'object',
-          properties: { value: { type: 'number' }, reason: { type: 'string' } }
-        },
-        stakes: {
-          type: 'object',
-          properties: { value: { type: 'number' }, reason: { type: 'string' } }
-        },
+        ...Object.fromEntries(metrics.map(metric => [
+          metric.id,
+          {
+            type: 'object',
+            properties: { value: { type: 'number' }, reason: { type: 'string' } }
+          }
+        ])),
         events: { type: 'array', items: { type: 'string' } },
         story_elements: {
           type: 'array',
@@ -810,7 +795,7 @@ Each reason or description must be brief.`;
 
   return {
     modelName,
-    segments: getUsableAnalysisSegments(parsedGemma),
+    segments: getUsableAnalysisSegments(parsedGemma, metrics),
   };
 }
 
@@ -827,6 +812,7 @@ export async function POST(req: NextRequest) {
     let modelChoice: 'gemini' | 'gemma' = 'gemini';
     let fileName = "video.mp4";
     let localAnalysisImages: string[] = [];
+    let analysisMetrics = DEFAULT_ANALYSIS_METRICS;
 
     const contentType = req.headers.get("content-type") || "";
     
@@ -836,6 +822,7 @@ export async function POST(req: NextRequest) {
       duration = body.duration || 0;
       modelChoice = body.model || 'gemini';
       fileName = jsonFileName || fileName;
+      analysisMetrics = parseAnalysisMetrics(body.analysisMetrics);
 
       if (!uploadId) return NextResponse.json({ error: "Missing uploadId" }, { status: 400 });
       
@@ -873,6 +860,7 @@ export async function POST(req: NextRequest) {
       const file = (formData.get("video") || formData.get("file")) as File;
       const durationStr = formData.get('duration') as string | null;
       modelChoice = (formData.get("model") || 'gemini') as 'gemini' | 'gemma';
+      analysisMetrics = parseAnalysisMetrics(formData.get("analysisMetrics"));
 
       if (!file) {
         return NextResponse.json({ error: "No video provided" }, { status: 400 });
@@ -904,8 +892,8 @@ export async function POST(req: NextRequest) {
     if (modelChoice === 'gemma') {
       // User explicitly selected local Gemma
       try {
-        const localOutput = await queryLocalGemma(fileName, durationInSeconds, durationInFrames, localAnalysisImages);
-        const workspaceData = convertSegmentsToWorkspace(localOutput.segments, fileName, durationInSeconds, durationInFrames);
+        const localOutput = await queryLocalGemma(fileName, durationInSeconds, durationInFrames, localAnalysisImages, analysisMetrics);
+        const workspaceData = convertSegmentsToWorkspace(localOutput.segments, fileName, durationInSeconds, durationInFrames, analysisMetrics);
         const hydratedWorkspace = await populateCharacterImages(workspaceData, localAnalysisImages);
         return NextResponse.json({
           ...hydratedWorkspace,
@@ -913,7 +901,7 @@ export async function POST(req: NextRequest) {
         });
       } catch (gemmaError) {
         console.warn("[GEMMA_API_FAILURE] Local model Gemma query failed. Returning dynamic generic fallback:", gemmaError);
-        const dynamicFallback = createDynamicFallback(fileName, durationInSeconds, durationInFrames);
+        const dynamicFallback = createDynamicFallback(fileName, durationInSeconds, durationInFrames, analysisMetrics);
         const hydratedWorkspace = await populateCharacterImages(dynamicFallback, localAnalysisImages);
         const gemmaErrMsg = gemmaError instanceof Error ? gemmaError.message : String(gemmaError);
         return NextResponse.json({
@@ -975,31 +963,27 @@ Make ALL text descriptions (reasons, events, dialog texts, and analysis) EXTREME
 
 CRITICAL DIALOGUE REQUIREMENT: Capture every distinct spoken or visibly readable dialogue line you can detect. Do NOT summarize dialogue, merge adjacent lines, or include only the most important quote. Each line must be its own object in the segment's "dialog" array, in chronological order. If useful, add a brief "description" for the line's intent, context, or subtext. If you can estimate line timing, include "start" and "end" seconds for that specific line; otherwise omit them.
 
-Additionally, pay close attention to the background music, audio cues, or deliberate silence/lack of music. You MUST evaluate how these auditory elements directly influence or amplify the metrics (tension, suspense, etc.) and mention it in the analysis or reasoning for the segments where it is impactful.
+Additionally, pay close attention to the background music, audio cues, or deliberate silence/lack of music. You MUST evaluate how these auditory elements directly influence or amplify the configured metrics and mention it in the analysis or reasoning for the segments where it is impactful.
 
-Metrics should be evaluated on a scale from 0 to 10. For each metric, provide a direct analysis/reason explaining WHY it is at that level or why it changed:
-- tension (sense of strain, anticipation, or unease)
-- suspense (withholding of information, ticking clocks, anticipation of outcome)
-- conflict (opposition between characters, environment, or internal struggle)
-- stakes (how much is at risk in the current moment)
+Metrics should be evaluated on a scale from 0 to 10. For each metric, provide a direct analysis/reason explaining WHY it is at that level or why it changed. Use exactly these JSON property names:
+${getMetricPromptLines(analysisMetrics)}
 
 Additionally, inside the "dialog" objects, you MUST identify the exact visual appearance of that speaker in the video frames. Find a frame where the speaker's face is clearly visible. Provide:
 1. "face_timestamp": a float indicating the exact seconds timestamp in the video where the speaker's face is visible and in focus.
 2. "face_box_ymin_xmin_ymax_xmax": an array of 4 integers [ymin, xmin, ymax, xmax] from 0 to 100 representing the bounding box coordinates of the speaker's face in that frame (e.g. [15, 40, 50, 70] where 15 is ymin, 40 is xmin, 50 is ymax, 70 is xmax).
 
-IMPORTANT: Every graph layer label (tension, suspense, conflict, stakes) and tag (story_elements, events, audio) do NOT always need to be represented in every segment. ONLY include them when the situation actually dictates it. For example, if there is no significant suspense, omit the "suspense" property entirely for that segment.
+IMPORTANT: Every metric graph layer and tag (story_elements, events, audio) does NOT always need to be represented in every segment. ONLY include a metric when the situation actually dictates it. For example, if a metric is not meaningfully present, omit that metric property entirely for that segment.
 
 Also identify key structural story elements that happen in this segment (e.g., "PLOT POINT", "CHARACTER BEAT", "EXPOSITION", "REVERSAL", "FORESHADOWING"). Leave empty or omit if none apply to the specific segment.
 
-CRITICAL: Because there is limited space, if a segment generates more than 4 notes in total across all types, you MUST determine the 4 most important notes that should be shown in the preview. Provide their keys in the "important_notes" array (e.g., ["analysis", "tension", "events", "audio"]). If there are 4 or fewer total notes, just list all their keys.
+CRITICAL: Because there is limited space, if a segment generates more than 4 notes in total across all types, you MUST determine the 4 most important notes that should be shown in the preview. Provide their keys in the "important_notes" array (e.g., ["analysis", "${analysisMetrics[0]?.id || 'metric'}", "events", "audio"]). If there are 4 or fewer total notes, just list all their keys.
 
 Respond EXACTLY in this JSON format, purely as an array of objects. Do not include markdown code block syntax. Note that the properties other than start, end, and analysis are optional.
 [
   {
     "start": 0.0,
     "end": 3.5,
-    "tension": { "value": 4, "reason": "Quiet atmosphere establishes a baseline unease." },
-    "stakes": { "value": 3, "reason": "Personal safety is implicitly at risk in the unknown location." },
+${getMetricJsonExample(analysisMetrics)}
     "audio": "Soft ambient drone builds slowly in the background, contrasting silence.",
     "story_elements": [
        { "type": "EXPOSITION", "description": "Establishing the isolated setting." }
@@ -1017,7 +1001,7 @@ Respond EXACTLY in this JSON format, purely as an array of objects. Do not inclu
        }
     ],
     "analysis": "The scene begins quietly, establishing a mysterious atmosphere.",
-    "important_notes": ["tension", "audio", "events", "analysis"]
+    "important_notes": ["${analysisMetrics[0]?.id || 'metric'}", "audio", "events", "analysis"]
   }
 ]`;
 
@@ -1123,7 +1107,7 @@ Respond EXACTLY in this JSON format, purely as an array of objects. Do not inclu
             }
           }
 
-          const workspaceData = convertSegmentsToWorkspace(segmentData, fileName, durationInSeconds, durationInFrames);
+          const workspaceData = convertSegmentsToWorkspace(segmentData, fileName, durationInSeconds, durationInFrames, analysisMetrics);
           const hydratedWorkspace = await populateCharacterImages(workspaceData, localAnalysisImages);
           return NextResponse.json({
             ...hydratedWorkspace,
@@ -1140,8 +1124,8 @@ Respond EXACTLY in this JSON format, purely as an array of objects. Do not inclu
           }
 
           try {
-            const localOutput = await queryLocalGemma(fileName, durationInSeconds, durationInFrames, localAnalysisImages);
-            const workspaceData = convertSegmentsToWorkspace(localOutput.segments, fileName, durationInSeconds, durationInFrames);
+            const localOutput = await queryLocalGemma(fileName, durationInSeconds, durationInFrames, localAnalysisImages, analysisMetrics);
+            const workspaceData = convertSegmentsToWorkspace(localOutput.segments, fileName, durationInSeconds, durationInFrames, analysisMetrics);
             const hydratedWorkspace = await populateCharacterImages(workspaceData, localAnalysisImages);
             return NextResponse.json({
               ...hydratedWorkspace,
@@ -1149,7 +1133,7 @@ Respond EXACTLY in this JSON format, purely as an array of objects. Do not inclu
             });
           } catch (gemmaError) {
             console.warn("[GEMMA_API_FAILURE] Local model fallback failed. Returning dynamic generic fallback:", gemmaError);
-            const dynamicFallback = createDynamicFallback(fileName, durationInSeconds, durationInFrames);
+            const dynamicFallback = createDynamicFallback(fileName, durationInSeconds, durationInFrames, analysisMetrics);
             const hydratedWorkspace = await populateCharacterImages(dynamicFallback, localAnalysisImages);
             const geminiErrMsg = geminiError instanceof Error ? geminiError.message : String(geminiError);
             const gemmaErrMsg = gemmaError instanceof Error ? gemmaError.message : String(gemmaError);
@@ -1167,8 +1151,8 @@ Respond EXACTLY in this JSON format, purely as an array of objects. Do not inclu
           } catch (unlinkErr) {}
         }
         try {
-          const localOutput = await queryLocalGemma(fileName, durationInSeconds, durationInFrames, localAnalysisImages);
-          const workspaceData = convertSegmentsToWorkspace(localOutput.segments, fileName, durationInSeconds, durationInFrames);
+          const localOutput = await queryLocalGemma(fileName, durationInSeconds, durationInFrames, localAnalysisImages, analysisMetrics);
+          const workspaceData = convertSegmentsToWorkspace(localOutput.segments, fileName, durationInSeconds, durationInFrames, analysisMetrics);
           const hydratedWorkspace = await populateCharacterImages(workspaceData, localAnalysisImages);
           return NextResponse.json({
             ...hydratedWorkspace,
@@ -1176,7 +1160,7 @@ Respond EXACTLY in this JSON format, purely as an array of objects. Do not inclu
           });
         } catch (gemmaError) {
           console.warn("[GEMMA_API_FAILURE] No API key, and local model failed. Returning dynamic generic fallback:", gemmaError);
-          const dynamicFallback = createDynamicFallback(fileName, durationInSeconds, durationInFrames);
+          const dynamicFallback = createDynamicFallback(fileName, durationInSeconds, durationInFrames, analysisMetrics);
           const hydratedWorkspace = await populateCharacterImages(dynamicFallback, localAnalysisImages);
           const gemmaErrMsg = gemmaError instanceof Error ? gemmaError.message : String(gemmaError);
           return NextResponse.json({

@@ -42,7 +42,7 @@ import AgentLogs from "./AgentLogs";
 import ChatConsole from "./ChatConsole";
 import { ScreenplayReport, LogEntry, SceneAnalysis } from "./types";
 import { Button } from "@storyboard/ui";
-import { MetricSymbol, TensionChart } from "@storyboard/ui/charts";
+import { MetricSymbol, TensionChart, type ChartMetricDefinition } from "@storyboard/ui/charts";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -196,7 +196,11 @@ export function AnalysisWorkspace({
     characters,
     fps,
     updateClip,
+    deleteClip,
     updateTrack,
+    updateScene,
+    highlightedBeatKeys,
+    setHighlightedBeatKeys,
     setCurrentFrame,
     setWorkspaceViewMode,
   } = useTimeline();
@@ -269,20 +273,16 @@ export function AnalysisWorkspace({
   const beatListRef = useRef<HTMLDivElement | null>(null);
   const [beatsListHeight, setBeatsListHeight] = useState<number>(450);
   const [dialogueHeight, setDialogueHeight] = useState<number>(240);
-  const [highlightedBeatNumbers, setHighlightedBeatNumbers] = useState<Set<string>>(new Set());
+  const highlightedBeatNumbers = useMemo(() => new Set(highlightedBeatKeys), [highlightedBeatKeys]);
 
   const toggleHighlightBeat = useCallback((sceneNumber: number, key = "summary") => {
     const highlightKey = `${sceneNumber}-${key}`;
-    setHighlightedBeatNumbers((prev) => {
-      const next = new Set(prev);
-      if (next.has(highlightKey)) {
-        next.delete(highlightKey);
-      } else {
-        next.add(highlightKey);
-      }
-      return next;
-    });
-  }, []);
+    setHighlightedBeatKeys((prev) => (
+      prev.includes(highlightKey)
+        ? prev.filter((item) => item !== highlightKey)
+        : [...prev, highlightKey]
+    ));
+  }, [setHighlightedBeatKeys]);
 
   // Drag and drop states for dashboard items reordering
   const [dashboardLayout, setDashboardLayout] = useState<{
@@ -614,6 +614,7 @@ export function AnalysisWorkspace({
 
           return {
             id: track.id,
+            metricId: track.id.startsWith("graph-metric-") ? track.id.replace("graph-metric-", "") : track.id,
             label: track.graph?.label || track.name || "Graph",
             color: graphColor.line || graphColor.accent,
             value,
@@ -640,6 +641,14 @@ export function AnalysisWorkspace({
           tension_reasoning: tReasoning || `Tension metric assessed at ${tension}/5.`,
           suspense_reasoning: sReasoning || `Suspense metric assessed at ${suspense}/5.`,
           anticipation_reasoning: stReasoning || `Anticipation metric assessed at ${anticipation}/5.`,
+          custom: graphTags
+            .filter((tag) => typeof tag.value === "number")
+            .map((tag) => ({
+              id: tag.metricId,
+              name: tag.label,
+              value: tag.value ?? 0,
+              reasoning: tag.reasoning,
+            })),
         },
         narrative_elements: {
           plot_point: beat.tags?.[0] || beat.name.replace(" Beat", ""),
@@ -695,6 +704,14 @@ export function AnalysisWorkspace({
       title: activeScene.name,
       overall_summary: activeScene.description || savedReport?.overall_summary || "The active timeline contains parsed narrative beats, detailing dialogue bubbles and emotional tracking. Select individual beats to check metrics.",
       scenes: parsedBeats,
+      metric_definitions: Array.isArray(savedReport?.metric_definitions)
+        ? savedReport.metric_definitions
+        : tracks
+            .filter((track) => track.type === "graph" && track.graph)
+            .map((track) => ({
+              id: track.id.startsWith("graph-metric-") ? track.id.replace("graph-metric-", "") : track.id,
+              name: track.graph?.label || track.name,
+            })),
       average_tension: avgT,
       average_suspense: avgS,
       average_anticipation: avgA,
@@ -745,7 +762,26 @@ export function AnalysisWorkspace({
     };
   }, [report, activeSceneIndex, handleSelectScene]);
 
-  const handleUpdateMetricValue = useCallback((sceneIndex: number, metric: 'tension' | 'suspense' | 'anticipation', newValue: number) => {
+  const chartMetricDefinitions = useMemo<ChartMetricDefinition[]>(() => {
+    const customDefinitions = Array.isArray(report?.metric_definitions)
+      ? report.metric_definitions
+          .map((metric: any) => ({
+            id: String(metric.id || '').trim(),
+            label: String(metric.name || metric.label || metric.id || '').trim(),
+          }))
+          .filter((metric: ChartMetricDefinition) => metric.id && metric.label)
+      : [];
+
+    if (customDefinitions.length > 0) return customDefinitions;
+
+    return [
+      { id: "tension", label: "Tension" },
+      { id: "suspense", label: "Suspense" },
+      { id: "anticipation", label: "Anticipation" },
+    ];
+  }, [report]);
+
+  const handleUpdateMetricValue = useCallback((sceneIndex: number, metric: string, newValue: number) => {
     if (!report?.scenes) return;
     const beat = report.scenes[sceneIndex];
     if (!beat) return;
@@ -759,6 +795,14 @@ export function AnalysisWorkspace({
       trackId = track?.id || "";
     } else if (metric === 'anticipation') {
       const track = tracks.find((t) => t.id === "graph-operational-stakes" || t.name.toLowerCase().includes("stakes") || t.name.toLowerCase().includes("conflict"));
+      trackId = track?.id || "";
+    } else {
+      const metricDefinition = chartMetricDefinitions.find((item) => item.id === metric);
+      const track = tracks.find((t) => (
+        t.id === `graph-metric-${metric}` ||
+        t.name.toLowerCase() === metricDefinition?.label.toLowerCase() ||
+        t.graph?.label?.toLowerCase() === metricDefinition?.label.toLowerCase()
+      ));
       trackId = track?.id || "";
     }
 
@@ -790,22 +834,156 @@ export function AnalysisWorkspace({
       }
     });
 
-    toast.success(`Updated ${metric} to ${newValue} for "${beat.title || `Beat ${beat.scene_number}`}"`, {
+    const metricLabel = chartMetricDefinitions.find((item) => item.id === metric)?.label || metric;
+    toast.success(`Updated ${metricLabel} to ${newValue} for "${beat.title || `Beat ${beat.scene_number}`}"`, {
       id: `metric-update-${metric}-${sceneIndex}`
     });
-  }, [report, tracks, fps, updateTrack]);
+  }, [chartMetricDefinitions, report, tracks, fps, updateTrack]);
+
+  const getAnalysisBeatClips = useCallback(() => (
+    clips
+      .filter((clip) => (
+        clip.type === "note" &&
+        (clip.name === "Analysis" || clip.tags?.includes("Analysis") || clip.name.toLowerCase().includes("beat"))
+      ))
+      .sort((a, b) => a.startFrame - b.startFrame)
+  ), [clips]);
+
+  const getReasoningClipForBeat = useCallback((sceneIndex: number, key: string) => {
+    const beatClip = getAnalysisBeatClips()[sceneIndex];
+    if (!beatClip) return undefined;
+
+    const keyMatchers = key === "stakes"
+      ? ["stakes", "anticipation"]
+      : [key];
+
+    return clips.find((clip) => (
+      clip.type === "note" &&
+      clip.startFrame === beatClip.startFrame &&
+      keyMatchers.some((matcher) => (
+        clip.name.toLowerCase().includes(matcher) ||
+        clip.tags?.some((tag) => tag.toLowerCase().includes(matcher))
+      ))
+    ));
+  }, [clips, getAnalysisBeatClips]);
+
+  const getUpdatedAnalysisReportScenes = useCallback((
+    sceneIndex: number,
+    key: string,
+    action: 'edit' | 'delete',
+    text?: string
+  ) => {
+    const existingScenes = activeScene.analysisReport?.scenes;
+    if (!Array.isArray(existingScenes)) return undefined;
+
+    if (action === 'delete' && key === "summary") {
+      return existingScenes.filter((_: unknown, index: number) => index !== sceneIndex);
+    }
+
+    return existingScenes.map((scene: any, index: number) => {
+      if (index !== sceneIndex) return scene;
+      const nextScene = { ...scene };
+
+      if (key === "summary") {
+        if (action === 'edit') {
+          nextScene.summary = text;
+          nextScene.text_segment = text;
+          nextScene.narrative_elements = {
+            ...(nextScene.narrative_elements || {}),
+            plot_point_reasoning: text,
+          };
+        }
+        return nextScene;
+      }
+
+      const metricKey = key === "stakes" ? "anticipation" : key;
+      const reasoningKey = `${metricKey}_reasoning`;
+      nextScene.metrics = { ...(nextScene.metrics || {}) };
+
+      if (action === 'edit') {
+        nextScene.metrics[reasoningKey] = text;
+      } else {
+        delete nextScene.metrics[reasoningKey];
+      }
+
+      return nextScene;
+    });
+  }, [activeScene.analysisReport?.scenes]);
+
+  const handleEditBeatText = useCallback((sceneIndex: number, newText: string, key = "summary") => {
+    if (isReadOnly) return;
+
+    const beatClip = getAnalysisBeatClips()[sceneIndex];
+    if (!beatClip) return;
+
+    const targetClip = key === "summary"
+      ? beatClip
+      : getReasoningClipForBeat(sceneIndex, key);
+
+    if (!targetClip) {
+      toast.error("No editable timeline note was found for that beat.");
+      return;
+    }
+
+    updateClip(targetClip.id, { description: newText });
+    const nextReportScenes = getUpdatedAnalysisReportScenes(sceneIndex, key, 'edit', newText);
+    if (nextReportScenes) {
+      updateScene(activeScene.id, {
+        analysisReport: {
+          ...activeScene.analysisReport,
+          scenes: nextReportScenes,
+        },
+      });
+    }
+  }, [activeScene.analysisReport, activeScene.id, getAnalysisBeatClips, getReasoningClipForBeat, getUpdatedAnalysisReportScenes, isReadOnly, updateClip, updateScene]);
+
+  const handleDeleteBeat = useCallback((sceneIndex: number, key = "summary") => {
+    if (isReadOnly) return;
+
+    const beatClip = getAnalysisBeatClips()[sceneIndex];
+    if (!beatClip) return;
+
+    const targetClip = key === "summary"
+      ? beatClip
+      : getReasoningClipForBeat(sceneIndex, key);
+
+    if (!targetClip) {
+      toast.error("No timeline note was found to delete.");
+      return;
+    }
+
+    deleteClip(targetClip.id);
+    const nextReportScenes = getUpdatedAnalysisReportScenes(sceneIndex, key, 'delete');
+    if (nextReportScenes) {
+      updateScene(activeScene.id, {
+        analysisReport: {
+          ...activeScene.analysisReport,
+          scenes: nextReportScenes,
+        },
+      });
+    }
+    toast.success(key === "summary" ? "Beat deleted." : "Beat note deleted.");
+  }, [activeScene.analysisReport, activeScene.id, deleteClip, getAnalysisBeatClips, getReasoningClipForBeat, getUpdatedAnalysisReportScenes, isReadOnly, updateScene]);
 
   // Handle active beat scroll/click synchronization
   const chartData = useMemo(() => {
     return report
-      ? report.scenes.map((s, idx) => ({
-          name: s.title,
-          tension: s.metrics.tension,
-          suspense: s.metrics.suspense,
-          anticipation: s.metrics.anticipation,
-          sceneIndex: idx,
-          timestamp: s.start ?? idx * 15,
-        }))
+      ? report.scenes.map((s, idx) => {
+          const customMetricValues = Array.isArray(s.metrics?.custom)
+            ? Object.fromEntries(s.metrics.custom.map((metric: any) => [metric.id, metric.value]))
+            : {};
+
+          return {
+            name: s.title,
+            tension: s.metrics.tension,
+            suspense: s.metrics.suspense,
+            anticipation: s.metrics.anticipation,
+            ...customMetricValues,
+            metrics: customMetricValues,
+            sceneIndex: idx,
+            timestamp: s.start ?? idx * 15,
+          };
+        })
       : [];
   }, [report]);
 
@@ -828,12 +1006,23 @@ export function AnalysisWorkspace({
       track.id === "graph-operational-stakes" || track.name.toLowerCase().includes("stakes") || track.name.toLowerCase().includes("conflict")
     ));
 
-    return {
+    const colors: Record<string, string | undefined> = {
       tension: getLineColor(tensionTrack),
       suspense: getLineColor(suspenseTrack),
       anticipation: getLineColor(stakesTrack),
     };
-  }, [tracks]);
+
+    chartMetricDefinitions.forEach((metric) => {
+      const track = graphTracks.find((item) => (
+        item.id === `graph-metric-${metric.id}` ||
+        item.name.toLowerCase() === metric.label.toLowerCase() ||
+        item.graph?.label?.toLowerCase() === metric.label.toLowerCase()
+      ));
+      colors[metric.id] = getLineColor(track);
+    });
+
+    return colors;
+  }, [chartMetricDefinitions, tracks]);
 
   const activeBeat = report?.scenes[activeSceneIndex];
 
@@ -1938,6 +2127,8 @@ export function AnalysisWorkspace({
                 highlightedBeatNumbers={highlightedBeatNumbers}
                 toggleHighlightBeat={toggleHighlightBeat}
                 isReadOnly={isReadOnly}
+                onEditBeatText={handleEditBeatText}
+                onDeleteBeat={handleDeleteBeat}
               />
             </div>
 
@@ -1990,6 +2181,7 @@ export function AnalysisWorkspace({
 
             <TensionChart
               data={chartData}
+              metrics={chartMetricDefinitions}
               activeIndex={activeSceneIndex}
               onSelectScene={handleSelectScene}
               colors={chartColors}

@@ -451,6 +451,62 @@ const isNoteVisibleForTagFilter = (note: PreviewGraphNote, noteTagFilter: string
   return note.tags.some(tag => enabledTagSet.has(normalizeTagKey(tag)));
 };
 
+const getPreviewNoteStarKey = (clip: TimelineClip, scene: Scene, fps: number) => {
+  const reportScenes = Array.isArray(scene.analysisReport?.scenes)
+    ? scene.analysisReport.scenes
+    : [];
+  if (reportScenes.length === 0) return undefined;
+
+  const tagKeys = new Set([
+    clip.name,
+    ...(clip.tags || []),
+  ].map(normalizeTagKey).filter(Boolean));
+
+  const hasTag = (value: string) => (
+    tagKeys.has(value) || normalizeTagKey(clip.name).includes(value)
+  );
+
+  const noteKey = hasTag('tension')
+    ? 'tension'
+    : hasTag('suspense')
+      ? 'suspense'
+      : hasTag('stakes') || hasTag('anticipation')
+        ? 'stakes'
+        : hasTag('analysis') || hasTag('beat')
+          ? 'summary'
+          : undefined;
+  if (!noteKey) return undefined;
+
+  const clipSeconds = clip.startFrame / Math.max(1, fps);
+  const sceneIndex = reportScenes.findIndex((reportScene: any, index: number) => {
+    const start = typeof reportScene.start === 'number' ? reportScene.start : 0;
+    const nextStart = reportScenes[index + 1]?.start;
+    const end = typeof reportScene.end === 'number'
+      ? reportScene.end
+      : typeof nextStart === 'number'
+        ? nextStart
+        : start;
+    return clipSeconds >= start - 0.05 && clipSeconds <= Math.max(start, end) + 0.05;
+  });
+  if (sceneIndex < 0) return undefined;
+
+  const reportScene = reportScenes[sceneIndex] as { scene_number?: number };
+  const sceneNumber = typeof reportScene.scene_number === 'number'
+    ? reportScene.scene_number
+    : sceneIndex + 1;
+  return `${sceneNumber}-${noteKey}`;
+};
+
+const isPreviewNoteClipStarred = (
+  clip: TimelineClip,
+  scene: Scene,
+  fps: number,
+  highlightedBeatKeySet: Set<string>,
+) => {
+  const starKey = getPreviewNoteStarKey(clip, scene, fps);
+  return Boolean(starKey && highlightedBeatKeySet.has(starKey));
+};
+
 const NOTE_OVERLAY_EASE = [0.16, 1, 0.3, 1] as const;
 const NOTE_OVERLAY_EXIT_EASE = [0.7, 0, 0.84, 0] as const;
 
@@ -1707,6 +1763,8 @@ function MultiScenePreview({
   showDialogPreviewUi,
   showSceneTitleUi,
   noteTagFilter,
+  showStarredNoteOverlaysOnly,
+  highlightedBeatKeys,
   viewportWidth,
   showSceneMuteControls,
   showPreviewTagUi,
@@ -1730,6 +1788,8 @@ function MultiScenePreview({
   showDialogPreviewUi: boolean;
   showSceneTitleUi: boolean;
   noteTagFilter: string[];
+  showStarredNoteOverlaysOnly: boolean;
+  highlightedBeatKeys: string[];
   viewportWidth: number;
   showSceneMuteControls: boolean;
   showPreviewTagUi: boolean;
@@ -1751,6 +1811,7 @@ function MultiScenePreview({
   const getDialogSpeakerKey = (clip: TimelineClip) => (
     clip.characterId || clip.character || 'dialog-speaker'
   );
+  const highlightedBeatKeySet = React.useMemo(() => new Set(highlightedBeatKeys), [highlightedBeatKeys]);
 
   const scenePanels = scenes.map(scene => {
     const activeClips = scene.clips.filter(
@@ -1775,6 +1836,10 @@ function MultiScenePreview({
           .sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id));
         const graphNotes = overlayClips
           .filter(clip => clip.type === 'note')
+          .filter(clip => (
+            !showStarredNoteOverlaysOnly ||
+            isPreviewNoteClipStarred(clip, scene, fps, highlightedBeatKeySet)
+          ))
           .sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id))
           .map(clip => {
             const links = getVisibleNoteGraphLinks(clip, allGraphTracks, visibleGraphTrackIds, currentFrame);
@@ -2038,6 +2103,8 @@ export function Preview({
     showDialogPreviewUi,
     showSceneTitleUi,
     noteTagFilter,
+    showStarredNoteOverlaysOnly,
+    highlightedBeatKeys,
     toggleTrackMute,
   } = useTimeline();
   const renderedAnalyticsOverlayStyle = useTagOverlayPresentation ? 'compact' : analyticsOverlayStyle;
@@ -2056,6 +2123,8 @@ export function Preview({
   const activeClips = clips.filter(
     (clip) => currentFrame >= clip.startFrame && currentFrame < clip.startFrame + clip.duration
   );
+  const activePreviewScene = scenes.find(scene => scene.id === activeSceneId);
+  const highlightedBeatKeySet = React.useMemo(() => new Set(highlightedBeatKeys), [highlightedBeatKeys]);
 
   const getCharacterName = (clip: TimelineClip) => {
     if (clip.characterId) {
@@ -2092,6 +2161,10 @@ export function Preview({
         .sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id));
       const notes = overlayClips
         .filter(clip => clip.type === 'note')
+        .filter(clip => (
+          !showStarredNoteOverlaysOnly ||
+          (activePreviewScene ? isPreviewNoteClipStarred(clip, activePreviewScene, fps, highlightedBeatKeySet) : false)
+        ))
         .sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id))
         .map(clip => {
           const links = getVisibleNoteGraphLinks(clip, allGraphTracks, visibleGraphTrackIds, currentFrame);
@@ -2135,7 +2208,7 @@ export function Preview({
         graphUiLayout: (p.graphUiLayout === 'column' || p.graphUiLayout === 'column-many' ? 'column' : 'grid') as TimelineTrack['graphUiLayout'],
       };
     });
-  }, [activeClips, currentFrame, fps, tracks, disabledTrackIds, noteTagFilter]);
+  }, [activeClips, activePreviewScene, currentFrame, fps, highlightedBeatKeySet, showStarredNoteOverlaysOnly, tracks, disabledTrackIds, noteTagFilter]);
 
   const gridClipIds = parentGroups.flatMap(g => g.activeGridClips.map(c => c.id)).join(',');
   const [gridState, setGridState] = React.useState({ prevCount: 0, currentCount: 0, currentIds: '' });
@@ -2189,7 +2262,6 @@ export function Preview({
   const previewScenes = enabledPreviewScenes.length > 0
     ? enabledPreviewScenes
     : scenes.filter(scene => scene.id === activeSceneId);
-  const activePreviewScene = scenes.find(scene => scene.id === activeSceneId);
   const shouldShowMultiScenePreview = previewScenes.length > 1 || previewSceneMode === 'all';
   const hasSceneTitleOverlay = showSceneTitleUi && Boolean(activePreviewScene?.name.trim() || activePreviewScene?.description?.trim());
 
@@ -2214,6 +2286,8 @@ export function Preview({
         showDialogPreviewUi={showDialogPreviewUi}
         showSceneTitleUi={showSceneTitleUi}
         noteTagFilter={noteTagFilter}
+        showStarredNoteOverlaysOnly={showStarredNoteOverlaysOnly}
+        highlightedBeatKeys={highlightedBeatKeys}
         viewportWidth={viewportWidth}
         showSceneMuteControls={showSceneMuteControls}
         showPreviewTagUi={showPreviewTagUi}
@@ -2299,6 +2373,10 @@ export function Preview({
         .sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id));
       const groupNotes = activeClips
         .filter(clip => clip.type === 'note' && groupVisualTrackIds.includes(clip.trackId))
+        .filter(clip => (
+          !showStarredNoteOverlaysOnly ||
+          (activePreviewScene ? isPreviewNoteClipStarred(clip, activePreviewScene, fps, highlightedBeatKeySet) : false)
+        ))
         .sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id))
         .map(clip => {
           const links = getVisibleNoteGraphLinks(clip, allGroupGraphTracks, visibleGraphTrackIds, currentFrame);

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -14,36 +14,61 @@ import {
 } from "recharts";
 import { MetricSymbol } from "./MetricSymbol";
 
+export type MetricKey = string;
+
+export interface ChartMetricDefinition {
+  id: MetricKey;
+  label: string;
+  color?: string;
+}
+
 export interface ChartDataPoint {
   name: string;
-  tension: number;
-  suspense: number;
-  anticipation: number;
+  tension?: number;
+  suspense?: number;
+  anticipation?: number;
   sceneIndex: number;
   timestamp: number;
+  metrics?: Record<string, number>;
+  [key: string]: string | number | Record<string, number> | undefined;
 }
 
 export interface TensionChartProps {
   data: ChartDataPoint[];
   activeIndex: number;
   onSelectScene: (index: number) => void;
-  colors?: Partial<Record<"tension" | "suspense" | "anticipation", string>>;
+  colors?: Partial<Record<string, string>>;
+  metrics?: ChartMetricDefinition[];
   activeTab?: string;
-  onUpdateValue?: (sceneIndex: number, metric: 'tension' | 'suspense' | 'anticipation', newValue: number) => void;
+  onUpdateValue?: (sceneIndex: number, metric: MetricKey, newValue: number) => void;
 }
 
-const DEFAULT_COLORS = {
-  tension: "#f43f5e",
-  suspense: "#a855f7",
-  anticipation: "#06b6d4",
-};
+const DEFAULT_METRICS: ChartMetricDefinition[] = [
+  { id: "tension", label: "Tension", color: "#f43f5e" },
+  { id: "suspense", label: "Suspense", color: "#a855f7" },
+  { id: "anticipation", label: "Anticipation", color: "#06b6d4" },
+];
+
+const FALLBACK_COLORS = ["#f43f5e", "#a855f7", "#06b6d4", "#f59e0b", "#14b8a6", "#f97316", "#e879f9", "#84cc16"];
+const CHART_SURFACE_COLOR = "var(--card)";
+const CHART_BORDER_COLOR = "var(--border)";
+const CHART_TEXT_COLOR = "var(--foreground)";
+const CHART_MUTED_COLOR = "var(--muted-foreground)";
 
 interface ChartDragHandlerProps {
-  draggingState: { index: number; metric: 'tension' | 'suspense' | 'anticipation' } | null;
-  onUpdateValue: (index: number, metric: 'tension' | 'suspense' | 'anticipation', val: number) => void;
+  draggingState: { index: number; metric: MetricKey } | null;
+  onUpdateValue: (index: number, metric: MetricKey, val: number) => void;
   onStopDrag: () => void;
   data: ChartDataPoint[];
 }
+
+const getMetricValue = (point: ChartDataPoint | undefined, metric: MetricKey) => {
+  if (!point) return null;
+  const value = point[metric];
+  if (typeof value === "number") return value;
+  const nestedValue = point.metrics?.[metric];
+  return typeof nestedValue === "number" ? nestedValue : null;
+};
 
 const ChartDragHandler = ({ draggingState, onUpdateValue, onStopDrag, data }: ChartDragHandlerProps) => {
   const yInverse = useYAxisInverseScale();
@@ -52,8 +77,7 @@ const ChartDragHandler = ({ draggingState, onUpdateValue, onStopDrag, data }: Ch
   useEffect(() => {
     if (!draggingState) return;
 
-    const initialPoint = data[draggingState.index];
-    let lastValue = initialPoint ? initialPoint[draggingState.metric] : null;
+    let lastValue = getMetricValue(data[draggingState.index], draggingState.metric);
 
     const handleMouseMove = (e: MouseEvent) => {
       const element = ref.current;
@@ -74,16 +98,12 @@ const ChartDragHandler = ({ draggingState, onUpdateValue, onStopDrag, data }: Ch
       }
     };
 
-    const handleMouseUp = () => {
-      onStopDrag();
-    };
-
     document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
+    document.addEventListener("mouseup", onStopDrag);
 
     return () => {
       document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("mouseup", onStopDrag);
     };
   }, [draggingState, yInverse, onUpdateValue, onStopDrag, data]);
 
@@ -94,17 +114,17 @@ const renderCustomLegend = (props: any) => {
   const { payload } = props;
   if (!payload) return null;
   return (
-    <div className="flex justify-center items-center gap-6 mb-4 select-none">
+    <div className="mb-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 select-none">
       {payload.map((entry: any, index: number) => {
-        const name = entry.value; // "Tension", "Suspense", "Anticipation"
+        const name = entry.value;
         return (
           <div key={`legend-item-${index}`} className="flex items-center gap-2">
-            <MetricSymbol 
-              name={name} 
-              className="w-3.5 h-3.5 shrink-0 animate-fade-in" 
-              style={{ color: entry.color }} 
+            <MetricSymbol
+              name={name}
+              className="h-3.5 w-3.5 shrink-0 animate-fade-in"
+              style={{ color: entry.color }}
             />
-            <span className="text-[10px] text-zinc-400 font-mono uppercase font-bold tracking-wider">
+            <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-400">
               {name}
             </span>
           </div>
@@ -114,32 +134,54 @@ const renderCustomLegend = (props: any) => {
   );
 };
 
-export function TensionChart({ data, activeIndex, onSelectScene, colors, activeTab, onUpdateValue }: TensionChartProps) {
-  if (!data || data.length === 0) return null;
+const getActiveMetricId = (activeTab?: string) => {
+  if (!activeTab?.startsWith("graph-")) return null;
+  const rawId = activeTab.replace("graph-", "");
+  if (rawId === "stakes") return "anticipation";
+  if (rawId.startsWith("metric-")) return rawId.replace("metric-", "");
+  return rawId;
+};
 
-  const [draggingState, setDraggingState] = useState<{ index: number; metric: 'tension' | 'suspense' | 'anticipation' } | null>(null);
+export function TensionChart({
+  data,
+  activeIndex,
+  onSelectScene,
+  colors,
+  metrics,
+  activeTab,
+  onUpdateValue,
+}: TensionChartProps) {
+  const [draggingState, setDraggingState] = useState<{ index: number; metric: MetricKey } | null>(null);
 
-  const chartColors = {
-    ...DEFAULT_COLORS,
-    ...colors,
-  };
+  const chartMetrics = useMemo(() => {
+    const sourceMetrics = metrics && metrics.length > 0 ? metrics : DEFAULT_METRICS;
+    return sourceMetrics
+      .map((metric, index) => ({
+        ...metric,
+        color: colors?.[metric.id] || metric.color || FALLBACK_COLORS[index % FALLBACK_COLORS.length],
+      }))
+      .filter(metric => data.some(point => typeof getMetricValue(point, metric.id) === "number"));
+  }, [colors, data, metrics]);
 
-  const activeLabel = activeTab?.startsWith("graph-") ? activeTab.replace("graph-", "") : null;
-  const showTension = !activeLabel || activeLabel === "tension";
-  const showSuspense = !activeLabel || activeLabel === "suspense";
-  const showAnticipation = !activeLabel || activeLabel === "anticipation" || activeLabel === "stakes";
+  if (!data || data.length === 0 || chartMetrics.length === 0) return null;
+
+  const activeMetricId = getActiveMetricId(activeTab);
+  const visibleMetrics = activeMetricId
+    ? chartMetrics.filter(metric => metric.id === activeMetricId)
+    : chartMetrics;
+  const renderMetrics = visibleMetrics.length > 0 ? visibleMetrics : chartMetrics;
 
   return (
-    <div className="w-full h-80 bg-zinc-950 border border-zinc-800 rounded-xl p-4 shadow-xl backdrop-blur-md">
-      <div className="flex justify-between items-center mb-3">
-        <h3 className="text-[11px] font-bold text-zinc-350 tracking-widest uppercase font-mono">
+    <div className="h-80 w-full rounded-xl border border-zinc-800 bg-zinc-950 p-4 shadow-xl backdrop-blur-md">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="font-mono text-[11px] font-bold uppercase tracking-widest text-zinc-350">
           Narrative & Emotional Arc
         </h3>
-        <span className="text-[10px] text-zinc-500 font-mono">
+        <span className="font-mono text-[10px] text-zinc-500">
           Click any beat to inspect details
         </span>
       </div>
-      
+
       <div className="h-64 min-h-64 w-full" style={{ height: 256, minHeight: 256 }}>
         <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 990, height: 256 }}>
           <LineChart
@@ -158,11 +200,11 @@ export function TensionChart({ data, activeIndex, onSelectScene, colors, activeT
             }}
             margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" opacity={0.3} />
-            <XAxis 
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_BORDER_COLOR} opacity={0.7} />
+            <XAxis
               type="number"
-              dataKey="timestamp" 
-              stroke="#52525b" 
+              dataKey="timestamp"
+              stroke={CHART_MUTED_COLOR}
               fontSize={10}
               tickLine={false}
               axisLine={false}
@@ -171,12 +213,12 @@ export function TensionChart({ data, activeIndex, onSelectScene, colors, activeT
                 const seconds = Math.floor(tick % 60);
                 return `${minutes}:${seconds.toString().padStart(2, "0")}`;
               }}
-              domain={[0, 'auto']}
+              domain={[0, "auto"]}
             />
-            <YAxis 
-              domain={[0, 5]} 
-              tickCount={6} 
-              stroke="#52525b" 
+            <YAxis
+              domain={[0, 5]}
+              tickCount={6}
+              stroke={CHART_MUTED_COLOR}
               fontSize={10}
               tickLine={false}
               axisLine={false}
@@ -191,27 +233,32 @@ export function TensionChart({ data, activeIndex, onSelectScene, colors, activeT
                 return labelName ? `${labelName} (${timeStr})` : timeStr;
               }}
               contentStyle={{
-                backgroundColor: "#09090b",
-                borderColor: "#27272a",
+                backgroundColor: CHART_SURFACE_COLOR,
+                borderColor: CHART_BORDER_COLOR,
                 borderRadius: "8px",
-                color: "#f4f4f5",
+                color: CHART_TEXT_COLOR,
                 fontSize: "11px",
-                fontFamily: "monospace"
+                fontFamily: "monospace",
               }}
-              cursor={{ stroke: "#3f3f46", strokeWidth: 1, strokeDasharray: "4 4" }}
+              cursor={{ stroke: CHART_MUTED_COLOR, strokeWidth: 1, strokeDasharray: "4 4" }}
             />
             <Legend content={renderCustomLegend} />
-            
-            {/* Tension Line */}
-            {showTension && (
+
+            {renderMetrics.map((metric) => (
               <Line
+                key={metric.id}
                 type="monotone"
-                dataKey="tension"
-                name="Tension"
-                stroke={chartColors.tension}
+                dataKey={metric.id}
+                name={metric.label}
+                stroke={metric.color}
                 strokeWidth={3}
-                onClick={(data: any, index: any) => {
-                  const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
+                connectNulls
+                onClick={(lineData: any, index: any) => {
+                  const targetIndex = typeof index === "number"
+                    ? index
+                    : lineData && typeof lineData.index === "number"
+                      ? lineData.index
+                      : undefined;
                   if (targetIndex !== undefined) {
                     onSelectScene(targetIndex);
                   }
@@ -223,18 +270,18 @@ export function TensionChart({ data, activeIndex, onSelectScene, colors, activeT
                       cx={props.cx}
                       cy={props.cy}
                       r={isActive ? 6 : 4}
-                      fill={isActive ? chartColors.tension : "#18181b"}
-                      stroke={chartColors.tension}
+                      fill={isActive ? metric.color : CHART_SURFACE_COLOR}
+                      stroke={metric.color}
                       strokeWidth={isActive ? 3 : 2}
                       className={onUpdateValue ? "cursor-ns-resize" : "cursor-pointer"}
-                      onMouseDown={(e) => {
+                      onMouseDown={(event) => {
                         if (!onUpdateValue) return;
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setDraggingState({ index: props.index, metric: 'tension' });
+                        event.stopPropagation();
+                        event.preventDefault();
+                        setDraggingState({ index: props.index, metric: metric.id });
                       }}
-                      onClick={(e) => {
-                        e.stopPropagation();
+                      onClick={(event) => {
+                        event.stopPropagation();
                         onSelectScene(props.index);
                       }}
                     />
@@ -242,93 +289,7 @@ export function TensionChart({ data, activeIndex, onSelectScene, colors, activeT
                 }}
                 activeDot={false}
               />
-            )}
-            
-            {/* Suspense Line */}
-            {showSuspense && (
-              <Line
-                type="monotone"
-                dataKey="suspense"
-                name="Suspense"
-                stroke={chartColors.suspense}
-                strokeWidth={3}
-                onClick={(data: any, index: any) => {
-                  const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
-                  if (targetIndex !== undefined) {
-                    onSelectScene(targetIndex);
-                  }
-                }}
-                dot={(props: any) => {
-                  const isActive = props.index === activeIndex;
-                  const h = isActive ? 6.5 : 4.5;
-                  const { cx, cy } = props;
-                  const points = `${cx},${cy - h} ${cx + h},${cy} ${cx},${cy + h} ${cx - h},${cy}`;
-                  return (
-                    <polygon
-                      points={points}
-                      fill={isActive ? chartColors.suspense : "#18181b"}
-                      stroke={chartColors.suspense}
-                      strokeWidth={isActive ? 3 : 2}
-                      className={onUpdateValue ? "cursor-ns-resize" : "cursor-pointer"}
-                      onMouseDown={(e) => {
-                        if (!onUpdateValue) return;
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setDraggingState({ index: props.index, metric: 'suspense' });
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectScene(props.index);
-                      }}
-                    />
-                  );
-                }}
-                activeDot={false}
-              />
-            )}
-            
-            {/* Anticipation Line */}
-            {showAnticipation && (
-              <Line
-                type="monotone"
-                dataKey="anticipation"
-                name="Anticipation"
-                stroke={chartColors.anticipation}
-                strokeWidth={3}
-                onClick={(data: any, index: any) => {
-                  const targetIndex = typeof index === "number" ? index : (data && typeof data.index === "number" ? data.index : undefined);
-                  if (targetIndex !== undefined) {
-                    onSelectScene(targetIndex);
-                  }
-                }}
-                dot={(props: any) => {
-                  const isActive = props.index === activeIndex;
-                  const h = isActive ? 6.5 : 4.5;
-                  const { cx, cy } = props;
-                  const points = `${cx},${cy - h} ${cx + h},${cy + h} ${cx - h},${cy + h}`;
-                  return (
-                    <polygon
-                      points={points}
-                      fill={isActive ? chartColors.anticipation : "#18181b"}
-                      stroke={chartColors.anticipation}
-                      strokeWidth={isActive ? 3 : 2}
-                      className={onUpdateValue ? "cursor-ns-resize" : "cursor-pointer"}
-                      onMouseDown={(e) => {
-                        if (!onUpdateValue) return;
-                        e.stopPropagation();
-                        e.preventDefault();
-                        setDraggingState({ index: props.index, metric: 'anticipation' });
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectScene(props.index);
-                      }}
-                    />
-                  );
-                }}
-                activeDot={false}
-              />
-            )}
+            ))}
             {onUpdateValue && (
               <ChartDragHandler
                 draggingState={draggingState}
