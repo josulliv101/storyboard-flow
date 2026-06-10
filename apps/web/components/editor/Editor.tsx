@@ -13,6 +13,7 @@ import { CharactersPanel } from './CharactersPanel';
 import { 
   Layers, 
   Settings, 
+  SlidersHorizontal,
   Share2, 
   LogOut,
   Shield,
@@ -22,6 +23,7 @@ import {
   Upload, 
   FileImage, 
   FileVideo, 
+  ArrowLeft,
   X, 
   ChevronDown, 
   Trash2,
@@ -34,6 +36,9 @@ import {
   ChevronRight,
   UserCircle,
   Loader2,
+  Search,
+  MoreVertical,
+  HelpCircle,
   Columns4,
   Grid2X2,
   PanelsTopLeft,
@@ -2170,6 +2175,43 @@ function EditorInner() {
   const [savedScenes, setSavedScenes] = React.useState<SavedSceneSummary[]>([]);
   const [isLoadingSavedScenes, setIsLoadingSavedScenes] = React.useState(false);
   const [savedScenesLoadError, setSavedScenesLoadError] = React.useState<string | null>(null);
+  const [sceneLaunchSearch, setSceneLaunchSearch] = React.useState('');
+  const [sceneComposerText, setSceneComposerText] = React.useState('');
+  const [sceneLaunchMediaItems, setSceneLaunchMediaItems] = React.useState<Array<{
+    id: string;
+    name: string;
+    type: 'image' | 'video';
+    previewUrl: string;
+    durationSeconds?: number;
+  }>>([]);
+  const [sceneLaunchBeats, setSceneLaunchBeats] = React.useState<Array<{
+    id: string;
+    name: string;
+    items: Array<{
+      id: string;
+      name: string;
+      type: 'image' | 'video';
+      previewUrl: string;
+      durationSeconds?: number;
+    }>;
+    childIds: string[];
+    gridOrder: Array<{
+      id: string;
+      type: 'media' | 'collection';
+    }>;
+  }>>([]);
+  const [sceneLaunchGridOrder, setSceneLaunchGridOrder] = React.useState<Array<{
+    id: string;
+    type: 'media' | 'collection';
+  }>>([]);
+  const [activeBeatUploadId, setActiveBeatUploadId] = React.useState<string | null>(null);
+  const [sceneLaunchBeatPath, setSceneLaunchBeatPath] = React.useState<string[]>([]);
+  const [hasLoadedSceneLaunchBoard, setHasLoadedSceneLaunchBoard] = React.useState(false);
+  const [sceneLaunchPreviewHover, setSceneLaunchPreviewHover] = React.useState<{ collectionId: string; startedAt: number } | null>(null);
+  const [sceneLaunchPreviewNow, setSceneLaunchPreviewNow] = React.useState(() => Date.now());
+  const beatFileInputRef = React.useRef<HTMLInputElement>(null);
+  const sceneLaunchMediaItemsRef = React.useRef(sceneLaunchMediaItems);
+  const sceneLaunchBeatsRef = React.useRef(sceneLaunchBeats);
 
   // Authentication & Authorization Role States
   const [isAuthModalOpen, setIsAuthModalOpen] = React.useState(false);
@@ -2475,6 +2517,13 @@ function EditorInner() {
 
   const sceneTabs = previewScenes.length > 1 ? previewScenes : [];
 
+  const closeSceneLaunchView = () => {
+    const currentParams = new URLSearchParams(window.location.search);
+    currentParams.delete('new');
+    const nextQuery = currentParams.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname);
+  };
+
   const handleAddClipClick = (type: ClipType) => {
     if (type === 'dialog') {
       handleAddClip('dialog', 'Narrator');
@@ -2489,7 +2538,11 @@ function EditorInner() {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && pendingType) {
-      handleAddClip(pendingType, undefined, file);
+      if (isNewSceneParam && (pendingType === 'video' || pendingType === 'image')) {
+        addFilesToSceneLaunchMedia([file]);
+      } else {
+        handleAddClip(pendingType, undefined, file);
+      }
     }
     e.target.value = '';
     setPendingType(null);
@@ -3974,6 +4027,1260 @@ function EditorInner() {
     window.addEventListener('pointerdown', handlePointerDown);
     return () => window.removeEventListener('pointerdown', handlePointerDown);
   }, [activeTab, selectedClip, setSelectedClipIds]);
+
+  const sceneLaunchQuery = sceneLaunchSearch.trim().toLowerCase();
+  const visibleProjectScenes = scenes.filter(scene => {
+    if (!sceneLaunchQuery) return true;
+    return `${scene.name} ${scene.description || ''}`.toLowerCase().includes(sceneLaunchQuery);
+  });
+  const projectHasSceneContent = scenes.some(scene => (
+    scene.clips.length > 0 ||
+    !!scene.thumbnailUrl ||
+    !!scene.description?.trim() ||
+    (scenes.length > 1 && scene.name !== 'Untitled Scene')
+  ));
+  const activeSceneLaunchBeatId = sceneLaunchBeatPath[sceneLaunchBeatPath.length - 1] || null;
+  const activeSceneLaunchBeat = activeSceneLaunchBeatId
+    ? sceneLaunchBeats.find(beat => beat.id === activeSceneLaunchBeatId)
+    : null;
+  const activeSceneLaunchGridOrder = activeSceneLaunchBeat ? activeSceneLaunchBeat.gridOrder : sceneLaunchGridOrder;
+  const sceneLaunchGridItems = activeSceneLaunchGridOrder
+    .map(orderItem => {
+      if (orderItem.type === 'media') {
+        const item = activeSceneLaunchBeat
+          ? activeSceneLaunchBeat.items.find(mediaItem => mediaItem.id === orderItem.id)
+          : sceneLaunchMediaItems.find(mediaItem => mediaItem.id === orderItem.id);
+        if (!item) return null;
+        return { ...orderItem, item };
+      }
+
+      const collection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+      if (!collection) return null;
+      return { ...orderItem, collection };
+    })
+    .filter((item): item is (
+      | { id: string; type: 'media'; item: typeof sceneLaunchMediaItems[number] }
+      | { id: string; type: 'collection'; collection: typeof sceneLaunchBeats[number] }
+    ) => !!item)
+    .filter(item => {
+      if (!sceneLaunchQuery) return true;
+      if (item.type === 'media') return item.item.name.toLowerCase().includes(sceneLaunchQuery);
+      return `${item.collection.name} ${item.collection.items.map(collectionItem => collectionItem.name).join(' ')}`.toLowerCase().includes(sceneLaunchQuery);
+    });
+  const rootSceneLaunchGridItemsCount = sceneLaunchGridOrder.length;
+  const showSceneLaunchView = pathname === '/editor' && isNewSceneParam && workspaceViewMode === 'editor' && !isSceneLoading;
+  const sceneLaunchBoardStorageKey = 'storyboard-flow:scene-launch-board:v1';
+  const sceneLaunchBoardDbName = 'storyboard-flow-scene-launch-board';
+  const sceneLaunchBoardStoreName = 'boards';
+
+  type SceneLaunchBoardState = {
+    mediaItems: typeof sceneLaunchMediaItems;
+    collections: typeof sceneLaunchBeats;
+    gridOrder: typeof sceneLaunchGridOrder;
+  };
+
+  const normalizeSceneLaunchBoard = (board: Partial<SceneLaunchBoardState> | null | undefined): SceneLaunchBoardState => ({
+    mediaItems: Array.isArray(board?.mediaItems) ? board.mediaItems : [],
+    collections: Array.isArray(board?.collections)
+      ? board.collections.map(collection => {
+          const items = Array.isArray(collection.items) ? collection.items : [];
+          return {
+            ...collection,
+            items,
+            childIds: Array.isArray(collection.childIds) ? collection.childIds : [],
+            gridOrder: Array.isArray(collection.gridOrder)
+              ? collection.gridOrder
+              : items.map(item => ({ id: item.id, type: 'media' as const })),
+          };
+        })
+      : [],
+    gridOrder: Array.isArray(board?.gridOrder) ? board.gridOrder : [],
+  });
+
+  const openSceneLaunchBoardDb = () => new Promise<IDBDatabase>((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('IndexedDB is not available.'));
+      return;
+    }
+
+    const request = window.indexedDB.open(sceneLaunchBoardDbName, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(sceneLaunchBoardStoreName)) {
+        db.createObjectStore(sceneLaunchBoardStoreName);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not open board storage.'));
+  });
+
+  const readSceneLaunchBoardFromIndexedDb = async () => {
+    const db = await openSceneLaunchBoardDb();
+    return new Promise<Partial<SceneLaunchBoardState> | null>((resolve, reject) => {
+      const transaction = db.transaction(sceneLaunchBoardStoreName, 'readonly');
+      const request = transaction.objectStore(sceneLaunchBoardStoreName).get(sceneLaunchBoardStorageKey);
+      request.onsuccess = () => resolve((request.result as Partial<SceneLaunchBoardState> | undefined) || null);
+      request.onerror = () => reject(request.error || new Error('Could not read board storage.'));
+      transaction.oncomplete = () => db.close();
+      transaction.onerror = () => {
+        db.close();
+        reject(transaction.error || new Error('Could not read board storage.'));
+      };
+    });
+  };
+
+  const writeSceneLaunchBoardToIndexedDb = async (board: SceneLaunchBoardState) => {
+    const db = await openSceneLaunchBoardDb();
+    return new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(sceneLaunchBoardStoreName, 'readwrite');
+      const request = transaction.objectStore(sceneLaunchBoardStoreName).put(board, sceneLaunchBoardStorageKey);
+      request.onerror = () => reject(request.error || new Error('Could not write board storage.'));
+      transaction.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      transaction.onerror = () => {
+        db.close();
+        reject(transaction.error || new Error('Could not write board storage.'));
+      };
+    });
+  };
+
+  React.useEffect(() => {
+    sceneLaunchMediaItemsRef.current = sceneLaunchMediaItems;
+  }, [sceneLaunchMediaItems]);
+
+  React.useEffect(() => {
+    sceneLaunchBeatsRef.current = sceneLaunchBeats;
+  }, [sceneLaunchBeats]);
+
+  React.useEffect(() => {
+    if (!sceneLaunchPreviewHover) return;
+
+    const previewTimer = window.setInterval(() => {
+      setSceneLaunchPreviewNow(Date.now());
+    }, 250);
+
+    return () => window.clearInterval(previewTimer);
+  }, [sceneLaunchPreviewHover]);
+
+  React.useEffect(() => {
+    let isCancelled = false;
+
+    const loadSceneLaunchBoard = async () => {
+      try {
+        let storedBoard = await readSceneLaunchBoardFromIndexedDb();
+
+        if (!storedBoard) {
+          const localStorageBoard = window.localStorage.getItem(sceneLaunchBoardStorageKey);
+          storedBoard = localStorageBoard ? JSON.parse(localStorageBoard) as Partial<SceneLaunchBoardState> : null;
+        }
+
+        if (isCancelled) return;
+
+        const normalizedBoard = normalizeSceneLaunchBoard(storedBoard);
+        setSceneLaunchMediaItems(normalizedBoard.mediaItems);
+        setSceneLaunchBeats(normalizedBoard.collections);
+        setSceneLaunchGridOrder(normalizedBoard.gridOrder);
+      } catch {
+        if (isCancelled) return;
+        setSceneLaunchMediaItems([]);
+        setSceneLaunchBeats([]);
+        setSceneLaunchGridOrder([]);
+      } finally {
+        if (!isCancelled) setHasLoadedSceneLaunchBoard(true);
+      }
+    };
+
+    void loadSceneLaunchBoard();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!hasLoadedSceneLaunchBoard) return;
+
+    const saveSceneLaunchBoard = async () => {
+      try {
+        await writeSceneLaunchBoardToIndexedDb({
+          mediaItems: sceneLaunchMediaItems,
+          collections: sceneLaunchBeats,
+          gridOrder: sceneLaunchGridOrder,
+        });
+      } catch {
+        try {
+          window.localStorage.setItem(sceneLaunchBoardStorageKey, JSON.stringify({
+            mediaItems: sceneLaunchMediaItems,
+            collections: sceneLaunchBeats,
+            gridOrder: sceneLaunchGridOrder,
+          }));
+        } catch {
+          toast.error('Could not save this scene board in browser storage.', { id: 'scene-board-storage-error' });
+        }
+      }
+    };
+
+    void saveSceneLaunchBoard();
+  }, [hasLoadedSceneLaunchBoard, sceneLaunchBeats, sceneLaunchGridOrder, sceneLaunchMediaItems]);
+
+  React.useEffect(() => (
+    () => {
+      sceneLaunchMediaItemsRef.current.forEach(item => {
+        if (item.previewUrl.startsWith('blob:')) URL.revokeObjectURL(item.previewUrl);
+      });
+      sceneLaunchBeatsRef.current.forEach(beat => {
+        beat.items.forEach(item => {
+          if (item.previewUrl.startsWith('blob:')) URL.revokeObjectURL(item.previewUrl);
+        });
+      });
+    }
+  ), []);
+
+  const readSceneLaunchFilePreview = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error('Could not read file preview.'));
+    });
+    reader.addEventListener('error', () => reject(reader.error || new Error('Could not read file preview.')));
+    reader.readAsDataURL(file);
+  });
+
+  const addFilesToSceneLaunchMedia = async (files: File[]) => {
+    const validFiles = files.filter(file => file.type.startsWith('image/') || file.type.startsWith('video/'));
+    const invalidCount = files.length - validFiles.length;
+
+    if (invalidCount > 0) {
+      toast.error('Only image and video files can be added here.');
+    }
+
+    if (validFiles.length === 0) return;
+
+    const nextItems = await Promise.all(validFiles.map(async file => ({
+      id: `scene-media-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      name: file.name,
+      type: file.type.startsWith('video/') ? 'video' as const : 'image' as const,
+      previewUrl: await readSceneLaunchFilePreview(file),
+      durationSeconds: file.type.startsWith('image/') ? 3 : undefined,
+    })));
+
+    if (activeSceneLaunchBeatId) {
+      setSceneLaunchBeats(previous => previous.map(beat => (
+        beat.id === activeSceneLaunchBeatId
+          ? {
+              ...beat,
+              items: [...beat.items, ...nextItems],
+              gridOrder: [
+                ...beat.gridOrder,
+                ...nextItems.map(item => ({ id: item.id, type: 'media' as const })),
+              ],
+            }
+          : beat
+      )));
+    } else {
+      setSceneLaunchMediaItems(previous => [...previous, ...nextItems]);
+      setSceneLaunchGridOrder(previous => [
+        ...previous,
+        ...nextItems.map(item => ({ id: item.id, type: 'media' as const })),
+      ]);
+    }
+
+    validFiles.forEach(file => {
+      handleAddClip(file.type.startsWith('video/') ? 'video' : 'image', undefined, file);
+    });
+  };
+
+  const createSceneLaunchBeat = () => {
+    const id = `beat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    if (activeSceneLaunchBeatId) {
+      setSceneLaunchBeats(previous => previous.map(beat => (
+        beat.id === activeSceneLaunchBeatId
+          ? {
+              ...beat,
+              childIds: [...beat.childIds, id],
+              gridOrder: [...beat.gridOrder, { id, type: 'collection' as const }],
+            }
+          : beat
+      )));
+    } else {
+      setSceneLaunchGridOrder(previous => [...previous, { id, type: 'collection' }]);
+    }
+    setSceneLaunchBeats(previous => [
+      ...previous,
+      {
+        id,
+        name: `Collection ${previous.length + 1}`,
+        items: [],
+        childIds: [],
+        gridOrder: [],
+      },
+    ]);
+  };
+
+  const openBeatUpload = (beatId: string) => {
+    setActiveBeatUploadId(beatId);
+    beatFileInputRef.current?.click();
+  };
+
+  const openBeatDetail = (beatId: string) => {
+    setSceneLaunchBeatPath(previous => [...previous, beatId]);
+  };
+
+  const addFilesToBeat = async (beatId: string, files: File[]) => {
+    const validFiles = files.filter(file => file.type.startsWith('image/') || file.type.startsWith('video/'));
+    const invalidCount = files.length - validFiles.length;
+
+    if (invalidCount > 0) {
+      toast.error('Only image and video files can be added to a collection.');
+    }
+
+    if (validFiles.length === 0) return;
+
+    const nextItems = await Promise.all(validFiles.map(async file => ({
+      id: `beat-item-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      name: file.name,
+      type: file.type.startsWith('video/') ? 'video' as const : 'image' as const,
+      previewUrl: await readSceneLaunchFilePreview(file),
+      durationSeconds: file.type.startsWith('image/') ? 3 : undefined,
+    })));
+
+    setSceneLaunchBeats(previous => previous.map(beat => (
+      beat.id === beatId
+        ? {
+            ...beat,
+            items: [...beat.items, ...nextItems],
+            gridOrder: [
+              ...beat.gridOrder,
+              ...nextItems.map(item => ({ id: item.id, type: 'media' as const })),
+            ],
+          }
+        : beat
+    )));
+
+    validFiles.forEach(file => {
+      handleAddClip(file.type.startsWith('video/') ? 'video' : 'image', undefined, file);
+    });
+  };
+
+  const handleBeatFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    if (activeBeatUploadId) {
+      addFilesToBeat(activeBeatUploadId, files);
+    }
+    event.target.value = '';
+    setActiveBeatUploadId(null);
+  };
+
+  const handleBeatDrop = (event: React.DragEvent<HTMLDivElement>, beatId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    addFilesToBeat(beatId, Array.from(event.dataTransfer.files || []));
+  };
+
+  const findSceneLaunchMediaItem = (mediaId: string) => {
+    const rootItem = sceneLaunchMediaItems.find(item => item.id === mediaId);
+    if (rootItem) return rootItem;
+    return sceneLaunchBeats.flatMap(beat => beat.items).find(item => item.id === mediaId) || null;
+  };
+
+  const getSceneLaunchMediaTileStyle = (item: typeof sceneLaunchMediaItems[number]): React.CSSProperties => {
+    const duration = item.type === 'image'
+      ? Math.max(1, Math.min(12, item.durationSeconds ?? 3))
+      : 3;
+    return {
+      flex: `${duration} 1 ${duration * 4.5}rem`,
+      minWidth: item.type === 'image' ? '7rem' : '9rem',
+      maxWidth: '100%',
+    };
+  };
+
+  const getSceneLaunchCollectionTileStyle = (): React.CSSProperties => ({
+    flex: '3 1 13.5rem',
+    minWidth: '9rem',
+    maxWidth: '100%',
+  });
+
+  const sceneLaunchTileMediaClassName = "h-36 overflow-hidden sm:h-40 lg:h-44";
+
+  const sceneLaunchAddTileStyle: React.CSSProperties = {
+    flex: '3 1 13.5rem',
+    minWidth: '9rem',
+    maxWidth: '100%',
+  };
+
+  const getSceneLaunchMediaPreviewDuration = (item: typeof sceneLaunchMediaItems[number]) => (
+    Math.max(1, item.type === 'image' ? item.durationSeconds ?? 3 : 3)
+  );
+
+  const getSceneLaunchCollectionPreview = (collection: typeof sceneLaunchBeats[number]) => {
+    const orderedMediaItems = collection.gridOrder
+      .filter(item => item.type === 'media')
+      .map(item => collection.items.find(collectionItem => collectionItem.id === item.id))
+      .filter((item): item is typeof sceneLaunchMediaItems[number] => !!item);
+
+    if (orderedMediaItems.length === 0) return null;
+
+    const firstItem = orderedMediaItems[0];
+    const isPlaying = sceneLaunchPreviewHover?.collectionId === collection.id;
+
+    if (!isPlaying) {
+      return {
+        item: firstItem,
+        elapsedSeconds: 0,
+        durationSeconds: getSceneLaunchMediaPreviewDuration(firstItem),
+        isPlaying,
+      };
+    }
+
+    const totalDuration = orderedMediaItems.reduce((total, item) => (
+      total + getSceneLaunchMediaPreviewDuration(item)
+    ), 0);
+    let elapsed = ((sceneLaunchPreviewNow - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration;
+
+    for (const item of orderedMediaItems) {
+      const durationSeconds = getSceneLaunchMediaPreviewDuration(item);
+      if (elapsed < durationSeconds) {
+        return {
+          item,
+          elapsedSeconds: elapsed,
+          durationSeconds,
+          isPlaying,
+        };
+      }
+      elapsed -= durationSeconds;
+    }
+
+    return {
+      item: firstItem,
+      elapsedSeconds: 0,
+      durationSeconds: getSceneLaunchMediaPreviewDuration(firstItem),
+      isPlaying,
+    };
+  };
+
+  const updateSceneLaunchImageDuration = (mediaId: string, durationSeconds: number) => {
+    const nextDuration = Math.max(1, Math.min(60, durationSeconds || 1));
+    const updateItem = (item: typeof sceneLaunchMediaItems[number]) => (
+      item.id === mediaId && item.type === 'image'
+        ? { ...item, durationSeconds: nextDuration }
+        : item
+    );
+
+    setSceneLaunchMediaItems(previous => previous.map(updateItem));
+    setSceneLaunchBeats(previous => previous.map(beat => ({
+      ...beat,
+      items: beat.items.map(updateItem),
+    })));
+  };
+
+  const removeSceneLaunchMediaFromCurrentLevel = (mediaId: string) => {
+    if (activeSceneLaunchBeatId) {
+      setSceneLaunchBeats(previous => previous.map(beat => (
+        beat.id === activeSceneLaunchBeatId
+          ? {
+              ...beat,
+              items: beat.items.filter(item => item.id !== mediaId),
+              gridOrder: beat.gridOrder.filter(item => !(item.type === 'media' && item.id === mediaId)),
+            }
+          : beat
+      )));
+      return;
+    }
+
+    setSceneLaunchMediaItems(previous => previous.filter(item => item.id !== mediaId));
+    setSceneLaunchGridOrder(previous => previous.filter(item => !(item.type === 'media' && item.id === mediaId)));
+  };
+
+  const moveSceneLaunchMediaToCollection = (mediaId: string, beatId: string) => {
+    const mediaItem = findSceneLaunchMediaItem(mediaId);
+    if (!mediaItem) return;
+
+    removeSceneLaunchMediaFromCurrentLevel(mediaId);
+    setSceneLaunchBeats(previous => previous.map(beat => (
+      beat.id === beatId
+        ? {
+            ...beat,
+            items: beat.items.some(item => item.id === mediaId) ? beat.items : [...beat.items, mediaItem],
+            gridOrder: beat.gridOrder.some(item => item.type === 'media' && item.id === mediaId)
+              ? beat.gridOrder
+              : [...beat.gridOrder, { id: mediaId, type: 'media' as const }],
+          }
+        : beat
+    )));
+  };
+
+  const handleCollectionGridDrop = (
+    event: React.DragEvent<HTMLDivElement | HTMLElement>,
+    beatId: string,
+    targetKey: string
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const draggedKey = event.dataTransfer.getData('text/plain');
+    if (draggedKey.startsWith('media:')) {
+      moveSceneLaunchMediaToCollection(draggedKey.slice('media:'.length), beatId);
+      return;
+    }
+
+    if (draggedKey) {
+      reorderSceneLaunchGridItem(draggedKey, targetKey);
+      return;
+    }
+
+    addFilesToBeat(beatId, Array.from(event.dataTransfer.files || []));
+  };
+
+  const reorderSceneLaunchGridItem = (draggedKey: string, targetKey: string) => {
+    if (!draggedKey || draggedKey === targetKey) return;
+
+    const reorderItems = (previous: Array<{ id: string; type: 'media' | 'collection' }>) => {
+      const draggedIndex = previous.findIndex(item => `${item.type}:${item.id}` === draggedKey);
+      const targetIndex = previous.findIndex(item => `${item.type}:${item.id}` === targetKey);
+      if (draggedIndex < 0 || targetIndex < 0) return previous;
+
+      const next = [...previous];
+      const [draggedItem] = next.splice(draggedIndex, 1);
+      next.splice(targetIndex, 0, draggedItem);
+      return next;
+    };
+
+    if (activeSceneLaunchBeatId) {
+      setSceneLaunchBeats(previous => previous.map(beat => (
+        beat.id === activeSceneLaunchBeatId
+          ? { ...beat, gridOrder: reorderItems(beat.gridOrder) }
+          : beat
+      )));
+      return;
+    }
+
+    setSceneLaunchGridOrder(reorderItems);
+  };
+
+  const createSceneFromComposer = () => {
+    const nextName = sceneComposerText.trim() || `Scene ${scenes.length + 1}`;
+    const reusableBlankScene = activeScene && scenes.length === 1 && activeScene.clips.length === 0 && !activeScene.description?.trim();
+
+    if (reusableBlankScene) {
+      updateScene(activeScene.id, { name: nextName });
+      setActiveScene(activeScene.id);
+    } else {
+      addScene(nextName);
+    }
+
+    setSceneComposerText('');
+    setActiveTab('scenes');
+  };
+
+  const handleSceneLaunchDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (event.dataTransfer.getData('text/plain')) return;
+    addFilesToSceneLaunchMedia(Array.from(event.dataTransfer.files || []));
+  };
+
+  const openProjectScene = (sceneId: string) => {
+    setActiveScene(sceneId);
+    closeSceneLaunchView();
+  };
+
+  const renderSceneLaunchWorkspace = () => (
+    <div
+      className="relative flex min-h-0 flex-1 overflow-hidden bg-black text-zinc-100"
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleSceneLaunchDrop}
+    >
+      <input
+        type="file"
+        ref={fileInputRef}
+        className="hidden"
+        accept={pendingType === 'video' ? 'video/*' : 'image/*'}
+        onChange={handleFileChange}
+      />
+      <input
+        type="file"
+        ref={beatFileInputRef}
+        className="hidden"
+        accept="image/*,video/*"
+        multiple
+        onChange={handleBeatFileChange}
+      />
+
+      <aside className="flex w-14 shrink-0 flex-col items-center border-r border-white/10 py-4">
+        <button
+          type="button"
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-800 text-white"
+          aria-label="Scenes"
+          onClick={() => setActiveTab('scenes')}
+        >
+          <Grid2X2 className="h-4.5 w-4.5" />
+        </button>
+        <button
+          type="button"
+          className="mt-5 flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+          aria-label="Characters"
+          onClick={() => setActiveTab('characters')}
+        >
+          <Users className="h-4.5 w-4.5" />
+        </button>
+        <button
+          type="button"
+          className="mt-2 flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+          aria-label="Saved scenes"
+          onClick={openSceneLibrary}
+        >
+          <Clapperboard className="h-4.5 w-4.5" />
+        </button>
+        <div className="my-5 h-px w-8 bg-white/10" />
+        <button
+          type="button"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+          aria-label="AI scene helper"
+          onClick={() => setActiveTab('analyze')}
+        >
+          <Sparkles className="h-4.5 w-4.5" />
+        </button>
+        <div className="flex-1" />
+        <button
+          type="button"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+          aria-label="Settings"
+          onClick={() => setActiveTab('settings')}
+        >
+          <Settings className="h-4.5 w-4.5" />
+        </button>
+      </aside>
+
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <header className="flex h-16 shrink-0 items-center justify-between gap-4 px-5">
+          <div className="flex min-w-0 items-center gap-4">
+            <button
+              type="button"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 hover:bg-white/5 hover:text-white"
+              aria-label="Back home"
+              onClick={() => {
+                if (activeSceneLaunchBeatId) {
+                  setSceneLaunchBeatPath(previous => previous.slice(0, -1));
+                  return;
+                }
+                router.push('/');
+              }}
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-zinc-100">
+                {activeSavedSceneId ? activeScene?.name || 'Current project' : 'New scene project'}
+              </div>
+              <div className="mt-0.5 text-[10px] font-medium text-zinc-600">
+                {new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+              </div>
+            </div>
+          </div>
+
+          <div className="hidden h-11 w-full max-w-xl items-center gap-3 rounded-full bg-zinc-900 px-5 text-zinc-500 ring-1 ring-white/10 md:flex">
+            <Search className="h-4.5 w-4.5 shrink-0" />
+            <input
+              value={sceneLaunchSearch}
+              onChange={(event) => setSceneLaunchSearch(event.target.value)}
+              className="h-full min-w-0 flex-1 bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+              placeholder="Search scenes"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-full text-zinc-300 hover:bg-white/5 hover:text-white"
+              onClick={() => handleAddClipClick('video')}
+              title="Add video scene media"
+              aria-label="Add video scene media"
+            >
+              <Plus className="h-5 w-5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-full text-zinc-300 hover:bg-white/5 hover:text-white"
+              onClick={() => setActiveTab('settings')}
+              title="Project settings"
+              aria-label="Project settings"
+            >
+              <Settings className="h-5 w-5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-full text-zinc-300 hover:bg-white/5 hover:text-white"
+              onClick={openSceneLibrary}
+              title="Scene help and library"
+              aria-label="Scene help and library"
+            >
+              <HelpCircle className="h-5 w-5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-full text-zinc-300 hover:bg-white/5 hover:text-white"
+              title="More"
+              aria-label="More"
+            >
+              <MoreVertical className="h-5 w-5" />
+            </Button>
+          </div>
+        </header>
+
+        <main className="relative flex min-h-0 flex-1 flex-col px-6 pb-28">
+          {!activeSceneLaunchBeat && rootSceneLaunchGridItemsCount === 0 && (projectHasSceneContent || visibleProjectScenes.length > 1) ? (
+            <div className="mx-auto mt-8 w-full max-w-6xl">
+              <div className="mb-4 flex items-end justify-between gap-4">
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-200">Project scenes</h2>
+                  <p className="mt-1 text-xs text-zinc-600">Open an existing scene or add a new scene to this project.</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
+                  onClick={createSceneFromComposer}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add Scene
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {visibleProjectScenes.map((scene, index) => (
+                  <article
+                    key={scene.id}
+                    className="group overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/70 transition-colors hover:border-zinc-700"
+                  >
+                    <button
+                      type="button"
+                      className="block w-full text-left"
+                      onClick={() => openProjectScene(scene.id)}
+                    >
+                      <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-zinc-950">
+                        {scene.thumbnailUrl ? (
+                          <img src={scene.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <Clapperboard className="h-8 w-8 text-zinc-700" />
+                        )}
+                        <span className="absolute left-3 top-3 rounded bg-black/70 px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-zinc-400">
+                          Scene {index + 1}
+                        </span>
+                      </div>
+                      <div className="p-3">
+                        <h3 className="truncate text-sm font-semibold text-zinc-100">{scene.name}</h3>
+                        <p className="mt-1 text-[10px] font-mono uppercase tracking-widest text-zinc-600">
+                          {scene.clips.length} {scene.clips.length === 1 ? 'clip' : 'clips'}
+                        </p>
+                      </div>
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : sceneLaunchGridItems.length === 0 ? (
+            <div className="flex flex-1 items-center justify-center">
+              <div className="flex flex-col items-center text-center">
+                <div className="flex h-16 w-16 items-center justify-center">
+                  <Clapperboard className="h-12 w-12 text-zinc-200" />
+                </div>
+                <h2 className="mt-5 text-lg font-medium text-zinc-500">Start creating or drop scene media</h2>
+                <p className="mt-2 max-w-sm text-xs leading-5 text-zinc-700">
+                  Add a video, image, or scene note to begin building this project.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          <section className="mx-auto mt-6 w-full max-w-6xl shrink-0">
+            {activeSceneLaunchBeat ? (
+              <>
+                <div className="mb-4 flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <h2 className="truncate text-sm font-semibold text-zinc-200">{activeSceneLaunchBeat.name}</h2>
+                    <p className="mt-1 text-[11px] text-zinc-700">
+                      {activeSceneLaunchBeat.gridOrder.length} {activeSceneLaunchBeat.gridOrder.length === 1 ? 'item' : 'items'} in this collection
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
+                      onClick={() => openBeatUpload(activeSceneLaunchBeat.id)}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Add Media
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
+                      onClick={createSceneLaunchBeat}
+                    >
+                      <Grid2X2 className="h-3.5 w-3.5" />
+                      Add Collection
+                    </Button>
+                  </div>
+                </div>
+
+                <div
+                  className="rounded-lg border border-zinc-900 bg-zinc-950/30 p-3"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => handleBeatDrop(event, activeSceneLaunchBeat.id)}
+                >
+                  {sceneLaunchGridItems.length > 0 ? (
+                    <div className="flex flex-wrap items-start gap-3">
+                      {sceneLaunchGridItems.map((gridItem, index) => {
+                        const dragKey = `${gridItem.type}:${gridItem.id}`;
+
+                        if (gridItem.type === 'media') {
+                          const item = gridItem.item;
+                          return (
+                            <article
+                              key={dragKey}
+                              draggable
+                              onDragStart={(event) => {
+                                event.dataTransfer.effectAllowed = 'move';
+                                event.dataTransfer.setData('text/plain', dragKey);
+                              }}
+                              onDragOver={(event) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = 'move';
+                              }}
+                              onDrop={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                reorderSceneLaunchGridItem(event.dataTransfer.getData('text/plain'), dragKey);
+                              }}
+                              style={getSceneLaunchMediaTileStyle(item)}
+                              className="group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-black transition-colors hover:border-zinc-700 active:cursor-grabbing"
+                            >
+                              <div className={sceneLaunchTileMediaClassName}>
+                                {item.type === 'video' ? (
+                                  <video src={item.previewUrl} className="h-full w-full object-cover" muted playsInline controls />
+                                ) : (
+                                  <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                                )}
+                              </div>
+                              <div className="flex items-center justify-between gap-2 p-2">
+                                <div className="min-w-0">
+                                  <div className="truncate text-[11px] font-semibold text-zinc-300">{item.name}</div>
+                                  <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-700">{item.type}</div>
+                                </div>
+                                {item.type === 'image' ? (
+                                  <label className="flex shrink-0 items-center gap-1 rounded bg-zinc-950 px-1.5 py-1 text-[9px] font-mono uppercase tracking-widest text-zinc-500">
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={60}
+                                      value={item.durationSeconds ?? 3}
+                                      onClick={(event) => event.stopPropagation()}
+                                      onPointerDown={(event) => event.stopPropagation()}
+                                      onChange={(event) => updateSceneLaunchImageDuration(item.id, Number(event.target.value))}
+                                      className="h-4 w-8 bg-transparent text-right text-[10px] text-zinc-300 outline-none"
+                                      aria-label={`${item.name} duration in seconds`}
+                                    />
+                                    s
+                                  </label>
+                                ) : null}
+                                <GripVertical className="h-3.5 w-3.5 shrink-0 text-zinc-700 group-hover:text-zinc-400" />
+                              </div>
+                            </article>
+                          );
+                        }
+
+                        const beat = gridItem.collection;
+                        const preview = getSceneLaunchCollectionPreview(beat);
+                        return (
+                          <article
+                            key={dragKey}
+                            draggable
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = 'move';
+                              event.dataTransfer.setData('text/plain', dragKey);
+                            }}
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = 'move';
+                            }}
+                            onDrop={(event) => handleCollectionGridDrop(event, beat.id, dragKey)}
+                            onMouseEnter={() => setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: Date.now() })}
+                            onMouseLeave={() => setSceneLaunchPreviewHover(previous => (
+                              previous?.collectionId === beat.id ? null : previous
+                            ))}
+                            onFocus={() => setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: Date.now() })}
+                            onBlur={() => setSceneLaunchPreviewHover(previous => (
+                              previous?.collectionId === beat.id ? null : previous
+                            ))}
+                            style={getSceneLaunchCollectionTileStyle()}
+                            className="group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/80 transition-colors hover:border-zinc-700 active:cursor-grabbing"
+                          >
+                            <div
+                              className={cn("relative bg-black", sceneLaunchTileMediaClassName)}
+                              onDragOver={(event) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = 'move';
+                              }}
+                              onDrop={(event) => handleCollectionGridDrop(event, beat.id, dragKey)}
+                            >
+                              <button
+                                type="button"
+                                className="block h-full w-full"
+                                onClick={() => openBeatDetail(beat.id)}
+                                aria-label={`Open ${beat.name}`}
+                              >
+                                {preview ? (
+                                  preview.item.type === 'video' ? (
+                                    <video src={preview.item.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                                  ) : (
+                                    <img src={preview.item.previewUrl} alt="" className="h-full w-full object-cover" />
+                                  )
+                                ) : (
+                                  <div className="flex h-full w-full flex-col items-center justify-center text-center text-zinc-600 transition-colors hover:bg-white/[0.03] hover:text-zinc-300">
+                                    <Grid2X2 className="h-6 w-6" />
+                                    <span className="mt-2 text-[10px] font-semibold uppercase tracking-widest">Open collection</span>
+                                  </div>
+                                )}
+                              </button>
+                              {preview?.isPlaying ? (
+                                <div className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/75 px-2 py-1 font-mono text-[10px] text-white">
+                                  {Math.floor(Math.min(preview.durationSeconds, preview.elapsedSeconds))}s / {preview.durationSeconds}s
+                                </div>
+                              ) : null}
+                            </div>
+                            <button
+                              type="button"
+                              className="flex w-full items-center justify-between gap-2 p-2 text-left"
+                              onClick={() => openBeatDetail(beat.id)}
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-[11px] font-semibold text-zinc-300">{beat.name}</div>
+                                <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-700">
+                                  {beat.gridOrder.length} {beat.gridOrder.length === 1 ? 'item' : 'items'}
+                                </div>
+                              </div>
+                              <span className="flex items-center gap-1">
+                                <span className="flex h-5 min-w-5 items-center justify-center rounded bg-zinc-900 font-mono text-[9px] text-zinc-600">
+                                  {index + 1}
+                                </span>
+                                <GripVertical className="h-3.5 w-3.5 text-zinc-700 group-hover:text-zinc-400" />
+                              </span>
+                            </button>
+                          </article>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        style={sceneLaunchAddTileStyle}
+                        className={cn("flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-900 bg-black/50 text-zinc-600 transition-colors hover:border-zinc-700 hover:text-zinc-300", sceneLaunchTileMediaClassName)}
+                        onClick={() => openBeatUpload(activeSceneLaunchBeat.id)}
+                      >
+                        <Plus className="h-6 w-6" />
+                        <span className="mt-2 text-[10px] font-semibold uppercase tracking-widest">Add media</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="flex min-h-64 w-full flex-col items-center justify-center rounded-md border border-dashed border-zinc-900 text-center text-zinc-600 transition-colors hover:border-zinc-700 hover:bg-white/[0.02] hover:text-zinc-300"
+                      onClick={() => openBeatUpload(activeSceneLaunchBeat.id)}
+                    >
+                      <Plus className="h-7 w-7" />
+                      <span className="mt-3 text-xs font-semibold uppercase tracking-widest">Upload into this collection</span>
+                      <span className="mt-2 max-w-xs text-[11px] leading-5 text-zinc-700">Drop media here, add a child collection, or click to browse.</span>
+                    </button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mb-3 flex items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Scene board</h2>
+                    <p className="mt-1 text-[11px] text-zinc-700">Media items and collections share one rearrangeable grid.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
+                      onClick={() => handleAddClipClick('image')}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Add Media
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
+                      onClick={createSceneLaunchBeat}
+                    >
+                      <Grid2X2 className="h-3.5 w-3.5" />
+                      Add Collection
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-start gap-3">
+                  {sceneLaunchGridItems.map((gridItem, index) => {
+                    const dragKey = `${gridItem.type}:${gridItem.id}`;
+
+                    if (gridItem.type === 'media') {
+                      const item = gridItem.item;
+                      return (
+                        <article
+                          key={dragKey}
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.effectAllowed = 'move';
+                            event.dataTransfer.setData('text/plain', dragKey);
+                          }}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = 'move';
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            reorderSceneLaunchGridItem(event.dataTransfer.getData('text/plain'), dragKey);
+                          }}
+                          style={getSceneLaunchMediaTileStyle(item)}
+                          className="group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-black transition-colors hover:border-zinc-700 active:cursor-grabbing"
+                        >
+                          <div className={sceneLaunchTileMediaClassName}>
+                            {item.type === 'video' ? (
+                              <video src={item.previewUrl} className="h-full w-full object-cover" muted playsInline controls />
+                            ) : (
+                              <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between gap-2 p-2">
+                            <div className="min-w-0">
+                              <div className="truncate text-[11px] font-semibold text-zinc-300">{item.name}</div>
+                              <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-700">{item.type}</div>
+                            </div>
+                            {item.type === 'image' ? (
+                              <label className="flex shrink-0 items-center gap-1 rounded bg-zinc-950 px-1.5 py-1 text-[9px] font-mono uppercase tracking-widest text-zinc-500">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={60}
+                                  value={item.durationSeconds ?? 3}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onChange={(event) => updateSceneLaunchImageDuration(item.id, Number(event.target.value))}
+                                  className="h-4 w-8 bg-transparent text-right text-[10px] text-zinc-300 outline-none"
+                                  aria-label={`${item.name} duration in seconds`}
+                                />
+                                s
+                              </label>
+                            ) : null}
+                            <GripVertical className="h-3.5 w-3.5 shrink-0 text-zinc-700 group-hover:text-zinc-400" />
+                          </div>
+                        </article>
+                      );
+                    }
+
+                    const beat = gridItem.collection;
+                    const preview = getSceneLaunchCollectionPreview(beat);
+                    return (
+                      <article
+                        key={dragKey}
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = 'move';
+                          event.dataTransfer.setData('text/plain', dragKey);
+                        }}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = 'move';
+                        }}
+                        onDrop={(event) => handleCollectionGridDrop(event, beat.id, dragKey)}
+                        onMouseEnter={() => setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: Date.now() })}
+                        onMouseLeave={() => setSceneLaunchPreviewHover(previous => (
+                          previous?.collectionId === beat.id ? null : previous
+                        ))}
+                        onFocus={() => setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: Date.now() })}
+                        onBlur={() => setSceneLaunchPreviewHover(previous => (
+                          previous?.collectionId === beat.id ? null : previous
+                        ))}
+                        style={getSceneLaunchCollectionTileStyle()}
+                        className="group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/80 transition-colors hover:border-zinc-700 active:cursor-grabbing"
+                      >
+                        <div
+                          className={cn("relative bg-black", sceneLaunchTileMediaClassName)}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = 'move';
+                          }}
+                          onDrop={(event) => handleCollectionGridDrop(event, beat.id, dragKey)}
+                        >
+                          <button
+                            type="button"
+                            className="block h-full w-full"
+                            onClick={() => openBeatDetail(beat.id)}
+                            aria-label={`Open ${beat.name}`}
+                          >
+                            {preview ? (
+                              preview.item.type === 'video' ? (
+                                <video src={preview.item.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                              ) : (
+                                <img src={preview.item.previewUrl} alt="" className="h-full w-full object-cover" />
+                              )
+                            ) : (
+                              <div className="flex h-full w-full flex-col items-center justify-center text-center text-zinc-600 transition-colors hover:bg-white/[0.03] hover:text-zinc-300">
+                                <Grid2X2 className="h-6 w-6" />
+                                <span className="mt-2 text-[10px] font-semibold uppercase tracking-widest">Open collection</span>
+                              </div>
+                            )}
+                          </button>
+                          {preview?.isPlaying ? (
+                            <div className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/75 px-2 py-1 font-mono text-[10px] text-white">
+                              {Math.floor(Math.min(preview.durationSeconds, preview.elapsedSeconds))}s / {preview.durationSeconds}s
+                            </div>
+                          ) : null}
+
+                          <button
+                            type="button"
+                            className="absolute inset-x-3 bottom-3 flex h-8 items-center justify-center rounded-full bg-black/75 px-3 text-[10px] font-semibold uppercase tracking-widest text-zinc-200 opacity-0 backdrop-blur transition-opacity hover:bg-zinc-900 group-hover:opacity-100 focus-visible:opacity-100"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openBeatUpload(beat.id);
+                            }}
+                          >
+                            <Plus className="mr-1.5 h-3.5 w-3.5" />
+                            Add media
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between gap-2 p-2 text-left"
+                          onClick={() => openBeatDetail(beat.id)}
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate text-[11px] font-semibold text-zinc-300">{beat.name}</div>
+                            <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-700">
+                              {beat.gridOrder.length} {beat.gridOrder.length === 1 ? 'item' : 'items'}
+                            </div>
+                          </div>
+                          <span className="flex items-center gap-1">
+                            <span className="flex h-5 min-w-5 items-center justify-center rounded bg-zinc-900 font-mono text-[9px] text-zinc-600">
+                              {index + 1}
+                            </span>
+                            <GripVertical className="h-3.5 w-3.5 text-zinc-700 group-hover:text-zinc-400" />
+                          </span>
+                        </button>
+                      </article>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    style={sceneLaunchAddTileStyle}
+                    className={cn("flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-900 bg-zinc-950/40 text-zinc-600 transition-colors hover:border-zinc-700 hover:bg-zinc-950 hover:text-zinc-300", sceneLaunchTileMediaClassName)}
+                    onClick={createSceneLaunchBeat}
+                  >
+                    <Plus className="h-6 w-6" />
+                    <span className="mt-2 text-[10px] font-semibold uppercase tracking-widest">Add collection</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
+
+        </main>
+
+        <form
+          className="absolute bottom-6 left-1/2 z-20 flex w-[min(92vw,42rem)] -translate-x-1/2 flex-col rounded-2xl border border-white/10 bg-zinc-900/90 p-3 shadow-2xl shadow-black/50"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createSceneFromComposer();
+          }}
+        >
+          <input
+            value={sceneComposerText}
+            onChange={(event) => setSceneComposerText(event.target.value)}
+            className="h-9 bg-transparent px-1 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+            placeholder="What scene do you want to create?"
+          />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-zinc-400 hover:bg-white/5 hover:text-white"
+                onClick={() => handleAddClipClick('video')}
+                title="Add video"
+                aria-label="Add video"
+              >
+                <Plus className="h-5 w-5" />
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-8 rounded-full bg-white px-4 text-xs font-semibold text-black hover:bg-zinc-200"
+                onClick={() => setActiveTab('analyze')}
+              >
+                Agent
+              </Button>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+                onClick={() => handleAddClipClick('image')}
+                title="Add image"
+                aria-label="Add image"
+              >
+                <ImageIcon className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+                onClick={() => setActiveTab('settings')}
+                title="Scene controls"
+                aria-label="Scene controls"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+              </Button>
+              <Button
+                type="submit"
+                size="icon"
+                className="h-9 w-9 rounded-full bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
+                title="Create scene"
+                aria-label="Create scene"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </Button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 
   const renderSidePanel = () => {
     if (!activeTab) return null;
@@ -5702,7 +7009,10 @@ function EditorInner() {
 
         {/* Editor Workspace */}
         <div ref={workspaceRef} className="flex-1 flex flex-col overflow-hidden relative">
-          
+          {showSceneLaunchView ? (
+            renderSceneLaunchWorkspace()
+          ) : (
+          <>
           {/* Upper Split: Preview Area (PERSISTENT & SHARED) */}
           {workspaceViewMode !== 'analysis' && (
             <>
@@ -6384,6 +7694,8 @@ function EditorInner() {
             <div className="flex-1 flex flex-col overflow-hidden">
               <TimelineRoot />
             </div>
+          )}
+          </>
           )}
         </div>
       </main>
