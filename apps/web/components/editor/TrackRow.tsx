@@ -805,9 +805,9 @@ export function TrackRow({ track, sceneClips, sceneTracks, sceneId }: TrackRowPr
             }} 
           />
         </DropdownMenuTrigger>
-        <DropdownMenuContent className="w-48 bg-[#18181b] border-zinc-700/50 text-zinc-300 shadow-2xl backdrop-blur-xl">
+        <DropdownMenuContent className="w-48 border border-border bg-popover text-popover-foreground shadow-2xl backdrop-blur-xl">
           <div className="text-[10px] uppercase tracking-widest text-zinc-500 px-3 py-2 font-bold select-none cursor-default">Add Item At Position</div>
-          <DropdownMenuSeparator className="bg-zinc-700/50" />
+          <DropdownMenuSeparator className="bg-border" />
           <DropdownMenuItem onClick={() => handleAddItem('dialog')} className="gap-2 focus:bg-purple-500/10 focus:text-purple-300 cursor-pointer">
             <Type className="h-3.5 w-3.5" /> Text / Dialog
           </DropdownMenuItem>
@@ -839,9 +839,9 @@ export function TrackRow({ track, sceneClips, sceneTracks, sceneId }: TrackRowPr
                   Add item to this layer
                 </div>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-48 bg-[#18181b] border-zinc-700/50 text-zinc-300 shadow-2xl backdrop-blur-xl">
+              <DropdownMenuContent align="start" className="w-48 border border-border bg-popover text-popover-foreground shadow-2xl backdrop-blur-xl">
                 <div className="text-[10px] uppercase tracking-widest text-zinc-500 px-3 py-2 font-bold select-none cursor-default">Select Item Type</div>
-                <DropdownMenuSeparator className="bg-zinc-700/50" />
+                <DropdownMenuSeparator className="bg-border" />
                 <DropdownMenuItem onClick={() => addClip({ id: 'clip-'+Date.now(), name: 'New Text', type: 'dialog', startFrame: 0, duration: 60, trackId: track.id, color: 'bg-purple-600' })} className="gap-2 focus:bg-purple-500/10 focus:text-purple-300 cursor-pointer">
                   <Type className="h-3.5 w-3.5" /> Text / Dialog
                 </DropdownMenuItem>
@@ -878,9 +878,9 @@ export function TrackRow({ track, sceneClips, sceneTracks, sceneId }: TrackRowPr
                   <Plus className="h-3 w-3" />
                 </div>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="center" className="w-48 bg-[#18181b] border-zinc-700/50 text-zinc-300 shadow-2xl backdrop-blur-xl">
+              <DropdownMenuContent align="center" className="w-48 border border-border bg-popover text-popover-foreground shadow-2xl backdrop-blur-xl">
                 <div className="text-[10px] uppercase tracking-widest text-zinc-500 px-3 py-2 font-bold select-none cursor-default">Select Item Type</div>
-                <DropdownMenuSeparator className="bg-zinc-700/50" />
+                <DropdownMenuSeparator className="bg-border" />
                 <DropdownMenuItem 
                   onClick={() => addClip({ id: 'clip-'+Date.now(), name: 'New Text', type: 'dialog', startFrame: gap.start, duration: Math.min(60, gap.end - gap.start), trackId: track.id, color: 'bg-purple-600' })} 
                   className="gap-2 focus:bg-purple-500/10 focus:text-purple-300 cursor-pointer"
@@ -921,9 +921,9 @@ export function TrackRow({ track, sceneClips, sceneTracks, sceneId }: TrackRowPr
                   <Plus className="h-3.5 w-3.5" />
                 </div>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-48 bg-[#18181b] border-zinc-700/50 text-zinc-300 shadow-2xl backdrop-blur-xl">
+              <DropdownMenuContent align="start" className="w-48 border border-border bg-popover text-popover-foreground shadow-2xl backdrop-blur-xl">
                 <div className="text-[10px] uppercase tracking-widest text-zinc-500 px-3 py-2 font-bold select-none cursor-default">Select Item Type</div>
-                <DropdownMenuSeparator className="bg-zinc-700/50" />
+                <DropdownMenuSeparator className="bg-border" />
                 <DropdownMenuItem onClick={() => addClip({ id: 'clip-'+Date.now(), name: 'New Text', type: 'dialog', startFrame: lastClipEndFrame, duration: 60, trackId: track.id, color: 'bg-purple-600' })} className="gap-2 focus:bg-purple-500/10 focus:text-purple-300 cursor-pointer">
                   <Type className="h-3.5 w-3.5" /> Text / Dialog
                 </DropdownMenuItem>

@@ -89,7 +89,7 @@ function PreviewSceneTitle({
   );
 }
 
-function PreviewVideo({
+const PreviewVideo = React.memo(function PreviewVideoInner({
   clip,
   currentFrame,
   isPlaying,
@@ -106,119 +106,431 @@ function PreviewVideo({
   muted: boolean;
   mediaLayout: PreviewMediaLayout;
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const { updateClip } = useTimeline();
+  
+  // Double buffer refs and states
+  const videoRefA = useRef<HTMLVideoElement>(null);
+  const videoRefB = useRef<HTMLVideoElement>(null);
+  const [activeBuffer, setActiveBuffer] = React.useState<'A' | 'B'>('A');
+  const [hasCompletedFirstSeek, setHasCompletedFirstSeek] = React.useState(false);
+  const [isReadyA, setIsReadyA] = React.useState(false);
+  const [isReadyB, setIsReadyB] = React.useState(false);
+  
+  const activeBufferRef = useRef<'A' | 'B'>('A');
   const currentFrameRef = useRef(currentFrame);
-  const [isReady, setIsReady] = React.useState(false);
+  const playbackRateRef = useRef(playbackRate);
+  const mutedRef = useRef(muted);
+  const isPlayingRef = useRef(isPlaying);
+  
+  const swapTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  const trimOffset = clip.trimStart || 0;
+  const initialTargetTime = useMemo(() => {
+    return Math.max(0, (trimOffset + (currentFrame - clip.startFrame)) / fps);
+  }, [clip.startFrame, trimOffset, fps]);
 
-  const mediaStyle = getPreviewMediaStyle(mediaLayout);
+  const latestTargetTimeRef = useRef<number>(initialTargetTime);
+
+  // Keep refs up to date for event listeners
+  useEffect(() => {
+    activeBufferRef.current = activeBuffer;
+  }, [activeBuffer]);
 
   useEffect(() => {
-    currentFrameRef.current = currentFrame;
-  }, [currentFrame]);
+    playbackRateRef.current = playbackRate;
+  }, [playbackRate]);
 
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  const isReady = isReadyA || isReadyB;
+
+  // Handle seek function
+  const seekTo = (targetTime: number) => {
+    const currentActive = activeBufferRef.current;
+    const activeVideo = currentActive === 'A' ? videoRefA.current : videoRefB.current;
+    const inactiveVideo = currentActive === 'A' ? videoRefB.current : videoRefA.current;
+
+    latestTargetTimeRef.current = targetTime;
+
+    if (!inactiveVideo || !activeVideo) {
+      if (activeVideo) {
+        activeVideo.currentTime = targetTime;
+      }
+      return;
+    }
+
+    if (swapTimeoutRef.current) {
+      clearTimeout(swapTimeoutRef.current);
+      swapTimeoutRef.current = null;
+    }
+
+    const onSeeked = () => {
+      inactiveVideo.removeEventListener('seeked', onSeeked);
+      if (swapTimeoutRef.current) {
+        clearTimeout(swapTimeoutRef.current);
+        swapTimeoutRef.current = null;
+      }
+
+      // Check if we have since started seeking to a different time
+      if (Math.abs(inactiveVideo.currentTime - latestTargetTimeRef.current) > 0.5) {
+        return;
+      }
+
+      const nextActive = currentActive === 'A' ? 'B' : 'A';
+
+      inactiveVideo.playbackRate = playbackRateRef.current;
+      syncVideoAudioState(inactiveVideo, mutedRef.current);
+
+      if (isPlayingRef.current) {
+        inactiveVideo.play().catch((err) => {
+          if (err && err.name === 'NotAllowedError') {
+            inactiveVideo.muted = true;
+            inactiveVideo.play().catch(() => {});
+          }
+        });
+      } else {
+        inactiveVideo.pause();
+      }
+
+      // Pause and mute the old video
+      activeVideo.pause();
+      syncVideoAudioState(activeVideo, true);
+
+      setActiveBuffer(nextActive);
+      setHasCompletedFirstSeek(true);
+    };
+
+    inactiveVideo.addEventListener('seeked', onSeeked);
+
+    swapTimeoutRef.current = setTimeout(() => {
+      inactiveVideo.removeEventListener('seeked', onSeeked);
+      
+      const nextActive = currentActive === 'A' ? 'B' : 'A';
+      inactiveVideo.playbackRate = playbackRateRef.current;
+      syncVideoAudioState(inactiveVideo, mutedRef.current);
+      if (isPlayingRef.current) {
+        inactiveVideo.play().catch(() => {});
+      } else {
+        inactiveVideo.pause();
+      }
+      activeVideo.pause();
+      syncVideoAudioState(activeVideo, true);
+
+      setActiveBuffer(nextActive);
+      setHasCompletedFirstSeek(true);
+    }, 400);
+
+    inactiveVideo.currentTime = targetTime;
+  };
+
+  // 1. Initial Seek / Load
+  useEffect(() => {
+    const activeVideo = videoRefA.current; // 'A' is initial active buffer
+    if (!activeVideo) return;
+
+    let isSubscribed = true;
+
+    const handleInitialSeeked = () => {
+      if (!isSubscribed) return;
+      activeVideo.removeEventListener('seeked', handleInitialSeeked);
+      
+      if (isPlayingRef.current) {
+        activeVideo.playbackRate = playbackRateRef.current;
+        syncVideoAudioState(activeVideo, mutedRef.current);
+        activeVideo.play().catch(() => {});
+      }
+      setHasCompletedFirstSeek(true);
+    };
+
+    const runSeek = () => {
+      activeVideo.currentTime = initialTargetTime;
+      activeVideo.addEventListener('seeked', handleInitialSeeked);
+      
+      setTimeout(() => {
+        if (!isSubscribed) return;
+        activeVideo.removeEventListener('seeked', handleInitialSeeked);
+        if (isPlayingRef.current) {
+          activeVideo.playbackRate = playbackRateRef.current;
+          syncVideoAudioState(activeVideo, mutedRef.current);
+          activeVideo.play().catch(() => {});
+        }
+        setHasCompletedFirstSeek(true);
+      }, 400);
+    };
+
+    if (initialTargetTime === 0) {
+      if (activeVideo.readyState >= 2) {
+        if (isPlayingRef.current) {
+          activeVideo.playbackRate = playbackRateRef.current;
+          syncVideoAudioState(activeVideo, mutedRef.current);
+          activeVideo.play().catch(() => {});
+        }
+        setHasCompletedFirstSeek(true);
+      } else {
+        const handleLoadedData = () => {
+          if (!isSubscribed) return;
+          activeVideo.removeEventListener('loadeddata', handleLoadedData);
+          if (isPlayingRef.current) {
+            activeVideo.playbackRate = playbackRateRef.current;
+            syncVideoAudioState(activeVideo, mutedRef.current);
+            activeVideo.play().catch(() => {});
+          }
+          setHasCompletedFirstSeek(true);
+        };
+        activeVideo.addEventListener('loadeddata', handleLoadedData);
+      }
+    } else {
+      if (activeVideo.readyState >= 1) {
+        runSeek();
+      } else {
+        const handleLoadedMetadata = () => {
+          if (!isSubscribed) return;
+          activeVideo.removeEventListener('loadedmetadata', handleLoadedMetadata);
+          runSeek();
+        };
+        activeVideo.addEventListener('loadedmetadata', handleLoadedMetadata);
+      }
+    }
+
+    return () => {
+      isSubscribed = false;
+      activeVideo.removeEventListener('seeked', handleInitialSeeked);
+    };
+  }, [clip.src]);
+
+  // 2. Play request event handler
   useEffect(() => {
     const handlePlayRequest = () => {
-      const video = videoRef.current;
-      if (!video || video.readyState < 1) return;
+      const currentActive = activeBufferRef.current;
+      const activeVideo = currentActive === 'A' ? videoRefA.current : videoRefB.current;
+      if (!activeVideo || activeVideo.readyState < 1) return;
 
-      const targetTime = Math.max(0, (currentFrameRef.current - clip.startFrame) / fps);
-      if (video.ended || Math.abs(video.currentTime - targetTime) > 0.1) {
-        video.currentTime = targetTime;
+      const targetTime = Math.max(0, (trimOffset + (currentFrameRef.current - clip.startFrame)) / fps);
+      if (activeVideo.ended || Math.abs(activeVideo.currentTime - targetTime) > 0.1) {
+        activeVideo.currentTime = targetTime;
       }
-      video.playbackRate = playbackRate;
-      syncVideoAudioState(video, muted);
-      video.play().catch(() => {});
+      activeVideo.playbackRate = playbackRateRef.current;
+      syncVideoAudioState(activeVideo, mutedRef.current);
+      activeVideo.play().catch((err) => {
+        if (err && err.name === 'NotAllowedError') {
+          activeVideo.muted = true;
+          activeVideo.play().catch(() => {});
+        }
+      });
     };
 
     window.addEventListener('timeline-preview-play-request', handlePlayRequest);
-    return () => window.removeEventListener('timeline-preview-play-request', handlePlayRequest);
-  }, [clip.startFrame, fps, playbackRate, muted]);
+    return () => {
+      window.removeEventListener('timeline-preview-play-request', handlePlayRequest);
+    };
+  }, [clip.startFrame, trimOffset, fps]);
 
+  // 3. Update Clip Metadata (duration) from videoRefA
   useEffect(() => {
-    const video = videoRef.current;
+    const video = videoRefA.current;
     if (!video) return;
 
-    setIsReady(false);
+    setIsReadyA(false);
 
     const handleLoadedMetadata = () => {
-      setIsReady(true);
+      setIsReadyA(true);
+      if (video.duration) {
+        const durationInFrames = Math.round(video.duration * fps);
+        if (clip.mediaDuration !== durationInFrames) {
+          updateClip(clip.id, { mediaDuration: durationInFrames });
+        }
+      }
     };
 
     if (video.readyState >= 1) {
-      setIsReady(true);
+      setIsReadyA(true);
+      if (video.duration) {
+        const durationInFrames = Math.round(video.duration * fps);
+        if (clip.mediaDuration !== durationInFrames) {
+          updateClip(clip.id, { mediaDuration: durationInFrames });
+        }
+      }
+    } else {
+      video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+    }
+  }, [clip.src, clip.mediaDuration, fps, updateClip, clip.id]);
+
+  // 4. Track metadata load on videoRefB
+  useEffect(() => {
+    const video = videoRefB.current;
+    if (!video) return;
+
+    setIsReadyB(false);
+
+    const handleLoadedMetadata = () => {
+      setIsReadyB(true);
+    };
+
+    if (video.readyState >= 1) {
+      setIsReadyB(true);
     } else {
       video.addEventListener('loadedmetadata', handleLoadedMetadata);
       return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
     }
   }, [clip.src]);
 
+  // 5. Playback state effect
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !isReady) return;
+    const currentActive = activeBufferRef.current;
+    const activeVideo = currentActive === 'A' ? videoRefA.current : videoRefB.current;
+    if (!activeVideo || !isReady) return;
 
     if (isPlaying) {
-      const targetTime = Math.max(0, (currentFrameRef.current - clip.startFrame) / fps);
-      if (video.ended || Math.abs(video.currentTime - targetTime) > 0.1) {
-        video.currentTime = targetTime;
+      const targetTime = Math.max(0, (trimOffset + (currentFrameRef.current - clip.startFrame)) / fps);
+      if (activeVideo.ended || Math.abs(activeVideo.currentTime - targetTime) > 0.1) {
+        seekTo(targetTime);
+      } else {
+        activeVideo.playbackRate = playbackRate;
+        syncVideoAudioState(activeVideo, muted);
+        activeVideo.play().catch((err) => {
+          if (err && err.name === 'NotAllowedError') {
+            activeVideo.muted = true;
+            activeVideo.play().catch(() => {});
+          }
+        });
       }
-      video.playbackRate = playbackRate;
-      syncVideoAudioState(video, muted);
-      video.play().catch(() => {});
     } else {
-      video.pause();
+      activeVideo.pause();
     }
-  }, [isPlaying, isReady, clip.startFrame, fps, playbackRate, muted]);
+  }, [isPlaying, isReady, clip.startFrame, trimOffset, fps, playbackRate, muted]);
 
+  // 6. Sync muted state to active video, and force-mute inactive video
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    syncVideoAudioState(video, muted);
-  }, [muted]);
+    const currentActive = activeBuffer;
+    const activeVideo = currentActive === 'A' ? videoRefA.current : videoRefB.current;
+    const inactiveVideo = currentActive === 'A' ? videoRefB.current : videoRefA.current;
 
+    if (activeVideo) syncVideoAudioState(activeVideo, muted);
+    if (inactiveVideo) syncVideoAudioState(inactiveVideo, true);
+  }, [muted, activeBuffer]);
+
+  // 7. Sync playback rate to both
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !isReady) return;
-    video.playbackRate = playbackRate;
-  }, [playbackRate, isReady]);
+    if (videoRefA.current && isReadyA) videoRefA.current.playbackRate = playbackRate;
+    if (videoRefB.current && isReadyB) videoRefB.current.playbackRate = playbackRate;
+  }, [playbackRate, isReadyA, isReadyB]);
 
+  // 8. Handle frame tracking and scrubbing via window event listener
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !isReady) return;
-
-    const targetTime = Math.max(0, (currentFrame - clip.startFrame) / fps);
-    
-    if (!isPlaying) {
-      if (Math.abs(video.currentTime - targetTime) > 0.05) {
-        video.currentTime = targetTime;
-      }
-    } else {
-      // If the timeline is playing, ensure the video is playing in the browser
-      if (video.paused && !video.ended) {
-        syncVideoAudioState(video, muted);
-        video.playbackRate = playbackRate;
-        video.play().catch(() => {});
-      }
+    const handleFrameUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<{ frame: number }>;
+      const frame = customEvent.detail.frame;
       
-      // Prevent React rendering congestion lag from pulling the playing video backward.
-      // Only seek if the user manually jumps the playhead (desync > 4.0s ahead or > 3.0s behind).
-      const timeDiff = video.currentTime - targetTime;
-      if (timeDiff > 4.0 || timeDiff < -3.0) {
-        video.currentTime = targetTime;
-      }
-    }
-  }, [currentFrame, clip.startFrame, isPlaying, fps, isReady, playbackRate, muted]);
+      currentFrameRef.current = frame;
 
-  return <video 
-    ref={videoRef} 
-    src={clip.src} 
-    data-preview-clip-id={clip.id}
-    className="absolute"
-    style={mediaStyle}
-    preload="auto"
-    playsInline
-    muted={muted}
-  />;
-}
+      const currentActive = activeBufferRef.current;
+      const activeVideo = currentActive === 'A' ? videoRefA.current : videoRefB.current;
+      if (!activeVideo || !isReady) return;
+
+      const targetTime = Math.max(0, (trimOffset + (frame - clip.startFrame)) / fps);
+
+      if (!isPlayingRef.current) {
+        if (Math.abs(activeVideo.currentTime - targetTime) > 0.05) {
+          seekTo(targetTime);
+        }
+      } else {
+        if (activeVideo.paused && !activeVideo.ended) {
+          if (Math.abs(activeVideo.currentTime - targetTime) > 0.1) {
+            seekTo(targetTime);
+          } else {
+            syncVideoAudioState(activeVideo, mutedRef.current);
+            activeVideo.playbackRate = playbackRateRef.current;
+            activeVideo.play().catch((err) => {
+              if (err && err.name === 'NotAllowedError') {
+                activeVideo.muted = true;
+                activeVideo.play().catch(() => {});
+              }
+            });
+          }
+        }
+
+        const timeDiff = activeVideo.currentTime - targetTime;
+        if (Math.abs(timeDiff) > 1.0) {
+          seekTo(targetTime);
+        }
+      }
+    };
+
+    window.addEventListener('timeline-frame-update', handleFrameUpdate);
+    return () => {
+      window.removeEventListener('timeline-frame-update', handleFrameUpdate);
+    };
+  }, [clip.startFrame, trimOffset, fps, isReady]);
+
+  // Cleanup swap safety timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (swapTimeoutRef.current) {
+        clearTimeout(swapTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const mediaStyle = getPreviewMediaStyle(mediaLayout);
+
+  const styleA: React.CSSProperties = {
+    ...mediaStyle,
+    opacity: activeBuffer === 'A' && hasCompletedFirstSeek ? 1 : 0,
+    pointerEvents: activeBuffer === 'A' ? 'auto' : 'none',
+  };
+
+  const styleB: React.CSSProperties = {
+    ...mediaStyle,
+    opacity: activeBuffer === 'B' && hasCompletedFirstSeek ? 1 : 0,
+    pointerEvents: activeBuffer === 'B' ? 'auto' : 'none',
+  };
+
+  return (
+    <>
+      <video
+        ref={videoRefA}
+        src={clip.src}
+        data-preview-clip-id={clip.id}
+        className="absolute"
+        style={styleA}
+        preload="auto"
+        playsInline
+        muted={activeBuffer === 'A' ? muted : true}
+      />
+      <video
+        ref={videoRefB}
+        src={clip.src}
+        data-preview-clip-id={clip.id}
+        className="absolute"
+        style={styleB}
+        preload="auto"
+        playsInline
+        muted={activeBuffer === 'B' ? muted : true}
+      />
+    </>
+  );
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.clip.id === nextProps.clip.id &&
+    prevProps.clip.src === nextProps.clip.src &&
+    prevProps.clip.startFrame === nextProps.clip.startFrame &&
+    prevProps.clip.duration === nextProps.clip.duration &&
+    prevProps.clip.trimStart === nextProps.clip.trimStart &&
+    prevProps.clip.mediaDuration === nextProps.clip.mediaDuration &&
+    prevProps.isPlaying === nextProps.isPlaying &&
+    prevProps.fps === nextProps.fps &&
+    prevProps.playbackRate === nextProps.playbackRate &&
+    prevProps.muted === nextProps.muted &&
+    prevProps.mediaLayout === nextProps.mediaLayout
+  );
+});
 
 const formatGraphValue = (value: number) => value.toFixed(1);
 

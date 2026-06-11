@@ -167,7 +167,9 @@ html:not(.dark) .workbench-shell [class~="bg-zinc-950"],
 html:not(.dark) .workbench-shell [class~="bg-zinc-950/80"],
 html:not(.dark) .workbench-shell [class~="bg-zinc-950/70"],
 html:not(.dark) .workbench-shell [class~="bg-zinc-950/60"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-950/45"],
 html:not(.dark) .workbench-shell [class~="bg-zinc-950/40"],
+html:not(.dark) .workbench-shell [class~="bg-zinc-950/30"],
 html:not(.dark) .workbench-shell [class~="bg-zinc-900"],
 html:not(.dark) .workbench-shell [class~="bg-zinc-900/80"],
 html:not(.dark) .workbench-shell [class~="bg-zinc-900/70"],
@@ -176,6 +178,22 @@ html:not(.dark) .workbench-shell [class~="bg-zinc-900/40"],
 html:not(.dark) .workbench-shell [class~="bg-zinc-900/30"],
 html:not(.dark) .workbench-shell [class~="bg-zinc-900/10"] {
   background-color: #ffffff !important;
+}
+
+html:not(.dark) .workbench-shell [class~="bg-zinc-950/85"] {
+  background-color: rgba(255, 255, 255, 0.85) !important;
+}
+
+html:not(.dark) .workbench-shell [class~="bg-[#09090b]/40"] {
+  background-color: rgba(244, 246, 248, 0.5) !important;
+}
+
+html:not(.dark) .workbench-shell [class~="bg-zinc-950/20"] {
+  background-color: rgba(0, 0, 0, 0.02) !important;
+}
+
+html:not(.dark) .workbench-shell [class~="bg-white/10"] {
+  background-color: #d8dde5 !important;
 }
 
 html:not(.dark) .workbench-shell [class~="bg-black"],
@@ -194,7 +212,9 @@ html:not(.dark) .workbench-shell [class~="border-zinc-800/80"],
 html:not(.dark) .workbench-shell [class~="border-zinc-800/60"],
 html:not(.dark) .workbench-shell [class~="border-zinc-800/50"],
 html:not(.dark) .workbench-shell [class~="border-zinc-800/40"],
-html:not(.dark) .workbench-shell [class~="border-zinc-700"] {
+html:not(.dark) .workbench-shell [class~="border-zinc-700/50"],
+html:not(.dark) .workbench-shell [class~="border-zinc-700"],
+html:not(.dark) .workbench-shell [class~="border-white/10"] {
   border-color: #d8dde5 !important;
 }
 
@@ -235,4 +255,54 @@ html:not(.dark) .workbench-shell input,
 html:not(.dark) .workbench-shell select,
 html:not(.dark) .workbench-shell textarea {
   color-scheme: light;
+}
+
+/* Light mode overrides for all standard webkit scrollbar thumbs */
+html:not(.dark) ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15) !important;
+}
+html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Timeline-specific webkit scrollbar styles */
+.timeline-track-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.timeline-track-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.timeline-track-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+.timeline-track-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+html:not(.dark) .timeline-track-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15) !important;
+}
+html:not(.dark) .timeline-track-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Universal light mode hover overrides for elements normally styled with dark classes */
+html:not(.dark) .workbench-shell [class*="hover:bg-white/10"]:hover {
+  background-color: rgba(0, 0, 0, 0.08) !important;
+}
+html:not(.dark) .workbench-shell [class*="hover:bg-white/5"]:hover {
+  background-color: rgba(0, 0, 0, 0.04) !important;
+}
+html:not(.dark) .workbench-shell [class*="hover:bg-white/[0.03]"]:hover {
+  background-color: rgba(0, 0, 0, 0.02) !important;
+}
+html:not(.dark) .workbench-shell [class*="hover:text-white"]:hover {
+  color: #111114 !important;
+}
+html:not(.dark) .workbench-shell [class*="hover:text-zinc-200"]:hover {
+  color: #18181b !important;
+}
+html:not(.dark) .workbench-shell [class*="hover:text-zinc-300"]:hover {
+  color: #27272a !important;
 }

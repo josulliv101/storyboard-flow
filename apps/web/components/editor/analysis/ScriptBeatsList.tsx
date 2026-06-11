@@ -816,7 +816,7 @@ export default function ScriptBeatsList({
                         </DropdownMenuTrigger>
                         <DropdownMenuContent 
                           align="start" 
-                          className="bg-zinc-950 border border-zinc-900 text-zinc-300 z-50 p-1.5 rounded-lg w-48 shadow-2xl"
+                          className="bg-popover border border-border text-popover-foreground z-50 p-1.5 rounded-lg w-48 shadow-2xl"
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();

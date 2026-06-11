@@ -316,7 +316,7 @@ export function Toolbar() {
                 <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-indigo-400" />
               )}
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="center" className="max-h-80 w-64 overflow-y-auto border-zinc-800 bg-[#111114] p-2 text-zinc-300">
+            <DropdownMenuContent align="center" className="max-h-80 w-64 overflow-y-auto border border-border bg-popover p-2 text-popover-foreground">
               <div className="mb-2 flex flex-col gap-2 rounded border border-zinc-800 bg-zinc-950/70 p-2">
                 <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Preview UI</div>
                 <button
@@ -472,7 +472,7 @@ export function Toolbar() {
                   </span>
                 </button>
               </div>
-              <DropdownMenuSeparator className="mb-2 bg-zinc-800" />
+              <DropdownMenuSeparator className="mb-2 bg-border" />
               <div className="mb-2 flex flex-col gap-2 rounded border border-zinc-800 bg-zinc-950/70 p-2">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -529,7 +529,7 @@ export function Toolbar() {
                   </div>
                 )}
               </div>
-              <DropdownMenuSeparator className="mb-2 bg-zinc-800" />
+              <DropdownMenuSeparator className="mb-2 bg-border" />
               <div className="mb-2 flex items-center justify-between gap-3 px-1">
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Note Tags</div>
@@ -625,7 +625,7 @@ export function Toolbar() {
             >
               {playbackRate.toFixed(playbackRate % 1 === 0 ? 0 : 2)}x
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-28 bg-[#111114] border-zinc-800 text-zinc-300">
+            <DropdownMenuContent align="start" className="w-28 border border-border bg-popover text-popover-foreground">
               <div className="px-2 py-1 text-[9px] uppercase tracking-widest text-zinc-500 font-bold select-none cursor-default">Speed</div>
               {[0.25, 0.5, 0.75, 1, 1.25, 1.5].map((rate) => (
                 <DropdownMenuItem
@@ -674,7 +674,7 @@ export function Toolbar() {
                 Add Item
                 <ChevronDown className="h-3 w-3 opacity-50" />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 bg-[#111114] border-zinc-800 text-zinc-300">
+              <DropdownMenuContent align="end" className="w-56 border border-border bg-popover text-popover-foreground">
                 <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-bold select-none cursor-default">Media Assets</div>
                 <DropdownMenuItem onClick={() => handleAddClipClick('video')} className="focus:bg-zinc-600 focus:text-white gap-2">
                   <Video className="h-4 w-4" /> Video Layer
@@ -683,7 +683,7 @@ export function Toolbar() {
                   <ImageIcon className="h-4 w-4" /> Image/Graphic
                 </DropdownMenuItem>
                 
-                <DropdownMenuSeparator className="bg-zinc-800" />
+                <DropdownMenuSeparator className="bg-border" />
                 <div className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-zinc-500 font-bold select-none cursor-default">Characters Dialog</div>
                 <DropdownMenuItem onClick={() => handleAddClip('dialog', 'Hero')} className="focus:bg-purple-600 focus:text-white gap-2">
                   <div className="w-4 h-4 rounded-full bg-blue-500/20 flex items-center justify-center"><User className="h-2.5 w-2.5 text-blue-400" /></div>
@@ -712,7 +712,7 @@ export function Toolbar() {
               <span className="text-[10px] font-mono font-bold tracking-widest">{aspectRatio}</span>
               <ChevronDown className="h-3 w-3 opacity-30" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40 bg-[#1d1d21] border-zinc-800 text-zinc-300">
+            <DropdownMenuContent align="end" className="w-40 border border-border bg-popover text-popover-foreground">
               <div className="px-2 py-1 text-[9px] uppercase tracking-widest text-zinc-500 font-bold select-none cursor-default">Aspect Ratio</div>
               <DropdownMenuItem onClick={() => setAspectRatio('16:9')} className="hover:bg-indigo-600 hover:text-white justify-between cursor-pointer">
                 <span>Widescreen</span>

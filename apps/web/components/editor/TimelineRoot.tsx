@@ -99,6 +99,7 @@ export function TimelineRoot() {
     clips,
     totalDuration, 
     zoom, 
+    setZoom,
     currentFrame, 
     setCurrentFrame, 
     collapsedTrackIds, 
@@ -121,6 +122,37 @@ export function TimelineRoot() {
   const headerRef = useRef<HTMLDivElement>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+
+  const hasFittedRef = useRef(false);
+  const prevActiveSceneIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (activeSceneId !== prevActiveSceneIdRef.current) {
+      prevActiveSceneIdRef.current = activeSceneId;
+      hasFittedRef.current = false;
+    }
+  }, [activeSceneId]);
+
+  useEffect(() => {
+    if (!contentRef.current || hasFittedRef.current) return;
+
+    if (clips.length === 0) return;
+
+    const timer = setTimeout(() => {
+      if (!contentRef.current || hasFittedRef.current) return;
+      const containerWidth = contentRef.current.clientWidth;
+      if (containerWidth <= 0) return;
+
+      if (totalDuration > 0) {
+        const targetZoom = (containerWidth - 48) / totalDuration;
+        const clampedZoom = Math.max(1, Math.min(20, Number(targetZoom.toFixed(2))));
+        setZoom(clampedZoom);
+        hasFittedRef.current = true;
+      }
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [activeSceneId, clips, setZoom]);
 
   const [lassoStart, setLassoStart] = useState<{ x: number, y: number } | null>(null);
   const [lassoEnd, setLassoEnd] = useState<{ x: number, y: number } | null>(null);
@@ -555,14 +587,27 @@ export function TimelineRoot() {
           )}
         </div>
 
-        <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center opacity-0 group-hover/layer:opacity-100 transition-opacity">
+        <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center opacity-0 group-hover/layer:opacity-100 transition-opacity gap-1">
+          {!isGraphLayer && (
+            <button
+              type="button"
+              className={cn(
+                "p-1 rounded hover:bg-zinc-800 transition-colors cursor-pointer outline-none",
+                isChildMuted ? "text-red-400" : "text-zinc-500 hover:text-zinc-200"
+              )}
+              onClick={() => toggleTrackMute(child.id)}
+              title={isChildMuted ? "Unmute Layer" : "Mute Layer"}
+            >
+              {isChildMuted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+            </button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger className="p-1 rounded bg-[#18181b]/90 backdrop-blur-md border border-zinc-700/50 shadow-xl text-zinc-500 hover:text-zinc-200 cursor-pointer outline-none">
               <MoreVertical className="h-3.5 w-3.5" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="w-44 bg-[#18181b] border-zinc-700/50 text-zinc-300 shadow-2xl backdrop-blur-xl"
+              className="w-44 border border-border bg-popover text-popover-foreground shadow-2xl backdrop-blur-xl"
             >
               {!isGraphLayer && (
                 <>
@@ -631,7 +676,7 @@ export function TimelineRoot() {
                   <><VolumeX className="h-3.5 w-3.5 mr-2" /> Mute Layer</>
                 )}
               </DropdownMenuItem>
-              <DropdownMenuSeparator className="bg-zinc-700/50" />
+              <DropdownMenuSeparator className="bg-border" />
               <DropdownMenuItem
                 className="text-red-400 hover:text-red-300 focus:bg-red-400/10 focus:text-red-300"
                 onClick={() => deleteTrack(child.id)}
@@ -925,14 +970,25 @@ export function TimelineRoot() {
                      )}
                   </div>
                   
-                  <div className="flex items-center opacity-0 group-hover/parent:opacity-100 transition-opacity pr-1">
+                  <div className="flex items-center opacity-0 group-hover/parent:opacity-100 transition-opacity pr-1 gap-1">
+                    <button
+                      type="button"
+                      className={cn(
+                        "p-1 rounded hover:bg-zinc-800 transition-colors cursor-pointer outline-none",
+                        isMuted ? "text-red-400" : "text-zinc-500 hover:text-zinc-200"
+                      )}
+                      onClick={() => toggleTrackMute(parent.id)}
+                      title={isMuted ? "Unmute Group" : "Mute Group"}
+                    >
+                      {isMuted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                    </button>
                     <DropdownMenu>
                       <DropdownMenuTrigger className="p-1 rounded hover:bg-white/10 transition-colors text-zinc-500 hover:text-zinc-200 cursor-pointer outline-none">
                         <MoreVertical className="h-3 w-3" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent 
                         align="end" 
-                        className="w-52 bg-[#18181b] border-zinc-700/50 text-zinc-300 shadow-2xl backdrop-blur-xl"
+                        className="w-52 border border-border bg-popover text-popover-foreground shadow-2xl backdrop-blur-xl"
                       >
                         <DropdownMenuItem onClick={() => setTimeout(() => startRenaming(parent.id, parent.name), 150)}>
                           <Edit2 className="h-3.5 w-3.5 mr-2" /> Rename Group
@@ -961,7 +1017,7 @@ export function TimelineRoot() {
                           <Activity className="h-3.5 w-3.5 mr-2" />
                           Graph UI: {parent.graphUiLayout === 'column' || parent.graphUiLayout === 'column-many' ? 'Grid' : 'Column'}
                         </DropdownMenuItem>
-                        <DropdownMenuSeparator className="bg-zinc-700/50" />
+                        <DropdownMenuSeparator className="bg-border" />
                         <DropdownMenuItem onClick={() => toggleTrackMute(parent.id)}>
                           {isMuted ? (
                             <><Volume2 className="h-3.5 w-3.5 mr-2" /> Unmute Group</>

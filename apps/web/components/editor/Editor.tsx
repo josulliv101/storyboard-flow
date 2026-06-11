@@ -2187,6 +2187,8 @@ function EditorInner() {
     type: 'image' | 'video';
     previewUrl: string;
     durationSeconds?: number;
+    trimStartSeconds?: number;
+    mediaDurationSeconds?: number;
   }>>([]);
   const [sceneLaunchBeats, setSceneLaunchBeats] = React.useState<Array<{
     id: string;
@@ -2197,6 +2199,8 @@ function EditorInner() {
       type: 'image' | 'video';
       previewUrl: string;
       durationSeconds?: number;
+      trimStartSeconds?: number;
+      mediaDurationSeconds?: number;
     }>;
     childIds: string[];
     gridOrder: Array<{
@@ -6340,23 +6344,30 @@ function EditorInner() {
                                  ref={(el) => {
                                    if (el) {
                                      const state = getGridItemTimelineState(item.id, 'media');
-                                     if (state.status === 'idle') {
-                                       el.currentTime = 0;
-                                       if (!el.paused) el.pause();
-                                     } else if (state.status === 'past') {
-                                       el.currentTime = state.duration;
-                                       if (!el.paused) el.pause();
-                                     } else if (state.status === 'future') {
-                                       el.currentTime = 0;
-                                       if (!el.paused) el.pause();
+                                     const trimStart = item.trimStartSeconds || 0;
+                                     
+                                     let targetTime = trimStart;
+                                     if (state.status === 'past') {
+                                       targetTime = trimStart + state.duration;
                                      } else if (state.status === 'active') {
-                                       const diff = Math.abs(el.currentTime - state.elapsed);
-                                       if (diff > 0.3) {
-                                         el.currentTime = state.elapsed;
-                                       }
-                                       if (el.paused && isTimelinePlaying) {
+                                       targetTime = trimStart + state.elapsed;
+                                     }
+
+                                     const diff = Math.abs(el.currentTime - targetTime);
+                                     const threshold = isTimelinePlaying ? 1.0 : 0.05;
+                                     if (diff > threshold) {
+                                       el.currentTime = targetTime;
+                                     }
+
+                                     if (isTimelinePlaying && state.status === 'active') {
+                                       if (el.paused) {
+                                         if (Math.abs(el.currentTime - targetTime) > 0.1) {
+                                           el.currentTime = targetTime;
+                                         }
                                          el.play().catch(() => {});
-                                       } else if (!el.paused && !isTimelinePlaying) {
+                                       }
+                                     } else {
+                                       if (!el.paused) {
                                          el.pause();
                                        }
                                      }
@@ -6452,12 +6463,21 @@ function EditorInner() {
                                       ref={(el) => {
                                         if (el) {
                                           const diff = Math.abs(el.currentTime - preview.elapsedSeconds);
-                                          if (diff > 0.3) {
+                                          const threshold = (isTimelinePlaying || sceneLaunchPreviewHover?.collectionId === beat.id) ? 1.0 : 0.05;
+                                          if (diff > threshold) {
                                             el.currentTime = preview.elapsedSeconds;
                                           }
-                                          const state = getGridItemTimelineState(beat.id, 'collection');
-                                          if (state.status === 'past') {
-                                            if (!el.paused) el.pause();
+                                          if (preview.isPlaying) {
+                                            if (el.paused) {
+                                              if (Math.abs(el.currentTime - preview.elapsedSeconds) > 0.1) {
+                                                el.currentTime = preview.elapsedSeconds;
+                                              }
+                                              el.play().catch(() => {});
+                                            }
+                                          } else {
+                                            if (!el.paused) {
+                                              el.pause();
+                                            }
                                           }
                                         }
                                       }}
@@ -6465,8 +6485,7 @@ function EditorInner() {
                                       className="h-full w-full object-cover"
                                       muted
                                       playsInline
-                                      autoPlay
-                                      loop
+                                      autoPlay={preview.isPlaying}
                                     />
                                   ) : (
                                     <img
@@ -6602,23 +6621,30 @@ function EditorInner() {
                                 ref={(el) => {
                                   if (el) {
                                     const state = getGridItemTimelineState(item.id, 'media');
-                                    if (state.status === 'idle') {
-                                      el.currentTime = 0;
-                                      if (!el.paused) el.pause();
-                                    } else if (state.status === 'past') {
-                                      el.currentTime = state.duration;
-                                      if (!el.paused) el.pause();
-                                    } else if (state.status === 'future') {
-                                      el.currentTime = 0;
-                                      if (!el.paused) el.pause();
+                                    const trimStart = item.trimStartSeconds || 0;
+                                    
+                                    let targetTime = trimStart;
+                                    if (state.status === 'past') {
+                                      targetTime = trimStart + state.duration;
                                     } else if (state.status === 'active') {
-                                      const diff = Math.abs(el.currentTime - state.elapsed);
-                                      if (diff > 0.3) {
-                                        el.currentTime = state.elapsed;
-                                      }
-                                      if (el.paused && isTimelinePlaying) {
+                                      targetTime = trimStart + state.elapsed;
+                                    }
+
+                                    const diff = Math.abs(el.currentTime - targetTime);
+                                    const threshold = isTimelinePlaying ? 1.0 : 0.05;
+                                    if (diff > threshold) {
+                                      el.currentTime = targetTime;
+                                    }
+
+                                    if (isTimelinePlaying && state.status === 'active') {
+                                      if (el.paused) {
+                                        if (Math.abs(el.currentTime - targetTime) > 0.1) {
+                                          el.currentTime = targetTime;
+                                        }
                                         el.play().catch(() => {});
-                                      } else if (!el.paused && !isTimelinePlaying) {
+                                      }
+                                    } else {
+                                      if (!el.paused) {
                                         el.pause();
                                       }
                                     }
@@ -6714,12 +6740,21 @@ function EditorInner() {
                                   ref={(el) => {
                                     if (el) {
                                       const diff = Math.abs(el.currentTime - preview.elapsedSeconds);
-                                      if (diff > 0.3) {
+                                      const threshold = (isTimelinePlaying || sceneLaunchPreviewHover?.collectionId === beat.id) ? 1.0 : 0.05;
+                                      if (diff > threshold) {
                                         el.currentTime = preview.elapsedSeconds;
                                       }
-                                      const state = getGridItemTimelineState(beat.id, 'collection');
-                                      if (state.status === 'past') {
-                                        if (!el.paused) el.pause();
+                                      if (preview.isPlaying) {
+                                        if (el.paused) {
+                                          if (Math.abs(el.currentTime - preview.elapsedSeconds) > 0.1) {
+                                            el.currentTime = preview.elapsedSeconds;
+                                          }
+                                          el.play().catch(() => {});
+                                        }
+                                      } else {
+                                        if (!el.paused) {
+                                          el.pause();
+                                        }
                                       }
                                     }
                                   }}
@@ -6727,8 +6762,7 @@ function EditorInner() {
                                   className="h-full w-full object-cover"
                                   muted
                                   playsInline
-                                  autoPlay
-                                  loop
+                                  autoPlay={preview.isPlaying}
                                 />
                               ) : (
                                 <img

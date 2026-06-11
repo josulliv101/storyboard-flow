@@ -27,6 +27,8 @@ export interface TimelineClip {
   layoutOrder?: number;
   layoutType?: 'grid' | 'overlay';
   anchorPoint?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center' | 'top' | 'bottom' | 'left' | 'right';
+  trimStart?: number;
+  mediaDuration?: number;
 }
 
 export interface Character {
@@ -814,6 +816,10 @@ export function TimelineProvider({ children }: { children: React.ReactNode }) {
   const currentFrameRef = React.useRef(currentFrame);
   React.useEffect(() => {
     currentFrameRef.current = currentFrame;
+  }, [currentFrame]);
+
+  React.useEffect(() => {
+    window.dispatchEvent(new CustomEvent('timeline-frame-update', { detail: { frame: currentFrame } }));
   }, [currentFrame]);
 
   React.useEffect(() => {

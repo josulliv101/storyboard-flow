@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { useTimeline, TimelineClip, TimelineTrack } from '@/lib/timeline-context';
 import { cn } from '@/lib/utils';
@@ -15,12 +15,62 @@ interface ClipItemProps {
 }
 
 export function ClipItem({ clip, sceneClips, sceneTracks, sceneId }: ClipItemProps) {
-  const { zoom, updateClip, selectClip, selectedClipIds, tracks, collapsedTrackIds, clips, setSnapLineFrame, setIsInteracting, characters, setActiveScene } = useTimeline();
+  const { zoom, updateClip, selectClip, selectedClipIds, tracks, collapsedTrackIds, clips, setSnapLineFrame, setIsInteracting, characters, setActiveScene, mutedTrackIds } = useTimeline();
   const clipTracks = sceneTracks || tracks;
   const clipSceneClips = sceneClips || clips;
   const [isDragging, setIsDragging] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
   
   const isSelected = selectedClipIds.includes(clip.id);
+
+  useEffect(() => {
+    const video = previewVideoRef.current;
+    if (!video) return;
+
+    if (isHovered && !isDragging) {
+      const isMuted = mutedTrackIds.includes(clip.trackId);
+      video.muted = isMuted;
+      video.volume = isMuted ? 0 : 1;
+
+      const playVideo = () => {
+        const startSec = (clip.trimStart || 0) / 30;
+        if (Math.abs(video.currentTime - startSec) > 0.1) {
+          video.currentTime = startSec;
+        }
+        video.play().catch((err) => {
+          if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
+            video.muted = true;
+            video.play().catch(() => {});
+          }
+        });
+      };
+
+      if (video.readyState >= 1) {
+        playVideo();
+      } else {
+        video.onloadedmetadata = playVideo;
+      }
+    } else {
+      video.onloadedmetadata = null;
+      if (!video.paused) {
+        video.pause();
+      }
+      
+      const seekToTrimStart = () => {
+        const startSec = (clip.trimStart || 0) / 30;
+        if (Math.abs(video.currentTime - startSec) > 0.05) {
+          video.currentTime = startSec;
+        }
+      };
+
+      if (video.readyState >= 1) {
+        seekToTrimStart();
+      } else {
+        video.onloadedmetadata = seekToTrimStart;
+      }
+    }
+  }, [isHovered, isDragging, clip.trimStart, clip.trackId, mutedTrackIds]);
 
   const linkedCharacter = useMemo(() => {
     if (!clip.characterId) return null;
@@ -197,6 +247,12 @@ export function ClipItem({ clip, sceneClips, sceneTracks, sceneId }: ClipItemPro
     window.addEventListener('pointerup', onPointerUp);
   };
 
+  const [resizingState, setResizingState] = useState<{
+    type: 'start' | 'end';
+    trimStart: number;
+    duration: number;
+  } | null>(null);
+
   const handleResize = (e: React.PointerEvent, type: 'start' | 'end') => {
     e.stopPropagation();
     e.preventDefault();
@@ -204,8 +260,15 @@ export function ClipItem({ clip, sceneClips, sceneTracks, sceneId }: ClipItemPro
     const startX = e.pageX;
     const startDuration = clip.duration;
     const startFrame = clip.startFrame;
+    const initialTrimStart = clip.trimStart || 0;
     const snapArray = getSnapFrames(clip.trackId, [clip.id]);
     const thresholdFrames = 10 / zoom;
+
+    setResizingState({
+      type,
+      trimStart: initialTrimStart,
+      duration: startDuration
+    });
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const deltaX = moveEvent.pageX - startX;
@@ -227,10 +290,23 @@ export function ClipItem({ clip, sceneClips, sceneTracks, sceneId }: ClipItemPro
         }
         newEndFrame += snapOffset;
         setSnapLineFrame(snappedLineFrame);
-        updateClip(clip.id, { duration: Math.max(1, newEndFrame - startFrame) });
+
+        let newDuration = Math.max(1, newEndFrame - startFrame);
+        if (clip.type === 'video') {
+          const maxDuration = (clip.mediaDuration || Infinity) - initialTrimStart;
+          newDuration = Math.min(newDuration, maxDuration);
+        }
+
+        setResizingState({
+          type: 'end',
+          trimStart: initialTrimStart,
+          duration: newDuration
+        });
+        updateClip(clip.id, { duration: newDuration });
       } else {
         const newStartRaw = startFrame + deltaFrames;
-        let newStart = Math.max(0, Math.min(newStartRaw, startFrame + startDuration - 1));
+        const maxAllowedStart = startFrame + startDuration - 1;
+        let newStart = Math.max(0, Math.min(newStartRaw, maxAllowedStart));
         
         let snapOffset = 0;
         let minSnapDiff = Infinity;
@@ -243,11 +319,39 @@ export function ClipItem({ clip, sceneClips, sceneTracks, sceneId }: ClipItemPro
           }
         }
         newStart += snapOffset;
-        // Make sure we didn't snap past the end
+        // Clamp to not exceed the end - 1
+        newStart = Math.min(newStart, maxAllowedStart);
+
+        let diffStart = newStart - startFrame;
+        let newTrimStart = initialTrimStart + diffStart;
+        if (clip.type === 'video') {
+          if (newTrimStart < 0) {
+            const adjustment = -newTrimStart;
+            newTrimStart = 0;
+            newStart += adjustment;
+            diffStart = newStart - startFrame;
+          }
+        } else {
+          // For non-video, trimStart isn't used, but clamp startFrame so it doesn't go below 0
+          if (newStart < 0) {
+            newStart = 0;
+            diffStart = newStart - startFrame;
+          }
+        }
+
         if (newStart < startFrame + startDuration) {
            setSnapLineFrame(snappedLineFrame);
            const newDuration = (startFrame + startDuration) - newStart;
-           updateClip(clip.id, { startFrame: newStart, duration: newDuration });
+           setResizingState({
+             type: 'start',
+             trimStart: clip.type === 'video' ? newTrimStart : 0,
+             duration: newDuration
+           });
+           updateClip(clip.id, { 
+             startFrame: newStart, 
+             duration: newDuration,
+             ...(clip.type === 'video' ? { trimStart: newTrimStart } : {})
+           });
         } else {
            setSnapLineFrame(null);
         }
@@ -257,6 +361,7 @@ export function ClipItem({ clip, sceneClips, sceneTracks, sceneId }: ClipItemPro
     const onPointerUp = () => {
       setSnapLineFrame(null);
       setIsInteracting(false);
+      setResizingState(null);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
     };
@@ -293,8 +398,10 @@ export function ClipItem({ clip, sceneClips, sceneTracks, sceneId }: ClipItemPro
   return (
     <div
       onPointerDown={handlePointerDown}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       className={cn(
-        "absolute top-1.5 bottom-1.5 rounded-sm flex items-center cursor-grab active:cursor-grabbing border transition-all duration-200 group overflow-hidden",
+        "absolute top-1.5 bottom-1.5 rounded-sm flex items-center cursor-grab active:cursor-grabbing border transition-all duration-200 group",
         clip.type === 'video' && "bg-indigo-600/40 border-indigo-500/50 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]",
         clip.type === 'image' && "bg-emerald-600/40 border-emerald-500/50",
         clip.type === 'dialog' && "bg-purple-600/40 border-purple-500/50",
@@ -307,24 +414,32 @@ export function ClipItem({ clip, sceneClips, sceneTracks, sceneId }: ClipItemPro
         width: `${clip.duration * zoom}px`,
       }}
     >
-      {/* Background Media */}
-      {clip.src && (
-        <div className="absolute inset-0 z-0 opacity-40 pointer-events-none">
-          {clip.type === 'video' ? (
-            <video src={clip.src} className="w-full h-full object-cover" muted />
-          ) : (
-            <img src={clip.src} alt="" className="w-full h-full object-cover" />
-          )}
-        </div>
-      )}
+      {/* Background Media wrapped in an overflow-hidden rounded container */}
+      <div className="absolute inset-0 z-0 overflow-hidden rounded-sm pointer-events-none">
+        {clip.src && (
+          <div className="absolute inset-0 opacity-40">
+            {clip.type === 'video' ? (
+              <video 
+                ref={previewVideoRef}
+                src={clip.src} 
+                className="w-full h-full object-cover" 
+                playsInline
+                muted={mutedTrackIds.includes(clip.trackId)}
+              />
+            ) : (
+              <img src={clip.src} alt="" className="w-full h-full object-cover" />
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Visual drag handle */}
-      <div className="absolute left-1 opacity-20 group-hover:opacity-100 transition-opacity z-20">
+      <div className="absolute left-4 opacity-20 group-hover:opacity-100 transition-opacity z-20 pointer-events-none">
         <GripVertical className="h-3 w-3" />
       </div>
 
       {/* Content */}
-      <div className="relative z-10 flex items-center gap-2 px-6 w-full pointer-events-none">
+      <div className="relative z-10 flex items-center gap-2 pl-8 pr-6 w-full pointer-events-none select-none">
         <div className="shrink-0 opacity-80">
           {clip.type === 'dialog' && characterName ? (
             <div className="w-4 h-4 rounded-full bg-white/20 border border-white/10 overflow-hidden flex items-center justify-center">
@@ -354,18 +469,42 @@ export function ClipItem({ clip, sceneClips, sceneTracks, sceneId }: ClipItemPro
 
       {/* Resize handles */}
       <div 
-        className="resize-handle absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/20 z-10"
+        className="resize-handle absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/10 z-30 flex items-center justify-start"
         onPointerDown={(e) => handleResize(e, 'start')}
-      />
-      <div 
-        className="resize-handle absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/20 z-10"
-        onPointerDown={(e) => handleResize(e, 'end')}
-      />
-      
-      {/* Hover Info */}
-      <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-white text-black text-[9px] font-black px-2 py-0.5 rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-all transform translate-y-1 group-hover:translate-y-0 whitespace-nowrap pointer-events-none z-50 uppercase tracking-tighter">
-        {clip.type} • {clip.duration}F • {(clip.duration / 30).toFixed(2)}s
+      >
+        <div className="w-1.5 h-1/2 bg-white rounded-r-sm shadow-md transition-opacity opacity-0 group-hover:opacity-100 ml-0.5" />
       </div>
+      <div 
+        className="resize-handle absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-white/10 z-30 flex items-center justify-end"
+        onPointerDown={(e) => handleResize(e, 'end')}
+      >
+        <div className="w-1.5 h-1/2 bg-white rounded-l-sm shadow-md transition-opacity opacity-0 group-hover:opacity-100 mr-0.5" />
+      </div>
+      
+      {/* Resizing Tooltip */}
+      {resizingState && (
+        <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-zinc-900 border border-zinc-700 text-white text-[10px] font-mono font-bold px-2 py-1 rounded shadow-[0_12px_24px_rgba(0,0,0,0.5)] z-[60] whitespace-nowrap uppercase tracking-wider flex items-center gap-2 select-none pointer-events-none">
+          {clip.type === 'video' && (
+            <>
+              {resizingState.type === 'start' ? (
+                <span className="text-indigo-400">Trim Start: +{(resizingState.trimStart / 30).toFixed(2)}s ({resizingState.trimStart}f)</span>
+              ) : (
+                <span className="text-emerald-400">Trim End: +{(((clip.trimStart || 0) + resizingState.duration) / 30).toFixed(2)}s</span>
+              )}
+              <span className="text-zinc-600">|</span>
+            </>
+          )}
+          <span>Dur: {(resizingState.duration / 30).toFixed(2)}s ({resizingState.duration}f)</span>
+        </div>
+      )}
+
+      {/* Hover Info (hidden while resizing) */}
+      {!resizingState && (
+        <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-white text-black text-[9px] font-black px-2 py-0.5 rounded shadow-2xl opacity-0 group-hover:opacity-100 transition-all transform translate-y-1 group-hover:translate-y-0 whitespace-nowrap pointer-events-none z-50 uppercase tracking-tighter">
+          {clip.type} • {clip.duration}F • {(clip.duration / 30).toFixed(2)}s
+          {clip.type === 'video' && clip.trimStart ? ` • trim: +${(clip.trimStart / 30).toFixed(2)}s` : ''}
+        </div>
+      )}
     </div>
   );
 }
