@@ -81,7 +81,7 @@ export interface TimelineRenderProject {
   activeSceneId: string;
   disabledTrackIds?: string[];
   config?: {
-    aspectRatio?: '16:9' | '21:9';
+    aspectRatio?: '16:9' | '21:9' | '1:1' | '9:16';
     fps?: number;
     dedicatedDialogPanel?: boolean;
     analyticsOverlayStyle?: 'compact' | 'analysis';
@@ -107,6 +107,8 @@ type AspectRatio = NonNullable<TimelineRenderProject['config']>['aspectRatio'];
 
 export const getRenderDimensions = (aspectRatio: AspectRatio) => {
   if (aspectRatio === '21:9') return { width: 2520, height: 1080 };
+  if (aspectRatio === '1:1') return { width: 1080, height: 1080 };
+  if (aspectRatio === '9:16') return { width: 1080, height: 1920 };
   return { width: 1920, height: 1080 };
 };
 

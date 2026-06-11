@@ -84,7 +84,7 @@ export interface Scene {
   analysisReport?: any;
 }
 
-export type TimelineAspectRatio = '16:9' | '21:9';
+export type TimelineAspectRatio = '16:9' | '21:9' | '1:1' | '9:16';
 export type AnalyticsOverlayStyle = 'compact' | 'analysis';
 export type PreviewSceneMode = 'active' | 'all';
 export type PreviewMediaLayout = 'inset' | 'full';
@@ -222,7 +222,7 @@ interface TimelineContextType extends TimelineState {
 
 const TimelineContext = createContext<TimelineContextType | undefined>(undefined);
 
-const ASPECT_RATIOS = ['16:9', '21:9'] as const;
+const ASPECT_RATIOS = ['16:9', '21:9', '1:1', '9:16'] as const;
 const GRID_ITEM_POSITIONS = ['first', 'last'] as const;
 const PREVIEW_GROUP_LAYOUTS = ['row', 'grid'] as const;
 const PREVIEW_SCENE_MODES = ['active', 'all'] as const;

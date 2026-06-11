@@ -65,7 +65,10 @@ import {
   Type,
   Star,
   Video,
-  Image as ImageIcon
+  Ratio,
+  Repeat,
+  Image as ImageIcon,
+  Pencil
 } from 'lucide-react';
 import {
   Button,
@@ -2092,6 +2095,7 @@ function EditorInner() {
     zoom, 
     setZoom,
     aspectRatio, 
+    setAspectRatio,
     fps,
     clips, 
     selectedClipIds, 
@@ -2209,6 +2213,26 @@ function EditorInner() {
   const [hasLoadedSceneLaunchBoard, setHasLoadedSceneLaunchBoard] = React.useState(false);
   const [sceneLaunchPreviewHover, setSceneLaunchPreviewHover] = React.useState<{ collectionId: string; startedAt: number } | null>(null);
   const [sceneLaunchPreviewNow, setSceneLaunchPreviewNow] = React.useState(() => Date.now());
+  const [sceneLaunchContextMenu, setSceneLaunchContextMenu] = React.useState<{ dragKey: string; x: number; y: number } | null>(null);
+  const [pxPerSecond, setPxPerSecond] = React.useState(20);
+  const [resizingItem, setResizingItem] = React.useState<{
+    id: string;
+    initialDuration: number;
+    currentDuration: number;
+    startX: number;
+  } | null>(null);
+  const [timelineDragOverKey, setTimelineDragOverKey] = React.useState<string | null>(null);
+  const [gridDragOverInfo, setGridDragOverInfo] = React.useState<{ targetKey: string; position: 'before' | 'after' | 'inside' } | null>(null);
+  const [isEditingHeaderName, setIsEditingHeaderName] = React.useState(false);
+  const [editingHeaderNameValue, setEditingHeaderNameValue] = React.useState('');
+  const [isTimelinePlaying, setIsTimelinePlaying] = React.useState(false);
+  const [isTimelineLooping, setIsTimelineLooping] = React.useState(true);
+  const [timelineCurrentTime, setTimelineCurrentTime] = React.useState(0);
+  const currentTimeRef = React.useRef(0);
+  React.useEffect(() => {
+    currentTimeRef.current = timelineCurrentTime;
+  }, [timelineCurrentTime]);
+  const [isScrubbing, setIsScrubbing] = React.useState(false);
   const beatFileInputRef = React.useRef<HTMLInputElement>(null);
   const sceneLaunchMediaItemsRef = React.useRef(sceneLaunchMediaItems);
   const sceneLaunchBeatsRef = React.useRef(sceneLaunchBeats);
@@ -4043,7 +4067,7 @@ function EditorInner() {
   const activeSceneLaunchBeat = activeSceneLaunchBeatId
     ? sceneLaunchBeats.find(beat => beat.id === activeSceneLaunchBeatId)
     : null;
-  const activeSceneLaunchGridOrder = activeSceneLaunchBeat ? activeSceneLaunchBeat.gridOrder : sceneLaunchGridOrder;
+  const activeSceneLaunchGridOrder = activeSceneLaunchBeat ? activeSceneLaunchBeat.gridOrder : sceneLaunchGridOrder.filter(item => item.id !== 'trash');
   const sceneLaunchGridItems = activeSceneLaunchGridOrder
     .map(orderItem => {
       if (orderItem.type === 'media') {
@@ -4081,19 +4105,31 @@ function EditorInner() {
 
   const normalizeSceneLaunchBoard = (board: Partial<SceneLaunchBoardState> | null | undefined): SceneLaunchBoardState => ({
     mediaItems: Array.isArray(board?.mediaItems) ? board.mediaItems : [],
-    collections: Array.isArray(board?.collections)
-      ? board.collections.map(collection => {
-          const items = Array.isArray(collection.items) ? collection.items : [];
-          return {
-            ...collection,
-            items,
-            childIds: Array.isArray(collection.childIds) ? collection.childIds : [],
-            gridOrder: Array.isArray(collection.gridOrder)
-              ? collection.gridOrder
-              : items.map(item => ({ id: item.id, type: 'media' as const })),
-          };
-        })
-      : [],
+    collections: (() => {
+      const cols = Array.isArray(board?.collections)
+        ? board.collections.map(collection => {
+            const items = Array.isArray(collection.items) ? collection.items : [];
+            return {
+              ...collection,
+              items,
+              childIds: Array.isArray(collection.childIds) ? collection.childIds : [],
+              gridOrder: Array.isArray(collection.gridOrder)
+                ? collection.gridOrder
+                : items.map(item => ({ id: item.id, type: 'media' as const })),
+            };
+          })
+        : [];
+      if (!cols.some(c => c.id === 'trash')) {
+        cols.push({
+          id: 'trash',
+          name: 'Trash',
+          items: [],
+          childIds: [],
+          gridOrder: []
+        });
+      }
+      return cols;
+    })(),
     gridOrder: Array.isArray(board?.gridOrder) ? board.gridOrder : [],
   });
 
@@ -4154,15 +4190,7 @@ function EditorInner() {
     sceneLaunchBeatsRef.current = sceneLaunchBeats;
   }, [sceneLaunchBeats]);
 
-  React.useEffect(() => {
-    if (!sceneLaunchPreviewHover) return;
-
-    const previewTimer = window.setInterval(() => {
-      setSceneLaunchPreviewNow(Date.now());
-    }, 250);
-
-    return () => window.clearInterval(previewTimer);
-  }, [sceneLaunchPreviewHover]);
+  // Hover preview animation frame loop handles preview timer and playhead sync (declared below timelineItems)
 
   React.useEffect(() => {
     let isCancelled = false;
@@ -4251,6 +4279,28 @@ function EditorInner() {
     reader.readAsDataURL(file);
   });
 
+  const getVideoDuration = (file: File): Promise<number> => {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.muted = true;
+      video.playsInline = true;
+
+      const url = URL.createObjectURL(file);
+      video.src = url;
+
+      video.onloadedmetadata = () => {
+        URL.revokeObjectURL(url);
+        resolve(Number(video.duration.toFixed(1)) || 3);
+      };
+
+      video.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(3);
+      };
+    });
+  };
+
   const addFilesToSceneLaunchMedia = async (files: File[]) => {
     const validFiles = files.filter(file => file.type.startsWith('image/') || file.type.startsWith('video/'));
     const invalidCount = files.length - validFiles.length;
@@ -4261,13 +4311,17 @@ function EditorInner() {
 
     if (validFiles.length === 0) return;
 
-    const nextItems = await Promise.all(validFiles.map(async file => ({
-      id: `scene-media-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      name: file.name,
-      type: file.type.startsWith('video/') ? 'video' as const : 'image' as const,
-      previewUrl: await readSceneLaunchFilePreview(file),
-      durationSeconds: file.type.startsWith('image/') ? 3 : undefined,
-    })));
+    const nextItems = await Promise.all(validFiles.map(async file => {
+      const isVideo = file.type.startsWith('video/');
+      const durationSeconds = isVideo ? await getVideoDuration(file) : 3;
+      return {
+        id: `scene-media-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        name: file.name,
+        type: isVideo ? 'video' as const : 'image' as const,
+        previewUrl: await readSceneLaunchFilePreview(file),
+        durationSeconds,
+      };
+    }));
 
     if (activeSceneLaunchBeatId) {
       setSceneLaunchBeats(previous => previous.map(beat => (
@@ -4341,13 +4395,17 @@ function EditorInner() {
 
     if (validFiles.length === 0) return;
 
-    const nextItems = await Promise.all(validFiles.map(async file => ({
-      id: `beat-item-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      name: file.name,
-      type: file.type.startsWith('video/') ? 'video' as const : 'image' as const,
-      previewUrl: await readSceneLaunchFilePreview(file),
-      durationSeconds: file.type.startsWith('image/') ? 3 : undefined,
-    })));
+    const nextItems = await Promise.all(validFiles.map(async file => {
+      const isVideo = file.type.startsWith('video/');
+      const durationSeconds = isVideo ? await getVideoDuration(file) : 3;
+      return {
+        id: `beat-item-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        name: file.name,
+        type: isVideo ? 'video' as const : 'image' as const,
+        previewUrl: await readSceneLaunchFilePreview(file),
+        durationSeconds,
+      };
+    }));
 
     setSceneLaunchBeats(previous => previous.map(beat => (
       beat.id === beatId
@@ -4388,45 +4446,245 @@ function EditorInner() {
     return sceneLaunchBeats.flatMap(beat => beat.items).find(item => item.id === mediaId) || null;
   };
 
+  const getAspectRatioValue = (ratio: string): number => {
+    const [w, h] = ratio.split(':').map(Number);
+    return w / h;
+  };
+
   const getSceneLaunchMediaTileStyle = (item: typeof sceneLaunchMediaItems[number]): React.CSSProperties => {
+    const ratioValue = getAspectRatioValue(aspectRatio);
+    const ratioMultiplier = ratioValue / (16 / 9);
+
     const duration = item.type === 'image'
       ? Math.max(1, Math.min(12, item.durationSeconds ?? 3))
       : 3;
+
+    // Use a base unit of 3.2rem so that 12s worth of duration fits on a single row (12 * 3.2 = 38.4rem)
+    const baseBasis = duration * 3.2;
+    const scaledBasis = Math.max(5.0, baseBasis * ratioMultiplier);
+
+    const baseMin = item.type === 'image' ? 5 : 7;
+    const scaledMin = Math.max(5.0, baseMin * ratioMultiplier);
+
     return {
-      flex: `${duration} 1 ${duration * 4.5}rem`,
-      minWidth: item.type === 'image' ? '7rem' : '9rem',
+      flex: `${duration} 1 ${scaledBasis}rem`,
+      minWidth: `${scaledMin}rem`,
       maxWidth: '100%',
     };
   };
 
-  const getSceneLaunchCollectionTileStyle = (): React.CSSProperties => ({
-    flex: '3 1 13.5rem',
-    minWidth: '9rem',
-    maxWidth: '100%',
-  });
+  const getSceneLaunchCollectionTileStyle = (): React.CSSProperties => {
+    const ratioValue = getAspectRatioValue(aspectRatio);
+    const ratioMultiplier = ratioValue / (16 / 9);
 
-  const sceneLaunchTileMediaClassName = "h-36 overflow-hidden sm:h-40 lg:h-44";
+    const scaledBasis = Math.max(7, 9.6 * ratioMultiplier);
+    const scaledMin = Math.max(5.5, 6.4 * ratioMultiplier);
 
-  const sceneLaunchAddTileStyle: React.CSSProperties = {
-    flex: '3 1 13.5rem',
-    minWidth: '9rem',
-    maxWidth: '100%',
+    return {
+      flex: `3 1 ${scaledBasis}rem`,
+      minWidth: `${scaledMin}rem`,
+      maxWidth: '100%',
+    };
+  };
+
+  const getSceneLaunchMediaPreviewStyle = (): React.CSSProperties => {
+    return {
+      width: '100%',
+    };
   };
 
   const getSceneLaunchMediaPreviewDuration = (item: typeof sceneLaunchMediaItems[number]) => (
-    Math.max(1, item.type === 'image' ? item.durationSeconds ?? 3 : 3)
+    Math.max(1, item.durationSeconds ?? 3)
   );
 
+  const getRecursiveMediaItems = (
+    collection: typeof sceneLaunchBeats[number],
+    visited = new Set<string>()
+  ): Array<typeof sceneLaunchMediaItems[number]> => {
+    if (visited.has(collection.id)) return [];
+    visited.add(collection.id);
+
+    const items: Array<typeof sceneLaunchMediaItems[number]> = [];
+
+    for (const gridItem of collection.gridOrder) {
+      if (gridItem.type === 'media') {
+        const found = collection.items.find(x => x.id === gridItem.id);
+        if (found) {
+          items.push(found);
+        }
+      } else if (gridItem.type === 'collection') {
+        const childBeat = sceneLaunchBeats.find(b => b.id === gridItem.id);
+        if (childBeat) {
+          items.push(...getRecursiveMediaItems(childBeat, visited));
+        }
+      }
+    }
+    return items;
+  };
+
+  const getRecursiveCollectionDuration = (
+    collection: typeof sceneLaunchBeats[number],
+    visited = new Set<string>()
+  ): number => {
+    if (visited.has(collection.id)) return 0;
+    visited.add(collection.id);
+
+    return collection.gridOrder.reduce((sum, orderItem) => {
+      if (orderItem.type === 'media') {
+        const m = collection.items.find(x => x.id === orderItem.id);
+        if (!m) return sum;
+        if (resizingItem && resizingItem.id === m.id) {
+          return sum + resizingItem.currentDuration;
+        }
+        return sum + (m.durationSeconds || 3);
+      } else {
+        const childBeat = sceneLaunchBeats.find(b => b.id === orderItem.id);
+        if (!childBeat) return sum;
+        return sum + getRecursiveCollectionDuration(childBeat, visited);
+      }
+    }, 0);
+  };
+
+  const getGridItemTimelineState = (
+    itemId: string,
+    itemType: 'media' | 'collection'
+  ): { status: 'past' | 'active' | 'future' | 'idle'; elapsed: number; duration: number } => {
+    if (!isTimelinePlaying && !isScrubbing) {
+      return { status: 'idle', elapsed: 0, duration: 3 };
+    }
+
+    let accumulatedTime = 0;
+    for (const item of timelineItems) {
+      let duration = 3;
+      if (item.type === 'media') {
+        if (resizingItem && resizingItem.id === item.item.id) {
+          duration = resizingItem.currentDuration;
+        } else {
+          duration = item.item.durationSeconds || 3;
+        }
+      } else {
+        duration = getRecursiveCollectionDuration(item.collection) || 3;
+      }
+
+      const isMatch = (item.type === itemType && item.id === itemId);
+      
+      let containsTarget = false;
+      let relStart = 0;
+      let relDuration = 0;
+
+      if (!isMatch && item.type === 'collection') {
+        const containsCollection = (parent: typeof sceneLaunchBeats[number], targetId: string, visited = new Set<string>()): boolean => {
+          if (visited.has(parent.id)) return false;
+          visited.add(parent.id);
+          for (const g of parent.gridOrder) {
+            if (g.type === 'collection') {
+              if (g.id === targetId) return true;
+              const child = sceneLaunchBeats.find(b => b.id === g.id);
+              if (child && containsCollection(child, targetId, visited)) return true;
+            }
+          }
+          return false;
+        };
+
+        const containsMedia = (parent: typeof sceneLaunchBeats[number], targetId: string, visited = new Set<string>()): boolean => {
+          if (visited.has(parent.id)) return false;
+          visited.add(parent.id);
+          for (const g of parent.gridOrder) {
+            if (g.type === 'media') {
+              if (g.id === targetId) return true;
+            } else {
+              const child = sceneLaunchBeats.find(b => b.id === g.id);
+              if (child && containsMedia(child, targetId, visited)) return true;
+            }
+          }
+          return false;
+        };
+
+        const checkInside = itemType === 'collection'
+          ? containsCollection(item.collection, itemId)
+          : containsMedia(item.collection, itemId);
+
+        if (checkInside) {
+          containsTarget = true;
+          const getRelativeStartAndDuration = (
+            parent: typeof sceneLaunchBeats[number],
+            targetId: string,
+            targetType: 'media' | 'collection',
+            visited = new Set<string>()
+          ): { start: number; duration: number } | null => {
+            if (visited.has(parent.id)) return null;
+            visited.add(parent.id);
+
+            let relTime = 0;
+            for (const g of parent.gridOrder) {
+              if (g.type === 'media') {
+                const m = parent.items.find(x => x.id === g.id);
+                const d = resizingItem && resizingItem.id === g.id
+                  ? resizingItem.currentDuration
+                  : (m?.durationSeconds || 3);
+                if (targetType === 'media' && g.id === targetId) {
+                  return { start: relTime, duration: d };
+                }
+                relTime += d;
+              } else {
+                const child = sceneLaunchBeats.find(b => b.id === g.id);
+                if (!child) continue;
+                if (targetType === 'collection' && g.id === targetId) {
+                  return { start: relTime, duration: getRecursiveCollectionDuration(child) };
+                }
+                const res = getRelativeStartAndDuration(child, targetId, targetType, visited);
+                if (res) {
+                  return { start: relTime + res.start, duration: res.duration };
+                }
+                relTime += getRecursiveCollectionDuration(child);
+              }
+            }
+            return null;
+          };
+
+          const rel = getRelativeStartAndDuration(item.collection, itemId, itemType);
+          if (rel) {
+            relStart = rel.start;
+            relDuration = rel.duration;
+          }
+        }
+      }
+
+      if (isMatch) {
+        if (timelineCurrentTime < accumulatedTime) {
+          return { status: 'future', elapsed: 0, duration };
+        } else if (timelineCurrentTime >= accumulatedTime + duration) {
+          return { status: 'past', elapsed: duration, duration };
+        } else {
+          return { status: 'active', elapsed: timelineCurrentTime - accumulatedTime, duration };
+        }
+      } else if (containsTarget) {
+        const absStart = accumulatedTime + relStart;
+        const absEnd = absStart + relDuration;
+        if (timelineCurrentTime < absStart) {
+          return { status: 'future', elapsed: 0, duration: relDuration };
+        } else if (timelineCurrentTime >= absEnd) {
+          return { status: 'past', elapsed: relDuration, duration: relDuration };
+        } else {
+          return { status: 'active', elapsed: timelineCurrentTime - absStart, duration: relDuration };
+        }
+      }
+
+      accumulatedTime += duration;
+    }
+
+    return { status: 'idle', elapsed: 0, duration: 3 };
+  };
+
   const getSceneLaunchCollectionPreview = (collection: typeof sceneLaunchBeats[number]) => {
-    const orderedMediaItems = collection.gridOrder
-      .filter(item => item.type === 'media')
-      .map(item => collection.items.find(collectionItem => collectionItem.id === item.id))
-      .filter((item): item is typeof sceneLaunchMediaItems[number] => !!item);
+    const orderedMediaItems = getRecursiveMediaItems(collection);
 
     if (orderedMediaItems.length === 0) return null;
 
     const firstItem = orderedMediaItems[0];
-    const isPlaying = sceneLaunchPreviewHover?.collectionId === collection.id;
+    const isHoverActive = sceneLaunchPreviewHover?.collectionId === collection.id;
+    const timelineState = getGridItemTimelineState(collection.id, 'collection');
+    const isPlaying = isHoverActive || timelineState.status !== 'idle';
 
     if (!isPlaying) {
       return {
@@ -4440,7 +4698,19 @@ function EditorInner() {
     const totalDuration = orderedMediaItems.reduce((total, item) => (
       total + getSceneLaunchMediaPreviewDuration(item)
     ), 0);
-    let elapsed = ((sceneLaunchPreviewNow - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration;
+    
+    let elapsed = 0;
+    if (isHoverActive) {
+      elapsed = ((sceneLaunchPreviewNow - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration;
+    } else {
+      if (timelineState.status === 'past') {
+        elapsed = totalDuration - 0.001;
+      } else if (timelineState.status === 'active') {
+        elapsed = timelineState.elapsed % totalDuration;
+      } else {
+        elapsed = 0; // future
+      }
+    }
 
     for (const item of orderedMediaItems) {
       const durationSeconds = getSceneLaunchMediaPreviewDuration(item);
@@ -4455,18 +4725,19 @@ function EditorInner() {
       elapsed -= durationSeconds;
     }
 
+    const lastItem = orderedMediaItems[orderedMediaItems.length - 1];
     return {
-      item: firstItem,
-      elapsedSeconds: 0,
-      durationSeconds: getSceneLaunchMediaPreviewDuration(firstItem),
+      item: lastItem,
+      elapsedSeconds: getSceneLaunchMediaPreviewDuration(lastItem) - 0.001,
+      durationSeconds: getSceneLaunchMediaPreviewDuration(lastItem),
       isPlaying,
     };
   };
 
-  const updateSceneLaunchImageDuration = (mediaId: string, durationSeconds: number) => {
+  const updateSceneLaunchMediaDuration = (mediaId: string, durationSeconds: number) => {
     const nextDuration = Math.max(1, Math.min(60, durationSeconds || 1));
     const updateItem = (item: typeof sceneLaunchMediaItems[number]) => (
-      item.id === mediaId && item.type === 'image'
+      item.id === mediaId
         ? { ...item, durationSeconds: nextDuration }
         : item
     );
@@ -4496,6 +4767,270 @@ function EditorInner() {
     setSceneLaunchGridOrder(previous => previous.filter(item => !(item.type === 'media' && item.id === mediaId)));
   };
 
+  const handleItemContextMenu = (event: React.MouseEvent, dragKey: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSceneLaunchContextMenu({
+      dragKey,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  };
+
+  const moveItemToTrash = (dragKey: string) => {
+    const [type, id] = dragKey.split(':');
+    if (!type || !id) return;
+    if (id === 'trash') {
+      toast.error("Cannot trash the Trash folder itself.");
+      return;
+    }
+
+    let itemTitle = '';
+
+    if (type === 'media') {
+      let foundMedia: typeof sceneLaunchMediaItems[number] | null = null;
+      const rootMedia = sceneLaunchMediaItems.find(m => m.id === id);
+      if (rootMedia) {
+        foundMedia = rootMedia;
+        setSceneLaunchMediaItems(prev => prev.filter(m => m.id !== id));
+        setSceneLaunchGridOrder(prev => prev.filter(item => !(item.type === 'media' && item.id === id)));
+      } else {
+        let parentBeatId: string | null = null;
+        for (const beat of sceneLaunchBeats) {
+          const m = beat.items.find(item => item.id === id);
+          if (m) {
+            foundMedia = m;
+            parentBeatId = beat.id;
+            break;
+          }
+        }
+        if (parentBeatId) {
+          setSceneLaunchBeats(prev => prev.map(beat => {
+            if (beat.id === parentBeatId) {
+              return {
+                ...beat,
+                items: beat.items.filter(m => m.id !== id),
+                gridOrder: beat.gridOrder.filter(item => !(item.type === 'media' && item.id === id))
+              };
+            }
+            return beat;
+          }));
+        }
+      }
+
+      if (!foundMedia) {
+        toast.error("Media item not found.");
+        return;
+      }
+      itemTitle = foundMedia.name;
+
+      setSceneLaunchBeats(prev => prev.map(beat => {
+        if (beat.id === 'trash') {
+          const exists = beat.items.some(m => m.id === id);
+          const newItems = exists ? beat.items : [...beat.items, foundMedia!];
+          const newGridOrder = exists ? beat.gridOrder : [...beat.gridOrder, { id, type: 'media' as const }];
+          return {
+            ...beat,
+            items: newItems,
+            gridOrder: newGridOrder
+          };
+        }
+        return beat;
+      }));
+
+    } else if (type === 'collection') {
+      const targetBeat = sceneLaunchBeats.find(b => b.id === id);
+      if (!targetBeat) {
+        toast.error("Collection not found.");
+        return;
+      }
+      itemTitle = targetBeat.name;
+
+      const isAtRoot = sceneLaunchGridOrder.some(item => item.type === 'collection' && item.id === id);
+      if (isAtRoot) {
+        setSceneLaunchGridOrder(prev => prev.filter(item => !(item.type === 'collection' && item.id === id)));
+      } else {
+        let parentBeatId: string | null = null;
+        for (const beat of sceneLaunchBeats) {
+          if (beat.childIds.includes(id)) {
+            parentBeatId = beat.id;
+            break;
+          }
+        }
+        if (parentBeatId) {
+          setSceneLaunchBeats(prev => prev.map(beat => {
+            if (beat.id === parentBeatId) {
+              return {
+                ...beat,
+                childIds: beat.childIds.filter(cid => cid !== id),
+                gridOrder: beat.gridOrder.filter(item => !(item.type === 'collection' && item.id === id))
+              };
+            }
+            return beat;
+          }));
+        }
+      }
+
+      setSceneLaunchBeats(prev => prev.map(beat => {
+        if (beat.id === 'trash') {
+          const exists = beat.childIds.includes(id);
+          const newChildIds = exists ? beat.childIds : [...beat.childIds, id];
+          const newGridOrder = exists ? beat.gridOrder : [...beat.gridOrder, { id, type: 'collection' as const }];
+          return {
+            ...beat,
+            childIds: newChildIds,
+            gridOrder: newGridOrder
+          };
+        }
+        return beat;
+      }));
+    }
+
+    toast.success(`Moved "${itemTitle}" to Trash`);
+  };
+
+  const restoreItemFromTrash = (dragKey: string) => {
+    const [type, id] = dragKey.split(':');
+    if (!type || !id) return;
+
+    const trashBeat = sceneLaunchBeats.find(b => b.id === 'trash');
+    if (!trashBeat) return;
+
+    let itemTitle = '';
+
+    if (type === 'media') {
+      const foundMedia = trashBeat.items.find(m => m.id === id);
+      if (!foundMedia) return;
+      itemTitle = foundMedia.name;
+
+      setSceneLaunchBeats(prev => prev.map(beat => {
+        if (beat.id === 'trash') {
+          return {
+            ...beat,
+            items: beat.items.filter(m => m.id !== id),
+            gridOrder: beat.gridOrder.filter(item => !(item.type === 'media' && item.id === id))
+          };
+        }
+        return beat;
+      }));
+
+      setSceneLaunchMediaItems(prev => [...prev, foundMedia]);
+      setSceneLaunchGridOrder(prev => [...prev, { id, type: 'media' as const }]);
+
+    } else if (type === 'collection') {
+      const targetBeat = sceneLaunchBeats.find(b => b.id === id);
+      if (!targetBeat) return;
+      itemTitle = targetBeat.name;
+
+      setSceneLaunchBeats(prev => prev.map(beat => {
+        if (beat.id === 'trash') {
+          return {
+            ...beat,
+            childIds: beat.childIds.filter(cid => cid !== id),
+            gridOrder: beat.gridOrder.filter(item => !(item.type === 'collection' && item.id === id))
+          };
+        }
+        return beat;
+      }));
+
+      setSceneLaunchGridOrder(prev => [...prev, { id, type: 'collection' as const }]);
+    }
+
+    toast.success(`Restored "${itemTitle}" to main view`);
+  };
+
+  const permanentlyDeleteItem = (dragKey: string) => {
+    const [type, id] = dragKey.split(':');
+    if (!type || !id) return;
+
+    const trashBeat = sceneLaunchBeats.find(b => b.id === 'trash');
+    if (!trashBeat) return;
+
+    let itemTitle = '';
+
+    if (type === 'media') {
+      const foundMedia = trashBeat.items.find(m => m.id === id);
+      if (!foundMedia) return;
+      itemTitle = foundMedia.name;
+
+      if (foundMedia.previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(foundMedia.previewUrl);
+      }
+
+      setSceneLaunchBeats(prev => prev.map(beat => {
+        if (beat.id === 'trash') {
+          return {
+            ...beat,
+            items: beat.items.filter(m => m.id !== id),
+            gridOrder: beat.gridOrder.filter(item => !(item.type === 'media' && item.id === id))
+          };
+        }
+        return beat;
+      }));
+
+    } else if (type === 'collection') {
+      const targetBeat = sceneLaunchBeats.find(b => b.id === id);
+      if (!targetBeat) return;
+      itemTitle = targetBeat.name;
+
+      targetBeat.items.forEach(item => {
+        if (item.previewUrl.startsWith('blob:')) URL.revokeObjectURL(item.previewUrl);
+      });
+
+      setSceneLaunchBeats(prev => prev
+        .filter(beat => beat.id !== id)
+        .map(beat => {
+          if (beat.id === 'trash') {
+            return {
+              ...beat,
+              childIds: beat.childIds.filter(cid => cid !== id),
+              gridOrder: beat.gridOrder.filter(item => !(item.type === 'collection' && item.id === id))
+            };
+          }
+          return beat;
+        })
+      );
+    }
+
+    toast.success(`Permanently deleted "${itemTitle}"`);
+  };
+
+  const emptyTrash = () => {
+    const trashBeat = sceneLaunchBeats.find(b => b.id === 'trash');
+    if (!trashBeat) return;
+
+    const collectionsToPermanentlyDelete = new Set<string>(trashBeat.childIds);
+    
+    trashBeat.items.forEach(item => {
+      if (item.previewUrl.startsWith('blob:')) URL.revokeObjectURL(item.previewUrl);
+    });
+
+    sceneLaunchBeats.forEach(beat => {
+      if (collectionsToPermanentlyDelete.has(beat.id)) {
+        beat.items.forEach(item => {
+          if (item.previewUrl.startsWith('blob:')) URL.revokeObjectURL(item.previewUrl);
+        });
+      }
+    });
+
+    setSceneLaunchBeats(prev => prev
+      .filter(beat => !collectionsToPermanentlyDelete.has(beat.id))
+      .map(beat => {
+        if (beat.id === 'trash') {
+          return {
+            ...beat,
+            items: [],
+            childIds: [],
+            gridOrder: []
+          };
+        }
+        return beat;
+      })
+    );
+
+    toast.success("Trash emptied permanently");
+  };
+
   const moveSceneLaunchMediaToCollection = (mediaId: string, beatId: string) => {
     const mediaItem = findSceneLaunchMediaItem(mediaId);
     if (!mediaItem) return;
@@ -4514,6 +5049,207 @@ function EditorInner() {
     )));
   };
 
+  const isDescendantCollection = (parentCollectionId: string, potentialDescendantId: string): boolean => {
+    const parent = sceneLaunchBeats.find(b => b.id === parentCollectionId);
+    if (!parent) return false;
+    const childIds = Array.isArray(parent.childIds) ? parent.childIds : [];
+    if (childIds.includes(potentialDescendantId)) return true;
+    return childIds.some(childId => isDescendantCollection(childId, potentialDescendantId));
+  };
+
+  const moveSceneLaunchCollectionToCollection = (draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+
+    // Check for cycles
+    if (isDescendantCollection(draggedId, targetId)) {
+      toast.error("Cannot move a collection inside its own sub-collection.");
+      return;
+    }
+
+    const draggedBeat = sceneLaunchBeats.find(b => b.id === draggedId);
+    const targetBeat = sceneLaunchBeats.find(b => b.id === targetId);
+    if (!draggedBeat || !targetBeat) {
+      toast.error("Collection not found.");
+      return;
+    }
+
+    // 1. Remove from current parent / level
+    const isAtRoot = sceneLaunchGridOrder.some(item => item.type === 'collection' && item.id === draggedId);
+    if (isAtRoot) {
+      setSceneLaunchGridOrder(prev => prev.filter(item => !(item.type === 'collection' && item.id === draggedId)));
+    } else {
+      // Find parent collection
+      let parentBeatId: string | null = null;
+      for (const beat of sceneLaunchBeats) {
+        const childIds = Array.isArray(beat.childIds) ? beat.childIds : [];
+        if (childIds.includes(draggedId)) {
+          parentBeatId = beat.id;
+          break;
+        }
+      }
+
+      if (parentBeatId) {
+        // If it's already in the target collection, do nothing
+        if (parentBeatId === targetId) return;
+
+        setSceneLaunchBeats(prev => prev.map(beat => {
+          if (beat.id === parentBeatId) {
+            const childIds = Array.isArray(beat.childIds) ? beat.childIds : [];
+            const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
+            return {
+              ...beat,
+              childIds: childIds.filter(cid => cid !== draggedId),
+              gridOrder: gridOrder.filter(item => !(item.type === 'collection' && item.id === draggedId))
+            };
+          }
+          return beat;
+        }));
+      }
+    }
+
+    // 2. Add to target parent
+    setSceneLaunchBeats(prev => prev.map(beat => {
+      if (beat.id === targetId) {
+        const childIds = Array.isArray(beat.childIds) ? beat.childIds : [];
+        const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
+        const exists = childIds.includes(draggedId);
+        const newChildIds = exists ? childIds : [...childIds, draggedId];
+        const newGridOrder = exists ? gridOrder : [...gridOrder, { id: draggedId, type: 'collection' as const }];
+        return {
+          ...beat,
+          childIds: newChildIds,
+          gridOrder: newGridOrder
+        };
+      }
+      return beat;
+    }));
+
+    toast.success(`Moved collection "${draggedBeat.name}" to "${targetBeat.name}"`);
+  };
+
+  const moveSceneLaunchItemToParent = (dragKey: string) => {
+    const [type, id] = dragKey.split(':');
+    if (!type || !id) return;
+
+    if (!activeSceneLaunchBeatId) return; // Already at root
+
+    // Determine target (parent) ID
+    let parentBeatId: string | null = null;
+    if (activeSceneLaunchBeatId !== 'trash') {
+      for (const beat of sceneLaunchBeats) {
+        const childIds = Array.isArray(beat.childIds) ? beat.childIds : [];
+        if (childIds.includes(activeSceneLaunchBeatId)) {
+          parentBeatId = beat.id;
+          break;
+        }
+      }
+    }
+
+    if (type === 'media') {
+      const mediaItem = findSceneLaunchMediaItem(id);
+      if (!mediaItem) return;
+
+      // Remove from current level
+      removeSceneLaunchMediaFromCurrentLevel(id);
+
+      if (parentBeatId) {
+        // Move to parent beat
+        setSceneLaunchBeats(previous => previous.map(beat => {
+          if (beat.id === parentBeatId) {
+            const items = Array.isArray(beat.items) ? beat.items : [];
+            const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
+            return {
+              ...beat,
+              items: items.some(item => item.id === id) ? items : [...items, mediaItem],
+              gridOrder: gridOrder.some(item => item.type === 'media' && item.id === id)
+                ? gridOrder
+                : [...gridOrder, { id, type: 'media' as const }],
+            };
+          }
+          return beat;
+        }));
+        const parentBeat = sceneLaunchBeats.find(b => b.id === parentBeatId);
+        toast.success(`Moved "${mediaItem.name}" to "${parentBeat?.name || 'parent folder'}"`);
+      } else {
+        // Move to root
+        setSceneLaunchMediaItems(prev => [...prev, mediaItem]);
+        setSceneLaunchGridOrder(prev => [...prev, { id, type: 'media' }]);
+        toast.success(`Moved "${mediaItem.name}" to root`);
+      }
+    } else if (type === 'collection') {
+      const draggedBeat = sceneLaunchBeats.find(b => b.id === id);
+      if (!draggedBeat) return;
+
+      // Remove from current level
+      setSceneLaunchBeats(prev => prev.map(beat => {
+        if (beat.id === activeSceneLaunchBeatId) {
+          const childIds = Array.isArray(beat.childIds) ? beat.childIds : [];
+          const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
+          return {
+            ...beat,
+            childIds: childIds.filter(cid => cid !== id),
+            gridOrder: gridOrder.filter(item => !(item.type === 'collection' && item.id === id))
+          };
+        }
+        return beat;
+      }));
+
+      if (parentBeatId) {
+        // Move to parent beat
+        setSceneLaunchBeats(prev => prev.map(beat => {
+          if (beat.id === parentBeatId) {
+            const childIds = Array.isArray(beat.childIds) ? beat.childIds : [];
+            const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
+            const exists = childIds.includes(id);
+            const newChildIds = exists ? childIds : [...childIds, id];
+            const newGridOrder = exists ? gridOrder : [...gridOrder, { id, type: 'collection' as const }];
+            return {
+              ...beat,
+              childIds: newChildIds,
+              gridOrder: newGridOrder
+            };
+          }
+          return beat;
+        }));
+        const parentBeat = sceneLaunchBeats.find(b => b.id === parentBeatId);
+        toast.success(`Moved collection "${draggedBeat.name}" to "${parentBeat?.name || 'parent folder'}"`);
+      } else {
+        // Move to root
+        setSceneLaunchGridOrder(prev => [...prev, { id, type: 'collection' }]);
+        toast.success(`Moved collection "${draggedBeat.name}" to root`);
+      }
+    }
+  };
+
+  const getHeaderName = () => {
+    if (activeSceneLaunchBeatId) {
+      if (activeSceneLaunchBeatId === 'trash') return 'Trash';
+      return activeSceneLaunchBeat?.name || 'Collection';
+    }
+    return activeSavedSceneId ? activeScene?.name || 'Current project' : 'New scene project';
+  };
+
+  const saveHeaderName = () => {
+    const trimmed = editingHeaderNameValue.trim();
+    if (!trimmed) {
+      setIsEditingHeaderName(false);
+      return;
+    }
+
+    if (activeSceneLaunchBeatId && activeSceneLaunchBeatId !== 'trash') {
+      setSceneLaunchBeats(prev => prev.map(beat => (
+        beat.id === activeSceneLaunchBeatId
+          ? { ...beat, name: trimmed }
+          : beat
+      )));
+      toast.success(`Renamed collection to "${trimmed}"`);
+    } else if (!activeSceneLaunchBeatId && activeScene) {
+      updateScene(activeScene.id, { name: trimmed });
+      toast.success(`Renamed project to "${trimmed}"`);
+    }
+    setIsEditingHeaderName(false);
+  };
+
   const handleCollectionGridDrop = (
     event: React.DragEvent<HTMLDivElement | HTMLElement>,
     beatId: string,
@@ -4525,6 +5261,13 @@ function EditorInner() {
     const draggedKey = event.dataTransfer.getData('text/plain');
     if (draggedKey.startsWith('media:')) {
       moveSceneLaunchMediaToCollection(draggedKey.slice('media:'.length), beatId);
+      return;
+    }
+
+    if (draggedKey.startsWith('collection:')) {
+      const draggedCollectionId = draggedKey.slice('collection:'.length);
+      if (draggedCollectionId === beatId) return;
+      moveSceneLaunchCollectionToCollection(draggedCollectionId, beatId);
       return;
     }
 
@@ -4547,6 +5290,111 @@ function EditorInner() {
       const next = [...previous];
       const [draggedItem] = next.splice(draggedIndex, 1);
       next.splice(targetIndex, 0, draggedItem);
+      return next;
+    };
+
+    if (activeSceneLaunchBeatId) {
+      setSceneLaunchBeats(previous => previous.map(beat => (
+        beat.id === activeSceneLaunchBeatId
+          ? { ...beat, gridOrder: reorderItems(beat.gridOrder) }
+          : beat
+      )));
+      return;
+    }
+
+    setSceneLaunchGridOrder(reorderItems);
+  };
+
+  const handleGridDragOver = (e: React.DragEvent<HTMLElement>, targetKey: string, isCollection: boolean) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const ratio = x / rect.width;
+
+    let position: 'before' | 'after' | 'inside' = 'inside';
+    if (isCollection) {
+      if (ratio < 0.25) position = 'before';
+      else if (ratio > 0.75) position = 'after';
+    } else {
+      position = ratio < 0.5 ? 'before' : 'after';
+    }
+
+    if (!gridDragOverInfo || gridDragOverInfo.targetKey !== targetKey || gridDragOverInfo.position !== position) {
+      setGridDragOverInfo({ targetKey, position });
+    }
+  };
+
+  const handleGridDragLeave = () => {
+    setGridDragOverInfo(null);
+  };
+
+  const handleGridDrop = (e: React.DragEvent<HTMLElement>, targetKey: string, isCollection: boolean) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setGridDragOverInfo(null);
+
+    const draggedKey = e.dataTransfer.getData('text/plain');
+    if (!draggedKey || draggedKey === targetKey) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const ratio = x / rect.width;
+
+    let position: 'before' | 'after' | 'inside' = 'inside';
+    if (isCollection) {
+      if (ratio < 0.25) position = 'before';
+      else if (ratio > 0.75) position = 'after';
+    } else {
+      position = ratio < 0.5 ? 'before' : 'after';
+    }
+
+    if (isCollection && position === 'inside') {
+      const collectionId = targetKey.slice('collection:'.length);
+      if (draggedKey.startsWith('media:')) {
+        moveSceneLaunchMediaToCollection(draggedKey.slice('media:'.length), collectionId);
+      } else if (draggedKey.startsWith('collection:')) {
+        moveSceneLaunchCollectionToCollection(draggedKey.slice('collection:'.length), collectionId);
+      }
+      return;
+    }
+
+    // Operating system file drops
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      if (isCollection && position === 'inside') {
+        const collectionId = targetKey.slice('collection:'.length);
+        addFilesToBeat(collectionId, Array.from(e.dataTransfer.files));
+      } else {
+        if (activeSceneLaunchBeatId) {
+          addFilesToBeat(activeSceneLaunchBeatId, Array.from(e.dataTransfer.files));
+        } else {
+          addFilesToSceneLaunchMedia(Array.from(e.dataTransfer.files));
+        }
+      }
+      return;
+    }
+
+    // Reordering drops
+    reorderSceneLaunchGridItemAtPosition(draggedKey, targetKey, position as 'before' | 'after');
+  };
+
+  const reorderSceneLaunchGridItemAtPosition = (draggedKey: string, targetKey: string, position: 'before' | 'after') => {
+    if (!draggedKey || draggedKey === targetKey) return;
+
+    const reorderItems = (previous: Array<{ id: string; type: 'media' | 'collection' }>) => {
+      const draggedIndex = previous.findIndex(item => `${item.type}:${item.id}` === draggedKey);
+      const targetIndex = previous.findIndex(item => `${item.type}:${item.id}` === targetKey);
+      if (draggedIndex < 0 || targetIndex < 0) return previous;
+
+      const next = [...previous];
+      const [draggedItem] = next.splice(draggedIndex, 1);
+
+      // Find the index of target in the array after splicing the dragged item
+      const newTargetIndex = next.findIndex(item => `${item.type}:${item.id}` === targetKey);
+      const insertIndex = position === 'before' ? newTargetIndex : newTargetIndex + 1;
+
+      next.splice(insertIndex, 0, draggedItem);
       return next;
     };
 
@@ -4586,6 +5434,501 @@ function EditorInner() {
   const openProjectScene = (sceneId: string) => {
     setActiveScene(sceneId);
     closeSceneLaunchView();
+  };
+
+  // Timeline View Helper calculations
+  const timelineItems = activeSceneLaunchGridOrder
+    .map(orderItem => {
+      if (orderItem.type === 'media') {
+        const item = activeSceneLaunchBeat
+          ? activeSceneLaunchBeat.items.find(mediaItem => mediaItem.id === orderItem.id)
+          : sceneLaunchMediaItems.find(mediaItem => mediaItem.id === orderItem.id);
+        if (!item) return null;
+        return { ...orderItem, item };
+      }
+
+      const collection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+      if (!collection) return null;
+      return { ...orderItem, collection };
+    })
+    .filter((item): item is (
+      | { id: string; type: 'media'; item: typeof sceneLaunchMediaItems[number] }
+      | { id: string; type: 'collection'; collection: typeof sceneLaunchBeats[number] }
+    ) => !!item);
+
+  const timelineTotalDuration = timelineItems.reduce((sum, item) => {
+    if (item.type === 'media') {
+      if (resizingItem && resizingItem.id === item.item.id) {
+        return sum + resizingItem.currentDuration;
+      }
+      return sum + (item.item.durationSeconds || 3);
+    } else {
+      return sum + (getRecursiveCollectionDuration(item.collection) || 3);
+    }
+  }, 0);
+
+  const getActiveTimelineItemInfo = (currentTime: number) => {
+    let accumulatedTime = 0;
+    for (const item of timelineItems) {
+      let duration = 3;
+      if (item.type === 'media') {
+        if (resizingItem && resizingItem.id === item.item.id) {
+          duration = resizingItem.currentDuration;
+        } else {
+          duration = item.item.durationSeconds || 3;
+        }
+      } else {
+        duration = getRecursiveCollectionDuration(item.collection) || 3;
+      }
+      if (currentTime >= accumulatedTime && currentTime < accumulatedTime + duration) {
+        return { id: item.id, type: item.type };
+      }
+      accumulatedTime += duration;
+    }
+    if (timelineItems.length > 0 && currentTime >= accumulatedTime) {
+      const last = timelineItems[timelineItems.length - 1];
+      return { id: last.id, type: last.type };
+    }
+    return null;
+  };
+
+  const activeItemInfo = getActiveTimelineItemInfo(timelineCurrentTime);
+  const activeItemKey = activeItemInfo ? `${activeItemInfo.type}:${activeItemInfo.id}` : null;
+
+  React.useEffect(() => {
+    if (!sceneLaunchPreviewHover) {
+      if (!isTimelinePlaying && !isScrubbing) {
+        setTimelineCurrentTime(0);
+        currentTimeRef.current = 0;
+      }
+      return;
+    }
+
+    let frameId: number;
+    const tick = () => {
+      const now = Date.now();
+      setSceneLaunchPreviewNow(now);
+
+      const hoveredId = sceneLaunchPreviewHover.collectionId;
+      const hoveredBeat = sceneLaunchBeats.find(b => b.id === hoveredId);
+      if (hoveredBeat && !isTimelinePlaying && !isScrubbing) {
+        const mediaItems = getRecursiveMediaItems(hoveredBeat);
+        const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
+        if (totalDuration > 0) {
+          const elapsed = ((now - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration;
+          
+          let startTime = 0;
+          let found = false;
+          for (const item of timelineItems) {
+            if (item.type === 'collection' && item.collection.id === hoveredId) {
+              found = true;
+              break;
+            }
+            if (item.type === 'media') {
+              startTime += item.item.durationSeconds || 3;
+            } else {
+              startTime += getRecursiveCollectionDuration(item.collection) || 3;
+            }
+          }
+          
+          if (found) {
+            const nextTime = startTime + elapsed;
+            setTimelineCurrentTime(nextTime);
+            currentTimeRef.current = nextTime;
+          }
+        }
+      }
+
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, [sceneLaunchPreviewHover, isTimelinePlaying, isScrubbing, timelineItems, sceneLaunchBeats]);
+
+  React.useEffect(() => {
+    if (!isTimelinePlaying) return;
+
+    let lastTime = performance.now();
+    let frameId: number;
+
+    const tick = (now: number) => {
+      const delta = (now - lastTime) / 1000;
+      lastTime = now;
+
+      const current = currentTimeRef.current;
+      const next = current + delta;
+
+      if (next >= timelineTotalDuration) {
+        setTimelineCurrentTime(0);
+        currentTimeRef.current = 0;
+        if (!isTimelineLooping) {
+          setIsTimelinePlaying(false);
+          return;
+        }
+      } else {
+        setTimelineCurrentTime(next);
+        currentTimeRef.current = next;
+      }
+
+      frameId = requestAnimationFrame(tick);
+    };
+
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
+  }, [isTimelinePlaying, timelineTotalDuration, isTimelineLooping]);
+
+  React.useEffect(() => {
+    if (!activeItemKey) return;
+    const element = document.getElementById(`grid-item-${activeItemKey}`);
+    if (element) {
+      element.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }
+  }, [activeItemKey]);
+
+  const renderTimelineRuler = () => {
+    const totalSec = Math.max(10, Math.ceil(timelineTotalDuration));
+    const ticks = [];
+    for (let i = 0; i <= totalSec; i++) {
+      ticks.push(i);
+    }
+
+    const widthPx = Math.max(10, timelineTotalDuration) * pxPerSecond;
+
+    return (
+      <div 
+        className="relative h-6 border-b border-zinc-800 text-[9px] font-mono text-zinc-500 select-none cursor-ew-resize"
+        style={{ width: `${widthPx}px`, minWidth: '100%' }}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          setIsScrubbing(true);
+          const rect = e.currentTarget.getBoundingClientRect();
+          const offsetX = e.clientX - rect.left;
+          const clickedTime = Math.max(0, Math.min(timelineTotalDuration, offsetX / pxPerSecond));
+          setTimelineCurrentTime(clickedTime);
+          currentTimeRef.current = clickedTime;
+        }}
+        onPointerMove={(e) => {
+          if (!isScrubbing) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          const offsetX = e.clientX - rect.left;
+          const clickedTime = Math.max(0, Math.min(timelineTotalDuration, offsetX / pxPerSecond));
+          setTimelineCurrentTime(clickedTime);
+          currentTimeRef.current = clickedTime;
+        }}
+        onPointerUp={(e) => {
+          if (isScrubbing) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+            setIsScrubbing(false);
+          }
+        }}
+      >
+        {ticks.map((sec) => {
+          const left = sec * pxPerSecond;
+          const isMajor = sec % 5 === 0;
+          return (
+            <div 
+              key={sec} 
+              className="absolute bottom-0 -translate-x-1/2 flex flex-col items-center"
+              style={{ left: `${left}px` }}
+            >
+              {isMajor && <span className="mb-0.5 text-[8px] text-zinc-500 font-semibold">{sec}s</span>}
+              <div className={cn("w-px bg-zinc-800/80", isMajor ? "h-2.5 bg-zinc-600/80" : "h-1 bg-zinc-800/40")} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderSceneLaunchTimeline = () => {
+    const totalDuration = timelineTotalDuration;
+    const widthPx = Math.max(10, totalDuration) * pxPerSecond;
+
+
+
+    return (
+      <div className="absolute bottom-5 left-1/2 z-20 -translate-x-1/2 w-[95%] max-w-[76rem] bg-zinc-950/85 border border-zinc-800/80 backdrop-blur-xl rounded-2xl shadow-2xl p-4 flex flex-col gap-2.5 select-none">
+        <style dangerouslySetInnerHTML={{ __html: `
+          .timeline-track-scroll::-webkit-scrollbar {
+            height: 6px;
+          }
+          .timeline-track-scroll::-webkit-scrollbar-track {
+            background: transparent;
+          }
+          .timeline-track-scroll::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.12);
+            border-radius: 9999px;
+          }
+          .timeline-track-scroll::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.25);
+          }
+        `}} />
+
+        <div className="flex items-center justify-between text-zinc-400 px-1">
+          {/* Left Column */}
+          <div className="flex flex-1 items-center gap-2">
+            <Clock className="h-4 w-4 text-indigo-400" />
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-300 truncate max-w-[12rem] md:max-w-[18rem]">
+              {activeSceneLaunchBeatId === 'trash' ? 'Trash Timeline' : activeSceneLaunchBeat ? `${activeSceneLaunchBeat.name} Timeline` : 'Project Timeline'}
+            </span>
+            <span className="text-[10px] bg-zinc-900 border border-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded-full font-mono font-bold shrink-0">
+              {totalDuration.toFixed(1)}s
+            </span>
+          </div>
+          
+          {/* Center Column: Play/Pause controls */}
+          <div className="flex items-center justify-center shrink-0 gap-2.5">
+            <button
+              type="button"
+              onClick={() => setIsTimelineLooping(!isTimelineLooping)}
+              className={cn(
+                "p-1 rounded transition-colors cursor-pointer",
+                isTimelineLooping ? "text-indigo-400 hover:text-indigo-300" : "text-zinc-650 hover:text-zinc-400"
+              )}
+              title={isTimelineLooping ? "Disable Loop" : "Enable Loop"}
+            >
+              <Repeat className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsTimelinePlaying(!isTimelinePlaying)}
+              className={cn(
+                "flex h-7 w-7 items-center justify-center rounded-full transition-all text-white shadow-md cursor-pointer",
+                isTimelinePlaying ? "bg-red-650 hover:bg-red-700 animate-pulse" : "bg-indigo-600 hover:bg-indigo-700"
+              )}
+              title={isTimelinePlaying ? "Pause Timeline" : "Play Timeline"}
+            >
+              {isTimelinePlaying ? (
+                <Pause className="h-3.5 w-3.5 fill-current" />
+              ) : (
+                <Play className="h-3.5 w-3.5 fill-current ml-0.5" />
+              )}
+            </button>
+            <span className="text-[10px] font-mono text-zinc-300 bg-zinc-900 border border-zinc-800/80 px-2 py-0.5 rounded-full font-bold">
+              {timelineCurrentTime.toFixed(1)}s
+            </span>
+          </div>
+
+          {/* Right Column */}
+          <div className="flex flex-1 items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setPxPerSecond(prev => Math.max(5, prev - 5))}
+              className="p-1 rounded hover:bg-white/5 hover:text-white transition-colors cursor-pointer"
+              title="Zoom out"
+            >
+              <ZoomOut className="h-4 w-4" />
+            </button>
+            <span className="text-[10px] font-mono text-zinc-500 w-8 text-center select-none font-semibold">
+              {Math.round(pxPerSecond * 5)}%
+            </span>
+            <button
+              type="button"
+              onClick={() => setPxPerSecond(prev => Math.min(60, prev + 5))}
+              className="p-1 rounded hover:bg-white/5 hover:text-white transition-colors cursor-pointer"
+              title="Zoom in"
+            >
+              <ZoomIn className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="relative border border-zinc-800/80 bg-[#09090b]/40 rounded-xl flex flex-col overflow-hidden">
+          <div className="overflow-x-auto overflow-y-hidden timeline-track-scroll flex flex-col flex-1 relative" id="timeline-track-scrub-zone">
+            {/* Ruler */}
+            {renderTimelineRuler()}
+
+            {/* Clips Row */}
+            <div 
+              className="flex items-stretch h-20 bg-zinc-950/20 relative"
+              style={{ width: `${widthPx}px`, minWidth: '100%' }}
+            >
+
+              {timelineItems.length === 0 ? (
+                <div className="flex items-center justify-center w-full h-full text-zinc-600 text-xs py-4">
+                  Timeline is empty. Drag media items or collections here.
+                </div>
+              ) : (
+                timelineItems.map((gridItem, idx) => {
+                  const dragKey = `${gridItem.type}:${gridItem.id}`;
+                  let duration = 3;
+                  let name = '';
+                  let previewUrl = '';
+                  let isImage = false;
+                  let isVideo = false;
+
+                  if (gridItem.type === 'media') {
+                    if (resizingItem && resizingItem.id === gridItem.id) {
+                      duration = resizingItem.currentDuration;
+                    } else {
+                      duration = gridItem.item.durationSeconds || 3;
+                    }
+                    name = gridItem.item.name;
+                    previewUrl = gridItem.item.previewUrl;
+                    isImage = gridItem.item.type === 'image';
+                    isVideo = gridItem.item.type === 'video';
+                  } else {
+                    duration = getRecursiveCollectionDuration(gridItem.collection) || 3;
+                    name = gridItem.collection.name;
+                    const colPreview = getSceneLaunchCollectionPreview(gridItem.collection);
+                    if (colPreview) {
+                      previewUrl = colPreview.item.previewUrl;
+                      isImage = colPreview.item.type === 'image';
+                      isVideo = colPreview.item.type === 'video';
+                    }
+                  }
+
+                  const blockWidth = duration * pxPerSecond;
+                  const isItemActive = activeItemKey === dragKey;
+
+                  return (
+                    <div
+                      key={dragKey}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', dragKey);
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                      }}
+                      onDragEnter={() => setTimelineDragOverKey(dragKey)}
+                      onDragLeave={() => setTimelineDragOverKey(null)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setTimelineDragOverKey(null);
+                        const draggedKey = e.dataTransfer.getData('text/plain');
+                        if (draggedKey) {
+                          reorderSceneLaunchGridItem(draggedKey, dragKey);
+                        }
+                      }}
+                      onContextMenu={(e) => handleItemContextMenu(e, dragKey)}
+                      style={{ width: `${blockWidth}px` }}
+                      className={cn(
+                        "relative group flex-shrink-0 flex items-stretch border-r border-zinc-800/80 bg-zinc-950/30 select-none overflow-hidden transition-all duration-150 cursor-grab active:cursor-grabbing",
+                        timelineDragOverKey === dragKey && "border-l-2 border-l-indigo-500 bg-indigo-950/20",
+                        gridItem.type === 'collection' && "bg-zinc-900/10 border-b-2 border-b-zinc-800",
+                        isItemActive ? "bg-indigo-955/10 border-t border-t-indigo-500/40" : ""
+                      )}
+                    >
+                      {/* Thumbnail background with low opacity */}
+                      {previewUrl ? (
+                        <div className="absolute inset-0 opacity-25 pointer-events-none">
+                          {isVideo ? (
+                            <video src={previewUrl} className="h-full w-full object-cover" muted />
+                          ) : (
+                            <img src={previewUrl} className="h-full w-full object-cover" alt="" />
+                          )}
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 opacity-10 bg-zinc-800 pointer-events-none flex items-center justify-center">
+                          <Grid2X2 className="h-5 w-5" />
+                        </div>
+                      )}
+
+                      {/* Content Overlay */}
+                      <div className="relative z-10 flex flex-col justify-between p-2 w-full h-full pointer-events-none text-left">
+                        <div className={cn("truncate text-[10px] font-bold text-zinc-300", isItemActive && "text-indigo-200")}>
+                          {name}
+                        </div>
+                        <div className="flex items-center justify-between gap-1 text-[9px] font-mono font-medium text-zinc-500">
+                          <span className={cn("bg-black/60 border border-zinc-800 px-1 rounded text-zinc-300", isItemActive && "border-indigo-900/50 text-indigo-300 bg-indigo-950/40")}>
+                            {duration.toFixed(1)}s
+                          </span>
+                          <span className="uppercase text-[8px] tracking-wider font-extrabold text-zinc-600">
+                            {gridItem.type}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Resize handle (for media items of type image or video) */}
+                      {gridItem.type === 'media' && (isImage || isVideo) && (
+                        <div
+                          style={{ touchAction: 'none' }}
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            const target = e.currentTarget;
+                            target.setPointerCapture(e.pointerId);
+                            setResizingItem({
+                              id: gridItem.id,
+                              initialDuration: duration,
+                              startX: e.clientX,
+                              currentDuration: duration,
+                            });
+                          }}
+                          onPointerMove={(e) => {
+                            if (!resizingItem || resizingItem.id !== gridItem.id) return;
+                            e.stopPropagation();
+                            const deltaX = e.clientX - resizingItem.startX;
+                            const deltaDuration = deltaX / pxPerSecond;
+                            const newDuration = Math.max(1, Math.min(60, resizingItem.initialDuration + deltaDuration));
+                            setResizingItem({
+                              ...resizingItem,
+                              currentDuration: newDuration,
+                            });
+                          }}
+                          onPointerUp={(e) => {
+                            if (resizingItem && resizingItem.id === gridItem.id) {
+                              e.currentTarget.releasePointerCapture(e.pointerId);
+                              updateSceneLaunchMediaDuration(gridItem.id, Number(resizingItem.currentDuration.toFixed(1)));
+                              setResizingItem(null);
+                            }
+                          }}
+                          className={cn(
+                            "absolute right-0 top-0 w-2.5 h-full cursor-col-resize z-20 transition-all hover:bg-indigo-500/70 bg-zinc-800/10 border-r border-r-zinc-700/50 group-hover:border-r-indigo-500/50",
+                            resizingItem?.id === gridItem.id && "bg-indigo-500 border-r-indigo-400"
+                          )}
+                        />
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Vertical Playhead line & handle spanning BOTH ruler and clips row */}
+            <div 
+              className="absolute top-0 bottom-0 w-0.5 bg-red-500/80 z-30 pointer-events-none"
+              style={{ left: `${timelineCurrentTime * pxPerSecond}px` }}
+            >
+              {/* Playhead Grab Handle badge sitting on ruler */}
+              <div 
+                className="absolute -top-0.5 -translate-x-1/2 w-6 h-6 flex items-center justify-center cursor-ew-resize pointer-events-auto group/playhead"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  setIsScrubbing(true);
+                }}
+                onPointerMove={(e) => {
+                  if (!isScrubbing) return;
+                  const track = document.getElementById('timeline-track-scrub-zone');
+                  if (track) {
+                    const rect = track.getBoundingClientRect();
+                    const offsetX = e.clientX - rect.left;
+                    const clickedTime = Math.max(0, Math.min(totalDuration, offsetX / pxPerSecond));
+                    setTimelineCurrentTime(clickedTime);
+                    currentTimeRef.current = clickedTime;
+                  }
+                }}
+                onPointerUp={(e) => {
+                  e.currentTarget.releasePointerCapture(e.pointerId);
+                  setIsScrubbing(false);
+                }}
+              >
+                {/* Sleek inverted teardrop handle badge with glow */}
+                <div className="w-3.5 h-4 bg-red-500 rounded-t-full rounded-b-sm border border-red-400 shadow-[0_1px_4px_rgba(0,0,0,0.5),0_0_8px_rgba(239,68,68,0.4)] group-hover/playhead:bg-red-400 group-hover/playhead:scale-110 transition-all duration-150" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const renderSceneLaunchWorkspace = () => (
@@ -4635,6 +5978,34 @@ function EditorInner() {
         >
           <Clapperboard className="h-4.5 w-4.5" />
         </button>
+        <button
+          type="button"
+          className={cn(
+            "mt-2 flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200",
+            activeSceneLaunchBeatId === 'trash'
+              ? "bg-zinc-800 text-white shadow-md"
+              : "text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+          )}
+          aria-label="Trash"
+          onClick={() => setSceneLaunchBeatPath(['trash'])}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.currentTarget.classList.add('bg-red-950/40', 'text-red-400', 'border', 'border-red-900/50');
+          }}
+          onDragLeave={(e) => {
+            e.currentTarget.classList.remove('bg-red-950/40', 'text-red-400', 'border', 'border-red-900/50');
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.currentTarget.classList.remove('bg-red-950/40', 'text-red-400', 'border', 'border-red-900/50');
+            const dragKey = e.dataTransfer.getData('text/plain');
+            if (dragKey) {
+              moveItemToTrash(dragKey);
+            }
+          }}
+        >
+          <Trash2 className="h-4.5 w-4.5" />
+        </button>
         <div className="my-5 h-px w-8 bg-white/10" />
         <button
           type="button"
@@ -4660,7 +6031,12 @@ function EditorInner() {
           <div className="flex min-w-0 items-center gap-4">
             <button
               type="button"
-              className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 hover:bg-white/5 hover:text-white"
+              className={cn(
+                "flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 transition-all duration-200",
+                activeSceneLaunchBeatId
+                  ? "hover:bg-white/5 hover:text-white"
+                  : "text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+              )}
               aria-label="Back home"
               onClick={() => {
                 if (activeSceneLaunchBeatId) {
@@ -4669,17 +6045,69 @@ function EditorInner() {
                 }
                 router.push('/');
               }}
+              onDragOver={(e) => {
+                if (!activeSceneLaunchBeatId) return;
+                e.preventDefault();
+                e.currentTarget.classList.add('bg-zinc-800', 'text-white', 'border', 'border-zinc-700');
+              }}
+              onDragLeave={(e) => {
+                e.currentTarget.classList.remove('bg-zinc-800', 'text-white', 'border', 'border-zinc-700');
+              }}
+              onDrop={(e) => {
+                if (!activeSceneLaunchBeatId) return;
+                e.preventDefault();
+                e.currentTarget.classList.remove('bg-zinc-800', 'text-white', 'border', 'border-zinc-700');
+                const dragKey = e.dataTransfer.getData('text/plain');
+                if (dragKey) {
+                  moveSceneLaunchItemToParent(dragKey);
+                }
+              }}
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-zinc-100">
-                {activeSavedSceneId ? activeScene?.name || 'Current project' : 'New scene project'}
-              </div>
-              <div className="mt-0.5 text-[10px] font-medium text-zinc-600">
-                {new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-              </div>
-            </div>
+            {(() => {
+              const headerName = getHeaderName();
+              const isHeaderEditable = activeSceneLaunchBeatId !== 'trash';
+              return (
+                <div className="min-w-0">
+                  {isEditingHeaderName && isHeaderEditable ? (
+                    <input
+                      type="text"
+                      value={editingHeaderNameValue}
+                      onChange={(e) => setEditingHeaderNameValue(e.target.value)}
+                      onBlur={saveHeaderName}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveHeaderName();
+                        if (e.key === 'Escape') setIsEditingHeaderName(false);
+                      }}
+                      autoFocus
+                      className="bg-transparent text-sm font-semibold text-zinc-100 border-b border-zinc-700 outline-none focus:border-indigo-500 py-0.5 px-0 w-auto min-w-[150px]"
+                    />
+                  ) : (
+                    <div 
+                      className={cn(
+                        "flex items-center gap-1.5 truncate text-sm font-semibold text-zinc-100 select-none",
+                        isHeaderEditable && "cursor-pointer hover:text-white group"
+                      )}
+                      onClick={() => {
+                        if (isHeaderEditable) {
+                          setEditingHeaderNameValue(headerName);
+                          setIsEditingHeaderName(true);
+                        }
+                      }}
+                    >
+                      <span className="truncate">{headerName}</span>
+                      {isHeaderEditable && (
+                        <Pencil className="h-3 w-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      )}
+                    </div>
+                  )}
+                  <div className="mt-0.5 text-[10px] font-medium text-zinc-600">
+                    {new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           <div className="hidden h-11 w-full max-w-xl items-center gap-3 rounded-full bg-zinc-900 px-5 text-zinc-500 ring-1 ring-white/10 md:flex">
@@ -4704,6 +6132,28 @@ function EditorInner() {
             >
               <Plus className="h-5 w-5" />
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className="h-9 w-9 flex items-center justify-center rounded-full text-zinc-300 hover:bg-white/5 hover:text-white transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
+                title={`Change aspect ratio (currently ${aspectRatio})`}
+                aria-label="Change aspect ratio"
+              >
+                <Ratio className="h-5 w-5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-36 bg-[#111114] border-zinc-800 text-zinc-300 z-50">
+                <div className="px-2 py-1 text-[9px] uppercase tracking-widest text-zinc-500 font-bold select-none cursor-default">Aspect Ratio</div>
+                {(['16:9', '21:9', '1:1', '9:16'] as const).map((ratio) => (
+                  <DropdownMenuItem
+                    key={ratio}
+                    onClick={() => setAspectRatio(ratio)}
+                    className="justify-between font-mono text-xs focus:bg-zinc-800 focus:text-white cursor-pointer"
+                  >
+                    {ratio}
+                    {aspectRatio === ratio && <span className="text-indigo-300">•</span>}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               type="button"
               variant="ghost"
@@ -4739,7 +6189,7 @@ function EditorInner() {
           </div>
         </header>
 
-        <main className="relative flex min-h-0 flex-1 flex-col px-6 pb-28">
+        <main className="relative flex min-h-0 flex-1 flex-col px-6 pb-56 overflow-y-auto">
           {!activeSceneLaunchBeat && rootSceneLaunchGridItemsCount === 0 && (projectHasSceneContent || visibleProjectScenes.length > 1) ? (
             <div className="mx-auto mt-8 w-full max-w-6xl">
               <div className="mb-4 flex items-end justify-between gap-4">
@@ -4809,32 +6259,41 @@ function EditorInner() {
               <>
                 <div className="mb-4 flex items-center justify-between gap-4">
                   <div className="min-w-0">
-                    <h2 className="truncate text-sm font-semibold text-zinc-200">{activeSceneLaunchBeat.name}</h2>
+                    <h2 className="truncate text-sm font-semibold text-zinc-200">
+                      {activeSceneLaunchBeatId === 'trash' ? 'Trash Folder' : activeSceneLaunchBeat.name}
+                    </h2>
                     <p className="mt-1 text-[11px] text-zinc-700">
-                      {activeSceneLaunchBeat.gridOrder.length} {activeSceneLaunchBeat.gridOrder.length === 1 ? 'item' : 'items'} in this collection
+                      {activeSceneLaunchBeatId === 'trash'
+                        ? 'Items moved here can be restored or permanently deleted'
+                        : `${activeSceneLaunchBeat.gridOrder.length} ${activeSceneLaunchBeat.gridOrder.length === 1 ? 'item' : 'items'} in this collection`
+                      }
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
-                      onClick={() => openBeatUpload(activeSceneLaunchBeat.id)}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Add Media
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
-                      onClick={createSceneLaunchBeat}
-                    >
-                      <Grid2X2 className="h-3.5 w-3.5" />
-                      Add Collection
-                    </Button>
+                    {activeSceneLaunchBeatId === 'trash' ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 border-red-950 bg-red-950/10 text-xs text-red-450 hover:bg-red-950 hover:text-white transition-colors"
+                        onClick={emptyTrash}
+                        disabled={activeSceneLaunchBeat.gridOrder.length === 0}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Empty Trash
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
+                        onClick={createSceneLaunchBeat}
+                      >
+                        <Grid2X2 className="h-3.5 w-3.5" />
+                        Add Collection
+                      </Button>
+                    )}
                   </div>
                 </div>
 
@@ -4853,26 +6312,62 @@ function EditorInner() {
                           return (
                             <article
                               key={dragKey}
+                              id={`grid-item-${dragKey}`}
                               draggable
                               onDragStart={(event) => {
                                 event.dataTransfer.effectAllowed = 'move';
                                 event.dataTransfer.setData('text/plain', dragKey);
                               }}
-                              onDragOver={(event) => {
-                                event.preventDefault();
-                                event.dataTransfer.dropEffect = 'move';
-                              }}
-                              onDrop={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                reorderSceneLaunchGridItem(event.dataTransfer.getData('text/plain'), dragKey);
-                              }}
+                              onDragOver={(event) => handleGridDragOver(event, dragKey, false)}
+                              onDragLeave={handleGridDragLeave}
+                              onDrop={(event) => handleGridDrop(event, dragKey, false)}
                               style={getSceneLaunchMediaTileStyle(item)}
-                              className="group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-black transition-colors hover:border-zinc-700 active:cursor-grabbing"
+                              className={cn(
+                                "group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-black transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
+                                isTimelinePlaying && activeItemKey && activeItemKey !== dragKey ? "opacity-30" : "opacity-100"
+                              )}
+                              onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
                             >
-                              <div className={sceneLaunchTileMediaClassName}>
+                              {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
+                                <div className="absolute top-0 bottom-0 left-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+                              )}
+                              {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'after' && (
+                                <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+                              )}
+                              <div className="overflow-hidden relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
                                 {item.type === 'video' ? (
-                                  <video src={item.previewUrl} className="h-full w-full object-cover" muted playsInline controls />
+                                  <video
+                                 ref={(el) => {
+                                   if (el) {
+                                     const state = getGridItemTimelineState(item.id, 'media');
+                                     if (state.status === 'idle') {
+                                       el.currentTime = 0;
+                                       if (!el.paused) el.pause();
+                                     } else if (state.status === 'past') {
+                                       el.currentTime = state.duration;
+                                       if (!el.paused) el.pause();
+                                     } else if (state.status === 'future') {
+                                       el.currentTime = 0;
+                                       if (!el.paused) el.pause();
+                                     } else if (state.status === 'active') {
+                                       const diff = Math.abs(el.currentTime - state.elapsed);
+                                       if (diff > 0.3) {
+                                         el.currentTime = state.elapsed;
+                                       }
+                                       if (el.paused && isTimelinePlaying) {
+                                         el.play().catch(() => {});
+                                       } else if (!el.paused && !isTimelinePlaying) {
+                                         el.pause();
+                                       }
+                                     }
+                                   }
+                                 }}
+                                 src={item.previewUrl}
+                                 className="h-full w-full object-cover"
+                                 muted
+                                 playsInline
+                                 controls
+                               />
                                 ) : (
                                   <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
                                 )}
@@ -4882,8 +6377,8 @@ function EditorInner() {
                                   <div className="truncate text-[11px] font-semibold text-zinc-300">{item.name}</div>
                                   <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-700">{item.type}</div>
                                 </div>
-                                {item.type === 'image' ? (
-                                  <label className="flex shrink-0 items-center gap-1 rounded bg-zinc-950 px-1.5 py-1 text-[9px] font-mono uppercase tracking-widest text-zinc-500">
+                                {item.type === 'image' || item.type === 'video' ? (
+                                  <label className="flex h-8 shrink-0 items-center gap-1 rounded border border-zinc-900 bg-zinc-950 px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-zinc-400 transition-colors hover:bg-zinc-900 focus-within:border-zinc-700 cursor-pointer select-none">
                                     <input
                                       type="number"
                                       min={1}
@@ -4891,8 +6386,8 @@ function EditorInner() {
                                       value={item.durationSeconds ?? 3}
                                       onClick={(event) => event.stopPropagation()}
                                       onPointerDown={(event) => event.stopPropagation()}
-                                      onChange={(event) => updateSceneLaunchImageDuration(item.id, Number(event.target.value))}
-                                      className="h-4 w-8 bg-transparent text-right text-[10px] text-zinc-300 outline-none"
+                                      onChange={(event) => updateSceneLaunchMediaDuration(item.id, Number(event.target.value))}
+                                      className="h-5 w-9 bg-transparent text-right text-[11px] font-semibold text-zinc-200 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                       aria-label={`${item.name} duration in seconds`}
                                     />
                                     s
@@ -4909,16 +6404,15 @@ function EditorInner() {
                         return (
                           <article
                             key={dragKey}
+                            id={`grid-item-${dragKey}`}
                             draggable
                             onDragStart={(event) => {
                               event.dataTransfer.effectAllowed = 'move';
                               event.dataTransfer.setData('text/plain', dragKey);
                             }}
-                            onDragOver={(event) => {
-                              event.preventDefault();
-                              event.dataTransfer.dropEffect = 'move';
-                            }}
-                            onDrop={(event) => handleCollectionGridDrop(event, beat.id, dragKey)}
+                            onDragOver={(event) => handleGridDragOver(event, dragKey, true)}
+                            onDragLeave={handleGridDragLeave}
+                            onDrop={(event) => handleGridDrop(event, dragKey, true)}
                             onMouseEnter={() => setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: Date.now() })}
                             onMouseLeave={() => setSceneLaunchPreviewHover(previous => (
                               previous?.collectionId === beat.id ? null : previous
@@ -4928,15 +6422,22 @@ function EditorInner() {
                               previous?.collectionId === beat.id ? null : previous
                             ))}
                             style={getSceneLaunchCollectionTileStyle()}
-                            className="group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/80 transition-colors hover:border-zinc-700 active:cursor-grabbing"
+                            className={cn(
+                              "group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/80 transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
+                              isTimelinePlaying && activeItemKey && activeItemKey !== dragKey ? "opacity-30" : "opacity-100",
+                              gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'inside' && "ring-2 ring-indigo-500 border-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.3)]"
+                            )}
+                            onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
                           >
+                            {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
+                              <div className="absolute top-0 bottom-0 left-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+                            )}
+                            {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'after' && (
+                              <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+                            )}
                             <div
-                              className={cn("relative bg-black", sceneLaunchTileMediaClassName)}
-                              onDragOver={(event) => {
-                                event.preventDefault();
-                                event.dataTransfer.dropEffect = 'move';
-                              }}
-                              onDrop={(event) => handleCollectionGridDrop(event, beat.id, dragKey)}
+                              className="relative bg-black overflow-hidden h-36 sm:h-40 lg:h-44"
+                              style={getSceneLaunchMediaPreviewStyle()}
                             >
                               <button
                                 type="button"
@@ -4946,9 +6447,34 @@ function EditorInner() {
                               >
                                 {preview ? (
                                   preview.item.type === 'video' ? (
-                                    <video src={preview.item.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                                    <video
+                                      key={preview.item.id}
+                                      ref={(el) => {
+                                        if (el) {
+                                          const diff = Math.abs(el.currentTime - preview.elapsedSeconds);
+                                          if (diff > 0.3) {
+                                            el.currentTime = preview.elapsedSeconds;
+                                          }
+                                          const state = getGridItemTimelineState(beat.id, 'collection');
+                                          if (state.status === 'past') {
+                                            if (!el.paused) el.pause();
+                                          }
+                                        }
+                                      }}
+                                      src={preview.item.previewUrl}
+                                      className="h-full w-full object-cover"
+                                      muted
+                                      playsInline
+                                      autoPlay
+                                      loop
+                                    />
                                   ) : (
-                                    <img src={preview.item.previewUrl} alt="" className="h-full w-full object-cover" />
+                                    <img
+                                      key={preview.item.id}
+                                      src={preview.item.previewUrl}
+                                      alt=""
+                                      className="h-full w-full object-cover"
+                                    />
                                   )
                                 ) : (
                                   <div className="flex h-full w-full flex-col items-center justify-center text-center text-zinc-600 transition-colors hover:bg-white/[0.03] hover:text-zinc-300">
@@ -4959,7 +6485,7 @@ function EditorInner() {
                               </button>
                               {preview?.isPlaying ? (
                                 <div className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/75 px-2 py-1 font-mono text-[10px] text-white">
-                                  {Math.floor(Math.min(preview.durationSeconds, preview.elapsedSeconds))}s / {preview.durationSeconds}s
+                                  {Math.min(preview.durationSeconds, preview.elapsedSeconds).toFixed(1)}s / {preview.durationSeconds.toFixed(1)}s
                                 </div>
                               ) : null}
                             </div>
@@ -4968,10 +6494,14 @@ function EditorInner() {
                               className="flex w-full items-center justify-between gap-2 p-2 text-left"
                               onClick={() => openBeatDetail(beat.id)}
                             >
-                              <div className="min-w-0">
+                              <div className="min-w-0 flex-1">
                                 <div className="truncate text-[11px] font-semibold text-zinc-300">{beat.name}</div>
-                                <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-700">
-                                  {beat.gridOrder.length} {beat.gridOrder.length === 1 ? 'item' : 'items'}
+                                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[9px] font-mono uppercase tracking-widest text-zinc-500">
+                                  <span>{beat.gridOrder.length} {beat.gridOrder.length === 1 ? 'item' : 'items'}</span>
+                                  <span className="text-zinc-700 font-bold">•</span>
+                                  <span className="text-white font-extrabold bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
+                                    {(getRecursiveCollectionDuration(beat) || 0).toFixed(1)}s
+                                  </span>
                                 </div>
                               </div>
                               <span className="flex items-center gap-1">
@@ -4984,26 +6514,23 @@ function EditorInner() {
                           </article>
                         );
                       })}
-                      <button
-                        type="button"
-                        style={sceneLaunchAddTileStyle}
-                        className={cn("flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-900 bg-black/50 text-zinc-600 transition-colors hover:border-zinc-700 hover:text-zinc-300", sceneLaunchTileMediaClassName)}
-                        onClick={() => openBeatUpload(activeSceneLaunchBeat.id)}
-                      >
-                        <Plus className="h-6 w-6" />
-                        <span className="mt-2 text-[10px] font-semibold uppercase tracking-widest">Add media</span>
-                      </button>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      className="flex min-h-64 w-full flex-col items-center justify-center rounded-md border border-dashed border-zinc-900 text-center text-zinc-600 transition-colors hover:border-zinc-700 hover:bg-white/[0.02] hover:text-zinc-300"
-                      onClick={() => openBeatUpload(activeSceneLaunchBeat.id)}
-                    >
-                      <Plus className="h-7 w-7" />
-                      <span className="mt-3 text-xs font-semibold uppercase tracking-widest">Upload into this collection</span>
-                      <span className="mt-2 max-w-xs text-[11px] leading-5 text-zinc-700">Drop media here, add a child collection, or click to browse.</span>
-                    </button>
+                    <div className="flex min-h-64 w-full flex-col items-center justify-center rounded-md border border-dashed border-zinc-900 text-center text-zinc-650 transition-colors">
+                      {activeSceneLaunchBeatId === 'trash' ? (
+                        <>
+                          <Trash2 className="h-7 w-7 text-zinc-700" />
+                          <span className="mt-3 text-xs font-semibold uppercase tracking-widest text-zinc-500">Trash is empty</span>
+                          <span className="mt-2 max-w-xs text-[11px] leading-5 text-zinc-700">Drag items to the Trash icon in the sidebar or right-click to delete them.</span>
+                        </>
+                      ) : (
+                        <>
+                          <Grid2X2 className="h-7 w-7 text-zinc-700" />
+                          <span className="mt-3 text-xs font-semibold uppercase tracking-widest text-zinc-500">Collection is empty</span>
+                          <span className="mt-2 max-w-xs text-[11px] leading-5 text-zinc-700">Drag and drop media here or add a child collection to begin.</span>
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
               </>
@@ -5047,26 +6574,62 @@ function EditorInner() {
                       return (
                         <article
                           key={dragKey}
+                          id={`grid-item-${dragKey}`}
                           draggable
                           onDragStart={(event) => {
                             event.dataTransfer.effectAllowed = 'move';
                             event.dataTransfer.setData('text/plain', dragKey);
                           }}
-                          onDragOver={(event) => {
-                            event.preventDefault();
-                            event.dataTransfer.dropEffect = 'move';
-                          }}
-                          onDrop={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            reorderSceneLaunchGridItem(event.dataTransfer.getData('text/plain'), dragKey);
-                          }}
+                          onDragOver={(event) => handleGridDragOver(event, dragKey, false)}
+                          onDragLeave={handleGridDragLeave}
+                          onDrop={(event) => handleGridDrop(event, dragKey, false)}
                           style={getSceneLaunchMediaTileStyle(item)}
-                          className="group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-black transition-colors hover:border-zinc-700 active:cursor-grabbing"
+                          className={cn(
+                            "group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-black transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
+                            isTimelinePlaying && activeItemKey && activeItemKey !== dragKey ? "opacity-30" : "opacity-100"
+                          )}
+                          onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
                         >
-                          <div className={sceneLaunchTileMediaClassName}>
+                          {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
+                            <div className="absolute top-0 bottom-0 left-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+                          )}
+                          {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'after' && (
+                            <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+                          )}
+                          <div className="overflow-hidden relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
                             {item.type === 'video' ? (
-                              <video src={item.previewUrl} className="h-full w-full object-cover" muted playsInline controls />
+                              <video
+                                ref={(el) => {
+                                  if (el) {
+                                    const state = getGridItemTimelineState(item.id, 'media');
+                                    if (state.status === 'idle') {
+                                      el.currentTime = 0;
+                                      if (!el.paused) el.pause();
+                                    } else if (state.status === 'past') {
+                                      el.currentTime = state.duration;
+                                      if (!el.paused) el.pause();
+                                    } else if (state.status === 'future') {
+                                      el.currentTime = 0;
+                                      if (!el.paused) el.pause();
+                                    } else if (state.status === 'active') {
+                                      const diff = Math.abs(el.currentTime - state.elapsed);
+                                      if (diff > 0.3) {
+                                        el.currentTime = state.elapsed;
+                                      }
+                                      if (el.paused && isTimelinePlaying) {
+                                        el.play().catch(() => {});
+                                      } else if (!el.paused && !isTimelinePlaying) {
+                                        el.pause();
+                                      }
+                                    }
+                                  }
+                                }}
+                                src={item.previewUrl}
+                                className="h-full w-full object-cover"
+                                muted
+                                playsInline
+                                controls
+                              />
                             ) : (
                               <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
                             )}
@@ -5076,8 +6639,8 @@ function EditorInner() {
                               <div className="truncate text-[11px] font-semibold text-zinc-300">{item.name}</div>
                               <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-700">{item.type}</div>
                             </div>
-                            {item.type === 'image' ? (
-                              <label className="flex shrink-0 items-center gap-1 rounded bg-zinc-950 px-1.5 py-1 text-[9px] font-mono uppercase tracking-widest text-zinc-500">
+                            {item.type === 'image' || item.type === 'video' ? (
+                              <label className="flex h-8 shrink-0 items-center gap-1 rounded border border-zinc-900 bg-zinc-950 px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-zinc-400 transition-colors hover:bg-zinc-900 focus-within:border-zinc-700 cursor-pointer select-none">
                                 <input
                                   type="number"
                                   min={1}
@@ -5085,8 +6648,8 @@ function EditorInner() {
                                   value={item.durationSeconds ?? 3}
                                   onClick={(event) => event.stopPropagation()}
                                   onPointerDown={(event) => event.stopPropagation()}
-                                  onChange={(event) => updateSceneLaunchImageDuration(item.id, Number(event.target.value))}
-                                  className="h-4 w-8 bg-transparent text-right text-[10px] text-zinc-300 outline-none"
+                                  onChange={(event) => updateSceneLaunchMediaDuration(item.id, Number(event.target.value))}
+                                  className="h-5 w-9 bg-transparent text-right text-[11px] font-semibold text-zinc-200 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                   aria-label={`${item.name} duration in seconds`}
                                 />
                                 s
@@ -5103,16 +6666,15 @@ function EditorInner() {
                     return (
                       <article
                         key={dragKey}
+                        id={`grid-item-${dragKey}`}
                         draggable
                         onDragStart={(event) => {
                           event.dataTransfer.effectAllowed = 'move';
                           event.dataTransfer.setData('text/plain', dragKey);
                         }}
-                        onDragOver={(event) => {
-                          event.preventDefault();
-                          event.dataTransfer.dropEffect = 'move';
-                        }}
-                        onDrop={(event) => handleCollectionGridDrop(event, beat.id, dragKey)}
+                        onDragOver={(event) => handleGridDragOver(event, dragKey, true)}
+                        onDragLeave={handleGridDragLeave}
+                        onDrop={(event) => handleGridDrop(event, dragKey, true)}
                         onMouseEnter={() => setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: Date.now() })}
                         onMouseLeave={() => setSceneLaunchPreviewHover(previous => (
                           previous?.collectionId === beat.id ? null : previous
@@ -5122,15 +6684,22 @@ function EditorInner() {
                           previous?.collectionId === beat.id ? null : previous
                         ))}
                         style={getSceneLaunchCollectionTileStyle()}
-                        className="group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/80 transition-colors hover:border-zinc-700 active:cursor-grabbing"
+                        className={cn(
+                          "group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/80 transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
+                          isTimelinePlaying && activeItemKey && activeItemKey !== dragKey ? "opacity-30" : "opacity-100",
+                          gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'inside' && "ring-2 ring-indigo-500 border-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.3)]"
+                        )}
+                        onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
                       >
+                        {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
+                          <div className="absolute top-0 bottom-0 left-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+                        )}
+                        {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'after' && (
+                          <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+                        )}
                         <div
-                          className={cn("relative bg-black", sceneLaunchTileMediaClassName)}
-                          onDragOver={(event) => {
-                            event.preventDefault();
-                            event.dataTransfer.dropEffect = 'move';
-                          }}
-                          onDrop={(event) => handleCollectionGridDrop(event, beat.id, dragKey)}
+                          className="relative bg-black overflow-hidden h-36 sm:h-40 lg:h-44"
+                          style={getSceneLaunchMediaPreviewStyle()}
                         >
                           <button
                             type="button"
@@ -5140,9 +6709,34 @@ function EditorInner() {
                           >
                             {preview ? (
                               preview.item.type === 'video' ? (
-                                <video src={preview.item.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                                <video
+                                  key={preview.item.id}
+                                  ref={(el) => {
+                                    if (el) {
+                                      const diff = Math.abs(el.currentTime - preview.elapsedSeconds);
+                                      if (diff > 0.3) {
+                                        el.currentTime = preview.elapsedSeconds;
+                                      }
+                                      const state = getGridItemTimelineState(beat.id, 'collection');
+                                      if (state.status === 'past') {
+                                        if (!el.paused) el.pause();
+                                      }
+                                    }
+                                  }}
+                                  src={preview.item.previewUrl}
+                                  className="h-full w-full object-cover"
+                                  muted
+                                  playsInline
+                                  autoPlay
+                                  loop
+                                />
                               ) : (
-                                <img src={preview.item.previewUrl} alt="" className="h-full w-full object-cover" />
+                                <img
+                                  key={preview.item.id}
+                                  src={preview.item.previewUrl}
+                                  alt=""
+                                  className="h-full w-full object-cover"
+                                />
                               )
                             ) : (
                               <div className="flex h-full w-full flex-col items-center justify-center text-center text-zinc-600 transition-colors hover:bg-white/[0.03] hover:text-zinc-300">
@@ -5153,31 +6747,23 @@ function EditorInner() {
                           </button>
                           {preview?.isPlaying ? (
                             <div className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/75 px-2 py-1 font-mono text-[10px] text-white">
-                              {Math.floor(Math.min(preview.durationSeconds, preview.elapsedSeconds))}s / {preview.durationSeconds}s
+                              {Math.min(preview.durationSeconds, preview.elapsedSeconds).toFixed(1)}s / {preview.durationSeconds.toFixed(1)}s
                             </div>
                           ) : null}
-
-                          <button
-                            type="button"
-                            className="absolute inset-x-3 bottom-3 flex h-8 items-center justify-center rounded-full bg-black/75 px-3 text-[10px] font-semibold uppercase tracking-widest text-zinc-200 opacity-0 backdrop-blur transition-opacity hover:bg-zinc-900 group-hover:opacity-100 focus-visible:opacity-100"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openBeatUpload(beat.id);
-                            }}
-                          >
-                            <Plus className="mr-1.5 h-3.5 w-3.5" />
-                            Add media
-                          </button>
                         </div>
                         <button
                           type="button"
                           className="flex w-full items-center justify-between gap-2 p-2 text-left"
                           onClick={() => openBeatDetail(beat.id)}
                         >
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="truncate text-[11px] font-semibold text-zinc-300">{beat.name}</div>
-                            <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-700">
-                              {beat.gridOrder.length} {beat.gridOrder.length === 1 ? 'item' : 'items'}
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[9px] font-mono uppercase tracking-widest text-zinc-500">
+                              <span>{beat.gridOrder.length} {beat.gridOrder.length === 1 ? 'item' : 'items'}</span>
+                              <span className="text-zinc-700 font-bold">•</span>
+                              <span className="text-white font-extrabold bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
+                                {(getRecursiveCollectionDuration(beat) || 0).toFixed(1)}s
+                              </span>
                             </div>
                           </div>
                           <span className="flex items-center gap-1">
@@ -5193,8 +6779,8 @@ function EditorInner() {
 
                   <button
                     type="button"
-                    style={sceneLaunchAddTileStyle}
-                    className={cn("flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-900 bg-zinc-950/40 text-zinc-600 transition-colors hover:border-zinc-700 hover:bg-zinc-950 hover:text-zinc-300", sceneLaunchTileMediaClassName)}
+                    style={getSceneLaunchCollectionTileStyle()}
+                    className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-900 bg-zinc-950/40 text-zinc-600 transition-colors hover:border-zinc-700 hover:bg-zinc-950 hover:text-zinc-300 h-36 sm:h-40 lg:h-44"
                     onClick={createSceneLaunchBeat}
                   >
                     <Plus className="h-6 w-6" />
@@ -5207,78 +6793,67 @@ function EditorInner() {
 
         </main>
 
-        <form
-          className="absolute bottom-6 left-1/2 z-20 flex w-[min(92vw,42rem)] -translate-x-1/2 flex-col rounded-2xl border border-white/10 bg-zinc-900/90 p-3 shadow-2xl shadow-black/50"
-          onSubmit={(event) => {
-            event.preventDefault();
-            createSceneFromComposer();
-          }}
-        >
-          <input
-            value={sceneComposerText}
-            onChange={(event) => setSceneComposerText(event.target.value)}
-            className="h-9 bg-transparent px-1 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
-            placeholder="What scene do you want to create?"
-          />
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 rounded-full text-zinc-400 hover:bg-white/5 hover:text-white"
-                onClick={() => handleAddClipClick('video')}
-                title="Add video"
-                aria-label="Add video"
-              >
-                <Plus className="h-5 w-5" />
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="h-8 rounded-full bg-white px-4 text-xs font-semibold text-black hover:bg-zinc-200"
-                onClick={() => setActiveTab('analyze')}
-              >
-                Agent
-              </Button>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 rounded-full text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
-                onClick={() => handleAddClipClick('image')}
-                title="Add image"
-                aria-label="Add image"
-              >
-                <ImageIcon className="h-4 w-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 rounded-full text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
-                onClick={() => setActiveTab('settings')}
-                title="Scene controls"
-                aria-label="Scene controls"
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-              </Button>
-              <Button
-                type="submit"
-                size="icon"
-                className="h-9 w-9 rounded-full bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white"
-                title="Create scene"
-                aria-label="Create scene"
-              >
-                <ChevronRight className="h-5 w-5" />
-              </Button>
-            </div>
-          </div>
-        </form>
+        {renderSceneLaunchTimeline()}
       </div>
+
+      <DropdownMenu
+        open={!!sceneLaunchContextMenu}
+        onOpenChange={(open) => !open && setSceneLaunchContextMenu(null)}
+      >
+        {sceneLaunchContextMenu && (
+          <DropdownMenuTrigger
+            style={{
+              position: 'fixed',
+              left: sceneLaunchContextMenu.x,
+              top: sceneLaunchContextMenu.y,
+              width: 1,
+              height: 1,
+              opacity: 0,
+              pointerEvents: 'none'
+            }}
+          />
+        )}
+        <DropdownMenuContent align="start" className="w-40 bg-[#111114] border-zinc-800 text-zinc-300 z-50">
+          {activeSceneLaunchBeatId === 'trash' ? (
+            <>
+              <DropdownMenuItem
+                onClick={() => {
+                  if (sceneLaunchContextMenu) {
+                    restoreItemFromTrash(sceneLaunchContextMenu.dragKey);
+                  }
+                }}
+                className="gap-2 focus:bg-zinc-800 focus:text-white cursor-pointer"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Restore Item
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  if (sceneLaunchContextMenu) {
+                    permanentlyDeleteItem(sceneLaunchContextMenu.dragKey);
+                  }
+                }}
+                className="gap-2 focus:bg-red-950/70 focus:text-red-200 text-red-400 cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete Permanently
+              </DropdownMenuItem>
+            </>
+          ) : (
+            <DropdownMenuItem
+              onClick={() => {
+                if (sceneLaunchContextMenu) {
+                  moveItemToTrash(sceneLaunchContextMenu.dragKey);
+                }
+              }}
+              className="gap-2 focus:bg-zinc-800 focus:text-white cursor-pointer"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Move to Trash
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 

@@ -6,6 +6,8 @@ export const aspectRatioOptions = {
   '16:9': { css: '16 / 9', factor: 16 / 9 },
   '4:3': { css: '4 / 3', factor: 4 / 3 },
   '21:9': { css: '21 / 9', factor: 21 / 9 },
+  '1:1': { css: '1 / 1', factor: 1 / 1 },
+  '9:16': { css: '9 / 16', factor: 9 / 16 },
 } as const;
 
 export type AspectRatioKey = keyof typeof aspectRatioOptions;
