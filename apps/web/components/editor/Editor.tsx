@@ -33,6 +33,7 @@ import {
   MapPin,
   GripVertical,
   Plus,
+  ChevronLeft,
   ChevronRight,
   UserCircle,
   Loader2,
@@ -2189,6 +2190,7 @@ function EditorInner() {
     durationSeconds?: number;
     trimStartSeconds?: number;
     mediaDurationSeconds?: number;
+    fileSize?: number;
   }>>([]);
   const [sceneLaunchBeats, setSceneLaunchBeats] = React.useState<Array<{
     id: string;
@@ -2201,6 +2203,7 @@ function EditorInner() {
       durationSeconds?: number;
       trimStartSeconds?: number;
       mediaDurationSeconds?: number;
+      fileSize?: number;
     }>;
     childIds: string[];
     gridOrder: Array<{
@@ -2216,6 +2219,9 @@ function EditorInner() {
   const [sceneLaunchBeatPath, setSceneLaunchBeatPath] = React.useState<string[]>([]);
   const [hasLoadedSceneLaunchBoard, setHasLoadedSceneLaunchBoard] = React.useState(false);
   const [sceneLaunchPreviewHover, setSceneLaunchPreviewHover] = React.useState<{ collectionId: string; startedAt: number } | null>(null);
+  const [sceneLaunchManuallyPaused, setSceneLaunchManuallyPaused] = React.useState<string | null>(null);
+  const [sceneLaunchPreviewPausedOffset, setSceneLaunchPreviewPausedOffset] = React.useState<number>(0);
+  const [collectionScrubbingId, setCollectionScrubbingId] = React.useState<string | null>(null);
   const [sceneLaunchPreviewNow, setSceneLaunchPreviewNow] = React.useState(() => Date.now());
   const [sceneLaunchContextMenu, setSceneLaunchContextMenu] = React.useState<{ dragKey: string; x: number; y: number } | null>(null);
   const [pxPerSecond, setPxPerSecond] = React.useState(20);
@@ -4324,6 +4330,7 @@ function EditorInner() {
         type: isVideo ? 'video' as const : 'image' as const,
         previewUrl: await readSceneLaunchFilePreview(file),
         durationSeconds,
+        fileSize: file.size,
       };
     }));
 
@@ -4408,6 +4415,7 @@ function EditorInner() {
         type: isVideo ? 'video' as const : 'image' as const,
         previewUrl: await readSceneLaunchFilePreview(file),
         durationSeconds,
+        fileSize: file.size,
       };
     }));
 
@@ -4495,6 +4503,16 @@ function EditorInner() {
     return {
       width: '100%',
     };
+  };
+
+  const formatFileSize = (item: { type: 'image' | 'video'; fileSize?: number }) => {
+    if (item.fileSize) {
+      if (item.fileSize >= 1024 * 1024) {
+        return `${(item.fileSize / (1024 * 1024)).toFixed(1)} MB`;
+      }
+      return `${(item.fileSize / 1024).toFixed(0)} KB`;
+    }
+    return item.type === 'video' ? '4.5 MB' : '320 KB';
   };
 
   const getSceneLaunchMediaPreviewDuration = (item: typeof sceneLaunchMediaItems[number]) => (
@@ -4686,18 +4704,9 @@ function EditorInner() {
     if (orderedMediaItems.length === 0) return null;
 
     const firstItem = orderedMediaItems[0];
-    const isHoverActive = sceneLaunchPreviewHover?.collectionId === collection.id;
+    const isHoverActive = sceneLaunchPreviewHover?.collectionId === collection.id && sceneLaunchManuallyPaused !== collection.id;
     const timelineState = getGridItemTimelineState(collection.id, 'collection');
     const isPlaying = isHoverActive || timelineState.status !== 'idle';
-
-    if (!isPlaying) {
-      return {
-        item: firstItem,
-        elapsedSeconds: 0,
-        durationSeconds: getSceneLaunchMediaPreviewDuration(firstItem),
-        isPlaying,
-      };
-    }
 
     const totalDuration = orderedMediaItems.reduce((total, item) => (
       total + getSceneLaunchMediaPreviewDuration(item)
@@ -4706,6 +4715,9 @@ function EditorInner() {
     let elapsed = 0;
     if (isHoverActive) {
       elapsed = ((sceneLaunchPreviewNow - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration;
+    } else if (sceneLaunchManuallyPaused === collection.id) {
+      elapsed = sceneLaunchPreviewPausedOffset % totalDuration;
+      console.log('[getSceneLaunchCollectionPreview]', collection.name, 'paused elapsed:', elapsed, 'offset:', sceneLaunchPreviewPausedOffset, 'totalDuration:', totalDuration);
     } else {
       if (timelineState.status === 'past') {
         elapsed = totalDuration - 0.001;
@@ -4714,19 +4726,26 @@ function EditorInner() {
       } else {
         elapsed = 0; // future
       }
+      console.log('[getSceneLaunchCollectionPreview]', collection.name, 'timeline elapsed:', elapsed, 'status:', timelineState.status, 'totalDuration:', totalDuration);
     }
 
+    const totalElapsed = elapsed;
+
+    let accum = 0;
     for (const item of orderedMediaItems) {
       const durationSeconds = getSceneLaunchMediaPreviewDuration(item);
-      if (elapsed < durationSeconds) {
+      if (elapsed >= accum - 0.001 && elapsed < accum + durationSeconds - 0.001) {
         return {
           item,
-          elapsedSeconds: elapsed,
+          elapsedSeconds: Math.max(0, elapsed - accum),
           durationSeconds,
           isPlaying,
+          totalElapsedSeconds: totalElapsed,
+          totalDurationSeconds: totalDuration,
+          itemStartOffset: accum,
         };
       }
-      elapsed -= durationSeconds;
+      accum += durationSeconds;
     }
 
     const lastItem = orderedMediaItems[orderedMediaItems.length - 1];
@@ -4735,7 +4754,104 @@ function EditorInner() {
       elapsedSeconds: getSceneLaunchMediaPreviewDuration(lastItem) - 0.001,
       durationSeconds: getSceneLaunchMediaPreviewDuration(lastItem),
       isPlaying,
+      totalElapsedSeconds: totalElapsed,
+      totalDurationSeconds: totalDuration,
+      itemStartOffset: totalDuration - getSceneLaunchMediaPreviewDuration(lastItem),
     };
+  };
+
+  const syncTimelinePlayheadToCollectionPreview = (beatId: string, elapsedSeconds: number) => {
+    const getNestedCollectionOffset = (
+      parent: typeof sceneLaunchBeats[number],
+      targetId: string,
+      visited = new Set<string>()
+    ): number | null => {
+      if (visited.has(parent.id)) return null;
+      visited.add(parent.id);
+
+      let relTime = 0;
+      for (const g of parent.gridOrder) {
+        if (g.type === 'media') {
+          const m = parent.items.find(x => x.id === g.id);
+          const d = (resizingItem && resizingItem.id === g.id)
+            ? resizingItem.currentDuration
+            : (m?.durationSeconds || 3);
+          relTime += d;
+        } else {
+          if (g.id === targetId) {
+            return relTime;
+          }
+          const child = sceneLaunchBeats.find(b => b.id === g.id);
+          if (child) {
+            const res = getNestedCollectionOffset(child, targetId, visited);
+            if (res !== null) {
+              return relTime + res;
+            }
+            relTime += getRecursiveCollectionDuration(child);
+          }
+        }
+      }
+      return null;
+    };
+
+    let startTime = 0;
+    let found = false;
+    let offsetInParent = 0;
+
+    for (const item of timelineItems) {
+      if (item.type === 'collection') {
+        if (item.collection.id === beatId) {
+          found = true;
+          offsetInParent = 0;
+          break;
+        }
+        const relOffset = getNestedCollectionOffset(item.collection, beatId);
+        if (relOffset !== null) {
+          found = true;
+          offsetInParent = relOffset;
+          break;
+        }
+      }
+
+      if (item.type === 'media') {
+        startTime += item.item.durationSeconds || 3;
+      } else {
+        startTime += getRecursiveCollectionDuration(item.collection) || 3;
+      }
+    }
+
+    if (found) {
+      const nextTime = startTime + offsetInParent + elapsedSeconds;
+      setTimelineCurrentTime(nextTime);
+      currentTimeRef.current = nextTime;
+    }
+  };
+
+  const changeCollectionPreviewItem = (beat: typeof sceneLaunchBeats[number], direction: 'next' | 'prev') => {
+    const orderedMediaItems = getRecursiveMediaItems(beat);
+    if (orderedMediaItems.length === 0) return;
+
+    const preview = getSceneLaunchCollectionPreview(beat);
+    const currentIndex = preview ? orderedMediaItems.findIndex(x => x.id === preview.item.id) : 0;
+    const activeIndex = currentIndex !== -1 ? currentIndex : 0;
+
+    let newIndex = 0;
+    if (direction === 'next') {
+      newIndex = (activeIndex + 1) % orderedMediaItems.length;
+    } else {
+      newIndex = (activeIndex - 1 + orderedMediaItems.length) % orderedMediaItems.length;
+    }
+
+    let targetStartOffset = 0;
+    for (let j = 0; j < newIndex; j++) {
+      targetStartOffset += getSceneLaunchMediaPreviewDuration(orderedMediaItems[j]);
+    }
+
+    setSceneLaunchManuallyPaused(beat.id);
+    setSceneLaunchPreviewPausedOffset(targetStartOffset);
+
+    // Sync timeline playhead if this collection or any parent is on the timeline
+    syncTimelinePlayheadToCollectionPreview(beat.id, targetStartOffset);
   };
 
   const updateSceneLaunchMediaDuration = (mediaId: string, durationSeconds: number) => {
@@ -5501,45 +5617,30 @@ function EditorInner() {
 
   React.useEffect(() => {
     if (!sceneLaunchPreviewHover) {
-      if (!isTimelinePlaying && !isScrubbing) {
-        setTimelineCurrentTime(0);
-        currentTimeRef.current = 0;
-      }
       return;
     }
 
     let frameId: number;
     const tick = () => {
       const now = Date.now();
-      setSceneLaunchPreviewNow(now);
-
       const hoveredId = sceneLaunchPreviewHover.collectionId;
+      const isPaused = sceneLaunchManuallyPaused === hoveredId;
+
+      if (!isPaused) {
+        setSceneLaunchPreviewNow(now);
+      }
+
       const hoveredBeat = sceneLaunchBeats.find(b => b.id === hoveredId);
       if (hoveredBeat && !isTimelinePlaying && !isScrubbing) {
         const mediaItems = getRecursiveMediaItems(hoveredBeat);
         const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
         if (totalDuration > 0) {
-          const elapsed = ((now - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration;
+          const elapsed = isPaused 
+            ? sceneLaunchPreviewPausedOffset % totalDuration
+            : ((now - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration;
           
-          let startTime = 0;
-          let found = false;
-          for (const item of timelineItems) {
-            if (item.type === 'collection' && item.collection.id === hoveredId) {
-              found = true;
-              break;
-            }
-            if (item.type === 'media') {
-              startTime += item.item.durationSeconds || 3;
-            } else {
-              startTime += getRecursiveCollectionDuration(item.collection) || 3;
-            }
-          }
-          
-          if (found) {
-            const nextTime = startTime + elapsed;
-            setTimelineCurrentTime(nextTime);
-            currentTimeRef.current = nextTime;
-          }
+          // Sync timeline playhead if this collection or any parent is on the timeline
+          syncTimelinePlayheadToCollectionPreview(hoveredId, elapsed);
         }
       }
 
@@ -5548,7 +5649,7 @@ function EditorInner() {
 
     frameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frameId);
-  }, [sceneLaunchPreviewHover, isTimelinePlaying, isScrubbing, timelineItems, sceneLaunchBeats]);
+  }, [sceneLaunchPreviewHover, isTimelinePlaying, isScrubbing, timelineItems, sceneLaunchBeats, sceneLaunchManuallyPaused, sceneLaunchPreviewPausedOffset]);
 
   React.useEffect(() => {
     if (!isTimelinePlaying) return;
@@ -5699,7 +5800,16 @@ function EditorInner() {
             </button>
             <button
               type="button"
-              onClick={() => setIsTimelinePlaying(!isTimelinePlaying)}
+              onClick={() => {
+                const nextPlaying = !isTimelinePlaying;
+                setIsTimelinePlaying(nextPlaying);
+                if (nextPlaying) {
+                  setTimelineCurrentTime(0);
+                  currentTimeRef.current = 0;
+                  setSceneLaunchPreviewPausedOffset(0);
+                  setSceneLaunchManuallyPaused(null);
+                }
+              }}
               className={cn(
                 "flex h-7 w-7 items-center justify-center rounded-full transition-all text-white shadow-md cursor-pointer",
                 isTimelinePlaying ? "bg-red-650 hover:bg-red-700 animate-pulse" : "bg-indigo-600 hover:bg-indigo-700"
@@ -6338,7 +6448,7 @@ function EditorInner() {
                               {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'after' && (
                                 <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
                               )}
-                              <div className="overflow-hidden relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
+                              <div className="relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
                                 {item.type === 'video' ? (
                                   <video
                                  ref={(el) => {
@@ -6382,29 +6492,44 @@ function EditorInner() {
                                 ) : (
                                   <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
                                 )}
-                              </div>
-                              <div className="flex items-center justify-between gap-2 p-2">
-                                <div className="min-w-0">
-                                  <div className="truncate text-[11px] font-semibold text-zinc-300">{item.name}</div>
-                                  <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-700">{item.type}</div>
+                                <div className="absolute top-2 right-2 z-20 flex h-7 items-center justify-end rounded-full border border-zinc-800 bg-zinc-950/90 text-zinc-450 shadow-md backdrop-blur-[2px] transition-all duration-300 w-7 hover:w-max max-w-[28px] hover:max-w-[120px] hover:pl-2.5 pr-[7px] group/sizeicon cursor-default overflow-hidden">
+                                  <span className="font-sans text-[10px] font-semibold select-none text-zinc-200 hidden group-hover/sizeicon:inline whitespace-nowrap pr-2">
+                                    {formatFileSize(item)}
+                                  </span>
+                                  {item.type === 'video' ? (
+                                    <Video className="h-3.5 w-3.5 shrink-0" />
+                                  ) : (
+                                    <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+                                  )}
                                 </div>
-                                {item.type === 'image' || item.type === 'video' ? (
-                                  <label className="flex h-8 shrink-0 items-center gap-1 rounded border border-zinc-900 bg-zinc-950 px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-zinc-400 transition-colors hover:bg-zinc-900 focus-within:border-zinc-700 cursor-pointer select-none">
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={60}
-                                      value={item.durationSeconds ?? 3}
-                                      onClick={(event) => event.stopPropagation()}
-                                      onPointerDown={(event) => event.stopPropagation()}
-                                      onChange={(event) => updateSceneLaunchMediaDuration(item.id, Number(event.target.value))}
-                                      className="h-5 w-9 bg-transparent text-right text-[11px] font-semibold text-zinc-200 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                      aria-label={`${item.name} duration in seconds`}
-                                    />
-                                    s
-                                  </label>
-                                ) : null}
-                                <GripVertical className="h-3.5 w-3.5 shrink-0 text-zinc-700 group-hover:text-zinc-400" />
+                              </div>
+                              <div className="flex items-center justify-between gap-2 p-2.5">
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-sm font-bold text-zinc-200">{item.name}</div>
+                                  <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500 font-mono tracking-wider uppercase">
+                                    <span>{item.type}</span>
+                                    {(item.type === 'image' || item.type === 'video') && (
+                                      <>
+                                        <span className="text-zinc-700 font-bold select-none">•</span>
+                                        <label className="flex items-center gap-0.5 text-[11px] font-mono text-zinc-400 hover:text-zinc-200 transition-colors focus-within:text-indigo-400 cursor-pointer">
+                                          <input
+                                            type="number"
+                                            min={1}
+                                            max={60}
+                                            value={item.durationSeconds ?? 3}
+                                            onClick={(event) => event.stopPropagation()}
+                                            onPointerDown={(event) => event.stopPropagation()}
+                                            onChange={(event) => updateSceneLaunchMediaDuration(item.id, Number(event.target.value))}
+                                            className="h-4 w-6 bg-transparent text-right text-[11px] font-bold text-zinc-300 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus:text-indigo-400"
+                                            aria-label={`${item.name} duration in seconds`}
+                                          />
+                                          <span className="text-zinc-500 select-none">s</span>
+                                        </label>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                                <GripVertical className="h-4.5 w-4.5 shrink-0 text-zinc-500 group-hover:text-zinc-300" />
                               </div>
                             </article>
                           );
@@ -6412,6 +6537,9 @@ function EditorInner() {
 
                         const beat = gridItem.collection;
                         const preview = getSceneLaunchCollectionPreview(beat);
+                        const orderedMediaItems = getRecursiveMediaItems(beat);
+                        const totalItems = orderedMediaItems.length;
+                        const activeItemIndex = preview ? orderedMediaItems.findIndex(x => x.id === preview.item.id) + 1 : 0;
                         return (
                           <article
                             key={dragKey}
@@ -6424,14 +6552,6 @@ function EditorInner() {
                             onDragOver={(event) => handleGridDragOver(event, dragKey, true)}
                             onDragLeave={handleGridDragLeave}
                             onDrop={(event) => handleGridDrop(event, dragKey, true)}
-                            onMouseEnter={() => setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: Date.now() })}
-                            onMouseLeave={() => setSceneLaunchPreviewHover(previous => (
-                              previous?.collectionId === beat.id ? null : previous
-                            ))}
-                            onFocus={() => setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: Date.now() })}
-                            onBlur={() => setSceneLaunchPreviewHover(previous => (
-                              previous?.collectionId === beat.id ? null : previous
-                            ))}
                             style={getSceneLaunchCollectionTileStyle()}
                             className={cn(
                               "group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/80 transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
@@ -6447,7 +6567,7 @@ function EditorInner() {
                               <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
                             )}
                             <div
-                              className="relative bg-black overflow-hidden h-36 sm:h-40 lg:h-44"
+                              className="relative bg-black h-36 sm:h-40 lg:h-44"
                               style={getSceneLaunchMediaPreviewStyle()}
                             >
                               <button
@@ -6462,12 +6582,12 @@ function EditorInner() {
                                       key={preview.item.id}
                                       ref={(el) => {
                                         if (el) {
-                                          const diff = Math.abs(el.currentTime - preview.elapsedSeconds);
-                                          const threshold = (isTimelinePlaying || sceneLaunchPreviewHover?.collectionId === beat.id) ? 1.0 : 0.05;
-                                          if (diff > threshold) {
-                                            el.currentTime = preview.elapsedSeconds;
-                                          }
                                           if (preview.isPlaying) {
+                                            const diff = Math.abs(el.currentTime - preview.elapsedSeconds);
+                                            const threshold = (isTimelinePlaying || sceneLaunchPreviewHover?.collectionId === beat.id) ? 1.0 : 0.05;
+                                            if (diff > threshold) {
+                                              el.currentTime = preview.elapsedSeconds;
+                                            }
                                             if (el.paused) {
                                               if (Math.abs(el.currentTime - preview.elapsedSeconds) > 0.1) {
                                                 el.currentTime = preview.elapsedSeconds;
@@ -6478,6 +6598,7 @@ function EditorInner() {
                                             if (!el.paused) {
                                               el.pause();
                                             }
+                                            el.currentTime = preview.elapsedSeconds;
                                           }
                                         }
                                       }}
@@ -6502,34 +6623,245 @@ function EditorInner() {
                                   </div>
                                 )}
                               </button>
-                              {preview?.isPlaying ? (
-                                <div className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/75 px-2 py-1 font-mono text-[10px] text-white">
-                                  {Math.min(preview.durationSeconds, preview.elapsedSeconds).toFixed(1)}s / {preview.durationSeconds.toFixed(1)}s
+                              {preview ? (
+                                <button
+                                  type="button"
+                                  onMouseEnter={() => {
+                                    if (collectionScrubbingId) return;
+                                    setSceneLaunchPreviewHover(prev => {
+                                      if (prev?.collectionId === beat.id) return prev;
+                                      const isResuming = sceneLaunchManuallyPaused === beat.id;
+                                      const offset = isResuming ? sceneLaunchPreviewPausedOffset : 0;
+                                      setSceneLaunchManuallyPaused(null);
+                                      if (!isResuming) {
+                                        setSceneLaunchPreviewPausedOffset(0);
+                                      }
+                                      const startedAt = Date.now() - (offset * 1000);
+                                      return { collectionId: beat.id, startedAt };
+                                    });
+                                  }}
+                                  onMouseLeave={() => {
+                                    if (collectionScrubbingId) return;
+                                    if (preview) {
+                                      if (sceneLaunchManuallyPaused !== beat.id) {
+                                        const mediaItems = getRecursiveMediaItems(beat);
+                                        const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
+                                        const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
+                                          ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
+                                          : 0;
+                                        setSceneLaunchPreviewPausedOffset(currentElapsed);
+                                        setSceneLaunchManuallyPaused(beat.id);
+                                      }
+                                    }
+                                    setSceneLaunchPreviewHover(previous => (
+                                      previous?.collectionId === beat.id ? null : previous
+                                    ));
+                                  }}
+                                  onFocus={() => {
+                                    if (collectionScrubbingId) return;
+                                    setSceneLaunchPreviewHover(prev => {
+                                      if (prev?.collectionId === beat.id) return prev;
+                                      const isResuming = sceneLaunchManuallyPaused === beat.id;
+                                      const offset = isResuming ? sceneLaunchPreviewPausedOffset : 0;
+                                      setSceneLaunchManuallyPaused(null);
+                                      if (!isResuming) {
+                                        setSceneLaunchPreviewPausedOffset(0);
+                                      }
+                                      const startedAt = Date.now() - (offset * 1000);
+                                      return { collectionId: beat.id, startedAt };
+                                    });
+                                  }}
+                                  onBlur={() => {
+                                    if (collectionScrubbingId) return;
+                                    if (preview) {
+                                      if (sceneLaunchManuallyPaused !== beat.id) {
+                                        const mediaItems = getRecursiveMediaItems(beat);
+                                        const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
+                                        const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
+                                          ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
+                                          : 0;
+                                        setSceneLaunchPreviewPausedOffset(currentElapsed);
+                                        setSceneLaunchManuallyPaused(beat.id);
+                                      }
+                                    }
+                                    setSceneLaunchPreviewHover(previous => (
+                                      previous?.collectionId === beat.id ? null : previous
+                                    ));
+                                  }}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    if (preview.isPlaying) {
+                                      const mediaItems = getRecursiveMediaItems(beat);
+                                      const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
+                                      const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
+                                        ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
+                                        : 0;
+                                      
+                                      setSceneLaunchPreviewPausedOffset(currentElapsed);
+                                      setSceneLaunchManuallyPaused(beat.id);
+
+                                      const video = event.currentTarget.parentElement?.querySelector('video');
+                                      if (video) {
+                                        video.pause();
+                                      }
+                                    } else {
+                                      const resumedStartedAt = Date.now() - (sceneLaunchPreviewPausedOffset * 1000);
+                                      setSceneLaunchManuallyPaused(null);
+                                      setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: resumedStartedAt });
+                                    }
+                                  }}
+                                  className={cn(
+                                    "absolute top-2 right-2 z-20 flex h-7 items-center justify-center border border-zinc-800 bg-zinc-950/90 text-zinc-300 shadow-md backdrop-blur-[2px] transition-all cursor-pointer hover:border-zinc-600 hover:bg-zinc-900 hover:scale-105 outline-none p-0",
+                                    preview.isPlaying 
+                                      ? "rounded-full px-2.5 gap-1.5 border-indigo-500/80 bg-zinc-950" 
+                                      : "w-7 h-7 rounded-full"
+                                  )}
+                                >
+                                  {preview.isPlaying ? (
+                                    <>
+                                      <span className="font-mono text-[10px] select-none text-zinc-300">
+                                        {Math.min(preview.durationSeconds, preview.elapsedSeconds).toFixed(1)}s / {preview.durationSeconds.toFixed(1)}s
+                                      </span>
+                                      <Pause className="h-3 w-3 animate-pulse text-indigo-400 fill-current" />
+                                    </>
+                                  ) : (
+                                    <Play className="h-3 w-3 fill-current text-zinc-350 ml-0.5" />
+                                  )}
+                                </button>
+                              ) : null}
+                              {preview ? (
+                                <div 
+                                  className={cn(
+                                    "absolute bottom-0 left-0 right-0 h-[3px] z-30 transition-opacity duration-300 pointer-events-none progress-bar-container",
+                                    (preview.isPlaying || sceneLaunchPreviewHover?.collectionId === beat.id || (sceneLaunchManuallyPaused === beat.id && sceneLaunchPreviewPausedOffset > 0)) ? "opacity-100" : "opacity-0"
+                                  )}
+                                >
+                                  <div className="w-full h-full bg-zinc-950/40 relative">
+                                    <div 
+                                      className="h-full bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.6)] relative"
+                                      style={{ 
+                                        width: `${(Math.min(preview.durationSeconds, preview.elapsedSeconds) / (preview.durationSeconds || 1) * 100).toFixed(1)}%` 
+                                      }}
+                                    >
+                                      {sceneLaunchManuallyPaused === beat.id && (
+                                        <div 
+                                          className="absolute left-full top-[1.5px] -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)] z-40 cursor-grab active:cursor-grabbing pointer-events-auto transition-transform hover:scale-125"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                          }}
+                                          onPointerDown={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            e.currentTarget.setPointerCapture(e.pointerId);
+                                            setCollectionScrubbingId(beat.id);
+                                            
+                                            const itemDuration = preview.durationSeconds;
+                                            const startOffset = preview.itemStartOffset ?? 0;
+
+                                            const container = e.currentTarget.closest('.progress-bar-container');
+                                            if (!container) return;
+                                            const rect = container.getBoundingClientRect();
+                                            const offsetX = e.clientX - rect.left;
+                                            const percent = Math.max(0, Math.min(1, offsetX / rect.width));
+                                            const newElapsed = startOffset + Math.max(0, Math.min(itemDuration - 0.001, percent * itemDuration));
+                                            
+                                            setSceneLaunchPreviewPausedOffset(newElapsed);
+                                            
+                                            // Sync timeline playhead if this collection or any parent is on the timeline
+                                            syncTimelinePlayheadToCollectionPreview(beat.id, newElapsed);
+                                          }}
+                                          onPointerMove={(e) => {
+                                            if (collectionScrubbingId !== beat.id) return;
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            
+                                            const itemDuration = preview.durationSeconds;
+                                            const startOffset = preview.itemStartOffset ?? 0;
+
+                                            const container = e.currentTarget.closest('.progress-bar-container');
+                                            if (!container) return;
+                                            const rect = container.getBoundingClientRect();
+                                            const offsetX = e.clientX - rect.left;
+                                            const percent = Math.max(0, Math.min(1, offsetX / rect.width));
+                                            const newElapsed = startOffset + Math.max(0, Math.min(itemDuration - 0.001, percent * itemDuration));
+                                            
+                                            setSceneLaunchPreviewPausedOffset(newElapsed);
+                                            
+                                            // Sync timeline playhead if this collection or any parent is on the timeline
+                                            syncTimelinePlayheadToCollectionPreview(beat.id, newElapsed);
+                                          }}
+                                          onPointerUp={(e) => {
+                                            if (collectionScrubbingId === beat.id) {
+                                              e.stopPropagation();
+                                              e.currentTarget.releasePointerCapture(e.pointerId);
+                                              setCollectionScrubbingId(null);
+                                            }
+                                          }}
+                                        />
+                                      )}
+                                    </div>
+                                  </div>
                                 </div>
                               ) : null}
                             </div>
-                            <button
-                              type="button"
-                              className="flex w-full items-center justify-between gap-2 p-2 text-left"
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              className="flex w-full items-center justify-between gap-2 p-2.5 text-left cursor-pointer focus:outline-none"
                               onClick={() => openBeatDetail(beat.id)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  openBeatDetail(beat.id);
+                                }
+                              }}
                             >
                               <div className="min-w-0 flex-1">
-                                <div className="truncate text-[11px] font-semibold text-zinc-300">{beat.name}</div>
-                                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[9px] font-mono uppercase tracking-widest text-zinc-500">
-                                  <span>{beat.gridOrder.length} {beat.gridOrder.length === 1 ? 'item' : 'items'}</span>
-                                  <span className="text-zinc-700 font-bold">•</span>
-                                  <span className="text-white font-extrabold bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
+                                <div className="truncate text-sm font-bold text-zinc-200">{beat.name}</div>
+                                <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500 font-mono tracking-wider uppercase">
+                                  <div className="flex items-center gap-1">
+                                    {activeItemIndex > 0 && totalItems > 1 && (
+                                      <button
+                                        type="button"
+                                        title="Previous Item"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          changeCollectionPreviewItem(beat, 'prev');
+                                        }}
+                                        className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-900/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors border border-zinc-850/40"
+                                      >
+                                        <ChevronLeft className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                    <span className="text-zinc-400 font-semibold text-[11px] select-none">
+                                      {activeItemIndex > 0 
+                                        ? `${activeItemIndex}/${totalItems} items`
+                                        : `${totalItems} ${totalItems === 1 ? 'item' : 'items'}`
+                                      }
+                                    </span>
+                                    {activeItemIndex > 0 && totalItems > 1 && (
+                                      <button
+                                        type="button"
+                                        title="Next Item"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          changeCollectionPreviewItem(beat, 'next');
+                                        }}
+                                        className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-900/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors border border-zinc-850/40"
+                                      >
+                                        <ChevronRight className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                  <span className="text-zinc-700 font-bold select-none">•</span>
+                                  <span className="text-zinc-400 font-medium font-mono text-[11px] select-none">
                                     {(getRecursiveCollectionDuration(beat) || 0).toFixed(1)}s
                                   </span>
                                 </div>
                               </div>
-                              <span className="flex items-center gap-1">
-                                <span className="flex h-5 min-w-5 items-center justify-center rounded bg-zinc-900 font-mono text-[9px] text-zinc-600">
-                                  {index + 1}
-                                </span>
-                                <GripVertical className="h-3.5 w-3.5 text-zinc-700 group-hover:text-zinc-400" />
-                              </span>
-                            </button>
+                              <GripVertical className="h-4.5 w-4.5 text-zinc-500 group-hover:text-zinc-300" />
+                            </div>
                           </article>
                         );
                       })}
@@ -6615,7 +6947,7 @@ function EditorInner() {
                           {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'after' && (
                             <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
                           )}
-                          <div className="overflow-hidden relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
+                          <div className="relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
                             {item.type === 'video' ? (
                               <video
                                 ref={(el) => {
@@ -6659,29 +6991,44 @@ function EditorInner() {
                             ) : (
                               <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
                             )}
-                          </div>
-                          <div className="flex items-center justify-between gap-2 p-2">
-                            <div className="min-w-0">
-                              <div className="truncate text-[11px] font-semibold text-zinc-300">{item.name}</div>
-                              <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-700">{item.type}</div>
+                            <div className="absolute top-2 right-2 z-20 flex h-7 items-center justify-end rounded-full border border-zinc-800 bg-zinc-950/90 text-zinc-450 shadow-md backdrop-blur-[2px] transition-all duration-300 w-7 hover:w-max max-w-[28px] hover:max-w-[120px] hover:pl-2.5 pr-[7px] group/sizeicon cursor-default overflow-hidden">
+                              <span className="font-sans text-[10px] font-semibold select-none text-zinc-200 hidden group-hover/sizeicon:inline whitespace-nowrap pr-2">
+                                {formatFileSize(item)}
+                              </span>
+                              {item.type === 'video' ? (
+                                <Video className="h-3.5 w-3.5 shrink-0" />
+                              ) : (
+                                <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+                              )}
                             </div>
-                            {item.type === 'image' || item.type === 'video' ? (
-                              <label className="flex h-8 shrink-0 items-center gap-1 rounded border border-zinc-900 bg-zinc-950 px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-zinc-400 transition-colors hover:bg-zinc-900 focus-within:border-zinc-700 cursor-pointer select-none">
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={60}
-                                  value={item.durationSeconds ?? 3}
-                                  onClick={(event) => event.stopPropagation()}
-                                  onPointerDown={(event) => event.stopPropagation()}
-                                  onChange={(event) => updateSceneLaunchMediaDuration(item.id, Number(event.target.value))}
-                                  className="h-5 w-9 bg-transparent text-right text-[11px] font-semibold text-zinc-200 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                  aria-label={`${item.name} duration in seconds`}
-                                />
-                                s
-                              </label>
-                            ) : null}
-                            <GripVertical className="h-3.5 w-3.5 shrink-0 text-zinc-700 group-hover:text-zinc-400" />
+                          </div>
+                          <div className="flex items-center justify-between gap-2 p-2.5">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-bold text-zinc-200">{item.name}</div>
+                              <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500 font-mono tracking-wider uppercase">
+                                <span>{item.type}</span>
+                                {(item.type === 'image' || item.type === 'video') && (
+                                  <>
+                                    <span className="text-zinc-700 font-bold select-none">•</span>
+                                    <label className="flex items-center gap-0.5 text-[11px] font-mono text-zinc-400 hover:text-zinc-200 transition-colors focus-within:text-indigo-400 cursor-pointer">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={60}
+                                        value={item.durationSeconds ?? 3}
+                                        onClick={(event) => event.stopPropagation()}
+                                        onPointerDown={(event) => event.stopPropagation()}
+                                        onChange={(event) => updateSceneLaunchMediaDuration(item.id, Number(event.target.value))}
+                                        className="h-4 w-6 bg-transparent text-right text-[11px] font-bold text-zinc-300 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus:text-indigo-400"
+                                        aria-label={`${item.name} duration in seconds`}
+                                      />
+                                      <span className="text-zinc-500 select-none">s</span>
+                                    </label>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            <GripVertical className="h-4.5 w-4.5 shrink-0 text-zinc-500 group-hover:text-zinc-300" />
                           </div>
                         </article>
                       );
@@ -6689,6 +7036,9 @@ function EditorInner() {
 
                     const beat = gridItem.collection;
                     const preview = getSceneLaunchCollectionPreview(beat);
+                    const orderedMediaItems = getRecursiveMediaItems(beat);
+                    const totalItems = orderedMediaItems.length;
+                    const activeItemIndex = preview ? orderedMediaItems.findIndex(x => x.id === preview.item.id) + 1 : 0;
                     return (
                       <article
                         key={dragKey}
@@ -6701,14 +7051,6 @@ function EditorInner() {
                         onDragOver={(event) => handleGridDragOver(event, dragKey, true)}
                         onDragLeave={handleGridDragLeave}
                         onDrop={(event) => handleGridDrop(event, dragKey, true)}
-                        onMouseEnter={() => setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: Date.now() })}
-                        onMouseLeave={() => setSceneLaunchPreviewHover(previous => (
-                          previous?.collectionId === beat.id ? null : previous
-                        ))}
-                        onFocus={() => setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: Date.now() })}
-                        onBlur={() => setSceneLaunchPreviewHover(previous => (
-                          previous?.collectionId === beat.id ? null : previous
-                        ))}
                         style={getSceneLaunchCollectionTileStyle()}
                         className={cn(
                           "group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/80 transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
@@ -6724,7 +7066,7 @@ function EditorInner() {
                           <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
                         )}
                         <div
-                          className="relative bg-black overflow-hidden h-36 sm:h-40 lg:h-44"
+                          className="relative bg-black h-36 sm:h-40 lg:h-44"
                           style={getSceneLaunchMediaPreviewStyle()}
                         >
                           <button
@@ -6739,12 +7081,12 @@ function EditorInner() {
                                   key={preview.item.id}
                                   ref={(el) => {
                                     if (el) {
-                                      const diff = Math.abs(el.currentTime - preview.elapsedSeconds);
-                                      const threshold = (isTimelinePlaying || sceneLaunchPreviewHover?.collectionId === beat.id) ? 1.0 : 0.05;
-                                      if (diff > threshold) {
-                                        el.currentTime = preview.elapsedSeconds;
-                                      }
                                       if (preview.isPlaying) {
+                                        const diff = Math.abs(el.currentTime - preview.elapsedSeconds);
+                                        const threshold = (isTimelinePlaying || sceneLaunchPreviewHover?.collectionId === beat.id) ? 1.0 : 0.05;
+                                        if (diff > threshold) {
+                                          el.currentTime = preview.elapsedSeconds;
+                                        }
                                         if (el.paused) {
                                           if (Math.abs(el.currentTime - preview.elapsedSeconds) > 0.1) {
                                             el.currentTime = preview.elapsedSeconds;
@@ -6755,6 +7097,7 @@ function EditorInner() {
                                         if (!el.paused) {
                                           el.pause();
                                         }
+                                        el.currentTime = preview.elapsedSeconds;
                                       }
                                     }
                                   }}
@@ -6779,34 +7122,241 @@ function EditorInner() {
                               </div>
                             )}
                           </button>
-                          {preview?.isPlaying ? (
-                            <div className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/75 px-2 py-1 font-mono text-[10px] text-white">
-                              {Math.min(preview.durationSeconds, preview.elapsedSeconds).toFixed(1)}s / {preview.durationSeconds.toFixed(1)}s
+                          {preview ? (
+                            <button
+                              type="button"
+                              onMouseEnter={() => {
+                                setSceneLaunchPreviewHover(prev => {
+                                  if (prev?.collectionId === beat.id) return prev;
+                                  const isResuming = sceneLaunchManuallyPaused === beat.id;
+                                  const offset = isResuming ? sceneLaunchPreviewPausedOffset : 0;
+                                  setSceneLaunchManuallyPaused(null);
+                                  if (!isResuming) {
+                                    setSceneLaunchPreviewPausedOffset(0);
+                                  }
+                                  const startedAt = Date.now() - (offset * 1000);
+                                  return { collectionId: beat.id, startedAt };
+                                });
+                              }}
+                              onMouseLeave={() => {
+                                if (preview) {
+                                  if (sceneLaunchManuallyPaused !== beat.id) {
+                                    const mediaItems = getRecursiveMediaItems(beat);
+                                    const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
+                                    const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
+                                      ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
+                                      : 0;
+                                    setSceneLaunchPreviewPausedOffset(currentElapsed);
+                                    setSceneLaunchManuallyPaused(beat.id);
+                                  }
+                                }
+                                setSceneLaunchPreviewHover(previous => (
+                                  previous?.collectionId === beat.id ? null : previous
+                                ));
+                              }}
+                              onFocus={() => {
+                                setSceneLaunchPreviewHover(prev => {
+                                  if (prev?.collectionId === beat.id) return prev;
+                                  const isResuming = sceneLaunchManuallyPaused === beat.id;
+                                  const offset = isResuming ? sceneLaunchPreviewPausedOffset : 0;
+                                  setSceneLaunchManuallyPaused(null);
+                                  if (!isResuming) {
+                                    setSceneLaunchPreviewPausedOffset(0);
+                                  }
+                                  const startedAt = Date.now() - (offset * 1000);
+                                  return { collectionId: beat.id, startedAt };
+                                });
+                              }}
+                              onBlur={() => {
+                                if (preview) {
+                                  if (sceneLaunchManuallyPaused !== beat.id) {
+                                    const mediaItems = getRecursiveMediaItems(beat);
+                                    const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
+                                    const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
+                                      ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
+                                      : 0;
+                                    setSceneLaunchPreviewPausedOffset(currentElapsed);
+                                    setSceneLaunchManuallyPaused(beat.id);
+                                  }
+                                }
+                                setSceneLaunchPreviewHover(previous => (
+                                  previous?.collectionId === beat.id ? null : previous
+                                ));
+                              }}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (preview.isPlaying) {
+                                  const mediaItems = getRecursiveMediaItems(beat);
+                                  const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
+                                  const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
+                                    ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
+                                    : 0;
+
+                                  setSceneLaunchPreviewPausedOffset(currentElapsed);
+                                  setSceneLaunchManuallyPaused(beat.id);
+
+                                  const video = event.currentTarget.parentElement?.querySelector('video');
+                                  if (video) {
+                                    video.pause();
+                                  }
+                                } else {
+                                  const resumedStartedAt = Date.now() - (sceneLaunchPreviewPausedOffset * 1000);
+                                  setSceneLaunchManuallyPaused(null);
+                                  setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: resumedStartedAt });
+                                }
+                              }}
+                              className={cn(
+                                "absolute top-2 right-2 z-20 flex h-7 items-center justify-center border border-zinc-800 bg-zinc-950/90 text-zinc-300 shadow-md backdrop-blur-[2px] transition-all cursor-pointer hover:border-zinc-600 hover:bg-zinc-900 hover:scale-105 outline-none p-0",
+                                preview.isPlaying 
+                                  ? "rounded-full px-2.5 gap-1.5 border-indigo-500/80 bg-zinc-950" 
+                                  : "w-7 h-7 rounded-full"
+                              )}
+                            >
+                              {preview.isPlaying ? (
+                                <>
+                                  <span className="font-mono text-[10px] select-none text-zinc-300">
+                                    {Math.min(preview.durationSeconds, preview.elapsedSeconds).toFixed(1)}s / {preview.durationSeconds.toFixed(1)}s
+                                  </span>
+                                  <Pause className="h-3 w-3 animate-pulse text-indigo-400 fill-current" />
+                                </>
+                              ) : (
+                                <Play className="h-3 w-3 fill-current text-zinc-350 ml-0.5" />
+                              )}
+                            </button>
+                          ) : null}
+                          {preview ? (
+                            <div 
+                              className={cn(
+                                "absolute bottom-0 left-0 right-0 h-[3px] z-30 transition-opacity duration-300 pointer-events-none progress-bar-container",
+                                (preview.isPlaying || sceneLaunchPreviewHover?.collectionId === beat.id || (sceneLaunchManuallyPaused === beat.id && sceneLaunchPreviewPausedOffset > 0)) ? "opacity-100" : "opacity-0"
+                              )}
+                            >
+                              <div className="w-full h-full bg-zinc-950/40 relative">
+                                <div 
+                                  className="h-full bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.6)] relative"
+                                  style={{ 
+                                    width: `${(Math.min(preview.durationSeconds, preview.elapsedSeconds) / (preview.durationSeconds || 1) * 100).toFixed(1)}%` 
+                                  }}
+                                >
+                                  {sceneLaunchManuallyPaused === beat.id && (
+                                    <div 
+                                      className="absolute left-full top-[1.5px] -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)] z-40 cursor-grab active:cursor-grabbing pointer-events-auto transition-transform hover:scale-125"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }}
+                                      onPointerDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        e.currentTarget.setPointerCapture(e.pointerId);
+                                        setCollectionScrubbingId(beat.id);
+                                        
+                                        const itemDuration = preview.durationSeconds;
+                                        const startOffset = preview.itemStartOffset ?? 0;
+ 
+                                        const container = e.currentTarget.closest('.progress-bar-container');
+                                        if (!container) return;
+                                        const rect = container.getBoundingClientRect();
+                                        const offsetX = e.clientX - rect.left;
+                                        const percent = Math.max(0, Math.min(1, offsetX / rect.width));
+                                        const newElapsed = startOffset + Math.max(0, Math.min(itemDuration - 0.001, percent * itemDuration));
+                                        
+                                        setSceneLaunchPreviewPausedOffset(newElapsed);
+                                        
+                                        // Sync timeline playhead if this collection or any parent is on the timeline
+                                        syncTimelinePlayheadToCollectionPreview(beat.id, newElapsed);
+                                      }}
+                                      onPointerMove={(e) => {
+                                        if (collectionScrubbingId !== beat.id) return;
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        
+                                        const itemDuration = preview.durationSeconds;
+                                        const startOffset = preview.itemStartOffset ?? 0;
+  
+                                        const container = e.currentTarget.closest('.progress-bar-container');
+                                        if (!container) return;
+                                        const rect = container.getBoundingClientRect();
+                                        const offsetX = e.clientX - rect.left;
+                                        const percent = Math.max(0, Math.min(1, offsetX / rect.width));
+                                        const newElapsed = startOffset + Math.max(0, Math.min(itemDuration - 0.001, percent * itemDuration));
+                                        
+                                        setSceneLaunchPreviewPausedOffset(newElapsed);
+                                        
+                                        // Sync timeline playhead if this collection or any parent is on the timeline
+                                        syncTimelinePlayheadToCollectionPreview(beat.id, newElapsed);
+                                      }}
+                                      onPointerUp={(e) => {
+                                        if (collectionScrubbingId === beat.id) {
+                                          e.stopPropagation();
+                                          e.currentTarget.releasePointerCapture(e.pointerId);
+                                          setCollectionScrubbingId(null);
+                                        }
+                                      }}
+                                    />
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           ) : null}
                         </div>
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between gap-2 p-2 text-left"
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          className="flex w-full items-center justify-between gap-2 p-2.5 text-left cursor-pointer focus:outline-none"
                           onClick={() => openBeatDetail(beat.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              openBeatDetail(beat.id);
+                            }
+                          }}
                         >
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-[11px] font-semibold text-zinc-300">{beat.name}</div>
-                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[9px] font-mono uppercase tracking-widest text-zinc-500">
-                              <span>{beat.gridOrder.length} {beat.gridOrder.length === 1 ? 'item' : 'items'}</span>
-                              <span className="text-zinc-700 font-bold">•</span>
-                              <span className="text-white font-extrabold bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
+                            <div className="truncate text-sm font-bold text-zinc-200">{beat.name}</div>
+                            <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500 font-mono tracking-wider uppercase">
+                              <div className="flex items-center gap-1">
+                                {activeItemIndex > 0 && totalItems > 1 && (
+                                  <button
+                                    type="button"
+                                    title="Previous Item"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      changeCollectionPreviewItem(beat, 'prev');
+                                    }}
+                                    className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-900/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors border border-zinc-850/40"
+                                  >
+                                    <ChevronLeft className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                                <span className="text-zinc-400 font-semibold text-[11px] select-none">
+                                  {activeItemIndex > 0 
+                                    ? `${activeItemIndex}/${totalItems} items`
+                                    : `${totalItems} ${totalItems === 1 ? 'item' : 'items'}`
+                                  }
+                                </span>
+                                {activeItemIndex > 0 && totalItems > 1 && (
+                                  <button
+                                    type="button"
+                                    title="Next Item"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      changeCollectionPreviewItem(beat, 'next');
+                                    }}
+                                    className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-900/60 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors border border-zinc-850/40"
+                                  >
+                                    <ChevronRight className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                              <span className="text-zinc-700 font-bold select-none">•</span>
+                              <span className="text-zinc-400 font-medium font-mono text-[11px] select-none">
                                 {(getRecursiveCollectionDuration(beat) || 0).toFixed(1)}s
                               </span>
                             </div>
                           </div>
-                          <span className="flex items-center gap-1">
-                            <span className="flex h-5 min-w-5 items-center justify-center rounded bg-zinc-900 font-mono text-[9px] text-zinc-600">
-                              {index + 1}
-                            </span>
-                            <GripVertical className="h-3.5 w-3.5 text-zinc-700 group-hover:text-zinc-400" />
-                          </span>
-                        </button>
+                          <GripVertical className="h-4.5 w-4.5 text-zinc-500 group-hover:text-zinc-300" />
+                        </div>
                       </article>
                     );
                   })}
