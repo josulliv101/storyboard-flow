@@ -69,7 +69,13 @@ import {
   Ratio,
   Repeat,
   Image as ImageIcon,
-  Pencil
+  Pencil,
+  FolderTree,
+  Folder,
+  FolderOpen,
+  FileImage as FileImageIcon,
+  FileVideo2,
+  ChevronDown as ChevronDownTree
 } from 'lucide-react';
 import {
   Button,
@@ -121,7 +127,7 @@ async function localUpload(filename: string, file: Blob): Promise<{ pathname: st
   return res.json();
 }
 
-type SidebarTab = 'scenes' | 'characters' | 'locations' | 'settings' | 'analyze' | null;
+type SidebarTab = 'scenes' | 'characters' | 'locations' | 'settings' | 'analyze' | 'directory' | null;
 
 type RenderGroupOption = {
   id: string;
@@ -2222,6 +2228,7 @@ function EditorInner() {
   const [sceneLaunchManuallyPaused, setSceneLaunchManuallyPaused] = React.useState<string | null>(null);
   const [sceneLaunchPreviewPausedOffset, setSceneLaunchPreviewPausedOffset] = React.useState<number>(0);
   const [collectionScrubbingId, setCollectionScrubbingId] = React.useState<string | null>(null);
+  const [directoryExpandedIds, setDirectoryExpandedIds] = React.useState<Set<string>>(new Set(['__root__']));
   const [sceneLaunchPreviewNow, setSceneLaunchPreviewNow] = React.useState(() => Date.now());
   const [sceneLaunchContextMenu, setSceneLaunchContextMenu] = React.useState<{ dragKey: string; x: number; y: number } | null>(null);
   const [pxPerSecond, setPxPerSecond] = React.useState(20);
@@ -6120,6 +6127,14 @@ function EditorInner() {
         >
           <Trash2 className="h-4.5 w-4.5" />
         </button>
+        <button
+          type="button"
+          className="mt-2 flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+          aria-label="Directory"
+          onClick={() => setActiveTab(activeTab === 'directory' ? null : 'directory')}
+        >
+          <FolderTree className="h-4.5 w-4.5" />
+        </button>
         <div className="my-5 h-px w-8 bg-white/10" />
         <button
           type="button"
@@ -7450,7 +7465,8 @@ function EditorInner() {
       characters: 'Characters',
       locations: 'Locations',
       settings: 'Project Settings',
-      analyze: 'AI Video Analysis'
+      analyze: 'AI Video Analysis',
+      directory: 'Project Directory'
     }[activeTab];
 
     return (
@@ -8167,6 +8183,169 @@ function EditorInner() {
                     ))}
                   </div>
                </div>
+            </div>
+          )}
+
+          {activeTab === 'directory' && (
+            <div className="p-3">
+              {(() => {
+                const toggleExpanded = (id: string) => {
+                  setDirectoryExpandedIds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    return next;
+                  });
+                };
+
+                const renderTreeCollection = (beat: typeof sceneLaunchBeats[number], depth: number): React.ReactNode => {
+                  const isExpanded = directoryExpandedIds.has(beat.id);
+                  const childItems = beat.gridOrder;
+                  const hasChildren = childItems.length > 0;
+
+                  return (
+                    <div key={beat.id}>
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-zinc-800/60 group/treeitem"
+                        style={{ paddingLeft: `${depth * 14 + 8}px` }}
+                        onClick={() => {
+                          if (hasChildren) toggleExpanded(beat.id);
+                          openBeatDetail(beat.id);
+                        }}
+                      >
+                        {hasChildren ? (
+                          <ChevronRight
+                            className={cn(
+                              "h-3 w-3 shrink-0 text-zinc-600 transition-transform duration-150",
+                              isExpanded && "rotate-90"
+                            )}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleExpanded(beat.id);
+                            }}
+                          />
+                        ) : (
+                          <span className="w-3 shrink-0" />
+                        )}
+                        {beat.id === 'trash' ? (
+                          <Trash2 className="h-3.5 w-3.5 shrink-0 text-red-500/70" />
+                        ) : isExpanded ? (
+                          <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-500/80" />
+                        ) : (
+                          <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500/60" />
+                        )}
+                        <span className="truncate text-[12px] font-medium text-zinc-300 group-hover/treeitem:text-zinc-100">
+                          {beat.name}
+                        </span>
+                        <span className="ml-auto text-[10px] font-mono text-zinc-600 tabular-nums shrink-0">
+                          {childItems.length}
+                        </span>
+                      </button>
+                      {isExpanded && (
+                        <div>
+                          {childItems.map(gi => {
+                            if (gi.type === 'collection') {
+                              const childBeat = sceneLaunchBeats.find(b => b.id === gi.id);
+                              if (childBeat) return renderTreeCollection(childBeat, depth + 1);
+                              return null;
+                            }
+                            const media = beat.items.find(m => m.id === gi.id);
+                            if (!media) return null;
+                            return (
+                              <div
+                                key={media.id}
+                                className="flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-zinc-800/40 cursor-default"
+                                style={{ paddingLeft: `${(depth + 1) * 14 + 8}px` }}
+                              >
+                                <span className="w-3 shrink-0" />
+                                {media.type === 'video' ? (
+                                  <FileVideo2 className="h-3.5 w-3.5 shrink-0 text-sky-500/70" />
+                                ) : (
+                                  <FileImageIcon className="h-3.5 w-3.5 shrink-0 text-emerald-500/70" />
+                                )}
+                                <span className="truncate text-[11px] text-zinc-500">
+                                  {media.name}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                };
+
+                const rootIsExpanded = directoryExpandedIds.has('__root__');
+
+                return (
+                  <div className="select-none">
+                    {/* Root level */}
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-zinc-800/60 mb-0.5"
+                      onClick={() => {
+                        toggleExpanded('__root__');
+                        setSceneLaunchBeatPath([]);
+                      }}
+                    >
+                      <ChevronRight
+                        className={cn(
+                          "h-3 w-3 shrink-0 text-zinc-600 transition-transform duration-150",
+                          rootIsExpanded && "rotate-90"
+                        )}
+                      />
+                      {rootIsExpanded ? (
+                        <FolderOpen className="h-3.5 w-3.5 shrink-0 text-indigo-400" />
+                      ) : (
+                        <Folder className="h-3.5 w-3.5 shrink-0 text-indigo-400/70" />
+                      )}
+                      <span className="text-[12px] font-bold text-zinc-200">Scene Board</span>
+                      <span className="ml-auto text-[10px] font-mono text-zinc-600 tabular-nums shrink-0">
+                        {sceneLaunchGridOrder.length}
+                      </span>
+                    </button>
+
+                    {rootIsExpanded && (
+                      <div>
+                        {sceneLaunchGridOrder.filter(g => g.id !== 'trash').map(gi => {
+                          if (gi.type === 'collection') {
+                            const beat = sceneLaunchBeats.find(b => b.id === gi.id);
+                            if (beat) return renderTreeCollection(beat, 1);
+                            return null;
+                          }
+                          const media = sceneLaunchMediaItems.find(m => m.id === gi.id);
+                          if (!media) return null;
+                          return (
+                            <div
+                              key={media.id}
+                              className="flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-zinc-800/40 cursor-default"
+                              style={{ paddingLeft: '22px' }}
+                            >
+                              <span className="w-3 shrink-0" />
+                              {media.type === 'video' ? (
+                                <FileVideo2 className="h-3.5 w-3.5 shrink-0 text-sky-500/70" />
+                              ) : (
+                                <FileImageIcon className="h-3.5 w-3.5 shrink-0 text-emerald-500/70" />
+                              )}
+                              <span className="truncate text-[11px] text-zinc-500">
+                                {media.name}
+                              </span>
+                            </div>
+                          );
+                        })}
+
+                        {/* Trash */}
+                        {(() => {
+                          const trashBeat = sceneLaunchBeats.find(b => b.id === 'trash');
+                          if (!trashBeat || (trashBeat.items.length === 0 && trashBeat.gridOrder.length === 0)) return null;
+                          return renderTreeCollection(trashBeat, 1);
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -9151,6 +9330,18 @@ function EditorInner() {
             title="AI Video Analysis"
           >
             <Sparkles className="h-4.5 w-4.5" />
+          </Button>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={() => setActiveTab(activeTab === 'directory' ? null : 'directory')}
+            className={cn(
+              "h-8 w-8 transition-all",
+              activeTab === 'directory' ? "text-indigo-400 bg-indigo-500/10" : "text-zinc-600 hover:text-zinc-300"
+            )}
+            title="Project Directory"
+          >
+            <FolderTree className="h-4.5 w-4.5" />
           </Button>
           <div className="flex-1" />
           <Button 
