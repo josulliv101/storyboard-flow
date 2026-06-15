@@ -2103,19 +2103,84 @@ interface CollectionProgressBarProps {
 
 const CollectionProgressBar = ({
   durationSeconds,
+  isPlaying,
   pausedOffset,
   children
 }: CollectionProgressBarProps) => {
-  const percent = durationSeconds > 0 
-    ? (Math.min(durationSeconds, Math.max(0, pausedOffset)) / durationSeconds) * 100 
-    : 0;
+  const barRef = React.useRef<HTMLDivElement>(null);
+  const rafRef = React.useRef<number>(0);
+  const animatingRef = React.useRef(false);
+  const lastDurationRef = React.useRef(durationSeconds);
+  const lastPlayingRef = React.useRef(isPlaying);
+  const lastOffsetRef = React.useRef(pausedOffset);
+
+  // Cleanup rAF on unmount only
+  React.useEffect(() => {
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+
+    const durationChanged = Math.abs(durationSeconds - lastDurationRef.current) > 0.01;
+    const playStateChanged = isPlaying !== lastPlayingRef.current;
+    // Detect item transition: offset jumps backward significantly
+    const offsetJumpedBack = pausedOffset < lastOffsetRef.current - 0.3;
+
+    lastDurationRef.current = durationSeconds;
+    lastPlayingRef.current = isPlaying;
+    lastOffsetRef.current = pausedOffset;
+
+    if (!isPlaying) {
+      // Paused or scrubbing: cancel any pending animation setup, snap to exact position
+      cancelAnimationFrame(rafRef.current);
+      animatingRef.current = false;
+      const percent = durationSeconds > 0
+        ? (Math.min(durationSeconds, Math.max(0, pausedOffset)) / durationSeconds) * 100
+        : 0;
+      bar.style.transition = 'none';
+      bar.style.width = `${percent.toFixed(2)}%`;
+      return;
+    }
+
+    // If CSS transition is already running and item hasn't changed, let it continue undisturbed
+    if (animatingRef.current && !durationChanged && !playStateChanged && !offsetJumpedBack) {
+      return;
+    }
+
+    // Cancel any pending rAF from a previous animation setup before starting a new one
+    cancelAnimationFrame(rafRef.current);
+    animatingRef.current = true;
+
+    const startPercent = durationSeconds > 0
+      ? (Math.min(durationSeconds, Math.max(0, pausedOffset)) / durationSeconds) * 100
+      : 0;
+    const remainingSeconds = Math.max(0.016, durationSeconds - Math.max(0, pausedOffset));
+
+    // Frame 1: snap to current position with no transition
+    bar.style.transition = 'none';
+    bar.style.width = `${startPercent.toFixed(2)}%`;
+
+    // Frame 2+3: after browser paints the snap, start a smooth linear CSS transition to 100%
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = requestAnimationFrame(() => {
+        if (!barRef.current) return;
+        barRef.current.style.transition = `width ${remainingSeconds.toFixed(3)}s linear`;
+        barRef.current.style.width = '100%';
+      });
+    });
+
+    // No cleanup here — the rAF must survive across effect re-runs.
+    // Cancellation is handled explicitly above (on pause or animation restart).
+  }, [isPlaying, durationSeconds, pausedOffset]);
 
   return (
     <div
-      className="h-full bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.6)] relative"
-      style={{
-        width: `${percent.toFixed(2)}%`
-      }}
+      ref={barRef}
+      className="h-full bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.6)] relative will-change-[width]"
     >
       {children}
     </div>
