@@ -2092,6 +2092,36 @@ const ANALYSIS_JSON_TEMPLATE = {
 
 // detectLetterbox, extractCharacterAvatarFromVideo, extractBeatThumbnailFromVideo are imported from '@/lib/video-helpers'
 
+interface CollectionProgressBarProps {
+  itemStartedAt: number;
+  durationSeconds: number;
+  isPlaying: boolean;
+  pausedOffset: number;
+  isScrubbing: boolean;
+  children?: React.ReactNode;
+}
+
+const CollectionProgressBar = ({
+  durationSeconds,
+  pausedOffset,
+  children
+}: CollectionProgressBarProps) => {
+  const percent = durationSeconds > 0 
+    ? (Math.min(durationSeconds, Math.max(0, pausedOffset)) / durationSeconds) * 100 
+    : 0;
+
+  return (
+    <div
+      className="h-full bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.6)] relative"
+      style={{
+        width: `${percent.toFixed(2)}%`
+      }}
+    >
+      {children}
+    </div>
+  );
+};
+
 function EditorInner() {
   // Routing integrations
   const pathname = usePathname();
@@ -6871,68 +6901,6 @@ function EditorInner() {
                               {preview ? (
                                 <button
                                   type="button"
-                                  onMouseEnter={() => {
-                                    if (collectionScrubbingId) return;
-                                    setSceneLaunchPreviewHover(prev => {
-                                      if (prev?.collectionId === beat.id) return prev;
-                                      const isResuming = sceneLaunchManuallyPaused === beat.id;
-                                      const offset = isResuming ? sceneLaunchPreviewPausedOffset : 0;
-                                      setSceneLaunchManuallyPaused(null);
-                                      if (!isResuming) {
-                                        setSceneLaunchPreviewPausedOffset(0);
-                                      }
-                                      const startedAt = Date.now() - (offset * 1000);
-                                      return { collectionId: beat.id, startedAt };
-                                    });
-                                  }}
-                                  onMouseLeave={() => {
-                                    if (collectionScrubbingId) return;
-                                    if (preview) {
-                                      if (sceneLaunchManuallyPaused !== beat.id) {
-                                        const mediaItems = getRecursiveMediaItems(beat);
-                                        const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
-                                        const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
-                                          ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
-                                          : 0;
-                                        setSceneLaunchPreviewPausedOffset(currentElapsed);
-                                        setSceneLaunchManuallyPaused(beat.id);
-                                      }
-                                    }
-                                    setSceneLaunchPreviewHover(previous => (
-                                      previous?.collectionId === beat.id ? null : previous
-                                    ));
-                                  }}
-                                  onFocus={() => {
-                                    if (collectionScrubbingId) return;
-                                    setSceneLaunchPreviewHover(prev => {
-                                      if (prev?.collectionId === beat.id) return prev;
-                                      const isResuming = sceneLaunchManuallyPaused === beat.id;
-                                      const offset = isResuming ? sceneLaunchPreviewPausedOffset : 0;
-                                      setSceneLaunchManuallyPaused(null);
-                                      if (!isResuming) {
-                                        setSceneLaunchPreviewPausedOffset(0);
-                                      }
-                                      const startedAt = Date.now() - (offset * 1000);
-                                      return { collectionId: beat.id, startedAt };
-                                    });
-                                  }}
-                                  onBlur={() => {
-                                    if (collectionScrubbingId) return;
-                                    if (preview) {
-                                      if (sceneLaunchManuallyPaused !== beat.id) {
-                                        const mediaItems = getRecursiveMediaItems(beat);
-                                        const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
-                                        const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
-                                          ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
-                                          : 0;
-                                        setSceneLaunchPreviewPausedOffset(currentElapsed);
-                                        setSceneLaunchManuallyPaused(beat.id);
-                                      }
-                                    }
-                                    setSceneLaunchPreviewHover(previous => (
-                                      previous?.collectionId === beat.id ? null : previous
-                                    ));
-                                  }}
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     if (preview.isPlaying) {
@@ -6956,10 +6924,10 @@ function EditorInner() {
                                     }
                                   }}
                                   className={cn(
-                                    "absolute top-2 right-2 z-20 flex h-7 items-center justify-center border border-zinc-800 bg-zinc-950/90 text-zinc-300 shadow-md backdrop-blur-[2px] transition-all cursor-pointer hover:border-zinc-600 hover:bg-zinc-900 hover:scale-105 outline-none p-0",
+                                    "absolute top-2 right-2 z-20 flex h-7 items-center justify-center border border-zinc-800 bg-zinc-950/90 text-zinc-350 shadow-md backdrop-blur-[2px] transition-all cursor-pointer hover:border-zinc-600 hover:bg-zinc-900 hover:scale-105 outline-none p-0",
                                     preview.isPlaying 
-                                      ? "rounded-full px-2.5 gap-1.5 border-indigo-500/80 bg-zinc-950" 
-                                      : "w-7 h-7 rounded-full"
+                                      ? "rounded-full px-2.5 gap-1.5 border-indigo-500/80 bg-zinc-950 opacity-100" 
+                                      : "w-7 h-7 rounded-full opacity-0 group-hover:opacity-100"
                                   )}
                                 >
                                   {preview.isPlaying ? (
@@ -6978,16 +6946,18 @@ function EditorInner() {
                                 <div 
                                   className={cn(
                                     "absolute bottom-0 left-0 right-0 h-[3px] z-30 transition-opacity duration-300 pointer-events-none progress-bar-container",
-                                    (preview.isPlaying || sceneLaunchPreviewHover?.collectionId === beat.id || (sceneLaunchManuallyPaused === beat.id && sceneLaunchPreviewPausedOffset > 0)) ? "opacity-100" : "opacity-0"
+                                    (preview.isPlaying || sceneLaunchPreviewHover?.collectionId === beat.id || (sceneLaunchManuallyPaused === beat.id && sceneLaunchPreviewPausedOffset > 0)) 
+                                      ? "opacity-100" 
+                                      : "opacity-0 group-hover:opacity-100"
                                   )}
                                 >
                                   <div className="w-full h-full bg-zinc-950/40 relative">
-                                    <div 
-                                      className="h-full bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.6)] relative"
-                                      style={{ 
-                                        width: `${(Math.min(preview.durationSeconds, preview.elapsedSeconds) / (preview.durationSeconds || 1) * 100).toFixed(1)}%`,
-                                        transition: (preview.isPlaying && preview.elapsedSeconds > 0.1 && collectionScrubbingId !== beat.id) ? 'width 0.1s linear' : 'none'
-                                      }}
+                                    <CollectionProgressBar
+                                      itemStartedAt={preview.isPlaying ? (Date.now() - preview.elapsedSeconds * 1000) : Date.now()}
+                                      durationSeconds={preview.durationSeconds}
+                                      isPlaying={preview.isPlaying}
+                                      pausedOffset={preview.elapsedSeconds}
+                                      isScrubbing={collectionScrubbingId === beat.id}
                                     >
                                       {sceneLaunchManuallyPaused === beat.id && (
                                         <div 
@@ -7046,7 +7016,7 @@ function EditorInner() {
                                           }}
                                         />
                                       )}
-                                    </div>
+                                    </CollectionProgressBar>
                                   </div>
                                 </div>
                               ) : null}
@@ -7445,64 +7415,6 @@ function EditorInner() {
                           {preview ? (
                             <button
                               type="button"
-                              onMouseEnter={() => {
-                                setSceneLaunchPreviewHover(prev => {
-                                  if (prev?.collectionId === beat.id) return prev;
-                                  const isResuming = sceneLaunchManuallyPaused === beat.id;
-                                  const offset = isResuming ? sceneLaunchPreviewPausedOffset : 0;
-                                  setSceneLaunchManuallyPaused(null);
-                                  if (!isResuming) {
-                                    setSceneLaunchPreviewPausedOffset(0);
-                                  }
-                                  const startedAt = Date.now() - (offset * 1000);
-                                  return { collectionId: beat.id, startedAt };
-                                });
-                              }}
-                              onMouseLeave={() => {
-                                if (preview) {
-                                  if (sceneLaunchManuallyPaused !== beat.id) {
-                                    const mediaItems = getRecursiveMediaItems(beat);
-                                    const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
-                                    const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
-                                      ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
-                                      : 0;
-                                    setSceneLaunchPreviewPausedOffset(currentElapsed);
-                                    setSceneLaunchManuallyPaused(beat.id);
-                                  }
-                                }
-                                setSceneLaunchPreviewHover(previous => (
-                                  previous?.collectionId === beat.id ? null : previous
-                                ));
-                              }}
-                              onFocus={() => {
-                                setSceneLaunchPreviewHover(prev => {
-                                  if (prev?.collectionId === beat.id) return prev;
-                                  const isResuming = sceneLaunchManuallyPaused === beat.id;
-                                  const offset = isResuming ? sceneLaunchPreviewPausedOffset : 0;
-                                  setSceneLaunchManuallyPaused(null);
-                                  if (!isResuming) {
-                                    setSceneLaunchPreviewPausedOffset(0);
-                                  }
-                                  const startedAt = Date.now() - (offset * 1000);
-                                  return { collectionId: beat.id, startedAt };
-                                });
-                              }}
-                              onBlur={() => {
-                                if (preview) {
-                                  if (sceneLaunchManuallyPaused !== beat.id) {
-                                    const mediaItems = getRecursiveMediaItems(beat);
-                                    const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
-                                    const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
-                                      ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
-                                      : 0;
-                                    setSceneLaunchPreviewPausedOffset(currentElapsed);
-                                    setSceneLaunchManuallyPaused(beat.id);
-                                  }
-                                }
-                                setSceneLaunchPreviewHover(previous => (
-                                  previous?.collectionId === beat.id ? null : previous
-                                ));
-                              }}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 if (preview.isPlaying) {
@@ -7526,10 +7438,10 @@ function EditorInner() {
                                 }
                               }}
                               className={cn(
-                                "absolute top-2 right-2 z-20 flex h-7 items-center justify-center border border-zinc-800 bg-zinc-950/90 text-zinc-300 shadow-md backdrop-blur-[2px] transition-all cursor-pointer hover:border-zinc-600 hover:bg-zinc-900 hover:scale-105 outline-none p-0",
+                                "absolute top-2 right-2 z-20 flex h-7 items-center justify-center border border-zinc-800 bg-zinc-950/90 text-zinc-350 shadow-md backdrop-blur-[2px] transition-all cursor-pointer hover:border-zinc-600 hover:bg-zinc-900 hover:scale-105 outline-none p-0",
                                 preview.isPlaying 
-                                  ? "rounded-full px-2.5 gap-1.5 border-indigo-500/80 bg-zinc-950" 
-                                  : "w-7 h-7 rounded-full"
+                                  ? "rounded-full px-2.5 gap-1.5 border-indigo-500/80 bg-zinc-950 opacity-100" 
+                                  : "w-7 h-7 rounded-full opacity-0 group-hover:opacity-100"
                               )}
                             >
                               {preview.isPlaying ? (
@@ -7548,16 +7460,18 @@ function EditorInner() {
                             <div 
                               className={cn(
                                 "absolute bottom-0 left-0 right-0 h-[3px] z-30 transition-opacity duration-300 pointer-events-none progress-bar-container",
-                                (preview.isPlaying || sceneLaunchPreviewHover?.collectionId === beat.id || (sceneLaunchManuallyPaused === beat.id && sceneLaunchPreviewPausedOffset > 0)) ? "opacity-100" : "opacity-0"
+                                (preview.isPlaying || sceneLaunchPreviewHover?.collectionId === beat.id || (sceneLaunchManuallyPaused === beat.id && sceneLaunchPreviewPausedOffset > 0)) 
+                                  ? "opacity-100" 
+                                  : "opacity-0 group-hover:opacity-100"
                               )}
                             >
                               <div className="w-full h-full bg-zinc-950/40 relative">
-                                <div 
-                                  className="h-full bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.6)] relative"
-                                  style={{ 
-                                    width: `${(Math.min(preview.durationSeconds, preview.elapsedSeconds) / (preview.durationSeconds || 1) * 100).toFixed(1)}%`,
-                                    transition: (preview.isPlaying && preview.elapsedSeconds > 0.1 && collectionScrubbingId !== beat.id) ? 'width 0.1s linear' : 'none'
-                                  }}
+                                <CollectionProgressBar
+                                  itemStartedAt={preview.isPlaying ? (Date.now() - preview.elapsedSeconds * 1000) : Date.now()}
+                                  durationSeconds={preview.durationSeconds}
+                                  isPlaying={preview.isPlaying}
+                                  pausedOffset={preview.elapsedSeconds}
+                                  isScrubbing={collectionScrubbingId === beat.id}
                                 >
                                   {sceneLaunchManuallyPaused === beat.id && (
                                     <div 
@@ -7574,7 +7488,7 @@ function EditorInner() {
                                         
                                         const itemDuration = preview.durationSeconds;
                                         const startOffset = preview.itemStartOffset ?? 0;
- 
+
                                         const container = e.currentTarget.closest('.progress-bar-container');
                                         if (!container) return;
                                         const rect = container.getBoundingClientRect();
@@ -7594,7 +7508,7 @@ function EditorInner() {
                                         
                                         const itemDuration = preview.durationSeconds;
                                         const startOffset = preview.itemStartOffset ?? 0;
-  
+
                                         const container = e.currentTarget.closest('.progress-bar-container');
                                         if (!container) return;
                                         const rect = container.getBoundingClientRect();
@@ -7616,7 +7530,7 @@ function EditorInner() {
                                       }}
                                     />
                                   )}
-                                </div>
+                                </CollectionProgressBar>
                               </div>
                             </div>
                           ) : null}
