@@ -12,6 +12,7 @@ import {
 import { getGraphColor, getGraphDisplayLabel, getGraphShortLabel, type GraphColor } from '@/lib/graph-style';
 import { ResponsiveAspectFrame } from './ResponsiveAspectFrame';
 import { Activity, Volume2, VolumeX, User } from 'lucide-react';
+import { Frame } from './Frame';
 
 const syncVideoAudioState = (video: HTMLVideoElement, muted: boolean) => {
   video.muted = muted;
@@ -89,448 +90,6 @@ function PreviewSceneTitle({
   );
 }
 
-const PreviewVideo = React.memo(function PreviewVideoInner({
-  clip,
-  currentFrame,
-  isPlaying,
-  fps,
-  playbackRate,
-  muted,
-  mediaLayout,
-}: {
-  clip: TimelineClip;
-  currentFrame: number;
-  isPlaying: boolean;
-  fps: number;
-  playbackRate: number;
-  muted: boolean;
-  mediaLayout: PreviewMediaLayout;
-}) {
-  const { updateClip } = useTimeline();
-  
-  // Double buffer refs and states
-  const videoRefA = useRef<HTMLVideoElement>(null);
-  const videoRefB = useRef<HTMLVideoElement>(null);
-  const [activeBuffer, setActiveBuffer] = React.useState<'A' | 'B'>('A');
-  const [hasCompletedFirstSeek, setHasCompletedFirstSeek] = React.useState(false);
-  const [isReadyA, setIsReadyA] = React.useState(false);
-  const [isReadyB, setIsReadyB] = React.useState(false);
-  
-  const activeBufferRef = useRef<'A' | 'B'>('A');
-  const currentFrameRef = useRef(currentFrame);
-  const playbackRateRef = useRef(playbackRate);
-  const mutedRef = useRef(muted);
-  const isPlayingRef = useRef(isPlaying);
-  
-  const swapTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
-  const trimOffset = clip.trimStart || 0;
-  const initialTargetTime = useMemo(() => {
-    return Math.max(0, (trimOffset + (currentFrame - clip.startFrame)) / fps);
-  }, [clip.startFrame, trimOffset, fps]);
-
-  const latestTargetTimeRef = useRef<number>(initialTargetTime);
-
-  // Keep refs up to date for event listeners
-  useEffect(() => {
-    activeBufferRef.current = activeBuffer;
-  }, [activeBuffer]);
-
-  useEffect(() => {
-    playbackRateRef.current = playbackRate;
-  }, [playbackRate]);
-
-  useEffect(() => {
-    mutedRef.current = muted;
-  }, [muted]);
-
-  useEffect(() => {
-    isPlayingRef.current = isPlaying;
-  }, [isPlaying]);
-
-  const isReady = isReadyA || isReadyB;
-
-  // Handle seek function
-  const seekTo = (targetTime: number) => {
-    const currentActive = activeBufferRef.current;
-    const activeVideo = currentActive === 'A' ? videoRefA.current : videoRefB.current;
-    const inactiveVideo = currentActive === 'A' ? videoRefB.current : videoRefA.current;
-
-    latestTargetTimeRef.current = targetTime;
-
-    if (!inactiveVideo || !activeVideo) {
-      if (activeVideo) {
-        activeVideo.currentTime = targetTime;
-      }
-      return;
-    }
-
-    if (swapTimeoutRef.current) {
-      clearTimeout(swapTimeoutRef.current);
-      swapTimeoutRef.current = null;
-    }
-
-    const onSeeked = () => {
-      inactiveVideo.removeEventListener('seeked', onSeeked);
-      if (swapTimeoutRef.current) {
-        clearTimeout(swapTimeoutRef.current);
-        swapTimeoutRef.current = null;
-      }
-
-      // Check if we have since started seeking to a different time
-      if (Math.abs(inactiveVideo.currentTime - latestTargetTimeRef.current) > 0.5) {
-        return;
-      }
-
-      const nextActive = currentActive === 'A' ? 'B' : 'A';
-
-      inactiveVideo.playbackRate = playbackRateRef.current;
-      syncVideoAudioState(inactiveVideo, mutedRef.current);
-
-      if (isPlayingRef.current) {
-        inactiveVideo.play().catch((err) => {
-          if (err && err.name === 'NotAllowedError') {
-            inactiveVideo.muted = true;
-            inactiveVideo.play().catch(() => {});
-          }
-        });
-      } else {
-        inactiveVideo.pause();
-      }
-
-      // Pause and mute the old video
-      activeVideo.pause();
-      syncVideoAudioState(activeVideo, true);
-
-      setActiveBuffer(nextActive);
-      setHasCompletedFirstSeek(true);
-    };
-
-    inactiveVideo.addEventListener('seeked', onSeeked);
-
-    swapTimeoutRef.current = setTimeout(() => {
-      inactiveVideo.removeEventListener('seeked', onSeeked);
-      
-      const nextActive = currentActive === 'A' ? 'B' : 'A';
-      inactiveVideo.playbackRate = playbackRateRef.current;
-      syncVideoAudioState(inactiveVideo, mutedRef.current);
-      if (isPlayingRef.current) {
-        inactiveVideo.play().catch(() => {});
-      } else {
-        inactiveVideo.pause();
-      }
-      activeVideo.pause();
-      syncVideoAudioState(activeVideo, true);
-
-      setActiveBuffer(nextActive);
-      setHasCompletedFirstSeek(true);
-    }, 400);
-
-    inactiveVideo.currentTime = targetTime;
-  };
-
-  // 1. Initial Seek / Load
-  useEffect(() => {
-    const activeVideo = videoRefA.current; // 'A' is initial active buffer
-    if (!activeVideo) return;
-
-    let isSubscribed = true;
-
-    const handleInitialSeeked = () => {
-      if (!isSubscribed) return;
-      activeVideo.removeEventListener('seeked', handleInitialSeeked);
-      
-      if (isPlayingRef.current) {
-        activeVideo.playbackRate = playbackRateRef.current;
-        syncVideoAudioState(activeVideo, mutedRef.current);
-        activeVideo.play().catch(() => {});
-      }
-      setHasCompletedFirstSeek(true);
-    };
-
-    const runSeek = () => {
-      activeVideo.currentTime = initialTargetTime;
-      activeVideo.addEventListener('seeked', handleInitialSeeked);
-      
-      setTimeout(() => {
-        if (!isSubscribed) return;
-        activeVideo.removeEventListener('seeked', handleInitialSeeked);
-        if (isPlayingRef.current) {
-          activeVideo.playbackRate = playbackRateRef.current;
-          syncVideoAudioState(activeVideo, mutedRef.current);
-          activeVideo.play().catch(() => {});
-        }
-        setHasCompletedFirstSeek(true);
-      }, 400);
-    };
-
-    if (initialTargetTime === 0) {
-      if (activeVideo.readyState >= 2) {
-        if (isPlayingRef.current) {
-          activeVideo.playbackRate = playbackRateRef.current;
-          syncVideoAudioState(activeVideo, mutedRef.current);
-          activeVideo.play().catch(() => {});
-        }
-        setHasCompletedFirstSeek(true);
-      } else {
-        const handleLoadedData = () => {
-          if (!isSubscribed) return;
-          activeVideo.removeEventListener('loadeddata', handleLoadedData);
-          if (isPlayingRef.current) {
-            activeVideo.playbackRate = playbackRateRef.current;
-            syncVideoAudioState(activeVideo, mutedRef.current);
-            activeVideo.play().catch(() => {});
-          }
-          setHasCompletedFirstSeek(true);
-        };
-        activeVideo.addEventListener('loadeddata', handleLoadedData);
-      }
-    } else {
-      if (activeVideo.readyState >= 1) {
-        runSeek();
-      } else {
-        const handleLoadedMetadata = () => {
-          if (!isSubscribed) return;
-          activeVideo.removeEventListener('loadedmetadata', handleLoadedMetadata);
-          runSeek();
-        };
-        activeVideo.addEventListener('loadedmetadata', handleLoadedMetadata);
-      }
-    }
-
-    return () => {
-      isSubscribed = false;
-      activeVideo.removeEventListener('seeked', handleInitialSeeked);
-    };
-  }, [clip.src]);
-
-  // 2. Play request event handler
-  useEffect(() => {
-    const handlePlayRequest = () => {
-      const currentActive = activeBufferRef.current;
-      const activeVideo = currentActive === 'A' ? videoRefA.current : videoRefB.current;
-      if (!activeVideo || activeVideo.readyState < 1) return;
-
-      const targetTime = Math.max(0, (trimOffset + (currentFrameRef.current - clip.startFrame)) / fps);
-      if (activeVideo.ended || Math.abs(activeVideo.currentTime - targetTime) > 0.1) {
-        activeVideo.currentTime = targetTime;
-      }
-      activeVideo.playbackRate = playbackRateRef.current;
-      syncVideoAudioState(activeVideo, mutedRef.current);
-      activeVideo.play().catch((err) => {
-        if (err && err.name === 'NotAllowedError') {
-          activeVideo.muted = true;
-          activeVideo.play().catch(() => {});
-        }
-      });
-    };
-
-    window.addEventListener('timeline-preview-play-request', handlePlayRequest);
-    return () => {
-      window.removeEventListener('timeline-preview-play-request', handlePlayRequest);
-    };
-  }, [clip.startFrame, trimOffset, fps]);
-
-  // 3. Update Clip Metadata (duration) from videoRefA
-  useEffect(() => {
-    const video = videoRefA.current;
-    if (!video) return;
-
-    setIsReadyA(false);
-
-    const handleLoadedMetadata = () => {
-      setIsReadyA(true);
-      if (video.duration) {
-        const durationInFrames = Math.round(video.duration * fps);
-        if (clip.mediaDuration !== durationInFrames) {
-          updateClip(clip.id, { mediaDuration: durationInFrames });
-        }
-      }
-    };
-
-    if (video.readyState >= 1) {
-      setIsReadyA(true);
-      if (video.duration) {
-        const durationInFrames = Math.round(video.duration * fps);
-        if (clip.mediaDuration !== durationInFrames) {
-          updateClip(clip.id, { mediaDuration: durationInFrames });
-        }
-      }
-    } else {
-      video.addEventListener('loadedmetadata', handleLoadedMetadata);
-      return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-    }
-  }, [clip.src, clip.mediaDuration, fps, updateClip, clip.id]);
-
-  // 4. Track metadata load on videoRefB
-  useEffect(() => {
-    const video = videoRefB.current;
-    if (!video) return;
-
-    setIsReadyB(false);
-
-    const handleLoadedMetadata = () => {
-      setIsReadyB(true);
-    };
-
-    if (video.readyState >= 1) {
-      setIsReadyB(true);
-    } else {
-      video.addEventListener('loadedmetadata', handleLoadedMetadata);
-      return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-    }
-  }, [clip.src]);
-
-  // 5. Playback state effect
-  useEffect(() => {
-    const currentActive = activeBufferRef.current;
-    const activeVideo = currentActive === 'A' ? videoRefA.current : videoRefB.current;
-    if (!activeVideo || !isReady) return;
-
-    if (isPlaying) {
-      const targetTime = Math.max(0, (trimOffset + (currentFrameRef.current - clip.startFrame)) / fps);
-      if (activeVideo.ended || Math.abs(activeVideo.currentTime - targetTime) > 0.1) {
-        seekTo(targetTime);
-      } else {
-        activeVideo.playbackRate = playbackRate;
-        syncVideoAudioState(activeVideo, muted);
-        activeVideo.play().catch((err) => {
-          if (err && err.name === 'NotAllowedError') {
-            activeVideo.muted = true;
-            activeVideo.play().catch(() => {});
-          }
-        });
-      }
-    } else {
-      activeVideo.pause();
-    }
-  }, [isPlaying, isReady, clip.startFrame, trimOffset, fps, playbackRate, muted]);
-
-  // 6. Sync muted state to active video, and force-mute inactive video
-  useEffect(() => {
-    const currentActive = activeBuffer;
-    const activeVideo = currentActive === 'A' ? videoRefA.current : videoRefB.current;
-    const inactiveVideo = currentActive === 'A' ? videoRefB.current : videoRefA.current;
-
-    if (activeVideo) syncVideoAudioState(activeVideo, muted);
-    if (inactiveVideo) syncVideoAudioState(inactiveVideo, true);
-  }, [muted, activeBuffer]);
-
-  // 7. Sync playback rate to both
-  useEffect(() => {
-    if (videoRefA.current && isReadyA) videoRefA.current.playbackRate = playbackRate;
-    if (videoRefB.current && isReadyB) videoRefB.current.playbackRate = playbackRate;
-  }, [playbackRate, isReadyA, isReadyB]);
-
-  // 8. Handle frame tracking and scrubbing via window event listener
-  useEffect(() => {
-    const handleFrameUpdate = (e: Event) => {
-      const customEvent = e as CustomEvent<{ frame: number }>;
-      const frame = customEvent.detail.frame;
-      
-      currentFrameRef.current = frame;
-
-      const currentActive = activeBufferRef.current;
-      const activeVideo = currentActive === 'A' ? videoRefA.current : videoRefB.current;
-      if (!activeVideo || !isReady) return;
-
-      const targetTime = Math.max(0, (trimOffset + (frame - clip.startFrame)) / fps);
-
-      if (!isPlayingRef.current) {
-        if (Math.abs(activeVideo.currentTime - targetTime) > 0.05) {
-          seekTo(targetTime);
-        }
-      } else {
-        if (activeVideo.paused && !activeVideo.ended) {
-          if (Math.abs(activeVideo.currentTime - targetTime) > 0.1) {
-            seekTo(targetTime);
-          } else {
-            syncVideoAudioState(activeVideo, mutedRef.current);
-            activeVideo.playbackRate = playbackRateRef.current;
-            activeVideo.play().catch((err) => {
-              if (err && err.name === 'NotAllowedError') {
-                activeVideo.muted = true;
-                activeVideo.play().catch(() => {});
-              }
-            });
-          }
-        }
-
-        const timeDiff = activeVideo.currentTime - targetTime;
-        if (Math.abs(timeDiff) > 1.0) {
-          seekTo(targetTime);
-        }
-      }
-    };
-
-    window.addEventListener('timeline-frame-update', handleFrameUpdate);
-    return () => {
-      window.removeEventListener('timeline-frame-update', handleFrameUpdate);
-    };
-  }, [clip.startFrame, trimOffset, fps, isReady]);
-
-  // Cleanup swap safety timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (swapTimeoutRef.current) {
-        clearTimeout(swapTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const mediaStyle = getPreviewMediaStyle(mediaLayout);
-
-  const styleA: React.CSSProperties = {
-    ...mediaStyle,
-    opacity: activeBuffer === 'A' && hasCompletedFirstSeek ? 1 : 0,
-    pointerEvents: activeBuffer === 'A' ? 'auto' : 'none',
-  };
-
-  const styleB: React.CSSProperties = {
-    ...mediaStyle,
-    opacity: activeBuffer === 'B' && hasCompletedFirstSeek ? 1 : 0,
-    pointerEvents: activeBuffer === 'B' ? 'auto' : 'none',
-  };
-
-  return (
-    <>
-      <video
-        ref={videoRefA}
-        src={clip.src}
-        data-preview-clip-id={clip.id}
-        className="absolute"
-        style={styleA}
-        preload="auto"
-        playsInline
-        muted={activeBuffer === 'A' ? muted : true}
-      />
-      <video
-        ref={videoRefB}
-        src={clip.src}
-        data-preview-clip-id={clip.id}
-        className="absolute"
-        style={styleB}
-        preload="auto"
-        playsInline
-        muted={activeBuffer === 'B' ? muted : true}
-      />
-    </>
-  );
-}, (prevProps, nextProps) => {
-  return (
-    prevProps.clip.id === nextProps.clip.id &&
-    prevProps.clip.src === nextProps.clip.src &&
-    prevProps.clip.startFrame === nextProps.clip.startFrame &&
-    prevProps.clip.duration === nextProps.clip.duration &&
-    prevProps.clip.trimStart === nextProps.clip.trimStart &&
-    prevProps.clip.mediaDuration === nextProps.clip.mediaDuration &&
-    prevProps.isPlaying === nextProps.isPlaying &&
-    prevProps.fps === nextProps.fps &&
-    prevProps.playbackRate === nextProps.playbackRate &&
-    prevProps.muted === nextProps.muted &&
-    prevProps.mediaLayout === nextProps.mediaLayout
-  );
-});
 
 const formatGraphValue = (value: number) => value.toFixed(1);
 
@@ -2288,11 +1847,8 @@ function MultiScenePreview({
                             {(clip.type === 'video' || clip.type === 'image') && (
                               <PreviewMediaBackdrop mediaLayout={previewMediaLayout} />
                             )}
-                            {clip.type === 'video' && clip.src && (
-                              <PreviewVideo key={`${clip.id}-${clip.src || 'missing-src'}`} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={isSceneMuted || mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
-                            )}
-                            {clip.type === 'image' && clip.src && (
-                              <img src={clip.src} alt={clip.name} className="absolute" style={mediaStyle} />
+                            {(clip.type === 'video' || clip.type === 'image') && clip.src && (
+                              <Frame key={clip.trackId || clip.id} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={isSceneMuted || mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
                             )}
                             {!clip.src && (
                               <motion.div layout className="z-10 flex flex-col items-center p-3 text-center text-white drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]">
@@ -2368,8 +1924,9 @@ function MultiScenePreview({
                         clip.type === 'image' && "overflow-hidden rounded-sm shadow-2xl ring-2 ring-white/10",
                       )}
                     >
-                      {clip.type === 'image' && clip.src && <img src={clip.src} alt={clip.name} className="max-h-full max-w-full object-contain" />}
-                      {clip.type === 'video' && clip.src && <PreviewVideo key={`${clip.id}-${clip.src || 'missing-src'}`} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={isSceneMuted || mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />}
+                      {(clip.type === 'video' || clip.type === 'image') && clip.src && (
+                         <Frame key={clip.trackId || clip.id} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={isSceneMuted || mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
+                       )}
                     </motion.div>
                   ))}
                 </div>
@@ -2803,11 +2360,8 @@ export function Preview({
                               {(clip.type === 'video' || clip.type === 'image') && (
                                 <PreviewMediaBackdrop mediaLayout={previewMediaLayout} />
                               )}
-                              {clip.type === 'video' && clip.src && (
-                                <PreviewVideo key={`${clip.id}-${clip.src || 'missing-src'}`} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
-                              )}
-                              {clip.type === 'image' && clip.src && (
-                                <img src={clip.src} alt={clip.name} className="absolute" style={getPreviewMediaStyle(previewMediaLayout)} />
+                              {(clip.type === 'video' || clip.type === 'image') && clip.src && (
+                                <Frame key={clip.trackId || clip.id} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
                               )}
                               {!clip.src && (
                                 <motion.div layout className="z-10 flex flex-col items-center p-4 text-center text-white drop-shadow-[0_4px_12px_rgba(0,0,0,0.5)]">
@@ -3077,22 +2631,8 @@ export function Preview({
                       
                              {clip.src ? (
                                <>
-                                 {clip.type === 'video' && (
-                                   <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
-                                      <div className="relative h-full w-full flex-shrink-0">
-                                        <PreviewVideo key={`${clip.id}-${clip.src || 'missing-src'}`} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
-                                      </div>
-                                   </div>
-                                 )}
-                                 {clip.type === 'image' && (
-                                   <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
-                                     <img 
-                                       src={clip.src} 
-                                       alt={clip.name} 
-                                       className="absolute"
-                                       style={getPreviewMediaStyle(previewMediaLayout)}
-                                     />
-                                   </div>
+                                 {(clip.type === 'video' || clip.type === 'image') && (
+                                   <Frame key={clip.trackId || clip.id} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
                                  )}
                                  {clip.type !== 'image' && (
                                    <motion.div layout="position" className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/90 via-black/60 to-transparent z-10 flex flex-col items-center group-hover:from-black transition-all">
@@ -3219,16 +2759,8 @@ export function Preview({
                   
                          {clip.src ? (
                            <>
-                             {clip.type === 'video' && (
-                               <PreviewVideo key={`${clip.id}-${clip.src || 'missing-src'}`} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
-                             )}
-                             {clip.type === 'image' && (
-                               <motion.img 
-                                 layout
-                                 src={clip.src} 
-                                 alt={clip.name} 
-                                 className="absolute inset-0 w-full h-full object-cover" 
-                               />
+                             {(clip.type === 'video' || clip.type === 'image') && (
+                               <Frame key={clip.trackId || clip.id} clip={clip} currentFrame={currentFrame} isPlaying={isPlaying} fps={fps} playbackRate={playbackRate} muted={mutedTrackIds.includes(clip.trackId) || mutedTrackIds.includes(group.id)} mediaLayout={previewMediaLayout} />
                              )}
                               {clip.type !== 'dialog' && clip.type !== 'image' && (
                                 <motion.div layout="position" className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/90 via-black/60 to-transparent z-10 flex flex-col items-center group-hover:from-black transition-all">
