@@ -6985,7 +6985,8 @@ function EditorInner() {
                                     <div 
                                       className="h-full bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.6)] relative"
                                       style={{ 
-                                        width: `${(Math.min(preview.durationSeconds, preview.elapsedSeconds) / (preview.durationSeconds || 1) * 100).toFixed(1)}%` 
+                                        width: `${(Math.min(preview.durationSeconds, preview.elapsedSeconds) / (preview.durationSeconds || 1) * 100).toFixed(1)}%`,
+                                        transition: (preview.isPlaying && preview.elapsedSeconds > 0.1 && collectionScrubbingId !== beat.id) ? 'width 0.1s linear' : 'none'
                                       }}
                                     >
                                       {sceneLaunchManuallyPaused === beat.id && (
@@ -7554,7 +7555,8 @@ function EditorInner() {
                                 <div 
                                   className="h-full bg-blue-500 shadow-[0_0_4px_rgba(59,130,246,0.6)] relative"
                                   style={{ 
-                                    width: `${(Math.min(preview.durationSeconds, preview.elapsedSeconds) / (preview.durationSeconds || 1) * 100).toFixed(1)}%` 
+                                    width: `${(Math.min(preview.durationSeconds, preview.elapsedSeconds) / (preview.durationSeconds || 1) * 100).toFixed(1)}%`,
+                                    transition: (preview.isPlaying && preview.elapsedSeconds > 0.1 && collectionScrubbingId !== beat.id) ? 'width 0.1s linear' : 'none'
                                   }}
                                 >
                                   {sceneLaunchManuallyPaused === beat.id && (
