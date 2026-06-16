@@ -1,9 +1,11 @@
 'use client';
 
 import React from 'react';
-import { Clock, Grid2X2, Pause, Play, Repeat, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { Clock, Grid2X2, Maximize2, MonitorPlay, Pause, Play, Repeat, ZoomIn, ZoomOut } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+
+export type SceneLaunchPlaybackMode = 'inline' | 'preview';
 
 export type SceneLaunchTimelineMediaItem = {
   id: string;
@@ -35,9 +37,11 @@ type SceneLaunchTimelineProps<TCollection extends { id: string; name: string }> 
   pxPerSecond: number;
   setPxPerSecond: React.Dispatch<React.SetStateAction<number>>;
   isTimelinePlaying: boolean;
+  playbackMode: SceneLaunchPlaybackMode;
   isTimelineLooping: boolean;
   onToggleLoop: () => void;
   onTogglePlayback: () => void;
+  onTogglePreview: () => void;
   isScrubbing: boolean;
   setIsScrubbing: React.Dispatch<React.SetStateAction<boolean>>;
   onTimelineTimeChange: (time: number) => void;
@@ -125,9 +129,11 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
   pxPerSecond,
   setPxPerSecond,
   isTimelinePlaying,
+  playbackMode,
   isTimelineLooping,
   onToggleLoop,
   onTogglePlayback,
+  onTogglePreview,
   isScrubbing,
   setIsScrubbing,
   onTimelineTimeChange,
@@ -229,13 +235,31 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
               "flex h-7 w-7 items-center justify-center rounded-full transition-all text-white shadow-md cursor-pointer",
               isTimelinePlaying ? "bg-red-650 hover:bg-red-700 animate-pulse" : "bg-indigo-600 hover:bg-indigo-700"
             )}
-            title={isTimelinePlaying ? "Pause Timeline" : "Play Timeline"}
+            title={playbackMode === 'preview'
+              ? isTimelinePlaying ? "Pause Preview" : "Play Preview"
+              : isTimelinePlaying ? "Pause Timeline" : "Play Timeline"}
           >
             {isTimelinePlaying ? (
               <Pause className="h-3.5 w-3.5 fill-current" />
             ) : (
               <Play className="h-3.5 w-3.5 fill-current ml-0.5" />
             )}
+          </button>
+
+          <button
+            type="button"
+            onClick={onTogglePreview}
+            aria-pressed={playbackMode === 'preview'}
+            className={cn(
+              "flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[9px] font-black uppercase tracking-widest shadow-md outline-none transition-colors focus-visible:ring-2 focus-visible:ring-indigo-400/70",
+              playbackMode === 'preview'
+                ? "border-indigo-500/60 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/25"
+                : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:text-white"
+            )}
+            title={playbackMode === 'preview' ? "Hide preview" : "Show preview"}
+          >
+            <MonitorPlay className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Preview</span>
           </button>
           <span className="text-[10px] font-mono text-zinc-300 bg-zinc-900 border border-zinc-800/80 px-2 py-0.5 rounded-full font-bold">
             {timelineCurrentTime.toFixed(1)}s
@@ -415,41 +439,56 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
 
                     {gridItem.type === 'media' && (isImage || isVideo) && (
                       <div
-                        style={{ touchAction: 'none' }}
-                        onPointerDown={(event) => {
-                          event.stopPropagation();
-                          event.preventDefault();
-                          event.currentTarget.setPointerCapture(event.pointerId);
-                          setResizingItem({
-                            id: gridItem.id,
-                            initialDuration: duration,
-                            startX: event.clientX,
-                            currentDuration: duration,
-                          });
-                        }}
-                        onPointerMove={(event) => {
-                          if (!resizingItem || resizingItem.id !== gridItem.id) return;
-                          event.stopPropagation();
-                          const deltaX = event.clientX - resizingItem.startX;
-                          const deltaDuration = deltaX / pxPerSecond;
-                          const newDuration = Math.max(1, Math.min(60, resizingItem.initialDuration + deltaDuration));
-                          setResizingItem({
-                            ...resizingItem,
-                            currentDuration: newDuration,
-                          });
-                        }}
-                        onPointerUp={(event) => {
-                          if (resizingItem && resizingItem.id === gridItem.id) {
-                            event.currentTarget.releasePointerCapture(event.pointerId);
-                            updateSceneLaunchMediaDuration(gridItem.id, Number(resizingItem.currentDuration.toFixed(1)));
-                            setResizingItem(null);
-                          }
-                        }}
                         className={cn(
-                          "absolute right-0 top-0 w-2.5 h-full cursor-col-resize z-20 transition-all hover:bg-indigo-500/70 bg-zinc-800/10 border-r border-r-zinc-700/50 group-hover:border-r-indigo-500/50",
-                          resizingItem?.id === gridItem.id && "bg-indigo-500 border-r-indigo-400"
+                          "absolute inset-y-0 left-0 right-0 z-20 flex items-stretch opacity-0 transition-opacity duration-150 group-hover:opacity-100",
+                          isItemActive && "opacity-100",
+                          resizingItem?.id === gridItem.id && "opacity-100"
                         )}
-                      />
+                      >
+                        <div className="pointer-events-none flex w-3.5 shrink-0 select-none items-center justify-center rounded-l-md border-y-2 border-l-2 border-white bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.28),0_6px_18px_rgba(0,0,0,0.35)]">
+                          <div className="h-6 w-[1.5px] rounded-full bg-zinc-400/60" />
+                        </div>
+
+                        <div className="pointer-events-none flex-1 border-y-2 border-white" />
+
+                        <div
+                          style={{ touchAction: 'none' }}
+                          onPointerDown={(event) => {
+                            event.stopPropagation();
+                            event.preventDefault();
+                            event.currentTarget.setPointerCapture(event.pointerId);
+                            setResizingItem({
+                              id: gridItem.id,
+                              initialDuration: duration,
+                              startX: event.clientX,
+                              currentDuration: duration,
+                            });
+                          }}
+                          onPointerMove={(event) => {
+                            if (!resizingItem || resizingItem.id !== gridItem.id) return;
+                            event.stopPropagation();
+                            const deltaX = event.clientX - resizingItem.startX;
+                            const deltaDuration = deltaX / pxPerSecond;
+                            const newDuration = Math.max(1, Math.min(60, resizingItem.initialDuration + deltaDuration));
+                            setResizingItem({
+                              ...resizingItem,
+                              currentDuration: newDuration,
+                            });
+                          }}
+                          onPointerUp={(event) => {
+                            if (resizingItem && resizingItem.id === gridItem.id) {
+                              event.currentTarget.releasePointerCapture(event.pointerId);
+                              updateSceneLaunchMediaDuration(gridItem.id, Number(resizingItem.currentDuration.toFixed(1)));
+                              setResizingItem(null);
+                            }
+                          }}
+                          className="flex w-3.5 shrink-0 cursor-col-resize select-none items-center justify-center rounded-r-md border-y-2 border-r-2 border-white bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.28),0_6px_18px_rgba(0,0,0,0.35)] transition-[width,box-shadow] duration-150 hover:w-4 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.7),0_0_18px_rgba(255,255,255,0.22),0_8px_22px_rgba(0,0,0,0.45)]"
+                          aria-label="Resize timeline item duration"
+                          title="Resize duration"
+                        >
+                          <div className="h-6 w-[1.5px] rounded-full bg-zinc-400/60" />
+                        </div>
+                      </div>
                     )}
                   </div>
                 );

@@ -2,15 +2,17 @@
 
 import React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Clapperboard, Grid2X2, Plus } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Grid2X2, Plus } from 'lucide-react';
+import { motion } from 'motion/react';
 import { Button } from '@storyboard/ui';
 import { toast } from 'sonner';
 
 import { useSceneLaunchBoard, type SceneLaunchBeat, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
 import { SceneLaunchSidebar } from '../SceneLaunchSidebar';
 import { SceneLaunchHeader } from '../SceneLaunchHeader';
+import { SceneLaunchCanvasPreview } from './SceneLaunchCanvasPreview';
 import { SceneLaunchGrid } from './SceneLaunchGrid';
-import { SceneLaunchTimeline } from '../SceneLaunchTimeline';
+import { SceneLaunchTimeline, type SceneLaunchPlaybackMode } from '../SceneLaunchTimeline';
 import { SceneLaunchContextMenu } from '../SceneLaunchContextMenu';
 import type { SidebarTab } from '../EditorSidebarRail';
 import type { Scene, TimelineClip, ClipType, TimelineAspectRatio } from '@/lib/timeline-context';
@@ -32,6 +34,7 @@ interface SceneLaunchWorkspaceProps {
   isDraggingItem?: boolean;
   onDropItem?: (dragKey: string) => void;
   board: ReturnType<typeof useSceneLaunchBoard>;
+  headerVariant?: 'default' | 'prompt';
 }
 
 export function SceneLaunchWorkspace({
@@ -51,6 +54,7 @@ export function SceneLaunchWorkspace({
   isDraggingItem = false,
   onDropItem = () => {},
   board,
+  headerVariant = 'default',
 }: SceneLaunchWorkspaceProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -107,6 +111,7 @@ export function SceneLaunchWorkspace({
   const [gridDragOverInfo, setGridDragOverInfo] = React.useState<{ targetKey: string; position: 'before' | 'after' | 'inside' } | null>(null);
   const [isEditingHeaderName, setIsEditingHeaderName] = React.useState(false);
   const [editingHeaderNameValue, setEditingHeaderNameValue] = React.useState('');
+  const [sceneLaunchPlaybackMode, setSceneLaunchPlaybackMode] = React.useState<SceneLaunchPlaybackMode>('inline');
   const [isTimelinePlaying, setIsTimelinePlaying] = React.useState(false);
   const [isTimelineLooping, setIsTimelineLooping] = React.useState(true);
   const [timelineCurrentTime, setTimelineCurrentTime] = React.useState(0);
@@ -590,6 +595,10 @@ const [w, h] = ratio.split(':').map(Number);
     }
   }, [isTimelinePlaying, setSceneLaunchTimelineTime]);
 
+  const toggleSceneLaunchPreview = React.useCallback(() => {
+    setSceneLaunchPlaybackMode(current => current === 'preview' ? 'inline' : 'preview');
+  }, []);
+
   // Preview animation tick effect
   React.useEffect(() => {
     if (!sceneLaunchPreviewHover) {
@@ -631,6 +640,7 @@ const [w, h] = ratio.split(':').map(Number);
     if (!isTimelinePlaying) return;
 
     let lastTime = performance.now();
+    let lastPublishedTime = currentTimeRef.current;
     let frameId: number;
 
     const tick = (now: number) => {
@@ -639,17 +649,23 @@ const [w, h] = ratio.split(':').map(Number);
 
       const current = currentTimeRef.current;
       const next = current + delta;
+      const isPreviewPlayback = sceneLaunchPlaybackMode === 'preview';
+      const publishIntervalSeconds = isPreviewPlayback ? 1 / 2 : 0;
 
       if (next >= timelineTotalDuration) {
         setTimelineCurrentTime(0);
         currentTimeRef.current = 0;
+        lastPublishedTime = 0;
         if (!isTimelineLooping) {
           setIsTimelinePlaying(false);
           return;
         }
       } else {
-        setTimelineCurrentTime(next);
         currentTimeRef.current = next;
+        if (!isPreviewPlayback || next - lastPublishedTime >= publishIntervalSeconds) {
+          setTimelineCurrentTime(next);
+          lastPublishedTime = next;
+        }
       }
 
       frameId = requestAnimationFrame(tick);
@@ -657,7 +673,7 @@ const [w, h] = ratio.split(':').map(Number);
 
     frameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frameId);
-  }, [isTimelinePlaying, timelineTotalDuration, isTimelineLooping]);
+  }, [isTimelinePlaying, timelineTotalDuration, isTimelineLooping, sceneLaunchPlaybackMode]);
 
   // Auto scroll timeline item into view
   React.useEffect(() => {
@@ -907,6 +923,38 @@ const [w, h] = ratio.split(':').map(Number);
       return `${item.collection.name} ${item.collection.items.map(collectionItem => collectionItem.name).join(' ')}`.toLowerCase().includes(sceneLaunchQuery);
     });
 
+  const activePreviewItem = (() => {
+    const activeTimelineItem = activeItemInfo
+      ? timelineItems.find(item => item.type === activeItemInfo.type && item.id === activeItemInfo.id)
+      : timelineItems[0];
+
+    if (!activeTimelineItem) return null;
+
+    if (activeTimelineItem.type === 'media') {
+      const timelineState = getGridItemTimelineState(activeTimelineItem.id, 'media');
+      const elapsedSeconds = timelineState.status === 'past'
+        ? timelineState.duration
+        : timelineState.status === 'active'
+          ? timelineState.elapsed
+          : 0;
+
+      return {
+        title: activeTimelineItem.item.name,
+        label: 'Media',
+        media: activeTimelineItem.item,
+        previewTimeSeconds: (activeTimelineItem.item.trimStartSeconds || 0) + elapsedSeconds,
+      };
+    }
+
+    const collectionPreview = getSceneLaunchCollectionPreview(activeTimelineItem.collection);
+    return {
+      title: activeTimelineItem.collection.name,
+      label: 'Collection',
+      media: collectionPreview?.item ?? null,
+      previewTimeSeconds: collectionPreview?.elapsedSeconds ?? 0,
+    };
+  })();
+
   return (
     <div
       className="relative flex min-h-0 flex-1 overflow-hidden bg-black text-zinc-100 animate-fade-in"
@@ -959,9 +1007,18 @@ const [w, h] = ratio.split(':').map(Number);
           setAspectRatio={setAspectRatio}
           setActiveTab={setActiveTab}
           openSceneLibrary={openSceneLibrary}
+          searchVariant={headerVariant === 'prompt' ? 'prompt' : 'default'}
         />
 
-        <main className="relative flex min-h-0 flex-1 flex-col px-6 pb-56 overflow-y-auto">
+        <main className="relative min-h-0 flex-1 overflow-hidden">
+          <motion.div
+            className="absolute inset-0 overflow-y-auto px-6 pb-56"
+            animate={{
+              x: '0%',
+              opacity: sceneLaunchPlaybackMode === 'preview' ? 0.18 : 1,
+            }}
+            transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+          >
           {!activeSceneLaunchBeat && rootSceneLaunchGridItemsCount === 0 && (projectHasSceneContent || visibleProjectScenes.length > 1) ? (
             <div className="mx-auto mt-8 w-full max-w-6xl">
               <div className="mb-4 flex items-end justify-between gap-4">
@@ -1030,7 +1087,7 @@ const [w, h] = ratio.split(':').map(Number);
               activeSceneLaunchBeatId={activeSceneLaunchBeatId}
               activeSceneLaunchBeat={activeSceneLaunchBeat || null}
               sceneLaunchGridItems={sceneLaunchGridItems}
-              isTimelinePlaying={isTimelinePlaying}
+              isTimelinePlaying={sceneLaunchPlaybackMode !== 'preview' && isTimelinePlaying}
               activeItemKey={activeItemKey}
               hoveredItemKey={hoveredItemKey}
               setHoveredItemKey={setHoveredItemKey}
@@ -1072,6 +1129,57 @@ const [w, h] = ratio.split(':').map(Number);
               }}
             />
           )}
+          </motion.div>
+
+          <motion.div
+            className="absolute inset-x-0 top-0 bottom-0 z-10 flex items-center justify-center px-6 pb-56 pt-6"
+            initial={false}
+            animate={{
+              y: sceneLaunchPlaybackMode === 'preview' ? '0%' : '100%',
+              boxShadow: sceneLaunchPlaybackMode === 'preview'
+                ? '0 -32px 80px rgba(0,0,0,0.5)'
+                : '0 -32px 80px rgba(0,0,0,0)',
+            }}
+            transition={{ type: 'spring', stiffness: 145, damping: 18, mass: 1.15 }}
+            aria-hidden={sceneLaunchPlaybackMode !== 'preview'}
+          >
+            <section className="flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/95 shadow-2xl shadow-black/50">
+              <div className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-zinc-800 px-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 rounded-full text-zinc-400 hover:bg-white/5 hover:text-white"
+                    onClick={() => setSceneLaunchPlaybackMode('inline')}
+                    aria-label="Back to scene board"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-bold uppercase tracking-widest text-zinc-300">
+                      {activePreviewItem?.title || 'Preview'}
+                    </div>
+                    <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-600">
+                      {activePreviewItem?.label || 'Timeline'} preview
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-indigo-200">
+                  Play Preview
+                </div>
+              </div>
+
+              <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
+                <SceneLaunchCanvasPreview
+                  media={activePreviewItem?.media ?? null}
+                  previewTimeSeconds={activePreviewItem?.previewTimeSeconds ?? 0}
+                  isPlaying={sceneLaunchPlaybackMode === 'preview' && isTimelinePlaying}
+                  isVisible={sceneLaunchPlaybackMode === 'preview'}
+                />
+              </div>
+            </section>
+          </motion.div>
         </main>
 
         <SceneLaunchTimeline
@@ -1085,9 +1193,11 @@ const [w, h] = ratio.split(':').map(Number);
           pxPerSecond={pxPerSecond}
           setPxPerSecond={setPxPerSecond}
           isTimelinePlaying={isTimelinePlaying}
+          playbackMode={sceneLaunchPlaybackMode}
           isTimelineLooping={isTimelineLooping}
           onToggleLoop={() => setIsTimelineLooping(current => !current)}
           onTogglePlayback={toggleSceneLaunchTimelinePlayback}
+          onTogglePreview={toggleSceneLaunchPreview}
           isScrubbing={isScrubbing}
           setIsScrubbing={setIsScrubbing}
           onTimelineTimeChange={setSceneLaunchTimelineTime}
