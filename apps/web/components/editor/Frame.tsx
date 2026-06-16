@@ -736,6 +736,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
   style,
 }: CollectionFrameProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [measuredFps, setMeasuredFps] = React.useState<number | null>(null);
 
   // Buffers
   const videoARef = useRef<HTMLVideoElement | null>(
@@ -951,6 +952,8 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
     isPlayingRef.current = isPlaying;
     if (isPlaying) {
       hasCachedFrameRef.current = false; // clear cache to prevent flashes
+    } else {
+      setMeasuredFps(null);
     }
 
     const activeVid = activeBufferRef.current === 'A' ? videoARef.current : videoBRef.current;
@@ -1366,8 +1369,23 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
     vB.addEventListener('canplay', handleCanPlay);
 
     let animationFrameId: number;
+    let lastTime = performance.now();
+    let frameCount = 0;
     const render = () => {
       drawCanvas();
+
+      if (isPlayingRef.current) {
+        frameCount++;
+        const now = performance.now();
+        const elapsed = now - lastTime;
+        if (elapsed >= 1000) {
+          const calculatedFps = Math.round((frameCount * 1000) / elapsed);
+          setMeasuredFps(calculatedFps);
+          frameCount = 0;
+          lastTime = now;
+        }
+      }
+
       animationFrameId = requestAnimationFrame(render);
     };
     animationFrameId = requestAnimationFrame(render);
@@ -1390,11 +1408,18 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
   // Monitor active item change handled inside unified elapsedSeconds useEffect
 
   return (
-    <canvas
-      ref={canvasRef}
-      className={className}
-      style={style}
-    />
+    <div className={`relative ${className || ''}`} style={style}>
+      {measuredFps !== null && (
+        <div className="absolute top-2 left-2 z-50 bg-black/75 border border-white/10 backdrop-blur-md text-emerald-400 font-mono text-[9px] px-1.5 py-0.5 rounded shadow-lg pointer-events-none flex items-center gap-1">
+          <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+          <span>FPS: {measuredFps}</span>
+        </div>
+      )}
+      <canvas
+        ref={canvasRef}
+        className="w-full h-full object-cover"
+      />
+    </div>
   );
 }, (prevProps, nextProps) => {
   return (

@@ -1981,6 +1981,41 @@ export function Preview({
   const containerRef = useRef<HTMLDivElement>(null);
   const [viewportWidth, setViewportWidth] = React.useState(0);
 
+  const [measuredFps, setMeasuredFps] = React.useState<number | null>(null);
+  const frameTimesRef = React.useRef<number[]>([]);
+
+  React.useEffect(() => {
+    if (!isPlaying) {
+      setMeasuredFps(null);
+      frameTimesRef.current = [];
+      return;
+    }
+
+    const now = performance.now();
+    frameTimesRef.current.push(now);
+
+    const oneSecondAgo = now - 1000;
+    while (frameTimesRef.current.length > 0 && frameTimesRef.current[0] < oneSecondAgo) {
+      frameTimesRef.current.shift();
+    }
+
+    if (frameTimesRef.current.length > 1) {
+      const firstTime = frameTimesRef.current[0];
+      const duration = (now - firstTime) / 1000;
+      if (duration > 0) {
+        const calculatedFps = Math.round((frameTimesRef.current.length - 1) / duration);
+        setMeasuredFps(calculatedFps);
+      }
+    }
+  }, [currentFrame, isPlaying]);
+
+  const fpsOverlay = measuredFps !== null ? (
+    <div className="absolute top-6 left-6 z-50 bg-black/75 border border-white/10 backdrop-blur-md text-emerald-400 font-mono text-[11px] px-2.5 py-1 rounded shadow-lg pointer-events-none flex items-center gap-1.5 animate-in fade-in duration-200">
+      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+      <span>FPS: {measuredFps} / {fps}</span>
+    </div>
+  ) : null;
+
   useEffect(() => {
     const updateViewportWidth = () => setViewportWidth(window.innerWidth);
 
@@ -2136,32 +2171,35 @@ export function Preview({
 
   if (shouldShowMultiScenePreview) {
     return (
-      <MultiScenePreview
-        scenes={previewScenes}
-        activeSceneId={activeSceneId}
-        currentFrame={currentFrame}
-        aspectRatio={aspectRatio}
-        disabledTrackIds={disabledTrackIds}
-        mutedTrackIds={mutedTrackIds}
-        isPlaying={isPlaying}
-        fps={fps}
-        playbackRate={playbackRate}
-        characters={characters}
-        previewGroupLayout={previewGroupLayout}
-        previewMediaLayout={previewMediaLayout}
-        analyticsOverlayStyle={renderedAnalyticsOverlayStyle}
-        showNoteOverlayIcons={showNoteOverlayIcons}
-        compactNoteOverlays={renderedCompactNoteOverlays}
-        showDialogPreviewUi={showDialogPreviewUi}
-        showSceneTitleUi={showSceneTitleUi}
-        noteTagFilter={noteTagFilter}
-        showStarredNoteOverlaysOnly={showStarredNoteOverlaysOnly}
-        highlightedBeatKeys={highlightedBeatKeys}
-        viewportWidth={viewportWidth}
-        showSceneMuteControls={showSceneMuteControls}
-        showPreviewTagUi={showPreviewTagUi}
-        toggleTrackMute={toggleTrackMute}
-      />
+      <div className="relative flex flex-col flex-1 min-h-0 min-w-0">
+        {fpsOverlay}
+        <MultiScenePreview
+          scenes={previewScenes}
+          activeSceneId={activeSceneId}
+          currentFrame={currentFrame}
+          aspectRatio={aspectRatio}
+          disabledTrackIds={disabledTrackIds}
+          mutedTrackIds={mutedTrackIds}
+          isPlaying={isPlaying}
+          fps={fps}
+          playbackRate={playbackRate}
+          characters={characters}
+          previewGroupLayout={previewGroupLayout}
+          previewMediaLayout={previewMediaLayout}
+          analyticsOverlayStyle={renderedAnalyticsOverlayStyle}
+          showNoteOverlayIcons={showNoteOverlayIcons}
+          compactNoteOverlays={renderedCompactNoteOverlays}
+          showDialogPreviewUi={showDialogPreviewUi}
+          showSceneTitleUi={showSceneTitleUi}
+          noteTagFilter={noteTagFilter}
+          showStarredNoteOverlaysOnly={showStarredNoteOverlaysOnly}
+          highlightedBeatKeys={highlightedBeatKeys}
+          viewportWidth={viewportWidth}
+          showSceneMuteControls={showSceneMuteControls}
+          showPreviewTagUi={showPreviewTagUi}
+          toggleTrackMute={toggleTrackMute}
+        />
+      </div>
     );
   }
 
@@ -2292,6 +2330,7 @@ export function Preview({
     });
     return (
       <div ref={containerRef} className="flex-1 bg-[#050505] flex items-center justify-center relative overflow-hidden group p-4">
+        {fpsOverlay}
         <div
           className="grid h-full w-full gap-1 p-1 xl:gap-2 xl:p-2"
           style={getPreviewGridStyle(visualGroups.length)}
@@ -2558,6 +2597,7 @@ export function Preview({
 
   return (
     <div ref={containerRef} className="flex-1 bg-[#050505] flex items-center justify-center relative overflow-hidden group p-4">
+      {fpsOverlay}
       <div
         className="grid h-full w-full gap-1 p-1 xl:gap-2 xl:p-2"
         style={getPreviewGridStyle(parentGroups.length)}
