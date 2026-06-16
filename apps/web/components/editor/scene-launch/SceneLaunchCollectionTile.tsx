@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Grid2X2, Pause, Play, ChevronLeft, ChevronRight, GripVertical } from 'lucide-react';
+import { Grid2X2, Pause, Play, ChevronLeft, ChevronRight, GripVertical, Folder } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CollectionFrame } from '../Frame';
 import { CollectionProgressBar } from '../CollectionProgressBar';
@@ -259,7 +259,10 @@ export function SceneLaunchCollectionTile({
         }}
       >
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-bold text-zinc-200">{beat.name}</div>
+          <div className="flex items-center gap-1.5 truncate text-sm font-bold text-zinc-200">
+            <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500/60 mr-1" />
+            <span className="truncate">{beat.name}</span>
+          </div>
           <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500 font-mono tracking-wider uppercase">
             <div className="flex items-center gap-1">
               {activeItemIndex > 0 && totalItems > 1 && (

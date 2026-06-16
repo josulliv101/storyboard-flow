@@ -37,6 +37,10 @@ type DirectorySidePanelProps = {
   sceneLaunchMediaItems: SceneLaunchMediaItem[];
   setSceneLaunchBeatPath: React.Dispatch<React.SetStateAction<string[]>>;
   openBeatDetail: (beatId: string) => void;
+  pendingMoveItem: { type: 'media' | 'collection'; id: string } | null;
+  setPendingMoveItem: React.Dispatch<React.SetStateAction<{ type: 'media' | 'collection'; id: string } | null>>;
+  onSelectMoveTarget: (targetBeatId: string) => void;
+  onCancelMove?: () => void;
 };
 
 export function DirectorySidePanel({
@@ -47,6 +51,10 @@ export function DirectorySidePanel({
   sceneLaunchMediaItems,
   setSceneLaunchBeatPath,
   openBeatDetail,
+  pendingMoveItem,
+  setPendingMoveItem,
+  onSelectMoveTarget,
+  onCancelMove,
 }: DirectorySidePanelProps) {
   const toggleExpanded = (id: string) => {
     setDirectoryExpandedIds(prev => {
@@ -87,8 +95,12 @@ export function DirectorySidePanel({
           className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-zinc-800/60 group/treeitem"
           style={{ paddingLeft: `${depth * 14 + 8}px` }}
           onClick={() => {
-            if (hasChildren) toggleExpanded(beat.id);
-            openBeatDetail(beat.id);
+            if (pendingMoveItem) {
+              onSelectMoveTarget(beat.id);
+            } else {
+              if (hasChildren) toggleExpanded(beat.id);
+              openBeatDetail(beat.id);
+            }
           }}
         >
           {hasChildren ? (
@@ -127,6 +139,7 @@ export function DirectorySidePanel({
                 if (childBeat) return renderTreeCollection(childBeat, depth + 1);
                 return null;
               }
+              if (pendingMoveItem) return null; // Filter/hide media in Move mode!
               const media = beat.items.find(m => m.id === gi.id);
               if (!media) return null;
               return renderMediaItem(media, `${(depth + 1) * 14 + 8}px`);
@@ -137,17 +150,53 @@ export function DirectorySidePanel({
     );
   };
 
+  const pendingMoveItemName = React.useMemo(() => {
+    if (!pendingMoveItem) return '';
+    const { type, id } = pendingMoveItem;
+    if (type === 'collection') {
+      return sceneLaunchBeats.find(b => b.id === id)?.name || '';
+    } else {
+      const rootItem = sceneLaunchMediaItems.find(item => item.id === id);
+      if (rootItem) return rootItem.name;
+      return sceneLaunchBeats.flatMap(beat => beat.items).find(item => item.id === id)?.name || '';
+    }
+  }, [pendingMoveItem, sceneLaunchBeats, sceneLaunchMediaItems]);
+
   const rootIsExpanded = directoryExpandedIds.has('__root__');
 
   return (
     <div className="p-3">
+      {pendingMoveItem && (
+        <div className="mb-3 rounded-lg border border-indigo-500/20 bg-indigo-500/5 p-2.5 flex flex-col gap-1.5 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Move Selection Mode</span>
+            <button
+              type="button"
+              onClick={onCancelMove || (() => setPendingMoveItem(null))}
+              className="text-[10px] font-bold text-zinc-500 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="text-[11px] text-zinc-300 leading-normal">
+            Moving <span className="font-semibold text-white">{pendingMoveItemName || 'item'}</span>
+          </p>
+          <p className="text-[9px] text-zinc-500 italic leading-tight">
+            Click on a folder or "Scene Board" to move it, or press ESC to cancel.
+          </p>
+        </div>
+      )}
       <div className="select-none">
         <button
           type="button"
           className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-zinc-800/60 mb-0.5"
           onClick={() => {
-            toggleExpanded('__root__');
-            setSceneLaunchBeatPath([]);
+            if (pendingMoveItem) {
+              onSelectMoveTarget('__root__');
+            } else {
+              toggleExpanded('__root__');
+              setSceneLaunchBeatPath([]);
+            }
           }}
         >
           <ChevronRight
@@ -175,6 +224,7 @@ export function DirectorySidePanel({
                 if (beat) return renderTreeCollection(beat, 1);
                 return null;
               }
+              if (pendingMoveItem) return null; // Filter/hide media in Move mode!
               const media = sceneLaunchMediaItems.find(m => m.id === gi.id);
               if (!media) return null;
               return renderMediaItem(media, '22px');

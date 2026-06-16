@@ -10,6 +10,8 @@ export type SidebarTab = 'scenes' | 'characters' | 'locations' | 'settings' | 'a
 type EditorSidebarRailProps = {
   activeTab: SidebarTab;
   setActiveTab: React.Dispatch<React.SetStateAction<SidebarTab>>;
+  isDraggingItem: boolean;
+  onDropItem: (dragKey: string) => void;
 };
 
 const sidebarItems: Array<{
@@ -24,22 +26,55 @@ const sidebarItems: Array<{
   { id: 'directory', icon: FolderTree, title: 'Project Directory' },
 ];
 
-export function EditorSidebarRail({ activeTab, setActiveTab }: EditorSidebarRailProps) {
-  const renderButton = ({ id, icon: Icon, title }: (typeof sidebarItems)[number]) => (
-    <Button
-      key={id}
-      variant="ghost"
-      size="icon"
-      onClick={() => setActiveTab(activeTab === id ? null : id)}
-      className={cn(
-        "h-8 w-8 transition-all",
-        activeTab === id ? "text-indigo-400 bg-indigo-500/10" : "text-zinc-600 hover:text-zinc-300"
-      )}
-      title={title}
-    >
-      <Icon className="h-4.5 w-4.5" />
-    </Button>
-  );
+export function EditorSidebarRail({
+  activeTab,
+  setActiveTab,
+  isDraggingItem,
+  onDropItem,
+}: EditorSidebarRailProps) {
+  const [isDragOverDirectory, setIsDragOverDirectory] = React.useState(false);
+
+  const renderButton = ({ id, icon: Icon, title }: (typeof sidebarItems)[number]) => {
+    const isDirectory = id === 'directory';
+    const isGlowActive = isDirectory && isDraggingItem;
+    const isHoverActive = isDirectory && isDragOverDirectory;
+
+    return (
+      <Button
+        key={id}
+        variant="ghost"
+        size="icon"
+        onClick={() => setActiveTab(activeTab === id ? null : id)}
+        onDragOver={isDirectory ? (e) => {
+          e.preventDefault();
+        } : undefined}
+        onDragEnter={isDirectory ? (e) => {
+          e.preventDefault();
+          setIsDragOverDirectory(true);
+        } : undefined}
+        onDragLeave={isDirectory ? () => {
+          setIsDragOverDirectory(false);
+        } : undefined}
+        onDrop={isDirectory ? (e) => {
+          e.preventDefault();
+          setIsDragOverDirectory(false);
+          const dragKey = e.dataTransfer.getData('text/plain');
+          if (dragKey) {
+            onDropItem(dragKey);
+          }
+        } : undefined}
+        className={cn(
+          "h-8 w-8 transition-all relative",
+          activeTab === id ? "text-indigo-400 bg-indigo-500/10" : "text-zinc-600 hover:text-zinc-300",
+          isGlowActive && "animate-pulse ring-2 ring-indigo-500/50 shadow-[0_0_10px_rgba(99,102,241,0.5)] border-indigo-400/30 text-indigo-400",
+          isHoverActive && "bg-emerald-500/10 text-emerald-400 ring-2 ring-emerald-500/80 shadow-[0_0_12px_rgba(16,185,129,0.6)] !animate-none"
+        )}
+        title={title}
+      >
+        <Icon className={cn("h-4.5 w-4.5", isHoverActive && "animate-bounce")} />
+      </Button>
+    );
+  };
 
   return (
     <aside className="w-12 border-r border-zinc-800 bg-[#111114] flex flex-col items-center py-4 gap-4 shrink-0 z-10">

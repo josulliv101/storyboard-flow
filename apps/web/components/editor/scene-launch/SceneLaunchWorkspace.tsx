@@ -29,6 +29,9 @@ interface SceneLaunchWorkspaceProps {
   setActiveScene: (sceneId: string) => void;
   updateClip: (clipId: string, updates: Partial<TimelineClip>) => void;
   handleAddClip: (type: ClipType, character?: string, file?: File, customId?: string, customDurationSeconds?: number) => string;
+  isDraggingItem?: boolean;
+  onDropItem?: (dragKey: string) => void;
+  board: ReturnType<typeof useSceneLaunchBoard>;
 }
 
 export function SceneLaunchWorkspace({
@@ -45,19 +48,14 @@ export function SceneLaunchWorkspace({
   setActiveScene,
   updateClip,
   handleAddClip,
+  isDraggingItem = false,
+  onDropItem = () => {},
+  board,
 }: SceneLaunchWorkspaceProps) {
   const router = useRouter();
   const pathname = usePathname();
 
   const activeSceneObject = scenes.find(s => s.id === activeSceneId) || scenes[0];
-
-  const board = useSceneLaunchBoard({
-    activeScene: activeSceneObject,
-    scenes,
-    updateScene,
-    handleAddClip,
-    updateClip,
-  });
 
   const {
     sceneLaunchMediaItems,
@@ -959,6 +957,8 @@ export function SceneLaunchWorkspace({
         setSceneLaunchBeatPath={setSceneLaunchBeatPath}
         openSceneLibrary={openSceneLibrary}
         moveItemToTrash={moveItemToTrash}
+        isDraggingItem={isDraggingItem}
+        onDropItem={onDropItem}
       />
 
       <div className="relative flex min-w-0 flex-1 flex-col">

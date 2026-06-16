@@ -186,6 +186,9 @@ function EditorInner() {
   const selectedClip = clips.find(c => c.id === selectedClipIds[selectedClipIds.length - 1]);
   const activeScene = scenes.find(scene => scene.id === activeSceneId) || scenes[0];
   const [activeTab, setActiveTab] = React.useState<SidebarTab>(null);
+  const [isDraggingSceneLaunchItem, setIsDraggingSceneLaunchItem] = React.useState(false);
+  const [pendingMoveItem, setPendingMoveItem] = React.useState<{ type: 'media' | 'collection'; id: string } | null>(null);
+  const [originalBeatPath, setOriginalBeatPath] = React.useState<string[] | null>(null);
   const [isFileMenuOpen, setIsFileMenuOpen] = React.useState(false);
   const [isRendering, setIsRendering] = React.useState(false);
   const [scriptEditorClipId, setScriptEditorClipId] = React.useState<string | null>(null);
@@ -204,6 +207,27 @@ function EditorInner() {
   const [authError, setAuthError] = React.useState('');
   const [allUsers, setAllUsers] = React.useState<{ id: string; username: string; role: 'viewer' | 'editor' | 'admin'; createdAt: string }[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = React.useState(false);
+
+  // Global drag-and-drop listener to detect Scene Launch item dragging
+  React.useEffect(() => {
+    const handleDragStart = (e: DragEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && target.id && target.id.startsWith('grid-item-')) {
+        setIsDraggingSceneLaunchItem(true);
+      }
+    };
+
+    const handleDragEnd = () => {
+      setIsDraggingSceneLaunchItem(false);
+    };
+
+    window.addEventListener('dragstart', handleDragStart);
+    window.addEventListener('dragend', handleDragEnd);
+    return () => {
+      window.removeEventListener('dragstart', handleDragStart);
+      window.removeEventListener('dragend', handleDragEnd);
+    };
+  }, []);
 
   // Enforce authentication: redirect anonymous users back to landing homepage
   React.useEffect(() => {
@@ -479,6 +503,36 @@ function EditorInner() {
     handleAddClip,
     updateClip,
   });
+
+  const handleCancelMove = React.useCallback(() => {
+    if (!pendingMoveItem) return;
+    if (originalBeatPath !== null) {
+      board.setSceneLaunchBeatPath(originalBeatPath);
+      setOriginalBeatPath(null);
+    }
+    setPendingMoveItem(null);
+    toast.info('Move operation cancelled');
+  }, [pendingMoveItem, originalBeatPath, board.setSceneLaunchBeatPath]);
+
+  // Listen to Escape key to cancel Move mode
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && pendingMoveItem) {
+        handleCancelMove();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [pendingMoveItem, handleCancelMove]);
+
+  // Cancel Move mode if directory side panel is closed
+  React.useEffect(() => {
+    if (activeTab !== 'directory' && pendingMoveItem) {
+      handleCancelMove();
+    }
+  }, [activeTab, pendingMoveItem, handleCancelMove]);
 
   const NOTE_TAG_FILTER_NONE = '__NO_NOTE_TAGS_VISIBLE__';
 
@@ -1200,6 +1254,10 @@ function EditorInner() {
               sceneLaunchMediaItems={board.sceneLaunchMediaItems}
               setSceneLaunchBeatPath={board.setSceneLaunchBeatPath}
               openBeatDetail={board.openBeatDetail}
+              pendingMoveItem={pendingMoveItem}
+              setPendingMoveItem={setPendingMoveItem}
+              onSelectMoveTarget={handleSelectMoveTarget}
+              onCancelMove={handleCancelMove}
             />
           )}
 
@@ -1244,6 +1302,77 @@ function EditorInner() {
       </div>
     );
   }
+
+  const buildPathToBeat = (beatId: string, beats: Array<{ id: string; childIds: string[] }>): string[] => {
+    if (beatId === '__root__' || beatId === 'root' || beatId === 'trash') {
+      return beatId === 'trash' ? ['trash'] : [];
+    }
+    const path: string[] = [beatId];
+    let currentId = beatId;
+    let iterations = 0;
+    while (iterations < 100) {
+      const parent = beats.find(b => b.childIds && b.childIds.includes(currentId));
+      if (parent) {
+        path.unshift(parent.id);
+        currentId = parent.id;
+        iterations++;
+      } else {
+        break;
+      }
+    }
+    return path;
+  };
+
+  const handleDropOnDirectory = (dragKey: string) => {
+    const [type, id] = dragKey.split(':');
+    if ((type === 'media' || type === 'collection') && id) {
+      setPendingMoveItem({ type: type as 'media' | 'collection', id });
+      setOriginalBeatPath(board.sceneLaunchBeatPath);
+      setActiveTab('directory');
+      toast.info('Click on a collection to add it to', { id: 'move-target-toast' });
+    }
+  };
+
+  const handleSelectMoveTarget = (targetBeatId: string) => {
+    if (!pendingMoveItem) return;
+    const { type, id } = pendingMoveItem;
+
+    const targetBeat = board.sceneLaunchBeats.find(b => b.id === targetBeatId);
+    const targetName = targetBeatId === 'trash' ? 'Trash' : targetBeat ? targetBeat.name : 'Scene Board';
+
+    console.log('[Move Target Selection] Clicked target:', targetBeatId, 'for item:', pendingMoveItem);
+
+    // Immediately update the main grid preview to show the selected target collection's contents
+    const targetPath = buildPathToBeat(targetBeatId, board.sceneLaunchBeats);
+    board.setSceneLaunchBeatPath(targetPath);
+
+    let hasConfirmed = false;
+    const toastId = toast(`Confirm Move`, {
+      description: `Move this ${type} to "${targetName}"?`,
+      duration: 12000,
+      action: {
+        label: 'Confirm',
+        onClick: () => {
+          hasConfirmed = true;
+          console.log('[Move Confirmed] Invoking moveSceneLaunchItemToTargetCollection with:', `${type}:${id}`, targetBeatId);
+          board.moveSceneLaunchItemToTargetCollection(`${type}:${id}`, targetBeatId);
+          setPendingMoveItem(null);
+          setOriginalBeatPath(null);
+          toast.dismiss(toastId);
+        },
+      },
+      onDismiss: () => {
+        if (!hasConfirmed) {
+          handleCancelMove();
+        }
+      },
+      onAutoClose: () => {
+        if (!hasConfirmed) {
+          handleCancelMove();
+        }
+      }
+    });
+  };
 
   return (
     <div className="workbench-shell flex flex-col h-screen bg-[#0a0a0b] text-zinc-300 font-sans overflow-hidden">
@@ -1426,7 +1555,12 @@ function EditorInner() {
           )}
         </AnimatePresence>
 
-        <EditorSidebarRail activeTab={activeTab} setActiveTab={setActiveTab} />
+        <EditorSidebarRail
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          isDraggingItem={isDraggingSceneLaunchItem}
+          onDropItem={handleDropOnDirectory}
+        />
 
         {/* Editor Workspace */}
         <div ref={workspaceRef} className="flex-1 flex flex-col overflow-hidden relative">
@@ -1445,6 +1579,9 @@ function EditorInner() {
               setActiveScene={setActiveScene}
               updateClip={updateClip}
               handleAddClip={handleAddClip}
+              isDraggingItem={isDraggingSceneLaunchItem}
+              onDropItem={handleDropOnDirectory}
+              board={board}
             />
           ) : (
           <>

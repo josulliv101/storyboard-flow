@@ -618,6 +618,118 @@ export function useSceneLaunchBoard({
     }
   };
 
+  const moveSceneLaunchItemToTargetCollection = (dragKey: string, targetId: string) => {
+    console.log('[moveSceneLaunchItemToTargetCollection] Invoked with dragKey:', dragKey, 'targetId:', targetId);
+    const [type, id] = dragKey.split(':');
+    if (!type || !id) {
+      console.error('[moveSceneLaunchItemToTargetCollection] Invalid type/id:', type, id);
+      return;
+    }
+
+    if (targetId === 'trash') {
+      console.log('[moveSceneLaunchItemToTargetCollection] Routing to trash');
+      moveItemToTrash(dragKey);
+      return;
+    }
+
+    if (type === 'media') {
+      const mediaItem = findSceneLaunchMediaItem(id);
+      console.log('[moveSceneLaunchItemToTargetCollection] findSceneLaunchMediaItem returned:', mediaItem);
+      if (!mediaItem) {
+        console.error('[moveSceneLaunchItemToTargetCollection] Media item not found for id:', id);
+        return;
+      }
+
+      // 1. Remove from current level
+      const isAtRoot = sceneLaunchGridOrder.some(item => item.type === 'media' && item.id === id);
+      if (isAtRoot) {
+        setSceneLaunchGridOrder(prev => prev.filter(item => !(item.type === 'media' && item.id === id)));
+        setSceneLaunchMediaItems(prev => prev.filter(item => item.id !== id));
+      } else {
+        setSceneLaunchBeats(previous => previous.map(beat => {
+          const items = Array.isArray(beat.items) ? beat.items : [];
+          const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
+          return {
+            ...beat,
+            items: items.filter(item => item.id !== id),
+            gridOrder: gridOrder.filter(item => !(item.type === 'media' && item.id === id)),
+          };
+        }));
+      }
+
+      // 2. Add to target level
+      if (targetId === '__root__' || targetId === 'root') {
+        setSceneLaunchMediaItems(prev => [...prev, mediaItem]);
+        setSceneLaunchGridOrder(prev => [...prev, { id, type: 'media' }]);
+        toast.success(`Moved "${mediaItem.name}" to Scene Board`);
+      } else {
+        setSceneLaunchBeats(previous => previous.map(beat => {
+          if (beat.id === targetId) {
+            const items = Array.isArray(beat.items) ? beat.items : [];
+            const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
+            return {
+              ...beat,
+              items: items.some(item => item.id === id) ? items : [...items, mediaItem],
+              gridOrder: gridOrder.some(item => item.type === 'media' && item.id === id)
+                ? gridOrder
+                : [...gridOrder, { id, type: 'media' as const }],
+            };
+          }
+          return beat;
+        }));
+        const targetBeat = sceneLaunchBeats.find(b => b.id === targetId);
+        toast.success(`Moved "${mediaItem.name}" to "${targetBeat?.name || 'collection'}"`);
+      }
+    } else if (type === 'collection') {
+      if (id === targetId) return;
+
+      if (targetId !== '__root__' && targetId !== 'root' && isDescendantCollection(id, targetId)) {
+        toast.error('Cannot move a collection inside its own sub-collection.');
+        return;
+      }
+
+      const draggedBeat = sceneLaunchBeats.find(b => b.id === id);
+      if (!draggedBeat) return;
+
+      // 1. Remove from current level
+      const isAtRoot = sceneLaunchGridOrder.some(item => item.type === 'collection' && item.id === id);
+      if (isAtRoot) {
+        setSceneLaunchGridOrder(prev => prev.filter(item => !(item.type === 'collection' && item.id === id)));
+      } else {
+        setSceneLaunchBeats(previous => previous.map(beat => {
+          const childIds = Array.isArray(beat.childIds) ? beat.childIds : [];
+          const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
+          return {
+            ...beat,
+            childIds: childIds.filter(cid => cid !== id),
+            gridOrder: gridOrder.filter(item => !(item.type === 'collection' && item.id === id)),
+          };
+        }));
+      }
+
+      // 2. Add to target level
+      if (targetId === '__root__' || targetId === 'root') {
+        setSceneLaunchGridOrder(prev => [...prev, { id, type: 'collection' }]);
+        toast.success(`Moved collection "${draggedBeat.name}" to Scene Board`);
+      } else {
+        setSceneLaunchBeats(previous => previous.map(beat => {
+          if (beat.id === targetId) {
+            const childIds = Array.isArray(beat.childIds) ? beat.childIds : [];
+            const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
+            return {
+              ...beat,
+              childIds: [...childIds, id],
+              gridOrder: [...gridOrder, { id, type: 'collection' as const }],
+            };
+          }
+          return beat;
+        }));
+        const targetBeat = sceneLaunchBeats.find(b => b.id === targetId);
+        toast.success(`Moved collection "${draggedBeat.name}" to "${targetBeat?.name || 'collection'}"`);
+      }
+    }
+  };
+
   const moveItemToTrash = (dragKey: string) => {
     const [type, id] = dragKey.split(':');
     if (!type || !id) return;
@@ -952,5 +1064,6 @@ export function useSceneLaunchBoard({
     updateSceneLaunchMediaOriginalDuration,
     updateSceneLaunchMediaTrim,
     handleItemContextMenu,
+    moveSceneLaunchItemToTargetCollection,
   };
 }
