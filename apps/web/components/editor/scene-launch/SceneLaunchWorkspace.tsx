@@ -113,6 +113,7 @@ export function SceneLaunchWorkspace({
   const [isScrubbing, setIsScrubbing] = React.useState(false);
   const [sceneLaunchPreviewNow, setSceneLaunchPreviewNow] = React.useState(() => Date.now());
   const [sceneComposerText, setSceneComposerText] = React.useState('');
+  const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
 
   const currentTimeRef = React.useRef(0);
   React.useEffect(() => {
@@ -520,44 +521,23 @@ export function SceneLaunchWorkspace({
   };
 
   const getAspectRatioValue = (ratio: string): number => {
-    const [w, h] = ratio.split(':').map(Number);
+const [w, h] = ratio.split(':').map(Number);
     return w / h;
   };
 
   const getSceneLaunchMediaTileStyle = React.useCallback((item: SceneLaunchMediaItem): React.CSSProperties => {
-    const ratioValue = getAspectRatioValue(aspectRatio);
-    const ratioMultiplier = ratioValue / (16 / 9);
-
-    const duration = item.type === 'image'
-      ? Math.max(1, Math.min(12, item.durationSeconds ?? 3))
-      : 3;
-
-    const baseBasis = duration * 3.2;
-    const scaledBasis = Math.max(5.0, baseBasis * ratioMultiplier);
-
-    const baseMin = item.type === 'image' ? 5 : 7;
-    const scaledMin = Math.max(5.0, baseMin * ratioMultiplier);
-
     return {
-      flex: `${duration} 1 ${scaledBasis}rem`,
-      minWidth: `${scaledMin}rem`,
+      width: '100%',
       maxWidth: '100%',
     };
-  }, [aspectRatio]);
+  }, []);
 
   const getSceneLaunchCollectionTileStyle = React.useCallback((): React.CSSProperties => {
-    const ratioValue = getAspectRatioValue(aspectRatio);
-    const ratioMultiplier = ratioValue / (16 / 9);
-
-    const scaledBasis = Math.max(7, 9.6 * ratioMultiplier);
-    const scaledMin = Math.max(5.5, 6.4 * ratioMultiplier);
-
     return {
-      flex: `3 1 ${scaledBasis}rem`,
-      minWidth: `${scaledMin}rem`,
+      width: '100%',
       maxWidth: '100%',
     };
-  }, [aspectRatio]);
+  }, []);
 
   const getSceneLaunchMediaPreviewStyle = (): React.CSSProperties => {
     return {
@@ -597,19 +577,18 @@ export function SceneLaunchWorkspace({
   const setSceneLaunchTimelineTime = React.useCallback((time: number) => {
     setTimelineCurrentTime(time);
     currentTimeRef.current = time;
-  }, []);
+    setSceneLaunchPreviewHover(null);
+  }, [setSceneLaunchPreviewHover]);
 
   const toggleSceneLaunchTimelinePlayback = React.useCallback(() => {
-    setIsTimelinePlaying((currentPlaying) => {
-      const nextPlaying = !currentPlaying;
-      if (nextPlaying) {
-        setSceneLaunchTimelineTime(0);
-        setSceneLaunchPreviewPausedOffset(0);
-        setSceneLaunchManuallyPaused(null);
-      }
-      return nextPlaying;
-    });
-  }, [setSceneLaunchTimelineTime]);
+    const nextPlaying = !isTimelinePlaying;
+    setIsTimelinePlaying(nextPlaying);
+    if (nextPlaying) {
+      setSceneLaunchTimelineTime(0);
+      setSceneLaunchPreviewPausedOffset(0);
+      setSceneLaunchManuallyPaused(null);
+    }
+  }, [isTimelinePlaying, setSceneLaunchTimelineTime]);
 
   // Preview animation tick effect
   React.useEffect(() => {
@@ -1047,11 +1026,14 @@ export function SceneLaunchWorkspace({
             </div>
           ) : (
             <SceneLaunchGrid
+              aspectRatio={aspectRatio}
               activeSceneLaunchBeatId={activeSceneLaunchBeatId}
               activeSceneLaunchBeat={activeSceneLaunchBeat || null}
               sceneLaunchGridItems={sceneLaunchGridItems}
               isTimelinePlaying={isTimelinePlaying}
               activeItemKey={activeItemKey}
+              hoveredItemKey={hoveredItemKey}
+              setHoveredItemKey={setHoveredItemKey}
               trimmingItemId={trimmingItemId}
               setTrimmingItemId={setTrimmingItemId}
               collectionScrubbingId={collectionScrubbingId}
@@ -1097,6 +1079,8 @@ export function SceneLaunchWorkspace({
           totalDuration={timelineTotalDuration}
           timelineItems={timelineItems}
           activeItemKey={activeItemKey}
+          hoveredItemKey={hoveredItemKey}
+          setHoveredItemKey={setHoveredItemKey}
           timelineCurrentTime={timelineCurrentTime}
           pxPerSecond={pxPerSecond}
           setPxPerSecond={setPxPerSecond}

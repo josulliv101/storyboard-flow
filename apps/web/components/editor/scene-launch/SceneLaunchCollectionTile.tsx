@@ -12,6 +12,8 @@ interface SceneLaunchCollectionTileProps {
   dragKey: string;
   isTimelinePlaying: boolean;
   activeItemKey: string | null;
+  hoveredItemKey: string | null;
+  setHoveredItemKey: React.Dispatch<React.SetStateAction<string | null>>;
   collectionScrubbingId: string | null;
   setCollectionScrubbingId: (id: string | null) => void;
   sceneLaunchPreviewHover: { collectionId: string; startedAt: number } | null;
@@ -49,6 +51,8 @@ export function SceneLaunchCollectionTile({
   dragKey,
   isTimelinePlaying,
   activeItemKey,
+  hoveredItemKey,
+  setHoveredItemKey,
   collectionScrubbingId,
   setCollectionScrubbingId,
   sceneLaunchPreviewHover,
@@ -89,6 +93,8 @@ export function SceneLaunchCollectionTile({
       onDragOver={(event) => handleGridDragOver(event, dragKey, true)}
       onDragLeave={handleGridDragLeave}
       onDrop={(event) => handleGridDrop(event, dragKey, true)}
+      onMouseEnter={() => setHoveredItemKey(dragKey)}
+      onMouseLeave={() => setHoveredItemKey(null)}
       style={getSceneLaunchCollectionTileStyle()}
       className={cn(
         "group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/80 transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",

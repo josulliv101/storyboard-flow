@@ -6,6 +6,7 @@ import { Grid2X2, Plus, Trash2 } from 'lucide-react';
 import { SceneLaunchMediaTile } from './SceneLaunchMediaTile';
 import { SceneLaunchCollectionTile } from './SceneLaunchCollectionTile';
 import type { SceneLaunchBeat, SceneLaunchMediaItem } from './useSceneLaunchBoard';
+import type { TimelineAspectRatio } from '@/lib/timeline-context';
 
 interface SceneLaunchGridProps {
   activeSceneLaunchBeatId: string | null;
@@ -16,6 +17,8 @@ interface SceneLaunchGridProps {
   >;
   isTimelinePlaying: boolean;
   activeItemKey: string | null;
+  hoveredItemKey: string | null;
+  setHoveredItemKey: React.Dispatch<React.SetStateAction<string | null>>;
   trimmingItemId: string | null;
   setTrimmingItemId: (id: string | null) => void;
   collectionScrubbingId: string | null;
@@ -56,6 +59,7 @@ interface SceneLaunchGridProps {
   createSceneLaunchBeat: () => void;
   handleAddClipClick: (type: 'video' | 'image' | 'dialog' | 'note') => void;
   handleBeatDrop: (event: React.DragEvent<HTMLDivElement>, beatId: string) => void;
+  aspectRatio: TimelineAspectRatio;
 }
 
 export function SceneLaunchGrid({
@@ -64,6 +68,8 @@ export function SceneLaunchGrid({
   sceneLaunchGridItems,
   isTimelinePlaying,
   activeItemKey,
+  hoveredItemKey,
+  setHoveredItemKey,
   trimmingItemId,
   setTrimmingItemId,
   collectionScrubbingId,
@@ -96,7 +102,16 @@ export function SceneLaunchGrid({
   createSceneLaunchBeat,
   handleAddClipClick,
   handleBeatDrop,
+  aspectRatio,
 }: SceneLaunchGridProps) {
+
+  const getAspectRatioValue = (ratio: string): number => {
+    const [w, h] = ratio.split(':').map(Number);
+    return w / h;
+  };
+  const ratioValue = getAspectRatioValue(aspectRatio);
+  const calculatedWidth = 10 * ratioValue;
+  const finalWidth = Math.max(7.5, calculatedWidth);
 
   return (
     <section className="mx-auto mt-6 w-full max-w-6xl shrink-0">
@@ -148,7 +163,12 @@ export function SceneLaunchGrid({
             onDrop={(event) => handleBeatDrop(event, activeSceneLaunchBeat.id)}
           >
             {sceneLaunchGridItems.length > 0 ? (
-              <div className="flex flex-wrap items-start gap-3">
+              <div
+                className="grid gap-3"
+                style={{
+                  gridTemplateColumns: `repeat(auto-fill, minmax(${finalWidth}rem, 1fr))`,
+                }}
+              >
                 {sceneLaunchGridItems.map((gridItem) => {
                   const dragKey = `${gridItem.type}:${gridItem.id}`;
 
@@ -160,6 +180,8 @@ export function SceneLaunchGrid({
                         dragKey={dragKey}
                         isTimelinePlaying={isTimelinePlaying}
                         activeItemKey={activeItemKey}
+                        hoveredItemKey={hoveredItemKey}
+                        setHoveredItemKey={setHoveredItemKey}
                         trimmingItemId={trimmingItemId}
                         setTrimmingItemId={setTrimmingItemId}
                         getGridItemTimelineState={getGridItemTimelineState}
@@ -184,6 +206,8 @@ export function SceneLaunchGrid({
                       dragKey={dragKey}
                       isTimelinePlaying={isTimelinePlaying}
                       activeItemKey={activeItemKey}
+                      hoveredItemKey={hoveredItemKey}
+                      setHoveredItemKey={setHoveredItemKey}
                       collectionScrubbingId={collectionScrubbingId}
                       setCollectionScrubbingId={setCollectionScrubbingId}
                       sceneLaunchPreviewHover={sceneLaunchPreviewHover}
@@ -260,7 +284,12 @@ export function SceneLaunchGrid({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-start gap-3">
+          <div
+            className="grid gap-3"
+            style={{
+              gridTemplateColumns: `repeat(auto-fill, minmax(${finalWidth}rem, 1fr))`,
+            }}
+          >
             {sceneLaunchGridItems.map((gridItem) => {
               const dragKey = `${gridItem.type}:${gridItem.id}`;
 
@@ -272,6 +301,8 @@ export function SceneLaunchGrid({
                     dragKey={dragKey}
                     isTimelinePlaying={isTimelinePlaying}
                     activeItemKey={activeItemKey}
+                    hoveredItemKey={hoveredItemKey}
+                    setHoveredItemKey={setHoveredItemKey}
                     trimmingItemId={trimmingItemId}
                     setTrimmingItemId={setTrimmingItemId}
                     getGridItemTimelineState={getGridItemTimelineState}
@@ -296,6 +327,8 @@ export function SceneLaunchGrid({
                   dragKey={dragKey}
                   isTimelinePlaying={isTimelinePlaying}
                   activeItemKey={activeItemKey}
+                  hoveredItemKey={hoveredItemKey}
+                  setHoveredItemKey={setHoveredItemKey}
                   collectionScrubbingId={collectionScrubbingId}
                   setCollectionScrubbingId={setCollectionScrubbingId}
                   sceneLaunchPreviewHover={sceneLaunchPreviewHover}

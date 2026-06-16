@@ -1247,6 +1247,7 @@ function EditorInner() {
 
           {activeTab === 'directory' && (
             <DirectorySidePanel
+              activeSceneLaunchBeatId={board.sceneLaunchBeatPath[board.sceneLaunchBeatPath.length - 1] || null}
               directoryExpandedIds={directoryExpandedIds}
               setDirectoryExpandedIds={setDirectoryExpandedIds}
               sceneLaunchBeats={board.sceneLaunchBeats}

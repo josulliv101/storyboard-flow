@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Clock, Grid2X2, Pause, Play, Repeat, ZoomIn, ZoomOut } from 'lucide-react';
+import { Clock, Grid2X2, Pause, Play, Repeat, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
@@ -29,6 +29,8 @@ type SceneLaunchTimelineProps<TCollection extends { id: string; name: string }> 
   totalDuration: number;
   timelineItems: Array<SceneLaunchTimelineItem<TCollection>>;
   activeItemKey: string | null;
+  hoveredItemKey: string | null;
+  setHoveredItemKey: React.Dispatch<React.SetStateAction<string | null>>;
   timelineCurrentTime: number;
   pxPerSecond: number;
   setPxPerSecond: React.Dispatch<React.SetStateAction<number>>;
@@ -117,6 +119,8 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
   totalDuration,
   timelineItems,
   activeItemKey,
+  hoveredItemKey,
+  setHoveredItemKey,
   timelineCurrentTime,
   pxPerSecond,
   setPxPerSecond,
@@ -139,6 +143,43 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
   updateSceneLaunchMediaDuration,
 }: SceneLaunchTimelineProps<TCollection>) {
   const widthPx = Math.max(10, totalDuration) * pxPerSecond;
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+
+  const handleFitToScreen = () => {
+    if (scrollContainerRef.current && totalDuration > 0) {
+      const containerWidth = scrollContainerRef.current.clientWidth;
+      const effectiveDuration = Math.max(10, totalDuration);
+      const availableWidth = containerWidth - 8;
+      const calculatedPxPerSecond = availableWidth / effectiveDuration;
+      const finalPxPerSecond = Math.max(1, Math.min(60, calculatedPxPerSecond));
+      setPxPerSecond(finalPxPerSecond);
+    }
+  };
+
+  const lastFittedTitleRef = React.useRef<string | null>(null);
+  const [isFitted, setIsFitted] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsFitted(false);
+  }, [title]);
+
+  React.useEffect(() => {
+    if (lastFittedTitleRef.current === title) {
+      return;
+    }
+
+    if (totalDuration === 0) {
+      setIsFitted(true);
+      lastFittedTitleRef.current = title;
+      return;
+    }
+
+    if (scrollContainerRef.current && scrollContainerRef.current.clientWidth > 0) {
+      handleFitToScreen();
+      setIsFitted(true);
+      lastFittedTitleRef.current = title;
+    }
+  }, [title, totalDuration]);
 
   return (
     <div className="absolute bottom-5 left-1/2 z-20 -translate-x-1/2 w-[95%] max-w-[76rem] bg-zinc-950/85 border border-zinc-800/80 backdrop-blur-xl rounded-2xl shadow-2xl p-4 flex flex-col gap-2.5 select-none">
@@ -221,11 +262,27 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
           >
             <ZoomIn className="h-4 w-4" />
           </button>
+          <div className="w-px h-3 bg-zinc-800 mx-0.5" />
+          <button
+            type="button"
+            onClick={handleFitToScreen}
+            className="p-1 rounded hover:bg-white/5 hover:text-white transition-colors cursor-pointer"
+            title="Fit to screen"
+          >
+            <Maximize2 className="h-4 w-4" />
+          </button>
         </div>
       </div>
 
       <div className="relative border border-zinc-800/80 bg-[#09090b]/40 rounded-xl flex flex-col overflow-hidden">
-        <div className="overflow-x-auto overflow-y-hidden timeline-track-scroll flex flex-col flex-1 relative" id="timeline-track-scrub-zone">
+        <div
+          ref={scrollContainerRef}
+          className={cn(
+            "overflow-x-auto overflow-y-hidden timeline-track-scroll flex flex-col flex-1 relative transition-opacity duration-300",
+            isFitted ? "opacity-100" : "opacity-0"
+          )}
+          id="timeline-track-scrub-zone"
+        >
           <SceneLaunchTimelineRuler
             totalDuration={totalDuration}
             pxPerSecond={pxPerSecond}
@@ -239,11 +296,12 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
             style={{ width: `${widthPx}px`, minWidth: '100%' }}
           >
             {timelineItems.length === 0 ? (
-              <div className="flex items-center justify-center w-full h-full text-zinc-600 text-xs py-4">
+              <div className="flex items-center justify-center w-full h-full text-zinc-650 text-xs py-4">
                 Timeline is empty. Drag media items or collections here.
               </div>
-            ) : (
-              timelineItems.map((gridItem) => {
+            ) : (() => {
+              let currentStartOffset = 0;
+              return timelineItems.map((gridItem) => {
                 const dragKey = `${gridItem.type}:${gridItem.id}`;
                 let duration = 3;
                 let name = '';
@@ -269,6 +327,9 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
                     isVideo = collectionPreview.item.type === 'video';
                   }
                 }
+
+                const itemStartOffset = currentStartOffset;
+                currentStartOffset += duration;
 
                 const blockWidth = duration * pxPerSecond;
                 const isItemActive = activeItemKey === dragKey;
@@ -299,14 +360,20 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
                       }
                     }}
                     onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
+                    onMouseEnter={() => setHoveredItemKey(dragKey)}
+                    onMouseLeave={() => setHoveredItemKey(null)}
+                    onClick={() => onTimelineTimeChange(itemStartOffset)}
                     style={{ width: `${blockWidth}px` }}
                     className={cn(
-                      "relative group flex-shrink-0 flex items-stretch border-r border-zinc-800/80 bg-zinc-950/30 select-none overflow-hidden transition-all duration-150 cursor-grab active:cursor-grabbing",
+                      "relative group flex-shrink-0 flex items-stretch border-r border-zinc-800/80 bg-zinc-950/30 select-none overflow-hidden transition-colors duration-150 cursor-grab active:cursor-grabbing",
                       timelineDragOverKey === dragKey && "border-l-2 border-l-indigo-500 bg-indigo-950/20",
                       gridItem.type === 'collection' && "bg-zinc-900/10 border-b-2 border-b-zinc-800",
                       isItemActive ? "bg-indigo-955/10 border-t border-t-indigo-500/40" : ""
                     )}
                   >
+                    {hoveredItemKey === dragKey && (
+                      <div className="absolute inset-0 border border-indigo-500/45 pointer-events-none z-[25] rounded-[inherit] bg-indigo-500/5 shadow-[inset_0_0_6px_rgba(99,102,241,0.25)]" />
+                    )}
                     {collectionSplitPercents.map((leftPercent) => (
                       <div
                         key={`collection-split-${dragKey}-${leftPercent.toFixed(3)}`}
@@ -386,8 +453,8 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
                     )}
                   </div>
                 );
-              })
-            )}
+              });
+            })()}
           </div>
 
           <div
