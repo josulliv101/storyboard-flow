@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Grid2X2, Pause, Play, ChevronLeft, ChevronRight, Folder } from 'lucide-react';
+import { Grid2X2, Pause, Play, ChevronLeft, ChevronRight, Folder, FolderOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CollectionFrame } from '../Frame';
 import { CollectionProgressBar } from '../CollectionProgressBar';
@@ -111,12 +111,12 @@ export function SceneLaunchCollectionTile({
         <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
       )}
       <div
-        className="relative bg-black h-36 sm:h-40 lg:h-44"
+        className="group/thumb relative bg-black h-36 sm:h-40 lg:h-44"
         style={getSceneLaunchMediaPreviewStyle()}
       >
         <button
           type="button"
-          className="block h-full w-full"
+          className="block h-full w-full relative"
           onClick={() => openBeatDetail(beat.id)}
           aria-label={`Open ${beat.name}`}
         >
@@ -134,50 +134,17 @@ export function SceneLaunchCollectionTile({
               <span className="mt-2 text-[10px] font-semibold uppercase tracking-widest">Open collection</span>
             </div>
           )}
+          {/* Drill-down hover overlay — hidden when playing */}
+          {!(preview?.isPlaying) && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover/thumb:bg-black/40 transition-all duration-200 pointer-events-none">
+              <div className="flex items-center gap-1.5 rounded-full bg-zinc-950/90 border border-zinc-700/80 px-3 py-1.5 opacity-0 group-hover/thumb:opacity-100 scale-90 group-hover/thumb:scale-100 transition-all duration-200 shadow-lg backdrop-blur-sm">
+                <FolderOpen className="h-3.5 w-3.5 text-amber-400" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-200">Open</span>
+              </div>
+            </div>
+          )}
         </button>
-        {preview ? (
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              if (preview.isPlaying) {
-                const totalDuration = preview.totalDurationSeconds;
-                const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
-                  ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
-                  : 0;
 
-                setSceneLaunchPreviewPausedOffset(currentElapsed);
-                setSceneLaunchManuallyPaused(beat.id);
-
-                const video = event.currentTarget.parentElement?.querySelector('video');
-                if (video) {
-                  video.pause();
-                }
-              } else {
-                const resumedStartedAt = Date.now() - (sceneLaunchPreviewPausedOffset * 1000);
-                setSceneLaunchManuallyPaused(null);
-                setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: resumedStartedAt });
-              }
-            }}
-            className={cn(
-              "absolute top-2 right-2 z-20 flex h-7 items-center justify-center border border-zinc-800 bg-zinc-950/90 text-zinc-350 shadow-md backdrop-blur-[2px] transition-all cursor-pointer hover:border-zinc-600 hover:bg-zinc-900 hover:scale-105 outline-none p-0",
-              preview.isPlaying
-                ? "rounded-full px-2.5 gap-1.5 border-indigo-500/80 bg-zinc-950 opacity-100"
-                : "w-7 h-7 rounded-full opacity-0 group-hover:opacity-100"
-            )}
-          >
-            {preview.isPlaying ? (
-              <>
-                <span className="font-mono text-[10px] select-none text-zinc-300">
-                  {Math.min(preview.durationSeconds, preview.elapsedSeconds).toFixed(1)}s / {preview.durationSeconds.toFixed(1)}s
-                </span>
-                <Pause className="h-3 w-3 animate-pulse text-indigo-400 fill-current" />
-              </>
-            ) : (
-              <Play className="h-3 w-3 fill-current text-zinc-350 ml-0.5" />
-            )}
-          </button>
-        ) : null}
         {preview ? (
           <div
             className={cn(
@@ -310,7 +277,48 @@ export function SceneLaunchCollectionTile({
             </span>
           </div>
         </div>
-        <Play className="h-4.5 w-4.5 shrink-0 fill-current text-zinc-500 group-hover:text-zinc-300" />
+        {preview ? (
+          <button
+            type="button"
+            title={preview.isPlaying ? 'Pause preview' : 'Play preview'}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (preview.isPlaying) {
+                const totalDuration = preview.totalDurationSeconds;
+                const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
+                  ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
+                  : 0;
+
+                setSceneLaunchPreviewPausedOffset(currentElapsed);
+                setSceneLaunchManuallyPaused(beat.id);
+
+                const article = event.currentTarget.closest('article');
+                const video = article?.querySelector('video');
+                if (video) {
+                  video.pause();
+                }
+              } else {
+                const resumedStartedAt = Date.now() - (sceneLaunchPreviewPausedOffset * 1000);
+                setSceneLaunchManuallyPaused(null);
+                setSceneLaunchPreviewHover({ collectionId: beat.id, startedAt: resumedStartedAt });
+              }
+            }}
+            className={cn(
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-all cursor-pointer outline-none",
+              preview.isPlaying
+                ? "border-indigo-500/60 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20"
+                : "border-zinc-800 bg-zinc-900/60 text-zinc-500 hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-200"
+            )}
+          >
+            {preview.isPlaying ? (
+              <Pause className="h-3 w-3 fill-current" />
+            ) : (
+              <Play className="h-3 w-3 fill-current ml-0.5" />
+            )}
+          </button>
+        ) : (
+          <Play className="h-4.5 w-4.5 shrink-0 fill-current text-zinc-500 group-hover:text-zinc-300" />
+        )}
       </div>
     </article>
   );

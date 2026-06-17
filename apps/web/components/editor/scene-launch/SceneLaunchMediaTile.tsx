@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Video, Image as ImageIcon } from 'lucide-react';
+import { Video, Image as ImageIcon, Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { SceneLaunchMediaItem } from './useSceneLaunchBoard';
 
@@ -246,7 +246,7 @@ export function SceneLaunchMediaTile({
       {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'after' && (
         <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
       )}
-      <div className="relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
+      <div className="group/thumb relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
         {item.type === 'video' ? (
           <>
             <video
@@ -418,6 +418,15 @@ export function SceneLaunchMediaTile({
           </>
         ) : (
           <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+        )}
+        {/* Edit hover overlay — only show when not trimming */}
+        {trimmingItemId !== item.id && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover/thumb:bg-black/40 transition-all duration-200 pointer-events-none z-10">
+            <div className="flex items-center gap-1.5 rounded-full bg-zinc-950/90 border border-zinc-700/80 px-3 py-1.5 opacity-0 group-hover/thumb:opacity-100 scale-90 group-hover/thumb:scale-100 transition-all duration-200 shadow-lg backdrop-blur-sm">
+              <Pencil className="h-3 w-3 text-indigo-400" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-200">Edit</span>
+            </div>
+          </div>
         )}
       </div>
       <div className="flex items-center justify-between gap-2 p-2.5">
