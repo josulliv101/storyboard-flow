@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Grid2X2, Pause, Play, ChevronLeft, ChevronRight, GripVertical, Folder } from 'lucide-react';
+import { Grid2X2, Pause, Play, ChevronLeft, ChevronRight, Folder } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CollectionFrame } from '../Frame';
 import { CollectionProgressBar } from '../CollectionProgressBar';
@@ -140,7 +140,7 @@ export function SceneLaunchCollectionTile({
             onClick={(event) => {
               event.stopPropagation();
               if (preview.isPlaying) {
-                const totalDuration = orderedMediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
+                const totalDuration = preview.totalDurationSeconds;
                 const currentElapsed = totalDuration > 0 && sceneLaunchPreviewHover
                   ? ((Date.now() - sceneLaunchPreviewHover.startedAt) / 1000) % totalDuration
                   : 0;
@@ -309,7 +309,7 @@ export function SceneLaunchCollectionTile({
             </span>
           </div>
         </div>
-        <GripVertical className="h-4.5 w-4.5 text-zinc-500 group-hover:text-zinc-300" />
+        <Play className="h-4.5 w-4.5 shrink-0 fill-current text-zinc-500 group-hover:text-zinc-300" />
       </div>
     </article>
   );

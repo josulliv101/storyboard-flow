@@ -718,6 +718,23 @@ interface CollectionItem {
   durationSeconds?: number;
 }
 
+const getCollectionItemDuration = (item: CollectionItem) => (
+  Math.max(0.5, item.durationSeconds ?? 3)
+);
+
+const getCollectionItemSourceTime = (item: CollectionItem, elapsedSeconds: number) => {
+  const trimStart = Math.max(0, item.trimStartSeconds ?? 0);
+  const duration = getCollectionItemDuration(item);
+  const clampedElapsed = Math.max(0, Math.min(duration - 0.001, elapsedSeconds));
+  return trimStart + clampedElapsed;
+};
+
+const isOutsideCollectionItemTrimRange = (video: HTMLVideoElement, item: CollectionItem) => {
+  const trimStart = Math.max(0, item.trimStartSeconds ?? 0);
+  const trimEnd = trimStart + getCollectionItemDuration(item);
+  return video.currentTime < trimStart - 0.05 || video.currentTime >= trimEnd;
+};
+
 export interface CollectionFrameProps {
   collectionId: string;
   orderedItems: CollectionItem[];
@@ -821,7 +838,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
 
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
-      const dur = it.durationSeconds || 3;
+      const dur = getCollectionItemDuration(it);
       if (elapsedSeconds >= accum && elapsedSeconds < accum + dur) {
         activeItem = it;
         activeItemElapsed = elapsedSeconds - accum;
@@ -833,7 +850,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
 
     if (!activeItem) {
       const lastItem = items[items.length - 1];
-      const dur = lastItem.durationSeconds || 3;
+      const dur = getCollectionItemDuration(lastItem);
       activeItem = lastItem;
       activeItemIndex = items.length - 1;
       activeItemElapsed = dur - 0.001;
@@ -871,8 +888,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
         nextClipRef.current = null;
         nextBufferReadyRef.current = false;
 
-        const trimStart = activeItem.trimStartSeconds || 0;
-        const targetTime = trimStart + activeItemElapsed;
+        const targetTime = getCollectionItemSourceTime(activeItem, activeItemElapsed);
 
         if (activeItem.type === 'video') {
           activeVideo.src = activeItem.previewUrl || '';
@@ -912,8 +928,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
         const activeVid = activeBufferRef.current === 'A' ? videoARef.current : videoBRef.current;
         if (activeVid && activeTypeRef.current === 'video') {
           activeTrimStartRef.current = activeItem.trimStartSeconds || 0;
-          const trimStart = activeItem.trimStartSeconds || 0;
-          const targetTime = trimStart + activeItemElapsed;
+          const targetTime = getCollectionItemSourceTime(activeItem, activeItemElapsed);
           
           if (!isPlayingRef.current) {
             if (Math.abs(activeVid.currentTime - targetTime) > 0.05) {
@@ -921,7 +936,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
             }
           } else {
             const diff = Math.abs(activeVid.currentTime - targetTime);
-            if (diff > 1.0) {
+            if (diff > 1.0 || isOutsideCollectionItemTrimRange(activeVid, activeItem)) {
               activeVid.currentTime = targetTime;
             }
             if (activeVid.paused) {
@@ -934,7 +949,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
 
     // 3. Look-ahead preloading of the next item
     if (activeItemIndex !== -1 && activeItemIndex < items.length - 1) {
-      const currentItemDur = activeItem.durationSeconds || 3;
+      const currentItemDur = getCollectionItemDuration(activeItem);
       const remainingTime = currentItemDur - activeItemElapsed;
       
       // If we are within 1.5 seconds of the end of the current clip, preload the next one
@@ -1138,8 +1153,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
       syncVideoAudioState(newVideo, true); // Hover previews are always muted
       newVideo.playbackRate = 1;
       if (targetItem.type === 'video') {
-        const trimStart = targetItem.trimStartSeconds || 0;
-        const targetTime = trimStart + currentElapsed;
+        const targetTime = getCollectionItemSourceTime(targetItem, currentElapsed);
         if (Math.abs(newVideo.currentTime - targetTime) > 0.1) {
           newVideo.currentTime = targetTime;
         }
@@ -1165,8 +1179,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
     nextClipRef.current = targetItem;
     onPreloadReadyRef.current = null;
 
-    const trimStart = targetItem.trimStartSeconds || 0;
-    const targetTime = trimStart;
+    const targetTime = getCollectionItemSourceTime(targetItem, 0);
 
     const onReady = () => {
       if (nextClipRef.current?.id !== targetItem.id) return;
@@ -1252,8 +1265,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
     nextClipRef.current = targetItem;
     onPreloadReadyRef.current = null;
 
-    const trimStart = targetItem.trimStartSeconds || 0;
-    const targetTime = trimStart + currentElapsed;
+    const targetTime = getCollectionItemSourceTime(targetItem, currentElapsed);
 
     const onReady = () => {
       if (nextClipRef.current?.id !== targetItem.id) return;
@@ -1279,7 +1291,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
         let activeItemElapsed = 0;
         for (let i = 0; i < items.length; i++) {
           const it = items[i];
-          const dur = it.durationSeconds || 3;
+          const dur = getCollectionItemDuration(it);
           if (elapsedSecondsRef.current >= accum && elapsedSecondsRef.current < accum + dur) {
             if (it.id === targetItem.id) {
               activeItemElapsed = elapsedSecondsRef.current - accum;
@@ -1288,8 +1300,7 @@ export const CollectionFrame = React.memo(function CollectionFrameInner({
           }
           accum += dur;
         }
-        const trimStart = targetItem.trimStartSeconds || 0;
-        const latestTargetTime = trimStart + activeItemElapsed;
+        const latestTargetTime = getCollectionItemSourceTime(targetItem, activeItemElapsed);
 
         if (Math.abs(nextVideo.currentTime - latestTargetTime) > 0.1) {
           nextVideo.currentTime = latestTargetTime;

@@ -10,6 +10,12 @@ type SceneLaunchCanvasPreviewProps = {
   previewTimeSeconds: number;
   isPlaying: boolean;
   isVisible: boolean;
+  getPlaybackSnapshot?: () => SceneLaunchCanvasPreviewSnapshot | null;
+};
+
+export type SceneLaunchCanvasPreviewSnapshot = {
+  media: SceneLaunchMediaItem | null;
+  previewTimeSeconds: number;
 };
 
 type CanvasPreviewVideo = HTMLVideoElement & {
@@ -65,13 +71,21 @@ export function SceneLaunchCanvasPreview({
   previewTimeSeconds,
   isPlaying,
   isVisible,
+  getPlaybackSnapshot,
 }: SceneLaunchCanvasPreviewProps) {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const imageRef = React.useRef<HTMLImageElement | null>(null);
+  const activeMediaRef = React.useRef<SceneLaunchMediaItem | null>(null);
+  const activeMediaKeyRef = React.useRef<string | null>(null);
+  const cleanupActiveMediaRef = React.useRef<(() => void) | null>(null);
+  const fallbackMediaRef = React.useRef<SceneLaunchMediaItem | null>(media);
+  const fallbackPreviewTimeRef = React.useRef(previewTimeSeconds);
+  const getPlaybackSnapshotRef = React.useRef<typeof getPlaybackSnapshot>(getPlaybackSnapshot);
 
   const animationFrameRef = React.useRef<number | null>(null);
   const videoFrameCallbackRef = React.useRef<number | null>(null);
+  const videoFrameCallbackOwnerRef = React.useRef<CanvasPreviewVideo | null>(null);
   const drawFrameRef = React.useRef<(() => void) | null>(null);
 
   const previewTimeRef = React.useRef(previewTimeSeconds);
@@ -103,9 +117,77 @@ export function SceneLaunchCanvasPreview({
   });
 
   React.useEffect(() => {
-    previewTimeRef.current = previewTimeSeconds;
+    fallbackMediaRef.current = media;
+    fallbackPreviewTimeRef.current = previewTimeSeconds;
+    getPlaybackSnapshotRef.current = getPlaybackSnapshot;
+  }, [getPlaybackSnapshot, media, previewTimeSeconds]);
+
+  const getCurrentSnapshot = React.useCallback((): SceneLaunchCanvasPreviewSnapshot => {
+    const snapshot = getPlaybackSnapshotRef.current?.();
+    return snapshot ?? {
+      media: fallbackMediaRef.current,
+      previewTimeSeconds: fallbackPreviewTimeRef.current,
+    };
+  }, []);
+
+  const getMediaKey = React.useCallback((item: SceneLaunchMediaItem | null) => (
+    item ? `${item.type}:${item.id}:${item.previewUrl}` : null
+  ), []);
+
+  const getMediaTrimRange = React.useCallback((item: SceneLaunchMediaItem) => {
+    const sourceDuration = item.mediaDurationSeconds ?? item.durationSeconds ?? 3;
+    const start = Math.max(0, item.trimStartSeconds ?? 0);
+    const fallbackDuration = Math.max(0.5, sourceDuration - start);
+    const requestedDuration = item.durationSeconds ?? fallbackDuration;
+    const duration = Math.max(0.5, Math.min(requestedDuration, Math.max(0.5, sourceDuration - start)));
+
+    return {
+      start,
+      end: start + duration,
+    };
+  }, []);
+
+  React.useEffect(() => {
+    const previousPreviewTime = previewTimeRef.current;
+    const snapshot = getCurrentSnapshot();
+    previewTimeRef.current = snapshot.previewTimeSeconds;
     reactUpdateCountRef.current += 1;
-  }, [previewTimeSeconds]);
+
+    if (!snapshot.media || snapshot.media.type !== 'video' || !isVisible) {
+      return;
+    }
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    const trimRange = getMediaTrimRange(snapshot.media);
+    const targetTime = Math.max(
+      trimRange.start,
+      Math.min(trimRange.end - 0.001, snapshot.previewTimeSeconds)
+    );
+    const didLoopBack = snapshot.previewTimeSeconds + 0.05 < previousPreviewTime;
+    const isOutsideTrimRange =
+      video.currentTime < trimRange.start - 0.05 ||
+      video.currentTime >= trimRange.end;
+    const drift = Math.abs(video.currentTime - targetTime);
+    const shouldSeek =
+      video.readyState >= HTMLMediaElement.HAVE_METADATA &&
+      Number.isFinite(targetTime) &&
+      (didLoopBack || isOutsideTrimRange || drift > (isPlaying ? 0.45 : 0.05));
+
+    if (shouldSeek) {
+      video.currentTime = targetTime;
+    }
+
+    if (isPlaying && (video.paused || video.ended)) {
+      playbackStateRef.current = 'playing';
+      video.play().catch(() => {
+        playbackStateRef.current = 'blocked';
+      });
+    }
+
+    requestAnimationFrame(() => drawFrameRef.current?.());
+  }, [previewTimeSeconds, media, isPlaying, isVisible, getCurrentSnapshot, getMediaTrimRange]);
 
   React.useEffect(() => {
     const shouldShowStats =
@@ -147,7 +229,7 @@ export function SceneLaunchCanvasPreview({
         rvfc: !!video?.requestVideoFrameCallback,
         backingWidth: canvas?.width ?? 0,
         backingHeight: canvas?.height ?? 0,
-        sourceType: media?.type ?? 'none',
+        sourceType: activeMediaRef.current?.type ?? 'none',
       });
 
       lastSampleTime = now;
@@ -192,73 +274,6 @@ export function SceneLaunchCanvasPreview({
   }, []);
 
   React.useEffect(() => {
-    if (!media || media.type !== 'video') {
-      videoRef.current?.pause();
-      videoRef.current = null;
-      return;
-    }
-
-    const video = document.createElement('video');
-    video.src = media.previewUrl;
-    video.muted = true;
-    video.defaultMuted = true;
-    video.loop = true;
-    video.playsInline = true;
-    video.preload = 'auto';
-
-    videoRef.current = video;
-
-    /**
-     * Important:
-     * Do NOT reset hasDrawnFrameRef here.
-     * During clip switches, we want to keep the previous canvas frame visible
-     * until the new video has a real decoded frame.
-     */
-
-    const drawLoadedFrame = () => drawFrameRef.current?.();
-
-    video.addEventListener('loadeddata', drawLoadedFrame);
-    video.addEventListener('canplay', drawLoadedFrame);
-    video.addEventListener('seeked', drawLoadedFrame);
-
-    return () => {
-      video.removeEventListener('loadeddata', drawLoadedFrame);
-      video.removeEventListener('canplay', drawLoadedFrame);
-      video.removeEventListener('seeked', drawLoadedFrame);
-
-      video.pause();
-      video.removeAttribute('src');
-      video.load();
-
-      if (videoRef.current === video) {
-        videoRef.current = null;
-      }
-    };
-  }, [media?.id, media?.previewUrl, media?.type]);
-
-  React.useEffect(() => {
-    if (!media || media.type !== 'image') {
-      imageRef.current = null;
-      return;
-    }
-
-    const image = new Image();
-    image.src = media.previewUrl;
-    imageRef.current = image;
-
-    /**
-     * Same idea as video:
-     * Keep old canvas content until the new image has loaded.
-     */
-
-    return () => {
-      if (imageRef.current === image) {
-        imageRef.current = null;
-      }
-    };
-  }, [media?.id, media?.previewUrl, media?.type]);
-
-  React.useEffect(() => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext('2d', { alpha: false });
 
@@ -270,13 +285,96 @@ export function SceneLaunchCanvasPreview({
         animationFrameRef.current = null;
       }
 
-      const video = videoRef.current as CanvasPreviewVideo | null;
+      const video = videoFrameCallbackOwnerRef.current;
 
       if (videoFrameCallbackRef.current !== null && video?.cancelVideoFrameCallback) {
         video.cancelVideoFrameCallback(videoFrameCallbackRef.current);
       }
 
       videoFrameCallbackRef.current = null;
+      videoFrameCallbackOwnerRef.current = null;
+    };
+
+    const ensureMediaSource = (nextMedia: SceneLaunchMediaItem | null) => {
+      const nextKey = getMediaKey(nextMedia);
+      if (nextKey === activeMediaKeyRef.current) return;
+
+      cleanupActiveMediaRef.current?.();
+      cleanupActiveMediaRef.current = null;
+      activeMediaKeyRef.current = nextKey;
+      activeMediaRef.current = nextMedia;
+      videoRef.current = null;
+      imageRef.current = null;
+      cancelAnimation();
+
+      if (!nextMedia) return;
+
+      if (nextMedia.type === 'video') {
+        const video = document.createElement('video');
+        video.src = nextMedia.previewUrl;
+        video.muted = true;
+        video.defaultMuted = true;
+        video.loop = false;
+        video.playsInline = true;
+        video.preload = 'auto';
+
+        const drawLoadedFrame = () => drawFrameRef.current?.();
+        const seekToCurrentPreviewTime = () => {
+          const trimRange = getMediaTrimRange(nextMedia);
+          const targetTime = Math.max(
+            trimRange.start,
+            Math.min(trimRange.end - 0.001, previewTimeRef.current)
+          );
+          if (
+            video.readyState >= HTMLMediaElement.HAVE_METADATA &&
+            Number.isFinite(targetTime) &&
+            Math.abs(video.currentTime - targetTime) > 0.02
+          ) {
+            video.currentTime = targetTime;
+          }
+        };
+
+        video.addEventListener('loadedmetadata', seekToCurrentPreviewTime);
+        video.addEventListener('loadeddata', drawLoadedFrame);
+        video.addEventListener('canplay', drawLoadedFrame);
+        video.addEventListener('seeked', drawLoadedFrame);
+        videoRef.current = video;
+
+        if (isPlaying) {
+          playbackStateRef.current = 'playing';
+          video.play().catch(() => {
+            playbackStateRef.current = 'blocked';
+          });
+        }
+
+        cleanupActiveMediaRef.current = () => {
+          video.removeEventListener('loadedmetadata', seekToCurrentPreviewTime);
+          video.removeEventListener('loadeddata', drawLoadedFrame);
+          video.removeEventListener('canplay', drawLoadedFrame);
+          video.removeEventListener('seeked', drawLoadedFrame);
+          video.pause();
+          video.removeAttribute('src');
+          video.load();
+          if (videoRef.current === video) {
+            videoRef.current = null;
+          }
+        };
+
+        return;
+      }
+
+      const image = new Image();
+      const drawLoadedFrame = () => drawFrameRef.current?.();
+      image.addEventListener('load', drawLoadedFrame);
+      image.src = nextMedia.previewUrl;
+      imageRef.current = image;
+
+      cleanupActiveMediaRef.current = () => {
+        image.removeEventListener('load', drawLoadedFrame);
+        if (imageRef.current === image) {
+          imageRef.current = null;
+        }
+      };
     };
 
     const drawEmpty = () => {
@@ -286,13 +384,18 @@ export function SceneLaunchCanvasPreview({
     };
 
     const drawFrame = () => {
-      if (!media || !isVisible) {
+      const snapshot = getCurrentSnapshot();
+      const snapshotMedia = snapshot.media;
+      previewTimeRef.current = snapshot.previewTimeSeconds;
+      ensureMediaSource(snapshotMedia);
+
+      if (!snapshotMedia || !isVisible) {
         drawEmpty();
         hasDrawnFrameRef.current = false;
         return;
       }
 
-      if (media.type === 'image') {
+      if (snapshotMedia.type === 'image') {
         const image = imageRef.current;
 
         readyStateRef.current = image?.complete ? 4 : 0;
@@ -341,8 +444,23 @@ export function SceneLaunchCanvasPreview({
       driftSecondsRef.current = Number.isFinite(targetTime)
         ? video.currentTime - targetTime
         : 0;
+      const trimRange = getMediaTrimRange(snapshotMedia);
 
       if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+        if (video.currentTime < trimRange.start - 0.05 || video.currentTime >= trimRange.end) {
+          video.currentTime = Number.isFinite(targetTime)
+            ? Math.max(trimRange.start, Math.min(trimRange.end - 0.001, targetTime))
+            : trimRange.start;
+          if (isPlaying && (video.paused || video.ended)) {
+            playbackStateRef.current = 'playing';
+            video.play().catch(() => {
+              playbackStateRef.current = 'blocked';
+            });
+          }
+          requestAnimationFrame(() => drawFrameRef.current?.());
+          return;
+        }
+
         const drawStart = performance.now();
 
         const didDraw = drawContainedMedia(
@@ -375,24 +493,34 @@ export function SceneLaunchCanvasPreview({
     };
 
     const renderVideoFrameLoop = () => {
+      const video = videoRef.current as CanvasPreviewVideo | null;
+
+      if (!video || videoFrameCallbackOwnerRef.current !== video) {
+        videoFrameCallbackRef.current = null;
+        videoFrameCallbackOwnerRef.current = null;
+        return;
+      }
+
       videoFrameCountRef.current += 1;
       drawFrame();
 
-      const video = videoRef.current as CanvasPreviewVideo | null;
+      const nextVideo = videoRef.current as CanvasPreviewVideo | null;
 
-      if (video?.requestVideoFrameCallback && isVisible && isPlaying) {
+      if (nextVideo?.requestVideoFrameCallback && isVisible && isPlaying) {
+        videoFrameCallbackOwnerRef.current = nextVideo;
         videoFrameCallbackRef.current =
-          video.requestVideoFrameCallback(renderVideoFrameLoop);
+          nextVideo.requestVideoFrameCallback(renderVideoFrameLoop);
       }
     };
 
     cancelAnimation();
     drawFrame();
 
-    if (media?.type === 'video' && isVisible && isPlaying) {
+    if (activeMediaRef.current?.type === 'video' && isVisible && isPlaying) {
       const video = videoRef.current as CanvasPreviewVideo | null;
 
       if (video?.requestVideoFrameCallback) {
+        videoFrameCallbackOwnerRef.current = video;
         videoFrameCallbackRef.current =
           video.requestVideoFrameCallback(renderVideoFrameLoop);
       } else {
@@ -405,20 +533,25 @@ export function SceneLaunchCanvasPreview({
         drawFrameRef.current = null;
       }
 
+      cleanupActiveMediaRef.current?.();
+      cleanupActiveMediaRef.current = null;
+      activeMediaKeyRef.current = null;
+      activeMediaRef.current = null;
       cancelAnimation();
     };
-  }, [isPlaying, isVisible, media?.id, media?.type]);
-
+  }, [isPlaying, isVisible, getCurrentSnapshot, getMediaKey, getMediaTrimRange]);
   React.useEffect(() => {
     const video = videoRef.current;
+    const snapshot = getCurrentSnapshot();
 
-    if (!video || !media || media.type !== 'video' || !isVisible) {
+    if (!video || !snapshot.media || snapshot.media.type !== 'video' || !isVisible) {
       videoRef.current?.pause();
       playbackStateRef.current = 'idle';
       return;
     }
 
-    const targetTime = previewTimeRef.current;
+    const targetTime = snapshot.previewTimeSeconds;
+    const trimRange = getMediaTrimRange(snapshot.media);
     const seekThreshold = isPlaying ? 0.35 : 0.05;
 
     if (
@@ -426,7 +559,7 @@ export function SceneLaunchCanvasPreview({
       Number.isFinite(targetTime) &&
       Math.abs(video.currentTime - targetTime) > seekThreshold
     ) {
-      video.currentTime = targetTime;
+      video.currentTime = Math.max(trimRange.start, Math.min(trimRange.end - 0.001, targetTime));
     }
 
     if (isPlaying) {
@@ -444,46 +577,7 @@ export function SceneLaunchCanvasPreview({
       playbackStateRef.current = 'paused';
       requestAnimationFrame(() => drawFrameRef.current?.());
     }
-  }, [isPlaying, isVisible, media?.id, media?.type]);
-
-  React.useEffect(() => {
-    if (!media || media.type !== 'image') return;
-
-    const image = imageRef.current;
-    if (!image) return;
-
-    const handleLoad = () => {
-      const canvas = canvasRef.current;
-      const context = canvas?.getContext('2d', { alpha: false });
-
-      if (!canvas || !context) return;
-
-      const drawStart = performance.now();
-
-      const didDraw = drawContainedMedia(
-        context,
-        image,
-        image.naturalWidth,
-        image.naturalHeight,
-        canvas.width,
-        canvas.height
-      );
-
-      if (didDraw) {
-        canvasFrameCountRef.current += 1;
-        lastDrawMsRef.current = performance.now() - drawStart;
-        hasDrawnFrameRef.current = true;
-      }
-    };
-
-    image.addEventListener('load', handleLoad);
-
-    if (image.complete) {
-      handleLoad();
-    }
-
-    return () => image.removeEventListener('load', handleLoad);
-  }, [media?.id, media?.type]);
+  }, [isPlaying, isVisible, media, getCurrentSnapshot, getMediaTrimRange]);
 
   return (
     <div className="relative flex h-full w-full items-center justify-center bg-black">

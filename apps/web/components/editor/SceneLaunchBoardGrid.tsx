@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, GripVertical, Grid2X2, Image as ImageIcon, Pause, Play, Plus, Video } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Grid2X2, Image as ImageIcon, Pause, Play, Plus, Video } from 'lucide-react';
 
 import { Button } from '@storyboard/ui';
 import { CollectionFrame } from './Frame';
@@ -333,7 +333,6 @@ export function SceneLaunchBoardGrid({
                       )}
                     </div>
                   </div>
-                  <GripVertical className="h-4.5 w-4.5 shrink-0 text-zinc-500 group-hover:text-zinc-300" />
                 </div>
               </article>
             );
@@ -573,7 +572,7 @@ export function SceneLaunchBoardGrid({
                     </span>
                   </div>
                 </div>
-                <GripVertical className="h-4.5 w-4.5 text-zinc-500 group-hover:text-zinc-300" />
+                <Play className="h-4.5 w-4.5 shrink-0 fill-current text-zinc-500 group-hover:text-zinc-300" />
               </div>
             </article>
           );

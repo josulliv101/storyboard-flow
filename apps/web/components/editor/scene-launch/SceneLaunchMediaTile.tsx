@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Video, Image as ImageIcon, GripVertical } from 'lucide-react';
+import { Video, Image as ImageIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { SceneLaunchMediaItem } from './useSceneLaunchBoard';
 
@@ -25,6 +25,7 @@ interface SceneLaunchMediaTileProps {
   handleGridDragOver: (e: React.DragEvent<HTMLElement>, targetKey: string, isCollection: boolean) => void;
   handleGridDragLeave: () => void;
   handleGridDrop: (e: React.DragEvent<HTMLElement>, targetKey: string, isCollection: boolean) => void;
+  onPreviewMedia: (item: SceneLaunchMediaItem) => void;
 }
 
 export function SceneLaunchMediaTile({
@@ -47,6 +48,7 @@ export function SceneLaunchMediaTile({
   handleGridDragOver,
   handleGridDragLeave,
   handleGridDrop,
+  onPreviewMedia,
 }: SceneLaunchMediaTileProps) {
 
   const [tempTrimStart, setTempTrimStart] = React.useState(item.trimStartSeconds || 0);
@@ -224,6 +226,17 @@ export function SceneLaunchMediaTile({
         "group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-black transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
         isTimelinePlaying && activeItemKey && activeItemKey !== dragKey ? "opacity-30" : "opacity-100"
       )}
+      onClick={(event) => {
+        const target = event.target as HTMLElement;
+        if (
+          trimmingItemId === item.id ||
+          target.closest('button, input, label, select, textarea, a')
+        ) {
+          return;
+        }
+
+        onPreviewMedia(item);
+      }}
       onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
     >
       {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
@@ -456,7 +469,6 @@ export function SceneLaunchMediaTile({
             )}
           </div>
         </div>
-        <GripVertical className="h-4.5 w-4.5 shrink-0 text-zinc-500 group-hover:text-zinc-300" />
       </div>
     </article>
   );

@@ -33,6 +33,8 @@ type SceneLaunchHeaderProps = {
   setActiveTab: React.Dispatch<React.SetStateAction<SidebarTab>>;
   openSceneLibrary: () => void;
   searchVariant?: 'default' | 'prompt';
+  hideSearch?: boolean;
+  centerSlot?: React.ReactNode;
 };
 
 export function SceneLaunchHeader({
@@ -54,6 +56,8 @@ export function SceneLaunchHeader({
   setActiveTab,
   openSceneLibrary,
   searchVariant = 'default',
+  hideSearch = false,
+  centerSlot,
 }: SceneLaunchHeaderProps) {
   const isHeaderEditable = activeSceneLaunchBeatId !== 'trash';
 
@@ -136,6 +140,11 @@ export function SceneLaunchHeader({
           </div>
         </div>
 
+        {centerSlot ? (
+          <div className="flex w-full max-w-2xl flex-[1.4] justify-center">
+            {centerSlot}
+          </div>
+        ) : !hideSearch && (
         <form
           className="flex h-14 w-full max-w-2xl flex-[1.4] items-center gap-2.5 rounded-[1.5rem] border border-white/10 bg-[#171717]/95 px-3 shadow-[0_12px_36px_rgba(0,0,0,0.38)] ring-1 ring-black/30"
           onSubmit={(event) => {
@@ -206,6 +215,7 @@ export function SceneLaunchHeader({
             <ArrowRight className="h-5 w-5 stroke-[1.8]" />
           </button>
         </form>
+        )}
 
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
           <Button
@@ -356,6 +366,11 @@ export function SceneLaunchHeader({
         </div>
       </div>
 
+      {centerSlot ? (
+        <div className="flex min-w-0 flex-1 justify-center">
+          {centerSlot}
+        </div>
+      ) : !hideSearch && (
       <div className="hidden h-11 w-full max-w-xl items-center gap-3 rounded-full bg-zinc-900 px-5 text-zinc-500 ring-1 ring-white/10 md:flex">
         <Search className="h-4.5 w-4.5 shrink-0" />
         <input
@@ -365,6 +380,7 @@ export function SceneLaunchHeader({
           placeholder="Search scenes"
         />
       </div>
+      )}
 
       <div className="flex items-center gap-2">
         <Button

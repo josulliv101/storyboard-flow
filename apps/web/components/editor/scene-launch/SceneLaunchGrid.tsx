@@ -55,6 +55,7 @@ interface SceneLaunchGridProps {
   updateSceneLaunchMediaDuration: (mediaId: string, duration: number) => void;
   updateSceneLaunchMediaTrim: (mediaId: string, trimStart: number, duration: number) => void;
   handleItemContextMenu: (event: React.MouseEvent, dragKey: string) => void;
+  onPreviewMedia: (item: SceneLaunchMediaItem) => void;
   emptyTrash: () => void;
   createSceneLaunchBeat: () => void;
   handleAddClipClick: (type: 'video' | 'image' | 'dialog' | 'note') => void;
@@ -98,6 +99,7 @@ export function SceneLaunchGrid({
   updateSceneLaunchMediaDuration,
   updateSceneLaunchMediaTrim,
   handleItemContextMenu,
+  onPreviewMedia,
   emptyTrash,
   createSceneLaunchBeat,
   handleAddClipClick,
@@ -114,7 +116,7 @@ export function SceneLaunchGrid({
   const finalWidth = Math.max(7.5, calculatedWidth);
 
   return (
-    <section className="mx-auto mt-6 w-full max-w-6xl shrink-0">
+    <section className="mt-6 w-full shrink-0">
       {activeSceneLaunchBeat ? (
         <>
           <div className="mb-4 flex items-center justify-between gap-4">
@@ -195,6 +197,7 @@ export function SceneLaunchGrid({
                         handleGridDragOver={handleGridDragOver}
                         handleGridDragLeave={handleGridDragLeave}
                         handleGridDrop={handleGridDrop}
+                        onPreviewMedia={onPreviewMedia}
                       />
                     );
                   }
@@ -316,6 +319,7 @@ export function SceneLaunchGrid({
                     handleGridDragOver={handleGridDragOver}
                     handleGridDragLeave={handleGridDragLeave}
                     handleGridDrop={handleGridDrop}
+                    onPreviewMedia={onPreviewMedia}
                   />
                 );
               }

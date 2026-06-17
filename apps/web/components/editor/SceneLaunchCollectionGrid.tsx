@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, GripVertical, Grid2X2, Image as ImageIcon, Pause, Play, Trash2, Video } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Grid2X2, Image as ImageIcon, Pause, Play, Trash2, Video } from 'lucide-react';
 
 import { CollectionFrame } from './Frame';
 import { CollectionProgressBar } from './CollectionProgressBar';
@@ -309,7 +309,6 @@ export function SceneLaunchCollectionGrid({
                         )}
                       </div>
                     </div>
-                    <GripVertical className="h-4.5 w-4.5 shrink-0 text-zinc-500 group-hover:text-zinc-300" />
                   </div>
                 </article>
               );
@@ -549,7 +548,7 @@ export function SceneLaunchCollectionGrid({
                       </span>
                     </div>
                   </div>
-                  <GripVertical className="h-4.5 w-4.5 text-zinc-500 group-hover:text-zinc-300" />
+                  <Play className="h-4.5 w-4.5 shrink-0 fill-current text-zinc-500 group-hover:text-zinc-300" />
                 </div>
               </article>
             );

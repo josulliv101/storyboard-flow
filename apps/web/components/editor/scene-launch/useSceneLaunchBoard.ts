@@ -945,12 +945,16 @@ export function useSceneLaunchBoard({
   };
 
   const updateSceneLaunchMediaDuration = (mediaId: string, durationSeconds: number) => {
-    const nextDuration = Math.max(1, Math.min(60, durationSeconds || 1));
-    const updateItem = (item: SceneLaunchMediaItem) => (
-      item.id === mediaId
-        ? { ...item, durationSeconds: nextDuration }
-        : item
-    );
+    const updateItem = (item: SceneLaunchMediaItem) => {
+      if (item.id !== mediaId) return item;
+
+      const trimStart = Math.max(0, item.trimStartSeconds ?? 0);
+      const sourceDuration = item.mediaDurationSeconds ?? Math.max(trimStart + 0.5, item.durationSeconds ?? durationSeconds ?? 1);
+      const maxDuration = Math.max(0.5, sourceDuration - trimStart);
+      const nextDuration = Math.max(0.5, Math.min(maxDuration, durationSeconds || 1));
+
+      return { ...item, durationSeconds: nextDuration };
+    };
 
     setSceneLaunchMediaItems(previous => previous.map(updateItem));
     setSceneLaunchBeats(previous => previous.map(beat => ({
@@ -978,11 +982,12 @@ export function useSceneLaunchBoard({
   };
 
   const updateSceneLaunchMediaTrim = (mediaId: string, trimStartSeconds: number, durationSeconds: number) => {
-    const nextTrimStart = Math.max(0, trimStartSeconds);
-    const nextDuration = Math.max(0.5, durationSeconds);
-
     const updateItem = (item: SceneLaunchMediaItem) => {
       if (item.id === mediaId) {
+        const sourceDuration = item.mediaDurationSeconds ?? Math.max(0.5, item.durationSeconds ?? durationSeconds ?? 0.5);
+        const nextTrimStart = Math.max(0, Math.min(sourceDuration - 0.5, trimStartSeconds));
+        const maxDuration = Math.max(0.5, sourceDuration - nextTrimStart);
+        const nextDuration = Math.max(0.5, Math.min(maxDuration, durationSeconds));
         const updated = {
           ...item,
           trimStartSeconds: nextTrimStart,

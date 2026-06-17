@@ -2,18 +2,25 @@
 
 import React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { ArrowLeft, Clapperboard, Grid2X2, Plus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, MonitorPlay, Pause, Play, Plus, Ratio, Repeat, Search } from 'lucide-react';
 import { motion } from 'motion/react';
-import { Button } from '@storyboard/ui';
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@storyboard/ui';
 import { toast } from 'sonner';
 
 import { useSceneLaunchBoard, type SceneLaunchBeat, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
 import { SceneLaunchSidebar } from '../SceneLaunchSidebar';
 import { SceneLaunchHeader } from '../SceneLaunchHeader';
-import { SceneLaunchCanvasPreview } from './SceneLaunchCanvasPreview';
+import { SceneLaunchCanvasPreview, type SceneLaunchCanvasPreviewSnapshot } from './SceneLaunchCanvasPreview';
 import { SceneLaunchGrid } from './SceneLaunchGrid';
 import { SceneLaunchTimeline, type SceneLaunchPlaybackMode } from '../SceneLaunchTimeline';
 import { SceneLaunchContextMenu } from '../SceneLaunchContextMenu';
+import { cn } from '@/lib/utils';
 import type { SidebarTab } from '../EditorSidebarRail';
 import type { Scene, TimelineClip, ClipType, TimelineAspectRatio } from '@/lib/timeline-context';
 
@@ -119,6 +126,7 @@ export function SceneLaunchWorkspace({
   const [sceneLaunchPreviewNow, setSceneLaunchPreviewNow] = React.useState(() => Date.now());
   const [sceneComposerText, setSceneComposerText] = React.useState('');
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
+  const [selectedPreviewMediaId, setSelectedPreviewMediaId] = React.useState<string | null>(null);
 
   const currentTimeRef = React.useRef(0);
   React.useEffect(() => {
@@ -133,6 +141,20 @@ export function SceneLaunchWorkspace({
   const activeSceneLaunchGridOrder = activeSceneLaunchBeat
     ? activeSceneLaunchBeat.gridOrder
     : sceneLaunchGridOrder.filter(item => item.id !== 'trash');
+
+  const selectedPreviewMedia = React.useMemo(() => {
+    if (!selectedPreviewMediaId) return null;
+
+    const rootItem = sceneLaunchMediaItems.find(item => item.id === selectedPreviewMediaId);
+    if (rootItem) return rootItem;
+
+    for (const beat of sceneLaunchBeats) {
+      const beatItem = beat.items.find(item => item.id === selectedPreviewMediaId);
+      if (beatItem) return beatItem;
+    }
+
+    return null;
+  }, [sceneLaunchBeats, sceneLaunchMediaItems, selectedPreviewMediaId]);
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const beatFileInputRef = React.useRef<HTMLInputElement>(null);
@@ -163,6 +185,21 @@ export function SceneLaunchWorkspace({
     return items;
   }, [sceneLaunchBeats]);
 
+  const getSceneLaunchMediaTrimmedDuration = React.useCallback((item: SceneLaunchMediaItem) => {
+    const sourceDuration = item.mediaDurationSeconds ?? item.durationSeconds ?? 3;
+    const trimStart = Math.max(0, item.trimStartSeconds ?? 0);
+    const fallbackDuration = Math.max(0.5, sourceDuration - trimStart);
+    const requestedDuration = item.durationSeconds ?? fallbackDuration;
+    return Math.max(0.5, Math.min(requestedDuration, Math.max(0.5, sourceDuration - trimStart)));
+  }, []);
+
+  const getSceneLaunchMediaSourceTime = React.useCallback((item: SceneLaunchMediaItem, elapsedSeconds: number) => {
+    const trimStart = Math.max(0, item.trimStartSeconds ?? 0);
+    const trimmedDuration = getSceneLaunchMediaTrimmedDuration(item);
+    const clampedElapsed = Math.max(0, Math.min(trimmedDuration - 0.001, elapsedSeconds));
+    return trimStart + clampedElapsed;
+  }, [getSceneLaunchMediaTrimmedDuration]);
+
   const getRecursiveCollectionDuration = React.useCallback((
     collection: SceneLaunchBeat,
     visited = new Set<string>()
@@ -176,7 +213,7 @@ export function SceneLaunchWorkspace({
         if (!m) return sum;
         const d = resizingItem && resizingItem.id === m.id
           ? resizingItem.currentDuration
-          : (m.durationSeconds || 3);
+          : getSceneLaunchMediaTrimmedDuration(m);
         return sum + d;
       } else {
         const childBeat = sceneLaunchBeats.find(b => b.id === orderItem.id);
@@ -184,7 +221,7 @@ export function SceneLaunchWorkspace({
         return sum + getRecursiveCollectionDuration(childBeat, visited);
       }
     }, 0);
-  }, [sceneLaunchBeats, resizingItem]);
+  }, [sceneLaunchBeats, resizingItem, getSceneLaunchMediaTrimmedDuration]);
 
   const getCollectionTimelineSplitPercents = React.useCallback((collection: SceneLaunchBeat) => {
     const orderedMediaItems = getRecursiveMediaItems(collection);
@@ -194,7 +231,7 @@ export function SceneLaunchWorkspace({
       if (resizingItem && resizingItem.id === item.id) {
         return resizingItem.currentDuration;
       }
-      return item.durationSeconds || 3;
+      return getSceneLaunchMediaTrimmedDuration(item);
     });
     const totalDuration = durations.reduce((sum, duration) => sum + duration, 0);
     if (totalDuration <= 0) return [];
@@ -204,18 +241,18 @@ export function SceneLaunchWorkspace({
       accumulatedDuration += duration;
       return (accumulatedDuration / totalDuration) * 100;
     });
-  }, [getRecursiveMediaItems, resizingItem]);
+  }, [getRecursiveMediaItems, resizingItem, getSceneLaunchMediaTrimmedDuration]);
 
-  const getSceneLaunchMediaPreviewDuration = (item: SceneLaunchMediaItem) => (
-    Math.max(1, item.durationSeconds ?? 3)
-  );
+  const getSceneLaunchMediaPreviewDuration = React.useCallback((item: SceneLaunchMediaItem) => (
+    getSceneLaunchMediaTrimmedDuration(item)
+  ), [getSceneLaunchMediaTrimmedDuration]);
 
   const getSceneLaunchMediaTimelineDuration = React.useCallback((item: SceneLaunchMediaItem) => {
     if (resizingItem && resizingItem.id === item.id) {
       return resizingItem.currentDuration;
     }
-    return Math.max(1, item.durationSeconds ?? 3);
-  }, [resizingItem]);
+    return getSceneLaunchMediaTrimmedDuration(item);
+  }, [resizingItem, getSceneLaunchMediaTrimmedDuration]);
 
   // Construct Timeline items
   const timelineItems = React.useMemo(() => {
@@ -571,6 +608,112 @@ const [w, h] = ratio.split(':').map(Number);
     return null;
   }, [timelineItems, getSceneLaunchMediaTimelineDuration, getRecursiveCollectionDuration]);
 
+  const getCollectionPreviewSnapshotAtElapsed = React.useCallback((
+    collection: SceneLaunchBeat,
+    elapsedSeconds: number
+  ): SceneLaunchCanvasPreviewSnapshot => {
+    const orderedMediaItems = getRecursiveMediaItems(collection);
+    const totalDuration = orderedMediaItems.reduce((total, item) => (
+      total + getSceneLaunchMediaPreviewDuration(item)
+    ), 0);
+
+    if (orderedMediaItems.length === 0 || totalDuration <= 0) {
+      return { media: null, previewTimeSeconds: 0 };
+    }
+
+    const normalizedElapsed = ((elapsedSeconds % totalDuration) + totalDuration) % totalDuration;
+    let accumulatedTime = 0;
+
+    for (const item of orderedMediaItems) {
+      const duration = getSceneLaunchMediaPreviewDuration(item);
+      const itemEnd = accumulatedTime + duration;
+
+      if (normalizedElapsed < itemEnd) {
+        return {
+          media: item,
+          previewTimeSeconds: getSceneLaunchMediaSourceTime(item, normalizedElapsed - accumulatedTime),
+        };
+      }
+
+      accumulatedTime = itemEnd;
+    }
+
+    const lastItem = orderedMediaItems[orderedMediaItems.length - 1];
+    return {
+      media: lastItem,
+      previewTimeSeconds: getSceneLaunchMediaSourceTime(lastItem, getSceneLaunchMediaPreviewDuration(lastItem) - 0.001),
+    };
+  }, [getRecursiveMediaItems, getSceneLaunchMediaPreviewDuration, getSceneLaunchMediaSourceTime]);
+
+  const getPreviewSnapshotAtTime = React.useCallback((currentTime: number): SceneLaunchCanvasPreviewSnapshot => {
+    let accumulatedTime = 0;
+
+    for (const item of timelineItems) {
+      const duration = item.type === 'media'
+        ? getSceneLaunchMediaTimelineDuration(item.item)
+        : getRecursiveCollectionDuration(item.collection) || 3;
+      const itemEnd = accumulatedTime + duration;
+
+      if (currentTime < itemEnd) {
+        const elapsedSeconds = Math.max(0, currentTime - accumulatedTime);
+
+        if (item.type === 'media') {
+          return {
+            media: item.item,
+            previewTimeSeconds: getSceneLaunchMediaSourceTime(item.item, elapsedSeconds),
+          };
+        }
+
+        return getCollectionPreviewSnapshotAtElapsed(item.collection, elapsedSeconds);
+      }
+
+      accumulatedTime = itemEnd;
+    }
+
+    if (timelineItems.length === 0) {
+      return { media: null, previewTimeSeconds: 0 };
+    }
+
+    const lastItem = timelineItems[timelineItems.length - 1];
+    if (lastItem.type === 'media') {
+      return {
+        media: lastItem.item,
+        previewTimeSeconds: getSceneLaunchMediaSourceTime(
+          lastItem.item,
+          getSceneLaunchMediaTimelineDuration(lastItem.item) - 0.001
+        ),
+      };
+    }
+
+    return getCollectionPreviewSnapshotAtElapsed(
+      lastItem.collection,
+      Math.max(0, (getRecursiveCollectionDuration(lastItem.collection) || 3) - 0.001)
+    );
+  }, [
+    timelineItems,
+    getSceneLaunchMediaTimelineDuration,
+    getRecursiveCollectionDuration,
+    getSceneLaunchMediaSourceTime,
+    getCollectionPreviewSnapshotAtElapsed,
+  ]);
+
+  const getLivePreviewSnapshot = React.useCallback(() => (
+    getPreviewSnapshotAtTime(currentTimeRef.current)
+  ), [getPreviewSnapshotAtTime]);
+
+  const getSelectedMediaPreviewSnapshot = React.useCallback((): SceneLaunchCanvasPreviewSnapshot | null => {
+    if (!selectedPreviewMedia) return null;
+
+    return {
+      media: selectedPreviewMedia,
+      previewTimeSeconds: getSceneLaunchMediaSourceTime(selectedPreviewMedia, 0),
+    };
+  }, [getSceneLaunchMediaSourceTime, selectedPreviewMedia]);
+
+  const getDisplayedPreviewSnapshot = React.useCallback(() => (
+    getSelectedMediaPreviewSnapshot() ?? getLivePreviewSnapshot()
+  ), [getLivePreviewSnapshot, getSelectedMediaPreviewSnapshot]);
+
   const activeItemInfo = getActiveTimelineItemInfo(timelineCurrentTime);
   const activeItemKey = activeItemInfo ? `${activeItemInfo.type}:${activeItemInfo.id}` : null;
   const sceneLaunchTimelineTitle = activeSceneLaunchBeatId === 'trash'
@@ -583,6 +726,7 @@ const [w, h] = ratio.split(':').map(Number);
     setTimelineCurrentTime(time);
     currentTimeRef.current = time;
     setSceneLaunchPreviewHover(null);
+    setSelectedPreviewMediaId(null);
   }, [setSceneLaunchPreviewHover]);
 
   const toggleSceneLaunchTimelinePlayback = React.useCallback(() => {
@@ -598,6 +742,15 @@ const [w, h] = ratio.split(':').map(Number);
   const toggleSceneLaunchPreview = React.useCallback(() => {
     setSceneLaunchPlaybackMode(current => current === 'preview' ? 'inline' : 'preview');
   }, []);
+
+  const previewSceneLaunchMedia = React.useCallback((item: SceneLaunchMediaItem) => {
+    setIsTimelinePlaying(false);
+    setSceneLaunchPreviewHover(null);
+    setSceneLaunchManuallyPaused(null);
+    setSceneLaunchPreviewPausedOffset(0);
+    setSelectedPreviewMediaId(item.id);
+    setSceneLaunchPlaybackMode('preview');
+  }, [setSceneLaunchPreviewHover]);
 
   // Preview animation tick effect
   React.useEffect(() => {
@@ -618,7 +771,7 @@ const [w, h] = ratio.split(':').map(Number);
       const hoveredBeat = sceneLaunchBeats.find(b => b.id === hoveredId);
       if (hoveredBeat && !isTimelinePlaying && !isScrubbing) {
         const mediaItems = getRecursiveMediaItems(hoveredBeat);
-        const totalDuration = mediaItems.reduce((sum, item) => sum + (item.durationSeconds || 3), 0);
+        const totalDuration = mediaItems.reduce((sum, item) => sum + getSceneLaunchMediaPreviewDuration(item), 0);
         if (totalDuration > 0) {
           const elapsed = isPaused
             ? sceneLaunchPreviewPausedOffset % totalDuration
@@ -633,7 +786,7 @@ const [w, h] = ratio.split(':').map(Number);
 
     frameId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frameId);
-  }, [sceneLaunchPreviewHover, isTimelinePlaying, isScrubbing, timelineItems, sceneLaunchBeats, sceneLaunchManuallyPaused, sceneLaunchPreviewPausedOffset, getRecursiveMediaItems, syncTimelinePlayheadToCollectionPreview]);
+  }, [sceneLaunchPreviewHover, isTimelinePlaying, isScrubbing, timelineItems, sceneLaunchBeats, sceneLaunchManuallyPaused, sceneLaunchPreviewPausedOffset, getRecursiveMediaItems, syncTimelinePlayheadToCollectionPreview, getSceneLaunchMediaPreviewDuration]);
 
   // Timeline playback tick effect
   React.useEffect(() => {
@@ -650,7 +803,7 @@ const [w, h] = ratio.split(':').map(Number);
       const current = currentTimeRef.current;
       const next = current + delta;
       const isPreviewPlayback = sceneLaunchPlaybackMode === 'preview';
-      const publishIntervalSeconds = isPreviewPlayback ? 1 / 2 : 0;
+      const publishIntervalSeconds = isPreviewPlayback ? 1 / 8 : 0;
 
       if (next >= timelineTotalDuration) {
         setTimelineCurrentTime(0);
@@ -924,6 +1077,15 @@ const [w, h] = ratio.split(':').map(Number);
     });
 
   const activePreviewItem = (() => {
+    if (selectedPreviewMedia) {
+      return {
+        title: selectedPreviewMedia.name,
+        label: selectedPreviewMedia.type === 'video' ? 'Video' : 'Image',
+        media: selectedPreviewMedia,
+        previewTimeSeconds: getSceneLaunchMediaSourceTime(selectedPreviewMedia, 0),
+      };
+    }
+
     const activeTimelineItem = activeItemInfo
       ? timelineItems.find(item => item.type === activeItemInfo.type && item.id === activeItemInfo.id)
       : timelineItems[0];
@@ -942,7 +1104,7 @@ const [w, h] = ratio.split(':').map(Number);
         title: activeTimelineItem.item.name,
         label: 'Media',
         media: activeTimelineItem.item,
-        previewTimeSeconds: (activeTimelineItem.item.trimStartSeconds || 0) + elapsedSeconds,
+        previewTimeSeconds: getSceneLaunchMediaSourceTime(activeTimelineItem.item, elapsedSeconds),
       };
     }
 
@@ -951,9 +1113,157 @@ const [w, h] = ratio.split(':').map(Number);
       title: activeTimelineItem.collection.name,
       label: 'Collection',
       media: collectionPreview?.item ?? null,
-      previewTimeSeconds: collectionPreview?.elapsedSeconds ?? 0,
+      previewTimeSeconds: collectionPreview
+        ? getSceneLaunchMediaSourceTime(collectionPreview.item, collectionPreview.elapsedSeconds)
+        : 0,
     };
   })();
+
+  const headerPlaybackControls = (
+    <div className="flex h-11 items-center justify-center gap-2.5 rounded-full border border-white/10 bg-zinc-950/85 px-3 text-zinc-300 shadow-[0_12px_36px_rgba(0,0,0,0.32)] ring-1 ring-black/30 backdrop-blur-xl">
+      <button
+        type="button"
+        onClick={() => setIsTimelineLooping(current => !current)}
+        className={cn(
+          'flex h-8 w-8 items-center justify-center rounded-full transition-colors',
+          isTimelineLooping
+            ? 'bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/20'
+            : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+        )}
+        title={isTimelineLooping ? 'Disable Loop' : 'Enable Loop'}
+        aria-label={isTimelineLooping ? 'Disable Loop' : 'Enable Loop'}
+      >
+        <Repeat className="h-4 w-4" />
+      </button>
+
+      <button
+        type="button"
+        onClick={toggleSceneLaunchTimelinePlayback}
+        className={cn(
+          'flex h-9 w-9 items-center justify-center rounded-full text-white shadow-md transition-all',
+          isTimelinePlaying
+            ? 'bg-red-650 hover:bg-red-700'
+            : 'bg-indigo-600 hover:bg-indigo-700'
+        )}
+        title={sceneLaunchPlaybackMode === 'preview'
+          ? isTimelinePlaying ? 'Pause Preview' : 'Play Preview'
+          : isTimelinePlaying ? 'Pause Timeline' : 'Play Timeline'}
+        aria-label={sceneLaunchPlaybackMode === 'preview'
+          ? isTimelinePlaying ? 'Pause Preview' : 'Play Preview'
+          : isTimelinePlaying ? 'Pause Timeline' : 'Play Timeline'}
+      >
+        {isTimelinePlaying ? (
+          <Pause className="h-4 w-4 fill-current" />
+        ) : (
+          <Play className="ml-0.5 h-4 w-4 fill-current" />
+        )}
+      </button>
+
+      <button
+        type="button"
+        onClick={toggleSceneLaunchPreview}
+        aria-pressed={sceneLaunchPlaybackMode === 'preview'}
+        className={cn(
+          'flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-[9px] font-black uppercase tracking-widest outline-none transition-colors focus-visible:ring-2 focus-visible:ring-indigo-400/70',
+          sceneLaunchPlaybackMode === 'preview'
+            ? 'border-indigo-500/60 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/25'
+            : 'border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:text-white'
+        )}
+        title={sceneLaunchPlaybackMode === 'preview' ? 'Hide preview' : 'Show preview'}
+      >
+        <MonitorPlay className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">Preview</span>
+      </button>
+
+      <span className="rounded-full border border-zinc-800/80 bg-zinc-900 px-2 py-0.5 font-mono text-[10px] font-bold text-zinc-300">
+        {timelineCurrentTime.toFixed(1)}s
+      </span>
+    </div>
+  );
+
+  const timelineSearch = headerVariant === 'prompt' ? (
+    <form
+      className="flex h-10 w-[min(42rem,48vw)] min-w-0 items-center gap-2 rounded-full border border-white/10 bg-[#171717]/95 px-2.5 shadow-[0_8px_24px_rgba(0,0,0,0.28)] ring-1 ring-black/30"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSceneLaunchSearch(sceneLaunchSearch.trim());
+      }}
+    >
+      <label htmlFor="scene-launch-floating-prompt-search" className="sr-only">Search scenes</label>
+      <button
+        type="button"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-zinc-300 transition-colors hover:bg-white/5 hover:text-white"
+        onClick={() => handleAddClipClick('video')}
+        title="Add video scene media"
+        aria-label="Add video scene media"
+      >
+        <Plus className="h-4 w-4 stroke-[1.8]" />
+      </button>
+
+      <input
+        id="scene-launch-floating-prompt-search"
+        name="sceneLaunchSearch"
+        value={sceneLaunchSearch}
+        onChange={(event) => setSceneLaunchSearch(event.target.value)}
+        className="h-full min-w-0 flex-1 bg-transparent text-xs font-semibold text-zinc-200 outline-none placeholder:text-zinc-500/90"
+        placeholder="What do you want to create?"
+        enterKeyHint="search"
+      />
+
+      <button
+        type="button"
+        className="hidden h-7 shrink-0 items-center rounded-full bg-zinc-800/80 px-3 text-[10px] font-bold text-zinc-300 transition-colors hover:bg-zinc-700/70 hover:text-white sm:flex"
+        onClick={() => setActiveTab('analyze')}
+      >
+        Agent
+      </button>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          className="hidden h-7 min-w-0 shrink-0 items-center gap-1.5 rounded-full bg-zinc-800/80 px-2.5 text-[10px] font-bold text-zinc-300 outline-none transition-colors hover:bg-zinc-700/70 hover:text-white focus-visible:ring-2 focus-visible:ring-zinc-500 md:flex"
+          title={`Change aspect ratio (currently ${aspectRatio})`}
+          aria-label="Change aspect ratio"
+        >
+          <span className="max-w-24 truncate">Banana 2</span>
+          <Ratio className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+          <span className="shrink-0 text-zinc-400">x4</span>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="z-50 w-36 border-zinc-800 bg-[#111114] text-zinc-300">
+          <div className="select-none px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-zinc-500">Aspect Ratio</div>
+          {(['16:9', '21:9', '1:1', '9:16'] as const).map((ratio) => (
+            <DropdownMenuItem
+              key={ratio}
+              onClick={() => setAspectRatio(ratio)}
+              className="cursor-pointer justify-between font-mono text-xs focus:bg-zinc-800 focus:text-white"
+            >
+              {ratio}
+              {aspectRatio === ratio && <span className="text-indigo-300">•</span>}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <button
+        type="submit"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-800/80 text-zinc-500 transition-colors hover:bg-zinc-700/70 hover:text-zinc-200"
+        aria-label="Submit search"
+      >
+        <ArrowRight className="h-4 w-4 stroke-[1.8]" />
+      </button>
+    </form>
+  ) : (
+    <div className="flex h-9 w-[min(34rem,42vw)] min-w-0 items-center gap-2.5 rounded-full bg-zinc-900/95 px-4 text-zinc-500 ring-1 ring-white/10">
+      <Search className="h-4.5 w-4.5 shrink-0" />
+      <label htmlFor="scene-launch-floating-search" className="sr-only">Search scenes</label>
+      <input
+        id="scene-launch-floating-search"
+        value={sceneLaunchSearch}
+        onChange={(event) => setSceneLaunchSearch(event.target.value)}
+        className="h-full min-w-0 flex-1 bg-transparent text-xs text-zinc-200 outline-none placeholder:text-zinc-600"
+        placeholder="Search scenes"
+      />
+    </div>
+  );
 
   return (
     <div
@@ -1008,6 +1318,8 @@ const [w, h] = ratio.split(':').map(Number);
           setActiveTab={setActiveTab}
           openSceneLibrary={openSceneLibrary}
           searchVariant={headerVariant === 'prompt' ? 'prompt' : 'default'}
+          hideSearch
+          centerSlot={headerPlaybackControls}
         />
 
         <main className="relative min-h-0 flex-1 overflow-hidden">
@@ -1017,10 +1329,15 @@ const [w, h] = ratio.split(':').map(Number);
               x: '0%',
               opacity: sceneLaunchPlaybackMode === 'preview' ? 0.18 : 1,
             }}
-            transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+            transition={{
+              x: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
+              opacity: sceneLaunchPlaybackMode === 'preview'
+                ? { duration: 0.22, ease: 'easeOut' }
+                : { duration: 0.48, delay: 0.12, ease: 'easeOut' },
+            }}
           >
           {!activeSceneLaunchBeat && rootSceneLaunchGridItemsCount === 0 && (projectHasSceneContent || visibleProjectScenes.length > 1) ? (
-            <div className="mx-auto mt-8 w-full max-w-6xl">
+            <div className="mt-8 w-full">
               <div className="mb-4 flex items-end justify-between gap-4">
                 <div>
                   <h2 className="text-sm font-semibold text-zinc-200">Project scenes</h2>
@@ -1119,6 +1436,7 @@ const [w, h] = ratio.split(':').map(Number);
               updateSceneLaunchMediaDuration={updateSceneLaunchMediaDuration}
               updateSceneLaunchMediaTrim={updateSceneLaunchMediaTrim}
               handleItemContextMenu={handleItemContextMenu}
+              onPreviewMedia={previewSceneLaunchMedia}
               emptyTrash={emptyTrash}
               createSceneLaunchBeat={createSceneLaunchBeat}
               handleAddClipClick={handleAddClipClick}
@@ -1143,7 +1461,7 @@ const [w, h] = ratio.split(':').map(Number);
             transition={{ type: 'spring', stiffness: 145, damping: 18, mass: 1.15 }}
             aria-hidden={sceneLaunchPlaybackMode !== 'preview'}
           >
-            <section className="flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/95 shadow-2xl shadow-black/50">
+            <section className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/95 shadow-2xl shadow-black/50">
               <div className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-zinc-800 px-4">
                 <div className="flex min-w-0 items-center gap-3">
                   <Button
@@ -1176,6 +1494,7 @@ const [w, h] = ratio.split(':').map(Number);
                   previewTimeSeconds={activePreviewItem?.previewTimeSeconds ?? 0}
                   isPlaying={sceneLaunchPlaybackMode === 'preview' && isTimelinePlaying}
                   isVisible={sceneLaunchPlaybackMode === 'preview'}
+                  getPlaybackSnapshot={getDisplayedPreviewSnapshot}
                 />
               </div>
             </section>
@@ -1208,9 +1527,12 @@ const [w, h] = ratio.split(':').map(Number);
           getRecursiveCollectionDuration={getRecursiveCollectionDuration}
           getCollectionTimelineSplitPercents={getCollectionTimelineSplitPercents}
           getSceneLaunchCollectionPreview={getSceneLaunchCollectionPreview}
+          getCollectionTimelineMediaItems={getRecursiveMediaItems}
           reorderSceneLaunchGridItem={reorderSceneLaunchGridItem}
           handleItemContextMenu={handleItemContextMenu}
           updateSceneLaunchMediaDuration={updateSceneLaunchMediaDuration}
+          updateSceneLaunchMediaTrim={updateSceneLaunchMediaTrim}
+          centerSlot={timelineSearch}
         />
       </div>
 
