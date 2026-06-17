@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@storyboard/ui';
 
@@ -60,6 +61,7 @@ type SceneLaunchTimelineProps<TCollection extends { id: string; name: string }> 
   getCollectionTimelineSplitPercents: (collection: TCollection) => number[];
   getSceneLaunchCollectionPreview: (collection: TCollection) => { item: SceneLaunchTimelineMediaItem } | null;
   getCollectionTimelineMediaItems: (collection: TCollection) => SceneLaunchTimelineMediaItem[];
+  onPreviewMediaId: (mediaId: string) => void;
   reorderSceneLaunchGridItem: (draggedKey: string, targetKey: string) => void;
   handleItemContextMenu: (event: React.MouseEvent, dragKey: string) => void;
   updateSceneLaunchMediaDuration: (mediaId: string, durationSeconds: number) => void;
@@ -75,130 +77,25 @@ const getTimelineMediaDuration = (item: SceneLaunchTimelineMediaItem) => {
   return Math.max(0.5, Math.min(requestedDuration, Math.max(0.5, sourceDuration - trimStart)));
 };
 
-const getTimelineMediaSourceDuration = (item: SceneLaunchTimelineMediaItem) => (
-  Math.max(0.5, item.mediaDurationSeconds ?? item.durationSeconds ?? 3)
-);
-
 function SceneLaunchTimelineCollectionMenu({
   collectionName,
   mediaItems,
-  updateSceneLaunchMediaDuration,
-  updateSceneLaunchMediaTrim,
+  collectionStartOffset,
+  onPreviewItem,
 }: {
   collectionName: string;
   mediaItems: SceneLaunchTimelineMediaItem[];
-  updateSceneLaunchMediaDuration: (mediaId: string, durationSeconds: number) => void;
-  updateSceneLaunchMediaTrim: (mediaId: string, trimStartSeconds: number, durationSeconds: number) => void;
+  collectionStartOffset: number;
+  onPreviewItem: (timelineTimeSeconds: number, mediaId: string) => void;
 }) {
-  const dragStateRef = React.useRef<{
-    item: SceneLaunchTimelineMediaItem;
-    mode: 'start' | 'end' | 'move';
-    startX: number;
-    trackWidth: number;
-    initialStart: number;
-    initialDuration: number;
-    sourceDuration: number;
-  } | null>(null);
-
-  const beginTrimDrag = (
-    event: React.PointerEvent<HTMLElement>,
-    item: SceneLaunchTimelineMediaItem,
-    mode: 'start' | 'end' | 'move'
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-
-    const track = event.currentTarget.closest('[data-collection-trim-track="true"]') as HTMLElement | null;
-    const sourceDuration = item.type === 'video'
-      ? getTimelineMediaSourceDuration(item)
-      : 60;
-
-    dragStateRef.current = {
-      item,
-      mode,
-      startX: event.clientX,
-      trackWidth: Math.max(1, track?.getBoundingClientRect().width ?? 1),
-      initialStart: item.type === 'video' ? Math.max(0, item.trimStartSeconds ?? 0) : 0,
-      initialDuration: getTimelineMediaDuration(item),
-      sourceDuration,
-    };
-  };
-
-  const updateTrimDrag = (event: React.PointerEvent<HTMLElement>) => {
-    const dragState = dragStateRef.current;
-    if (!dragState) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const deltaSeconds = ((event.clientX - dragState.startX) / dragState.trackWidth) * dragState.sourceDuration;
-
-    if (dragState.item.type === 'video') {
-      if (dragState.mode === 'start') {
-        const nextStart = Math.max(
-          0,
-          Math.min(
-            dragState.initialStart + dragState.initialDuration - 0.5,
-            dragState.initialStart + deltaSeconds,
-            dragState.sourceDuration - 0.5
-          )
-        );
-        const nextDuration = Math.max(
-          0.5,
-          Math.min(
-            dragState.sourceDuration - nextStart,
-            dragState.initialDuration - (nextStart - dragState.initialStart)
-          )
-        );
-        updateSceneLaunchMediaTrim(
-          dragState.item.id,
-          Number(nextStart.toFixed(2)),
-          Number(nextDuration.toFixed(2))
-        );
-        return;
-      }
-
-      if (dragState.mode === 'move') {
-        const nextStart = Math.max(
-          0,
-          Math.min(
-            dragState.sourceDuration - dragState.initialDuration,
-            dragState.initialStart + deltaSeconds
-          )
-        );
-        updateSceneLaunchMediaTrim(
-          dragState.item.id,
-          Number(nextStart.toFixed(2)),
-          Number(dragState.initialDuration.toFixed(2))
-        );
-        return;
-      }
-
-      const nextDuration = Math.max(
-        0.5,
-        Math.min(
-          dragState.sourceDuration - dragState.initialStart,
-          dragState.initialDuration + deltaSeconds
-        )
-      );
-      updateSceneLaunchMediaTrim(
-        dragState.item.id,
-        Number(dragState.initialStart.toFixed(2)),
-        Number(nextDuration.toFixed(2))
-      );
-      return;
-    }
-
-    const nextDuration = Math.max(0.5, Math.min(60, dragState.initialDuration + deltaSeconds));
-    updateSceneLaunchMediaDuration(dragState.item.id, Number(nextDuration.toFixed(2)));
-  };
-
-  const endTrimDrag = (event: React.PointerEvent<HTMLElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    dragStateRef.current = null;
-  };
+  const itemOffsets = React.useMemo(() => {
+    let elapsedSeconds = 0;
+    return mediaItems.map((item) => {
+      const offset = elapsedSeconds;
+      elapsedSeconds += getTimelineMediaDuration(item);
+      return offset;
+    });
+  }, [mediaItems]);
 
   return (
     <DropdownMenu>
@@ -206,7 +103,7 @@ function SceneLaunchTimelineCollectionMenu({
         className="absolute right-1.5 top-1.5 z-40 flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-black/65 text-zinc-400 opacity-0 shadow-lg outline-none backdrop-blur transition-opacity hover:bg-zinc-900 hover:text-zinc-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-indigo-400/70 group-hover:opacity-100 data-[state=open]:opacity-100"
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
-        aria-label={`Edit media in ${collectionName}`}
+        aria-label={`Preview media in ${collectionName}`}
         title="Collection media"
       >
         <MoreVertical className="h-3.5 w-3.5" />
@@ -229,207 +126,39 @@ function SceneLaunchTimelineCollectionMenu({
           </div>
         </div>
 
-        <div className="space-y-2">
+        <div className="grid grid-cols-3 gap-2">
           {mediaItems.length === 0 ? (
-            <div className="rounded-md border border-zinc-850 bg-zinc-950 p-3 text-center text-xs text-zinc-600">
+            <div className="col-span-3 rounded-md border border-zinc-850 bg-zinc-950 p-3 text-center text-xs text-zinc-600">
               No media in this collection.
             </div>
-          ) : mediaItems.map((item, index) => {
-            const sourceDuration = getTimelineMediaSourceDuration(item);
-            const trimStart = Math.max(0, item.trimStartSeconds ?? 0);
-            const duration = getTimelineMediaDuration(item);
-            const startPercent = item.type === 'video'
-              ? (trimStart / sourceDuration) * 100
-              : 0;
-            const durationPercent = item.type === 'video'
-              ? (duration / sourceDuration) * 100
-              : Math.min(100, (duration / 60) * 100);
-            const rightDimPercent = item.type === 'video'
-              ? Math.max(0, 100 - startPercent - durationPercent)
-              : 0;
-            const stripLeft = item.type === 'video' ? startPercent : 0;
-            const stripWidth = Math.max(4, item.type === 'video' ? durationPercent : Math.min(100, durationPercent));
-
-            if (item.type === 'image') {
-              const setImageDuration = (nextDuration: number) => {
-                const clampedDuration = Math.max(0.5, Math.min(60, nextDuration));
-                updateSceneLaunchMediaDuration(item.id, Number(clampedDuration.toFixed(2)));
-              };
-
-              return (
-                <div
-                  key={`${item.id}-${index}`}
-                  className="rounded-lg border border-zinc-850 bg-zinc-950/80 p-2 shadow-inner shadow-black/30"
-                >
-                  <div className="rounded-md border border-zinc-850 bg-black/45 p-2">
-                    <div className="relative flex h-16 w-full items-center justify-center overflow-hidden rounded-md border border-zinc-800 bg-zinc-950">
-                      <img
-                        src={item.previewUrl}
-                        alt=""
-                        className="absolute inset-0 h-full w-full object-cover opacity-80"
-                      />
-                      <div className="absolute inset-0 bg-black/35" />
-                      <div className="absolute inset-0 opacity-25 [background-image:linear-gradient(90deg,rgba(255,255,255,0.12)_1px,transparent_1px)] [background-size:18px_100%]" />
-                      <div className="relative flex items-center gap-2 rounded-full border border-white/10 bg-black/60 px-2.5 py-1 shadow-lg">
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setImageDuration(duration - 0.5);
-                          }}
-                          className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-900 text-sm font-bold text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white"
-                          aria-label={`Decrease ${item.name} duration`}
-                        >
-                          -
-                        </button>
-                        <label className="flex items-center gap-1 font-mono text-[10px] text-zinc-500">
-                          <input
-                            type="number"
-                            min={0.5}
-                            max={60}
-                            step={0.5}
-                            value={Number(duration.toFixed(1))}
-                            onClick={(event) => event.stopPropagation()}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onChange={(event) => setImageDuration(Number(event.target.value))}
-                            className="h-6 w-12 bg-transparent text-right text-xs font-bold text-zinc-100 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                            aria-label={`${item.name} duration`}
-                          />
-                          <span>s</span>
-                        </label>
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setImageDuration(duration + 0.5);
-                          }}
-                          className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-900 text-sm font-bold text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-white"
-                          aria-label={`Increase ${item.name} duration`}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="mt-2 flex min-w-0 items-center justify-between gap-3 px-0.5 py-0.5">
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <ImageIcon className="h-3 w-3 shrink-0 text-emerald-400/80" />
-                        <span className="min-w-0 truncate text-[11px] font-semibold text-zinc-400">
-                          {index + 1}. {item.name}
-                        </span>
-                      </div>
-                      <div className="ml-auto shrink-0 rounded border border-zinc-850 bg-black/35 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-300">
-                        image · {duration.toFixed(1)}s
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            }
-
-            return (
-              <div
-                key={`${item.id}-${index}`}
-                className="rounded-lg border border-zinc-850 bg-zinc-950/80 p-2 shadow-inner shadow-black/30"
-              >
-                <div className="rounded-md border border-zinc-850 bg-black/45 p-2">
-                  <div
-                    data-collection-trim-track="true"
-                    className="relative h-16 overflow-hidden rounded-md bg-zinc-900"
-                  >
-                    {item.type === 'video' && (
-                      <div className="absolute inset-0 flex opacity-35">
-                        {[0, 1, 2, 3, 4].map((thumbIndex) => (
-                          <video
-                            key={thumbIndex}
-                            ref={(video) => {
-                              if (!video) return;
-                              const targetTime = (thumbIndex / 4) * sourceDuration;
-                              if (Math.abs(video.currentTime - targetTime) > 0.1) {
-                                video.currentTime = targetTime;
-                              }
-                            }}
-                            src={item.previewUrl}
-                            className="h-full min-w-0 flex-1 object-cover"
-                            muted
-                            playsInline
-                          />
-                        ))}
-                      </div>
-                    )}
-                    {item.type === 'video' && (
-                      <>
-                        <div className="absolute inset-y-0 left-0 bg-black/65" style={{ width: `${startPercent}%` }} />
-                        <div className="absolute inset-y-0 right-0 bg-black/65" style={{ width: `${rightDimPercent}%` }} />
-                      </>
-                    )}
-                    <div
-                      onPointerDown={(event) => beginTrimDrag(event, item, item.type === 'video' ? 'move' : 'end')}
-                      onPointerMove={updateTrimDrag}
-                      onPointerUp={endTrimDrag}
-                      onPointerCancel={endTrimDrag}
-                      className={cn(
-                        'absolute inset-y-0 rounded-md border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.3),0_0_14px_rgba(255,255,255,0.18)]',
-                        item.type === 'video' ? 'cursor-grab active:cursor-grabbing' : 'cursor-ew-resize'
-                      )}
-                      style={{
-                        left: `${stripLeft}%`,
-                        width: `${stripWidth}%`,
-                      }}
-                    >
-                      {item.type === 'video' && (
-                        <div
-                          onPointerDown={(event) => beginTrimDrag(event, item, 'start')}
-                          onPointerMove={updateTrimDrag}
-                          onPointerUp={endTrimDrag}
-                          onPointerCancel={endTrimDrag}
-                          className="absolute inset-y-0 left-0 flex w-4 cursor-ew-resize items-center justify-center rounded-l bg-white"
-                        >
-                          <div className="h-7 w-[1.5px] rounded-full bg-zinc-400" />
-                        </div>
-                      )}
-                      <div
-                        onPointerDown={(event) => beginTrimDrag(event, item, 'end')}
-                        onPointerMove={updateTrimDrag}
-                        onPointerUp={endTrimDrag}
-                        onPointerCancel={endTrimDrag}
-                        className="absolute inset-y-0 right-0 flex w-4 cursor-ew-resize items-center justify-center rounded-r bg-white"
-                      >
-                        <div className="h-7 w-[1.5px] rounded-full bg-zinc-400" />
-                      </div>
-                      <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white shadow">
-                        {duration.toFixed(1)}s
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 flex min-w-0 items-center justify-between gap-3 px-0.5 py-0.5">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      {item.type === 'video' ? (
-                        <Video className="h-3 w-3 shrink-0 text-amber-400/80" />
-                      ) : (
-                        <ImageIcon className="h-3 w-3 shrink-0 text-emerald-400/80" />
-                      )}
-                      <span className="min-w-0 truncate text-[11px] font-semibold text-zinc-400">
-                        {index + 1}. {item.name}
-                      </span>
-                    </div>
-                    <div className="ml-auto shrink-0 rounded border border-zinc-850 bg-black/35 px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest text-zinc-300">
-                      {item.type === 'video'
-                        ? `${trimStart.toFixed(1)}s - ${(trimStart + duration).toFixed(1)}s`
-                        : `${duration.toFixed(1)}s`}
-                    </div>
-                  </div>
+          ) : mediaItems.map((item, index) => (
+            <DropdownMenuItem
+              key={`${item.id}-${index}`}
+              onClick={() => {
+                onPreviewItem(collectionStartOffset + itemOffsets[index], item.id);
+              }}
+              className="group block min-w-0 cursor-pointer rounded-lg border border-zinc-850 bg-zinc-950/80 p-1.5 text-left shadow-inner shadow-black/30 outline-none transition-colors hover:border-zinc-650 hover:bg-zinc-900 focus:border-zinc-650 focus:bg-zinc-900 focus:text-zinc-200"
+            >
+              <div className="relative aspect-video overflow-hidden rounded-md border border-zinc-800 bg-black">
+                {item.type === 'video' ? (
+                  <video src={item.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                ) : (
+                  <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                )}
+                <div className="pointer-events-none absolute left-1.5 top-1.5 rounded bg-black/55 p-1 text-zinc-100 shadow">
+                  {item.type === 'video' ? <Video className="h-3 w-3" /> : <ImageIcon className="h-3 w-3" />}
                 </div>
               </div>
-            );
-          })}
+              <div className="mt-1.5 truncate text-[10px] font-semibold text-zinc-400 group-hover:text-zinc-200">
+                {index + 1}. {item.name}
+              </div>
+            </DropdownMenuItem>
+          ))}
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
-
 function SceneLaunchTimelineRuler({
   totalDuration,
   pxPerSecond,
@@ -518,6 +247,7 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
   getCollectionTimelineSplitPercents,
   getSceneLaunchCollectionPreview,
   getCollectionTimelineMediaItems,
+  onPreviewMediaId,
   reorderSceneLaunchGridItem,
   handleItemContextMenu,
   updateSceneLaunchMediaDuration,
@@ -792,8 +522,11 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
                       <SceneLaunchTimelineCollectionMenu
                         collectionName={gridItem.collection.name}
                         mediaItems={getCollectionTimelineMediaItems(gridItem.collection)}
-                        updateSceneLaunchMediaDuration={updateSceneLaunchMediaDuration}
-                        updateSceneLaunchMediaTrim={updateSceneLaunchMediaTrim}
+                        collectionStartOffset={itemStartOffset}
+                        onPreviewItem={(timelineTimeSeconds, mediaId) => {
+                          onTimelineTimeChange(timelineTimeSeconds);
+                          onPreviewMediaId(mediaId);
+                        }}
                       />
                     )}
 

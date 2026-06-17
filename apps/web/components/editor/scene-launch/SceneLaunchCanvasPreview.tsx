@@ -131,7 +131,9 @@ export function SceneLaunchCanvasPreview({
   }, []);
 
   const getMediaKey = React.useCallback((item: SceneLaunchMediaItem | null) => (
-    item ? `${item.type}:${item.id}:${item.previewUrl}` : null
+    item
+      ? `${item.type}:${item.id}:${item.previewUrl}:${item.trimStartSeconds ?? 0}:${item.durationSeconds ?? 0}:${item.mediaDurationSeconds ?? 0}`
+      : null
   ), []);
 
   const getMediaTrimRange = React.useCallback((item: SceneLaunchMediaItem) => {

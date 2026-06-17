@@ -84,6 +84,7 @@ export function SceneLaunchCollectionTile({
 
   return (
     <article
+      data-scene-grid-item="true"
       id={`grid-item-${dragKey}`}
       draggable
       onDragStart={(event) => {

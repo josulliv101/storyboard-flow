@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, MonitorPlay, Pause, Play, Plus, Ratio, Repeat, Search } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Clapperboard, Grid2X2, Loader2, MonitorPlay, Pause, Play, Plus, Ratio, Repeat, Search, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
   Button,
@@ -107,6 +107,7 @@ export function SceneLaunchWorkspace({
     permanentlyDeleteItem,
     emptyTrash,
     updateSceneLaunchMediaDuration,
+    updateSceneLaunchMediaName,
     updateSceneLaunchMediaOriginalDuration,
     updateSceneLaunchMediaTrim,
     handleItemContextMenu,
@@ -127,11 +128,39 @@ export function SceneLaunchWorkspace({
   const [sceneComposerText, setSceneComposerText] = React.useState('');
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
   const [selectedPreviewMediaId, setSelectedPreviewMediaId] = React.useState<string | null>(null);
+  const [previewEditDraft, setPreviewEditDraft] = React.useState<{
+    mediaId: string;
+    name: string;
+    durationSeconds: number;
+    trimStartSeconds: number;
+  } | null>(null);
+  const [isPreviewEditSaving, setIsPreviewEditSaving] = React.useState(false);
 
   const currentTimeRef = React.useRef(0);
+  const previewSurfaceRef = React.useRef<HTMLDivElement | null>(null);
+  const [previewSurfaceSize, setPreviewSurfaceSize] = React.useState({ width: 0, height: 0 });
   React.useEffect(() => {
     currentTimeRef.current = timelineCurrentTime;
   }, [timelineCurrentTime]);
+
+  React.useEffect(() => {
+    const element = previewSurfaceRef.current;
+    if (!element) return;
+
+    const updateSize = () => {
+      const rect = element.getBoundingClientRect();
+      setPreviewSurfaceSize({
+        width: rect.width,
+        height: rect.height,
+      });
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, []);
 
   const activeSceneLaunchBeatId = sceneLaunchBeatPath[sceneLaunchBeatPath.length - 1] || null;
   const activeSceneLaunchBeat = activeSceneLaunchBeatId
@@ -148,8 +177,32 @@ export function SceneLaunchWorkspace({
     const rootItem = sceneLaunchMediaItems.find(item => item.id === selectedPreviewMediaId);
     if (rootItem) return rootItem;
 
+    const visited = new Set<string>();
+    const findInCollection = (collection: SceneLaunchBeat): SceneLaunchMediaItem | null => {
+      if (visited.has(collection.id)) return null;
+      visited.add(collection.id);
+
+      const directItem = collection.items.find(item => item.id === selectedPreviewMediaId);
+      if (directItem) return directItem;
+
+      const childIds = Array.from(new Set([
+        ...collection.gridOrder
+          .filter((item): item is { id: string; type: 'collection' } => item.type === 'collection')
+          .map(item => item.id),
+        ...collection.childIds,
+      ]));
+
+      for (const childId of childIds) {
+        const childBeat = sceneLaunchBeats.find(beat => beat.id === childId);
+        const childItem = childBeat ? findInCollection(childBeat) : null;
+        if (childItem) return childItem;
+      }
+
+      return null;
+    };
+
     for (const beat of sceneLaunchBeats) {
-      const beatItem = beat.items.find(item => item.id === selectedPreviewMediaId);
+      const beatItem = findInCollection(beat);
       if (beatItem) return beatItem;
     }
 
@@ -743,14 +796,30 @@ const [w, h] = ratio.split(':').map(Number);
     setSceneLaunchPlaybackMode(current => current === 'preview' ? 'inline' : 'preview');
   }, []);
 
-  const previewSceneLaunchMedia = React.useCallback((item: SceneLaunchMediaItem) => {
+  const previewSceneLaunchMediaId = React.useCallback((mediaId: string) => {
     setIsTimelinePlaying(false);
     setSceneLaunchPreviewHover(null);
     setSceneLaunchManuallyPaused(null);
     setSceneLaunchPreviewPausedOffset(0);
-    setSelectedPreviewMediaId(item.id);
+    setIsPreviewEditSaving(false);
+    setPreviewEditDraft(null);
+    setSelectedPreviewMediaId(mediaId);
     setSceneLaunchPlaybackMode('preview');
   }, [setSceneLaunchPreviewHover]);
+
+  const previewSceneLaunchMedia = React.useCallback((item: SceneLaunchMediaItem) => {
+    previewSceneLaunchMediaId(item.id);
+  }, [previewSceneLaunchMediaId]);
+
+  const handleBoardContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>, insertionIndex: number) => {
+    event.preventDefault();
+    setSceneLaunchContextMenu({
+      type: 'board',
+      x: event.clientX,
+      y: event.clientY,
+      insertionIndex,
+    });
+  }, [setSceneLaunchContextMenu]);
 
   // Preview animation tick effect
   React.useEffect(() => {
@@ -1115,9 +1184,197 @@ const [w, h] = ratio.split(':').map(Number);
       media: collectionPreview?.item ?? null,
       previewTimeSeconds: collectionPreview
         ? getSceneLaunchMediaSourceTime(collectionPreview.item, collectionPreview.elapsedSeconds)
-        : 0,
+      : 0,
     };
   })();
+  const activePreviewMedia = activePreviewItem?.media ?? null;
+  const previewCanvasKey = activePreviewMedia
+    ? [
+        activePreviewMedia.id,
+        activePreviewMedia.previewUrl,
+        activePreviewMedia.trimStartSeconds ?? 0,
+        activePreviewMedia.durationSeconds ?? 0,
+        activePreviewMedia.mediaDurationSeconds ?? 0,
+      ].join(':')
+    : 'empty';
+  const getPreviewEditDefaults = React.useCallback((media: SceneLaunchMediaItem) => {
+    const trimStartSeconds = Math.max(0, media.trimStartSeconds ?? 0);
+    const sourceDuration = media.type === 'image'
+      ? 60
+      : Math.max(0.5, media.mediaDurationSeconds ?? media.durationSeconds ?? 3);
+    const fallbackDuration = Math.max(0.5, sourceDuration - trimStartSeconds);
+    const durationSeconds = Math.max(
+      0.5,
+      Math.min(media.durationSeconds ?? fallbackDuration, fallbackDuration)
+    );
+
+    return {
+      mediaId: media.id,
+      name: media.name,
+      durationSeconds,
+      trimStartSeconds,
+    };
+  }, []);
+  const activePreviewDraft = activePreviewMedia
+    ? previewEditDraft?.mediaId === activePreviewMedia.id
+      ? previewEditDraft
+      : getPreviewEditDefaults(activePreviewMedia)
+    : null;
+  const updateActivePreviewDraft = React.useCallback((
+    updater: (draft: { mediaId: string; name: string; durationSeconds: number; trimStartSeconds: number }) => {
+      mediaId: string;
+      name: string;
+      durationSeconds: number;
+      trimStartSeconds: number;
+    }
+  ) => {
+    if (!activePreviewMedia) return;
+    setPreviewEditDraft(previous => updater(
+      previous?.mediaId === activePreviewMedia.id
+        ? previous
+        : getPreviewEditDefaults(activePreviewMedia)
+    ));
+  }, [activePreviewMedia, getPreviewEditDefaults]);
+  const cancelPreviewEdit = React.useCallback(() => {
+    setIsPreviewEditSaving(false);
+    setPreviewEditDraft(null);
+    setSceneLaunchPlaybackMode('inline');
+  }, []);
+  const commitPreviewEdit = React.useCallback(() => {
+    if (!activePreviewMedia || !activePreviewDraft || isPreviewEditSaving) return;
+
+    setIsPreviewEditSaving(true);
+    updateSceneLaunchMediaName(activePreviewMedia.id, activePreviewDraft.name);
+    if (activePreviewMedia.type === 'video') {
+      updateSceneLaunchMediaTrim(
+        activePreviewMedia.id,
+        activePreviewDraft.trimStartSeconds,
+        activePreviewDraft.durationSeconds
+      );
+    } else {
+      updateSceneLaunchMediaDuration(activePreviewMedia.id, activePreviewDraft.durationSeconds);
+    }
+
+    window.setTimeout(() => {
+      setSceneLaunchPlaybackMode('inline');
+      window.setTimeout(() => {
+        setPreviewEditDraft(null);
+        setIsPreviewEditSaving(false);
+      }, 450);
+    }, 120);
+  }, [
+    activePreviewDraft,
+    activePreviewMedia,
+    isPreviewEditSaving,
+    updateSceneLaunchMediaDuration,
+    updateSceneLaunchMediaName,
+    updateSceneLaunchMediaTrim,
+  ]);
+  const beginPreviewTrimDrag = React.useCallback((
+    event: React.PointerEvent<HTMLElement>,
+    mode: 'start' | 'end' | 'move'
+  ) => {
+    if (!activePreviewMedia || activePreviewMedia.type !== 'video' || !activePreviewDraft || isPreviewEditSaving) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const pointerTarget = event.currentTarget;
+    const pointerId = event.pointerId;
+
+    const track = event.currentTarget.closest('[data-preview-trim-track="true"]') as HTMLElement | null;
+    const trackWidth = Math.max(1, track?.getBoundingClientRect().width ?? 1);
+    const sourceDuration = Math.max(0.5, activePreviewMedia.mediaDurationSeconds ?? activePreviewMedia.durationSeconds ?? 3);
+    const initialStart = activePreviewDraft.trimStartSeconds;
+    const initialDuration = activePreviewDraft.durationSeconds;
+    const startX = event.clientX;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const deltaSeconds = ((moveEvent.clientX - startX) / trackWidth) * sourceDuration;
+
+      updateActivePreviewDraft((draft) => {
+        if (mode === 'start') {
+          const nextStart = Math.max(
+            0,
+            Math.min(
+              initialStart + initialDuration - 0.5,
+              initialStart + deltaSeconds,
+              sourceDuration - 0.5
+            )
+          );
+          return {
+            ...draft,
+            trimStartSeconds: Number(nextStart.toFixed(2)),
+            durationSeconds: Number(Math.max(0.5, initialDuration - (nextStart - initialStart)).toFixed(2)),
+          };
+        }
+
+        if (mode === 'move') {
+          const nextStart = Math.max(
+            0,
+            Math.min(sourceDuration - initialDuration, initialStart + deltaSeconds)
+          );
+          return {
+            ...draft,
+            trimStartSeconds: Number(nextStart.toFixed(2)),
+          };
+        }
+
+        const nextDuration = Math.max(
+          0.5,
+          Math.min(sourceDuration - initialStart, initialDuration + deltaSeconds)
+        );
+        return {
+          ...draft,
+          durationSeconds: Number(nextDuration.toFixed(2)),
+        };
+      });
+    };
+
+    const onPointerUp = () => {
+      pointerTarget.releasePointerCapture(pointerId);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  }, [activePreviewDraft, activePreviewMedia, isPreviewEditSaving, updateActivePreviewDraft]);
+  const activePreviewSourceDuration = activePreviewMedia
+    ? activePreviewMedia.type === 'image'
+      ? 60
+      : Math.max(0.5, activePreviewMedia.mediaDurationSeconds ?? activePreviewMedia.durationSeconds ?? 3)
+    : 0;
+  const activePreviewAspectRatio = getAspectRatioValue(aspectRatio);
+  const previewMediaFrameSize = (() => {
+    const availableWidth = Math.max(0, previewSurfaceSize.width - 32);
+    const availableHeight = Math.max(0, previewSurfaceSize.height - 32);
+
+    if (availableWidth <= 0 || availableHeight <= 0) {
+      return { width: 0, height: 0 };
+    }
+
+    const availableRatio = availableWidth / availableHeight;
+    if (availableRatio > activePreviewAspectRatio) {
+      const height = availableHeight;
+      return {
+        width: height * activePreviewAspectRatio,
+        height,
+      };
+    }
+
+    const width = availableWidth;
+    return {
+      width,
+      height: width / activePreviewAspectRatio,
+    };
+  })();
+  const activePreviewTrimStartPercent = activePreviewDraft && activePreviewSourceDuration > 0
+    ? (activePreviewDraft.trimStartSeconds / activePreviewSourceDuration) * 100
+    : 0;
+  const activePreviewTrimWidthPercent = activePreviewDraft && activePreviewSourceDuration > 0
+    ? (activePreviewDraft.durationSeconds / activePreviewSourceDuration) * 100
+    : 0;
 
   const headerPlaybackControls = (
     <div className="flex h-11 items-center justify-center gap-2.5 rounded-full border border-white/10 bg-zinc-950/85 px-3 text-zinc-300 shadow-[0_12px_36px_rgba(0,0,0,0.32)] ring-1 ring-black/30 backdrop-blur-xl">
@@ -1436,10 +1693,10 @@ const [w, h] = ratio.split(':').map(Number);
               updateSceneLaunchMediaDuration={updateSceneLaunchMediaDuration}
               updateSceneLaunchMediaTrim={updateSceneLaunchMediaTrim}
               handleItemContextMenu={handleItemContextMenu}
+              handleBoardContextMenu={handleBoardContextMenu}
               onPreviewMedia={previewSceneLaunchMedia}
               emptyTrash={emptyTrash}
               createSceneLaunchBeat={createSceneLaunchBeat}
-              handleAddClipClick={handleAddClipClick}
               handleBeatDrop={(event, beatId) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -1475,9 +1732,23 @@ const [w, h] = ratio.split(':').map(Number);
                     <ArrowLeft className="h-4 w-4" />
                   </Button>
                   <div className="min-w-0">
-                    <div className="truncate text-xs font-bold uppercase tracking-widest text-zinc-300">
-                      {activePreviewItem?.title || 'Preview'}
-                    </div>
+                    {activePreviewMedia && activePreviewDraft ? (
+                      <input
+                        type="text"
+                        value={activePreviewDraft.name}
+                        onChange={(event) => updateActivePreviewDraft(draft => ({
+                          ...draft,
+                          name: event.target.value,
+                        }))}
+                        disabled={isPreviewEditSaving}
+                        className="h-7 w-[min(34rem,52vw)] min-w-0 rounded-md border border-transparent bg-transparent px-0 text-xs font-bold uppercase tracking-widest text-zinc-300 outline-none transition-colors focus:border-zinc-700 focus:bg-black/30 focus:px-2"
+                        aria-label="Preview item name"
+                      />
+                    ) : (
+                      <div className="truncate text-xs font-bold uppercase tracking-widest text-zinc-300">
+                        {activePreviewItem?.title || 'Preview'}
+                      </div>
+                    )}
                     <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-600">
                       {activePreviewItem?.label || 'Timeline'} preview
                     </div>
@@ -1488,14 +1759,126 @@ const [w, h] = ratio.split(':').map(Number);
                 </div>
               </div>
 
-              <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
+              <div ref={previewSurfaceRef} className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
                 <SceneLaunchCanvasPreview
+                  key={previewCanvasKey}
                   media={activePreviewItem?.media ?? null}
                   previewTimeSeconds={activePreviewItem?.previewTimeSeconds ?? 0}
                   isPlaying={sceneLaunchPlaybackMode === 'preview' && isTimelinePlaying}
                   isVisible={sceneLaunchPlaybackMode === 'preview'}
                   getPlaybackSnapshot={getDisplayedPreviewSnapshot}
                 />
+                {activePreviewMedia && activePreviewDraft && (
+                  <>
+                    {activePreviewMedia.type === 'image' ? (
+                      <label className="absolute bottom-4 left-4 rounded-lg border border-zinc-800 bg-zinc-950/88 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 shadow-2xl shadow-black/50 backdrop-blur-xl">
+                        Duration
+                        <div className="mt-1 flex h-8 items-center rounded-md border border-zinc-800 bg-black/50 px-2">
+                          <input
+                            type="number"
+                            min={0.5}
+                            max={60}
+                            step={0.5}
+                            value={Number(activePreviewDraft.durationSeconds.toFixed(1))}
+                            onChange={(event) => {
+                              const nextDuration = Math.max(0.5, Math.min(60, Number(event.target.value) || 0.5));
+                              updateActivePreviewDraft(draft => ({
+                                ...draft,
+                                durationSeconds: Number(nextDuration.toFixed(2)),
+                              }));
+                            }}
+                            disabled={isPreviewEditSaving}
+                            className="w-14 bg-transparent text-right text-sm font-bold normal-case tracking-normal text-zinc-100 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                            aria-label="Image duration"
+                          />
+                          <span className="ml-1.5 text-xs font-mono normal-case tracking-normal text-zinc-500">s</span>
+                        </div>
+                      </label>
+                    ) : (
+                      <div
+                        className="absolute bottom-20 left-1/2 text-[10px] font-black uppercase tracking-widest text-zinc-400"
+                        style={{
+                          width: previewMediaFrameSize.width > 0
+                            ? `${previewMediaFrameSize.width}px`
+                            : 'calc(100% - 2rem)',
+                          transform: 'translateX(-50%)',
+                        }}
+                      >
+                        <div className="mb-1.5 flex items-center justify-between">
+                          <span>Trim</span>
+                          <span className="font-mono normal-case tracking-normal text-zinc-300">
+                            {activePreviewDraft.trimStartSeconds.toFixed(1)}s - {(activePreviewDraft.trimStartSeconds + activePreviewDraft.durationSeconds).toFixed(1)}s
+                          </span>
+                        </div>
+                        <div
+                          data-preview-trim-track="true"
+                          className="relative h-14 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/60"
+                        >
+                          <video
+                            src={activePreviewMedia.previewUrl}
+                            className="absolute inset-0 h-full w-full object-cover opacity-55"
+                            muted
+                            playsInline
+                          />
+                          <div
+                            className="absolute inset-y-0 left-0 bg-black/65"
+                            style={{ width: `${activePreviewTrimStartPercent}%` }}
+                          />
+                          <div
+                            className="absolute inset-y-0 right-0 bg-black/65"
+                            style={{ width: `${Math.max(0, 100 - activePreviewTrimStartPercent - activePreviewTrimWidthPercent)}%` }}
+                          />
+                          <div
+                            onPointerDown={(event) => beginPreviewTrimDrag(event, 'move')}
+                            className="absolute inset-y-0 cursor-grab rounded-md border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.35),0_0_18px_rgba(255,255,255,0.24)] active:cursor-grabbing"
+                            style={{
+                              left: `${activePreviewTrimStartPercent}%`,
+                              width: `${Math.max(4, activePreviewTrimWidthPercent)}%`,
+                            }}
+                          >
+                            <div
+                              onPointerDown={(event) => beginPreviewTrimDrag(event, 'start')}
+                              className="absolute inset-y-0 left-0 flex w-5 cursor-ew-resize items-center justify-center rounded-l bg-white"
+                            >
+                              <div className="h-8 w-[1.5px] rounded-full bg-zinc-400" />
+                            </div>
+                            <div
+                              onPointerDown={(event) => beginPreviewTrimDrag(event, 'end')}
+                              className="absolute inset-y-0 right-0 flex w-5 cursor-ew-resize items-center justify-center rounded-r bg-white"
+                            >
+                              <div className="h-8 w-[1.5px] rounded-full bg-zinc-400" />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div className="absolute bottom-4 right-4 flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11 min-w-32 rounded-md border-zinc-700 bg-zinc-950/90 px-5 text-xs font-black uppercase tracking-widest text-zinc-200 shadow-2xl shadow-black/50 backdrop-blur-xl hover:bg-zinc-850"
+                        onClick={cancelPreviewEdit}
+                        disabled={isPreviewEditSaving}
+                      >
+                        <X className="mr-2 h-4 w-4" />
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        className="h-11 min-w-32 rounded-md bg-indigo-500 px-5 text-xs font-black uppercase tracking-widest text-white shadow-2xl shadow-black/50 hover:bg-indigo-400"
+                        onClick={commitPreviewEdit}
+                        disabled={isPreviewEditSaving}
+                      >
+                        {isPreviewEditSaving ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <Check className="mr-2 h-4 w-4" />
+                        )}
+                        Done
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
             </section>
           </motion.div>
@@ -1528,6 +1911,7 @@ const [w, h] = ratio.split(':').map(Number);
           getCollectionTimelineSplitPercents={getCollectionTimelineSplitPercents}
           getSceneLaunchCollectionPreview={getSceneLaunchCollectionPreview}
           getCollectionTimelineMediaItems={getRecursiveMediaItems}
+          onPreviewMediaId={previewSceneLaunchMediaId}
           reorderSceneLaunchGridItem={reorderSceneLaunchGridItem}
           handleItemContextMenu={handleItemContextMenu}
           updateSceneLaunchMediaDuration={updateSceneLaunchMediaDuration}
@@ -1543,6 +1927,7 @@ const [w, h] = ratio.split(':').map(Number);
         onMoveToTrash={moveItemToTrash}
         onRestoreFromTrash={restoreItemFromTrash}
         onDeletePermanently={permanentlyDeleteItem}
+        onAddCollection={(insertionIndex) => createSceneLaunchBeat(insertionIndex)}
       />
     </div>
   );

@@ -145,11 +145,11 @@ export function useSceneLaunchBoard({
   const [trimmingItemId, setTrimmingItemId] = React.useState<string | null>(null);
 
   // Context Menu state
-  const [sceneLaunchContextMenu, setSceneLaunchContextMenu] = React.useState<{
-    x: number;
-    y: number;
-    dragKey: string;
-  } | null>(null);
+  const [sceneLaunchContextMenu, setSceneLaunchContextMenu] = React.useState<
+    | { type: 'item'; x: number; y: number; dragKey: string }
+    | { type: 'board'; x: number; y: number; insertionIndex: number }
+    | null
+  >(null);
 
   const sceneLaunchMediaItemsRef = React.useRef(sceneLaunchMediaItems);
   const sceneLaunchBeatsRef = React.useRef(sceneLaunchBeats);
@@ -332,20 +332,35 @@ export function useSceneLaunchBoard({
     });
   };
 
-  const createSceneLaunchBeat = () => {
+  const createSceneLaunchBeat = (insertionIndex?: number) => {
     const id = `beat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const insertGridItem = (
+      order: Array<{ id: string; type: 'media' | 'collection' }>,
+      item: { id: string; type: 'collection' },
+    ) => {
+      if (typeof insertionIndex !== 'number') {
+        return [...order, item];
+      }
+      const nextIndex = Math.max(0, Math.min(insertionIndex, order.length));
+      return [
+        ...order.slice(0, nextIndex),
+        item,
+        ...order.slice(nextIndex),
+      ];
+    };
+
     if (activeSceneLaunchBeatId) {
       setSceneLaunchBeats(previous => previous.map(beat => (
         beat.id === activeSceneLaunchBeatId
           ? {
               ...beat,
               childIds: [...beat.childIds, id],
-              gridOrder: [...beat.gridOrder, { id, type: 'collection' as const }],
+              gridOrder: insertGridItem(beat.gridOrder, { id, type: 'collection' as const }),
             }
           : beat
       )));
     } else {
-      setSceneLaunchGridOrder(previous => [...previous, { id, type: 'collection' }]);
+      setSceneLaunchGridOrder(previous => insertGridItem(previous, { id, type: 'collection' }));
     }
     setSceneLaunchBeats(previous => [
       ...previous,
@@ -949,12 +964,36 @@ export function useSceneLaunchBoard({
       if (item.id !== mediaId) return item;
 
       const trimStart = Math.max(0, item.trimStartSeconds ?? 0);
-      const sourceDuration = item.mediaDurationSeconds ?? Math.max(trimStart + 0.5, item.durationSeconds ?? durationSeconds ?? 1);
+      const sourceDuration = item.type === 'image'
+        ? 60
+        : item.mediaDurationSeconds ?? Math.max(trimStart + 0.5, item.durationSeconds ?? durationSeconds ?? 1);
       const maxDuration = Math.max(0.5, sourceDuration - trimStart);
       const nextDuration = Math.max(0.5, Math.min(maxDuration, durationSeconds || 1));
 
       return { ...item, durationSeconds: nextDuration };
     };
+
+    setSceneLaunchMediaItems(previous => previous.map(updateItem));
+    setSceneLaunchBeats(previous => previous.map(beat => ({
+      ...beat,
+      items: beat.items.map(updateItem),
+    })));
+  };
+
+  const updateSceneLaunchMediaName = (mediaId: string, name: string) => {
+    const nextName = name.trim();
+    if (!nextName) return;
+
+    const updateItem = (item: SceneLaunchMediaItem) => (
+      item.id === mediaId
+        ? { ...item, name: nextName }
+        : item
+    );
+
+    const mediaItem = findSceneLaunchMediaItem(mediaId);
+    if (mediaItem?.clipId) {
+      updateClip(mediaItem.clipId, { name: nextName });
+    }
 
     setSceneLaunchMediaItems(previous => previous.map(updateItem));
     setSceneLaunchBeats(previous => previous.map(beat => ({
@@ -1021,6 +1060,7 @@ export function useSceneLaunchBoard({
   const handleItemContextMenu = (event: React.MouseEvent, dragKey: string) => {
     event.preventDefault();
     setSceneLaunchContextMenu({
+      type: 'item',
       x: event.clientX,
       y: event.clientY,
       dragKey,
@@ -1066,6 +1106,7 @@ export function useSceneLaunchBoard({
     permanentlyDeleteItem,
     emptyTrash,
     updateSceneLaunchMediaDuration,
+    updateSceneLaunchMediaName,
     updateSceneLaunchMediaOriginalDuration,
     updateSceneLaunchMediaTrim,
     handleItemContextMenu,

@@ -55,10 +55,10 @@ interface SceneLaunchGridProps {
   updateSceneLaunchMediaDuration: (mediaId: string, duration: number) => void;
   updateSceneLaunchMediaTrim: (mediaId: string, trimStart: number, duration: number) => void;
   handleItemContextMenu: (event: React.MouseEvent, dragKey: string) => void;
+  handleBoardContextMenu: (event: React.MouseEvent<HTMLElement>, insertionIndex: number) => void;
   onPreviewMedia: (item: SceneLaunchMediaItem) => void;
   emptyTrash: () => void;
   createSceneLaunchBeat: () => void;
-  handleAddClipClick: (type: 'video' | 'image' | 'dialog' | 'note') => void;
   handleBeatDrop: (event: React.DragEvent<HTMLDivElement>, beatId: string) => void;
   aspectRatio: TimelineAspectRatio;
 }
@@ -99,10 +99,10 @@ export function SceneLaunchGrid({
   updateSceneLaunchMediaDuration,
   updateSceneLaunchMediaTrim,
   handleItemContextMenu,
+  handleBoardContextMenu,
   onPreviewMedia,
   emptyTrash,
   createSceneLaunchBeat,
-  handleAddClipClick,
   handleBeatDrop,
   aspectRatio,
 }: SceneLaunchGridProps) {
@@ -114,62 +114,96 @@ export function SceneLaunchGrid({
   const ratioValue = getAspectRatioValue(aspectRatio);
   const calculatedWidth = 10 * ratioValue;
   const finalWidth = Math.max(7.5, calculatedWidth);
+  const getGridInsertionIndex = (
+    event: React.MouseEvent<HTMLElement>,
+    container: HTMLElement,
+  ) => {
+    const itemElements = Array.from(container.querySelectorAll<HTMLElement>(':scope > [data-scene-grid-item="true"]'));
+    if (itemElements.length === 0) return 0;
+
+    const entries = itemElements
+      .map((element, index) => ({ element, index, rect: element.getBoundingClientRect() }))
+      .sort((a, b) => (Math.abs(a.rect.top - b.rect.top) > 8 ? a.rect.top - b.rect.top : a.rect.left - b.rect.left));
+    const rows: Array<typeof entries> = [];
+
+    for (const entry of entries) {
+      const row = rows.find(items => Math.abs(items[0].rect.top - entry.rect.top) <= 8);
+      if (row) {
+        row.push(entry);
+      } else {
+        rows.push([entry]);
+      }
+    }
+
+    const y = event.clientY;
+    const x = event.clientX;
+    const targetRow = rows.find(row => {
+      const top = Math.min(...row.map(item => item.rect.top));
+      const bottom = Math.max(...row.map(item => item.rect.bottom));
+      return y <= bottom || y < top;
+    }) ?? rows[rows.length - 1];
+
+    for (const entry of targetRow) {
+      if (x < entry.rect.left + entry.rect.width / 2) {
+        return entry.index;
+      }
+    }
+
+    return targetRow[targetRow.length - 1].index + 1;
+  };
+
+  const handleGridBackgroundContextMenu = (event: React.MouseEvent<HTMLElement>) => {
+    if (activeSceneLaunchBeatId === 'trash') return;
+    if ((event.target as HTMLElement).closest('[data-scene-grid-item="true"]')) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const gridContainer = event.currentTarget.matches('[data-scene-grid-container="true"]')
+      ? event.currentTarget
+      : event.currentTarget.querySelector<HTMLElement>('[data-scene-grid-container="true"]') ?? event.currentTarget;
+    handleBoardContextMenu(event, getGridInsertionIndex(event, gridContainer));
+  };
 
   return (
     <section className="mt-6 w-full shrink-0">
       {activeSceneLaunchBeat ? (
         <>
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold text-zinc-200">
-                {activeSceneLaunchBeatId === 'trash' ? 'Trash Folder' : activeSceneLaunchBeat.name}
-              </h2>
-              <p className="mt-1 text-[11px] text-zinc-700">
-                {activeSceneLaunchBeatId === 'trash'
-                  ? 'Items moved here can be restored or permanently deleted'
-                  : `${activeSceneLaunchBeat.gridOrder.length} ${activeSceneLaunchBeat.gridOrder.length === 1 ? 'item' : 'items'} in this collection`
-                }
-              </p>
+          {activeSceneLaunchBeatId === 'trash' && (
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="truncate text-sm font-semibold text-zinc-200">Trash Folder</h2>
+                <p className="mt-1 text-[11px] text-zinc-700">
+                  Items moved here can be restored or permanently deleted
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 border-red-950 bg-red-950/10 text-xs text-red-450 hover:bg-red-950 hover:text-white transition-colors"
+                onClick={emptyTrash}
+                disabled={activeSceneLaunchBeat.gridOrder.length === 0}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Empty Trash
+              </Button>
             </div>
-            <div className="flex items-center gap-2">
-              {activeSceneLaunchBeatId === 'trash' ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-red-950 bg-red-950/10 text-xs text-red-450 hover:bg-red-950 hover:text-white transition-colors"
-                  onClick={emptyTrash}
-                  disabled={activeSceneLaunchBeat.gridOrder.length === 0}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Empty Trash
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
-                  onClick={createSceneLaunchBeat}
-                >
-                  <Grid2X2 className="h-3.5 w-3.5" />
-                  Add Collection
-                </Button>
-              )}
-            </div>
-          </div>
+          )}
 
           <div
             className="rounded-lg border border-zinc-900 bg-zinc-950/30 p-3"
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => handleBeatDrop(event, activeSceneLaunchBeat.id)}
+            onContextMenu={handleGridBackgroundContextMenu}
           >
             {sceneLaunchGridItems.length > 0 ? (
               <div
+                data-scene-grid-container="true"
                 className="grid gap-3"
                 style={{
                   gridTemplateColumns: `repeat(auto-fill, minmax(${finalWidth}rem, 1fr))`,
                 }}
+                onContextMenu={handleGridBackgroundContextMenu}
               >
                 {sceneLaunchGridItems.map((gridItem) => {
                   const dragKey = `${gridItem.type}:${gridItem.id}`;
@@ -258,40 +292,13 @@ export function SceneLaunchGrid({
         </>
       ) : (
         <>
-          <div className="mb-3 flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Scene board</h2>
-              <p className="mt-1 text-[11px] text-zinc-700">Media items and collections share one rearrangeable grid.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
-                onClick={() => handleAddClipClick('image')}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add Media
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 border-zinc-800 bg-zinc-950 text-xs text-zinc-300 hover:bg-zinc-900 hover:text-white"
-                onClick={createSceneLaunchBeat}
-              >
-                <Grid2X2 className="h-3.5 w-3.5" />
-                Add Collection
-              </Button>
-            </div>
-          </div>
-
           <div
+            data-scene-grid-container="true"
             className="grid gap-3"
             style={{
               gridTemplateColumns: `repeat(auto-fill, minmax(${finalWidth}rem, 1fr))`,
             }}
+            onContextMenu={handleGridBackgroundContextMenu}
           >
             {sceneLaunchGridItems.map((gridItem) => {
               const dragKey = `${gridItem.type}:${gridItem.id}`;

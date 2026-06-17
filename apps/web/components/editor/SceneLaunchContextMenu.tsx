@@ -1,6 +1,6 @@
 'use client';
 
-import { RefreshCw, Trash2 } from 'lucide-react';
+import { Grid2X2, RefreshCw, Trash2 } from 'lucide-react';
 
 import {
   DropdownMenu,
@@ -10,7 +10,13 @@ import {
 } from '@storyboard/ui';
 
 export type SceneLaunchContextMenuState = {
+  type: 'item';
   dragKey: string;
+  x: number;
+  y: number;
+} | {
+  type: 'board';
+  insertionIndex: number;
   x: number;
   y: number;
 } | null;
@@ -22,6 +28,7 @@ interface SceneLaunchContextMenuProps {
   onMoveToTrash: (dragKey: string) => void;
   onRestoreFromTrash: (dragKey: string) => void;
   onDeletePermanently: (dragKey: string) => void;
+  onAddCollection: (insertionIndex: number) => void;
 }
 
 export function SceneLaunchContextMenu({
@@ -31,6 +38,7 @@ export function SceneLaunchContextMenu({
   onMoveToTrash,
   onRestoreFromTrash,
   onDeletePermanently,
+  onAddCollection,
 }: SceneLaunchContextMenuProps) {
   return (
     <DropdownMenu
@@ -51,11 +59,19 @@ export function SceneLaunchContextMenu({
         />
       )}
       <DropdownMenuContent align="start" className="w-40 bg-[#111114] border-zinc-800 text-zinc-300 z-50">
-        {isTrashOpen ? (
+        {menu?.type === 'board' ? (
+          <DropdownMenuItem
+            onClick={() => onAddCollection(menu.insertionIndex)}
+            className="gap-2 focus:bg-zinc-800 focus:text-white cursor-pointer"
+          >
+            <Grid2X2 className="h-3.5 w-3.5" />
+            Add Collection
+          </DropdownMenuItem>
+        ) : isTrashOpen ? (
           <>
             <DropdownMenuItem
               onClick={() => {
-                if (menu) {
+                if (menu?.type === 'item') {
                   onRestoreFromTrash(menu.dragKey);
                 }
               }}
@@ -66,7 +82,7 @@ export function SceneLaunchContextMenu({
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => {
-                if (menu) {
+                if (menu?.type === 'item') {
                   onDeletePermanently(menu.dragKey);
                 }
               }}
@@ -79,7 +95,7 @@ export function SceneLaunchContextMenu({
         ) : (
           <DropdownMenuItem
             onClick={() => {
-              if (menu) {
+              if (menu?.type === 'item') {
                 onMoveToTrash(menu.dragKey);
               }
             }}

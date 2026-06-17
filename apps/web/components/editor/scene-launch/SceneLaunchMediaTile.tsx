@@ -206,6 +206,7 @@ export function SceneLaunchMediaTile({
 
   return (
     <article
+      data-scene-grid-item="true"
       id={`grid-item-${dragKey}`}
       draggable={trimmingItemId !== item.id}
       onDragStart={(event) => {
