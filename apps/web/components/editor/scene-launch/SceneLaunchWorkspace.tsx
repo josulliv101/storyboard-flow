@@ -18,6 +18,7 @@ import { SceneLaunchSidebar } from '../SceneLaunchSidebar';
 import { SceneLaunchHeader } from '../SceneLaunchHeader';
 import { SceneLaunchCanvasPreview, type SceneLaunchCanvasPreviewSnapshot } from './SceneLaunchCanvasPreview';
 import { SceneLaunchGrid } from './SceneLaunchGrid';
+import { SceneLaunchPreviewWheel, type SceneLaunchPreviewWheelEffect } from './SceneLaunchPreviewWheel';
 import { SceneLaunchTimeline, type SceneLaunchPlaybackMode } from '../SceneLaunchTimeline';
 import { SceneLaunchContextMenu } from '../SceneLaunchContextMenu';
 import { cn } from '@/lib/utils';
@@ -128,6 +129,7 @@ export function SceneLaunchWorkspace({
   const [sceneComposerText, setSceneComposerText] = React.useState('');
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
   const [selectedPreviewMediaId, setSelectedPreviewMediaId] = React.useState<string | null>(null);
+  const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelEffect>('cylinder');
   const [previewEditDraft, setPreviewEditDraft] = React.useState<{
     mediaId: string;
     name: string;
@@ -1189,7 +1191,7 @@ const [w, h] = ratio.split(':').map(Number);
   })();
   const activePreviewMedia = activePreviewItem?.media ?? null;
 
-  // Flattened list of all media items in timeline order for thumbnail navigation
+  // Flattened list of all media items in timeline order for preview navigation.
   const flattenedTimelineMediaItems = React.useMemo(() => {
     const items: SceneLaunchMediaItem[] = [];
     const flattenItem = (gridItem: typeof timelineItems[number]) => {
@@ -1203,21 +1205,6 @@ const [w, h] = ratio.split(':').map(Number);
     timelineItems.forEach(flattenItem);
     return items;
   }, [timelineItems, getRecursiveMediaItems]);
-
-  // Compute preview thumbnail neighbors
-  const previewNeighbors = React.useMemo(() => {
-    if (!selectedPreviewMediaId || flattenedTimelineMediaItems.length === 0) {
-      return { prev: [] as SceneLaunchMediaItem[], next: [] as SceneLaunchMediaItem[] };
-    }
-    const currentIndex = flattenedTimelineMediaItems.findIndex(m => m.id === selectedPreviewMediaId);
-    if (currentIndex < 0) {
-      return { prev: [] as SceneLaunchMediaItem[], next: [] as SceneLaunchMediaItem[] };
-    }
-    const maxNeighbors = 4;
-    const prev = flattenedTimelineMediaItems.slice(Math.max(0, currentIndex - maxNeighbors), currentIndex).reverse();
-    const next = flattenedTimelineMediaItems.slice(currentIndex + 1, currentIndex + 1 + maxNeighbors);
-    return { prev, next };
-  }, [selectedPreviewMediaId, flattenedTimelineMediaItems]);
 
   const previewCanvasKey = activePreviewMedia
     ? [
@@ -1791,79 +1778,40 @@ const [w, h] = ratio.split(':').map(Number);
               </div>
 
               <div ref={previewSurfaceRef} className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
-                {/* Thumbnail navigation strip — left neighbors */}
-                {selectedPreviewMediaId && previewNeighbors.prev.length > 0 && (
-                  <div className="absolute left-3 top-1/2 z-20 flex flex-row-reverse items-center gap-1.5" style={{ transform: 'translateY(-50%)' }}>
-                    {previewNeighbors.prev.map((neighbor, i) => {
-                      const scale = 1 - i * 0.15;
-                      const opacity = 1 - i * 0.2;
-                      const size = Math.max(48, 88 * scale);
-                      return (
-                        <button
-                          key={neighbor.id}
-                          type="button"
-                          title={neighbor.name}
-                          onClick={() => previewSceneLaunchMediaId(neighbor.id)}
-                          className="group/nav shrink-0 overflow-hidden rounded-md border border-zinc-700/60 bg-zinc-900 shadow-lg transition-all duration-200 hover:border-zinc-500 hover:shadow-xl hover:ring-1 hover:ring-indigo-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
-                          style={{
-                            width: size,
-                            height: size,
-                            opacity: Math.max(0.3, opacity),
-                            transform: `scale(${scale}) perspective(400px) rotateY(25deg)`,
-                          }}
-                        >
-                          {neighbor.type === 'video' ? (
-                            <video src={neighbor.previewUrl} className="h-full w-full object-cover pointer-events-none" muted playsInline />
-                          ) : (
-                            <img src={neighbor.previewUrl} alt="" className="h-full w-full object-cover" />
-                          )}
-                          <div className="absolute inset-0 bg-black/30 group-hover/nav:bg-black/10 transition-colors" />
-                        </button>
-                      );
-                    })}
-                  </div>
+                {selectedPreviewMediaId ? (
+                  <>
+                    <SceneLaunchPreviewWheel
+                      items={flattenedTimelineMediaItems}
+                      selectedMediaId={selectedPreviewMediaId}
+                      effect={previewWheelEffect}
+                      onCenteredMediaChange={previewSceneLaunchMediaId}
+                    />
+                    <label className="absolute right-4 top-4 z-40 flex items-center gap-2 rounded-md border border-zinc-700/80 bg-zinc-950/88 px-2.5 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-2xl shadow-black/50 backdrop-blur-xl">
+                      <span>Wheel</span>
+                      <select
+                        value={previewWheelEffect}
+                        onChange={(event) => setPreviewWheelEffect(event.target.value as SceneLaunchPreviewWheelEffect)}
+                        className="h-7 rounded-md border border-zinc-700 bg-black/70 px-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
+                        aria-label="Wheel effect"
+                      >
+                        <option value="cylinder">Cylinder</option>
+                        <option value="cylinder2">Cylinder 2</option>
+                        <option value="coverflow">Coverflow</option>
+                        <option value="gallery">Gallery</option>
+                        <option value="stack">Stack</option>
+                      </select>
+                    </label>
+                  </>
+                ) : (
+                  <SceneLaunchCanvasPreview
+                    key={previewCanvasKey}
+                    media={activePreviewItem?.media ?? null}
+                    previewTimeSeconds={activePreviewItem?.previewTimeSeconds ?? 0}
+                    isPlaying={sceneLaunchPlaybackMode === 'preview' && isTimelinePlaying}
+                    isVisible={sceneLaunchPlaybackMode === 'preview'}
+                    getPlaybackSnapshot={getDisplayedPreviewSnapshot}
+                  />
                 )}
-
-                {/* Thumbnail navigation strip — right neighbors */}
-                {selectedPreviewMediaId && previewNeighbors.next.length > 0 && (
-                  <div className="absolute right-3 top-1/2 z-20 flex flex-row items-center gap-1.5" style={{ transform: 'translateY(-50%)' }}>
-                    {previewNeighbors.next.map((neighbor, i) => {
-                      const scale = 1 - i * 0.15;
-                      const opacity = 1 - i * 0.2;
-                      const size = Math.max(48, 88 * scale);
-                      return (
-                        <button
-                          key={neighbor.id}
-                          type="button"
-                          title={neighbor.name}
-                          onClick={() => previewSceneLaunchMediaId(neighbor.id)}
-                          className="group/nav shrink-0 overflow-hidden rounded-md border border-zinc-700/60 bg-zinc-900 shadow-lg transition-all duration-200 hover:border-zinc-500 hover:shadow-xl hover:ring-1 hover:ring-indigo-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
-                          style={{
-                            width: size,
-                            height: size,
-                            opacity: Math.max(0.3, opacity),
-                            transform: `scale(${scale}) perspective(400px) rotateY(-25deg)`,
-                          }}
-                        >
-                          {neighbor.type === 'video' ? (
-                            <video src={neighbor.previewUrl} className="h-full w-full object-cover pointer-events-none" muted playsInline />
-                          ) : (
-                            <img src={neighbor.previewUrl} alt="" className="h-full w-full object-cover" />
-                          )}
-                          <div className="absolute inset-0 bg-black/30 group-hover/nav:bg-black/10 transition-colors" />
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                <SceneLaunchCanvasPreview
-                  key={previewCanvasKey}
-                  media={activePreviewItem?.media ?? null}
-                  previewTimeSeconds={activePreviewItem?.previewTimeSeconds ?? 0}
-                  isPlaying={sceneLaunchPlaybackMode === 'preview' && isTimelinePlaying}
-                  isVisible={sceneLaunchPlaybackMode === 'preview'}
-                  getPlaybackSnapshot={getDisplayedPreviewSnapshot}
-                />
                 {activePreviewMedia && activePreviewDraft && (
                   <>
                     {activePreviewMedia.type === 'image' ? (
