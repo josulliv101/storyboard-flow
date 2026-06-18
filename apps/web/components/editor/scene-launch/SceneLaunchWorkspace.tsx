@@ -3,8 +3,8 @@
 import React from 'react';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, MonitorPlay, Pause, Play, Plus, Ratio, Repeat, Search } from 'lucide-react';
-import { motion } from 'motion/react';
+import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, MonitorPlay, Pause, Play, Plus, Ratio, Repeat, Search, X } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   Button,
   DropdownMenu,
@@ -30,7 +30,7 @@ import { SceneLaunchContextMenu } from '../SceneLaunchContextMenu';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 import type { SidebarTab } from '../EditorSidebarRail';
-import type { Scene, TimelineClip, ClipType, TimelineAspectRatio } from '@/lib/timeline-context';
+import { type Scene, type TimelineClip, type ClipType, type TimelineAspectRatio } from '@/lib/timeline-context';
 
 const MAX_IMAGE_DURATION_SECONDS = 60 * 60;
 
@@ -52,6 +52,8 @@ interface SceneLaunchWorkspaceProps {
   onDropItem?: (dragKey: string) => void;
   board: ReturnType<typeof useSceneLaunchBoard>;
   headerVariant?: 'default' | 'prompt';
+  viewMode: 'storyboard' | 'workbench';
+  setViewMode: React.Dispatch<React.SetStateAction<'storyboard' | 'workbench'>>;
 }
 
 export function SceneLaunchWorkspace({
@@ -72,6 +74,8 @@ export function SceneLaunchWorkspace({
   onDropItem = () => {},
   board,
   headerVariant = 'default',
+  viewMode,
+  setViewMode,
 }: SceneLaunchWorkspaceProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -140,6 +144,17 @@ export function SceneLaunchWorkspace({
   const [sceneComposerText, setSceneComposerText] = React.useState('');
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
   const [selectedPreviewMediaId, setSelectedPreviewMediaId] = React.useState<string | null>(null);
+  const [thumbnailMode, setThumbnailMode] = React.useState<'grid' | 'single'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-thumbnail-mode');
+      if (saved === 'single') return 'single';
+    }
+    return 'grid';
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-thumbnail-mode', thumbnailMode);
+  }, [thumbnailMode]);
   const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV3Effect>('gallery');
   const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV3Sizing>('uniform');
   const [previewWheelDurationScale, setPreviewWheelDurationScale] = React.useState(1);
@@ -155,6 +170,8 @@ export function SceneLaunchWorkspace({
   React.useEffect(() => {
     currentTimeRef.current = timelineCurrentTime;
   }, [timelineCurrentTime]);
+
+
 
   const activeSceneLaunchBeatId = sceneLaunchBeatPath[sceneLaunchBeatPath.length - 1] || null;
   const activeSceneLaunchBeat = activeSceneLaunchBeatId
@@ -1001,7 +1018,6 @@ export function SceneLaunchWorkspace({
 
   const handleGridDragOver = (e: React.DragEvent<HTMLElement>, targetKey: string, isCollection: boolean) => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
 
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -1015,8 +1031,65 @@ export function SceneLaunchWorkspace({
       position = ratio < 0.5 ? 'before' : 'after';
     }
 
-    if (!gridDragOverInfo || gridDragOverInfo.targetKey !== targetKey || gridDragOverInfo.position !== position) {
-      setGridDragOverInfo({ targetKey, position });
+    let finalTargetKey = targetKey;
+    let finalPosition = position;
+    let isNoOp = false;
+
+    if (draggedGridItemKey) {
+      if (draggedGridItemKey === targetKey) {
+        isNoOp = true;
+      } else {
+        const draggedIndex = activeSceneLaunchGridOrder.findIndex(
+          item => `${item.type}:${item.id}` === draggedGridItemKey
+        );
+        const targetIndex = activeSceneLaunchGridOrder.findIndex(
+          item => `${item.type}:${item.id}` === targetKey
+        );
+
+        if (draggedIndex >= 0 && targetIndex >= 0) {
+          if (position === 'inside') {
+            const draggedCollectionId = draggedGridItemKey.startsWith('collection:')
+              ? draggedGridItemKey.slice('collection:'.length)
+              : null;
+            if (draggedCollectionId && targetKey.slice('collection:'.length) === draggedCollectionId) {
+              isNoOp = true;
+            }
+          } else {
+            const gapIndex = position === 'before' ? targetIndex : targetIndex + 1;
+            if (gapIndex === draggedIndex || gapIndex === draggedIndex + 1) {
+              isNoOp = true;
+            } else {
+              // Normalize the visual indicator to the left edge of the next item
+              // or the right edge of the last item if at the end of the grid.
+              if (gapIndex < activeSceneLaunchGridOrder.length) {
+                const normItem = activeSceneLaunchGridOrder[gapIndex];
+                finalTargetKey = `${normItem.type}:${normItem.id}`;
+                finalPosition = 'before';
+              } else {
+                const normItem = activeSceneLaunchGridOrder[gapIndex - 1];
+                finalTargetKey = `${normItem.type}:${normItem.id}`;
+                finalPosition = 'after';
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (isNoOp) {
+      e.dataTransfer.dropEffect = 'none';
+      if (gridDragOverInfo !== null) {
+        setGridDragOverInfo(null);
+      }
+    } else {
+      e.dataTransfer.dropEffect = 'move';
+      if (
+        !gridDragOverInfo ||
+        gridDragOverInfo.targetKey !== finalTargetKey ||
+        gridDragOverInfo.position !== finalPosition
+      ) {
+        setGridDragOverInfo({ targetKey: finalTargetKey, position: finalPosition });
+      }
     }
   };
 
@@ -1030,7 +1103,7 @@ export function SceneLaunchWorkspace({
     setGridDragOverInfo(null);
 
     const draggedKey = e.dataTransfer.getData('text/plain');
-    if (!draggedKey || draggedKey === targetKey) return;
+    const isInternalDrag = draggedKey && (draggedKey.startsWith('media:') || draggedKey.startsWith('collection:'));
 
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -1044,17 +1117,7 @@ export function SceneLaunchWorkspace({
       position = ratio < 0.5 ? 'before' : 'after';
     }
 
-    if (isCollection && position === 'inside') {
-      const collectionId = targetKey.slice('collection:'.length);
-      if (draggedKey.startsWith('media:')) {
-        moveSceneLaunchMediaToCollection(draggedKey.slice('media:'.length), collectionId);
-      } else if (draggedKey.startsWith('collection:')) {
-        moveSceneLaunchCollectionToCollection(draggedKey.slice('collection:'.length), collectionId);
-      }
-      return;
-    }
-
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    if (!isInternalDrag && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       if (isCollection && position === 'inside') {
         const collectionId = targetKey.slice('collection:'.length);
         addFilesToBeat(collectionId, Array.from(e.dataTransfer.files));
@@ -1066,6 +1129,38 @@ export function SceneLaunchWorkspace({
         }
       }
       return;
+    }
+
+    if (!draggedKey || draggedKey === targetKey) return;
+
+    if (isCollection && position === 'inside') {
+      const collectionId = targetKey.slice('collection:'.length);
+      const draggedCollectionId = draggedKey.startsWith('collection:')
+        ? draggedKey.slice('collection:'.length)
+        : null;
+      if (draggedCollectionId && collectionId === draggedCollectionId) return;
+
+      if (draggedKey.startsWith('media:')) {
+        moveSceneLaunchMediaToCollection(draggedKey.slice('media:'.length), collectionId);
+      } else if (draggedKey.startsWith('collection:')) {
+        moveSceneLaunchCollectionToCollection(draggedKey.slice('collection:'.length), collectionId);
+      }
+      return;
+    }
+
+    const draggedIndex = activeSceneLaunchGridOrder.findIndex(
+      item => `${item.type}:${item.id}` === draggedKey
+    );
+    const targetIndex = activeSceneLaunchGridOrder.findIndex(
+      item => `${item.type}:${item.id}` === targetKey
+    );
+
+    if (draggedIndex >= 0 && targetIndex >= 0) {
+      const gapIndex = position === 'before' ? targetIndex : targetIndex + 1;
+      if (gapIndex === draggedIndex || gapIndex === draggedIndex + 1) {
+        // No-move drop, ignore
+        return;
+      }
     }
 
     reorderSceneLaunchGridItemAtPosition(draggedKey, targetKey, position as 'before' | 'after');
@@ -1202,6 +1297,26 @@ export function SceneLaunchWorkspace({
     timelineItems.forEach(flattenItem);
     return items;
   }, [timelineItems, getRecursiveMediaItems]);
+
+  // Synchronize viewMode and sceneLaunchPlaybackMode
+  React.useEffect(() => {
+    if (viewMode === 'workbench' && sceneLaunchPlaybackMode !== 'preview') {
+      setSceneLaunchPlaybackMode('preview');
+      if (!selectedPreviewMediaId && flattenedTimelineMediaItems.length > 0) {
+        setSelectedPreviewMediaId(flattenedTimelineMediaItems[0].id);
+      }
+    } else if (viewMode === 'storyboard' && sceneLaunchPlaybackMode !== 'inline') {
+      setSceneLaunchPlaybackMode('inline');
+    }
+  }, [viewMode, sceneLaunchPlaybackMode, selectedPreviewMediaId, flattenedTimelineMediaItems]);
+
+  React.useEffect(() => {
+    if (sceneLaunchPlaybackMode === 'preview' && viewMode !== 'workbench') {
+      setViewMode('workbench');
+    } else if (sceneLaunchPlaybackMode === 'inline' && viewMode !== 'storyboard') {
+      setViewMode('storyboard');
+    }
+  }, [sceneLaunchPlaybackMode, viewMode, setViewMode]);
 
   const previewCanvasKey = activePreviewMedia
     ? [
@@ -1346,6 +1461,36 @@ export function SceneLaunchWorkspace({
   const isPlaybackActive = isWheelSequencePreview ? isWheelPreviewPlaying : isTimelinePlaying;
   const headerPlaybackControls = (
     <div className="flex h-11 items-center justify-center gap-2.5 rounded-full border border-white/10 bg-zinc-950/85 px-3 text-zinc-300 shadow-[0_12px_36px_rgba(0,0,0,0.32)] ring-1 ring-black/30 backdrop-blur-xl">
+      <div className="flex h-8 items-center rounded-full border border-zinc-800 bg-zinc-900 p-0.5 shrink-0 select-none">
+        <button
+          type="button"
+          onClick={() => setViewMode('storyboard')}
+          className={cn(
+            'flex h-7 items-center rounded-full px-3 text-[9px] font-black uppercase tracking-widest outline-none transition-colors cursor-pointer',
+            viewMode === 'storyboard'
+              ? 'bg-indigo-500/20 text-indigo-100 font-extrabold'
+              : 'text-zinc-500 hover:text-zinc-300'
+          )}
+        >
+          Storyboard
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setViewMode('workbench')}
+          className={cn(
+            'flex h-7 items-center rounded-full px-3 text-[9px] font-black uppercase tracking-widest outline-none transition-colors cursor-pointer',
+            viewMode === 'workbench'
+              ? 'bg-indigo-500/20 text-indigo-100 font-extrabold'
+              : 'text-zinc-500 hover:text-zinc-300'
+          )}
+        >
+          Workbench
+        </button>
+      </div>
+
+      <div className="h-4 w-px bg-zinc-800 shrink-0" />
+
       <button
         type="button"
         onClick={() => setIsTimelineLooping(current => !current)}
@@ -1545,6 +1690,8 @@ export function SceneLaunchWorkspace({
           searchVariant={headerVariant === 'prompt' ? 'prompt' : 'default'}
           hideSearch
           centerSlot={headerPlaybackControls}
+          thumbnailMode={thumbnailMode}
+          setThumbnailMode={setThumbnailMode}
         />
 
         <main className="relative min-h-0 flex-1 overflow-hidden">
@@ -1611,24 +1758,13 @@ export function SceneLaunchWorkspace({
                 ))}
               </div>
             </div>
-          ) : sceneLaunchGridItems.length === 0 ? (
-            <div className="flex flex-1 items-center justify-center">
-              <div className="flex flex-col items-center text-center">
-                <div className="flex h-16 w-16 items-center justify-center">
-                  <Grid2X2 className="h-12 w-12 text-zinc-600" />
-                </div>
-                <h2 className="mt-5 text-lg font-medium text-zinc-500">Start creating or drop scene media</h2>
-                <p className="mt-2 max-w-sm text-xs leading-5 text-zinc-700">
-                  Add a video, image, or scene note to begin building this project.
-                </p>
-              </div>
-            </div>
           ) : (
             <SceneLaunchGrid
               aspectRatio={aspectRatio}
               activeSceneLaunchBeatId={activeSceneLaunchBeatId}
               activeSceneLaunchBeat={activeSceneLaunchBeat || null}
               sceneLaunchGridItems={sceneLaunchGridItems}
+              thumbnailMode={thumbnailMode}
               isTimelinePlaying={sceneLaunchPlaybackMode !== 'preview' && isTimelinePlaying}
               activeItemKey={activeItemKey}
               hoveredItemKey={hoveredItemKey}
@@ -1668,6 +1804,9 @@ export function SceneLaunchWorkspace({
               handleBeatDrop={(event, beatId) => {
                 event.preventDefault();
                 event.stopPropagation();
+                const draggedKey = event.dataTransfer.getData('text/plain');
+                const isInternalDrag = draggedKey && (draggedKey.startsWith('media:') || draggedKey.startsWith('collection:'));
+                if (isInternalDrag) return;
                 addFilesToBeat(beatId, Array.from(event.dataTransfer.files || []));
               }}
               allCollections={sceneLaunchBeats}
@@ -1675,6 +1814,7 @@ export function SceneLaunchWorkspace({
               setDraggedGridItemKey={setDraggedGridItemKey}
               moveSceneLaunchItemToParent={moveSceneLaunchItemToParent}
               moveSceneLaunchItemToTargetCollection={moveSceneLaunchItemToTargetCollection}
+              moveItemToTrash={moveItemToTrash}
             />
           )}
           </motion.div>
@@ -2042,7 +2182,6 @@ export function SceneLaunchWorkspace({
             </section>
           </motion.div>
         </main>
-
       </div>
 
       <SceneLaunchContextMenu

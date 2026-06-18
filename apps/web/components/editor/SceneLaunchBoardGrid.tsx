@@ -8,6 +8,7 @@ import { CollectionFrame } from './Frame';
 import { CollectionProgressBar } from './CollectionProgressBar';
 import { cn } from '@/lib/utils';
 import type { ClipType } from '@/lib/timeline-context';
+import { VIDEO_PLACEHOLDER } from './scene-launch/useSceneLaunchBoard';
 
 type SceneLaunchBoardGridProps = {
   sceneLaunchGridItems: any[];
@@ -148,131 +149,147 @@ export function SceneLaunchBoardGrid({
                 )}
                 <div className="relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
                   {item.type === 'video' ? (
-                    <>
-                      <video
-                        data-trim-video-id={item.id}
-                        ref={(el) => {
-                          if (el) {
-                            if (trimmingItemId === item.id) {
-                              if (el.paused) {
-                                const trimStart = item.trimStartSeconds || 0;
-                                if (Math.abs(el.currentTime - trimStart) > 0.05) {
-                                  el.currentTime = trimStart;
+                    (() => {
+                      const state = getGridItemTimelineState(item.id, 'media');
+                      const shouldRenderVideo = state.status === 'active' || trimmingItemId === item.id;
+                      if (shouldRenderVideo) {
+                        return (
+                          <>
+                            <video
+                              data-trim-video-id={item.id}
+                              poster={item.posterUrl}
+                              preload="metadata"
+                              ref={(el) => {
+                                if (el) {
+                                  if (trimmingItemId === item.id) {
+                                    if (el.paused) {
+                                      const trimStart = item.trimStartSeconds || 0;
+                                      if (Math.abs(el.currentTime - trimStart) > 0.05) {
+                                        el.currentTime = trimStart;
+                                      }
+                                    }
+                                    return;
+                                  }
+                                  const trimStart = item.trimStartSeconds || 0;
+
+                                  let targetTime = trimStart;
+                                  if (state.status === 'past') {
+                                    targetTime = trimStart + state.duration;
+                                  } else if (state.status === 'active') {
+                                    targetTime = trimStart + state.elapsed;
+                                  }
+
+                                  const diff = Math.abs(el.currentTime - targetTime);
+                                  const threshold = isTimelinePlaying ? 1.0 : 0.05;
+                                  if (diff > threshold) {
+                                    el.currentTime = targetTime;
+                                  }
+
+                                  if (isTimelinePlaying && state.status === 'active') {
+                                    if (el.paused) {
+                                      if (Math.abs(el.currentTime - targetTime) > 0.1) {
+                                        el.currentTime = targetTime;
+                                      }
+                                      el.play().catch(() => {});
+                                    }
+                                  } else {
+                                    if (!el.paused) {
+                                      el.pause();
+                                    }
+                                  }
                                 }
-                              }
-                              return;
-                            }
-                            const state = getGridItemTimelineState(item.id, 'media');
-                            const trimStart = item.trimStartSeconds || 0;
-
-                            let targetTime = trimStart;
-                            if (state.status === 'past') {
-                              targetTime = trimStart + state.duration;
-                            } else if (state.status === 'active') {
-                              targetTime = trimStart + state.elapsed;
-                            }
-
-                            const diff = Math.abs(el.currentTime - targetTime);
-                            const threshold = isTimelinePlaying ? 1.0 : 0.05;
-                            if (diff > threshold) {
-                              el.currentTime = targetTime;
-                            }
-
-                            if (isTimelinePlaying && state.status === 'active') {
-                              if (el.paused) {
-                                if (Math.abs(el.currentTime - targetTime) > 0.1) {
-                                  el.currentTime = targetTime;
+                              }}
+                              onLoadedMetadata={(e) => {
+                                const el = e.currentTarget;
+                                const duration = el.duration;
+                                if (duration && duration > 0) {
+                                  const currentMediaDur = item.mediaDurationSeconds;
+                                  if (!currentMediaDur) {
+                                    updateSceneLaunchMediaOriginalDuration(item.id, duration);
+                                  }
                                 }
-                                el.play().catch(() => {});
-                              }
-                            } else {
-                              if (!el.paused) {
-                                el.pause();
-                              }
-                            }
-                          }
-                        }}
-                        onLoadedMetadata={(e) => {
-                          const el = e.currentTarget;
-                          const duration = el.duration;
-                          if (duration && duration > 0) {
-                            const currentMediaDur = item.mediaDurationSeconds;
-                            if (!currentMediaDur) {
-                              updateSceneLaunchMediaOriginalDuration(item.id, duration);
-                            }
-                          }
-                        }}
-                        src={item.previewUrl}
-                        className="h-full w-full object-cover"
-                        muted
-                        playsInline
-                        controls={trimmingItemId !== item.id}
-                      />
-                      {trimmingItemId === item.id && (
-                        <div className="absolute inset-0 bg-black/10 flex flex-col justify-end z-30 pointer-events-auto">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setTrimmingItemId(null);
-                            }}
-                            className="absolute top-2 right-2 z-40 flex h-6 items-center justify-center rounded bg-indigo-600 px-2 text-[10px] font-bold text-white shadow hover:bg-indigo-500 transition-colors"
-                          >
-                            Done
-                          </button>
-                          <div className="h-10 bg-zinc-950/90 border-t border-zinc-800/80 flex flex-col justify-between py-0.5 relative select-none">
-                            <div className="h-1 w-full opacity-40" style={{
-                              backgroundImage: 'repeating-linear-gradient(to right, #e4e4e7 0px, #e4e4e7 3px, transparent 3px, transparent 7px)',
-                            }} />
-                            <div className="relative flex-1 mx-2 bg-zinc-900/50 rounded border border-zinc-800/50 overflow-hidden">
-                              <div
-                                className="absolute top-0 bottom-0 left-0 bg-black/60 z-10"
-                                style={{ width: `${(item.trimStartSeconds || 0) / (item.mediaDurationSeconds || item.durationSeconds || 10) * 100}%` }}
-                              />
-                              <div
-                                className="absolute top-0 bottom-0 right-0 bg-black/60 z-10"
-                                style={{
-                                  width: `${(1 - ((item.trimStartSeconds || 0) + (item.durationSeconds || (item.mediaDurationSeconds || 10))) / (item.mediaDurationSeconds || item.durationSeconds || 10)) * 100}%`
-                                }}
-                              />
-                              <div
-                                className="absolute top-0 bottom-0 border border-indigo-500 bg-indigo-500/10 z-10"
-                                style={{
-                                  left: `${(item.trimStartSeconds || 0) / (item.mediaDurationSeconds || item.durationSeconds || 10) * 100}%`,
-                                  width: `${(item.durationSeconds || 3) / (item.mediaDurationSeconds || item.durationSeconds || 10) * 100}%`
-                                }}
-                              />
-                            </div>
-                            {(() => {
-                              const totalDur = item.mediaDurationSeconds || item.durationSeconds || 10;
-                              const startPercent = ((item.trimStartSeconds || 0) / totalDur) * 100;
-                              const durationPercent = ((item.durationSeconds || totalDur) / totalDur) * 100;
-                              return (
-                                <>
-                                  <div
-                                    onPointerDown={(e) => handleStartPointerDown(e, item)}
-                                    className="absolute top-1 bottom-1 w-3 bg-indigo-500 hover:bg-indigo-400 cursor-ew-resize z-20 flex items-center justify-center rounded-l shadow border-r border-indigo-600"
-                                    style={{ left: `calc(${startPercent}% + 8px)`, transform: 'translateX(-50%)' }}
-                                  >
-                                    <div className="h-3 w-0.5 bg-white/70 rounded-full" />
+                              }}
+                              src={item.previewUrl}
+                              className="h-full w-full object-cover"
+                              muted
+                              playsInline
+                              controls={trimmingItemId !== item.id}
+                            />
+                            {trimmingItemId === item.id && (
+                              <div className="absolute inset-0 bg-black/10 flex flex-col justify-end z-30 pointer-events-auto">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTrimmingItemId(null);
+                                  }}
+                                  className="absolute top-2 right-2 z-40 flex h-6 items-center justify-center rounded bg-indigo-600 px-2 text-[10px] font-bold text-white shadow hover:bg-indigo-500 transition-colors"
+                                >
+                                  Done
+                                </button>
+                                <div className="h-10 bg-zinc-950/90 border-t border-zinc-800/80 flex flex-col justify-between py-0.5 relative select-none">
+                                  <div className="h-1 w-full opacity-40" style={{
+                                    backgroundImage: 'repeating-linear-gradient(to right, #e4e4e7 0px, #e4e4e7 3px, transparent 3px, transparent 7px)',
+                                  }} />
+                                  <div className="relative flex-1 mx-2 bg-zinc-900/50 rounded border border-zinc-800/50 overflow-hidden">
+                                    <div
+                                      className="absolute top-0 bottom-0 left-0 bg-black/60 z-10"
+                                      style={{ width: `${(item.trimStartSeconds || 0) / (item.mediaDurationSeconds || item.durationSeconds || 10) * 100}%` }}
+                                    />
+                                    <div
+                                      className="absolute top-0 bottom-0 right-0 bg-black/60 z-10"
+                                      style={{
+                                        width: `${(1 - ((item.trimStartSeconds || 0) + (item.durationSeconds || (item.mediaDurationSeconds || 10))) / (item.mediaDurationSeconds || item.durationSeconds || 10)) * 100}%`
+                                      }}
+                                    />
+                                    <div
+                                      className="absolute top-0 bottom-0 border border-indigo-500 bg-indigo-500/10 z-10"
+                                      style={{
+                                        left: `${(item.trimStartSeconds || 0) / (item.mediaDurationSeconds || item.durationSeconds || 10) * 100}%`,
+                                        width: `${(item.durationSeconds || 3) / (item.mediaDurationSeconds || item.durationSeconds || 10) * 100}%`
+                                      }}
+                                    />
                                   </div>
-                                  <div
-                                    onPointerDown={(e) => handleEndPointerDown(e, item)}
-                                    className="absolute top-1 bottom-1 w-3 bg-indigo-500 hover:bg-indigo-400 cursor-ew-resize z-20 flex items-center justify-center rounded-r shadow border-l border-indigo-600"
-                                    style={{ left: `calc(${startPercent + durationPercent}% + 8px)`, transform: 'translateX(-50%)' }}
-                                  >
-                                    <div className="h-3 w-0.5 bg-white/70 rounded-full" />
-                                  </div>
-                                </>
-                              );
-                            })()}
-                            <div className="h-1 w-full opacity-40" style={{
-                              backgroundImage: 'repeating-linear-gradient(to right, #e4e4e7 0px, #e4e4e7 3px, transparent 3px, transparent 7px)',
-                            }} />
-                          </div>
-                        </div>
-                      )}
-                    </>
+                                  {(() => {
+                                    const totalDur = item.mediaDurationSeconds || item.durationSeconds || 10;
+                                    const startPercent = ((item.trimStartSeconds || 0) / totalDur) * 100;
+                                    const durationPercent = ((item.durationSeconds || totalDur) / totalDur) * 100;
+                                    return (
+                                      <>
+                                        <div
+                                          onPointerDown={(e) => handleStartPointerDown(e, item)}
+                                          className="absolute top-1 bottom-1 w-3 bg-indigo-500 hover:bg-indigo-400 cursor-ew-resize z-20 flex items-center justify-center rounded-l shadow border-r border-indigo-600"
+                                          style={{ left: `calc(${startPercent}% + 8px)`, transform: 'translateX(-50%)' }}
+                                        >
+                                          <div className="h-3 w-0.5 bg-white/70 rounded-full" />
+                                        </div>
+                                        <div
+                                          onPointerDown={(e) => handleEndPointerDown(e, item)}
+                                          className="absolute top-1 bottom-1 w-3 bg-indigo-500 hover:bg-indigo-400 cursor-ew-resize z-20 flex items-center justify-center rounded-r shadow border-l border-indigo-600"
+                                          style={{ left: `calc(${startPercent + durationPercent}% + 8px)`, transform: 'translateX(-50%)' }}
+                                        >
+                                          <div className="h-3 w-0.5 bg-white/70 rounded-full" />
+                                        </div>
+                                      </>
+                                    );
+                                  })()}
+                                  <div className="h-1 w-full opacity-40" style={{
+                                    backgroundImage: 'repeating-linear-gradient(to right, #e4e4e7 0px, #e4e4e7 3px, transparent 3px, transparent 7px)',
+                                  }} />
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        );
+                      }
+                      return (
+                        <img
+                          src={item.posterUrl || VIDEO_PLACEHOLDER}
+                          className="h-full w-full object-cover"
+                          alt=""
+                        />
+                      );
+                    })()
                   ) : (
                     <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
                   )}

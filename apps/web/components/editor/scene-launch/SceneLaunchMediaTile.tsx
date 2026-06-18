@@ -3,7 +3,7 @@
 import React from 'react';
 import { Video, Image as ImageIcon, Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { SceneLaunchMediaItem } from './useSceneLaunchBoard';
+import { type SceneLaunchMediaItem, VIDEO_PLACEHOLDER } from './useSceneLaunchBoard';
 
 interface SceneLaunchMediaTileProps {
   item: SceneLaunchMediaItem;
@@ -222,6 +222,10 @@ export function SceneLaunchMediaTile({
           event.preventDefault();
           return;
         }
+        const ghostEl = document.getElementById(`drag-ghost-${dragKey}`);
+        if (ghostEl) {
+          event.dataTransfer.setDragImage(ghostEl, 48, 36);
+        }
         onGridDragStart(event, dragKey);
       }}
       onDragEnd={onGridDragEnd}
@@ -232,12 +236,13 @@ export function SceneLaunchMediaTile({
       onMouseLeave={() => setHoveredItemKey(null)}
       style={getSceneLaunchMediaTileStyle(item)}
       className={cn(
-        "group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-black transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
+        "group cursor-grab overflow-visible rounded-lg border border-zinc-900 bg-black transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
         isTimelinePlaying && activeItemKey && activeItemKey !== dragKey ? "opacity-30" : "opacity-100"
       )}
       onClick={(event) => {
         const target = event.target as HTMLElement;
         if (
+          isBeingDragged ||
           trimmingItemId === item.id ||
           target.closest('button, input, label, select, textarea, a')
         ) {
@@ -248,190 +253,231 @@ export function SceneLaunchMediaTile({
       }}
       onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
     >
-      {isBeingDragged && (
-        dragPlaceholderContent
-      )}
+      {/* Hidden drag image template */}
+      <div
+        id={`drag-ghost-${dragKey}`}
+        className="fixed pointer-events-none bg-zinc-950 border border-zinc-700/60 rounded-md overflow-hidden flex items-center justify-center shadow-2xl z-[9999]"
+        style={{
+          width: '96px',
+          height: '72px',
+          left: '-9999px',
+          top: '-9999px',
+        }}
+      >
+        {item.type === 'video' ? (
+          <img
+            src={item.posterUrl || VIDEO_PLACEHOLDER}
+            className="w-full h-full object-cover"
+            alt=""
+          />
+        ) : (
+          <img
+            src={item.previewUrl}
+            className="w-full h-full object-cover"
+            alt=""
+          />
+        )}
+        <div className="absolute inset-0 bg-black/10" />
+      </div>
+
       {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
-        <div className="absolute top-0 bottom-0 left-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+        <div className="absolute top-1/2 -translate-y-1/2 -left-[8px] w-1 h-[85%] bg-gradient-to-b from-indigo-400 to-violet-500 rounded-full shadow-[0_0_12px_rgba(99,102,241,0.85)] z-50 pointer-events-none animate-pulse" />
       )}
       {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'after' && (
-        <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+        <div className="absolute top-1/2 -translate-y-1/2 -right-[8px] w-1 h-[85%] bg-gradient-to-b from-indigo-400 to-violet-500 rounded-full shadow-[0_0_12px_rgba(99,102,241,0.85)] z-50 pointer-events-none animate-pulse" />
       )}
-      <div className="group/thumb relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
-        {item.type === 'video' ? (
-          <>
-            <video
-              data-trim-video-id={item.id}
-              ref={(el) => {
-                if (el) {
-                  if (trimmingItemId === item.id) {
-                    if (el.paused) {
-                      const trimStart = tempTrimStart;
-                      if (Math.abs(el.currentTime - trimStart) > 0.05) {
-                        el.currentTime = trimStart;
+
+      <div className="w-full h-full rounded-lg overflow-hidden flex flex-col relative">
+        {isBeingDragged && (
+          dragPlaceholderContent
+        )}
+        <div className="group/thumb relative h-36 sm:h-40 lg:h-44" style={getSceneLaunchMediaPreviewStyle()}>
+          {item.type === 'video' ? (
+            (() => {
+              const state = getGridItemTimelineState(item.id, 'media');
+              const shouldRenderVideo = state.status === 'active' || trimmingItemId === item.id;
+              if (shouldRenderVideo) {
+                return (
+                  <video
+                    data-trim-video-id={item.id}
+                    poster={item.posterUrl}
+                    preload="metadata"
+                    ref={(el) => {
+                      if (el) {
+                        if (trimmingItemId === item.id) {
+                          if (el.paused) {
+                            const trimStart = tempTrimStart;
+                            if (Math.abs(el.currentTime - trimStart) > 0.05) {
+                              el.currentTime = trimStart;
+                            }
+                          }
+                          return;
+                        }
+                        const trimStart = item.trimStartSeconds || 0;
+                        let targetTime = trimStart;
+                        if (state.status === 'past') {
+                          targetTime = trimStart + state.duration;
+                        } else if (state.status === 'active') {
+                          targetTime = trimStart + state.elapsed;
+                        }
+                        const diff = Math.abs(el.currentTime - targetTime);
+                        const threshold = isTimelinePlaying ? 1.0 : 0.05;
+                        if (diff > threshold) {
+                          el.currentTime = targetTime;
+                        }
+                        if (isTimelinePlaying && state.status === 'active') {
+                          if (el.paused) {
+                            if (Math.abs(el.currentTime - targetTime) > 0.1) {
+                              el.currentTime = targetTime;
+                            }
+                            el.play().catch(() => {});
+                          }
+                        } else {
+                          if (!el.paused) {
+                            el.pause();
+                          }
+                        }
                       }
-                    }
-                    return;
-                  }
-                  const state = getGridItemTimelineState(item.id, 'media');
-                  const trimStart = item.trimStartSeconds || 0;
-
-                  let targetTime = trimStart;
-                  if (state.status === 'past') {
-                    targetTime = trimStart + state.duration;
-                  } else if (state.status === 'active') {
-                    targetTime = trimStart + state.elapsed;
-                  }
-
-                  const diff = Math.abs(el.currentTime - targetTime);
-                  const threshold = isTimelinePlaying ? 1.0 : 0.05;
-                  if (diff > threshold) {
-                    el.currentTime = targetTime;
-                  }
-
-                  if (isTimelinePlaying && state.status === 'active') {
-                    if (el.paused) {
-                      if (Math.abs(el.currentTime - targetTime) > 0.1) {
-                        el.currentTime = targetTime;
+                    }}
+                    onLoadedMetadata={(e) => {
+                      const el = e.currentTarget;
+                      const duration = el.duration;
+                      if (duration && duration > 0) {
+                        const currentMediaDur = item.mediaDurationSeconds;
+                        if (!currentMediaDur) {
+                          updateSceneLaunchMediaOriginalDuration(item.id, duration);
+                        }
                       }
-                      el.play().catch(() => {});
-                    }
-                  } else {
-                    if (!el.paused) {
-                      el.pause();
-                    }
-                  }
-                }
-              }}
-              onLoadedMetadata={(e) => {
-                const el = e.currentTarget;
-                const duration = el.duration;
-                if (duration && duration > 0) {
-                  const currentMediaDur = item.mediaDurationSeconds;
-                  if (!currentMediaDur) {
-                    updateSceneLaunchMediaOriginalDuration(item.id, duration);
-                  }
-                }
-              }}
-              src={item.previewUrl}
-              className="h-full w-full object-cover"
-              muted
-              playsInline
-              controls={trimmingItemId !== item.id}
-            />
-            {trimmingItemId === item.id && (
-              <div className="absolute inset-0 z-30 pointer-events-none select-none rounded-lg overflow-hidden">
-                {/* Done/Cancel actions floating at top-right */}
-                <div className="absolute top-2 right-2 z-45 flex items-center gap-1.5 pointer-events-auto">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setTrimmingItemId(null); // Cancel: discard local state changes
                     }}
-                    className="flex h-6 items-center justify-center rounded bg-zinc-950/90 px-2 text-[10px] font-bold text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 shadow-md border border-zinc-850 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      updateSceneLaunchMediaTrim(item.id, tempTrimStart, tempDuration); // Save changes
-                      setTrimmingItemId(null);
-                    }}
-                    className="flex h-6 items-center justify-center rounded bg-indigo-600 px-2.5 text-[10px] font-bold text-white shadow-md hover:bg-indigo-500 transition-colors"
-                  >
-                    Done
-                  </button>
+                    src={item.previewUrl}
+                    className="h-full w-full object-cover"
+                    muted
+                    playsInline
+                    controls={trimmingItemId !== item.id}
+                  />
+                );
+              }
+              return (
+                <img
+                  src={item.posterUrl || VIDEO_PLACEHOLDER}
+                  className="h-full w-full object-cover"
+                  alt=""
+                />
+              );
+            })()
+          ) : (
+            <img src={item.previewUrl} className="h-full w-full object-cover" alt="" />
+          )}
+
+          {trimmingItemId === item.id && (
+            <div className="absolute inset-0 z-30 pointer-events-none select-none rounded-lg overflow-hidden">
+              {/* Done/Cancel actions floating at top-right */}
+              <div className="absolute top-2 right-2 z-45 flex items-center gap-1.5 pointer-events-auto">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTrimmingItemId(null); // Cancel: discard local state changes
+                  }}
+                  className="flex h-6 items-center justify-center rounded bg-zinc-950/90 px-2 text-[10px] font-bold text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 shadow-md border border-zinc-850 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    updateSceneLaunchMediaTrim(item.id, tempTrimStart, tempDuration); // Save changes
+                    setTrimmingItemId(null);
+                  }}
+                  className="flex h-6 items-center justify-center rounded bg-indigo-600 px-2.5 text-[10px] font-bold text-white shadow-md hover:bg-indigo-500 transition-colors"
+                >
+                  Done
+                </button>
+              </div>
+
+              {/* Duration Tooltip centered above active trim window */}
+              <div
+                className="absolute bottom-18 z-45 bg-zinc-950/90 border border-zinc-800 text-zinc-200 text-[10px] font-mono font-bold px-2 py-0.5 rounded shadow-lg backdrop-blur-[2px] pointer-events-none transition-all duration-75 select-none"
+                style={{
+                  left: `calc(8px + ((${startPercent} + ${durationPercent} / 2) / 100) * (100% - 16px))`,
+                  transform: 'translateX(-50%)',
+                }}
+              >
+                {tempDuration.toFixed(1)}s
+              </div>
+
+              {/* Floating Trim Filmstrip Track (with padding) */}
+              <div className="absolute bottom-2 left-2 right-2 h-14 bg-zinc-950/95 border border-zinc-850 rounded-lg overflow-hidden z-40 flex items-stretch pointer-events-auto trim-overlay-container shadow-2xl">
+                {/* Filmstrip Background Sequence */}
+                <div className="absolute inset-0 z-0 flex items-stretch overflow-hidden">
+                  {[0, 1, 2, 3, 4].map((index) => (
+                    <div key={index} className="flex-1 h-full relative border-r border-zinc-950/20 last:border-r-0 overflow-hidden bg-zinc-950">
+                      <video
+                        ref={(el) => {
+                          if (el) {
+                            const targetTime = (index / 4) * totalDur;
+                            if (Math.abs(el.currentTime - targetTime) > 0.1) {
+                              el.currentTime = targetTime;
+                            }
+                          }
+                        }}
+                        src={item.previewUrl}
+                        className="h-full w-full object-cover pointer-events-none opacity-40"
+                        muted
+                        playsInline
+                      />
+                    </div>
+                  ))}
                 </div>
 
-                {/* Duration Tooltip centered above active trim window */}
+                {/* Left Dimmed Region */}
                 <div
-                  className="absolute bottom-18 z-45 bg-zinc-950/90 border border-zinc-800 text-zinc-200 text-[10px] font-mono font-bold px-2 py-0.5 rounded shadow-lg backdrop-blur-[2px] pointer-events-none transition-all duration-75 select-none"
+                  className="absolute top-0 bottom-0 left-0 bg-black/60 z-10"
+                  style={{ width: `${startPercent}%` }}
+                />
+
+                {/* Interactive Slider overlay bounds (between handles) */}
+                <div
+                  onPointerDown={handleCenterPointerDown}
+                  className="absolute top-0 bottom-0 z-20 border-t-2 border-b-2 border-white cursor-grab active:cursor-grabbing flex items-stretch"
                   style={{
-                    left: `calc(8px + ((${startPercent} + ${durationPercent} / 2) / 100) * (100% - 16px))`,
-                    transform: 'translateX(-50%)',
+                    left: `${startPercent}%`,
+                    width: `${durationPercent}%`,
                   }}
                 >
-                  {tempDuration.toFixed(1)}s
-                </div>
-
-                {/* Floating Trim Filmstrip Track (with padding) */}
-                <div className="absolute bottom-2 left-2 right-2 h-14 bg-zinc-950/95 border border-zinc-850 rounded-lg overflow-hidden z-40 flex items-stretch pointer-events-auto trim-overlay-container shadow-2xl">
-                  {/* Filmstrip Background Sequence */}
-                  <div className="absolute inset-0 z-0 flex items-stretch overflow-hidden">
-                    {[0, 1, 2, 3, 4].map((index) => (
-                      <div key={index} className="flex-1 h-full relative border-r border-zinc-950/20 last:border-r-0 overflow-hidden bg-zinc-950">
-                        <video
-                          ref={(el) => {
-                            if (el) {
-                              const targetTime = (index / 4) * totalDur;
-                              if (Math.abs(el.currentTime - targetTime) > 0.1) {
-                                el.currentTime = targetTime;
-                              }
-                            }
-                          }}
-                          src={item.previewUrl}
-                          className="h-full w-full object-cover pointer-events-none opacity-40"
-                          muted
-                          playsInline
-                        />
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Left dimmed region */}
+                  {/* Left rounded white drag handle */}
                   <div
-                    className="absolute top-0 bottom-0 left-0 bg-black/60 z-10"
-                    style={{ width: `${startPercent}%` }}
-                  />
-
-                  {/* Active trim region with white border and handles */}
-                  <div
-                    onPointerDown={handleCenterPointerDown}
-                    className="absolute top-0 bottom-0 z-20 cursor-grab active:cursor-grabbing flex items-stretch"
-                    style={{
-                      left: `${startPercent}%`,
-                      width: `${durationPercent}%`,
-                    }}
+                    onPointerDown={handleStartPointerDown}
+                    className="w-3.5 bg-white rounded-l-md flex items-center justify-center cursor-ew-resize select-none shrink-0 border-t-2 border-b-2 border-l-2 border-white"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    {/* Left rounded white drag handle */}
-                    <div
-                      onPointerDown={handleStartPointerDown}
-                      className="w-3.5 bg-white rounded-l-md flex items-center justify-center cursor-ew-resize select-none shrink-0 border-t-2 border-b-2 border-l-2 border-white"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="w-[1.5px] h-6 bg-zinc-400/60 rounded-full" />
-                    </div>
-
-                    {/* Top and bottom borders */}
-                    <div className="flex-1 border-t-2 border-b-2 border-white pointer-events-none" />
-
-                    {/* Right rounded white drag handle */}
-                    <div
-                      onPointerDown={handleEndPointerDown}
-                      className="w-3.5 bg-white rounded-r-md flex items-center justify-center cursor-ew-resize select-none shrink-0 border-t-2 border-b-2 border-r-2 border-white"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="w-[1.5px] h-6 bg-zinc-400/60 rounded-full" />
-                    </div>
+                    <div className="w-[1.5px] h-6 bg-zinc-400/60 rounded-full" />
                   </div>
 
-                  {/* Right dimmed region */}
+                  {/* Top and bottom borders */}
+                  <div className="flex-1 border-t-2 border-b-2 border-white pointer-events-none" />
+
+                  {/* Right rounded white drag handle */}
                   <div
-                    className="absolute top-0 bottom-0 right-0 bg-black/60 z-10"
-                    style={{ width: `${100 - (startPercent + durationPercent)}%` }}
-                  />
+                    onPointerDown={handleEndPointerDown}
+                    className="w-3.5 bg-white rounded-r-md flex items-center justify-center cursor-ew-resize select-none shrink-0 border-t-2 border-b-2 border-r-2 border-white"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="w-[1.5px] h-6 bg-zinc-400/60 rounded-full" />
+                  </div>
                 </div>
+
+                {/* Right dimmed region */}
+                <div
+                  className="absolute top-0 bottom-0 right-0 bg-black/60 z-10"
+                  style={{ width: `${100 - (startPercent + durationPercent)}%` }}
+                />
               </div>
-            )}
-          </>
-        ) : (
-          <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
-        )}
-        {/* Edit hover overlay — only show when not trimming */}
-        {trimmingItemId !== item.id && (
+            </div>
+          )}
+          {/* Edit hover overlay — only show when not trimming */}
+          {trimmingItemId !== item.id && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover/thumb:bg-black/40 transition-all duration-200 pointer-events-none z-10">
             <div className="flex items-center gap-1.5 rounded-full bg-zinc-950/90 border border-zinc-700/80 px-3 py-1.5 opacity-0 group-hover/thumb:opacity-100 scale-90 group-hover/thumb:scale-100 transition-all duration-200 shadow-lg backdrop-blur-sm">
               <Pencil className="h-3 w-3 text-indigo-400" />
@@ -491,6 +537,7 @@ export function SceneLaunchMediaTile({
           </div>
         </div>
       </div>
-    </article>
+    </div>
+  </article>
   );
 }

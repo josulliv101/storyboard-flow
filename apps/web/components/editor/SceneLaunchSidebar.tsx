@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Clapperboard, FolderTree, Grid2X2, Settings, Sparkles, Trash2, Users } from 'lucide-react';
+import { Clapperboard, FolderTree, Grid2X2, Settings, Sparkles, Trash2, Users, Home } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import type { SidebarTab } from './EditorSidebarRail';
@@ -33,7 +33,27 @@ export function SceneLaunchSidebar({
     <aside className="flex w-14 shrink-0 flex-col items-center border-r border-white/10 py-4">
       <button
         type="button"
-        className="relative group flex h-10 w-10 items-center justify-center rounded-full bg-zinc-800 text-white"
+        className={cn(
+          "relative group flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200",
+          activeSceneLaunchBeatId === null
+            ? "bg-zinc-800 text-white shadow-md"
+            : "text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
+        )}
+        aria-label="Home"
+        onClick={() => {
+          setSceneLaunchBeatPath([]);
+          setActiveTab(null);
+        }}
+      >
+        <Home className="h-4.5 w-4.5" />
+        <span className="absolute left-full ml-3 px-2 py-1 bg-zinc-950/90 border border-zinc-800/80 text-zinc-300 text-[11px] rounded-md opacity-0 translate-x-0 pointer-events-none group-hover:opacity-100 group-hover:translate-x-1 transition-all duration-200 whitespace-nowrap z-50 shadow-lg font-medium before:content-[''] before:absolute before:top-1/2 before:-translate-y-1/2 before:right-full before:border-4 before:border-transparent before:border-r-zinc-950/90">
+          Home
+        </span>
+      </button>
+      <div className="my-2 h-px w-8 bg-white/10" />
+      <button
+        type="button"
+        className="relative group mt-2 flex h-10 w-10 items-center justify-center rounded-full bg-zinc-800 text-white"
         aria-label="Scenes"
         onClick={() => setActiveTab('scenes')}
       >

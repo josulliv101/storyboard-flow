@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Button } from '@storyboard/ui';
-import { CornerUpLeft, FolderInput, FolderOpen, Grid2X2, Plus, Trash2 } from 'lucide-react';
+import { CornerUpLeft, Folder, FolderInput, FolderOpen, Grid2X2, Plus, Trash2, X } from 'lucide-react';
 import { SceneLaunchMediaTile } from './SceneLaunchMediaTile';
 import { SceneLaunchCollectionTile } from './SceneLaunchCollectionTile';
 import type { SceneLaunchBeat, SceneLaunchMediaItem } from './useSceneLaunchBoard';
@@ -83,6 +83,8 @@ interface SceneLaunchGridProps {
   setDraggedGridItemKey: React.Dispatch<React.SetStateAction<string | null>>;
   moveSceneLaunchItemToParent: (dragKey: string) => void;
   moveSceneLaunchItemToTargetCollection: (dragKey: string, targetId: string) => void;
+  moveItemToTrash: (dragKey: string) => void;
+  thumbnailMode: 'grid' | 'single';
 }
 
 export function SceneLaunchGrid({
@@ -132,9 +134,11 @@ export function SceneLaunchGrid({
   setDraggedGridItemKey,
   moveSceneLaunchItemToParent,
   moveSceneLaunchItemToTargetCollection,
+  moveItemToTrash,
+  thumbnailMode,
 }: SceneLaunchGridProps) {
 
-  const [utilityDropZone, setUtilityDropZone] = React.useState<'parent' | 'directory' | null>(null);
+  const [utilityDropZone, setUtilityDropZone] = React.useState<'parent' | 'directory' | 'trash' | 'cancel' | null>(null);
   const [directoryPendingKey, setDirectoryPendingKey] = React.useState<string | null>(null);
   const [isDirectoryPickerOpen, setIsDirectoryPickerOpen] = React.useState(false);
   const dropHandledRef = React.useRef(false);
@@ -169,6 +173,74 @@ export function SceneLaunchGrid({
   const availableDirectoryCollections = allCollections.filter(collection => (
     collection.id !== 'trash' && !unavailableCollectionIds.has(collection.id)
   ));
+
+  const flatDirectoryTree = React.useMemo(() => {
+    const parentMap = new Map<string, string>();
+    allCollections.forEach(p => {
+      p.childIds.forEach(cId => {
+        parentMap.set(cId, p.id);
+      });
+    });
+
+    const itemMap = new Map<string, SceneLaunchBeat>();
+    availableDirectoryCollections.forEach(item => itemMap.set(item.id, item));
+
+    const roots = availableDirectoryCollections.filter(item => {
+      const pId = parentMap.get(item.id);
+      return !pId || !itemMap.has(pId);
+    });
+
+    interface TempTreeNode {
+      id: string;
+      name: string;
+      children: TempTreeNode[];
+      depth: number;
+    }
+
+    const getChildren = (nodeId: string, depth: number): TempTreeNode[] => {
+      const node = itemMap.get(nodeId);
+      if (!node) return [];
+      const childNodes: TempTreeNode[] = [];
+      node.childIds.forEach(cId => {
+        if (itemMap.has(cId)) {
+          childNodes.push({
+            id: cId,
+            name: itemMap.get(cId)!.name,
+            children: getChildren(cId, depth + 1),
+            depth: depth + 1
+          });
+        }
+      });
+      return childNodes;
+    };
+
+    const tree = roots.map(r => ({
+      id: r.id,
+      name: r.name,
+      children: getChildren(r.id, 0),
+      depth: 0
+    }));
+
+    interface FlatTreeNode {
+      id: string;
+      name: string;
+      depth: number;
+      hasChildren: boolean;
+    }
+
+    const flatList: FlatTreeNode[] = [];
+    const traverse = (node: TempTreeNode) => {
+      flatList.push({
+        id: node.id,
+        name: node.name,
+        depth: node.depth,
+        hasChildren: node.children.length > 0
+      });
+      node.children.forEach(traverse);
+    };
+    tree.forEach(traverse);
+    return flatList;
+  }, [allCollections, availableDirectoryCollections]);
   const handleGridItemDragStart = (event: React.DragEvent<HTMLElement>, dragKey: string) => {
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', dragKey);
@@ -219,6 +291,20 @@ export function SceneLaunchGrid({
     setIsDirectoryPickerOpen(true);
   };
 
+  const handleTrashDrop = (event: React.DragEvent<HTMLElement>) => {
+    if (!claimNativeDrop(event)) return;
+    const dragKey = getDraggedKey(event);
+    if (dragKey && activeSceneLaunchBeatId !== 'trash') moveItemToTrash(dragKey);
+    setDraggedGridItemKey(null);
+    setUtilityDropZone(null);
+  };
+
+  const handleCancelDrop = (event: React.DragEvent<HTMLElement>) => {
+    if (!claimNativeDrop(event)) return;
+    setDraggedGridItemKey(null);
+    setUtilityDropZone(null);
+  };
+
   const chooseDirectory = (collectionId: string) => {
     if (!directoryPendingKey || directoryMoveCommittedRef.current) return;
     directoryMoveCommittedRef.current = true;
@@ -245,98 +331,193 @@ export function SceneLaunchGrid({
     handleItemContextMenu(event, dragKey);
   };
 
-  const renderOriginPlaceholder = (dragKey: string) => (
-    <div className="absolute inset-0 z-50 grid grid-cols-2 gap-2 rounded-lg border border-dashed border-indigo-400/70 bg-zinc-950/95 p-2 shadow-inner shadow-indigo-500/10 backdrop-blur-sm">
+  const renderOriginPlaceholder = (dragKey: string) => {
+    const canMoveToTrash = activeSceneLaunchBeatId !== 'trash';
+    return (
       <div
-        role="button"
-        aria-disabled={!canMoveToParent}
-        onDragOver={(event) => {
-          if (!canMoveToParent) return;
-          event.preventDefault();
-          event.stopPropagation();
-          event.dataTransfer.dropEffect = 'move';
-          setUtilityDropZone('parent');
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
         }}
-        onDragLeave={(event) => {
-          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-          setUtilityDropZone(current => current === 'parent' ? null : current);
-        }}
-        onDrop={handleParentDrop}
-        className={cn(
-          "flex min-w-0 flex-col items-center justify-center rounded-md border border-dashed p-2 text-center transition-all",
-          !canMoveToParent && "border-zinc-800 bg-zinc-900/40 text-zinc-600",
-          canMoveToParent && utilityDropZone !== 'parent' && "border-zinc-700 bg-zinc-900/70 text-zinc-300",
-          utilityDropZone === 'parent' && "border-indigo-400 bg-indigo-500/20 text-indigo-100 shadow-lg shadow-indigo-500/10",
-        )}
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="absolute inset-0 z-50 grid grid-cols-2 grid-rows-2 gap-1.5 rounded-lg border border-dashed border-indigo-400/70 bg-zinc-950/95 p-1.5 shadow-inner shadow-indigo-500/10 backdrop-blur-sm"
       >
-        <CornerUpLeft className="size-5" />
-        <span className="mt-2 text-[9px] font-black uppercase tracking-widest">Parent</span>
-        <span className="mt-1 text-[9px] leading-3 text-zinc-500">
-          {canMoveToParent ? 'Move up one level' : 'Top level'}
-        </span>
-      </div>
-
-      <Popover
-        open={isDirectoryPickerOpen && directoryPendingKey === dragKey}
-        onOpenChange={(open) => {
-          setIsDirectoryPickerOpen(open);
-          if (!open) setDirectoryPendingKey(null);
-        }}
-      >
-        <PopoverTrigger
-          render={
-            <button
-              type="button"
-              onDragOver={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                event.dataTransfer.dropEffect = 'move';
-                setUtilityDropZone('directory');
-              }}
-              onDragLeave={(event) => {
-                if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-                setUtilityDropZone(current => current === 'directory' ? null : current);
-              }}
-              onDrop={handleDirectoryDrop}
-              className={cn(
-                "flex min-w-0 flex-col items-center justify-center rounded-md border border-dashed p-2 text-center transition-all",
-                utilityDropZone !== 'directory' && "border-zinc-700 bg-zinc-900/70 text-zinc-300",
-                utilityDropZone === 'directory' && "border-indigo-400 bg-indigo-500/20 text-indigo-100 shadow-lg shadow-indigo-500/10",
-              )}
-            />
-          }
+        {/* Option 1: Parent */}
+        <div
+          role="button"
+          aria-disabled={!canMoveToParent}
+          onDragOver={(event) => {
+            if (!canMoveToParent) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = 'move';
+            setUtilityDropZone('parent');
+          }}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            setUtilityDropZone(current => current === 'parent' ? null : current);
+          }}
+          onDrop={handleParentDrop}
+          className={cn(
+            "flex min-w-0 flex-col items-center justify-center rounded-md border border-dashed p-1 text-center transition-all",
+            !canMoveToParent && "border-zinc-800 bg-zinc-900/40 text-zinc-600",
+            canMoveToParent && utilityDropZone !== 'parent' && "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-indigo-450 hover:bg-indigo-950/20 hover:text-indigo-200",
+            utilityDropZone === 'parent' && "border-indigo-400 bg-indigo-500/25 text-indigo-100 shadow-lg shadow-indigo-500/10",
+          )}
         >
-          <FolderInput className="size-5" />
-          <span className="mt-2 text-[9px] font-black uppercase tracking-widest">Directory</span>
-          <span className="mt-1 text-[9px] leading-3 text-zinc-500">Choose collection</span>
-        </PopoverTrigger>
-        <PopoverContent align="start" side="bottom" className="w-80 p-0">
-          <PopoverHeader className="px-3 pt-3">
-            <PopoverTitle>Move to collection</PopoverTitle>
-            <PopoverDescription>Select a directory for the dropped item.</PopoverDescription>
-          </PopoverHeader>
-          <Command>
-            <CommandInput placeholder="Search collections..." autoFocus />
-            <CommandList>
-              <CommandEmpty>No available collections.</CommandEmpty>
-              <CommandGroup heading="Collections">
-                {availableDirectoryCollections.map(collection => (
-                  <CommandItem
-                    key={collection.id}
-                    value={`${collection.name} ${collection.id}`}
-                    onSelect={() => chooseDirectory(collection.id)}
-                  >
-                    <FolderOpen />
-                    <span className="truncate">{collection.name}</span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-    </div>
-  );
+          <CornerUpLeft className="size-4" />
+          <span className="mt-1 text-[8px] font-black uppercase tracking-widest leading-none">Parent</span>
+          <span className="mt-0.5 text-[7px] leading-none text-zinc-500 truncate max-w-full px-1">
+            {canMoveToParent ? 'Move up' : 'Top level'}
+          </span>
+        </div>
+
+        {/* Option 2: Directory */}
+        <Popover
+          open={isDirectoryPickerOpen && directoryPendingKey === dragKey}
+          onOpenChange={(open) => {
+            setIsDirectoryPickerOpen(open);
+            if (!open) setDirectoryPendingKey(null);
+          }}
+        >
+          <PopoverTrigger
+            render={
+              <button
+                type="button"
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = 'move';
+                  setUtilityDropZone('directory');
+                }}
+                onDragLeave={(event) => {
+                  if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                  setUtilityDropZone(current => current === 'directory' ? null : current);
+                }}
+                onDrop={handleDirectoryDrop}
+                className={cn(
+                  "flex w-full min-w-0 flex-col items-center justify-center rounded-md border border-dashed p-1 text-center transition-all",
+                  utilityDropZone !== 'directory' && "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-indigo-450 hover:bg-indigo-950/20 hover:text-indigo-200",
+                  utilityDropZone === 'directory' && "border-indigo-400 bg-indigo-500/25 text-indigo-100 shadow-lg shadow-indigo-500/10",
+                )}
+              />
+            }
+          >
+            <FolderInput className="size-4" />
+            <span className="mt-1 text-[8px] font-black uppercase tracking-widest leading-none">Directory</span>
+            <span className="mt-0.5 text-[7px] leading-none text-zinc-500 truncate max-w-full px-1">Choose folder</span>
+          </PopoverTrigger>
+          <PopoverContent align="start" side="bottom" className="w-80 p-0 bg-zinc-950 border-zinc-800 shadow-2xl">
+            <PopoverHeader className="px-3 pt-3">
+              <PopoverTitle className="text-zinc-200">Move to collection</PopoverTitle>
+              <PopoverDescription className="text-zinc-550">Select a directory for the dropped item.</PopoverDescription>
+            </PopoverHeader>
+            <Command className="bg-transparent">
+              <CommandInput placeholder="Search collections..." autoFocus className="text-zinc-250" />
+              <CommandList className="max-h-[300px] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-850 scrollbar-track-transparent">
+                <CommandEmpty className="text-zinc-500 text-xs py-4 text-center">No available collections.</CommandEmpty>
+                <CommandGroup heading="Collections" className="text-zinc-550 text-[10px] uppercase font-bold tracking-wider px-2">
+                  <div className="flex flex-col gap-0.5 py-1">
+                    {flatDirectoryTree.map(node => (
+                      <CommandItem
+                        key={node.id}
+                        value={`${node.name} ${node.id}`}
+                        onSelect={() => chooseDirectory(node.id)}
+                        className="relative group flex items-center gap-2.5 py-2 pr-3 text-xs text-zinc-300 hover:text-white cursor-pointer select-none outline-none data-[selected=true]:bg-zinc-900 data-[selected=true]:text-white transition-colors rounded-md overflow-hidden"
+                        style={{ paddingLeft: `${12 + node.depth * 16}px` }}
+                      >
+                        {/* Indentation lines */}
+                        {node.depth > 0 && (
+                          <>
+                            {/* Vertical lines for parents */}
+                            {Array.from({ length: node.depth }).map((_, i) => (
+                              <div
+                                key={i}
+                                className="absolute top-0 bottom-0 w-px border-l border-dashed border-zinc-800/80 group-hover:border-zinc-700/60 transition-colors"
+                                style={{ left: `${8 + i * 16}px` }}
+                              />
+                            ))}
+                            {/* Horizontal connector line */}
+                            <div
+                              className="absolute top-1/2 -translate-y-1/2 h-px w-2 border-t border-dashed border-zinc-800/80 group-hover:border-zinc-700/60 transition-colors"
+                              style={{ left: `${8 + (node.depth - 1) * 16}px` }}
+                            />
+                          </>
+                        )}
+                        
+                        {node.hasChildren ? (
+                          <FolderOpen className="size-3.5 shrink-0 text-indigo-400/80 group-hover:text-indigo-400 transition-colors z-10" />
+                        ) : (
+                          <Folder className="size-3.5 shrink-0 text-zinc-500 group-hover:text-zinc-350 transition-colors z-10" />
+                        )}
+                        <span className="truncate font-semibold z-10">{node.name}</span>
+                      </CommandItem>
+                    ))}
+                  </div>
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+
+        {/* Option 3: Trash */}
+        <div
+          role="button"
+          aria-disabled={!canMoveToTrash}
+          onDragOver={(event) => {
+            if (!canMoveToTrash) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = 'move';
+            setUtilityDropZone('trash');
+          }}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            setUtilityDropZone(current => current === 'trash' ? null : current);
+          }}
+          onDrop={handleTrashDrop}
+          className={cn(
+            "flex min-w-0 flex-col items-center justify-center rounded-md border border-dashed p-1 text-center transition-all",
+            !canMoveToTrash && "border-zinc-800 bg-zinc-900/40 text-zinc-600",
+            canMoveToTrash && utilityDropZone !== 'trash' && "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-red-900/50 hover:bg-red-950/10 hover:text-red-400",
+            utilityDropZone === 'trash' && "border-red-500 bg-red-950/30 text-red-200 shadow-lg shadow-red-900/20",
+          )}
+        >
+          <Trash2 className="size-4" />
+          <span className="mt-1 text-[8px] font-black uppercase tracking-widest leading-none">Trash</span>
+          <span className="mt-0.5 text-[7px] leading-none text-zinc-500 truncate max-w-full px-1">
+            {canMoveToTrash ? 'Move to trash' : 'In trash'}
+          </span>
+        </div>
+
+        {/* Option 4: Cancel */}
+        <div
+          role="button"
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = 'move';
+            setUtilityDropZone('cancel');
+          }}
+          onDragLeave={(event) => {
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            setUtilityDropZone(current => current === 'cancel' ? null : current);
+          }}
+          onDrop={handleCancelDrop}
+          className={cn(
+            "flex min-w-0 flex-col items-center justify-center rounded-md border border-dashed p-1 text-center transition-all",
+            utilityDropZone !== 'cancel' && "border-zinc-700 bg-zinc-900/70 text-zinc-300 hover:border-zinc-500 hover:bg-zinc-850/40 hover:text-zinc-200",
+            utilityDropZone === 'cancel' && "border-zinc-400 bg-zinc-800/80 text-zinc-100 shadow-lg shadow-zinc-500/10",
+          )}
+        >
+          <X className="size-4" />
+          <span className="mt-1 text-[8px] font-black uppercase tracking-widest leading-none">Cancel</span>
+          <span className="mt-0.5 text-[7px] leading-none text-zinc-500 truncate max-w-full px-1">Cancel drag</span>
+        </div>
+      </div>
+    );
+  };
   const getGridInsertionIndex = (
     event: React.MouseEvent<HTMLElement>,
     container: HTMLElement,
@@ -422,7 +603,7 @@ export function SceneLaunchGrid({
             {sceneLaunchGridItems.length > 0 ? (
               <div
                 data-scene-grid-container="true"
-                className="grid gap-3"
+                className="grid gap-5"
                 style={{
                   gridTemplateColumns: `repeat(auto-fill, minmax(${finalWidth}rem, 1fr))`,
                 }}
@@ -498,6 +679,9 @@ export function SceneLaunchGrid({
                       onGridDragStart={handleGridItemDragStart}
                       onGridDragEnd={handleGridItemDragEnd}
                       dragPlaceholderContent={renderOriginPlaceholder(dragKey)}
+                      allCollections={allCollections}
+                      aspectRatio={ratioValue}
+                      thumbnailMode={thumbnailMode}
                     />
                   );
                 })}
@@ -525,7 +709,7 @@ export function SceneLaunchGrid({
         <>
           <div
             data-scene-grid-container="true"
-            className="grid gap-3"
+            className="grid gap-5"
             style={{
               gridTemplateColumns: `repeat(auto-fill, minmax(${finalWidth}rem, 1fr))`,
             }}
@@ -601,6 +785,9 @@ export function SceneLaunchGrid({
                   onGridDragStart={handleGridItemDragStart}
                   onGridDragEnd={handleGridItemDragEnd}
                   dragPlaceholderContent={renderOriginPlaceholder(dragKey)}
+                  allCollections={allCollections}
+                  aspectRatio={ratioValue}
+                  thumbnailMode={thumbnailMode}
                 />
               );
             })}

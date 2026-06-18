@@ -4,6 +4,7 @@ import React from 'react';
 import { Clock, Grid2X2, ImageIcon, Maximize2, MonitorPlay, MoreVertical, Pause, Play, Repeat, Video, ZoomIn, ZoomOut } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { VIDEO_PLACEHOLDER } from './scene-launch/useSceneLaunchBoard';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +19,7 @@ export type SceneLaunchTimelineMediaItem = {
   name: string;
   type: 'image' | 'video';
   previewUrl: string;
+  posterUrl?: string;
   durationSeconds?: number;
   trimStartSeconds?: number;
   mediaDurationSeconds?: number;
@@ -142,7 +144,7 @@ function SceneLaunchTimelineCollectionMenu({
             >
               <div className="relative aspect-video overflow-hidden rounded-md border border-zinc-800 bg-black">
                 {item.type === 'video' ? (
-                  <video src={item.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                  <img src={item.posterUrl || VIDEO_PLACEHOLDER} className="h-full w-full object-cover" alt="" />
                 ) : (
                   <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
                 )}
@@ -444,6 +446,7 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
                 let duration = 3;
                 let name = '';
                 let previewUrl = '';
+                let posterUrl = '';
                 let isImage = false;
                 let isVideo = false;
 
@@ -453,6 +456,7 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
                     : getTimelineMediaDuration(gridItem.item);
                   name = gridItem.item.name;
                   previewUrl = gridItem.item.previewUrl;
+                  posterUrl = gridItem.item.posterUrl || '';
                   isImage = gridItem.item.type === 'image';
                   isVideo = gridItem.item.type === 'video';
                 } else {
@@ -461,6 +465,7 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
                   const collectionPreview = getSceneLaunchCollectionPreview(gridItem.collection);
                   if (collectionPreview) {
                     previewUrl = collectionPreview.item.previewUrl;
+                    posterUrl = collectionPreview.item.posterUrl || '';
                     isImage = collectionPreview.item.type === 'image';
                     isVideo = collectionPreview.item.type === 'video';
                   }
@@ -580,7 +585,7 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
                         isItemActive ? "opacity-100" : "opacity-25"
                       )}>
                         {isVideo ? (
-                          <video src={previewUrl} className="h-full w-full object-cover" muted />
+                          <img src={posterUrl || VIDEO_PLACEHOLDER} className="h-full w-full object-cover" alt="" />
                         ) : (
                           <img src={previewUrl} className="h-full w-full object-cover" alt="" />
                         )}

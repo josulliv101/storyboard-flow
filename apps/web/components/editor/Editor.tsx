@@ -1583,6 +1583,8 @@ function EditorInner() {
               isDraggingItem={isDraggingSceneLaunchItem}
               onDropItem={handleDropOnDirectory}
               board={board}
+              viewMode="storyboard"
+              setViewMode={() => {}}
             />
           ) : (
           <>

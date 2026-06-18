@@ -6,12 +6,15 @@ import type { Scene, TimelineClip, ClipType } from '@/lib/timeline-context';
 
 const MAX_IMAGE_DURATION_SECONDS = 60 * 60;
 
+export const VIDEO_PLACEHOLDER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='300' viewBox='0 0 400 300'><rect width='100%' height='100%' fill='%2309090b'/><g fill='%2327272a'><path d='M150 120h60a8 8 0 0 1 8 8v44a8 8 0 0 1-8 8h-60a8 8 0 0 1-8-8v-44a8 8 0 0 1 8-8z'/><path d='M226 130l24-15v50l-24-15z'/></g></svg>";
+
 export type SceneLaunchMediaItem = {
   id: string;
   clipId: string;
   name: string;
   type: 'image' | 'video';
   previewUrl: string;
+  posterUrl?: string;
   durationSeconds?: number;
   trimStartSeconds?: number;
   mediaDurationSeconds?: number;
@@ -254,6 +257,55 @@ export function useSceneLaunchBoard({
     reader.readAsDataURL(file);
   });
 
+  const getVideoPoster = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'auto';
+      video.muted = true;
+      video.playsInline = true;
+
+      const url = URL.createObjectURL(file);
+      video.src = url;
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      const cleanUp = () => {
+        try {
+          video.pause();
+          video.src = '';
+          video.load();
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          // ignore
+        }
+      };
+
+      video.onseeked = () => {
+        try {
+          canvas.width = video.videoWidth || 320;
+          canvas.height = video.videoHeight || 240;
+          ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          resolve(dataUrl);
+        } catch (err) {
+          resolve('');
+        } finally {
+          cleanUp();
+        }
+      };
+
+      video.onerror = () => {
+        resolve('');
+        cleanUp();
+      };
+
+      video.onloadeddata = () => {
+        video.currentTime = 0.1;
+      };
+    });
+  };
+
   const getVideoDuration = (file: File): Promise<number> => {
     return new Promise((resolve) => {
       const video = document.createElement('video');
@@ -301,6 +353,7 @@ export function useSceneLaunchBoard({
         name: file.name,
         type: isVideo ? 'video' as const : 'image' as const,
         previewUrl: await readSceneLaunchFilePreview(file),
+        posterUrl: isVideo ? await getVideoPoster(file) : undefined,
         durationSeconds,
         mediaDurationSeconds: isVideo ? durationSeconds : undefined,
         fileSize: file.size,
@@ -404,6 +457,7 @@ export function useSceneLaunchBoard({
         name: file.name,
         type: isVideo ? 'video' as const : 'image' as const,
         previewUrl: await readSceneLaunchFilePreview(file),
+        posterUrl: isVideo ? await getVideoPoster(file) : undefined,
         durationSeconds,
         mediaDurationSeconds: isVideo ? durationSeconds : undefined,
         fileSize: file.size,

@@ -5,7 +5,125 @@ import { Grid2X2, Pause, Play, ChevronLeft, ChevronRight, Folder, FolderOpen } f
 import { cn } from '@/lib/utils';
 import { CollectionFrame } from '../Frame';
 import { CollectionProgressBar } from '../CollectionProgressBar';
-import type { SceneLaunchBeat, SceneLaunchMediaItem } from './useSceneLaunchBoard';
+import { type SceneLaunchBeat, type SceneLaunchMediaItem, VIDEO_PLACEHOLDER } from './useSceneLaunchBoard';
+
+interface CollectionCanvasThumbnailProps {
+  items: SceneLaunchMediaItem[];
+  aspectRatio: number;
+}
+
+function dataURLtoBlob(dataurl: string): Blob {
+  const arr = dataurl.split(',');
+  if (arr.length < 2) {
+    throw new Error('Invalid data URL');
+  }
+  const mimeMatch = arr[0].match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : '';
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new Blob([u8arr], { type: mime });
+}
+
+export function CollectionCanvasThumbnail({ items, aspectRatio }: CollectionCanvasThumbnailProps) {
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = 320;
+    const height = 320 / aspectRatio;
+    canvas.width = width;
+    canvas.height = height;
+
+    ctx.fillStyle = '#18181b';
+    ctx.fillRect(0, 0, width, height);
+
+    if (items.length === 0) return;
+
+    const gap = 4;
+    const quadrants = [
+      { x: 0, y: 0, w: width / 2 - gap / 2, h: height / 2 - gap / 2 },
+      { x: width / 2 + gap / 2, y: 0, w: width / 2 - gap / 2, h: height / 2 - gap / 2 },
+      { x: 0, y: height / 2 + gap / 2, w: width / 2 - gap / 2, h: height / 2 - gap / 2 },
+      { x: width / 2 + gap / 2, y: height / 2 + gap / 2, w: width / 2 - gap / 2, h: height / 2 - gap / 2 }
+    ];
+
+    let active = true;
+    const activeLoopIds: number[] = [];
+    const blobUrlsToRevoke: string[] = [];
+
+    // Draw dark gray placeholders for empty spots in the 2x2 grid
+    for (let index = items.length; index < quadrants.length; index++) {
+      const quad = quadrants[index];
+      ctx.fillStyle = '#1c1c1f';
+      ctx.fillRect(quad.x, quad.y, quad.w, quad.h);
+    }
+
+    items.forEach((item, index) => {
+      if (index >= quadrants.length) return;
+      const quad = quadrants[index];
+
+      const drawSource = (srcEl: HTMLImageElement | HTMLVideoElement) => {
+        if (!active) return;
+
+        const imgWidth = srcEl instanceof HTMLVideoElement ? srcEl.videoWidth : srcEl.naturalWidth;
+        const imgHeight = srcEl instanceof HTMLVideoElement ? srcEl.videoHeight : srcEl.naturalHeight;
+
+        if (!imgWidth || !imgHeight) return;
+
+        const imgRatio = imgWidth / imgHeight;
+        const destRatio = quad.w / quad.h;
+
+        let sx = 0, sy = 0, sw = imgWidth, sh = imgHeight;
+
+        if (imgRatio > destRatio) {
+          sw = imgHeight * destRatio;
+          sx = (imgWidth - sw) / 2;
+        } else {
+          sh = imgWidth / destRatio;
+          sy = (imgHeight - sh) / 2;
+        }
+
+        try {
+          ctx.drawImage(srcEl, sx, sy, sw, sh, quad.x, quad.y, quad.w, quad.h);
+        } catch (err) {
+          console.warn('Failed to draw source frame:', err);
+        }
+      };
+
+      const img = new Image();
+      img.onload = () => {
+        drawSource(img);
+      };
+      if (item.type === 'video') {
+        img.src = item.posterUrl || VIDEO_PLACEHOLDER;
+      } else {
+        img.src = item.previewUrl;
+      }
+    });
+
+    return () => {
+      active = false;
+      activeLoopIds.forEach(id => cancelAnimationFrame(id));
+      blobUrlsToRevoke.forEach(url => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          // ignore
+        }
+      });
+    };
+  }, [items, aspectRatio]);
+
+  return <canvas ref={canvasRef} className="w-full h-full object-cover" />;
+}
 
 interface SceneLaunchCollectionTileProps {
   beat: SceneLaunchBeat;
@@ -48,6 +166,9 @@ interface SceneLaunchCollectionTileProps {
   onGridDragStart: (event: React.DragEvent<HTMLElement>, dragKey: string) => void;
   onGridDragEnd: () => void;
   dragPlaceholderContent?: React.ReactNode;
+  allCollections: SceneLaunchBeat[];
+  aspectRatio: number;
+  thumbnailMode: 'grid' | 'single';
 }
 
 export function SceneLaunchCollectionTile({
@@ -83,6 +204,9 @@ export function SceneLaunchCollectionTile({
   onGridDragStart,
   onGridDragEnd,
   dragPlaceholderContent,
+  allCollections,
+  aspectRatio,
+  thumbnailMode,
 }: SceneLaunchCollectionTileProps) {
 
   const preview = getSceneLaunchCollectionPreview(beat);
@@ -90,12 +214,57 @@ export function SceneLaunchCollectionTile({
   const totalItems = orderedMediaItems.length;
   const activeItemIndex = preview ? orderedMediaItems.findIndex(x => x.id === preview.item.id) + 1 : 0;
 
+  const findMediaItemInCollection = React.useCallback((mediaId: string): SceneLaunchMediaItem | null => {
+    return orderedMediaItems.find(m => m.id === mediaId) || null;
+  }, [orderedMediaItems]);
+
+  const prevItemsRef = React.useRef<SceneLaunchMediaItem[]>([]);
+  const firstFourItems = React.useMemo(() => {
+    const items: SceneLaunchMediaItem[] = [];
+
+    const gather = (collection: SceneLaunchBeat) => {
+      for (const key of collection.gridOrder) {
+        if (items.length >= 4) return;
+
+        if (key.type === 'media') {
+          const mediaItem = findMediaItemInCollection(key.id);
+          if (mediaItem) {
+            items.push(mediaItem);
+          }
+        } else {
+          const subBeat = allCollections.find(b => b.id === key.id);
+          if (subBeat) {
+            gather(subBeat);
+          }
+        }
+      }
+    };
+
+    gather(beat);
+
+    const prevItems = prevItemsRef.current;
+    const isSame = prevItems.length === items.length &&
+      items.every((item, idx) => item.id === prevItems[idx].id && item.previewUrl === prevItems[idx].previewUrl);
+
+    if (isSame) {
+      return prevItems;
+    }
+    prevItemsRef.current = items;
+    return items;
+  }, [beat, allCollections, findMediaItemInCollection]);
+
   return (
     <article
       data-scene-grid-item="true"
       id={`grid-item-${dragKey}`}
       draggable
-      onDragStart={(event) => onGridDragStart(event, dragKey)}
+      onDragStart={(event) => {
+        const ghostEl = document.getElementById(`drag-ghost-${dragKey}`);
+        if (ghostEl) {
+          event.dataTransfer.setDragImage(ghostEl, 48, 36);
+        }
+        onGridDragStart(event, dragKey);
+      }}
       onDragEnd={onGridDragEnd}
       onDragOver={(event) => handleGridDragOver(event, dragKey, true)}
       onDragLeave={handleGridDragLeave}
@@ -104,32 +273,108 @@ export function SceneLaunchCollectionTile({
       onMouseLeave={() => setHoveredItemKey(null)}
       style={getSceneLaunchCollectionTileStyle()}
       className={cn(
-        "group cursor-grab overflow-hidden rounded-lg border border-zinc-900 bg-zinc-950/80 transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
+        "group cursor-grab overflow-visible rounded-lg border border-zinc-900 bg-zinc-950/80 transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
         isTimelinePlaying && activeItemKey && activeItemKey !== dragKey ? "opacity-30" : "opacity-100",
         gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'inside' && "ring-2 ring-indigo-500 border-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.3)]"
       )}
       onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
     >
-      {isBeingDragged && (
-        dragPlaceholderContent
-      )}
+      {/* Hidden drag image template */}
+      <div
+        id={`drag-ghost-${dragKey}`}
+        className="fixed pointer-events-none bg-zinc-950 border border-zinc-700/60 rounded-md overflow-hidden flex flex-col items-center justify-center shadow-2xl z-[9999]"
+        style={{
+          width: '96px',
+          height: '72px',
+          left: '-9999px',
+          top: '-9999px',
+        }}
+      >
+        {firstFourItems.length > 0 ? (
+          <div className="relative w-full h-full overflow-hidden rounded-md">
+            {thumbnailMode === 'single' ? (
+              <>
+                <div className="w-full h-full relative z-10">
+                  {firstFourItems[0].type === 'video' ? (
+                    <img src={firstFourItems[0].posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <img src={firstFourItems[0].previewUrl} alt="" className="h-full w-full object-cover" />
+                  )}
+                </div>
+                {orderedMediaItems.length >= 1 && (
+                  <>
+                    <svg 
+                      width="36" 
+                      height="36" 
+                      viewBox="0 0 36 36" 
+                      className="absolute top-0 right-0 z-20 pointer-events-none overflow-visible"
+                      style={{
+                        filter: 'drop-shadow(-1px 1px 1.5px rgba(0,0,0,0.45))'
+                      }}
+                    >
+                      <path 
+                        d="M 0,0 L 36,0 L 36,36 Z" 
+                        fill="#18181b" 
+                        stroke="#27272a" 
+                        strokeWidth="1.2"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <div
+                      className="absolute top-0 right-0 w-[36px] h-[36px] z-30 flex items-start justify-end pt-1 pr-1.5 select-none pointer-events-none"
+                    >
+                      <span className="text-[9px] font-extrabold text-white font-sans tracking-tight">
+                        +{orderedMediaItems.length - 1}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <CollectionCanvasThumbnail
+                  items={firstFourItems}
+                  aspectRatio={4/3}
+                />
+                {orderedMediaItems.length > 4 && (
+                  <div className="absolute bottom-1 right-1 flex items-center justify-center rounded bg-zinc-950/80 px-1 py-0.2 shadow text-[8px] font-bold text-zinc-300 font-mono">
+                    +{orderedMediaItems.length - 4}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        ) : (
+          <Folder className="h-6 w-6 text-amber-500" />
+        )}
+        <div className="absolute inset-0 bg-black/10" />
+        <span className="absolute bottom-1 left-1 right-1 truncate text-[8px] bg-black/60 px-1 rounded text-center text-zinc-350 font-medium">
+          {beat.name}
+        </span>
+      </div>
+
       {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
-        <div className="absolute top-0 bottom-0 left-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+        <div className="absolute top-1/2 -translate-y-1/2 -left-[8px] w-1 h-[85%] bg-gradient-to-b from-indigo-400 to-violet-500 rounded-full shadow-[0_0_12px_rgba(99,102,241,0.85)] z-50 pointer-events-none animate-pulse" />
       )}
       {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'after' && (
-        <div className="absolute top-0 bottom-0 right-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
+        <div className="absolute top-1/2 -translate-y-1/2 -right-[8px] w-1 h-[85%] bg-gradient-to-b from-indigo-400 to-violet-500 rounded-full shadow-[0_0_12px_rgba(99,102,241,0.85)] z-50 pointer-events-none animate-pulse" />
       )}
-      <div
-        className="group/thumb relative bg-black h-36 sm:h-40 lg:h-44"
-        style={getSceneLaunchMediaPreviewStyle()}
-      >
+
+      <div className="w-full h-full rounded-lg overflow-hidden flex flex-col relative">
+        {isBeingDragged && (
+          dragPlaceholderContent
+        )}
+        <div
+          className="group/thumb relative bg-black h-36 sm:h-40 lg:h-44"
+          style={getSceneLaunchMediaPreviewStyle()}
+        >
         <button
           type="button"
           className="block h-full w-full relative"
           onClick={() => openBeatDetail(beat.id)}
           aria-label={`Open ${beat.name}`}
         >
-          {preview ? (
+          {preview?.isPlaying ? (
             <CollectionFrame
               collectionId={beat.id}
               orderedItems={orderedMediaItems}
@@ -137,8 +382,64 @@ export function SceneLaunchCollectionTile({
               isPlaying={preview.isPlaying}
               className="h-full w-full object-cover"
             />
+          ) : firstFourItems.length > 0 ? (
+            <div className="relative w-full h-full">
+              {thumbnailMode === 'single' ? (
+                <>
+                  <div className="w-full h-full relative z-10">
+                    {firstFourItems[0].type === 'video' ? (
+                      <img src={firstFourItems[0].posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <img src={firstFourItems[0].previewUrl} alt="" className="h-full w-full object-cover" />
+                    )}
+                  </div>
+                  {orderedMediaItems.length >= 1 && (
+                    <>
+                      <svg 
+                        width="52" 
+                        height="52" 
+                        viewBox="0 0 52 52" 
+                        className="absolute top-0 right-0 z-20 pointer-events-none overflow-visible"
+                        style={{
+                          filter: 'drop-shadow(-1.5px 1.5px 2px rgba(0,0,0,0.5))'
+                        }}
+                      >
+                        <path 
+                          d="M 0,0 L 52,0 L 52,52 Z" 
+                          fill="#18181b" 
+                          stroke="#27272a" 
+                          strokeWidth="1.5"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      <div
+                        className="absolute top-0 right-0 w-[52px] h-[52px] z-30 flex items-start justify-end pt-1.5 pr-2 select-none pointer-events-none"
+                      >
+                        <span className="text-[11px] font-extrabold text-white font-sans tracking-tight">
+                          +{orderedMediaItems.length - 1}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <CollectionCanvasThumbnail
+                    items={firstFourItems}
+                    aspectRatio={aspectRatio}
+                  />
+                  {orderedMediaItems.length > 4 && (
+                    <div className="absolute bottom-2 right-2 flex items-center justify-center rounded-md bg-zinc-950/85 border border-zinc-700/50 px-2 py-0.5 shadow-lg backdrop-blur-sm pointer-events-none z-20">
+                      <span className="text-[10px] font-bold text-zinc-200 font-mono">
+                        +{orderedMediaItems.length - 4}
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center text-center text-zinc-600 transition-colors hover:bg-white/[0.03] hover:text-zinc-300">
+            <div className="flex h-full w-full flex-col items-center justify-center text-center text-zinc-650 transition-colors hover:bg-white/[0.03] hover:text-zinc-300">
               <Grid2X2 className="h-6 w-6" />
               <span className="mt-2 text-[10px] font-semibold uppercase tracking-widest">Open collection</span>
             </div>
@@ -329,6 +630,7 @@ export function SceneLaunchCollectionTile({
           <Play className="h-4.5 w-4.5 shrink-0 fill-current text-zinc-500 group-hover:text-zinc-300" />
         )}
       </div>
-    </article>
+    </div>
+  </article>
   );
 }

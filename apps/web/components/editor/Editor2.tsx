@@ -51,6 +51,7 @@ export function Editor2() {
   } = useTimeline();
 
   const activeScene = scenes.find(scene => scene.id === activeSceneId) || scenes[0];
+  const [viewMode, setViewMode] = React.useState<'storyboard' | 'workbench'>('storyboard');
   const [activeTab, setActiveTab] = React.useState<SidebarTab>(null);
   const [directoryExpandedIds, setDirectoryExpandedIds] = React.useState<Set<string>>(new Set(['__root__']));
   const [pendingMoveItem, setPendingMoveItem] = React.useState<{ type: 'media' | 'collection'; id: string } | null>(null);
@@ -64,6 +65,8 @@ export function Editor2() {
   const [deletingSavedSceneId, setDeletingSavedSceneId] = React.useState<string | null>(null);
 
   const sidePanelRef = React.useRef<HTMLElement | null>(null);
+  const clipPropertiesPanelRef = React.useRef<HTMLElement | null>(null);
+  const workspaceRef = React.useRef<HTMLDivElement>(null);
 
   const handleAddClip = React.useCallback((
     type: ClipType,
@@ -438,6 +441,8 @@ export function Editor2() {
             onDropItem={handleDropOnDirectory}
             board={board}
             headerVariant="prompt"
+            viewMode={viewMode}
+            setViewMode={setViewMode}
           />
         </div>
       </main>
