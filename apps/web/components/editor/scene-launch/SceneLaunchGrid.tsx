@@ -176,7 +176,11 @@ export function SceneLaunchGrid({
     setIsDirectoryPickerOpen(false);
     dropHandledRef.current = false;
     directoryMoveCommittedRef.current = false;
-    setDraggedGridItemKey(dragKey);
+    // Defer the state update so the browser captures the drag ghost image
+    // before the DOM is modified by the placeholder overlay.
+    requestAnimationFrame(() => {
+      setDraggedGridItemKey(dragKey);
+    });
   };
 
   const handleGridItemDragEnd = () => {

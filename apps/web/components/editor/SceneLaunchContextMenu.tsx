@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { Grid2X2, RefreshCw, Trash2 } from 'lucide-react';
 
 import {
@@ -40,10 +41,36 @@ export function SceneLaunchContextMenu({
   onDeletePermanently,
   onAddCollection,
 }: SceneLaunchContextMenuProps) {
+  // Guard against Base UI's outside-click detection immediately closing
+  // the menu. The right-click that opened the menu is picked up as an
+  // outside pointer event by Base UI's Menu component, so we ignore the
+  // first onOpenChange(false) that arrives right after opening.
+  const openedAtRef = React.useRef<number>(0);
+
+  React.useEffect(() => {
+    if (menu) {
+      openedAtRef.current = Date.now();
+    }
+  }, [menu]);
+
+  const handleOpenChange = React.useCallback(
+    (open: boolean) => {
+      if (!open) {
+        // Ignore close requests that arrive within 200ms of opening —
+        // they're caused by the right-click itself being treated as an
+        // outside interaction.
+        const elapsed = Date.now() - openedAtRef.current;
+        if (elapsed < 200) return;
+      }
+      onOpenChange(open);
+    },
+    [onOpenChange],
+  );
+
   return (
     <DropdownMenu
       open={!!menu}
-      onOpenChange={onOpenChange}
+      onOpenChange={handleOpenChange}
     >
       {menu && (
         <DropdownMenuTrigger
