@@ -38,6 +38,7 @@ type SceneLaunchTimelineProps<TCollection extends { id: string; name: string }> 
   title: string;
   totalDuration: number;
   timelineItems: Array<SceneLaunchTimelineItem<TCollection>>;
+  selectedMediaId: string | null;
   activeItemKey: string | null;
   hoveredItemKey: string | null;
   setHoveredItemKey: React.Dispatch<React.SetStateAction<string | null>>;
@@ -224,6 +225,7 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
   title,
   totalDuration,
   timelineItems,
+  selectedMediaId,
   activeItemKey,
   hoveredItemKey,
   setHoveredItemKey,
@@ -469,9 +471,36 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
 
                 const blockWidth = duration * pxPerSecond;
                 const isItemActive = activeItemKey === dragKey;
+                const collectionMediaItems = gridItem.type === 'collection'
+                  ? getCollectionTimelineMediaItems(gridItem.collection)
+                  : [];
+                const clickedMediaId = gridItem.type === 'media'
+                  ? gridItem.item.id
+                  : collectionMediaItems[0]?.id ?? null;
                 const collectionSplitPercents = gridItem.type === 'collection' && isItemActive
                   ? getCollectionTimelineSplitPercents(gridItem.collection)
                   : [];
+                const selectedMediaRange = (() => {
+                  if (!selectedMediaId) return null;
+                  if (gridItem.type === 'media') {
+                    return gridItem.item.id === selectedMediaId
+                      ? { leftPercent: 0, widthPercent: 100 }
+                      : null;
+                  }
+
+                  let elapsedSeconds = 0;
+                  for (const mediaItem of collectionMediaItems) {
+                    const mediaDuration = getTimelineMediaDuration(mediaItem);
+                    if (mediaItem.id === selectedMediaId) {
+                      return {
+                        leftPercent: duration > 0 ? elapsedSeconds / duration * 100 : 0,
+                        widthPercent: duration > 0 ? mediaDuration / duration * 100 : 0,
+                      };
+                    }
+                    elapsedSeconds += mediaDuration;
+                  }
+                  return null;
+                })();
 
                 return (
                   <div
@@ -498,15 +527,30 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
                     onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
                     onMouseEnter={() => setHoveredItemKey(dragKey)}
                     onMouseLeave={() => setHoveredItemKey(null)}
-                    onClick={() => onTimelineTimeChange(itemStartOffset)}
+                    onClick={() => {
+                      onTimelineTimeChange(itemStartOffset);
+                      if (clickedMediaId) {
+                        onPreviewMediaId(clickedMediaId);
+                      }
+                    }}
                     style={{ width: `${blockWidth}px` }}
                     className={cn(
-                      "relative group flex-shrink-0 flex items-stretch border-r border-zinc-800/80 bg-zinc-950/30 select-none overflow-hidden transition-colors duration-150 cursor-grab active:cursor-grabbing",
+                      "relative group flex-shrink-0 flex items-stretch border-r border-zinc-800/80 bg-zinc-950/30 select-none overflow-visible transition-colors duration-150 cursor-grab active:cursor-grabbing",
                       timelineDragOverKey === dragKey && "border-l-2 border-l-indigo-500 bg-indigo-950/20",
                       gridItem.type === 'collection' && "bg-zinc-900/10 border-b-2 border-b-zinc-800",
                       isItemActive ? "bg-indigo-955/10 border-t border-t-indigo-500/40" : ""
                     )}
                   >
+                    {selectedMediaRange && (
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute -top-1.5 z-[30] h-1 bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)]"
+                        style={{
+                          left: `${selectedMediaRange.leftPercent}%`,
+                          width: `${selectedMediaRange.widthPercent}%`,
+                        }}
+                      />
+                    )}
                     {hoveredItemKey === dragKey && (
                       <div className="absolute inset-0 border border-indigo-500/45 pointer-events-none z-[25] rounded-[inherit] bg-indigo-500/5 shadow-[inset_0_0_6px_rgba(99,102,241,0.25)]" />
                     )}
@@ -521,7 +565,7 @@ export function SceneLaunchTimeline<TCollection extends { id: string; name: stri
                     {gridItem.type === 'collection' && (
                       <SceneLaunchTimelineCollectionMenu
                         collectionName={gridItem.collection.name}
-                        mediaItems={getCollectionTimelineMediaItems(gridItem.collection)}
+                        mediaItems={collectionMediaItems}
                         collectionStartOffset={itemStartOffset}
                         onPreviewItem={(timelineTimeSeconds, mediaId) => {
                           onTimelineTimeChange(timelineTimeSeconds);

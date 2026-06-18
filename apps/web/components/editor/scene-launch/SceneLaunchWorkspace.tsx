@@ -18,12 +18,18 @@ import { SceneLaunchSidebar } from '../SceneLaunchSidebar';
 import { SceneLaunchHeader } from '../SceneLaunchHeader';
 import { SceneLaunchCanvasPreview, type SceneLaunchCanvasPreviewSnapshot } from './SceneLaunchCanvasPreview';
 import { SceneLaunchGrid } from './SceneLaunchGrid';
-import { SceneLaunchPreviewWheel, type SceneLaunchPreviewWheelEffect } from './SceneLaunchPreviewWheel';
+import {
+  SceneLaunchPreviewWheelV2,
+  type SceneLaunchPreviewWheelV2Effect,
+  type SceneLaunchPreviewWheelV2Sizing,
+} from './SceneLaunchPreviewWheelV2';
 import { SceneLaunchTimeline, type SceneLaunchPlaybackMode } from '../SceneLaunchTimeline';
 import { SceneLaunchContextMenu } from '../SceneLaunchContextMenu';
 import { cn } from '@/lib/utils';
 import type { SidebarTab } from '../EditorSidebarRail';
 import type { Scene, TimelineClip, ClipType, TimelineAspectRatio } from '@/lib/timeline-context';
+
+const MAX_IMAGE_DURATION_SECONDS = 60 * 60;
 
 interface SceneLaunchWorkspaceProps {
   activeTab: SidebarTab;
@@ -129,7 +135,9 @@ export function SceneLaunchWorkspace({
   const [sceneComposerText, setSceneComposerText] = React.useState('');
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
   const [selectedPreviewMediaId, setSelectedPreviewMediaId] = React.useState<string | null>(null);
-  const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelEffect>('cylinder');
+  const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV2Effect>('cylinder');
+  const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV2Sizing>('uniform');
+  const [previewWheelDurationScale, setPreviewWheelDurationScale] = React.useState(1);
   const [previewEditDraft, setPreviewEditDraft] = React.useState<{
     mediaId: string;
     name: string;
@@ -139,30 +147,9 @@ export function SceneLaunchWorkspace({
   const [isPreviewEditSaving, setIsPreviewEditSaving] = React.useState(false);
 
   const currentTimeRef = React.useRef(0);
-  const previewSurfaceRef = React.useRef<HTMLDivElement | null>(null);
-  const [previewSurfaceSize, setPreviewSurfaceSize] = React.useState({ width: 0, height: 0 });
   React.useEffect(() => {
     currentTimeRef.current = timelineCurrentTime;
   }, [timelineCurrentTime]);
-
-  React.useEffect(() => {
-    const element = previewSurfaceRef.current;
-    if (!element) return;
-
-    const updateSize = () => {
-      const rect = element.getBoundingClientRect();
-      setPreviewSurfaceSize({
-        width: rect.width,
-        height: rect.height,
-      });
-    };
-
-    updateSize();
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(element);
-
-    return () => observer.disconnect();
-  }, []);
 
   const activeSceneLaunchBeatId = sceneLaunchBeatPath[sceneLaunchBeatPath.length - 1] || null;
   const activeSceneLaunchBeat = activeSceneLaunchBeatId
@@ -615,11 +602,6 @@ export function SceneLaunchWorkspace({
     setSceneLaunchManuallyPaused(beat.id);
     setSceneLaunchPreviewPausedOffset(targetStartOffset);
     syncTimelinePlayheadToCollectionPreview(beat.id, targetStartOffset);
-  };
-
-  const getAspectRatioValue = (ratio: string): number => {
-const [w, h] = ratio.split(':').map(Number);
-    return w / h;
   };
 
   const getSceneLaunchMediaTileStyle = React.useCallback((item: SceneLaunchMediaItem): React.CSSProperties => {
@@ -1218,7 +1200,7 @@ const [w, h] = ratio.split(':').map(Number);
   const getPreviewEditDefaults = React.useCallback((media: SceneLaunchMediaItem) => {
     const trimStartSeconds = Math.max(0, media.trimStartSeconds ?? 0);
     const sourceDuration = media.type === 'image'
-      ? 60
+      ? MAX_IMAGE_DURATION_SECONDS
       : Math.max(0.5, media.mediaDurationSeconds ?? media.durationSeconds ?? 3);
     const fallbackDuration = Math.max(0.5, sourceDuration - trimStartSeconds);
     const durationSeconds = Math.max(
@@ -1360,33 +1342,9 @@ const [w, h] = ratio.split(':').map(Number);
   }, [activePreviewDraft, activePreviewMedia, isPreviewEditSaving, updateActivePreviewDraft]);
   const activePreviewSourceDuration = activePreviewMedia
     ? activePreviewMedia.type === 'image'
-      ? 60
+      ? MAX_IMAGE_DURATION_SECONDS
       : Math.max(0.5, activePreviewMedia.mediaDurationSeconds ?? activePreviewMedia.durationSeconds ?? 3)
     : 0;
-  const activePreviewAspectRatio = getAspectRatioValue(aspectRatio);
-  const previewMediaFrameSize = (() => {
-    const availableWidth = Math.max(0, previewSurfaceSize.width - 32);
-    const availableHeight = Math.max(0, previewSurfaceSize.height - 32);
-
-    if (availableWidth <= 0 || availableHeight <= 0) {
-      return { width: 0, height: 0 };
-    }
-
-    const availableRatio = availableWidth / availableHeight;
-    if (availableRatio > activePreviewAspectRatio) {
-      const height = availableHeight;
-      return {
-        width: height * activePreviewAspectRatio,
-        height,
-      };
-    }
-
-    const width = availableWidth;
-    return {
-      width,
-      height: width / activePreviewAspectRatio,
-    };
-  })();
   const activePreviewTrimStartPercent = activePreviewDraft && activePreviewSourceDuration > 0
     ? (activePreviewDraft.trimStartSeconds / activePreviewSourceDuration) * 100
     : 0;
@@ -1750,23 +1708,9 @@ const [w, h] = ratio.split(':').map(Number);
                     <ArrowLeft className="h-4 w-4" />
                   </Button>
                   <div className="min-w-0">
-                    {activePreviewMedia && activePreviewDraft ? (
-                      <input
-                        type="text"
-                        value={activePreviewDraft.name}
-                        onChange={(event) => updateActivePreviewDraft(draft => ({
-                          ...draft,
-                          name: event.target.value,
-                        }))}
-                        disabled={isPreviewEditSaving}
-                        className="h-7 w-[min(34rem,52vw)] min-w-0 rounded-md border border-transparent bg-transparent px-0 text-xs font-bold uppercase tracking-widest text-zinc-300 outline-none transition-colors focus:border-zinc-700 focus:bg-black/30 focus:px-2"
-                        aria-label="Preview item name"
-                      />
-                    ) : (
-                      <div className="truncate text-xs font-bold uppercase tracking-widest text-zinc-300">
-                        {activePreviewItem?.title || 'Preview'}
-                      </div>
-                    )}
+                    <div className="truncate text-xs font-bold uppercase tracking-widest text-zinc-300">
+                      {activePreviewItem?.title || 'Preview'}
+                    </div>
                     <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-600">
                       {activePreviewItem?.label || 'Timeline'} preview
                     </div>
@@ -1777,30 +1721,171 @@ const [w, h] = ratio.split(':').map(Number);
                 </div>
               </div>
 
-              <div ref={previewSurfaceRef} className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
+              <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
                 {selectedPreviewMediaId ? (
                   <>
-                    <SceneLaunchPreviewWheel
+                    <SceneLaunchPreviewWheelV2
                       items={flattenedTimelineMediaItems}
                       selectedMediaId={selectedPreviewMediaId}
                       effect={previewWheelEffect}
+                      sizing={previewWheelSizing}
+                      durationScale={previewWheelDurationScale}
+                      selectedItemDurationSeconds={activePreviewDraft?.durationSeconds}
+                      selectedItemTrimStartSeconds={activePreviewDraft?.trimStartSeconds}
+                      onSelectedItemDurationChange={(durationSeconds, trimStartSeconds) => {
+                        updateActivePreviewDraft(draft => ({
+                          ...draft,
+                          durationSeconds,
+                          trimStartSeconds,
+                        }));
+                      }}
                       onCenteredMediaChange={previewSceneLaunchMediaId}
+                      renderSelectedItemOverlay={(item) => {
+                        if (!activePreviewDraft || activePreviewMedia?.id !== item.id) return null;
+
+                        return (
+                          <>
+                            <label className="pointer-events-auto absolute left-3 top-3 max-w-[calc(100%-1.5rem)] rounded-md border border-white/15 bg-black/72 px-2.5 py-2 shadow-xl backdrop-blur-md">
+                              <span className="sr-only">Item name</span>
+                              <input
+                                type="text"
+                                value={activePreviewDraft.name}
+                                onChange={(event) => updateActivePreviewDraft(draft => ({
+                                  ...draft,
+                                  name: event.target.value,
+                                }))}
+                                disabled={isPreviewEditSaving}
+                                className="w-full min-w-40 bg-transparent text-xs font-black uppercase text-white outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                              />
+                            </label>
+
+                            {item.type === 'image' ? (
+                              <label className="pointer-events-auto absolute bottom-3 left-3 rounded-md border border-white/15 bg-black/78 px-2.5 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-xl backdrop-blur-md">
+                                Duration
+                                <div className="mt-1 flex h-8 items-center rounded-md border border-zinc-700 bg-black/60 px-2">
+                                  <input
+                                    type="number"
+                                    min={0.5}
+                                    max={MAX_IMAGE_DURATION_SECONDS}
+                                    step={0.5}
+                                    value={Number(activePreviewDraft.durationSeconds.toFixed(1))}
+                                    onChange={(event) => {
+                                      const nextDuration = Math.max(
+                                        0.5,
+                                        Math.min(MAX_IMAGE_DURATION_SECONDS, Number(event.target.value) || 0.5),
+                                      );
+                                      updateActivePreviewDraft(draft => ({
+                                        ...draft,
+                                        durationSeconds: Number(nextDuration.toFixed(2)),
+                                      }));
+                                    }}
+                                    disabled={isPreviewEditSaving}
+                                    className="w-14 bg-transparent text-right text-sm font-bold normal-case tracking-normal text-white outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                                  />
+                                  <span className="ml-1.5 font-mono text-xs normal-case tracking-normal text-zinc-400">s</span>
+                                </div>
+                              </label>
+                            ) : (
+                              <div className="pointer-events-auto absolute inset-x-3 bottom-3 rounded-md border border-white/15 bg-black/78 p-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 shadow-xl backdrop-blur-md">
+                                <div className="mb-1.5 flex items-center justify-between gap-3">
+                                  <span>Trim</span>
+                                  <span className="font-mono normal-case tracking-normal text-zinc-200">
+                                    {activePreviewDraft.trimStartSeconds.toFixed(1)}s - {(activePreviewDraft.trimStartSeconds + activePreviewDraft.durationSeconds).toFixed(1)}s
+                                  </span>
+                                </div>
+                                <div
+                                  data-preview-trim-track="true"
+                                  className="relative h-12 overflow-hidden rounded-md border border-zinc-700 bg-zinc-900"
+                                >
+                                  <video
+                                    src={item.previewUrl}
+                                    className="absolute inset-0 h-full w-full object-cover opacity-55"
+                                    muted
+                                    playsInline
+                                  />
+                                  <div
+                                    className="absolute inset-y-0 left-0 bg-black/65"
+                                    style={{ width: `${activePreviewTrimStartPercent}%` }}
+                                  />
+                                  <div
+                                    className="absolute inset-y-0 right-0 bg-black/65"
+                                    style={{ width: `${Math.max(0, 100 - activePreviewTrimStartPercent - activePreviewTrimWidthPercent)}%` }}
+                                  />
+                                  <div
+                                    onPointerDown={(event) => beginPreviewTrimDrag(event, 'move')}
+                                    className="absolute inset-y-0 cursor-grab rounded-md border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.35),0_0_14px_rgba(255,255,255,0.2)] active:cursor-grabbing"
+                                    style={{
+                                      left: `${activePreviewTrimStartPercent}%`,
+                                      width: `${Math.min(
+                                        Math.max(4, activePreviewTrimWidthPercent),
+                                        100 - activePreviewTrimStartPercent,
+                                      )}%`,
+                                    }}
+                                  >
+                                    <div
+                                      onPointerDown={(event) => beginPreviewTrimDrag(event, 'start')}
+                                      className="absolute inset-y-0 left-0 flex w-5 cursor-ew-resize items-center justify-center rounded-l bg-white"
+                                    >
+                                      <div className="h-7 w-[1.5px] rounded-full bg-zinc-400" />
+                                    </div>
+                                    <div
+                                      onPointerDown={(event) => beginPreviewTrimDrag(event, 'end')}
+                                      className="absolute inset-y-0 right-0 flex w-5 cursor-ew-resize items-center justify-center rounded-r bg-white"
+                                    >
+                                      <div className="h-7 w-[1.5px] rounded-full bg-zinc-400" />
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        );
+                      }}
                     />
-                    <label className="absolute right-4 top-4 z-40 flex items-center gap-2 rounded-md border border-zinc-700/80 bg-zinc-950/88 px-2.5 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-2xl shadow-black/50 backdrop-blur-xl">
-                      <span>Wheel</span>
-                      <select
-                        value={previewWheelEffect}
-                        onChange={(event) => setPreviewWheelEffect(event.target.value as SceneLaunchPreviewWheelEffect)}
-                        className="h-7 rounded-md border border-zinc-700 bg-black/70 px-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
-                        aria-label="Wheel effect"
-                      >
-                        <option value="cylinder">Cylinder</option>
-                        <option value="cylinder2">Cylinder 2</option>
-                        <option value="coverflow">Coverflow</option>
-                        <option value="gallery">Gallery</option>
-                        <option value="stack">Stack</option>
-                      </select>
-                    </label>
+                    <div className="absolute right-4 top-4 z-40 flex items-center gap-3 rounded-md border border-zinc-700/80 bg-zinc-950/88 px-2.5 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-2xl shadow-black/50 backdrop-blur-xl">
+                      <label className="flex items-center gap-2">
+                        <span>Effect</span>
+                        <select
+                          value={previewWheelEffect}
+                          onChange={(event) => setPreviewWheelEffect(event.target.value as SceneLaunchPreviewWheelV2Effect)}
+                          className="h-7 rounded-md border border-zinc-700 bg-black/70 px-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
+                        >
+                          <option value="cylinder">Cylinder</option>
+                          <option value="cylinder2">Cylinder 2</option>
+                          <option value="coverflow">Coverflow</option>
+                          <option value="gallery">Gallery</option>
+                          <option value="stack">Stack</option>
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span>Width</span>
+                        <select
+                          value={previewWheelSizing}
+                          onChange={(event) => setPreviewWheelSizing(event.target.value as SceneLaunchPreviewWheelV2Sizing)}
+                          className="h-7 rounded-md border border-zinc-700 bg-black/70 px-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
+                        >
+                          <option value="uniform">Uniform</option>
+                          <option value="duration">Duration</option>
+                        </select>
+                      </label>
+                      {previewWheelSizing === 'duration' && (
+                        <label className="flex items-center gap-2">
+                          <span>Scale</span>
+                          <input
+                            type="range"
+                            min={0.5}
+                            max={4}
+                            step={0.25}
+                            value={previewWheelDurationScale}
+                            onChange={(event) => setPreviewWheelDurationScale(Number(event.target.value))}
+                            className="h-5 w-24 cursor-ew-resize accent-indigo-500"
+                          />
+                          <output className="w-9 text-right font-mono text-zinc-200">
+                            {previewWheelDurationScale.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}x
+                          </output>
+                        </label>
+                      )}
+                    </div>
                   </>
                 ) : (
                   <SceneLaunchCanvasPreview
@@ -1813,90 +1898,7 @@ const [w, h] = ratio.split(':').map(Number);
                   />
                 )}
                 {activePreviewMedia && activePreviewDraft && (
-                  <>
-                    {activePreviewMedia.type === 'image' ? (
-                      <label className="absolute bottom-4 left-4 rounded-lg border border-zinc-800 bg-zinc-950/88 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-500 shadow-2xl shadow-black/50 backdrop-blur-xl">
-                        Duration
-                        <div className="mt-1 flex h-8 items-center rounded-md border border-zinc-800 bg-black/50 px-2">
-                          <input
-                            type="number"
-                            min={0.5}
-                            max={60}
-                            step={0.5}
-                            value={Number(activePreviewDraft.durationSeconds.toFixed(1))}
-                            onChange={(event) => {
-                              const nextDuration = Math.max(0.5, Math.min(60, Number(event.target.value) || 0.5));
-                              updateActivePreviewDraft(draft => ({
-                                ...draft,
-                                durationSeconds: Number(nextDuration.toFixed(2)),
-                              }));
-                            }}
-                            disabled={isPreviewEditSaving}
-                            className="w-14 bg-transparent text-right text-sm font-bold normal-case tracking-normal text-zinc-100 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                            aria-label="Image duration"
-                          />
-                          <span className="ml-1.5 text-xs font-mono normal-case tracking-normal text-zinc-500">s</span>
-                        </div>
-                      </label>
-                    ) : (
-                      <div
-                        className="absolute bottom-20 left-1/2 text-[10px] font-black uppercase tracking-widest text-zinc-400"
-                        style={{
-                          width: previewMediaFrameSize.width > 0
-                            ? `${previewMediaFrameSize.width}px`
-                            : 'calc(100% - 2rem)',
-                          transform: 'translateX(-50%)',
-                        }}
-                      >
-                        <div className="mb-1.5 flex items-center justify-between">
-                          <span>Trim</span>
-                          <span className="font-mono normal-case tracking-normal text-zinc-300">
-                            {activePreviewDraft.trimStartSeconds.toFixed(1)}s - {(activePreviewDraft.trimStartSeconds + activePreviewDraft.durationSeconds).toFixed(1)}s
-                          </span>
-                        </div>
-                        <div
-                          data-preview-trim-track="true"
-                          className="relative h-14 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 shadow-2xl shadow-black/60"
-                        >
-                          <video
-                            src={activePreviewMedia.previewUrl}
-                            className="absolute inset-0 h-full w-full object-cover opacity-55"
-                            muted
-                            playsInline
-                          />
-                          <div
-                            className="absolute inset-y-0 left-0 bg-black/65"
-                            style={{ width: `${activePreviewTrimStartPercent}%` }}
-                          />
-                          <div
-                            className="absolute inset-y-0 right-0 bg-black/65"
-                            style={{ width: `${Math.max(0, 100 - activePreviewTrimStartPercent - activePreviewTrimWidthPercent)}%` }}
-                          />
-                          <div
-                            onPointerDown={(event) => beginPreviewTrimDrag(event, 'move')}
-                            className="absolute inset-y-0 cursor-grab rounded-md border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.35),0_0_18px_rgba(255,255,255,0.24)] active:cursor-grabbing"
-                            style={{
-                              left: `${activePreviewTrimStartPercent}%`,
-                              width: `${Math.max(4, activePreviewTrimWidthPercent)}%`,
-                            }}
-                          >
-                            <div
-                              onPointerDown={(event) => beginPreviewTrimDrag(event, 'start')}
-                              className="absolute inset-y-0 left-0 flex w-5 cursor-ew-resize items-center justify-center rounded-l bg-white"
-                            >
-                              <div className="h-8 w-[1.5px] rounded-full bg-zinc-400" />
-                            </div>
-                            <div
-                              onPointerDown={(event) => beginPreviewTrimDrag(event, 'end')}
-                              className="absolute inset-y-0 right-0 flex w-5 cursor-ew-resize items-center justify-center rounded-r bg-white"
-                            >
-                              <div className="h-8 w-[1.5px] rounded-full bg-zinc-400" />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    <div className="absolute bottom-4 right-4 flex items-center gap-2">
+                  <div className="absolute bottom-4 right-4 flex items-center gap-2">
                       <Button
                         type="button"
                         variant="outline"
@@ -1920,8 +1922,7 @@ const [w, h] = ratio.split(':').map(Number);
                         )}
                         Done
                       </Button>
-                    </div>
-                  </>
+                  </div>
                 )}
               </div>
             </section>
@@ -1932,6 +1933,7 @@ const [w, h] = ratio.split(':').map(Number);
           title={sceneLaunchTimelineTitle}
           totalDuration={timelineTotalDuration}
           timelineItems={timelineItems}
+          selectedMediaId={selectedPreviewMediaId}
           activeItemKey={activeItemKey}
           hoveredItemKey={hoveredItemKey}
           setHoveredItemKey={setHoveredItemKey}

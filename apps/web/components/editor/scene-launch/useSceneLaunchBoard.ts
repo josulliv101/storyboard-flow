@@ -4,6 +4,8 @@ import React from 'react';
 import { toast } from 'sonner';
 import type { Scene, TimelineClip, ClipType } from '@/lib/timeline-context';
 
+const MAX_IMAGE_DURATION_SECONDS = 60 * 60;
+
 export type SceneLaunchMediaItem = {
   id: string;
   clipId: string;
@@ -965,7 +967,7 @@ export function useSceneLaunchBoard({
 
       const trimStart = Math.max(0, item.trimStartSeconds ?? 0);
       const sourceDuration = item.type === 'image'
-        ? 60
+        ? MAX_IMAGE_DURATION_SECONDS
         : item.mediaDurationSeconds ?? Math.max(trimStart + 0.5, item.durationSeconds ?? durationSeconds ?? 1);
       const maxDuration = Math.max(0.5, sourceDuration - trimStart);
       const nextDuration = Math.max(0.5, Math.min(maxDuration, durationSeconds || 1));
