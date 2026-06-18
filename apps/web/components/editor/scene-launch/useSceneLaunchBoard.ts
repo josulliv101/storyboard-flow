@@ -1023,31 +1023,35 @@ export function useSceneLaunchBoard({
   };
 
   const updateSceneLaunchMediaTrim = (mediaId: string, trimStartSeconds: number, durationSeconds: number) => {
+    const mediaItem = findSceneLaunchMediaItem(mediaId);
+    if (!mediaItem) return;
+
+    const sourceDuration = mediaItem.mediaDurationSeconds
+      ?? Math.max(0.5, mediaItem.durationSeconds ?? durationSeconds ?? 0.5);
+    const nextTrimStart = Math.max(0, Math.min(sourceDuration - 0.5, trimStartSeconds));
+    const maxDuration = Math.max(0.5, sourceDuration - nextTrimStart);
+    const nextDuration = Math.max(0.5, Math.min(maxDuration, durationSeconds));
+
+    if (activeScene) {
+      const correspondingClip = activeScene.clips.find(clip =>
+        (mediaItem.clipId && clip.id === mediaItem.clipId) ||
+        (clip.name === mediaItem.name && clip.type === 'video')
+      );
+      if (correspondingClip) {
+        updateClip(correspondingClip.id, {
+          trimStart: Math.round(nextTrimStart * 30),
+          duration: Math.round(nextDuration * 30),
+        });
+      }
+    }
+
     const updateItem = (item: SceneLaunchMediaItem) => {
       if (item.id === mediaId) {
-        const sourceDuration = item.mediaDurationSeconds ?? Math.max(0.5, item.durationSeconds ?? durationSeconds ?? 0.5);
-        const nextTrimStart = Math.max(0, Math.min(sourceDuration - 0.5, trimStartSeconds));
-        const maxDuration = Math.max(0.5, sourceDuration - nextTrimStart);
-        const nextDuration = Math.max(0.5, Math.min(maxDuration, durationSeconds));
-        const updated = {
+        return {
           ...item,
           trimStartSeconds: nextTrimStart,
           durationSeconds: nextDuration,
         };
-
-        if (activeScene) {
-          const correspondingClip = activeScene.clips.find(clip =>
-            (item.clipId && clip.id === item.clipId) ||
-            (clip.name === item.name && clip.type === 'video')
-          );
-          if (correspondingClip) {
-            updateClip(correspondingClip.id, {
-              trimStart: Math.round(nextTrimStart * 30),
-              duration: Math.round(nextDuration * 30),
-            });
-          }
-        }
-        return updated;
       }
       return item;
     };

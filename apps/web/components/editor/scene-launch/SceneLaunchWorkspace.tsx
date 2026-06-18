@@ -1,8 +1,9 @@
 'use client';
 
 import React from 'react';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Check, Clapperboard, Grid2X2, Loader2, MonitorPlay, Pause, Play, Plus, Ratio, Repeat, Search, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, MonitorPlay, Pause, Play, Plus, Ratio, Repeat, Search } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
   Button,
@@ -19,11 +20,12 @@ import { SceneLaunchHeader } from '../SceneLaunchHeader';
 import { SceneLaunchCanvasPreview, type SceneLaunchCanvasPreviewSnapshot } from './SceneLaunchCanvasPreview';
 import { SceneLaunchGrid } from './SceneLaunchGrid';
 import {
-  SceneLaunchPreviewWheelV2,
-  type SceneLaunchPreviewWheelV2Effect,
-  type SceneLaunchPreviewWheelV2Sizing,
-} from './SceneLaunchPreviewWheelV2';
-import { SceneLaunchTimeline, type SceneLaunchPlaybackMode } from '../SceneLaunchTimeline';
+  SceneLaunchPreviewWheelV3,
+  type SceneLaunchPreviewWheelV3Effect,
+  type SceneLaunchPreviewWheelV3Sizing,
+} from './SceneLaunchPreviewWheelV3';
+import { VideoFrameFilmstrip } from './VideoFrameFilmstrip';
+import type { SceneLaunchPlaybackMode } from '../SceneLaunchTimeline';
 import { SceneLaunchContextMenu } from '../SceneLaunchContextMenu';
 import { cn } from '@/lib/utils';
 import type { SidebarTab } from '../EditorSidebarRail';
@@ -120,23 +122,22 @@ export function SceneLaunchWorkspace({
     handleItemContextMenu,
   } = board;
 
-  const [pxPerSecond, setPxPerSecond] = React.useState(20);
-  const [resizingItem, setResizingItem] = React.useState<any>(null);
-  const [timelineDragOverKey, setTimelineDragOverKey] = React.useState<string | null>(null);
+  const [resizingItem] = React.useState<any>(null);
   const [gridDragOverInfo, setGridDragOverInfo] = React.useState<{ targetKey: string; position: 'before' | 'after' | 'inside' } | null>(null);
   const [isEditingHeaderName, setIsEditingHeaderName] = React.useState(false);
   const [editingHeaderNameValue, setEditingHeaderNameValue] = React.useState('');
   const [sceneLaunchPlaybackMode, setSceneLaunchPlaybackMode] = React.useState<SceneLaunchPlaybackMode>('inline');
   const [isTimelinePlaying, setIsTimelinePlaying] = React.useState(false);
+  const [isWheelPreviewPlaying, setIsWheelPreviewPlaying] = React.useState(false);
   const [isTimelineLooping, setIsTimelineLooping] = React.useState(true);
   const [timelineCurrentTime, setTimelineCurrentTime] = React.useState(0);
-  const [isScrubbing, setIsScrubbing] = React.useState(false);
+  const [isScrubbing] = React.useState(false);
   const [sceneLaunchPreviewNow, setSceneLaunchPreviewNow] = React.useState(() => Date.now());
   const [sceneComposerText, setSceneComposerText] = React.useState('');
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
   const [selectedPreviewMediaId, setSelectedPreviewMediaId] = React.useState<string | null>(null);
-  const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV2Effect>('cylinder');
-  const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV2Sizing>('uniform');
+  const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV3Effect>('gallery');
+  const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV3Sizing>('uniform');
   const [previewWheelDurationScale, setPreviewWheelDurationScale] = React.useState(1);
   const [previewEditDraft, setPreviewEditDraft] = React.useState<{
     mediaId: string;
@@ -144,7 +145,6 @@ export function SceneLaunchWorkspace({
     durationSeconds: number;
     trimStartSeconds: number;
   } | null>(null);
-  const [isPreviewEditSaving, setIsPreviewEditSaving] = React.useState(false);
 
   const currentTimeRef = React.useRef(0);
   React.useEffect(() => {
@@ -753,12 +753,10 @@ export function SceneLaunchWorkspace({
 
   const activeItemInfo = getActiveTimelineItemInfo(timelineCurrentTime);
   const activeItemKey = activeItemInfo ? `${activeItemInfo.type}:${activeItemInfo.id}` : null;
-  const sceneLaunchTimelineTitle = activeSceneLaunchBeatId === 'trash'
-    ? 'Trash Timeline'
-    : activeSceneLaunchBeat
-      ? `${activeSceneLaunchBeat.name} Timeline`
-      : 'Project Timeline';
-
+  const isWheelSequencePreview =
+    sceneLaunchPlaybackMode === 'preview' &&
+    previewWheelEffect === 'gallery' &&
+    Boolean(selectedPreviewMediaId);
   const setSceneLaunchTimelineTime = React.useCallback((time: number) => {
     setTimelineCurrentTime(time);
     currentTimeRef.current = time;
@@ -767,25 +765,33 @@ export function SceneLaunchWorkspace({
   }, [setSceneLaunchPreviewHover]);
 
   const toggleSceneLaunchTimelinePlayback = React.useCallback(() => {
+    if (isWheelSequencePreview) {
+      setIsTimelinePlaying(false);
+      setIsWheelPreviewPlaying(current => !current);
+      return;
+    }
+
     const nextPlaying = !isTimelinePlaying;
+    setIsWheelPreviewPlaying(false);
     setIsTimelinePlaying(nextPlaying);
     if (nextPlaying) {
       setSceneLaunchTimelineTime(0);
       setSceneLaunchPreviewPausedOffset(0);
       setSceneLaunchManuallyPaused(null);
     }
-  }, [isTimelinePlaying, setSceneLaunchTimelineTime]);
+  }, [isTimelinePlaying, isWheelSequencePreview, setSceneLaunchTimelineTime]);
 
   const toggleSceneLaunchPreview = React.useCallback(() => {
+    if (sceneLaunchPlaybackMode === 'preview') setIsWheelPreviewPlaying(false);
     setSceneLaunchPlaybackMode(current => current === 'preview' ? 'inline' : 'preview');
-  }, []);
+  }, [sceneLaunchPlaybackMode]);
 
   const previewSceneLaunchMediaId = React.useCallback((mediaId: string) => {
     setIsTimelinePlaying(false);
+    setIsWheelPreviewPlaying(false);
     setSceneLaunchPreviewHover(null);
     setSceneLaunchManuallyPaused(null);
     setSceneLaunchPreviewPausedOffset(0);
-    setIsPreviewEditSaving(false);
     setPreviewEditDraft(null);
     setSelectedPreviewMediaId(mediaId);
     setSceneLaunchPlaybackMode('preview');
@@ -794,6 +800,10 @@ export function SceneLaunchWorkspace({
   const previewSceneLaunchMedia = React.useCallback((item: SceneLaunchMediaItem) => {
     previewSceneLaunchMediaId(item.id);
   }, [previewSceneLaunchMediaId]);
+  const selectPreviewMediaDuringPlayback = React.useCallback((mediaId: string) => {
+    setPreviewEditDraft(null);
+    setSelectedPreviewMediaId(mediaId);
+  }, []);
 
   const handleBoardContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>, insertionIndex: number) => {
     event.preventDefault();
@@ -1235,46 +1245,11 @@ export function SceneLaunchWorkspace({
         : getPreviewEditDefaults(activePreviewMedia)
     ));
   }, [activePreviewMedia, getPreviewEditDefaults]);
-  const cancelPreviewEdit = React.useCallback(() => {
-    setIsPreviewEditSaving(false);
-    setPreviewEditDraft(null);
-    setSceneLaunchPlaybackMode('inline');
-  }, []);
-  const commitPreviewEdit = React.useCallback(() => {
-    if (!activePreviewMedia || !activePreviewDraft || isPreviewEditSaving) return;
-
-    setIsPreviewEditSaving(true);
-    updateSceneLaunchMediaName(activePreviewMedia.id, activePreviewDraft.name);
-    if (activePreviewMedia.type === 'video') {
-      updateSceneLaunchMediaTrim(
-        activePreviewMedia.id,
-        activePreviewDraft.trimStartSeconds,
-        activePreviewDraft.durationSeconds
-      );
-    } else {
-      updateSceneLaunchMediaDuration(activePreviewMedia.id, activePreviewDraft.durationSeconds);
-    }
-
-    window.setTimeout(() => {
-      setSceneLaunchPlaybackMode('inline');
-      window.setTimeout(() => {
-        setPreviewEditDraft(null);
-        setIsPreviewEditSaving(false);
-      }, 450);
-    }, 120);
-  }, [
-    activePreviewDraft,
-    activePreviewMedia,
-    isPreviewEditSaving,
-    updateSceneLaunchMediaDuration,
-    updateSceneLaunchMediaName,
-    updateSceneLaunchMediaTrim,
-  ]);
   const beginPreviewTrimDrag = React.useCallback((
     event: React.PointerEvent<HTMLElement>,
     mode: 'start' | 'end' | 'move'
   ) => {
-    if (!activePreviewMedia || activePreviewMedia.type !== 'video' || !activePreviewDraft || isPreviewEditSaving) return;
+    if (!activePreviewMedia || activePreviewMedia.type !== 'video' || !activePreviewDraft) return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -1288,6 +1263,8 @@ export function SceneLaunchWorkspace({
     const initialStart = activePreviewDraft.trimStartSeconds;
     const initialDuration = activePreviewDraft.durationSeconds;
     const startX = event.clientX;
+    let latestTrimStart = initialStart;
+    let latestDuration = initialDuration;
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const deltaSeconds = ((moveEvent.clientX - startX) / trackWidth) * sourceDuration;
@@ -1302,10 +1279,12 @@ export function SceneLaunchWorkspace({
               sourceDuration - 0.5
             )
           );
+          latestTrimStart = Number(nextStart.toFixed(2));
+          latestDuration = Number(Math.max(0.5, initialDuration - (nextStart - initialStart)).toFixed(2));
           return {
             ...draft,
-            trimStartSeconds: Number(nextStart.toFixed(2)),
-            durationSeconds: Number(Math.max(0.5, initialDuration - (nextStart - initialStart)).toFixed(2)),
+            trimStartSeconds: latestTrimStart,
+            durationSeconds: latestDuration,
           };
         }
 
@@ -1314,9 +1293,10 @@ export function SceneLaunchWorkspace({
             0,
             Math.min(sourceDuration - initialDuration, initialStart + deltaSeconds)
           );
+          latestTrimStart = Number(nextStart.toFixed(2));
           return {
             ...draft,
-            trimStartSeconds: Number(nextStart.toFixed(2)),
+            trimStartSeconds: latestTrimStart,
           };
         }
 
@@ -1324,22 +1304,28 @@ export function SceneLaunchWorkspace({
           0.5,
           Math.min(sourceDuration - initialStart, initialDuration + deltaSeconds)
         );
+        latestDuration = Number(nextDuration.toFixed(2));
         return {
           ...draft,
-          durationSeconds: Number(nextDuration.toFixed(2)),
+          durationSeconds: latestDuration,
         };
       });
     };
 
     const onPointerUp = () => {
-      pointerTarget.releasePointerCapture(pointerId);
+      updateSceneLaunchMediaTrim(activePreviewMedia.id, latestTrimStart, latestDuration);
+      if (pointerTarget.hasPointerCapture(pointerId)) {
+        pointerTarget.releasePointerCapture(pointerId);
+      }
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
     };
 
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
-  }, [activePreviewDraft, activePreviewMedia, isPreviewEditSaving, updateActivePreviewDraft]);
+    window.addEventListener('pointercancel', onPointerUp);
+  }, [activePreviewDraft, activePreviewMedia, updateActivePreviewDraft, updateSceneLaunchMediaTrim]);
   const activePreviewSourceDuration = activePreviewMedia
     ? activePreviewMedia.type === 'image'
       ? MAX_IMAGE_DURATION_SECONDS
@@ -1352,6 +1338,7 @@ export function SceneLaunchWorkspace({
     ? (activePreviewDraft.durationSeconds / activePreviewSourceDuration) * 100
     : 0;
 
+  const isPlaybackActive = isWheelSequencePreview ? isWheelPreviewPlaying : isTimelinePlaying;
   const headerPlaybackControls = (
     <div className="flex h-11 items-center justify-center gap-2.5 rounded-full border border-white/10 bg-zinc-950/85 px-3 text-zinc-300 shadow-[0_12px_36px_rgba(0,0,0,0.32)] ring-1 ring-black/30 backdrop-blur-xl">
       <button
@@ -1374,18 +1361,18 @@ export function SceneLaunchWorkspace({
         onClick={toggleSceneLaunchTimelinePlayback}
         className={cn(
           'flex h-9 w-9 items-center justify-center rounded-full text-white shadow-md transition-all',
-          isTimelinePlaying
+          isPlaybackActive
             ? 'bg-red-650 hover:bg-red-700'
             : 'bg-indigo-600 hover:bg-indigo-700'
         )}
         title={sceneLaunchPlaybackMode === 'preview'
-          ? isTimelinePlaying ? 'Pause Preview' : 'Play Preview'
-          : isTimelinePlaying ? 'Pause Timeline' : 'Play Timeline'}
+          ? isPlaybackActive ? 'Pause Preview' : 'Play Preview'
+          : isPlaybackActive ? 'Pause Timeline' : 'Play Timeline'}
         aria-label={sceneLaunchPlaybackMode === 'preview'
-          ? isTimelinePlaying ? 'Pause Preview' : 'Play Preview'
-          : isTimelinePlaying ? 'Pause Timeline' : 'Play Timeline'}
+          ? isPlaybackActive ? 'Pause Preview' : 'Play Preview'
+          : isPlaybackActive ? 'Pause Timeline' : 'Play Timeline'}
       >
-        {isTimelinePlaying ? (
+        {isPlaybackActive ? (
           <Pause className="h-4 w-4 fill-current" />
         ) : (
           <Play className="ml-0.5 h-4 w-4 fill-current" />
@@ -1557,7 +1544,7 @@ export function SceneLaunchWorkspace({
 
         <main className="relative min-h-0 flex-1 overflow-hidden">
           <motion.div
-            className="absolute inset-0 overflow-y-auto px-6 pb-56"
+            className="absolute inset-0 overflow-y-auto px-6 pb-6"
             animate={{
               x: '0%',
               opacity: sceneLaunchPlaybackMode === 'preview' ? 0.18 : 1,
@@ -1683,7 +1670,7 @@ export function SceneLaunchWorkspace({
           </motion.div>
 
           <motion.div
-            className="absolute inset-x-0 top-0 bottom-0 z-10 flex items-center justify-center px-6 pb-56 pt-6"
+            className="absolute inset-0 z-10 flex items-center justify-center p-6"
             initial={false}
             animate={{
               y: sceneLaunchPlaybackMode === 'preview' ? '0%' : '100%',
@@ -1695,14 +1682,20 @@ export function SceneLaunchWorkspace({
             aria-hidden={sceneLaunchPlaybackMode !== 'preview'}
           >
             <section className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/95 shadow-2xl shadow-black/50">
-              <div className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-zinc-800 px-4">
+              <div className={cn(
+                "grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 border-b border-zinc-800 px-4",
+                activePreviewMedia && previewWheelEffect !== 'gallery' ? 'h-32' : 'h-24',
+              )}>
                 <div className="flex min-w-0 items-center gap-3">
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 shrink-0 rounded-full text-zinc-400 hover:bg-white/5 hover:text-white"
-                    onClick={() => setSceneLaunchPlaybackMode('inline')}
+                    onClick={() => {
+                      setIsWheelPreviewPlaying(false);
+                      setSceneLaunchPlaybackMode('inline');
+                    }}
                     aria-label="Back to scene board"
                   >
                     <ArrowLeft className="h-4 w-4" />
@@ -1716,15 +1709,116 @@ export function SceneLaunchWorkspace({
                     </div>
                   </div>
                 </div>
-                <div className="rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-indigo-200">
-                  Play Preview
-                </div>
+                {activePreviewMedia && activePreviewDraft && previewWheelEffect !== 'gallery' && (
+                  <div className={cn(
+                    "justify-self-center",
+                    activePreviewMedia.type === 'image' ? 'w-40' : 'w-[42rem]',
+                  )}>
+                    {activePreviewMedia.type === 'video' && (
+                      <div className="mb-1 flex items-center justify-between gap-3 text-[9px] font-black uppercase tracking-widest text-zinc-400">
+                        <span>Trim</span>
+                        <span className="font-mono normal-case tracking-normal text-zinc-300">
+                          {activePreviewDraft.trimStartSeconds.toFixed(1)}s - {(activePreviewDraft.trimStartSeconds + activePreviewDraft.durationSeconds).toFixed(1)}s
+                        </span>
+                      </div>
+                    )}
+                    <div
+                      data-preview-trim-track={activePreviewMedia.type === 'video' ? 'true' : undefined}
+                      className={cn(
+                        "relative overflow-hidden rounded-md",
+                        activePreviewMedia.type === 'image'
+                          ? 'h-24'
+                          : 'h-24 border border-zinc-700 bg-zinc-900',
+                      )}
+                    >
+                      {activePreviewMedia.type === 'video' ? (
+                        <>
+                          <VideoFrameFilmstrip
+                            key={activePreviewMedia.id}
+                            src={activePreviewMedia.previewUrl}
+                            durationSeconds={activePreviewSourceDuration}
+                            frameCount={4}
+                          />
+                          <div
+                            className="absolute inset-y-0 left-0 bg-black/65"
+                            style={{ width: `${activePreviewTrimStartPercent}%` }}
+                          />
+                          <div
+                            className="absolute inset-y-0 right-0 bg-black/65"
+                            style={{ width: `${Math.max(0, 100 - activePreviewTrimStartPercent - activePreviewTrimWidthPercent)}%` }}
+                          />
+                          <div
+                            onPointerDown={(event) => beginPreviewTrimDrag(event, 'move')}
+                            className="absolute inset-y-0 cursor-grab rounded-md border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.35),0_0_14px_rgba(255,255,255,0.2)] active:cursor-grabbing"
+                            style={{
+                              left: `${activePreviewTrimStartPercent}%`,
+                              width: `${Math.min(
+                                Math.max(4, activePreviewTrimWidthPercent),
+                                100 - activePreviewTrimStartPercent,
+                              )}%`,
+                            }}
+                          >
+                            <div
+                              onPointerDown={(event) => beginPreviewTrimDrag(event, 'start')}
+                              className="absolute inset-y-0 left-0 flex w-5 cursor-ew-resize items-center justify-center rounded-l bg-white"
+                            >
+                              <div className="h-12 w-[1.5px] rounded-full bg-zinc-400" />
+                            </div>
+                            <div
+                              onPointerDown={(event) => beginPreviewTrimDrag(event, 'end')}
+                              className="absolute inset-y-0 right-0 flex w-5 cursor-ew-resize items-center justify-center rounded-r bg-white"
+                            >
+                              <div className="h-12 w-[1.5px] rounded-full bg-zinc-400" />
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <Image
+                          src={activePreviewMedia.previewUrl}
+                          alt={`Thumbnail of ${activePreviewMedia.name}`}
+                          fill
+                          sizes="160px"
+                          unoptimized
+                          className="object-cover"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+                {activePreviewMedia?.type === 'image' && activePreviewDraft && previewWheelEffect !== 'gallery' && (
+                  <label className="justify-self-end rounded-md border border-zinc-700 bg-zinc-950/85 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-zinc-400 shadow-lg">
+                    <span className="mb-1 block">Duration</span>
+                    <span className="flex h-8 items-center rounded-md border border-zinc-700 bg-black/70 px-2">
+                      <input
+                        type="number"
+                        min={0.5}
+                        max={MAX_IMAGE_DURATION_SECONDS}
+                        step={0.5}
+                        value={Number(activePreviewDraft.durationSeconds.toFixed(1))}
+                        onChange={(event) => {
+                          const nextDuration = Math.max(
+                            0.5,
+                            Math.min(MAX_IMAGE_DURATION_SECONDS, Number(event.target.value) || 0.5),
+                          );
+                          updateActivePreviewDraft(draft => ({
+                            ...draft,
+                            durationSeconds: Number(nextDuration.toFixed(2)),
+                          }));
+                          updateSceneLaunchMediaDuration(activePreviewMedia.id, Number(nextDuration.toFixed(2)));
+                        }}
+                        className="w-16 bg-transparent text-right font-mono text-sm font-bold normal-case tracking-normal text-white outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                      />
+                      <span className="ml-1.5 font-mono text-xs normal-case tracking-normal text-zinc-400">s</span>
+                    </span>
+                  </label>
+                )}
               </div>
 
-              <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
+              <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center bg-black">
                 {selectedPreviewMediaId ? (
                   <>
-                    <SceneLaunchPreviewWheelV2
+                    <div className="min-h-0 w-full flex-1">
+                      <SceneLaunchPreviewWheelV3
                       items={flattenedTimelineMediaItems}
                       selectedMediaId={selectedPreviewMediaId}
                       effect={previewWheelEffect}
@@ -1739,7 +1833,66 @@ export function SceneLaunchWorkspace({
                           trimStartSeconds,
                         }));
                       }}
+                      onSelectedItemDurationChangeEnd={(durationSeconds, trimStartSeconds) => {
+                        if (!activePreviewMedia) return;
+                        if (activePreviewMedia.type === 'video') {
+                          updateSceneLaunchMediaTrim(activePreviewMedia.id, trimStartSeconds, durationSeconds);
+                        } else {
+                          updateSceneLaunchMediaDuration(activePreviewMedia.id, durationSeconds);
+                        }
+                      }}
                       onCenteredMediaChange={previewSceneLaunchMediaId}
+                      renderGalleryTrimOverlay={(item) => {
+                        if (!activePreviewDraft || activePreviewMedia?.id !== item.id || item.type !== 'video') return null;
+
+                        return (
+                          <div>
+                            <div className="mb-1.5 flex items-center justify-between gap-3 text-[9px] font-black uppercase tracking-widest text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.95)]">
+                              <span>Trim</span>
+                              <span className="font-mono normal-case tracking-normal text-zinc-200">
+                                {activePreviewDraft.trimStartSeconds.toFixed(1)}s - {(activePreviewDraft.trimStartSeconds + activePreviewDraft.durationSeconds).toFixed(1)}s
+                              </span>
+                            </div>
+                            <div
+                              data-preview-trim-track="true"
+                              className="relative h-16 overflow-hidden rounded-md border border-zinc-700 bg-zinc-900"
+                            >
+                              <VideoFrameFilmstrip
+                                key={activePreviewMedia.id}
+                                src={activePreviewMedia.previewUrl}
+                                durationSeconds={activePreviewSourceDuration}
+                                frameCount={6}
+                              />
+                              <div className="absolute inset-y-0 left-0 bg-black/65" style={{ width: `${activePreviewTrimStartPercent}%` }} />
+                              <div
+                                className="absolute inset-y-0 right-0 bg-black/65"
+                                style={{ width: `${Math.max(0, 100 - activePreviewTrimStartPercent - activePreviewTrimWidthPercent)}%` }}
+                              />
+                              <div
+                                onPointerDown={(event) => beginPreviewTrimDrag(event, 'move')}
+                                className="absolute inset-y-0 cursor-grab rounded-md border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.35),0_0_14px_rgba(255,255,255,0.2)] active:cursor-grabbing"
+                                style={{
+                                  left: `${activePreviewTrimStartPercent}%`,
+                                  width: `${Math.min(Math.max(4, activePreviewTrimWidthPercent), 100 - activePreviewTrimStartPercent)}%`,
+                                }}
+                              >
+                                <div
+                                  onPointerDown={(event) => beginPreviewTrimDrag(event, 'start')}
+                                  className="absolute inset-y-0 left-0 flex w-5 cursor-ew-resize items-center justify-center rounded-l bg-white"
+                                >
+                                  <div className="h-8 w-[1.5px] rounded-full bg-zinc-400" />
+                                </div>
+                                <div
+                                  onPointerDown={(event) => beginPreviewTrimDrag(event, 'end')}
+                                  className="absolute inset-y-0 right-0 flex w-5 cursor-ew-resize items-center justify-center rounded-r bg-white"
+                                >
+                                  <div className="h-8 w-[1.5px] rounded-full bg-zinc-400" />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }}
                       renderSelectedItemOverlay={(item) => {
                         if (!activePreviewDraft || activePreviewMedia?.id !== item.id) return null;
 
@@ -1754,100 +1907,67 @@ export function SceneLaunchWorkspace({
                                   ...draft,
                                   name: event.target.value,
                                 }))}
-                                disabled={isPreviewEditSaving}
+                                onBlur={(event) => updateSceneLaunchMediaName(item.id, event.target.value)}
                                 className="w-full min-w-40 bg-transparent text-xs font-black uppercase text-white outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
                               />
                             </label>
 
-                            {item.type === 'image' ? (
-                              <label className="pointer-events-auto absolute bottom-3 left-3 rounded-md border border-white/15 bg-black/78 px-2.5 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-xl backdrop-blur-md">
-                                Duration
-                                <div className="mt-1 flex h-8 items-center rounded-md border border-zinc-700 bg-black/60 px-2">
-                                  <input
-                                    type="number"
-                                    min={0.5}
-                                    max={MAX_IMAGE_DURATION_SECONDS}
-                                    step={0.5}
-                                    value={Number(activePreviewDraft.durationSeconds.toFixed(1))}
-                                    onChange={(event) => {
-                                      const nextDuration = Math.max(
-                                        0.5,
-                                        Math.min(MAX_IMAGE_DURATION_SECONDS, Number(event.target.value) || 0.5),
-                                      );
-                                      updateActivePreviewDraft(draft => ({
-                                        ...draft,
-                                        durationSeconds: Number(nextDuration.toFixed(2)),
-                                      }));
-                                    }}
-                                    disabled={isPreviewEditSaving}
-                                    className="w-14 bg-transparent text-right text-sm font-bold normal-case tracking-normal text-white outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                                  />
-                                  <span className="ml-1.5 font-mono text-xs normal-case tracking-normal text-zinc-400">s</span>
-                                </div>
-                              </label>
-                            ) : (
-                              <div className="pointer-events-auto absolute inset-x-3 bottom-3 rounded-md border border-white/15 bg-black/78 p-2.5 text-[10px] font-black uppercase tracking-widest text-zinc-300 shadow-xl backdrop-blur-md">
-                                <div className="mb-1.5 flex items-center justify-between gap-3">
-                                  <span>Trim</span>
-                                  <span className="font-mono normal-case tracking-normal text-zinc-200">
-                                    {activePreviewDraft.trimStartSeconds.toFixed(1)}s - {(activePreviewDraft.trimStartSeconds + activePreviewDraft.durationSeconds).toFixed(1)}s
-                                  </span>
-                                </div>
-                                <div
-                                  data-preview-trim-track="true"
-                                  className="relative h-12 overflow-hidden rounded-md border border-zinc-700 bg-zinc-900"
-                                >
-                                  <video
-                                    src={item.previewUrl}
-                                    className="absolute inset-0 h-full w-full object-cover opacity-55"
-                                    muted
-                                    playsInline
-                                  />
-                                  <div
-                                    className="absolute inset-y-0 left-0 bg-black/65"
-                                    style={{ width: `${activePreviewTrimStartPercent}%` }}
-                                  />
-                                  <div
-                                    className="absolute inset-y-0 right-0 bg-black/65"
-                                    style={{ width: `${Math.max(0, 100 - activePreviewTrimStartPercent - activePreviewTrimWidthPercent)}%` }}
-                                  />
-                                  <div
-                                    onPointerDown={(event) => beginPreviewTrimDrag(event, 'move')}
-                                    className="absolute inset-y-0 cursor-grab rounded-md border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.35),0_0_14px_rgba(255,255,255,0.2)] active:cursor-grabbing"
-                                    style={{
-                                      left: `${activePreviewTrimStartPercent}%`,
-                                      width: `${Math.min(
-                                        Math.max(4, activePreviewTrimWidthPercent),
-                                        100 - activePreviewTrimStartPercent,
-                                      )}%`,
-                                    }}
-                                  >
-                                    <div
-                                      onPointerDown={(event) => beginPreviewTrimDrag(event, 'start')}
-                                      className="absolute inset-y-0 left-0 flex w-5 cursor-ew-resize items-center justify-center rounded-l bg-white"
-                                    >
-                                      <div className="h-7 w-[1.5px] rounded-full bg-zinc-400" />
-                                    </div>
-                                    <div
-                                      onPointerDown={(event) => beginPreviewTrimDrag(event, 'end')}
-                                      className="absolute inset-y-0 right-0 flex w-5 cursor-ew-resize items-center justify-center rounded-r bg-white"
-                                    >
-                                      <div className="h-7 w-[1.5px] rounded-full bg-zinc-400" />
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
                           </>
                         );
                       }}
-                    />
+                      isPreviewPlaying={isWheelPreviewPlaying}
+                      loopPreviewPlayback={isTimelineLooping}
+                      onPreviewPlaybackComplete={() => setIsWheelPreviewPlaying(false)}
+                      onPlaybackMediaChange={selectPreviewMediaDuringPlayback}
+                      />
+                    </div>
+                    {previewWheelEffect === 'gallery' && activePreviewMedia && activePreviewDraft && (
+                      <div className="grid h-24 w-full shrink-0 grid-cols-[minmax(12rem,32rem)_1fr] items-center gap-5 border-t border-zinc-800 bg-zinc-950/95 px-5 pr-80">
+                        <label className="min-w-0 rounded-md border border-zinc-700 bg-black/55 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-zinc-400">
+                          <span className="mb-1 block">Name</span>
+                          <input
+                            type="text"
+                            value={activePreviewDraft.name}
+                            onChange={(event) => updateActivePreviewDraft(draft => ({
+                              ...draft,
+                              name: event.target.value,
+                            }))}
+                            onBlur={(event) => updateSceneLaunchMediaName(activePreviewMedia.id, event.target.value)}
+                            className="h-8 w-full min-w-0 bg-transparent text-sm font-bold normal-case tracking-normal text-white outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                          />
+                        </label>
+                        {activePreviewMedia.type === 'image' && (
+                          <label className="justify-self-end rounded-md border border-zinc-700 bg-black/55 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-zinc-400">
+                            <span className="mb-1 block">Duration</span>
+                            <span className="flex h-8 items-center rounded-md border border-zinc-700 bg-black/70 px-2">
+                              <input
+                                type="number"
+                                min={0.5}
+                                max={MAX_IMAGE_DURATION_SECONDS}
+                                step={0.5}
+                                value={Number(activePreviewDraft.durationSeconds.toFixed(1))}
+                                onChange={(event) => {
+                                  const nextDuration = Number(Math.max(0.5, Math.min(MAX_IMAGE_DURATION_SECONDS, Number(event.target.value) || 0.5)).toFixed(2));
+                                  updateActivePreviewDraft(draft => ({
+                                    ...draft,
+                                    durationSeconds: nextDuration,
+                                  }));
+                                  updateSceneLaunchMediaDuration(activePreviewMedia.id, nextDuration);
+                                }}
+                                className="w-16 bg-transparent text-right font-mono text-sm font-bold normal-case tracking-normal text-white outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                              />
+                              <span className="ml-1.5 font-mono text-xs normal-case tracking-normal text-zinc-400">s</span>
+                            </span>
+                          </label>
+                        )}
+                      </div>
+                    )}
                     <div className="absolute right-4 top-4 z-40 flex items-center gap-3 rounded-md border border-zinc-700/80 bg-zinc-950/88 px-2.5 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-2xl shadow-black/50 backdrop-blur-xl">
                       <label className="flex items-center gap-2">
                         <span>Effect</span>
                         <select
                           value={previewWheelEffect}
-                          onChange={(event) => setPreviewWheelEffect(event.target.value as SceneLaunchPreviewWheelV2Effect)}
+                          onChange={(event) => setPreviewWheelEffect(event.target.value as SceneLaunchPreviewWheelV3Effect)}
                           className="h-7 rounded-md border border-zinc-700 bg-black/70 px-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
                         >
                           <option value="cylinder">Cylinder</option>
@@ -1861,7 +1981,7 @@ export function SceneLaunchWorkspace({
                         <span>Width</span>
                         <select
                           value={previewWheelSizing}
-                          onChange={(event) => setPreviewWheelSizing(event.target.value as SceneLaunchPreviewWheelV2Sizing)}
+                          onChange={(event) => setPreviewWheelSizing(event.target.value as SceneLaunchPreviewWheelV3Sizing)}
                           className="h-7 rounded-md border border-zinc-700 bg-black/70 px-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
                         >
                           <option value="uniform">Uniform</option>
@@ -1897,73 +2017,11 @@ export function SceneLaunchWorkspace({
                     getPlaybackSnapshot={getDisplayedPreviewSnapshot}
                   />
                 )}
-                {activePreviewMedia && activePreviewDraft && (
-                  <div className="absolute bottom-4 right-4 flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-11 min-w-32 rounded-md border-zinc-700 bg-zinc-950/90 px-5 text-xs font-black uppercase tracking-widest text-zinc-200 shadow-2xl shadow-black/50 backdrop-blur-xl hover:bg-zinc-850"
-                        onClick={cancelPreviewEdit}
-                        disabled={isPreviewEditSaving}
-                      >
-                        <X className="mr-2 h-4 w-4" />
-                        Cancel
-                      </Button>
-                      <Button
-                        type="button"
-                        className="h-11 min-w-32 rounded-md bg-indigo-500 px-5 text-xs font-black uppercase tracking-widest text-white shadow-2xl shadow-black/50 hover:bg-indigo-400"
-                        onClick={commitPreviewEdit}
-                        disabled={isPreviewEditSaving}
-                      >
-                        {isPreviewEditSaving ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <Check className="mr-2 h-4 w-4" />
-                        )}
-                        Done
-                      </Button>
-                  </div>
-                )}
               </div>
             </section>
           </motion.div>
         </main>
 
-        <SceneLaunchTimeline
-          title={sceneLaunchTimelineTitle}
-          totalDuration={timelineTotalDuration}
-          timelineItems={timelineItems}
-          selectedMediaId={selectedPreviewMediaId}
-          activeItemKey={activeItemKey}
-          hoveredItemKey={hoveredItemKey}
-          setHoveredItemKey={setHoveredItemKey}
-          timelineCurrentTime={timelineCurrentTime}
-          pxPerSecond={pxPerSecond}
-          setPxPerSecond={setPxPerSecond}
-          isTimelinePlaying={isTimelinePlaying}
-          playbackMode={sceneLaunchPlaybackMode}
-          isTimelineLooping={isTimelineLooping}
-          onToggleLoop={() => setIsTimelineLooping(current => !current)}
-          onTogglePlayback={toggleSceneLaunchTimelinePlayback}
-          onTogglePreview={toggleSceneLaunchPreview}
-          isScrubbing={isScrubbing}
-          setIsScrubbing={setIsScrubbing}
-          onTimelineTimeChange={setSceneLaunchTimelineTime}
-          timelineDragOverKey={timelineDragOverKey}
-          setTimelineDragOverKey={setTimelineDragOverKey}
-          resizingItem={resizingItem}
-          setResizingItem={setResizingItem}
-          getRecursiveCollectionDuration={getRecursiveCollectionDuration}
-          getCollectionTimelineSplitPercents={getCollectionTimelineSplitPercents}
-          getSceneLaunchCollectionPreview={getSceneLaunchCollectionPreview}
-          getCollectionTimelineMediaItems={getRecursiveMediaItems}
-          onPreviewMediaId={previewSceneLaunchMediaId}
-          reorderSceneLaunchGridItem={reorderSceneLaunchGridItem}
-          handleItemContextMenu={handleItemContextMenu}
-          updateSceneLaunchMediaDuration={updateSceneLaunchMediaDuration}
-          updateSceneLaunchMediaTrim={updateSceneLaunchMediaTrim}
-          centerSlot={timelineSearch}
-        />
       </div>
 
       <SceneLaunchContextMenu
