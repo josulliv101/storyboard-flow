@@ -73,6 +73,7 @@ export function SceneLaunchContextMenu({
               onClick={() => {
                 if (menu?.type === 'item') {
                   onRestoreFromTrash(menu.dragKey);
+                  onOpenChange(false);
                 }
               }}
               className="gap-2 focus:bg-zinc-800 focus:text-white cursor-pointer"
@@ -84,6 +85,7 @@ export function SceneLaunchContextMenu({
               onClick={() => {
                 if (menu?.type === 'item') {
                   onDeletePermanently(menu.dragKey);
+                  onOpenChange(false);
                 }
               }}
               className="gap-2 focus:bg-red-950/70 focus:text-red-200 text-red-400 cursor-pointer"
@@ -97,6 +99,7 @@ export function SceneLaunchContextMenu({
             onClick={() => {
               if (menu?.type === 'item') {
                 onMoveToTrash(menu.dragKey);
+                onOpenChange(false);
               }
             }}
             className="gap-2 focus:bg-zinc-800 focus:text-white cursor-pointer"

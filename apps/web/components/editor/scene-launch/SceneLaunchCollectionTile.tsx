@@ -44,6 +44,10 @@ interface SceneLaunchCollectionTileProps {
   handleGridDrop: (e: React.DragEvent<HTMLElement>, targetKey: string, isCollection: boolean) => void;
   syncTimelinePlayheadToCollectionPreview: (beatId: string, elapsedSeconds: number) => void;
   handleItemContextMenu: (event: React.MouseEvent<HTMLElement>, key: string) => void;
+  isBeingDragged: boolean;
+  onGridDragStart: (event: React.DragEvent<HTMLElement>, dragKey: string) => void;
+  onGridDragEnd: () => void;
+  dragPlaceholderContent?: React.ReactNode;
 }
 
 export function SceneLaunchCollectionTile({
@@ -75,6 +79,10 @@ export function SceneLaunchCollectionTile({
   handleGridDrop,
   syncTimelinePlayheadToCollectionPreview,
   handleItemContextMenu,
+  isBeingDragged,
+  onGridDragStart,
+  onGridDragEnd,
+  dragPlaceholderContent,
 }: SceneLaunchCollectionTileProps) {
 
   const preview = getSceneLaunchCollectionPreview(beat);
@@ -87,10 +95,8 @@ export function SceneLaunchCollectionTile({
       data-scene-grid-item="true"
       id={`grid-item-${dragKey}`}
       draggable
-      onDragStart={(event) => {
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('text/plain', dragKey);
-      }}
+      onDragStart={(event) => onGridDragStart(event, dragKey)}
+      onDragEnd={onGridDragEnd}
       onDragOver={(event) => handleGridDragOver(event, dragKey, true)}
       onDragLeave={handleGridDragLeave}
       onDrop={(event) => handleGridDrop(event, dragKey, true)}
@@ -104,6 +110,9 @@ export function SceneLaunchCollectionTile({
       )}
       onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
     >
+      {isBeingDragged && (
+        dragPlaceholderContent
+      )}
       {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
         <div className="absolute top-0 bottom-0 left-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
       )}

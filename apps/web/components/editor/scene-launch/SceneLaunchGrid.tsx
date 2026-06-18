@@ -2,11 +2,28 @@
 
 import React from 'react';
 import { Button } from '@storyboard/ui';
-import { Grid2X2, Plus, Trash2 } from 'lucide-react';
+import { CornerUpLeft, FolderInput, FolderOpen, Grid2X2, Plus, Trash2 } from 'lucide-react';
 import { SceneLaunchMediaTile } from './SceneLaunchMediaTile';
 import { SceneLaunchCollectionTile } from './SceneLaunchCollectionTile';
 import type { SceneLaunchBeat, SceneLaunchMediaItem } from './useSceneLaunchBoard';
 import type { TimelineAspectRatio } from '@/lib/timeline-context';
+import { cn } from '@/lib/utils';
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
 
 interface SceneLaunchGridProps {
   activeSceneLaunchBeatId: string | null;
@@ -61,6 +78,11 @@ interface SceneLaunchGridProps {
   createSceneLaunchBeat: () => void;
   handleBeatDrop: (event: React.DragEvent<HTMLDivElement>, beatId: string) => void;
   aspectRatio: TimelineAspectRatio;
+  allCollections: SceneLaunchBeat[];
+  draggedGridItemKey: string | null;
+  setDraggedGridItemKey: React.Dispatch<React.SetStateAction<string | null>>;
+  moveSceneLaunchItemToParent: (dragKey: string) => void;
+  moveSceneLaunchItemToTargetCollection: (dragKey: string, targetId: string) => void;
 }
 
 export function SceneLaunchGrid({
@@ -105,7 +127,18 @@ export function SceneLaunchGrid({
   createSceneLaunchBeat,
   handleBeatDrop,
   aspectRatio,
+  allCollections,
+  draggedGridItemKey,
+  setDraggedGridItemKey,
+  moveSceneLaunchItemToParent,
+  moveSceneLaunchItemToTargetCollection,
 }: SceneLaunchGridProps) {
+
+  const [utilityDropZone, setUtilityDropZone] = React.useState<'parent' | 'directory' | null>(null);
+  const [directoryPendingKey, setDirectoryPendingKey] = React.useState<string | null>(null);
+  const [isDirectoryPickerOpen, setIsDirectoryPickerOpen] = React.useState(false);
+  const dropHandledRef = React.useRef(false);
+  const directoryMoveCommittedRef = React.useRef(false);
 
   const getAspectRatioValue = (ratio: string): number => {
     const [w, h] = ratio.split(':').map(Number);
@@ -114,6 +147,192 @@ export function SceneLaunchGrid({
   const ratioValue = getAspectRatioValue(aspectRatio);
   const calculatedWidth = 10 * ratioValue;
   const finalWidth = Math.max(7.5, calculatedWidth);
+  const canMoveToParent = !!activeSceneLaunchBeatId && activeSceneLaunchBeatId !== 'trash';
+  const draggedCollectionId = draggedGridItemKey?.startsWith('collection:')
+    ? draggedGridItemKey.slice('collection:'.length)
+    : directoryPendingKey?.startsWith('collection:')
+      ? directoryPendingKey.slice('collection:'.length)
+      : null;
+  const unavailableCollectionIds = React.useMemo(() => {
+    const unavailable = new Set<string>();
+    if (!draggedCollectionId) return unavailable;
+
+    const visit = (collectionId: string) => {
+      if (unavailable.has(collectionId)) return;
+      unavailable.add(collectionId);
+      const collection = allCollections.find(candidate => candidate.id === collectionId);
+      collection?.childIds.forEach(visit);
+    };
+    visit(draggedCollectionId);
+    return unavailable;
+  }, [allCollections, draggedCollectionId]);
+  const availableDirectoryCollections = allCollections.filter(collection => (
+    collection.id !== 'trash' && !unavailableCollectionIds.has(collection.id)
+  ));
+  const handleGridItemDragStart = (event: React.DragEvent<HTMLElement>, dragKey: string) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', dragKey);
+    setDirectoryPendingKey(null);
+    setIsDirectoryPickerOpen(false);
+    dropHandledRef.current = false;
+    directoryMoveCommittedRef.current = false;
+    setDraggedGridItemKey(dragKey);
+  };
+
+  const handleGridItemDragEnd = () => {
+    setDraggedGridItemKey(null);
+    setUtilityDropZone(null);
+    handleGridDragLeave();
+  };
+
+  const getDraggedKey = (event: React.DragEvent<HTMLElement>) => (
+    event.dataTransfer.getData('text/plain') || draggedGridItemKey || ''
+  );
+
+  const claimNativeDrop = (event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (dropHandledRef.current) return false;
+    dropHandledRef.current = true;
+    return true;
+  };
+
+  const handleParentDrop = (event: React.DragEvent<HTMLElement>) => {
+    if (!claimNativeDrop(event)) return;
+    const dragKey = getDraggedKey(event);
+    if (dragKey && canMoveToParent) moveSceneLaunchItemToParent(dragKey);
+    setDraggedGridItemKey(null);
+    setUtilityDropZone(null);
+  };
+
+  const handleDirectoryDrop = (event: React.DragEvent<HTMLElement>) => {
+    if (!claimNativeDrop(event)) return;
+    const dragKey = getDraggedKey(event);
+    if (!dragKey) return;
+    setDirectoryPendingKey(dragKey);
+    setDraggedGridItemKey(null);
+    setUtilityDropZone(null);
+    setIsDirectoryPickerOpen(true);
+  };
+
+  const chooseDirectory = (collectionId: string) => {
+    if (!directoryPendingKey || directoryMoveCommittedRef.current) return;
+    directoryMoveCommittedRef.current = true;
+    moveSceneLaunchItemToTargetCollection(directoryPendingKey, collectionId);
+    setDirectoryPendingKey(null);
+    setIsDirectoryPickerOpen(false);
+  };
+
+  const handleItemDrop = (
+    event: React.DragEvent<HTMLElement>,
+    targetKey: string,
+    isCollection: boolean,
+  ) => {
+    if (!claimNativeDrop(event)) return;
+    handleGridDrop(event, targetKey, isCollection);
+    setDraggedGridItemKey(null);
+    setUtilityDropZone(null);
+  };
+
+  const handleGridItemContextMenu = (event: React.MouseEvent, dragKey: string) => {
+    setDraggedGridItemKey(null);
+    setDirectoryPendingKey(null);
+    setIsDirectoryPickerOpen(false);
+    handleItemContextMenu(event, dragKey);
+  };
+
+  const renderOriginPlaceholder = (dragKey: string) => (
+    <div className="absolute inset-0 z-50 grid grid-cols-2 gap-2 rounded-lg border border-dashed border-indigo-400/70 bg-zinc-950/95 p-2 shadow-inner shadow-indigo-500/10 backdrop-blur-sm">
+      <div
+        role="button"
+        aria-disabled={!canMoveToParent}
+        onDragOver={(event) => {
+          if (!canMoveToParent) return;
+          event.preventDefault();
+          event.stopPropagation();
+          event.dataTransfer.dropEffect = 'move';
+          setUtilityDropZone('parent');
+        }}
+        onDragLeave={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+          setUtilityDropZone(current => current === 'parent' ? null : current);
+        }}
+        onDrop={handleParentDrop}
+        className={cn(
+          "flex min-w-0 flex-col items-center justify-center rounded-md border border-dashed p-2 text-center transition-all",
+          !canMoveToParent && "border-zinc-800 bg-zinc-900/40 text-zinc-600",
+          canMoveToParent && utilityDropZone !== 'parent' && "border-zinc-700 bg-zinc-900/70 text-zinc-300",
+          utilityDropZone === 'parent' && "border-indigo-400 bg-indigo-500/20 text-indigo-100 shadow-lg shadow-indigo-500/10",
+        )}
+      >
+        <CornerUpLeft className="size-5" />
+        <span className="mt-2 text-[9px] font-black uppercase tracking-widest">Parent</span>
+        <span className="mt-1 text-[9px] leading-3 text-zinc-500">
+          {canMoveToParent ? 'Move up one level' : 'Top level'}
+        </span>
+      </div>
+
+      <Popover
+        open={isDirectoryPickerOpen && directoryPendingKey === dragKey}
+        onOpenChange={(open) => {
+          setIsDirectoryPickerOpen(open);
+          if (!open) setDirectoryPendingKey(null);
+        }}
+      >
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = 'move';
+                setUtilityDropZone('directory');
+              }}
+              onDragLeave={(event) => {
+                if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                setUtilityDropZone(current => current === 'directory' ? null : current);
+              }}
+              onDrop={handleDirectoryDrop}
+              className={cn(
+                "flex min-w-0 flex-col items-center justify-center rounded-md border border-dashed p-2 text-center transition-all",
+                utilityDropZone !== 'directory' && "border-zinc-700 bg-zinc-900/70 text-zinc-300",
+                utilityDropZone === 'directory' && "border-indigo-400 bg-indigo-500/20 text-indigo-100 shadow-lg shadow-indigo-500/10",
+              )}
+            />
+          }
+        >
+          <FolderInput className="size-5" />
+          <span className="mt-2 text-[9px] font-black uppercase tracking-widest">Directory</span>
+          <span className="mt-1 text-[9px] leading-3 text-zinc-500">Choose collection</span>
+        </PopoverTrigger>
+        <PopoverContent align="start" side="bottom" className="w-80 p-0">
+          <PopoverHeader className="px-3 pt-3">
+            <PopoverTitle>Move to collection</PopoverTitle>
+            <PopoverDescription>Select a directory for the dropped item.</PopoverDescription>
+          </PopoverHeader>
+          <Command>
+            <CommandInput placeholder="Search collections..." autoFocus />
+            <CommandList>
+              <CommandEmpty>No available collections.</CommandEmpty>
+              <CommandGroup heading="Collections">
+                {availableDirectoryCollections.map(collection => (
+                  <CommandItem
+                    key={collection.id}
+                    value={`${collection.name} ${collection.id}`}
+                    onSelect={() => chooseDirectory(collection.id)}
+                  >
+                    <FolderOpen />
+                    <span className="truncate">{collection.name}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
   const getGridInsertionIndex = (
     event: React.MouseEvent<HTMLElement>,
     container: HTMLElement,
@@ -165,7 +384,7 @@ export function SceneLaunchGrid({
   };
 
   return (
-    <section className="mt-6 w-full shrink-0">
+    <section className="relative mt-6 w-full shrink-0">
       {activeSceneLaunchBeat ? (
         <>
           {activeSceneLaunchBeatId === 'trash' && (
@@ -224,14 +443,18 @@ export function SceneLaunchGrid({
                         updateSceneLaunchMediaOriginalDuration={updateSceneLaunchMediaOriginalDuration}
                         updateSceneLaunchMediaDuration={updateSceneLaunchMediaDuration}
                         updateSceneLaunchMediaTrim={updateSceneLaunchMediaTrim}
-                        handleItemContextMenu={handleItemContextMenu}
+                        handleItemContextMenu={handleGridItemContextMenu}
                         getSceneLaunchMediaTileStyle={getSceneLaunchMediaTileStyle}
                         getSceneLaunchMediaPreviewStyle={getSceneLaunchMediaPreviewStyle}
                         gridDragOverInfo={gridDragOverInfo}
                         handleGridDragOver={handleGridDragOver}
                         handleGridDragLeave={handleGridDragLeave}
-                        handleGridDrop={handleGridDrop}
+                        handleGridDrop={handleItemDrop}
                         onPreviewMedia={onPreviewMedia}
+                        isBeingDragged={draggedGridItemKey === dragKey || directoryPendingKey === dragKey}
+                        onGridDragStart={handleGridItemDragStart}
+                        onGridDragEnd={handleGridItemDragEnd}
+                        dragPlaceholderContent={renderOriginPlaceholder(dragKey)}
                       />
                     );
                   }
@@ -264,9 +487,13 @@ export function SceneLaunchGrid({
                       gridDragOverInfo={gridDragOverInfo}
                       handleGridDragOver={handleGridDragOver}
                       handleGridDragLeave={handleGridDragLeave}
-                      handleGridDrop={handleGridDrop}
+                      handleGridDrop={handleItemDrop}
                       syncTimelinePlayheadToCollectionPreview={syncTimelinePlayheadToCollectionPreview}
-                      handleItemContextMenu={handleItemContextMenu}
+                      handleItemContextMenu={handleGridItemContextMenu}
+                      isBeingDragged={draggedGridItemKey === dragKey || directoryPendingKey === dragKey}
+                      onGridDragStart={handleGridItemDragStart}
+                      onGridDragEnd={handleGridItemDragEnd}
+                      dragPlaceholderContent={renderOriginPlaceholder(dragKey)}
                     />
                   );
                 })}
@@ -319,14 +546,18 @@ export function SceneLaunchGrid({
                     updateSceneLaunchMediaOriginalDuration={updateSceneLaunchMediaOriginalDuration}
                     updateSceneLaunchMediaDuration={updateSceneLaunchMediaDuration}
                     updateSceneLaunchMediaTrim={updateSceneLaunchMediaTrim}
-                    handleItemContextMenu={handleItemContextMenu}
+                    handleItemContextMenu={handleGridItemContextMenu}
                     getSceneLaunchMediaTileStyle={getSceneLaunchMediaTileStyle}
                     getSceneLaunchMediaPreviewStyle={getSceneLaunchMediaPreviewStyle}
                     gridDragOverInfo={gridDragOverInfo}
                     handleGridDragOver={handleGridDragOver}
                     handleGridDragLeave={handleGridDragLeave}
-                    handleGridDrop={handleGridDrop}
+                    handleGridDrop={handleItemDrop}
                     onPreviewMedia={onPreviewMedia}
+                    isBeingDragged={draggedGridItemKey === dragKey || directoryPendingKey === dragKey}
+                    onGridDragStart={handleGridItemDragStart}
+                    onGridDragEnd={handleGridItemDragEnd}
+                    dragPlaceholderContent={renderOriginPlaceholder(dragKey)}
                   />
                 );
               }
@@ -359,9 +590,13 @@ export function SceneLaunchGrid({
                   gridDragOverInfo={gridDragOverInfo}
                   handleGridDragOver={handleGridDragOver}
                   handleGridDragLeave={handleGridDragLeave}
-                  handleGridDrop={handleGridDrop}
+                  handleGridDrop={handleItemDrop}
                   syncTimelinePlayheadToCollectionPreview={syncTimelinePlayheadToCollectionPreview}
-                  handleItemContextMenu={handleItemContextMenu}
+                  handleItemContextMenu={handleGridItemContextMenu}
+                  isBeingDragged={draggedGridItemKey === dragKey || directoryPendingKey === dragKey}
+                  onGridDragStart={handleGridItemDragStart}
+                  onGridDragEnd={handleGridItemDragEnd}
+                  dragPlaceholderContent={renderOriginPlaceholder(dragKey)}
                 />
               );
             })}

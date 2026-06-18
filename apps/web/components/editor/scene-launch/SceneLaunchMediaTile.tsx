@@ -26,6 +26,10 @@ interface SceneLaunchMediaTileProps {
   handleGridDragLeave: () => void;
   handleGridDrop: (e: React.DragEvent<HTMLElement>, targetKey: string, isCollection: boolean) => void;
   onPreviewMedia: (item: SceneLaunchMediaItem) => void;
+  isBeingDragged: boolean;
+  onGridDragStart: (event: React.DragEvent<HTMLElement>, dragKey: string) => void;
+  onGridDragEnd: () => void;
+  dragPlaceholderContent?: React.ReactNode;
 }
 
 export function SceneLaunchMediaTile({
@@ -49,6 +53,10 @@ export function SceneLaunchMediaTile({
   handleGridDragLeave,
   handleGridDrop,
   onPreviewMedia,
+  isBeingDragged,
+  onGridDragStart,
+  onGridDragEnd,
+  dragPlaceholderContent,
 }: SceneLaunchMediaTileProps) {
 
   const [tempTrimStart, setTempTrimStart] = React.useState(item.trimStartSeconds || 0);
@@ -214,9 +222,9 @@ export function SceneLaunchMediaTile({
           event.preventDefault();
           return;
         }
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('text/plain', dragKey);
+        onGridDragStart(event, dragKey);
       }}
+      onDragEnd={onGridDragEnd}
       onDragOver={(event) => handleGridDragOver(event, dragKey, false)}
       onDragLeave={handleGridDragLeave}
       onDrop={(event) => handleGridDrop(event, dragKey, false)}
@@ -240,6 +248,9 @@ export function SceneLaunchMediaTile({
       }}
       onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
     >
+      {isBeingDragged && (
+        dragPlaceholderContent
+      )}
       {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
         <div className="absolute top-0 bottom-0 left-0 w-1 bg-indigo-500 shadow-[0_0_8px_#6366f1] z-30 pointer-events-none" />
       )}

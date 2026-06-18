@@ -28,6 +28,7 @@ import { VideoFrameFilmstrip } from './VideoFrameFilmstrip';
 import type { SceneLaunchPlaybackMode } from '../SceneLaunchTimeline';
 import { SceneLaunchContextMenu } from '../SceneLaunchContextMenu';
 import { cn } from '@/lib/utils';
+import { Switch } from '@/components/ui/switch';
 import type { SidebarTab } from '../EditorSidebarRail';
 import type { Scene, TimelineClip, ClipType, TimelineAspectRatio } from '@/lib/timeline-context';
 
@@ -109,8 +110,10 @@ export function SceneLaunchWorkspace({
     addFilesToBeat,
     findSceneLaunchMediaItem,
     moveSceneLaunchMediaToCollection,
+    reorderSceneLaunchMedia,
     moveSceneLaunchCollectionToCollection,
     moveSceneLaunchItemToParent,
+    moveSceneLaunchItemToTargetCollection,
     moveItemToTrash,
     restoreItemFromTrash,
     permanentlyDeleteItem,
@@ -124,6 +127,7 @@ export function SceneLaunchWorkspace({
 
   const [resizingItem] = React.useState<any>(null);
   const [gridDragOverInfo, setGridDragOverInfo] = React.useState<{ targetKey: string; position: 'before' | 'after' | 'inside' } | null>(null);
+  const [draggedGridItemKey, setDraggedGridItemKey] = React.useState<string | null>(null);
   const [isEditingHeaderName, setIsEditingHeaderName] = React.useState(false);
   const [editingHeaderNameValue, setEditingHeaderNameValue] = React.useState('');
   const [sceneLaunchPlaybackMode, setSceneLaunchPlaybackMode] = React.useState<SceneLaunchPlaybackMode>('inline');
@@ -139,6 +143,7 @@ export function SceneLaunchWorkspace({
   const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV3Effect>('gallery');
   const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV3Sizing>('uniform');
   const [previewWheelDurationScale, setPreviewWheelDurationScale] = React.useState(1);
+  const [previewWheelSelectDroppedItem, setPreviewWheelSelectDroppedItem] = React.useState(true);
   const [previewEditDraft, setPreviewEditDraft] = React.useState<{
     mediaId: string;
     name: string;
@@ -1665,6 +1670,11 @@ export function SceneLaunchWorkspace({
                 event.stopPropagation();
                 addFilesToBeat(beatId, Array.from(event.dataTransfer.files || []));
               }}
+              allCollections={sceneLaunchBeats}
+              draggedGridItemKey={draggedGridItemKey}
+              setDraggedGridItemKey={setDraggedGridItemKey}
+              moveSceneLaunchItemToParent={moveSceneLaunchItemToParent}
+              moveSceneLaunchItemToTargetCollection={moveSceneLaunchItemToTargetCollection}
             />
           )}
           </motion.div>
@@ -1842,6 +1852,8 @@ export function SceneLaunchWorkspace({
                         }
                       }}
                       onCenteredMediaChange={previewSceneLaunchMediaId}
+                      onItemsReorder={reorderSceneLaunchMedia}
+                      selectReorderedItem={previewWheelSelectDroppedItem}
                       renderGalleryTrimOverlay={(item) => {
                         if (!activePreviewDraft || activePreviewMedia?.id !== item.id || item.type !== 'video') return null;
 
@@ -1987,6 +1999,15 @@ export function SceneLaunchWorkspace({
                           <option value="uniform">Uniform</option>
                           <option value="duration">Duration</option>
                         </select>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span>Center drop</span>
+                        <Switch
+                          size="sm"
+                          checked={previewWheelSelectDroppedItem}
+                          onCheckedChange={setPreviewWheelSelectDroppedItem}
+                          aria-label="Center and select dropped timeline item"
+                        />
                       </label>
                       {previewWheelSizing === 'duration' && (
                         <label className="flex items-center gap-2">

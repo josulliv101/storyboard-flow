@@ -535,7 +535,9 @@ export function useSceneLaunchBoard({
         const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
         const exists = childIds.includes(draggedId);
         const newChildIds = exists ? childIds : [...childIds, draggedId];
-        const newGridOrder = exists ? gridOrder : [...gridOrder, { id: draggedId, type: 'collection' as const }];
+        const newGridOrder = gridOrder.some(item => item.type === 'collection' && item.id === draggedId)
+          ? gridOrder
+          : [...gridOrder, { id: draggedId, type: 'collection' as const }];
         return {
           ...beat,
           childIds: newChildIds,
@@ -589,8 +591,10 @@ export function useSceneLaunchBoard({
         const parentBeat = sceneLaunchBeats.find(b => b.id === parentBeatId);
         toast.success(`Moved "${mediaItem.name}" to "${parentBeat?.name || 'parent folder'}"`);
       } else {
-        setSceneLaunchMediaItems(prev => [...prev, mediaItem]);
-        setSceneLaunchGridOrder(prev => [...prev, { id, type: 'media' }]);
+        setSceneLaunchMediaItems(prev => prev.some(item => item.id === id) ? prev : [...prev, mediaItem]);
+        setSceneLaunchGridOrder(prev => prev.some(item => item.type === 'media' && item.id === id)
+          ? prev
+          : [...prev, { id, type: 'media' }]);
         toast.success(`Moved "${mediaItem.name}" to root`);
       }
     } else if (type === 'collection') {
@@ -617,7 +621,9 @@ export function useSceneLaunchBoard({
             const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
             const exists = childIds.includes(id);
             const newChildIds = exists ? childIds : [...childIds, id];
-            const newGridOrder = exists ? gridOrder : [...gridOrder, { id: draggedBeat.id, type: 'collection' as const }];
+            const newGridOrder = gridOrder.some(item => item.type === 'collection' && item.id === id)
+              ? gridOrder
+              : [...gridOrder, { id: draggedBeat.id, type: 'collection' as const }];
             return {
               ...beat,
               childIds: newChildIds,
@@ -629,7 +635,9 @@ export function useSceneLaunchBoard({
         const parentBeat = sceneLaunchBeats.find(b => b.id === parentBeatId);
         toast.success(`Moved collection "${draggedBeat.name}" to "${parentBeat?.name || 'parent folder'}"`);
       } else {
-        setSceneLaunchGridOrder(prev => [...prev, { id, type: 'collection' }]);
+        setSceneLaunchGridOrder(prev => prev.some(item => item.type === 'collection' && item.id === id)
+          ? prev
+          : [...prev, { id, type: 'collection' }]);
         toast.success(`Moved collection "${draggedBeat.name}" to root`);
       }
     }
@@ -676,8 +684,10 @@ export function useSceneLaunchBoard({
 
       // 2. Add to target level
       if (targetId === '__root__' || targetId === 'root') {
-        setSceneLaunchMediaItems(prev => [...prev, mediaItem]);
-        setSceneLaunchGridOrder(prev => [...prev, { id, type: 'media' }]);
+        setSceneLaunchMediaItems(prev => prev.some(item => item.id === id) ? prev : [...prev, mediaItem]);
+        setSceneLaunchGridOrder(prev => prev.some(item => item.type === 'media' && item.id === id)
+          ? prev
+          : [...prev, { id, type: 'media' }]);
         toast.success(`Moved "${mediaItem.name}" to Scene Board`);
       } else {
         setSceneLaunchBeats(previous => previous.map(beat => {
@@ -726,7 +736,9 @@ export function useSceneLaunchBoard({
 
       // 2. Add to target level
       if (targetId === '__root__' || targetId === 'root') {
-        setSceneLaunchGridOrder(prev => [...prev, { id, type: 'collection' }]);
+        setSceneLaunchGridOrder(prev => prev.some(item => item.type === 'collection' && item.id === id)
+          ? prev
+          : [...prev, { id, type: 'collection' }]);
         toast.success(`Moved collection "${draggedBeat.name}" to Scene Board`);
       } else {
         setSceneLaunchBeats(previous => previous.map(beat => {
@@ -735,8 +747,10 @@ export function useSceneLaunchBoard({
             const gridOrder = Array.isArray(beat.gridOrder) ? beat.gridOrder : [];
             return {
               ...beat,
-              childIds: [...childIds, id],
-              gridOrder: [...gridOrder, { id, type: 'collection' as const }],
+              childIds: childIds.includes(id) ? childIds : [...childIds, id],
+              gridOrder: gridOrder.some(item => item.type === 'collection' && item.id === id)
+                ? gridOrder
+                : [...gridOrder, { id, type: 'collection' as const }],
             };
           }
           return beat;
@@ -765,8 +779,10 @@ export function useSceneLaunchBoard({
         if (beat.id === 'trash') {
           return {
             ...beat,
-            items: [...beat.items, foundMedia],
-            gridOrder: [...beat.gridOrder, { id, type: 'media' as const }]
+            items: beat.items.some(item => item.id === id) ? beat.items : [...beat.items, foundMedia],
+            gridOrder: beat.gridOrder.some(item => item.type === 'media' && item.id === id)
+              ? beat.gridOrder
+              : [...beat.gridOrder, { id, type: 'media' as const }]
           };
         }
         return beat;
@@ -810,8 +826,10 @@ export function useSceneLaunchBoard({
         if (beat.id === 'trash') {
           return {
             ...beat,
-            childIds: [...beat.childIds, id],
-            gridOrder: [...beat.gridOrder, { id, type: 'collection' as const }]
+            childIds: beat.childIds.includes(id) ? beat.childIds : [...beat.childIds, id],
+            gridOrder: beat.gridOrder.some(item => item.type === 'collection' && item.id === id)
+              ? beat.gridOrder
+              : [...beat.gridOrder, { id, type: 'collection' as const }]
           };
         }
         return beat;
@@ -847,7 +865,9 @@ export function useSceneLaunchBoard({
       }));
 
       setSceneLaunchMediaItems(prev => [...prev, foundMedia]);
-      setSceneLaunchGridOrder(prev => [...prev, { id, type: 'media' as const }]);
+      setSceneLaunchGridOrder(prev => prev.some(item => item.type === 'media' && item.id === id)
+        ? prev
+        : [...prev, { id, type: 'media' as const }]);
     } else if (type === 'collection') {
       const targetBeat = sceneLaunchBeats.find(b => b.id === id);
       if (!targetBeat) return;
@@ -864,7 +884,9 @@ export function useSceneLaunchBoard({
         return beat;
       }));
 
-      setSceneLaunchGridOrder(prev => [...prev, { id, type: 'collection' as const }]);
+      setSceneLaunchGridOrder(prev => prev.some(item => item.type === 'collection' && item.id === id)
+        ? prev
+        : [...prev, { id, type: 'collection' as const }]);
     }
 
     toast.success(`Restored "${itemTitle}" to main view`);
@@ -982,6 +1004,66 @@ export function useSceneLaunchBoard({
     })));
   };
 
+  const reorderSceneLaunchMedia = (
+    draggedMediaId: string,
+    targetMediaId: string,
+    position: 'before' | 'after',
+  ) => {
+    if (draggedMediaId === targetMediaId) return;
+
+    const findOwner = (mediaId: string): 'root' | string | null => {
+      if (sceneLaunchGridOrder.some(item => item.type === 'media' && item.id === mediaId)) return 'root';
+      return sceneLaunchBeats.find(beat => (
+        beat.gridOrder.some(item => item.type === 'media' && item.id === mediaId)
+      ))?.id ?? null;
+    };
+    const sourceOwner = findOwner(draggedMediaId);
+    const targetOwner = findOwner(targetMediaId);
+    if (!sourceOwner || !targetOwner) return;
+
+    const draggedMedia = sourceOwner === 'root'
+      ? sceneLaunchMediaItems.find(item => item.id === draggedMediaId)
+      : sceneLaunchBeats.find(beat => beat.id === sourceOwner)?.items.find(item => item.id === draggedMediaId);
+    if (!draggedMedia) return;
+
+    const reorderGrid = (gridOrder: Array<{ id: string; type: 'media' | 'collection' }>) => {
+      const withoutDragged = gridOrder.filter(item => !(item.type === 'media' && item.id === draggedMediaId));
+      const targetIndex = withoutDragged.findIndex(item => item.type === 'media' && item.id === targetMediaId);
+      if (targetIndex < 0) return withoutDragged;
+      const insertIndex = targetIndex + (position === 'after' ? 1 : 0);
+      withoutDragged.splice(insertIndex, 0, { id: draggedMediaId, type: 'media' });
+      return withoutDragged;
+    };
+
+    setSceneLaunchGridOrder(previous => {
+      const withoutDragged = sourceOwner === 'root'
+        ? previous.filter(item => !(item.type === 'media' && item.id === draggedMediaId))
+        : previous;
+      return targetOwner === 'root' ? reorderGrid(withoutDragged) : withoutDragged;
+    });
+    setSceneLaunchMediaItems(previous => {
+      const withoutDragged = sourceOwner === 'root'
+        ? previous.filter(item => item.id !== draggedMediaId)
+        : previous;
+      return targetOwner === 'root' && !withoutDragged.some(item => item.id === draggedMediaId)
+        ? [...withoutDragged, draggedMedia]
+        : withoutDragged;
+    });
+    setSceneLaunchBeats(previous => previous.map(beat => {
+      let items = beat.items;
+      let gridOrder = beat.gridOrder;
+      if (beat.id === sourceOwner) {
+        items = items.filter(item => item.id !== draggedMediaId);
+        gridOrder = gridOrder.filter(item => !(item.type === 'media' && item.id === draggedMediaId));
+      }
+      if (beat.id === targetOwner) {
+        if (!items.some(item => item.id === draggedMediaId)) items = [...items, draggedMedia];
+        gridOrder = reorderGrid(gridOrder);
+      }
+      return items === beat.items && gridOrder === beat.gridOrder ? beat : { ...beat, items, gridOrder };
+    }));
+  };
+
   const updateSceneLaunchMediaName = (mediaId: string, name: string) => {
     const nextName = name.trim();
     if (!nextName) return;
@@ -1065,6 +1147,7 @@ export function useSceneLaunchBoard({
 
   const handleItemContextMenu = (event: React.MouseEvent, dragKey: string) => {
     event.preventDefault();
+    event.stopPropagation();
     setSceneLaunchContextMenu({
       type: 'item',
       x: event.clientX,
@@ -1105,6 +1188,7 @@ export function useSceneLaunchBoard({
     addFilesToBeat,
     findSceneLaunchMediaItem,
     moveSceneLaunchMediaToCollection,
+    reorderSceneLaunchMedia,
     moveSceneLaunchCollectionToCollection,
     moveSceneLaunchItemToParent,
     moveItemToTrash,

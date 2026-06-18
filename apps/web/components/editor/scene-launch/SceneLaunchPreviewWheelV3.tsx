@@ -1,11 +1,17 @@
 import React from 'react';
 import Image from 'next/image';
+import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/utils';
 import type { SceneLaunchMediaItem } from './useSceneLaunchBoard';
 
 const ITEM_GAP = 24;
 const DRAG_SELECT_THRESHOLD = 5;
+const REORDER_LIFT_THRESHOLD = 24;
+const DROP_SETTLE_DURATION_MS = 180;
+const PREPARED_PREVIEW_HANDOFF_MS = 900;
+const REORDER_EDGE_ZONE_MAX_PX = 140;
+const REORDER_AUTO_PAN_MAX_PX_PER_FRAME = 16;
 const MOMENTUM_MIN_VELOCITY = 0.035;
 const MOMENTUM_FRICTION_PER_FRAME = 0.945;
 const SNAP_DURATION_MS = 420;
@@ -20,6 +26,7 @@ const GALLERY_ITEM_HEIGHT = 96;
 type PreviewWheelDragState = {
   isDragging: boolean;
   startX: number;
+  startY: number;
   startOffset: number;
   lastX: number;
   lastTime: number;
@@ -27,6 +34,18 @@ type PreviewWheelDragState = {
   didMove: boolean;
   velocity: number;
   targetMediaId: string | null;
+  mode: 'pending' | 'wheel' | 'reorder';
+  lastReorderTarget: string | null;
+  reorderTargetMediaId: string | null;
+  reorderPosition: 'before' | 'after' | null;
+};
+
+type ReorderPreview = {
+  mediaId: string;
+  clientX: number;
+  clientY: number;
+  width: number;
+  height: number;
 };
 
 export type SceneLaunchPreviewWheelV3Effect = 'cylinder' | 'cylinder2' | 'coverflow' | 'gallery' | 'stack';
@@ -49,17 +68,13 @@ interface SceneLaunchPreviewWheelV3Props {
   loopPreviewPlayback?: boolean;
   onPreviewPlaybackComplete?: () => void;
   onPlaybackMediaChange?: (mediaId: string) => void;
+  onItemsReorder?: (draggedMediaId: string, targetMediaId: string, position: 'before' | 'after') => void;
+  selectReorderedItem?: boolean;
 }
 
 const clamp = (value: number, min: number, max: number) => (
   Math.max(min, Math.min(max, value))
 );
-
-const easeOutBack = (value: number) => {
-  const overshoot = 1.18;
-  const shifted = value - 1;
-  return 1 + shifted * shifted * ((overshoot + 1) * shifted + overshoot);
-};
 
 const getNearestIndexForOffset = (offset: number, centerPositions: number[]) => {
   let nearestIndex = 0;
@@ -215,6 +230,54 @@ function GalleryScrubPreview({
   );
 }
 
+function PreparedGalleryPreview({
+  media,
+  onReady,
+}: {
+  media: SceneLaunchMediaItem;
+  onReady: () => void;
+}) {
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+
+  if (media.type === 'image') {
+    return (
+      <Image
+        src={media.previewUrl}
+        alt=""
+        fill
+        sizes="288px"
+        unoptimized
+        onLoad={onReady}
+        className="object-contain"
+      />
+    );
+  }
+
+  const prepareFrame = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const targetTime = Math.max(0, media.trimStartSeconds ?? 0);
+    if (targetTime <= 0.001 || Math.abs(video.currentTime - targetTime) <= 0.001) {
+      onReady();
+      return;
+    }
+    video.currentTime = Math.min(targetTime, Math.max(0, video.duration - 0.001));
+  };
+
+  return (
+    <video
+      ref={videoRef}
+      src={media.previewUrl}
+      preload="auto"
+      muted
+      playsInline
+      onLoadedData={prepareFrame}
+      onSeeked={onReady}
+      className="h-full w-full object-contain"
+    />
+  );
+}
+
 export function SceneLaunchPreviewWheelV3({
   items,
   selectedMediaId,
@@ -232,13 +295,17 @@ export function SceneLaunchPreviewWheelV3({
   loopPreviewPlayback = false,
   onPreviewPlaybackComplete,
   onPlaybackMediaChange,
+  onItemsReorder,
+  selectReorderedItem = true,
 }: SceneLaunchPreviewWheelV3Props) {
   const viewportRef = React.useRef<HTMLDivElement | null>(null);
   const galleryPreviewRef = React.useRef<HTMLDivElement | null>(null);
   const trimOverlayRef = React.useRef<HTMLDivElement | null>(null);
+  const reorderGhostRef = React.useRef<HTMLDivElement | null>(null);
   const dragRef = React.useRef<PreviewWheelDragState>({
     isDragging: false,
     startX: 0,
+    startY: 0,
     startOffset: 0,
     lastX: 0,
     lastTime: 0,
@@ -246,6 +313,10 @@ export function SceneLaunchPreviewWheelV3({
     didMove: false,
     velocity: 0,
     targetMediaId: null,
+    mode: 'pending',
+    lastReorderTarget: null,
+    reorderTargetMediaId: null,
+    reorderPosition: null,
   });
   const momentumFrameRef = React.useRef<number | null>(null);
   const snapFrameRef = React.useRef<number | null>(null);
@@ -259,10 +330,26 @@ export function SceneLaunchPreviewWheelV3({
   const playbackSelectedMediaIdRef = React.useRef<string | null>(selectedMediaId);
   const fastNavigationRef = React.useRef(false);
   const fastNavigationIdleTimeoutRef = React.useRef<number | null>(null);
+  const dropSettleTimeoutRef = React.useRef<number | null>(null);
+  const pendingReorderSelectionRef = React.useRef<string | null>(null);
+  const skipNextReorderAlignmentRef = React.useRef(false);
+  const skipNextSelectedAlignmentRef = React.useRef(false);
+  const snapCompletionRef = React.useRef<{ mediaId: string; finish: () => void } | null>(null);
+  const preparedPreviewMediaIdRef = React.useRef<string | null>(null);
+  const preparedPreviewHandoffTimeoutRef = React.useRef<number | null>(null);
+  const reorderAutoPanFrameRef = React.useRef<number | null>(null);
+  const reorderPointerRef = React.useRef({ clientX: 0, clientY: 0 });
+  const reorderPreviewOrderRef = React.useRef<string[] | null>(null);
   const [offset, setOffsetState] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
   const [isSpinning, setIsSpinning] = React.useState(false);
+  const [isSnapping, setIsSnapping] = React.useState(false);
   const [isFastNavigating, setIsFastNavigating] = React.useState(false);
+  const [reorderPreview, setReorderPreview] = React.useState<ReorderPreview | null>(null);
+  const [reorderPreviewOrder, setReorderPreviewOrder] = React.useState<string[] | null>(null);
+  const [preparedPreviewMediaId, setPreparedPreviewMediaId] = React.useState<string | null>(null);
+  const [preparedPreviewReady, setPreparedPreviewReady] = React.useState(false);
+  const [visiblePreparedPreviewMediaId, setVisiblePreparedPreviewMediaId] = React.useState<string | null>(null);
   const [directPreviewMediaId, setDirectPreviewMediaId] = React.useState<string | null>(selectedMediaId);
   const [trimOverlayMediaId, setTrimOverlayMediaId] = React.useState<string | null>(null);
   const [viewportSize, setViewportSize] = React.useState({ width: 960, height: 520 });
@@ -346,6 +433,24 @@ export function SceneLaunchPreviewWheelV3({
     });
     return positions;
   }, [itemGap, itemWidths]);
+  const reorderItemCenterPositions = React.useMemo(() => {
+    if (!reorderPreviewOrder) return null;
+
+    const positions = new Map<string, number>();
+    let center = 0;
+    reorderPreviewOrder.forEach((mediaId, orderIndex) => {
+      const itemIndex = items.findIndex(item => item.id === mediaId);
+      const width = itemWidths[itemIndex] ?? uniformItemWidth;
+      if (orderIndex > 0) {
+        const previousId = reorderPreviewOrder[orderIndex - 1];
+        const previousIndex = items.findIndex(item => item.id === previousId);
+        const previousWidth = itemWidths[previousIndex] ?? uniformItemWidth;
+        center += previousWidth / 2 + itemGap + width / 2;
+      }
+      positions.set(mediaId, center);
+    });
+    return positions;
+  }, [itemGap, itemWidths, items, reorderPreviewOrder, uniformItemWidth]);
   const itemStartPixels = React.useMemo(() => {
     const firstItemHalfWidth = (itemWidths[0] ?? 0) / 2;
     return itemWidths.map((width, index) => (
@@ -377,6 +482,9 @@ export function SceneLaunchPreviewWheelV3({
   ), [itemCenterPositions, itemStartPixels, sizing, timelineOriginOffset]);
   const centeredIndex = getNearestIndexForOffset(offset, snapReferencePositions);
   const centeredItem = items[centeredIndex] ?? null;
+  const preparedPreviewMedia = preparedPreviewMediaId
+    ? items.find(item => item.id === preparedPreviewMediaId) ?? null
+    : null;
   const isWheelMoving = isDragging || isSpinning;
   const scrubSnapshot = React.useMemo<GalleryScrubSnapshot | null>(() => {
     if (selectedIndex < 0 || items.length === 0) return null;
@@ -598,7 +706,9 @@ export function SceneLaunchPreviewWheelV3({
       window.cancelAnimationFrame(snapFrameRef.current);
       snapFrameRef.current = null;
     }
+    snapCompletionRef.current = null;
     setIsSpinning(false);
+    setIsSnapping(false);
   }, [updateFastNavigation]);
 
   const snapToIndex = React.useCallback((
@@ -606,14 +716,16 @@ export function SceneLaunchPreviewWheelV3({
     {
       commit = true,
       scrubPreview = false,
+      deferPreview = false,
     }: {
       commit?: boolean;
       scrubPreview?: boolean;
+      deferPreview?: boolean;
     } = {},
   ) => {
     const boundedIndex = clamp(index, 0, Math.max(0, items.length - 1));
     const targetItem = items[boundedIndex];
-    if (!scrubPreview) {
+    if (!scrubPreview && !deferPreview) {
       updateFastNavigation(0);
       setDirectPreviewMediaId(targetItem?.id ?? null);
     }
@@ -624,37 +736,59 @@ export function SceneLaunchPreviewWheelV3({
       minOffset,
       maxOffset,
     );
-    const startOffset = offsetRef.current;
-    const startTime = performance.now();
-
     if (snapFrameRef.current !== null) {
       window.cancelAnimationFrame(snapFrameRef.current);
       snapFrameRef.current = null;
     }
 
-    const step = (time: number) => {
-      const progress = clamp((time - startTime) / SNAP_DURATION_MS, 0, 1);
-      const easedProgress = easeOutBack(progress);
-      setOffset(startOffset + (targetOffset - startOffset) * easedProgress);
-
-      if (progress < 1) {
-        snapFrameRef.current = window.requestAnimationFrame(step);
-        return;
+    setIsSpinning(true);
+    setIsSnapping(true);
+    let didFinish = false;
+    const finish = () => {
+      if (didFinish) return;
+      didFinish = true;
+      if (snapFrameRef.current !== null) {
+        window.cancelAnimationFrame(snapFrameRef.current);
+        snapFrameRef.current = null;
       }
-
-      snapFrameRef.current = null;
-      setOffset(targetOffset);
+      snapCompletionRef.current = null;
       setIsSpinning(false);
+      setIsSnapping(false);
       if (commit) {
+        if (deferPreview) {
+          setDirectPreviewMediaId(targetItem?.id ?? null);
+          if (targetItem?.id === preparedPreviewMediaIdRef.current) {
+            setVisiblePreparedPreviewMediaId(targetItem.id);
+            if (preparedPreviewHandoffTimeoutRef.current !== null) {
+              window.clearTimeout(preparedPreviewHandoffTimeoutRef.current);
+            }
+            preparedPreviewHandoffTimeoutRef.current = window.setTimeout(() => {
+              preparedPreviewHandoffTimeoutRef.current = null;
+              preparedPreviewMediaIdRef.current = null;
+              setVisiblePreparedPreviewMediaId(null);
+              setPreparedPreviewMediaId(null);
+            }, PREPARED_PREVIEW_HANDOFF_MS);
+          }
+        }
         if (targetItem && targetItem.id !== selectedMediaId) {
           setTrimOverlayMediaId(null);
           onCenteredMediaChange(targetItem.id);
         }
       }
     };
-
-    setIsSpinning(true);
-    snapFrameRef.current = window.requestAnimationFrame(step);
+    if (targetItem) snapCompletionRef.current = { mediaId: targetItem.id, finish };
+    snapFrameRef.current = window.requestAnimationFrame(() => {
+      setOffset(targetOffset);
+      const transitionStart = performance.now();
+      const finishAfterTransition = (time: number) => {
+        if (time - transitionStart < SNAP_DURATION_MS + 80) {
+          snapFrameRef.current = window.requestAnimationFrame(finishAfterTransition);
+          return;
+        }
+        finish();
+      };
+      snapFrameRef.current = window.requestAnimationFrame(finishAfterTransition);
+    });
   }, [itemCenterPositions, itemStartPixels, items, maxOffset, minOffset, onCenteredMediaChange, selectedMediaId, setOffset, sizing, timelineOriginOffset, updateFastNavigation]);
 
   const snapToNearest = React.useCallback(() => {
@@ -670,9 +804,40 @@ export function SceneLaunchPreviewWheelV3({
   }, [snapToIndex]);
 
   React.useEffect(() => {
-    if (selectedIndex < 0 || isPreviewPlaying) return;
+    if (skipNextSelectedAlignmentRef.current) {
+      skipNextSelectedAlignmentRef.current = false;
+      return;
+    }
+    if (
+      selectedIndex < 0 ||
+      isPreviewPlaying ||
+      pendingReorderSelectionRef.current ||
+      skipNextReorderAlignmentRef.current
+    ) return;
     snapToIndexRef.current(selectedIndex, { commit: false });
   }, [isPreviewPlaying, selectedIndex, selectedMediaId]);
+
+  React.useEffect(() => {
+    if (skipNextReorderAlignmentRef.current) {
+      skipNextReorderAlignmentRef.current = false;
+      const nextCenteredIndex = getNearestIndexForOffset(offsetRef.current, snapReferencePositions);
+      const nextCenteredItem = items[nextCenteredIndex];
+      if (nextCenteredItem && nextCenteredItem.id !== selectedMediaId) {
+        skipNextSelectedAlignmentRef.current = true;
+        setDirectPreviewMediaId(nextCenteredItem.id);
+        setTrimOverlayMediaId(null);
+        onCenteredMediaChange(nextCenteredItem.id);
+      }
+      return;
+    }
+    const mediaId = pendingReorderSelectionRef.current;
+    if (!mediaId) return;
+    const index = items.findIndex(item => item.id === mediaId);
+    if (index < 0) return;
+
+    pendingReorderSelectionRef.current = null;
+    snapToIndexRef.current(index, { deferPreview: true });
+  }, [items, onCenteredMediaChange, selectedMediaId, snapReferencePositions]);
 
   const previousCenterPositionsRef = React.useRef(itemCenterPositions);
   React.useLayoutEffect(() => {
@@ -683,6 +848,9 @@ export function SceneLaunchPreviewWheelV3({
       !geometryChanged ||
       selectedIndex < 0 ||
       isPreviewPlaying ||
+      pendingReorderSelectionRef.current ||
+      skipNextReorderAlignmentRef.current ||
+      skipNextSelectedAlignmentRef.current ||
       dragRef.current.isDragging ||
       momentumFrameRef.current !== null ||
       snapFrameRef.current !== null
@@ -728,6 +896,15 @@ export function SceneLaunchPreviewWheelV3({
     }
     if (fastNavigationIdleTimeoutRef.current !== null) {
       window.clearTimeout(fastNavigationIdleTimeoutRef.current);
+    }
+    if (dropSettleTimeoutRef.current !== null) {
+      window.clearTimeout(dropSettleTimeoutRef.current);
+    }
+    if (reorderAutoPanFrameRef.current !== null) {
+      window.cancelAnimationFrame(reorderAutoPanFrameRef.current);
+    }
+    if (preparedPreviewHandoffTimeoutRef.current !== null) {
+      window.clearTimeout(preparedPreviewHandoffTimeoutRef.current);
     }
   }, []);
 
@@ -775,6 +952,116 @@ export function SceneLaunchPreviewWheelV3({
     momentumFrameRef.current = window.requestAnimationFrame(step);
   }, [maxOffset, minOffset, setOffset, snapToNearest, updateFastNavigation]);
 
+  const getCenteredMediaIdForOrder = React.useCallback((order: string[]) => {
+    const firstItemIndex = items.findIndex(item => item.id === order[0]);
+    const durationOrigin = (itemWidths[firstItemIndex] ?? uniformItemWidth) / 2;
+    let cursor = 0;
+    let nearestMediaId: string | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    order.forEach((mediaId, orderIndex) => {
+      const itemIndex = items.findIndex(item => item.id === mediaId);
+      const width = itemWidths[itemIndex] ?? uniformItemWidth;
+      const referencePosition = sizing === 'duration'
+        ? cursor - durationOrigin
+        : cursor + width / 2;
+      const distance = Math.abs(referencePosition + offsetRef.current);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestMediaId = mediaId;
+      }
+      cursor += width + (orderIndex < order.length - 1 ? itemGap : 0);
+    });
+
+    return nearestMediaId;
+  }, [itemGap, itemWidths, items, sizing, uniformItemWidth]);
+
+  const prepareFixedCenterPreview = React.useCallback((order: string[]) => {
+    if (selectReorderedItem) return;
+    const mediaId = getCenteredMediaIdForOrder(order);
+    if (!mediaId || mediaId === preparedPreviewMediaIdRef.current) return;
+
+    preparedPreviewMediaIdRef.current = mediaId;
+    setPreparedPreviewMediaId(mediaId);
+    setPreparedPreviewReady(false);
+    setVisiblePreparedPreviewMediaId(null);
+  }, [getCenteredMediaIdForOrder, selectReorderedItem]);
+
+  const updateReorderTarget = React.useCallback((clientX: number) => {
+    const drag = dragRef.current;
+    if (drag.mode !== 'reorder' || !drag.targetMediaId) return;
+
+    const candidates = Array.from(
+      viewportRef.current?.querySelectorAll<HTMLElement>('[data-preview-wheel-item-id]') ?? [],
+    ).filter(element => element.dataset.previewWheelItemId !== drag.targetMediaId);
+    const target = candidates.reduce<{ element: HTMLElement; distance: number } | null>((nearest, element) => {
+      const bounds = element.getBoundingClientRect();
+      const distance = Math.abs(clientX - (bounds.left + bounds.width / 2));
+      return !nearest || distance < nearest.distance ? { element, distance } : nearest;
+    }, null);
+    const targetMediaId = target?.element.dataset.previewWheelItemId;
+    if (!target || !targetMediaId) return;
+
+    const bounds = target.element.getBoundingClientRect();
+    const position = clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+    const reorderTarget = `${targetMediaId}:${position}`;
+    if (drag.lastReorderTarget === reorderTarget) return;
+
+    drag.lastReorderTarget = reorderTarget;
+    drag.reorderTargetMediaId = targetMediaId;
+    drag.reorderPosition = position;
+    const next = [...(reorderPreviewOrderRef.current ?? items.map(item => item.id))];
+    const draggedIndex = next.indexOf(drag.targetMediaId);
+    if (draggedIndex >= 0) next.splice(draggedIndex, 1);
+    const targetIndex = next.indexOf(targetMediaId);
+    if (targetIndex < 0) return;
+    next.splice(targetIndex + (position === 'after' ? 1 : 0), 0, drag.targetMediaId);
+    reorderPreviewOrderRef.current = next;
+    prepareFixedCenterPreview(next);
+    setReorderPreviewOrder(next);
+  }, [items, prepareFixedCenterPreview]);
+
+  const startReorderAutoPan = React.useCallback(() => {
+    if (reorderAutoPanFrameRef.current !== null) return;
+    let previousTime = performance.now();
+    let previousHitTestTime = 0;
+
+    const step = (time: number) => {
+      const drag = dragRef.current;
+      const viewport = viewportRef.current;
+      if (drag.mode !== 'reorder' || !viewport) {
+        reorderAutoPanFrameRef.current = null;
+        return;
+      }
+
+      const deltaFrames = Math.min(2, Math.max(0.25, (time - previousTime) / 16.67));
+      previousTime = time;
+      const bounds = viewport.getBoundingClientRect();
+      const edgeZone = Math.min(REORDER_EDGE_ZONE_MAX_PX, bounds.width * 0.18);
+      const pointerX = reorderPointerRef.current.clientX;
+      const leftStrength = clamp((bounds.left + edgeZone - pointerX) / edgeZone, 0, 1);
+      const rightStrength = clamp((pointerX - (bounds.right - edgeZone)) / edgeZone, 0, 1);
+      const panDelta = (
+        leftStrength * leftStrength - rightStrength * rightStrength
+      ) * REORDER_AUTO_PAN_MAX_PX_PER_FRAME * deltaFrames;
+
+      if (Math.abs(panDelta) > 0.01) {
+        const previousOffset = offsetRef.current;
+        setOffset(previousOffset + panDelta);
+        if (offsetRef.current !== previousOffset && time - previousHitTestTime >= 48) {
+          previousHitTestTime = time;
+          updateReorderTarget(pointerX);
+          const previewOrder = reorderPreviewOrderRef.current;
+          if (previewOrder) prepareFixedCenterPreview(previewOrder);
+        }
+      }
+
+      reorderAutoPanFrameRef.current = window.requestAnimationFrame(step);
+    };
+
+    reorderAutoPanFrameRef.current = window.requestAnimationFrame(step);
+  }, [prepareFixedCenterPreview, setOffset, updateReorderTarget]);
+
   const beginDrag = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
 
@@ -782,7 +1069,14 @@ export function SceneLaunchPreviewWheelV3({
     if (!viewport) return;
 
     stopAnimation();
-    setDirectPreviewMediaId(null);
+    if (preparedPreviewHandoffTimeoutRef.current !== null) {
+      window.clearTimeout(preparedPreviewHandoffTimeoutRef.current);
+      preparedPreviewHandoffTimeoutRef.current = null;
+    }
+    preparedPreviewMediaIdRef.current = null;
+    setPreparedPreviewMediaId(null);
+    setPreparedPreviewReady(false);
+    setVisiblePreparedPreviewMediaId(null);
     const targetMediaId = (event.target as HTMLElement)
       .closest<HTMLElement>('[data-preview-wheel-item-id]')
       ?.dataset.previewWheelItemId ?? null;
@@ -790,6 +1084,7 @@ export function SceneLaunchPreviewWheelV3({
     dragRef.current = {
       isDragging: true,
       startX: event.clientX,
+      startY: event.clientY,
       startOffset: offsetRef.current,
       lastX: event.clientX,
       lastTime: performance.now(),
@@ -797,6 +1092,10 @@ export function SceneLaunchPreviewWheelV3({
       didMove: false,
       velocity: 0,
       targetMediaId,
+      mode: 'pending',
+      lastReorderTarget: null,
+      reorderTargetMediaId: null,
+      reorderPosition: null,
     };
     clickGuardRef.current = false;
     setIsDragging(true);
@@ -808,6 +1107,53 @@ export function SceneLaunchPreviewWheelV3({
     if (!drag.isDragging || drag.pointerId !== event.pointerId) return;
 
     const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+
+    if (
+      drag.mode === 'pending' &&
+      drag.targetMediaId &&
+      onItemsReorder &&
+      deltaY <= -REORDER_LIFT_THRESHOLD &&
+      Math.abs(deltaY) > Math.abs(deltaX) * 1.1
+    ) {
+      const itemElement = viewportRef.current?.querySelector<HTMLElement>(
+        `[data-preview-wheel-item-id="${CSS.escape(drag.targetMediaId)}"]`,
+      );
+      const bounds = itemElement?.getBoundingClientRect();
+      drag.mode = 'reorder';
+      drag.didMove = true;
+      clickGuardRef.current = true;
+      updateFastNavigation(0);
+      setReorderPreview({
+        mediaId: drag.targetMediaId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        width: bounds?.width ?? 240,
+        height: bounds?.height ?? 135,
+      });
+      const initialOrder = items.map(item => item.id);
+      reorderPreviewOrderRef.current = initialOrder;
+      setReorderPreviewOrder(initialOrder);
+      prepareFixedCenterPreview(initialOrder);
+      reorderPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+      startReorderAutoPan();
+    } else if (drag.mode === 'pending' && Math.abs(deltaX) > DRAG_SELECT_THRESHOLD) {
+      drag.mode = 'wheel';
+      setDirectPreviewMediaId(null);
+    }
+
+    if (drag.mode === 'reorder' && drag.targetMediaId && onItemsReorder) {
+      reorderPointerRef.current = { clientX: event.clientX, clientY: event.clientY };
+      if (reorderGhostRef.current) {
+        reorderGhostRef.current.style.transform = `translate3d(${event.clientX}px, ${event.clientY}px, 0) translate(-50%, -50%) scale(1.03)`;
+      }
+
+      updateReorderTarget(event.clientX);
+      event.preventDefault();
+      return;
+    }
+
+    if (drag.mode !== 'wheel') return;
     const now = performance.now();
     const frameDeltaMs = Math.max(1, now - drag.lastTime);
     const instantVelocity = (event.clientX - drag.lastX) / frameDeltaMs;
@@ -840,12 +1186,17 @@ export function SceneLaunchPreviewWheelV3({
       });
     }
     event.preventDefault();
-  }, [setOffset, updateFastNavigation]);
+  }, [items, onItemsReorder, prepareFixedCenterPreview, setOffset, startReorderAutoPan, updateFastNavigation, updateReorderTarget]);
 
   const endDrag = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     const viewport = viewportRef.current;
     if (!drag.isDragging || drag.pointerId !== event.pointerId) return;
+
+    if (reorderAutoPanFrameRef.current !== null) {
+      window.cancelAnimationFrame(reorderAutoPanFrameRef.current);
+      reorderAutoPanFrameRef.current = null;
+    }
 
     if (fastNavigationIdleTimeoutRef.current !== null) {
       window.clearTimeout(fastNavigationIdleTimeoutRef.current);
@@ -863,6 +1214,7 @@ export function SceneLaunchPreviewWheelV3({
     dragRef.current = {
       isDragging: false,
       startX: 0,
+      startY: 0,
       startOffset: 0,
       lastX: 0,
       lastTime: 0,
@@ -870,11 +1222,82 @@ export function SceneLaunchPreviewWheelV3({
       didMove: false,
       velocity: 0,
       targetMediaId: null,
+      mode: 'pending',
+      lastReorderTarget: null,
+      reorderTargetMediaId: null,
+      reorderPosition: null,
     };
     setIsDragging(false);
+    if (drag.mode !== 'reorder') {
+      setReorderPreview(null);
+      setReorderPreviewOrder(null);
+    }
 
     if (viewport?.hasPointerCapture(event.pointerId)) {
       viewport.releasePointerCapture(event.pointerId);
+    }
+
+    if (drag.mode === 'reorder') {
+      if (drag.targetMediaId && drag.reorderTargetMediaId && drag.reorderPosition) {
+        if (selectReorderedItem) {
+          preparedPreviewMediaIdRef.current = drag.targetMediaId;
+          setPreparedPreviewMediaId(drag.targetMediaId);
+          setPreparedPreviewReady(false);
+          setVisiblePreparedPreviewMediaId(null);
+        }
+        const draggedElement = viewport?.querySelector<HTMLElement>(
+          `[data-preview-wheel-item-id="${CSS.escape(drag.targetMediaId)}"]`,
+        );
+        const destinationBounds = draggedElement?.getBoundingClientRect();
+        if (reorderGhostRef.current && destinationBounds) {
+          reorderGhostRef.current.style.transition = `transform ${DROP_SETTLE_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+          reorderGhostRef.current.style.transform = `translate3d(${destinationBounds.left + destinationBounds.width / 2}px, ${destinationBounds.top + destinationBounds.height / 2}px, 0) translate(-50%, -50%) scale(1)`;
+        }
+
+        if (!selectReorderedItem) {
+          const centeredMediaId = reorderPreviewOrderRef.current
+            ? getCenteredMediaIdForOrder(reorderPreviewOrderRef.current)
+            : null;
+          if (centeredMediaId && centeredMediaId === preparedPreviewMediaIdRef.current) {
+            setVisiblePreparedPreviewMediaId(centeredMediaId);
+            if (preparedPreviewHandoffTimeoutRef.current !== null) {
+              window.clearTimeout(preparedPreviewHandoffTimeoutRef.current);
+            }
+            preparedPreviewHandoffTimeoutRef.current = window.setTimeout(() => {
+              preparedPreviewHandoffTimeoutRef.current = null;
+              preparedPreviewMediaIdRef.current = null;
+              setVisiblePreparedPreviewMediaId(null);
+              setPreparedPreviewMediaId(null);
+            }, PREPARED_PREVIEW_HANDOFF_MS);
+          }
+          if (centeredMediaId && centeredMediaId !== selectedMediaId) {
+            skipNextSelectedAlignmentRef.current = true;
+            setDirectPreviewMediaId(centeredMediaId);
+            setTrimOverlayMediaId(null);
+            onCenteredMediaChange(centeredMediaId);
+          }
+          skipNextReorderAlignmentRef.current = true;
+          onItemsReorder?.(drag.targetMediaId, drag.reorderTargetMediaId, drag.reorderPosition);
+        }
+
+        dropSettleTimeoutRef.current = window.setTimeout(() => {
+          dropSettleTimeoutRef.current = null;
+          if (selectReorderedItem) {
+            pendingReorderSelectionRef.current = drag.targetMediaId;
+            onItemsReorder?.(drag.targetMediaId!, drag.reorderTargetMediaId!, drag.reorderPosition!);
+          }
+          reorderPreviewOrderRef.current = null;
+          setReorderPreview(null);
+          setReorderPreviewOrder(null);
+        }, destinationBounds ? DROP_SETTLE_DURATION_MS : 0);
+      } else {
+        reorderPreviewOrderRef.current = null;
+        setReorderPreview(null);
+        setReorderPreviewOrder(null);
+      }
+      clickGuardRef.current = true;
+      clearClickGuardSoon();
+      return;
     }
 
     if (drag.didMove) {
@@ -893,7 +1316,7 @@ export function SceneLaunchPreviewWheelV3({
         snapToIndex(targetIndex);
       }
     }
-  }, [clearClickGuardSoon, items, setOffset, sizing, snapToIndex, spinWithMomentum]);
+  }, [clearClickGuardSoon, getCenteredMediaIdForOrder, items, onCenteredMediaChange, onItemsReorder, selectReorderedItem, selectedMediaId, setOffset, sizing, snapToIndex, spinWithMomentum]);
 
   const focusItem = React.useCallback((index: number) => {
     window.requestAnimationFrame(() => {
@@ -1078,11 +1501,11 @@ export function SceneLaunchPreviewWheelV3({
           aria-label="Timeline media wheel"
           className={cn(
             "relative flex h-full min-h-0 items-center overflow-hidden",
-            isDragging ? "cursor-grabbing select-none" : "cursor-grab"
+            reorderPreview ? "cursor-grabbing select-none" : isDragging ? "cursor-grabbing select-none" : "cursor-grab"
           )}
           style={{
             perspective: 1200,
-            touchAction: 'pan-y',
+            touchAction: 'none',
           }}
           onPointerDown={beginDrag}
           onPointerMove={moveDrag}
@@ -1094,6 +1517,33 @@ export function SceneLaunchPreviewWheelV3({
           <div className="sr-only" aria-live="polite">
             {centeredItem ? `Centered media ${centeredItem.name}` : 'Timeline media wheel'}
           </div>
+          {reorderPreview && typeof document !== 'undefined' && (() => {
+            const item = items.find(candidate => candidate.id === reorderPreview.mediaId);
+            if (!item) return null;
+            return createPortal(
+              <div
+                ref={reorderGhostRef}
+                aria-hidden="true"
+                className="pointer-events-none fixed z-[300] overflow-hidden rounded-md border-2 border-indigo-300 bg-zinc-900 shadow-2xl shadow-black/70 ring-2 ring-indigo-400/40"
+                style={{
+                  left: 0,
+                  top: 0,
+                  width: reorderPreview.width,
+                  height: reorderPreview.height,
+                  transform: `translate3d(${reorderPreview.clientX}px, ${reorderPreview.clientY}px, 0) translate(-50%, -50%) scale(1.03)`,
+                  willChange: 'transform',
+                }}
+              >
+                {item.type === 'video' ? (
+                  <video src={item.previewUrl} className="h-full w-full object-cover" muted playsInline />
+                ) : (
+                  <Image src={item.previewUrl} alt="" fill sizes={`${Math.round(reorderPreview.width)}px`} unoptimized className="object-cover" />
+                )}
+                <div className="absolute inset-0 bg-indigo-500/10" />
+              </div>,
+              document.body,
+            );
+          })()}
           {effect === 'gallery' && scrubSnapshot && (
             <div
               ref={galleryPreviewRef}
@@ -1119,6 +1569,23 @@ export function SceneLaunchPreviewWheelV3({
                   isPlaying={isPreviewPlaying}
                   loopPlayback={false}
                 />
+              )}
+              {preparedPreviewMedia && !isPreviewPlaying && (
+                <div
+                  aria-hidden="true"
+                  className={cn(
+                    "pointer-events-none absolute inset-0 bg-black transition-opacity duration-75",
+                    visiblePreparedPreviewMediaId === preparedPreviewMedia.id && preparedPreviewReady
+                      ? "opacity-100"
+                      : "opacity-0",
+                  )}
+                >
+                  <PreparedGalleryPreview
+                    key={preparedPreviewMedia.id}
+                    media={preparedPreviewMedia}
+                    onReady={() => setPreparedPreviewReady(true)}
+                  />
+                </div>
               )}
               {scrubSnapshot.media.id === selectedMediaId &&
                 scrubSnapshot.media.type === 'video' &&
@@ -1177,7 +1644,7 @@ export function SceneLaunchPreviewWheelV3({
           <div className="absolute inset-0 will-change-transform" style={{ transformStyle: 'preserve-3d' }}>
             {items.map((item, index) => {
               const itemWidth = itemWidths[index] ?? uniformItemWidth;
-              const itemCenterOffset = (itemCenterPositions[index] ?? 0) + offset;
+              const itemCenterOffset = (reorderItemCenterPositions?.get(item.id) ?? itemCenterPositions[index] ?? 0) + offset;
               const offsetFromCenter = itemCenterOffset / itemStride;
               const absOffsetFromCenter = Math.abs(offsetFromCenter);
               const distance = Math.min(4, absOffsetFromCenter);
@@ -1265,7 +1732,7 @@ export function SceneLaunchPreviewWheelV3({
               }
 
               return (
-                <React.Fragment key={`${item.id}-${index}`}>
+                <React.Fragment key={item.id}>
                   {sizing === 'duration' && (
                     <div
                       aria-hidden="true"
@@ -1297,9 +1764,11 @@ export function SceneLaunchPreviewWheelV3({
                   className={cn(
                     "group/nav absolute left-1/2 shrink-0 overflow-hidden border bg-zinc-900 shadow-lg",
                     isGaplessGallery ? 'rounded-none' : 'rounded-md',
-                    isWheelMoving
-                      ? "transition-[border-color,box-shadow] duration-100"
-                      : "transition-[border-color,box-shadow,filter,opacity,transform] duration-150",
+                    isSnapping
+                      ? "transition-[border-color,box-shadow,filter,opacity,transform] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
+                      : isWheelMoving
+                        ? "transition-[border-color,box-shadow] duration-100"
+                        : "transition-[border-color,box-shadow,filter,opacity,transform] duration-150",
                     isActive
                       ? "border-indigo-300 shadow-indigo-500/25 ring-1 ring-indigo-400/50"
                       : "border-zinc-700/70 hover:border-zinc-500 hover:shadow-xl hover:ring-1 hover:ring-indigo-500/40"
@@ -1309,11 +1778,21 @@ export function SceneLaunchPreviewWheelV3({
                     top: itemCenterY,
                     width: itemWidth,
                     height: itemHeight,
-                    opacity,
+                    opacity: reorderPreview?.mediaId === item.id ? 0.12 : opacity,
                     pointerEvents: shouldRender ? 'auto' : 'none',
                     transform: `translate3d(calc(-50% + ${x}px), calc(-50% + ${translateY}px), ${z}px) rotateY(${rotateY}deg) scale(${scale})`,
                     transformOrigin: 'center center',
                     zIndex: Math.round(100 - distance * 10),
+                  }}
+                  onTransitionEnd={(event) => {
+                    const completion = snapCompletionRef.current;
+                    if (
+                      event.target === event.currentTarget &&
+                      event.propertyName === 'transform' &&
+                      completion?.mediaId === item.id
+                    ) {
+                      completion.finish();
+                    }
                   }}
                 >
                   <button
