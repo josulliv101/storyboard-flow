@@ -1,7 +1,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Ban, Clapperboard, CornerUpLeft, FolderInput, Play, Pause, Repeat, AlignLeft, AlignCenter, Trash2 } from 'lucide-react';
+import { ArrowLeft, Ban, Clapperboard, CornerUpLeft, FolderInput, Play, Pause, Repeat, AlignLeft, AlignCenter, AlignRight, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { VIDEO_PLACEHOLDER, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
@@ -91,6 +91,7 @@ interface SceneLaunchPreviewWheelV3Props {
   onTogglePlayback?: () => void;
   timelineCurrentTime?: number;
   onToggleLoop?: () => void;
+  showUniformRuler?: boolean;
 }
 
 const clamp = (value: number, min: number, max: number) => (
@@ -330,6 +331,7 @@ export function SceneLaunchPreviewWheelV3({
   onTogglePlayback,
   timelineCurrentTime = 0,
   onToggleLoop,
+  showUniformRuler = true,
 }: SceneLaunchPreviewWheelV3Props) {
   const containerResizeObserverRef = React.useRef<ResizeObserver | null>(null);
   const viewportResizeObserverRef = React.useRef<ResizeObserver | null>(null);
@@ -523,6 +525,7 @@ export function SceneLaunchPreviewWheelV3({
   const playheadOffsetFromCenter = isGallery && playheadAlignment === 'left'
     ? 96 - viewportSize.width / 2
     : 0;
+  const centerX = viewportSize.width > 0 ? viewportSize.width / 2 : 480;
   const galleryPreviewHeight = Math.max(0, Math.min(
     360,
     viewportSize.width * 9 / 16,
@@ -662,12 +665,27 @@ export function SceneLaunchPreviewWheelV3({
   const selectedScrubOriginOffset = selectedIndex >= 0
     ? (itemStartPixels[selectedIndex] ?? 0) - (itemCenterPositions[selectedIndex] ?? 0)
     : 0;
-  const maxOffset = (sizing === 'duration' || isGallery)
+  const maxOffset = (sizing === 'duration')
     ? timelineOriginOffset
-    : Math.max(0, selectedScrubOriginOffset);
-  const minOffset = (sizing === 'duration' || isGallery)
+    : (sizing === 'uniform')
+      ? Math.max(
+          centerX - ((itemWidths[0] ?? uniformItemWidth) / 2),
+          centerX - ((itemWidths[0] ?? uniformItemWidth) / 2) - playheadOffsetFromCenter
+        ) + 120
+      : isGallery
+        ? timelineOriginOffset
+        : Math.max(0, selectedScrubOriginOffset);
+
+  const minOffset = (sizing === 'duration')
     ? timelineOriginOffset - stripEndPixel
-    : Math.min(finalCenterOffset, selectedScrubOriginOffset - stripEndPixel);
+    : (sizing === 'uniform')
+      ? Math.min(
+          -centerX - ((itemCenterPositions[finalIndex] ?? 0) - (itemWidths[finalIndex] ?? uniformItemWidth) / 2),
+          -itemCenterPositions[finalIndex] - playheadOffsetFromCenter
+        ) - 120
+      : isGallery
+        ? timelineOriginOffset - stripEndPixel
+        : Math.min(finalCenterOffset, selectedScrubOriginOffset - stripEndPixel);
   const snapReferencePositions = React.useMemo(() => (
     (sizing === 'duration' || isGallery)
       ? itemStartPixels.map(startPixel => startPixel - timelineOriginOffset)
@@ -997,6 +1015,56 @@ export function SceneLaunchPreviewWheelV3({
       snapFrameRef.current = window.requestAnimationFrame(finishAfterTransition);
     });
   }, [itemCenterPositions, itemStartPixels, items, maxOffset, minOffset, onCenteredMediaChange, selectedMediaId, setOffset, sizing, timelineOriginOffset, updateFastNavigation]);
+
+  const alignItemToOffset = React.useCallback((targetIndex: number, targetOffset: number, progress: number) => {
+    const boundedOffset = clamp(targetOffset, minOffset, maxOffset);
+    const targetItem = items[targetIndex];
+    if (!targetItem) return;
+
+    if (snapFrameRef.current !== null) {
+      window.cancelAnimationFrame(snapFrameRef.current);
+      snapFrameRef.current = null;
+    }
+
+    setIsSpinning(true);
+    setIsSnapping(true);
+    let didFinish = false;
+    const finish = () => {
+      if (didFinish) return;
+      didFinish = true;
+      if (snapFrameRef.current !== null) {
+        window.cancelAnimationFrame(snapFrameRef.current);
+        snapFrameRef.current = null;
+      }
+      snapCompletionRef.current = null;
+      setIsSpinning(false);
+      setIsSnapping(false);
+      
+      skipNextSelectedAlignmentRef.current = true;
+      if (targetItem.id !== selectedMediaId) {
+        setTrimOverlayMediaId(null);
+        onCenteredMediaChange(targetItem.id);
+      }
+    };
+
+    if (targetItem) snapCompletionRef.current = { mediaId: targetItem.id, finish };
+    setDirectPreviewMediaId(targetItem.id);
+    const itemDuration = itemDurations[targetIndex] ?? 0.5;
+    playbackTimeRef.current = (itemStartTimes[targetIndex] ?? 0) + progress * itemDuration;
+
+    snapFrameRef.current = window.requestAnimationFrame(() => {
+      setOffset(boundedOffset);
+      const transitionStart = performance.now();
+      const finishAfterTransition = (time: number) => {
+        if (time - transitionStart < SNAP_DURATION_MS + 80) {
+          snapFrameRef.current = window.requestAnimationFrame(finishAfterTransition);
+          return;
+        }
+        finish();
+      };
+      snapFrameRef.current = window.requestAnimationFrame(finishAfterTransition);
+    });
+  }, [items, minOffset, maxOffset, selectedMediaId, setOffset, onCenteredMediaChange, itemDurations, itemStartTimes]);
 
   const snapToNearest = React.useCallback(() => {
     snapToIndex(
@@ -2142,6 +2210,10 @@ export function SceneLaunchPreviewWheelV3({
                 brightness = 1;
               }
 
+              if (sizing === 'uniform' || effect === 'gallery') {
+                shouldRender = true;
+              }
+
               const firstRulerTick = Math.ceil((itemStartTime - 0.001) / rulerTickStep) * rulerTickStep;
               const rulerTicks: number[] = [];
               for (
@@ -2156,7 +2228,7 @@ export function SceneLaunchPreviewWheelV3({
 
               return (
                 <React.Fragment key={item.id}>
-                  {sizing === 'duration' && (
+                  {(sizing === 'duration' || (sizing === 'uniform' && showUniformRuler)) && (
                     <div
                       aria-hidden="true"
                       className="pointer-events-none absolute left-1/2 h-7 border-b border-zinc-600/80 text-[9px] font-mono text-zinc-400"
@@ -2307,6 +2379,54 @@ export function SceneLaunchPreviewWheelV3({
                       </span>
                     </button>
                   ) : null}
+                  {sizing === 'uniform' && (
+                    <div
+                      onPointerDown={(event) => event.stopPropagation()}
+                      className="absolute bottom-2.5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-full border border-zinc-700 bg-zinc-950/90 px-1.5 py-0.5 shadow-md transition-opacity opacity-0 group-hover/nav:opacity-100 focus-within:opacity-100"
+                    >
+                      <button
+                        type="button"
+                        title="Align Left"
+                        aria-label={`Align ${item.name} start to center`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const itemWidth = itemWidths[index] ?? uniformItemWidth;
+                          const targetOffset = itemWidth / 2 - itemCenterPositions[index];
+                          alignItemToOffset(index, targetOffset, 0.0);
+                        }}
+                        className="flex h-5 w-5 items-center justify-center rounded-full text-zinc-400 hover:bg-white/5 hover:text-white transition-all hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
+                      >
+                        <AlignLeft className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Align Center"
+                        aria-label={`Align ${item.name} center to center`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const targetOffset = -itemCenterPositions[index] - playheadOffsetFromCenter;
+                          alignItemToOffset(index, targetOffset, 0.5);
+                        }}
+                        className="flex h-5 w-5 items-center justify-center rounded-full text-zinc-400 hover:bg-white/5 hover:text-white transition-all hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
+                      >
+                        <AlignCenter className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Align Right"
+                        aria-label={`Align ${item.name} end to center`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          const itemWidth = itemWidths[index] ?? uniformItemWidth;
+                          const targetOffset = centerX - itemWidth / 2 - itemCenterPositions[index] - playheadOffsetFromCenter;
+                          alignItemToOffset(index, targetOffset, 1.0);
+                        }}
+                        className="flex h-5 w-5 items-center justify-center rounded-full text-zinc-400 hover:bg-white/5 hover:text-white transition-all hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
+                      >
+                        <AlignRight className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
                   {collectionDropTargetId === item.id && (
                     <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-emerald-950/45">
                       <span className="rounded-full border border-emerald-300/60 bg-emerald-950/90 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-emerald-100 shadow-xl">

@@ -185,6 +185,17 @@ export function SceneLaunchWorkspace({
   }, [thumbnailMode]);
   const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV3Effect>('gallery');
   const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV3Sizing>('uniform');
+  const [previewWheelShowUniformRuler, setPreviewWheelShowUniformRuler] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-show-uniform-ruler');
+      return saved !== 'false';
+    }
+    return true;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-show-uniform-ruler', String(previewWheelShowUniformRuler));
+  }, [previewWheelShowUniformRuler]);
   const [previewWheelSequence, setPreviewWheelSequence] = React.useState<PreviewWheelSequence>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('scene-launch-preview-wheel-sequence');
@@ -2089,6 +2100,7 @@ export function SceneLaunchWorkspace({
                       selectedMediaId={previewWheelSelectedMediaId}
                       effect={previewWheelEffect}
                       sizing={previewWheelSizing}
+                      showUniformRuler={previewWheelShowUniformRuler}
                       durationScale={previewWheelDurationScale}
                       selectedItemDurationSeconds={activePreviewDraft?.durationSeconds}
                       selectedItemTrimStartSeconds={activePreviewDraft?.trimStartSeconds}
@@ -2297,6 +2309,17 @@ export function SceneLaunchWorkspace({
                           <option value="duration">Duration</option>
                         </select>
                       </label>
+                      {previewWheelSizing === 'uniform' && (
+                        <label className="flex items-center gap-2">
+                          <span>Ruler</span>
+                          <Switch
+                            size="sm"
+                            checked={previewWheelShowUniformRuler}
+                            onCheckedChange={setPreviewWheelShowUniformRuler}
+                            aria-label="Show or hide interactive ruler in uniform mode"
+                          />
+                        </label>
+                      )}
                       {!wheelReflectsCollections && (
                         <label className="flex items-center gap-2">
                           <span>Center drop</span>
