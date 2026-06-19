@@ -44,6 +44,14 @@ type PreviewWheelDragState = {
   utilityAction: PreviewWheelUtilityAction | null;
 };
 
+type PreviewWheelPlayheadDragState = {
+  isDragging: boolean;
+  pointerId: number;
+  startClientX: number;
+  startPlayheadX: number;
+  startOffset: number;
+};
+
 export type PreviewWheelUtilityAction = 'parent' | 'directory' | 'trash' | 'disable';
 
 type ReorderPreview = {
@@ -89,7 +97,6 @@ interface SceneLaunchPreviewWheelV3Props {
   onUtilityDrop?: (action: PreviewWheelUtilityAction, draggedMediaId: string) => void;
   selectReorderedItem?: boolean;
   onTogglePlayback?: () => void;
-  timelineCurrentTime?: number;
   onToggleLoop?: () => void;
   showUniformRuler?: boolean;
 }
@@ -119,6 +126,98 @@ const formatRulerSeconds = (seconds: number) => (
   `${Number(seconds.toFixed(1))}s`
 );
 
+const formatPlaybackTime = (seconds: number) => {
+  const totalTenths = Math.round(Math.max(0, seconds) * 10);
+  const minutes = Math.floor(totalTenths / 600);
+  const remainingSeconds = (totalTenths % 600) / 10;
+  return `${String(minutes).padStart(2, '0')}:${remainingSeconds.toFixed(1).padStart(4, '0')}`;
+};
+
+const formatPlaybackTimestamp = (currentSeconds: number, totalSeconds: number) => (
+  `${formatPlaybackTime(currentSeconds)} / ${formatPlaybackTime(totalSeconds)}`
+);
+
+function UniformItemProgress({
+  progress,
+  durationSeconds,
+  isPlaying,
+  timelineTimeSeconds,
+}: {
+  progress: number;
+  durationSeconds: number;
+  isPlaying: boolean;
+  timelineTimeSeconds: number;
+}) {
+  const barRef = React.useRef<HTMLDivElement | null>(null);
+  const wasPlayingRef = React.useRef(false);
+  const pausedInputProgressRef = React.useRef<number | null>(null);
+  const previousTimelineTimeRef = React.useRef<number | null>(null);
+
+  React.useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+
+    const boundedProgress = clamp(progress, 0, 1);
+    const wasPlaying = wasPlayingRef.current;
+    const previousTimelineTime = previousTimelineTimeRef.current;
+    const didTimelineReset =
+      previousTimelineTime !== null &&
+      timelineTimeSeconds < previousTimelineTime - 0.001;
+    wasPlayingRef.current = isPlaying;
+    previousTimelineTimeRef.current = timelineTimeSeconds;
+
+    if (!didTimelineReset && !isPlaying && wasPlaying) {
+      const computedTransform = window.getComputedStyle(bar).transform;
+      pausedInputProgressRef.current = boundedProgress;
+      bar.style.transition = 'none';
+      if (computedTransform !== 'none') bar.style.transform = computedTransform;
+      return;
+    }
+
+    if (
+      !isPlaying &&
+      pausedInputProgressRef.current !== null &&
+      Math.abs(pausedInputProgressRef.current - boundedProgress) < 0.0001
+    ) {
+      return;
+    }
+
+    pausedInputProgressRef.current = isPlaying ? null : boundedProgress;
+
+    let startingProgress = boundedProgress;
+    if (isPlaying && !wasPlaying) {
+      const computedTransform = window.getComputedStyle(bar).transform;
+      const matrixMatch = computedTransform.match(/^matrix\(([^,]+),/);
+      const computedScale = matrixMatch ? Number(matrixMatch[1]) : Number.NaN;
+      if (Number.isFinite(computedScale)) startingProgress = clamp(computedScale, 0, 1);
+    }
+
+    bar.style.transition = 'none';
+    bar.style.transform = `scaleX(${startingProgress})`;
+
+    if (!isPlaying || startingProgress >= 1) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      const remainingSeconds = Math.max(0, durationSeconds * (1 - startingProgress));
+      bar.style.transition = `transform ${remainingSeconds}s linear`;
+      bar.style.transform = 'scaleX(1)';
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [durationSeconds, isPlaying, progress, timelineTimeSeconds]);
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-x-0 bottom-0 z-30 h-0.5 overflow-hidden bg-black/35"
+    >
+      <div
+        ref={barRef}
+        className="h-full origin-left bg-blue-500 shadow-[0_0_5px_rgba(59,130,246,0.85)] will-change-transform"
+      />
+    </div>
+  );
+}
+
 type GalleryScrubSnapshot = {
   media: SceneLaunchMediaItem;
   sourceTimeSeconds: number;
@@ -128,13 +227,9 @@ type GalleryScrubSnapshot = {
 function GalleryScrubPreview({
   snapshot,
   isPlaying = false,
-  loopPlayback = false,
-  onPlaybackComplete,
 }: {
   snapshot: GalleryScrubSnapshot;
   isPlaying?: boolean;
-  loopPlayback?: boolean;
-  onPlaybackComplete?: () => void;
 }) {
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const targetTimeRef = React.useRef(snapshot.sourceTimeSeconds);
@@ -198,23 +293,6 @@ function GalleryScrubPreview({
     if (isPlaying && video.paused) void video.play().catch(() => undefined);
   }, [isPlaying, seekToLatestTarget]);
 
-  const handleTimeUpdate = React.useCallback(() => {
-    const video = videoRef.current;
-    if (!video || snapshot.media.type !== 'video') return;
-    const playbackStart = Math.max(0, snapshot.media.trimStartSeconds ?? 0);
-    const playbackEnd = playbackStart + Math.max(0.5, snapshot.media.durationSeconds ?? 3);
-    if (video.currentTime < playbackEnd - 0.02) return;
-
-    if (loopPlayback) {
-      video.currentTime = playbackStart;
-      void video.play().catch(() => undefined);
-      return;
-    }
-
-    video.pause();
-    onPlaybackComplete?.();
-  }, [loopPlayback, onPlaybackComplete, snapshot.media]);
-
   return (
     <div
       role="img"
@@ -229,7 +307,6 @@ function GalleryScrubPreview({
         playsInline
         onLoadedMetadata={handleLoadedMetadata}
         onSeeked={handleSeeked}
-        onTimeUpdate={handleTimeUpdate}
         className={cn(
           "h-full w-full object-contain",
           snapshot.media.type !== 'video' && "hidden",
@@ -329,13 +406,13 @@ export function SceneLaunchPreviewWheelV3({
   onUtilityDrop,
   selectReorderedItem = true,
   onTogglePlayback,
-  timelineCurrentTime = 0,
   onToggleLoop,
   showUniformRuler = true,
 }: SceneLaunchPreviewWheelV3Props) {
   const containerResizeObserverRef = React.useRef<ResizeObserver | null>(null);
   const viewportResizeObserverRef = React.useRef<ResizeObserver | null>(null);
   const viewportRef = React.useRef<HTMLDivElement | null>(null);
+  const [viewportSize, setViewportSize] = React.useState({ width: 960, height: 520 });
 
   const containerRefCallback = React.useCallback((node: HTMLDivElement | null) => {
     if (containerResizeObserverRef.current) {
@@ -419,7 +496,10 @@ export function SceneLaunchPreviewWheelV3({
   const pendingDragOffsetRef = React.useRef<number | null>(null);
   const playbackFrameRef = React.useRef<number | null>(null);
   const playbackTimeRef = React.useRef(0);
+  const wasPreviewPlayingRef = React.useRef(false);
+  const prominentTimestampRef = React.useRef<HTMLDivElement | null>(null);
   const playbackSelectedMediaIdRef = React.useRef<string | null>(selectedMediaId);
+  const playbackResolvedMediaKeyRef = React.useRef<string | null>(null);
   const fastNavigationRef = React.useRef(false);
   const fastNavigationIdleTimeoutRef = React.useRef<number | null>(null);
   const dropSettleTimeoutRef = React.useRef<number | null>(null);
@@ -433,8 +513,16 @@ export function SceneLaunchPreviewWheelV3({
   const reorderPointerRef = React.useRef({ clientX: 0, clientY: 0 });
   const reorderPreviewOrderRef = React.useRef<string[] | null>(null);
   const wheelTimeoutRef = React.useRef<number | null>(null);
+  const playheadDragRef = React.useRef<PreviewWheelPlayheadDragState>({
+    isDragging: false,
+    pointerId: -1,
+    startClientX: 0,
+    startPlayheadX: 0,
+    startOffset: 0,
+  });
   const [offset, setOffsetState] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
+  const [isPlayheadDragging, setIsPlayheadDragging] = React.useState(false);
   const [isSpinning, setIsSpinning] = React.useState(false);
   const [isSnapping, setIsSnapping] = React.useState(false);
   const [isFastNavigating, setIsFastNavigating] = React.useState(false);
@@ -469,23 +557,31 @@ export function SceneLaunchPreviewWheelV3({
   const [preparedPreviewReady, setPreparedPreviewReady] = React.useState(false);
   const [visiblePreparedPreviewMediaId, setVisiblePreparedPreviewMediaId] = React.useState<string | null>(null);
   const [directPreviewMediaId, setDirectPreviewMediaId] = React.useState<string | null>(selectedMediaId);
+  const [playbackSnapshotTime, setPlaybackSnapshotTime] = React.useState<number | null>(null);
   const [trimOverlayMediaId, setTrimOverlayMediaId] = React.useState<string | null>(null);
-  const [viewportSize, setViewportSize] = React.useState({ width: 960, height: 520 });
-  const [playheadAlignment, setPlayheadAlignment] = React.useState<'center' | 'left'>('center');
+  const playheadPositionRatioRef = React.useRef(0.5);
+  const [playheadPositionRatio, setPlayheadPositionRatio] = React.useState(0.5);
 
   React.useEffect(() => {
-    const saved = localStorage.getItem('scene-launch-playhead-alignment');
-    if (saved === 'left' || saved === 'center') {
-      setPlayheadAlignment(saved);
-    }
+    const savedPosition = Number(localStorage.getItem('scene-launch-playhead-position'));
+    const nextPosition = Number.isFinite(savedPosition) && savedPosition > 0 && savedPosition < 1
+      ? savedPosition
+      : localStorage.getItem('scene-launch-playhead-alignment') === 'left'
+        ? 0.1
+        : null;
+    if (nextPosition === null) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      playheadPositionRatioRef.current = nextPosition;
+      setPlayheadPositionRatio(nextPosition);
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
-  const togglePlayheadAlignment = React.useCallback(() => {
-    setPlayheadAlignment(prev => {
-      const next = prev === 'center' ? 'left' : 'center';
-      localStorage.setItem('scene-launch-playhead-alignment', next);
-      return next;
-    });
+  const centerPlayhead = React.useCallback(() => {
+    playheadPositionRatioRef.current = 0.5;
+    setPlayheadPositionRatio(0.5);
+    localStorage.setItem('scene-launch-playhead-position', '0.5');
   }, []);
 
   React.useEffect(() => {
@@ -523,14 +619,18 @@ export function SceneLaunchPreviewWheelV3({
   const rulerTop = isGallery
     ? 22
     : Math.max(2, itemCenterY - itemHeight / 2 - 28);
-  const playheadOffsetFromCenter = isGallery && playheadAlignment === 'left'
-    ? 96 - viewportSize.width / 2
-    : 0;
+  const itemTop = itemCenterY - itemHeight / 2;
   const centerX = viewportSize.width > 0 ? viewportSize.width / 2 : 480;
+  const playheadX = clamp(
+    viewportSize.width * playheadPositionRatio,
+    32,
+    Math.max(32, viewportSize.width - 32),
+  );
+  const playheadOffsetFromCenter = playheadX - centerX;
   const galleryPreviewHeight = Math.max(0, Math.min(
     360,
     viewportSize.width * 9 / 16,
-    viewportSize.height - rowHeight - 88,
+    viewportSize.height - rowHeight - 116,
   ));
   const galleryPreviewWidth = galleryPreviewHeight * 16 / 9;
   const uniformItemWidth = sizing === 'uniform'
@@ -697,9 +797,33 @@ export function SceneLaunchPreviewWheelV3({
   const preparedPreviewMedia = preparedPreviewMediaId
     ? items.find(item => item.id === preparedPreviewMediaId) ?? null
     : null;
-  const isWheelMoving = isDragging || isSpinning;
+  const isWheelMoving = isDragging || isPlayheadDragging || isSpinning;
   const scrubSnapshot = React.useMemo<GalleryScrubSnapshot | null>(() => {
     if (selectedIndex < 0 || items.length === 0) return null;
+
+    if (isPreviewPlaying && playbackSnapshotTime !== null) {
+      const timelineTimeSeconds = clamp(playbackSnapshotTime, 0, totalDurationSeconds);
+      let playbackIndex = finalIndex;
+      for (let index = 0; index < itemDurations.length; index += 1) {
+        const itemEndTime = (itemStartTimes[index] ?? 0) + (itemDurations[index] ?? 0.5);
+        if (timelineTimeSeconds < itemEndTime) {
+          playbackIndex = index;
+          break;
+        }
+      }
+
+      const media = items[playbackIndex];
+      if (media) {
+        const elapsedSeconds = Math.max(
+          0,
+          timelineTimeSeconds - (itemStartTimes[playbackIndex] ?? 0),
+        );
+        return {
+          ...resolveItemSnapshot(media, elapsedSeconds),
+          timelineTimeSeconds,
+        };
+      }
+    }
 
     if (directPreviewMediaId && !isPreviewPlaying) {
       const directIndex = items.findIndex(item => item.id === directPreviewMediaId);
@@ -767,13 +891,16 @@ export function SceneLaunchPreviewWheelV3({
     itemStartTimes,
     itemWidths,
     items,
+    isGallery,
     isPreviewPlaying,
     offset,
+    playbackSnapshotTime,
     resolveItemSnapshot,
     selectedIndex,
     sizing,
     stripEndPixel,
     timelineOriginOffset,
+    totalDurationSeconds,
   ]);
   const rulerPlayheadTimeSeconds = React.useMemo(() => {
     if (items.length === 0) return 0;
@@ -829,32 +956,78 @@ export function SceneLaunchPreviewWheelV3({
     setOffsetState(boundedOffset);
   }, [maxOffset, minOffset]);
 
-  React.useEffect(() => {
+  const scrubWithPlayhead = React.useCallback((
+    nextPlayheadX: number,
+    originPlayheadX: number,
+    originOffset: number,
+  ) => {
+    const boundedPlayheadX = clamp(
+      nextPlayheadX,
+      32,
+      Math.max(32, viewportSize.width - 32),
+    );
+    const nextRatio = boundedPlayheadX / Math.max(1, viewportSize.width);
+    playheadPositionRatioRef.current = nextRatio;
+    setPlayheadPositionRatio(nextRatio);
+    setOffset(originOffset - (boundedPlayheadX - originPlayheadX));
+    setDirectPreviewMediaId(null);
+  }, [setOffset, viewportSize.width]);
+
+  React.useLayoutEffect(() => {
+    const wasPlaying = wasPreviewPlayingRef.current;
+    wasPreviewPlayingRef.current = isPreviewPlaying;
     if (isPreviewPlaying) return;
-    playbackTimeRef.current = scrubSnapshot?.timelineTimeSeconds ?? 0;
+
+    const nextTime = wasPlaying
+      ? playbackTimeRef.current
+      : scrubSnapshot?.timelineTimeSeconds ?? 0;
+    playbackTimeRef.current = nextTime;
     playbackSelectedMediaIdRef.current = selectedMediaId;
-  }, [isPreviewPlaying, scrubSnapshot?.timelineTimeSeconds, selectedMediaId]);
+    if (prominentTimestampRef.current) {
+      prominentTimestampRef.current.textContent = formatPlaybackTimestamp(
+        nextTime,
+        totalDurationSeconds,
+      );
+    }
+  }, [isPreviewPlaying, scrubSnapshot?.timelineTimeSeconds, selectedMediaId, totalDurationSeconds]);
 
   React.useEffect(() => {
-    if (!isPreviewPlaying || totalDurationSeconds <= 0) return;
+    if (!isPreviewPlaying || totalDurationSeconds <= 0) {
+      playbackResolvedMediaKeyRef.current = null;
+      return;
+    }
 
     let lastTime = performance.now();
     const tick = (now: number) => {
       const deltaSeconds = Math.max(0, (now - lastTime) / 1000);
       lastTime = now;
       let nextTime = playbackTimeRef.current + deltaSeconds;
+      let didLoop = false;
 
       if (nextTime >= totalDurationSeconds) {
         if (loopPreviewPlayback) {
           nextTime %= totalDurationSeconds;
+          didLoop = true;
         } else {
           playbackTimeRef.current = totalDurationSeconds;
+          if (prominentTimestampRef.current) {
+            prominentTimestampRef.current.textContent = formatPlaybackTimestamp(
+              totalDurationSeconds,
+              totalDurationSeconds,
+            );
+          }
           onPreviewPlaybackComplete?.();
           return;
         }
       }
 
       playbackTimeRef.current = nextTime;
+      if (prominentTimestampRef.current) {
+        prominentTimestampRef.current.textContent = formatPlaybackTimestamp(
+          nextTime,
+          totalDurationSeconds,
+        );
+      }
       let playbackIndex = finalIndex;
       for (let index = 0; index < itemDurations.length; index += 1) {
         const itemEndTime = (itemStartTimes[index] ?? 0) + (itemDurations[index] ?? 0.5);
@@ -865,6 +1038,19 @@ export function SceneLaunchPreviewWheelV3({
       }
 
       const playbackItem = items[playbackIndex];
+      if (playbackItem) {
+        const itemElapsedSeconds = Math.max(
+          0,
+          nextTime - (itemStartTimes[playbackIndex] ?? 0),
+        );
+        const resolvedMedia = resolveItemSnapshot(playbackItem, itemElapsedSeconds).media;
+        const resolvedMediaKey = `${playbackIndex}:${resolvedMedia.id}`;
+        if (didLoop || playbackResolvedMediaKeyRef.current !== resolvedMediaKey) {
+          playbackResolvedMediaKeyRef.current = resolvedMediaKey;
+          setPlaybackSnapshotTime(nextTime);
+        }
+      }
+
       if (playbackItem && playbackSelectedMediaIdRef.current !== playbackItem.id) {
         playbackSelectedMediaIdRef.current = playbackItem.id;
         setOffset(
@@ -896,6 +1082,7 @@ export function SceneLaunchPreviewWheelV3({
     loopPreviewPlayback,
     onPlaybackMediaChange,
     onPreviewPlaybackComplete,
+    resolveItemSnapshot,
     setOffset,
     sizing,
     timelineOriginOffset,
@@ -936,6 +1123,61 @@ export function SceneLaunchPreviewWheelV3({
     setIsSpinning(false);
     setIsSnapping(false);
   }, [updateFastNavigation]);
+
+  const beginPlayheadDrag = React.useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    stopAnimation();
+    playheadDragRef.current = {
+      isDragging: true,
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startPlayheadX: playheadX,
+      startOffset: offsetRef.current,
+    };
+    setIsPlayheadDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [playheadX, stopAnimation]);
+
+  const movePlayheadDrag = React.useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = playheadDragRef.current;
+    if (!drag.isDragging || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    scrubWithPlayhead(
+      drag.startPlayheadX + event.clientX - drag.startClientX,
+      drag.startPlayheadX,
+      drag.startOffset,
+    );
+  }, [scrubWithPlayhead]);
+
+  const endPlayheadDrag = React.useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = playheadDragRef.current;
+    if (!drag.isDragging || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    playheadDragRef.current.isDragging = false;
+    setIsPlayheadDragging(false);
+    localStorage.setItem('scene-launch-playhead-position', String(playheadPositionRatioRef.current));
+  }, []);
+
+  const handlePlayheadKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+    let nextPlayheadX: number | null = null;
+    if (event.key === 'ArrowLeft') nextPlayheadX = playheadX - (event.shiftKey ? 24 : 8);
+    if (event.key === 'ArrowRight') nextPlayheadX = playheadX + (event.shiftKey ? 24 : 8);
+    if (event.key === 'Home') nextPlayheadX = 32;
+    if (event.key === 'End') nextPlayheadX = Math.max(32, viewportSize.width - 32);
+    if (nextPlayheadX === null) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    stopAnimation();
+    scrubWithPlayhead(nextPlayheadX, playheadX, offsetRef.current);
+    const nextRatio = clamp(nextPlayheadX, 32, Math.max(32, viewportSize.width - 32)) /
+      Math.max(1, viewportSize.width);
+    localStorage.setItem('scene-launch-playhead-position', String(nextRatio));
+  }, [playheadX, scrubWithPlayhead, stopAnimation, viewportSize.width]);
 
   const snapToIndex = React.useCallback((
     index: number,
@@ -1092,7 +1334,7 @@ export function SceneLaunchPreviewWheelV3({
       skipNextReorderAlignmentRef.current
     ) return;
     snapToIndexRef.current(selectedIndex, { commit: false });
-  }, [isPreviewPlaying, selectedIndex, selectedMediaId, playheadAlignment]);
+  }, [isPreviewPlaying, selectedIndex, selectedMediaId]);
 
   React.useEffect(() => {
     if (skipNextReorderAlignmentRef.current) {
@@ -1905,8 +2147,6 @@ export function SceneLaunchPreviewWheelV3({
                 <GalleryScrubPreview
                   snapshot={scrubSnapshot}
                   isPlaying={isPreviewPlaying}
-                  loopPlayback={loopPreviewPlayback}
-                  onPlaybackComplete={onPreviewPlaybackComplete}
                 />
               )}
               {preparedPreviewMedia && !isPreviewPlaying && (
@@ -1943,8 +2183,9 @@ export function SceneLaunchPreviewWheelV3({
                 )}
             </div>
 
-            {/* Control capsule below preview */}
-            <div className="mt-2.5 flex items-center justify-center gap-2 rounded-full border border-white/5 bg-zinc-900/40 px-2.5 py-1 shadow-md backdrop-blur-md shrink-0">
+            {/* Controls and prominent playback timestamp below preview */}
+            <div className="mt-2.5 flex shrink-0 flex-col items-center">
+              <div className="flex items-center justify-center gap-2 rounded-full border border-white/5 bg-zinc-900/40 px-2.5 py-1 shadow-md backdrop-blur-md">
               {/* Go to First Button */}
               <button
                 type="button"
@@ -2043,32 +2284,31 @@ export function SceneLaunchPreviewWheelV3({
 
               <div className="h-3.5 w-px bg-zinc-800" />
 
-              {/* Time display */}
-              <span className="font-mono text-[10px] font-bold text-zinc-300 select-none px-1.5">
-                {timelineCurrentTime.toFixed(1)}s
-              </span>
-
-              <div className="h-3.5 w-px bg-zinc-800" />
-
-              {/* Playhead Alignment Toggle */}
+              {/* Playhead Center Reset */}
               <button
                 type="button"
-                onClick={togglePlayheadAlignment}
+                onClick={centerPlayhead}
                 className={cn(
                   'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
-                  playheadAlignment === 'left'
+                  Math.abs(playheadPositionRatio - 0.5) > 0.001
                     ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
                     : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
                 )}
-                title={playheadAlignment === 'left' ? 'Align Playhead to Center' : 'Align Playhead to Left'}
-                aria-label={playheadAlignment === 'left' ? 'Align Playhead to Center' : 'Align Playhead to Left'}
+                title="Center playhead"
+                aria-label="Center playhead"
               >
-                {playheadAlignment === 'left' ? (
-                  <AlignLeft className="h-3.5 w-3.5" />
-                ) : (
-                  <AlignCenter className="h-3.5 w-3.5" />
-                )}
+                <AlignCenter className="h-3.5 w-3.5" />
               </button>
+              </div>
+              <div
+                ref={prominentTimestampRef}
+                role="timer"
+                aria-live="off"
+                aria-label="Playback time"
+                className="mt-1.5 min-w-40 rounded-md border border-indigo-400/20 bg-black/70 px-3 py-1 text-center font-mono text-sm font-black tabular-nums tracking-wide text-indigo-100 shadow-lg shadow-black/40"
+              >
+                {formatPlaybackTimestamp(scrubSnapshot.timelineTimeSeconds, totalDurationSeconds)}
+              </div>
             </div>
           </div>
         )}
@@ -2168,20 +2408,42 @@ export function SceneLaunchPreviewWheelV3({
               document.body,
             );
           })()}
-          {(sizing === 'duration' || isGallery) && (
+          {isPreviewPlaying && (sizing === 'duration' || isGallery) && (
             <div
               aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 z-[190] w-0"
+              style={{ left: playheadX }}
+            >
+              <div className="absolute inset-y-0 left-0 w-0.5 -translate-x-1/2 bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.95)]" />
+            </div>
+          )}
+          {!isPreviewPlaying && (sizing === 'duration' || isGallery) && (
+            <div
               className="pointer-events-none absolute z-[190]"
               style={{
-                left: playheadAlignment === 'left' ? '96px' : '50%',
-                top: rulerTop,
-                height: itemCenterY + itemHeight / 2 - rulerTop,
+                left: playheadX,
+                top: itemTop,
+                height: itemHeight,
                 width: 0,
               }}
             >
-              <div className="absolute left-0 top-0 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded bg-indigo-500 px-1.5 py-0.5 font-mono text-[9px] font-bold text-white shadow-lg shadow-black/50">
-                {formatRulerSeconds(rulerPlayheadTimeSeconds)}
-              </div>
+              <button
+                type="button"
+                aria-label={`Drag playhead, currently ${formatRulerSeconds(rulerPlayheadTimeSeconds)}`}
+                title="Drag to scrub. Use arrow keys for fine adjustment."
+                onPointerDown={beginPlayheadDrag}
+                onPointerMove={movePlayheadDrag}
+                onPointerUp={endPlayheadDrag}
+                onPointerCancel={endPlayheadDrag}
+                onLostPointerCapture={endPlayheadDrag}
+                onKeyDown={handlePlayheadKeyDown}
+                className={cn(
+                  'pointer-events-auto absolute left-0 top-0 flex h-8 w-10 -translate-x-1/2 -translate-y-full touch-none items-end justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200',
+                  isPlayheadDragging ? 'cursor-grabbing' : 'cursor-ew-resize',
+                )}
+              >
+                <span className="h-0 w-0 border-x-[15px] border-t-[20px] border-x-transparent border-t-indigo-500 drop-shadow-[0_3px_4px_rgba(0,0,0,0.7)]" />
+              </button>
               {onNavigateBack && (
                 <button
                   type="button"
@@ -2198,11 +2460,10 @@ export function SceneLaunchPreviewWheelV3({
                   <ArrowLeft className="h-3 w-3" />
                 </button>
               )}
-              <div className="absolute left-0 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-indigo-400" />
-              <div className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-indigo-300 shadow-[0_0_8px_rgba(165,180,252,0.9)]" />
+              <div aria-hidden="true" className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-indigo-300 shadow-[0_0_8px_rgba(165,180,252,0.9)]" />
             </div>
           )}
-          {(sizing === 'duration' || isGallery) && (
+          {!isPreviewPlaying && (sizing === 'duration' || isGallery) && (
             <div className="sr-only" aria-live="polite">
               Playhead at {formatRulerSeconds(rulerPlayheadTimeSeconds)}
             </div>
@@ -2233,6 +2494,20 @@ export function SceneLaunchPreviewWheelV3({
               const itemDuration = itemDurations[index] ?? 0.5;
               const itemStartTime = itemStartTimes[index] ?? 0;
               const itemEndTime = itemStartTime + itemDuration;
+              const progressTimelineTime = scrubSnapshot?.timelineTimeSeconds ?? 0;
+              const itemElapsedSeconds = clamp(
+                progressTimelineTime - itemStartTime,
+                0,
+                itemDuration,
+              );
+              const itemProgress = itemDuration > 0
+                ? itemElapsedSeconds / itemDuration
+                : 0;
+              const isItemProgressPlaying =
+                isPreviewPlaying &&
+                itemDuration > 0 &&
+                progressTimelineTime >= itemStartTime &&
+                progressTimelineTime < itemEndTime;
               let x = itemCenterOffset + playheadOffsetFromCenter;
               let z = 0;
               let rotateY = 0;
@@ -2438,6 +2713,14 @@ export function SceneLaunchPreviewWheelV3({
                       </div>
                     )}
                   </button>
+                  {sizing === 'uniform' && (
+                    <UniformItemProgress
+                      progress={itemProgress}
+                      durationSeconds={itemDuration}
+                      isPlaying={isItemProgressPlaying}
+                      timelineTimeSeconds={progressTimelineTime}
+                    />
+                  )}
                   {collectionItemIds.includes(item.id) && onCollectionOpen ? (
                     <button
                       type="button"

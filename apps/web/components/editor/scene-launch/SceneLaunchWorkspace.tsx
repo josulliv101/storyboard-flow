@@ -2197,7 +2197,6 @@ export function SceneLaunchWorkspace({
                       onPreviewPlaybackComplete={() => setIsWheelPreviewPlaying(false)}
                       onPlaybackMediaChange={selectPreviewMediaDuringPlayback}
                       onTogglePlayback={toggleSceneLaunchTimelinePlayback}
-                      timelineCurrentTime={timelineCurrentTime}
                       onToggleLoop={() => setIsTimelineLooping(current => !current)}
                       />
                     </div>
