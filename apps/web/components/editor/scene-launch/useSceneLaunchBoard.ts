@@ -20,6 +20,7 @@ export type SceneLaunchMediaItem = {
   trimStartSeconds?: number;
   mediaDurationSeconds?: number;
   fileSize?: number;
+  disabled?: boolean;
 };
 
 export type SceneLaunchBeat = {
@@ -28,6 +29,7 @@ export type SceneLaunchBeat = {
   items: SceneLaunchMediaItem[];
   childIds: string[];
   gridOrder: Array<{ id: string; type: 'media' | 'collection' }>;
+  disabled?: boolean;
 };
 
 export type SceneLaunchBoardState = {
@@ -423,7 +425,7 @@ export function useSceneLaunchBoard({
     });
   };
 
-  const createSceneLaunchBeat = (insertionIndex?: number) => {
+  const createSceneLaunchBeat = (insertionIndex?: number, parentBeatId?: string | null) => {
     const id = `beat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const insertGridItem = (
       order: Array<{ id: string; type: 'media' | 'collection' }>,
@@ -440,9 +442,11 @@ export function useSceneLaunchBoard({
       ];
     };
 
-    if (activeSceneLaunchBeatId) {
+    const targetParentBeatId = parentBeatId === undefined ? activeSceneLaunchBeatId : parentBeatId;
+
+    if (targetParentBeatId) {
       setSceneLaunchBeats(previous => previous.map(beat => (
-        beat.id === activeSceneLaunchBeatId
+        beat.id === targetParentBeatId
           ? {
               ...beat,
               childIds: [...beat.childIds, id],
@@ -463,6 +467,7 @@ export function useSceneLaunchBoard({
         gridOrder: [],
       },
     ]);
+    return id;
   };
 
   const openBeatUpload = (beatId: string) => {
@@ -929,6 +934,22 @@ export function useSceneLaunchBoard({
     toast.success(`Moved "${itemTitle}" to Trash`);
   };
 
+  const setSceneLaunchItemDisabled = (dragKey: string, disabled: boolean) => {
+    const [type, id] = dragKey.split(':');
+    if (!id) return;
+    if (type === 'media') {
+      setSceneLaunchMediaItems(previous => previous.map(item => item.id === id ? { ...item, disabled } : item));
+      setSceneLaunchBeats(previous => previous.map(beat => ({
+        ...beat,
+        items: beat.items.map(item => item.id === id ? { ...item, disabled } : item),
+      })));
+      return;
+    }
+    if (type === 'collection') {
+      setSceneLaunchBeats(previous => previous.map(beat => beat.id === id ? { ...beat, disabled } : beat));
+    }
+  };
+
   const restoreItemFromTrash = (dragKey: string) => {
     const [type, id] = dragKey.split(':');
     if (!type || !id) return;
@@ -1282,6 +1303,7 @@ export function useSceneLaunchBoard({
     moveSceneLaunchCollectionToCollection,
     moveSceneLaunchItemToParent,
     moveItemToTrash,
+    setSceneLaunchItemDisabled,
     restoreItemFromTrash,
     permanentlyDeleteItem,
     emptyTrash,

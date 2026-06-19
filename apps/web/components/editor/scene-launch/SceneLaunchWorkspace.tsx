@@ -33,6 +33,8 @@ import type { SidebarTab } from '../EditorSidebarRail';
 import { type Scene, type TimelineClip, type ClipType, type TimelineAspectRatio } from '@/lib/timeline-context';
 
 const MAX_IMAGE_DURATION_SECONDS = 60 * 60;
+const COLLECTION_WHEEL_PLACEHOLDER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='225' viewBox='0 0 400 225'><rect width='400' height='225' fill='%2309090b'/><g fill='none' stroke='%2352525b' stroke-width='8'><rect x='142' y='72' width='116' height='82' rx='8'/><path d='M150 72v-14h42l14 14'/></g></svg>";
+type PreviewWheelSequence = 'media' | 'collections';
 
 interface SceneLaunchWorkspaceProps {
   activeTab: SidebarTab;
@@ -115,6 +117,7 @@ export function SceneLaunchWorkspace({
     moveSceneLaunchItemToParent,
     moveSceneLaunchItemToTargetCollection,
     moveItemToTrash,
+    setSceneLaunchItemDisabled,
     restoreItemFromTrash,
     permanentlyDeleteItem,
     emptyTrash,
@@ -182,6 +185,15 @@ export function SceneLaunchWorkspace({
   }, [thumbnailMode]);
   const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV3Effect>('gallery');
   const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV3Sizing>('uniform');
+  const [previewWheelSequence, setPreviewWheelSequence] = React.useState<PreviewWheelSequence>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-sequence');
+      if (saved === 'collections') return 'collections';
+    }
+    return 'media';
+  });
+  const [previewWheelCollectionPath, setPreviewWheelCollectionPath] = React.useState<string[]>([]);
+  const [wheelDirectoryPendingKey, setWheelDirectoryPendingKey] = React.useState<string | null>(null);
   const [previewWheelDurationScale, setPreviewWheelDurationScale] = React.useState(1);
   const [previewWheelSelectDroppedItem, setPreviewWheelSelectDroppedItem] = React.useState(false);
   const [previewEditDraft, setPreviewEditDraft] = React.useState<{
@@ -190,6 +202,10 @@ export function SceneLaunchWorkspace({
     durationSeconds: number;
     trimStartSeconds: number;
   } | null>(null);
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-sequence', previewWheelSequence);
+  }, [previewWheelSequence]);
 
   const currentTimeRef = React.useRef(0);
   React.useEffect(() => {
@@ -1301,6 +1317,216 @@ export function SceneLaunchWorkspace({
     return items;
   }, [timelineItems, getRecursiveMediaItems]);
 
+  const previewWheelSourceItems = React.useMemo(() => {
+    const collectionId = previewWheelCollectionPath[previewWheelCollectionPath.length - 1];
+    const collection = collectionId
+      ? sceneLaunchBeats.find(beat => beat.id === collectionId)
+      : null;
+    if (!collection) return timelineItems;
+
+    return collection.gridOrder.map(orderItem => {
+      if (orderItem.type === 'media') {
+        const item = collection.items.find(media => media.id === orderItem.id);
+        return item ? { ...orderItem, item } : null;
+      }
+      const childCollection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+      return childCollection ? { ...orderItem, collection: childCollection } : null;
+    }).filter((item): item is typeof timelineItems[number] => item !== null);
+  }, [previewWheelCollectionPath, sceneLaunchBeats, timelineItems]);
+
+  const getCollectionWheelRepresentative = React.useCallback((collection: SceneLaunchBeat): SceneLaunchMediaItem => (
+    getRecursiveMediaItems(collection)[0] ?? {
+      id: `collection-placeholder:${collection.id}`,
+      clipId: '',
+      name: collection.name,
+      type: 'image',
+      previewUrl: COLLECTION_WHEEL_PLACEHOLDER,
+      durationSeconds: 3,
+    }
+  ), [getRecursiveMediaItems]);
+
+  const collectionAwareWheelItems = React.useMemo(() => previewWheelSourceItems.flatMap(item => {
+    if (item.type === 'media') return [item.item];
+
+    const collectionMedia = getRecursiveMediaItems(item.collection);
+    const representative = getCollectionWheelRepresentative(item.collection);
+
+    return [{
+      ...representative,
+      name: item.collection.name,
+      disabled: item.collection.disabled,
+      durationSeconds: collectionMedia.reduce((total, media) => (
+        total + getSceneLaunchMediaPreviewDuration(media)
+      ), 0),
+    }];
+  }), [previewWheelSourceItems, getCollectionWheelRepresentative, getRecursiveMediaItems, getSceneLaunchMediaPreviewDuration]);
+
+  const collectionAwareWheelSequences = React.useMemo(() => {
+    const sequences: Record<string, SceneLaunchMediaItem[]> = {};
+    previewWheelSourceItems.forEach(item => {
+      if (item.type !== 'collection') return;
+      const collectionMedia = getRecursiveMediaItems(item.collection);
+      const representative = getCollectionWheelRepresentative(item.collection);
+      sequences[representative.id] = collectionMedia;
+    });
+    return sequences;
+  }, [previewWheelSourceItems, getCollectionWheelRepresentative, getRecursiveMediaItems]);
+
+  const collectionAwareWheelThumbnails = React.useMemo(() => {
+    const thumbnails: Record<string, Record<string, SceneLaunchMediaItem>> = {};
+
+    previewWheelSourceItems.forEach(item => {
+      if (item.type !== 'collection') return;
+      const representative = getCollectionWheelRepresentative(item.collection);
+
+      const childThumbnails: Record<string, SceneLaunchMediaItem> = {};
+      item.collection.gridOrder.forEach(orderItem => {
+        if (orderItem.type === 'media') {
+          const media = item.collection.items.find(candidate => candidate.id === orderItem.id);
+          if (media) childThumbnails[media.id] = media;
+          return;
+        }
+
+        const childCollection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+        if (!childCollection) return;
+        const childRepresentative = getRecursiveMediaItems(childCollection)[0];
+        if (!childRepresentative) return;
+        getRecursiveMediaItems(childCollection).forEach(media => {
+          childThumbnails[media.id] = childRepresentative;
+        });
+      });
+      thumbnails[representative.id] = childThumbnails;
+    });
+
+    return thumbnails;
+  }, [getCollectionWheelRepresentative, getRecursiveMediaItems, previewWheelSourceItems, sceneLaunchBeats]);
+
+  const wheelCollectionIds = React.useMemo(() => {
+    const ids: Record<string, string> = {};
+    previewWheelSourceItems.forEach(item => {
+      if (item.type !== 'collection') return;
+      const representative = getCollectionWheelRepresentative(item.collection);
+      ids[representative.id] = item.collection.id;
+    });
+    return ids;
+  }, [getCollectionWheelRepresentative, previewWheelSourceItems]);
+
+  const reorderCollectionAwareWheelItem = React.useCallback((
+    draggedWheelId: string,
+    targetWheelId: string,
+    position: 'before' | 'after',
+  ) => {
+    const getGridKey = (wheelId: string) => {
+      const sourceItem = previewWheelSourceItems.find(item => (
+        item.type === 'media'
+          ? item.item.id === wheelId
+          : getCollectionWheelRepresentative(item.collection).id === wheelId
+      ));
+      return sourceItem ? `${sourceItem.type}:${sourceItem.id}` : null;
+    };
+
+    const draggedKey = getGridKey(draggedWheelId);
+    const targetKey = getGridKey(targetWheelId);
+    if (!draggedKey || !targetKey) return;
+
+    const drilledCollectionId = previewWheelCollectionPath[previewWheelCollectionPath.length - 1];
+    if (!drilledCollectionId) {
+      reorderSceneLaunchGridItemAtPosition(draggedKey, targetKey, position);
+      return;
+    }
+
+    setSceneLaunchBeats(previous => previous.map(collection => {
+      if (collection.id !== drilledCollectionId) return collection;
+      const nextOrder = [...collection.gridOrder];
+      const draggedIndex = nextOrder.findIndex(item => `${item.type}:${item.id}` === draggedKey);
+      const targetIndex = nextOrder.findIndex(item => `${item.type}:${item.id}` === targetKey);
+      if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return collection;
+
+      const [draggedItem] = nextOrder.splice(draggedIndex, 1);
+      const adjustedTargetIndex = nextOrder.findIndex(item => `${item.type}:${item.id}` === targetKey);
+      nextOrder.splice(position === 'before' ? adjustedTargetIndex : adjustedTargetIndex + 1, 0, draggedItem);
+      return { ...collection, gridOrder: nextOrder };
+    }));
+  }, [getCollectionWheelRepresentative, previewWheelCollectionPath, previewWheelSourceItems, setSceneLaunchBeats]);
+
+  const moveWheelItemIntoCollection = React.useCallback((
+    draggedWheelId: string,
+    targetCollectionWheelId: string,
+  ) => {
+    const draggedItem = previewWheelSourceItems.find(item => (
+      item.type === 'media'
+        ? item.item.id === draggedWheelId
+        : getCollectionWheelRepresentative(item.collection).id === draggedWheelId
+    ));
+    const targetCollectionId = wheelCollectionIds[targetCollectionWheelId];
+    if (!draggedItem || !targetCollectionId || draggedItem.id === targetCollectionId) return;
+
+    moveSceneLaunchItemToTargetCollection(
+      `${draggedItem.type}:${draggedItem.id}`,
+      targetCollectionId,
+    );
+  }, [getCollectionWheelRepresentative, moveSceneLaunchItemToTargetCollection, previewWheelSourceItems, wheelCollectionIds]);
+
+  const disabledWheelItemIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    sceneLaunchMediaItems.forEach(item => item.disabled && ids.add(item.id));
+    sceneLaunchBeats.forEach(beat => {
+      beat.items.forEach(item => item.disabled && ids.add(item.id));
+      if (beat.disabled) ids.add(getCollectionWheelRepresentative(beat).id);
+    });
+    return Array.from(ids);
+  }, [getCollectionWheelRepresentative, sceneLaunchBeats, sceneLaunchMediaItems]);
+
+  const handleWheelUtilityDrop = React.useCallback((action: 'parent' | 'directory' | 'trash' | 'disable', draggedWheelId: string) => {
+    const draggedItem = previewWheelSourceItems.find(item => (
+      item.type === 'media'
+        ? item.item.id === draggedWheelId
+        : getCollectionWheelRepresentative(item.collection).id === draggedWheelId
+    ));
+    if (!draggedItem) return;
+    const dragKey = `${draggedItem.type}:${draggedItem.id}`;
+
+    if (action === 'directory') {
+      setWheelDirectoryPendingKey(dragKey);
+    } else if (action === 'trash') {
+      moveItemToTrash(dragKey);
+    } else if (action === 'disable') {
+      const isDisabled = draggedItem.type === 'media'
+        ? Boolean(draggedItem.item.disabled)
+        : Boolean(draggedItem.collection.disabled);
+      setSceneLaunchItemDisabled(dragKey, !isDisabled);
+    } else {
+      moveSceneLaunchItemToParent(dragKey);
+    }
+  }, [getCollectionWheelRepresentative, moveItemToTrash, moveSceneLaunchItemToParent, previewWheelSourceItems, setSceneLaunchItemDisabled]);
+
+  const wheelReflectsCollections = previewWheelSizing === 'uniform' && previewWheelSequence === 'collections';
+  const previewWheelItems = React.useMemo(() => {
+    const sourceItems = wheelReflectsCollections
+      ? collectionAwareWheelItems
+      : flattenedTimelineMediaItems;
+    const seenIds = new Set<string>();
+    return sourceItems.filter(item => {
+      if (seenIds.has(item.id)) return false;
+      seenIds.add(item.id);
+      return true;
+    });
+  }, [collectionAwareWheelItems, flattenedTimelineMediaItems, wheelReflectsCollections]);
+
+  const previewWheelSelectedMediaId = React.useMemo(() => {
+    if (!wheelReflectsCollections || !selectedPreviewMediaId) return selectedPreviewMediaId || '';
+
+    const containingItem = previewWheelSourceItems.find(item => (
+      item.type === 'media'
+        ? item.id === selectedPreviewMediaId
+        : getRecursiveMediaItems(item.collection).some(media => media.id === selectedPreviewMediaId)
+    ));
+
+    if (!containingItem) return selectedPreviewMediaId;
+    if (containingItem.type === 'media') return containingItem.item.id;
+    return getCollectionWheelRepresentative(containingItem.collection).id;
+  }, [getCollectionWheelRepresentative, getRecursiveMediaItems, previewWheelSourceItems, selectedPreviewMediaId, wheelReflectsCollections]);
+
 
   const previewSceneLaunchMediaId = React.useCallback((mediaId: string) => {
     setIsTimelinePlaying(false);
@@ -1315,6 +1541,60 @@ export function SceneLaunchWorkspace({
   const previewSceneLaunchMedia = React.useCallback((item: SceneLaunchMediaItem) => {
     previewSceneLaunchMediaId(item.id);
   }, [previewSceneLaunchMediaId]);
+
+  const openPreviewWheelCollection = React.useCallback((representativeMediaId: string) => {
+    const collectionId = wheelCollectionIds[representativeMediaId];
+    const collection = collectionId
+      ? sceneLaunchBeats.find(beat => beat.id === collectionId)
+      : null;
+    if (!collection) return;
+
+    const firstMedia = getRecursiveMediaItems(collection)[0];
+    if (!firstMedia) return;
+    setPreviewWheelCollectionPath(current => [...current, collection.id]);
+    previewSceneLaunchMediaId(firstMedia.id);
+  }, [getRecursiveMediaItems, previewSceneLaunchMediaId, sceneLaunchBeats, wheelCollectionIds]);
+
+  const closePreviewWheelCollection = React.useCallback(() => {
+    if (previewWheelCollectionPath.length === 0) {
+      const parentPath = board.sceneLaunchBeatPath.slice(0, -1);
+      const parentId = parentPath[parentPath.length - 1];
+      const parent = parentId ? sceneLaunchBeats.find(beat => beat.id === parentId) : null;
+      let firstMedia = parent ? getRecursiveMediaItems(parent)[0] : undefined;
+
+      if (!parent) {
+        for (const orderItem of sceneLaunchGridOrder) {
+          if (orderItem.type === 'media') {
+            firstMedia = sceneLaunchMediaItems.find(media => media.id === orderItem.id);
+          } else {
+            const collection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+            firstMedia = collection ? getRecursiveMediaItems(collection)[0] : undefined;
+          }
+          if (firstMedia) break;
+        }
+      }
+
+      if (firstMedia) navigateToPath([...parentPath, 'workbench'], firstMedia.id);
+      return;
+    }
+
+    const next = previewWheelCollectionPath.slice(0, -1);
+    const parentId = next[next.length - 1];
+    const parent = parentId ? sceneLaunchBeats.find(beat => beat.id === parentId) : null;
+    const firstMedia = parent
+      ? getRecursiveMediaItems(parent)[0]
+      : flattenedTimelineMediaItems[0];
+    setPreviewWheelCollectionPath(next);
+    if (firstMedia) previewSceneLaunchMediaId(firstMedia.id);
+  }, [board.sceneLaunchBeatPath, flattenedTimelineMediaItems, getRecursiveMediaItems, navigateToPath, previewSceneLaunchMediaId, previewWheelCollectionPath, sceneLaunchBeats, sceneLaunchGridOrder, sceneLaunchMediaItems]);
+
+  const createPreviewWheelCollection = React.useCallback(() => {
+    const drilledCollectionId = previewWheelCollectionPath[previewWheelCollectionPath.length - 1];
+    createSceneLaunchBeat(undefined, drilledCollectionId ?? activeSceneLaunchBeatId);
+    setPreviewWheelSequence('collections');
+    setPreviewWheelSizing('uniform');
+    toast.success('Collection added to the wheel');
+  }, [activeSceneLaunchBeatId, createSceneLaunchBeat, previewWheelCollectionPath]);
 
   const selectPreviewMediaDuringPlayback = React.useCallback((mediaId: string) => {
     setPreviewEditDraft(null);
@@ -1796,8 +2076,17 @@ export function SceneLaunchWorkspace({
                   <>
                     <div className="min-h-0 w-full flex-1">
                       <SceneLaunchPreviewWheelV3
-                      items={flattenedTimelineMediaItems}
-                      selectedMediaId={selectedPreviewMediaId}
+                      items={previewWheelItems}
+                      itemSequences={wheelReflectsCollections ? collectionAwareWheelSequences : undefined}
+                      itemSequenceThumbnails={wheelReflectsCollections ? collectionAwareWheelThumbnails : undefined}
+                      onCollectionOpen={wheelReflectsCollections ? openPreviewWheelCollection : undefined}
+                      collectionItemIds={wheelReflectsCollections ? Object.keys(wheelCollectionIds) : undefined}
+                      onItemMoveIntoCollection={wheelReflectsCollections ? moveWheelItemIntoCollection : undefined}
+                      disabledItemIds={disabledWheelItemIds}
+                      onUtilityDrop={handleWheelUtilityDrop}
+                      canNavigateBack={previewWheelCollectionPath.length > 0 || board.sceneLaunchBeatPath.length > 0}
+                      onNavigateBack={closePreviewWheelCollection}
+                      selectedMediaId={previewWheelSelectedMediaId}
                       effect={previewWheelEffect}
                       sizing={previewWheelSizing}
                       durationScale={previewWheelDurationScale}
@@ -1819,10 +2108,10 @@ export function SceneLaunchWorkspace({
                         }
                       }}
                       onCenteredMediaChange={previewSceneLaunchMediaId}
-                      onItemsReorder={reorderSceneLaunchMedia}
+                      onItemsReorder={wheelReflectsCollections ? reorderCollectionAwareWheelItem : reorderSceneLaunchMedia}
                       selectReorderedItem={previewWheelSelectDroppedItem}
                       renderGalleryTrimOverlay={(item) => {
-                        if (!activePreviewDraft || activePreviewMedia?.id !== item.id || item.type !== 'video') return null;
+                        if (wheelReflectsCollections || !activePreviewDraft || activePreviewMedia?.id !== item.id || item.type !== 'video') return null;
 
                         return (
                           <div>
@@ -1873,7 +2162,7 @@ export function SceneLaunchWorkspace({
                         );
                       }}
                       renderSelectedItemOverlay={(item) => {
-                        if (!activePreviewDraft || activePreviewMedia?.id !== item.id) return null;
+                        if (wheelReflectsCollections || !activePreviewDraft || activePreviewMedia?.id !== item.id) return null;
 
                         return (
                           <>
@@ -1944,6 +2233,44 @@ export function SceneLaunchWorkspace({
                         )}
                       </div>
                     )}
+                    <div className="absolute left-4 top-4 z-40 rounded-lg border border-zinc-700/80 bg-zinc-950/92 p-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-2xl shadow-black/50 backdrop-blur-xl">
+                      <div className="mb-1 px-1.5 text-[9px] text-zinc-500">Wheel items</div>
+                      <div className="flex rounded-md bg-black/70 p-0.5" role="group" aria-label="Wheel items">
+                        {([
+                          ['media', 'All media'],
+                          ['collections', 'Collections'],
+                        ] as const).map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            aria-pressed={previewWheelSequence === value}
+                            onClick={() => {
+                              setPreviewWheelSequence(value);
+                              setPreviewWheelSizing('uniform');
+                              if (value === 'media') setPreviewWheelCollectionPath([]);
+                            }}
+                            className={cn(
+                              'h-7 rounded px-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400',
+                              previewWheelSequence === value
+                                ? 'bg-indigo-500 text-white shadow-sm'
+                                : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100',
+                            )}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {previewWheelSizing === 'uniform' && (
+                        <button
+                          type="button"
+                          onClick={createPreviewWheelCollection}
+                          className="mt-1.5 flex h-7 w-full items-center justify-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-[9px] text-zinc-200 transition-colors hover:border-indigo-400 hover:bg-indigo-500/15 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                        >
+                          <Plus className="h-3 w-3" />
+                          Collection
+                        </button>
+                      )}
+                    </div>
                     <div className="absolute right-4 top-4 z-40 flex items-center gap-3 rounded-md border border-zinc-700/80 bg-zinc-950/88 px-2.5 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-2xl shadow-black/50 backdrop-blur-xl">
                       <label className="flex items-center gap-2">
                         <span>Effect</span>
@@ -1970,15 +2297,17 @@ export function SceneLaunchWorkspace({
                           <option value="duration">Duration</option>
                         </select>
                       </label>
-                      <label className="flex items-center gap-2">
-                        <span>Center drop</span>
-                        <Switch
-                          size="sm"
-                          checked={previewWheelSelectDroppedItem}
-                          onCheckedChange={setPreviewWheelSelectDroppedItem}
-                          aria-label="Center and select dropped timeline item"
-                        />
-                      </label>
+                      {!wheelReflectsCollections && (
+                        <label className="flex items-center gap-2">
+                          <span>Center drop</span>
+                          <Switch
+                            size="sm"
+                            checked={previewWheelSelectDroppedItem}
+                            onCheckedChange={setPreviewWheelSelectDroppedItem}
+                            aria-label="Center and select dropped timeline item"
+                          />
+                        </label>
+                      )}
                       {previewWheelSizing === 'duration' && (
                         <label className="flex items-center gap-2">
                           <span>Scale</span>
@@ -2013,6 +2342,38 @@ export function SceneLaunchWorkspace({
           </motion.div>
         </main>
       </div>
+
+      {wheelDirectoryPendingKey && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/65 p-6 backdrop-blur-sm" onClick={() => setWheelDirectoryPendingKey(null)}>
+          <div className="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-950 p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-white">Move to directory</h2>
+                <p className="mt-1 text-xs text-zinc-500">Choose a collection for the dropped item.</p>
+              </div>
+              <button type="button" aria-label="Close directory chooser" onClick={() => setWheelDirectoryPendingKey(null)} className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="mt-4 max-h-72 space-y-1 overflow-y-auto">
+              {sceneLaunchBeats.filter(beat => beat.id !== 'trash').map(beat => (
+                <button
+                  key={beat.id}
+                  type="button"
+                  onClick={() => {
+                    moveSceneLaunchItemToTargetCollection(wheelDirectoryPendingKey, beat.id);
+                    setWheelDirectoryPendingKey(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md border border-transparent px-3 py-2 text-left text-xs font-semibold text-zinc-300 hover:border-indigo-500/40 hover:bg-indigo-500/10 hover:text-white"
+                >
+                  <Grid2X2 className="h-3.5 w-3.5 text-indigo-400" />
+                  <span className="truncate">{beat.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <SceneLaunchContextMenu
         menu={sceneLaunchContextMenu}

@@ -1,7 +1,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { createPortal } from 'react-dom';
-import { Clapperboard, Play, Pause, Repeat, AlignLeft, AlignCenter } from 'lucide-react';
+import { ArrowLeft, Ban, Clapperboard, CornerUpLeft, FolderInput, Play, Pause, Repeat, AlignLeft, AlignCenter, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { VIDEO_PLACEHOLDER, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
@@ -10,6 +10,8 @@ const ITEM_GAP = 24;
 const DRAG_SELECT_THRESHOLD = 5;
 const REORDER_LIFT_THRESHOLD = 24;
 const DROP_SETTLE_DURATION_MS = 180;
+const REORDER_LIFT_HOLD_MS = 200;
+const REORDER_SHRINK_DURATION_MS = 180;
 const PREPARED_PREVIEW_HANDOFF_MS = 900;
 const REORDER_EDGE_ZONE_MAX_PX = 140;
 const REORDER_AUTO_PAN_MAX_PX_PER_FRAME = 16;
@@ -22,7 +24,7 @@ const FAST_NAVIGATION_IDLE_RESET_MS = 120;
 const MAX_WHEEL_ANGLE = 54;
 const DURATION_REFERENCE_SECONDS = 3;
 const MAX_IMAGE_DURATION_SECONDS = 60 * 60;
-const GALLERY_ITEM_HEIGHT = 96;
+const GALLERY_ITEM_HEIGHT = 120;
 
 type PreviewWheelDragState = {
   isDragging: boolean;
@@ -38,8 +40,11 @@ type PreviewWheelDragState = {
   mode: 'pending' | 'wheel' | 'reorder';
   lastReorderTarget: string | null;
   reorderTargetMediaId: string | null;
-  reorderPosition: 'before' | 'after' | null;
+  reorderPosition: 'before' | 'after' | 'inside' | null;
+  utilityAction: PreviewWheelUtilityAction | null;
 };
+
+export type PreviewWheelUtilityAction = 'parent' | 'directory' | 'trash' | 'disable';
 
 type ReorderPreview = {
   mediaId: string;
@@ -47,6 +52,9 @@ type ReorderPreview = {
   clientY: number;
   width: number;
   height: number;
+  liftScale: number;
+  trayX: number;
+  trayY: number;
 };
 
 export type SceneLaunchPreviewWheelV3Effect = 'cylinder' | 'cylinder2' | 'coverflow' | 'gallery' | 'stack';
@@ -54,6 +62,11 @@ export type SceneLaunchPreviewWheelV3Sizing = 'uniform' | 'duration';
 
 interface SceneLaunchPreviewWheelV3Props {
   items: SceneLaunchMediaItem[];
+  itemSequences?: Record<string, SceneLaunchMediaItem[]>;
+  itemSequenceThumbnails?: Record<string, Record<string, SceneLaunchMediaItem>>;
+  onCollectionOpen?: (representativeMediaId: string) => void;
+  canNavigateBack?: boolean;
+  onNavigateBack?: () => void;
   selectedMediaId: string;
   effect: SceneLaunchPreviewWheelV3Effect;
   sizing: SceneLaunchPreviewWheelV3Sizing;
@@ -70,6 +83,10 @@ interface SceneLaunchPreviewWheelV3Props {
   onPreviewPlaybackComplete?: () => void;
   onPlaybackMediaChange?: (mediaId: string) => void;
   onItemsReorder?: (draggedMediaId: string, targetMediaId: string, position: 'before' | 'after') => void;
+  collectionItemIds?: string[];
+  onItemMoveIntoCollection?: (draggedMediaId: string, targetCollectionMediaId: string) => void;
+  disabledItemIds?: string[];
+  onUtilityDrop?: (action: PreviewWheelUtilityAction, draggedMediaId: string) => void;
   selectReorderedItem?: boolean;
   onTogglePlayback?: () => void;
   timelineCurrentTime?: number;
@@ -284,6 +301,11 @@ function PreparedGalleryPreview({
 
 export function SceneLaunchPreviewWheelV3({
   items,
+  itemSequences,
+  itemSequenceThumbnails,
+  onCollectionOpen,
+  canNavigateBack = false,
+  onNavigateBack,
   selectedMediaId,
   effect,
   sizing,
@@ -300,6 +322,10 @@ export function SceneLaunchPreviewWheelV3({
   onPreviewPlaybackComplete,
   onPlaybackMediaChange,
   onItemsReorder,
+  collectionItemIds = [],
+  onItemMoveIntoCollection,
+  disabledItemIds = [],
+  onUtilityDrop,
   selectReorderedItem = true,
   onTogglePlayback,
   timelineCurrentTime = 0,
@@ -364,6 +390,7 @@ export function SceneLaunchPreviewWheelV3({
   const galleryPreviewRef = React.useRef<HTMLDivElement | null>(null);
   const trimOverlayRef = React.useRef<HTMLDivElement | null>(null);
   const reorderGhostRef = React.useRef<HTMLDivElement | null>(null);
+  const reorderGhostContentRef = React.useRef<HTMLDivElement | null>(null);
   const dragRef = React.useRef<PreviewWheelDragState>({
     isDragging: false,
     startX: 0,
@@ -379,6 +406,7 @@ export function SceneLaunchPreviewWheelV3({
     lastReorderTarget: null,
     reorderTargetMediaId: null,
     reorderPosition: null,
+    utilityAction: null,
   });
   const momentumFrameRef = React.useRef<number | null>(null);
   const snapFrameRef = React.useRef<number | null>(null);
@@ -409,6 +437,31 @@ export function SceneLaunchPreviewWheelV3({
   const [isFastNavigating, setIsFastNavigating] = React.useState(false);
   const [reorderPreview, setReorderPreview] = React.useState<ReorderPreview | null>(null);
   const [reorderPreviewOrder, setReorderPreviewOrder] = React.useState<string[] | null>(null);
+  const [collectionDropTargetId, setCollectionDropTargetId] = React.useState<string | null>(null);
+  const [utilityDropTarget, setUtilityDropTarget] = React.useState<PreviewWheelUtilityAction | null>(null);
+
+  React.useLayoutEffect(() => {
+    const content = reorderGhostContentRef.current;
+    if (!reorderPreview || !content || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    const animation = content.animate(
+      [
+        { transform: `scale(${reorderPreview.liftScale})`, offset: 0 },
+        {
+          transform: `scale(${reorderPreview.liftScale})`,
+          offset: REORDER_LIFT_HOLD_MS / (REORDER_LIFT_HOLD_MS + REORDER_SHRINK_DURATION_MS),
+          easing: 'cubic-bezier(0.42, 0, 1, 1)',
+        },
+        { transform: 'scale(1)' },
+      ],
+      {
+        duration: REORDER_LIFT_HOLD_MS + REORDER_SHRINK_DURATION_MS,
+        easing: 'linear',
+        fill: 'both',
+      },
+    );
+    return () => animation.cancel();
+  }, [reorderPreview]);
   const [preparedPreviewMediaId, setPreparedPreviewMediaId] = React.useState<string | null>(null);
   const [preparedPreviewReady, setPreparedPreviewReady] = React.useState(false);
   const [visiblePreparedPreviewMediaId, setVisiblePreparedPreviewMediaId] = React.useState<string | null>(null);
@@ -483,12 +536,63 @@ export function SceneLaunchPreviewWheelV3({
         320,
         Math.min(760, viewportSize.width * 0.72),
       ));
-  const itemDurations = React.useMemo(() => items.map(item => Math.max(
+  const getMediaDuration = React.useCallback((item: SceneLaunchMediaItem) => Math.max(
     0.5,
-    item.id === selectedMediaId && selectedItemDurationSeconds !== undefined
-      ? selectedItemDurationSeconds
-      : item.durationSeconds ?? 3,
-  )), [items, selectedItemDurationSeconds, selectedMediaId]);
+    item.durationSeconds ?? 3,
+  ), []);
+  const itemDurations = React.useMemo(() => items.map(item => {
+    if (disabledItemIds.includes(item.id)) return 0;
+    const sequence = itemSequences?.[item.id];
+    if (sequence?.length) {
+      return sequence.reduce((total, media) => (
+        total + (disabledItemIds.includes(media.id) ? 0 : getMediaDuration(media))
+      ), 0);
+    }
+    return Math.max(
+      0.5,
+      item.id === selectedMediaId && selectedItemDurationSeconds !== undefined
+        ? selectedItemDurationSeconds
+        : item.durationSeconds ?? 3,
+    );
+  }), [disabledItemIds, getMediaDuration, itemSequences, items, selectedItemDurationSeconds, selectedMediaId]);
+
+  const resolveItemSnapshot = React.useCallback((
+    item: SceneLaunchMediaItem,
+    elapsedSeconds: number,
+  ) => {
+    const sequence = itemSequences?.[item.id]?.filter(media => !disabledItemIds.includes(media.id));
+    if (!sequence?.length) {
+      return {
+        media: item,
+        sourceTimeSeconds: item.type === 'video'
+          ? Math.max(0, item.trimStartSeconds ?? 0) + elapsedSeconds
+          : 0,
+      };
+    }
+
+    let remaining = Math.max(0, elapsedSeconds);
+    for (const media of sequence) {
+      const duration = getMediaDuration(media);
+      if (remaining < duration) {
+        return {
+          media,
+          sourceTimeSeconds: media.type === 'video'
+            ? Math.max(0, media.trimStartSeconds ?? 0) + remaining
+            : 0,
+        };
+      }
+      remaining -= duration;
+    }
+
+    const media = sequence[sequence.length - 1];
+    const duration = getMediaDuration(media);
+    return {
+      media,
+      sourceTimeSeconds: media.type === 'video'
+        ? Math.max(0, media.trimStartSeconds ?? 0) + Math.max(0, duration - 0.001)
+        : 0,
+    };
+  }, [disabledItemIds, getMediaDuration, itemSequences]);
   const durationPixelsPerSecond = uniformItemWidth / DURATION_REFERENCE_SECONDS * durationScale;
   const itemWidths = React.useMemo(() => {
     if (sizing === 'uniform') {
@@ -581,10 +685,10 @@ export function SceneLaunchPreviewWheelV3({
     if (directPreviewMediaId && !isPreviewPlaying) {
       const directIndex = items.findIndex(item => item.id === directPreviewMediaId);
       const media = items[directIndex];
-      if (media) {
+      if (media && !disabledItemIds.includes(media.id)) {
+        const resolved = resolveItemSnapshot(media, 0);
         return {
-          media,
-          sourceTimeSeconds: media.type === 'video' ? Math.max(0, media.trimStartSeconds ?? 0) : 0,
+          ...resolved,
           timelineTimeSeconds: itemStartTimes[directIndex] ?? 0,
         };
       }
@@ -610,6 +714,20 @@ export function SceneLaunchPreviewWheelV3({
       }
     }
 
+    if (disabledItemIds.includes(items[scrubbedIndex]?.id)) {
+      const nextEnabled = items.findIndex((candidate, index) => index > scrubbedIndex && !disabledItemIds.includes(candidate.id));
+      if (nextEnabled >= 0) {
+        scrubbedIndex = nextEnabled;
+      } else {
+        for (let index = scrubbedIndex - 1; index >= 0; index -= 1) {
+          if (!disabledItemIds.includes(items[index].id)) {
+            scrubbedIndex = index;
+            break;
+          }
+        }
+      }
+    }
+
     const media = items[scrubbedIndex];
     if (!media) return null;
 
@@ -618,13 +736,12 @@ export function SceneLaunchPreviewWheelV3({
     const progress = clamp((playheadPixel - itemStartPixel) / itemWidth, 0, 1);
     const itemDuration = itemDurations[scrubbedIndex] ?? 0.5;
     const timelineTimeSeconds = (itemStartTimes[scrubbedIndex] ?? 0) + progress * itemDuration;
-    const sourceTimeSeconds = media.type === 'video'
-      ? Math.max(0, media.trimStartSeconds ?? 0) + progress * itemDuration
-      : 0;
+    const resolved = resolveItemSnapshot(media, progress * itemDuration);
 
-    return { media, sourceTimeSeconds, timelineTimeSeconds };
+    return { ...resolved, timelineTimeSeconds };
   }, [
     directPreviewMediaId,
+    disabledItemIds,
     finalIndex,
     itemDurations,
     itemStartPixels,
@@ -633,6 +750,7 @@ export function SceneLaunchPreviewWheelV3({
     items,
     isPreviewPlaying,
     offset,
+    resolveItemSnapshot,
     selectedIndex,
     sizing,
     stripEndPixel,
@@ -1069,7 +1187,7 @@ export function SceneLaunchPreviewWheelV3({
     setVisiblePreparedPreviewMediaId(null);
   }, [getCenteredMediaIdForOrder, selectReorderedItem]);
 
-  const updateReorderTarget = React.useCallback((clientX: number) => {
+  const updateReorderTarget = React.useCallback((clientX: number, clientY: number) => {
     const drag = dragRef.current;
     if (drag.mode !== 'reorder' || !drag.targetMediaId) return;
 
@@ -1085,6 +1203,26 @@ export function SceneLaunchPreviewWheelV3({
     if (!target || !targetMediaId) return;
 
     const bounds = target.element.getBoundingClientRect();
+    const isCollectionTarget = collectionItemIds.includes(targetMediaId);
+    const isInsideTarget = isCollectionTarget &&
+      clientX >= bounds.left + bounds.width * 0.25 &&
+      clientX <= bounds.right - bounds.width * 0.25 &&
+      clientY >= bounds.top - 24 &&
+      clientY <= bounds.bottom + 24;
+    if (isInsideTarget) {
+      const reorderTarget = `${targetMediaId}:inside`;
+      if (drag.lastReorderTarget === reorderTarget) return;
+      drag.lastReorderTarget = reorderTarget;
+      drag.reorderTargetMediaId = targetMediaId;
+      drag.reorderPosition = 'inside';
+      setCollectionDropTargetId(targetMediaId);
+      const initialOrder = items.map(item => item.id);
+      reorderPreviewOrderRef.current = initialOrder;
+      setReorderPreviewOrder(initialOrder);
+      return;
+    }
+
+    setCollectionDropTargetId(null);
     const position = clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
     const reorderTarget = `${targetMediaId}:${position}`;
     if (drag.lastReorderTarget === reorderTarget) return;
@@ -1101,7 +1239,7 @@ export function SceneLaunchPreviewWheelV3({
     reorderPreviewOrderRef.current = next;
     prepareFixedCenterPreview(next);
     setReorderPreviewOrder(next);
-  }, [items, prepareFixedCenterPreview]);
+  }, [collectionItemIds, items, prepareFixedCenterPreview]);
 
   const startReorderAutoPan = React.useCallback(() => {
     if (reorderAutoPanFrameRef.current !== null) return;
@@ -1132,7 +1270,7 @@ export function SceneLaunchPreviewWheelV3({
         setOffset(previousOffset + panDelta);
         if (offsetRef.current !== previousOffset && time - previousHitTestTime >= 48) {
           previousHitTestTime = time;
-          updateReorderTarget(pointerX);
+          updateReorderTarget(pointerX, reorderPointerRef.current.clientY);
           const previewOrder = reorderPreviewOrderRef.current;
           if (previewOrder) prepareFixedCenterPreview(previewOrder);
         }
@@ -1178,6 +1316,7 @@ export function SceneLaunchPreviewWheelV3({
       lastReorderTarget: null,
       reorderTargetMediaId: null,
       reorderPosition: null,
+      utilityAction: null,
     };
     clickGuardRef.current = false;
     setIsDragging(true);
@@ -1202,6 +1341,10 @@ export function SceneLaunchPreviewWheelV3({
         `[data-preview-wheel-item-id="${CSS.escape(drag.targetMediaId)}"]`,
       );
       const bounds = itemElement?.getBoundingClientRect();
+      const sourceWidth = bounds?.width ?? 240;
+      const sourceHeight = bounds?.height ?? 135;
+      const previewWidth = Math.min(sourceWidth * 0.72, clamp(sourceWidth * 0.55, 88, 180));
+      const previewHeight = previewWidth * sourceHeight / Math.max(1, sourceWidth);
       drag.mode = 'reorder';
       drag.didMove = true;
       clickGuardRef.current = true;
@@ -1210,10 +1353,14 @@ export function SceneLaunchPreviewWheelV3({
         mediaId: drag.targetMediaId,
         clientX: event.clientX,
         clientY: event.clientY,
-        width: bounds?.width ?? 240,
-        height: bounds?.height ?? 135,
+        width: previewWidth,
+        height: previewHeight,
+        liftScale: sourceWidth / previewWidth,
+        trayX: bounds ? bounds.left + bounds.width / 2 : event.clientX,
+        trayY: bounds ? bounds.top - 16 : event.clientY - sourceHeight / 2 - 16,
       });
       const initialOrder = items.map(item => item.id);
+      setCollectionDropTargetId(null);
       reorderPreviewOrderRef.current = initialOrder;
       setReorderPreviewOrder(initialOrder);
       prepareFixedCenterPreview(initialOrder);
@@ -1230,7 +1377,22 @@ export function SceneLaunchPreviewWheelV3({
         reorderGhostRef.current.style.transform = `translate3d(${event.clientX}px, ${event.clientY}px, 0) translate(-50%, -50%) scale(1.03)`;
       }
 
-      updateReorderTarget(event.clientX);
+      const utilityElement = Array.from(document.querySelectorAll<HTMLElement>('[data-wheel-utility-target]'))
+        .find(element => {
+          const bounds = element.getBoundingClientRect();
+          return event.clientX >= bounds.left && event.clientX <= bounds.right &&
+            event.clientY >= bounds.top && event.clientY <= bounds.bottom;
+        });
+      const utilityAction = utilityElement?.dataset.wheelUtilityTarget as PreviewWheelUtilityAction | undefined;
+      drag.utilityAction = utilityAction ?? null;
+      setUtilityDropTarget(utilityAction ?? null);
+      if (utilityAction) {
+        setCollectionDropTargetId(null);
+        event.preventDefault();
+        return;
+      }
+
+      updateReorderTarget(event.clientX, event.clientY);
       event.preventDefault();
       return;
     }
@@ -1308,8 +1470,11 @@ export function SceneLaunchPreviewWheelV3({
       lastReorderTarget: null,
       reorderTargetMediaId: null,
       reorderPosition: null,
+      utilityAction: null,
     };
     setIsDragging(false);
+    setCollectionDropTargetId(null);
+    setUtilityDropTarget(null);
     if (drag.mode !== 'reorder') {
       setReorderPreview(null);
       setReorderPreviewOrder(null);
@@ -1320,6 +1485,15 @@ export function SceneLaunchPreviewWheelV3({
     }
 
     if (drag.mode === 'reorder') {
+      if (drag.utilityAction && drag.targetMediaId) {
+        onUtilityDrop?.(drag.utilityAction, drag.targetMediaId);
+        reorderPreviewOrderRef.current = null;
+        setReorderPreview(null);
+        setReorderPreviewOrder(null);
+        clickGuardRef.current = true;
+        clearClickGuardSoon();
+        return;
+      }
       if (drag.targetMediaId && drag.reorderTargetMediaId && drag.reorderPosition) {
         if (selectReorderedItem) {
           preparedPreviewMediaIdRef.current = drag.targetMediaId;
@@ -1327,13 +1501,29 @@ export function SceneLaunchPreviewWheelV3({
           setPreparedPreviewReady(false);
           setVisiblePreparedPreviewMediaId(null);
         }
+        const destinationMediaId = drag.reorderPosition === 'inside'
+          ? drag.reorderTargetMediaId
+          : drag.targetMediaId;
         const draggedElement = viewport?.querySelector<HTMLElement>(
-          `[data-preview-wheel-item-id="${CSS.escape(drag.targetMediaId)}"]`,
+          `[data-preview-wheel-item-id="${CSS.escape(destinationMediaId)}"]`,
         );
         const destinationBounds = draggedElement?.getBoundingClientRect();
         if (reorderGhostRef.current && destinationBounds) {
           reorderGhostRef.current.style.transition = `transform ${DROP_SETTLE_DURATION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
           reorderGhostRef.current.style.transform = `translate3d(${destinationBounds.left + destinationBounds.width / 2}px, ${destinationBounds.top + destinationBounds.height / 2}px, 0) translate(-50%, -50%) scale(1)`;
+          if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && reorderPreview) {
+            reorderGhostContentRef.current?.animate(
+              [
+                { transform: 'scale(1)' },
+                { transform: `scale(${destinationBounds.width / reorderPreview.width})` },
+              ],
+              {
+                duration: DROP_SETTLE_DURATION_MS,
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                fill: 'both',
+              },
+            );
+          }
         }
 
         if (!selectReorderedItem) {
@@ -1359,14 +1549,22 @@ export function SceneLaunchPreviewWheelV3({
             onCenteredMediaChange(centeredMediaId);
           }
           skipNextReorderAlignmentRef.current = true;
-          onItemsReorder?.(drag.targetMediaId, drag.reorderTargetMediaId, drag.reorderPosition);
+          if (drag.reorderPosition === 'inside') {
+            onItemMoveIntoCollection?.(drag.targetMediaId, drag.reorderTargetMediaId);
+          } else {
+            onItemsReorder?.(drag.targetMediaId, drag.reorderTargetMediaId, drag.reorderPosition);
+          }
         }
 
         dropSettleTimeoutRef.current = window.setTimeout(() => {
           dropSettleTimeoutRef.current = null;
           if (selectReorderedItem) {
             pendingReorderSelectionRef.current = drag.targetMediaId;
-            onItemsReorder?.(drag.targetMediaId!, drag.reorderTargetMediaId!, drag.reorderPosition!);
+            if (drag.reorderPosition === 'inside') {
+              onItemMoveIntoCollection?.(drag.targetMediaId!, drag.reorderTargetMediaId!);
+            } else {
+              onItemsReorder?.(drag.targetMediaId!, drag.reorderTargetMediaId!, drag.reorderPosition!);
+            }
           }
           reorderPreviewOrderRef.current = null;
           setReorderPreview(null);
@@ -1398,7 +1596,7 @@ export function SceneLaunchPreviewWheelV3({
         snapToIndex(targetIndex);
       }
     }
-  }, [clearClickGuardSoon, getCenteredMediaIdForOrder, items, onCenteredMediaChange, onItemsReorder, selectReorderedItem, selectedMediaId, setOffset, sizing, snapToIndex, spinWithMomentum]);
+  }, [clearClickGuardSoon, getCenteredMediaIdForOrder, items, onCenteredMediaChange, onItemMoveIntoCollection, onItemsReorder, onUtilityDrop, reorderPreview, selectReorderedItem, selectedMediaId, setOffset, sizing, snapToIndex, spinWithMomentum]);
 
   const focusItem = React.useCallback((index: number) => {
     window.requestAnimationFrame(() => {
@@ -1742,26 +1940,68 @@ export function SceneLaunchPreviewWheelV3({
             const item = items.find(candidate => candidate.id === reorderPreview.mediaId);
             if (!item) return null;
             return createPortal(
-              <div
-                ref={reorderGhostRef}
-                aria-hidden="true"
-                className="pointer-events-none fixed z-[300] overflow-hidden rounded-md border-2 border-indigo-300 bg-zinc-900 shadow-2xl shadow-black/70 ring-2 ring-indigo-400/40"
-                style={{
-                  left: 0,
-                  top: 0,
-                  width: reorderPreview.width,
-                  height: reorderPreview.height,
-                  transform: `translate3d(${reorderPreview.clientX}px, ${reorderPreview.clientY}px, 0) translate(-50%, -50%) scale(1.03)`,
-                  willChange: 'transform',
-                }}
-              >
-                {item.type === 'video' ? (
-                  <img src={item.posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
-                )}
-                <div className="absolute inset-0 bg-indigo-500/10" />
-              </div>,
+              <>
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none fixed left-0 top-0 z-[310] grid w-[360px] grid-cols-4 gap-2 rounded-xl border border-zinc-700/90 bg-zinc-950/95 p-3 shadow-2xl shadow-black/70"
+                  style={{
+                    transform: `translate3d(${reorderPreview.trayX}px, ${reorderPreview.trayY}px, 0) translate(-50%, -100%)`,
+                  }}
+                >
+                  {([
+                    ['parent', 'Parent', CornerUpLeft],
+                    ['trash', 'Trash', Trash2],
+                    ['disable', 'Disable', Ban],
+                    ['directory', 'Directory', FolderInput],
+                  ] as const).map(([action, label, Icon]) => (
+                    <div
+                      key={action}
+                      data-wheel-utility-target={action}
+                      className={cn(
+                        'flex h-16 min-w-0 flex-col items-center justify-center rounded-lg border border-dashed text-zinc-300 transition-colors',
+                        utilityDropTarget === action
+                          ? action === 'trash'
+                            ? 'border-red-400 bg-red-500/25 text-red-100'
+                            : action === 'disable'
+                              ? 'border-amber-400 bg-amber-500/25 text-amber-100'
+                              : 'border-indigo-400 bg-indigo-500/25 text-indigo-100'
+                          : 'border-zinc-700 bg-zinc-900/90',
+                      )}
+                    >
+                      <Icon className="h-5 w-5" />
+                      <span className="mt-1.5 text-[9px] font-black uppercase tracking-wider">
+                        {action === 'disable' && disabledItemIds.includes(reorderPreview.mediaId) ? 'Enable' : label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div
+                  ref={reorderGhostRef}
+                  aria-hidden="true"
+                  className="pointer-events-none fixed z-[300]"
+                  style={{
+                    left: 0,
+                    top: 0,
+                    width: reorderPreview.width,
+                    height: reorderPreview.height,
+                    transform: `translate3d(${reorderPreview.clientX}px, ${reorderPreview.clientY}px, 0) translate(-50%, -50%) scale(1.03)`,
+                    willChange: 'transform',
+                  }}
+                >
+                  <div
+                    ref={reorderGhostContentRef}
+                    className="relative h-full w-full overflow-hidden rounded-md border-2 border-indigo-300 bg-zinc-900 shadow-2xl shadow-black/70 ring-2 ring-indigo-400/40"
+                    style={{ transformOrigin: 'center center', willChange: 'transform' }}
+                  >
+                    {item.type === 'video' ? (
+                      <img src={item.posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                    )}
+                    <div className="absolute inset-0 bg-indigo-500/10" />
+                  </div>
+                </div>
+              </>,
               document.body,
             );
           })()}
@@ -1779,6 +2019,22 @@ export function SceneLaunchPreviewWheelV3({
               <div className="absolute left-0 top-0 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded bg-indigo-500 px-1.5 py-0.5 font-mono text-[9px] font-bold text-white shadow-lg shadow-black/50">
                 {formatRulerSeconds(rulerPlayheadTimeSeconds)}
               </div>
+              {onNavigateBack && (
+                <button
+                  type="button"
+                  title={canNavigateBack ? 'Back to parent collection' : 'No parent collection'}
+                  aria-label="Back to parent collection"
+                  disabled={!canNavigateBack}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onNavigateBack();
+                  }}
+                  className="pointer-events-auto absolute right-7 top-0 flex h-5 w-5 -translate-y-full items-center justify-center rounded-full border border-indigo-300/40 bg-indigo-500 text-white shadow-lg shadow-black/50 transition-colors hover:bg-indigo-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-500"
+                >
+                  <ArrowLeft className="h-3 w-3" />
+                </button>
+              )}
               <div className="absolute left-0 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-indigo-400" />
               <div className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-indigo-300 shadow-[0_0_8px_rgba(165,180,252,0.9)]" />
             </div>
@@ -1801,6 +2057,9 @@ export function SceneLaunchPreviewWheelV3({
           />
           <div className="absolute inset-0 will-change-transform" style={{ transformStyle: 'preserve-3d' }}>
             {items.map((item, index) => {
+              const thumbnailItem = scrubSnapshot
+                ? itemSequenceThumbnails?.[item.id]?.[scrubSnapshot.media.id] ?? item
+                : item;
               const itemWidth = itemWidths[index] ?? uniformItemWidth;
               const itemCenterOffset = (reorderItemCenterPositions?.get(item.id) ?? itemCenterPositions[index] ?? 0) + offset;
               const offsetFromCenter = itemCenterOffset / itemStride;
@@ -1878,6 +2137,11 @@ export function SceneLaunchPreviewWheelV3({
                 shouldRender = absOffsetFromCenter < 4.8;
               }
 
+              if (sizing === 'uniform') {
+                opacity = 1;
+                brightness = 1;
+              }
+
               const firstRulerTick = Math.ceil((itemStartTime - 0.001) / rulerTickStep) * rulerTickStep;
               const rulerTicks: number[] = [];
               for (
@@ -1928,16 +2192,22 @@ export function SceneLaunchPreviewWheelV3({
                       : isWheelMoving
                         ? "transition-[border-color,box-shadow] duration-100"
                         : "transition-[border-color,box-shadow,filter,opacity,transform] duration-150",
-                    isActive
-                      ? "border-indigo-300 shadow-indigo-500/25 ring-1 ring-indigo-400/50"
-                      : "border-zinc-700/70 hover:border-zinc-500 hover:shadow-xl hover:ring-1 hover:ring-indigo-500/40"
+                    collectionDropTargetId === item.id
+                      ? "border-emerald-300 shadow-emerald-500/30 ring-2 ring-emerald-400/80"
+                      : isActive
+                        ? "border-indigo-300 shadow-indigo-500/25 ring-1 ring-indigo-400/50"
+                        : "border-zinc-700/70 hover:border-zinc-500 hover:shadow-xl hover:ring-1 hover:ring-indigo-500/40"
                   )}
                   style={{
-                    filter: `brightness(${brightness})`,
+                    filter: `brightness(${brightness}) ${disabledItemIds.includes(item.id) ? 'grayscale(1)' : ''}`,
                     top: itemCenterY,
                     width: itemWidth,
                     height: itemHeight,
-                    opacity: reorderPreview?.mediaId === item.id ? 0.12 : opacity,
+                    opacity: reorderPreview?.mediaId === item.id
+                      ? 0.12
+                      : disabledItemIds.includes(item.id)
+                        ? 0.42
+                        : opacity,
                     pointerEvents: shouldRender ? 'auto' : 'none',
                     transform: `translate3d(${(x - itemWidth / 2).toFixed(2)}px, ${(translateY - itemHeight / 2).toFixed(2)}px, ${z}px) rotateY(${rotateY}deg) scale(${scale})`,
                     transformOrigin: 'center center',
@@ -1972,18 +2242,22 @@ export function SceneLaunchPreviewWheelV3({
                     }}
                     className="absolute inset-0 overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
                   >
-                    {item.type === 'video' ? (
+                    {thumbnailItem.type === 'video' ? (
                       <img
-                        src={item.posterUrl || VIDEO_PLACEHOLDER}
+                        src={thumbnailItem.posterUrl || VIDEO_PLACEHOLDER}
                         alt=""
                         className="h-full w-full object-cover"
                       />
                     ) : (
-                      <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                      <img src={thumbnailItem.previewUrl} alt="" className="h-full w-full object-cover" />
                     )}
                     <div className={cn(
                       "absolute inset-0 transition-colors",
-                      isActive ? "bg-indigo-500/10" : "bg-black/30 group-hover/nav:bg-black/10"
+                      isActive
+                        ? "bg-indigo-500/10"
+                        : sizing === 'uniform'
+                          ? "bg-transparent group-hover/nav:bg-white/5"
+                          : "bg-black/30 group-hover/nav:bg-black/10"
                     )} />
                     {!isActive && effect !== 'gallery' && (
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-2.5">
@@ -1997,6 +2271,54 @@ export function SceneLaunchPreviewWheelV3({
                       </div>
                     )}
                   </button>
+                  {collectionItemIds.includes(item.id) && onCollectionOpen ? (
+                    <button
+                      type="button"
+                      title="View Collection"
+                      aria-label={`View collection ${item.name}`}
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onCollectionOpen(item.id);
+                      }}
+                      className="group/collection absolute right-0 top-0 z-40 h-[52px] w-[52px] overflow-visible focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
+                    >
+                      <svg
+                        width="52"
+                        height="52"
+                        viewBox="0 0 52 52"
+                        aria-hidden="true"
+                        className="pointer-events-none absolute right-0 top-0 overflow-visible"
+                        style={{ filter: 'drop-shadow(-1.5px 1.5px 2px rgba(0,0,0,0.5))' }}
+                      >
+                        <path
+                          d="M 0,0 L 52,0 L 52,52 Z"
+                          fill="#18181b"
+                          stroke="#27272a"
+                          strokeWidth="1.5"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      <span className="pointer-events-none absolute right-2 top-1.5 font-sans text-[11px] font-extrabold tracking-tight text-white">
+                        {itemSequences?.[item.id]?.length ?? 0}
+                      </span>
+                      <span className="pointer-events-none absolute right-0 top-full mt-2 hidden whitespace-nowrap rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] font-bold normal-case tracking-normal text-white shadow-xl group-hover/collection:block group-focus-visible/collection:block">
+                        View Collection
+                      </span>
+                    </button>
+                  ) : null}
+                  {collectionDropTargetId === item.id && (
+                    <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-emerald-950/45">
+                      <span className="rounded-full border border-emerald-300/60 bg-emerald-950/90 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-emerald-100 shadow-xl">
+                        Move into collection
+                      </span>
+                    </div>
+                  )}
+                  {disabledItemIds.includes(item.id) && (
+                    <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+                      <span className="rounded-full border border-amber-400/60 bg-black/80 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-amber-200">Disabled</span>
+                    </div>
+                  )}
                   {isActive && effect !== 'gallery' && renderSelectedItemOverlay && (
                     <div
                       className="pointer-events-none absolute inset-0 z-20"
