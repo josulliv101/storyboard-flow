@@ -9,8 +9,11 @@
   "scripts": {
     "storybook": "npm run storybook --workspace=apps/storybook",
     "build-storybook": "npm run build-storybook --workspace=apps/storybook",
-    "dev:frontend": "npm run dev --workspace=apps/web",
+    "dev:frontend": "cross-env NODE_OPTIONS=\"--max-old-space-size=4096 --heapsnapshot-near-heap-limit=1\" npm run dev --workspace=apps/web",
     "dev:backend": "npm run dev --workspace=apps/backend",
     "setup:backend": "npm run setup --workspace=apps/backend"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
   }
 }

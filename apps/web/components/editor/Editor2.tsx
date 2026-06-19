@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Loader2, MapPin, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
@@ -51,7 +52,18 @@ export function Editor2() {
   } = useTimeline();
 
   const activeScene = scenes.find(scene => scene.id === activeSceneId) || scenes[0];
-  const [viewMode, setViewMode] = React.useState<'storyboard' | 'workbench'>('storyboard');
+  const params = useParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const rawPath = React.useMemo(() => {
+    const p = params?.path;
+    if (!p) return [];
+    return typeof p === 'string' ? [p] : p;
+  }, [params?.path]);
+
+  const viewMode = rawPath.includes('workbench') ? 'workbench' : 'storyboard';
   const [activeTab, setActiveTab] = React.useState<SidebarTab>(null);
   const [directoryExpandedIds, setDirectoryExpandedIds] = React.useState<Set<string>>(new Set(['__root__']));
   const [pendingMoveItem, setPendingMoveItem] = React.useState<{ type: 'media' | 'collection'; id: string } | null>(null);
@@ -121,6 +133,32 @@ export function Editor2() {
     handleAddClip,
     updateClip,
   });
+
+  const setViewMode = React.useCallback((mode: 'storyboard' | 'workbench') => {
+    const baseSegment = pathname ? pathname.split('/')[1] : 'editor';
+    const baseRoute = `/${baseSegment}`;
+    const collectionPath = board.sceneLaunchBeatPath;
+    
+    const currentParams = new URLSearchParams(searchParams ? searchParams.toString() : '');
+    let nextPath: string[];
+    if (mode === 'storyboard') {
+      nextPath = collectionPath;
+      currentParams.delete('mediaId');
+    } else {
+      nextPath = [...collectionPath, 'workbench'];
+      if (!currentParams.has('mediaId')) {
+        const firstMediaId = board.sceneLaunchMediaItems[0]?.id || '';
+        if (firstMediaId) {
+          currentParams.set('mediaId', firstMediaId);
+        }
+      }
+    }
+    
+    const pathString = nextPath.length > 0 ? '/' + nextPath.map(encodeURIComponent).join('/') : '';
+    const querySuffix = currentParams.toString() ? `?${currentParams.toString()}` : '';
+    
+    router.push(`${baseRoute}${pathString}${querySuffix}`);
+  }, [router, pathname, searchParams, board.sceneLaunchBeatPath, board.sceneLaunchMediaItems]);
 
   React.useEffect(() => {
     const handleDragStart = (event: DragEvent) => {
@@ -441,8 +479,6 @@ export function Editor2() {
             onDropItem={handleDropOnDirectory}
             board={board}
             headerVariant="prompt"
-            viewMode={viewMode}
-            setViewMode={setViewMode}
           />
         </div>
       </main>

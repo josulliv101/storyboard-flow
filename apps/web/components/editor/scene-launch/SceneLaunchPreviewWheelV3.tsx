@@ -1,9 +1,10 @@
 import React from 'react';
 import Image from 'next/image';
 import { createPortal } from 'react-dom';
+import { Clapperboard, Play, Pause, Repeat, AlignLeft, AlignCenter } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import type { SceneLaunchMediaItem } from './useSceneLaunchBoard';
+import { VIDEO_PLACEHOLDER, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
 
 const ITEM_GAP = 24;
 const DRAG_SELECT_THRESHOLD = 5;
@@ -70,6 +71,9 @@ interface SceneLaunchPreviewWheelV3Props {
   onPlaybackMediaChange?: (mediaId: string) => void;
   onItemsReorder?: (draggedMediaId: string, targetMediaId: string, position: 'before' | 'after') => void;
   selectReorderedItem?: boolean;
+  onTogglePlayback?: () => void;
+  timelineCurrentTime?: number;
+  onToggleLoop?: () => void;
 }
 
 const clamp = (value: number, min: number, max: number) => (
@@ -297,8 +301,66 @@ export function SceneLaunchPreviewWheelV3({
   onPlaybackMediaChange,
   onItemsReorder,
   selectReorderedItem = true,
+  onTogglePlayback,
+  timelineCurrentTime = 0,
+  onToggleLoop,
 }: SceneLaunchPreviewWheelV3Props) {
+  const containerResizeObserverRef = React.useRef<ResizeObserver | null>(null);
+  const viewportResizeObserverRef = React.useRef<ResizeObserver | null>(null);
   const viewportRef = React.useRef<HTMLDivElement | null>(null);
+
+  const containerRefCallback = React.useCallback((node: HTMLDivElement | null) => {
+    if (containerResizeObserverRef.current) {
+      containerResizeObserverRef.current.disconnect();
+      containerResizeObserverRef.current = null;
+    }
+
+    if (node) {
+      const updateSize = () => {
+        const bounds = node.getBoundingClientRect();
+        setViewportSize(prev => {
+          const nextHeight = bounds.height || 520;
+          if (prev.height === nextHeight) return prev;
+          return { ...prev, height: nextHeight };
+        });
+      };
+      updateSize();
+
+      if (typeof ResizeObserver !== 'undefined') {
+        const observer = new ResizeObserver(updateSize);
+        observer.observe(node);
+        containerResizeObserverRef.current = observer;
+      }
+    }
+  }, []);
+
+  const viewportRefCallback = React.useCallback((node: HTMLDivElement | null) => {
+    viewportRef.current = node;
+
+    if (viewportResizeObserverRef.current) {
+      viewportResizeObserverRef.current.disconnect();
+      viewportResizeObserverRef.current = null;
+    }
+
+    if (node) {
+      const updateSize = () => {
+        const bounds = node.getBoundingClientRect();
+        setViewportSize(prev => {
+          const nextWidth = bounds.width || 960;
+          if (prev.width === nextWidth) return prev;
+          return { ...prev, width: nextWidth };
+        });
+      };
+      updateSize();
+
+      if (typeof ResizeObserver !== 'undefined') {
+        const observer = new ResizeObserver(updateSize);
+        observer.observe(node);
+        viewportResizeObserverRef.current = observer;
+      }
+    }
+  }, []);
+
   const galleryPreviewRef = React.useRef<HTMLDivElement | null>(null);
   const trimOverlayRef = React.useRef<HTMLDivElement | null>(null);
   const reorderGhostRef = React.useRef<HTMLDivElement | null>(null);
@@ -353,6 +415,22 @@ export function SceneLaunchPreviewWheelV3({
   const [directPreviewMediaId, setDirectPreviewMediaId] = React.useState<string | null>(selectedMediaId);
   const [trimOverlayMediaId, setTrimOverlayMediaId] = React.useState<string | null>(null);
   const [viewportSize, setViewportSize] = React.useState({ width: 960, height: 520 });
+  const [playheadAlignment, setPlayheadAlignment] = React.useState<'center' | 'left'>('center');
+
+  React.useEffect(() => {
+    const saved = localStorage.getItem('scene-launch-playhead-alignment');
+    if (saved === 'left' || saved === 'center') {
+      setPlayheadAlignment(saved);
+    }
+  }, []);
+
+  const togglePlayheadAlignment = React.useCallback(() => {
+    setPlayheadAlignment(prev => {
+      const next = prev === 'center' ? 'left' : 'center';
+      localStorage.setItem('scene-launch-playhead-alignment', next);
+      return next;
+    });
+  }, []);
 
   React.useEffect(() => {
     if (!trimOverlayMediaId) return;
@@ -376,15 +454,26 @@ export function SceneLaunchPreviewWheelV3({
         220,
         620,
       ));
-  const itemCenterY = Math.max(
-    itemHeight / 2 + 32,
-    viewportSize.height - itemHeight / 2 - 24,
-  );
-  const rulerTop = Math.max(2, itemCenterY - itemHeight / 2 - 28);
+  const isGallery = effect === 'gallery';
+  const rowHeight = isGallery
+    ? itemHeight + 66
+    : itemHeight + 36;
+  const itemCenterY = isGallery
+    ? rowHeight - 12 - itemHeight / 2
+    : Math.max(
+        itemHeight / 2 + 32,
+        viewportSize.height - itemHeight / 2 - 24,
+      );
+  const rulerTop = isGallery
+    ? 22
+    : Math.max(2, itemCenterY - itemHeight / 2 - 28);
+  const playheadOffsetFromCenter = isGallery && playheadAlignment === 'left'
+    ? 96 - viewportSize.width / 2
+    : 0;
   const galleryPreviewHeight = Math.max(0, Math.min(
     360,
     viewportSize.width * 9 / 16,
-    rulerTop - 24,
+    viewportSize.height - rowHeight - 88,
   ));
   const galleryPreviewWidth = galleryPreviewHeight * 16 / 9;
   const uniformItemWidth = sizing === 'uniform'
@@ -469,17 +558,17 @@ export function SceneLaunchPreviewWheelV3({
   const selectedScrubOriginOffset = selectedIndex >= 0
     ? (itemStartPixels[selectedIndex] ?? 0) - (itemCenterPositions[selectedIndex] ?? 0)
     : 0;
-  const maxOffset = sizing === 'duration'
+  const maxOffset = (sizing === 'duration' || isGallery)
     ? timelineOriginOffset
     : Math.max(0, selectedScrubOriginOffset);
-  const minOffset = sizing === 'duration'
+  const minOffset = (sizing === 'duration' || isGallery)
     ? timelineOriginOffset - stripEndPixel
     : Math.min(finalCenterOffset, selectedScrubOriginOffset - stripEndPixel);
   const snapReferencePositions = React.useMemo(() => (
-    sizing === 'duration'
+    (sizing === 'duration' || isGallery)
       ? itemStartPixels.map(startPixel => startPixel - timelineOriginOffset)
       : itemCenterPositions
-  ), [itemCenterPositions, itemStartPixels, sizing, timelineOriginOffset]);
+  ), [itemCenterPositions, itemStartPixels, sizing, isGallery, timelineOriginOffset]);
   const centeredIndex = getNearestIndexForOffset(offset, snapReferencePositions);
   const centeredItem = items[centeredIndex] ?? null;
   const preparedPreviewMedia = preparedPreviewMediaId
@@ -502,7 +591,7 @@ export function SceneLaunchPreviewWheelV3({
     }
 
     const playheadPixel = clamp(
-      sizing === 'duration' ? timelineOriginOffset - offset : -offset,
+      (sizing === 'duration' || isGallery) ? timelineOriginOffset - offset : -offset,
       0,
       stripEndPixel,
     );
@@ -642,7 +731,7 @@ export function SceneLaunchPreviewWheelV3({
       if (playbackItem && playbackSelectedMediaIdRef.current !== playbackItem.id) {
         playbackSelectedMediaIdRef.current = playbackItem.id;
         setOffset(
-          sizing === 'duration'
+          (sizing === 'duration' || isGallery)
             ? timelineOriginOffset - (itemStartPixels[playbackIndex] ?? 0)
             : -(itemCenterPositions[playbackIndex] ?? 0),
         );
@@ -730,7 +819,7 @@ export function SceneLaunchPreviewWheelV3({
       setDirectPreviewMediaId(targetItem?.id ?? null);
     }
     const targetOffset = clamp(
-      sizing === 'duration'
+      (sizing === 'duration' || isGallery)
         ? timelineOriginOffset - (itemStartPixels[boundedIndex] ?? 0)
         : -(itemCenterPositions[boundedIndex] ?? 0),
       minOffset,
@@ -815,7 +904,7 @@ export function SceneLaunchPreviewWheelV3({
       skipNextReorderAlignmentRef.current
     ) return;
     snapToIndexRef.current(selectedIndex, { commit: false });
-  }, [isPreviewPlaying, selectedIndex, selectedMediaId]);
+  }, [isPreviewPlaying, selectedIndex, selectedMediaId, playheadAlignment]);
 
   React.useEffect(() => {
     if (skipNextReorderAlignmentRef.current) {
@@ -858,27 +947,20 @@ export function SceneLaunchPreviewWheelV3({
       return;
     }
 
-    setOffset(sizing === 'duration'
+    setOffset((sizing === 'duration' || isGallery)
       ? timelineOriginOffset - (itemStartPixels[selectedIndex] ?? 0)
       : -(itemCenterPositions[selectedIndex] ?? 0));
-  }, [isPreviewPlaying, itemCenterPositions, itemStartPixels, selectedIndex, setOffset, sizing, timelineOriginOffset]);
+  }, [isPreviewPlaying, itemCenterPositions, itemStartPixels, selectedIndex, setOffset, sizing, isGallery, timelineOriginOffset]);
 
   React.useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport || typeof ResizeObserver === 'undefined') return;
-
-    const updateSize = () => {
-      const bounds = viewport.getBoundingClientRect();
-      setViewportSize({
-        width: bounds.width || 960,
-        height: bounds.height || 520,
-      });
+    return () => {
+      if (containerResizeObserverRef.current) {
+        containerResizeObserverRef.current.disconnect();
+      }
+      if (viewportResizeObserverRef.current) {
+        viewportResizeObserverRef.current.disconnect();
+      }
     };
-    updateSize();
-
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(viewport);
-    return () => observer.disconnect();
   }, []);
 
   React.useEffect(() => () => {
@@ -962,7 +1044,7 @@ export function SceneLaunchPreviewWheelV3({
     order.forEach((mediaId, orderIndex) => {
       const itemIndex = items.findIndex(item => item.id === mediaId);
       const width = itemWidths[itemIndex] ?? uniformItemWidth;
-      const referencePosition = sizing === 'duration'
+      const referencePosition = (sizing === 'duration' || isGallery)
         ? cursor - durationOrigin
         : cursor + width / 2;
       const distance = Math.abs(referencePosition + offsetRef.current);
@@ -1303,7 +1385,7 @@ export function SceneLaunchPreviewWheelV3({
     if (drag.didMove) {
       clickGuardRef.current = true;
       clearClickGuardSoon();
-      if (sizing === 'duration') {
+      if (sizing === 'duration' || isGallery) {
         return;
       }
       spinWithMomentum(drag.velocity);
@@ -1494,60 +1576,84 @@ export function SceneLaunchPreviewWheelV3({
   if (selectedIndex < 0) return null;
 
   return (
-    <div className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black px-4 py-6">
-      <div className="h-full min-h-0 w-full overflow-hidden rounded-md border border-zinc-800/90 bg-zinc-950/85 shadow-2xl shadow-black/60 backdrop-blur-xl">
-        <div
-          ref={viewportRef}
-          aria-label="Timeline media wheel"
-          className={cn(
-            "relative flex h-full min-h-0 items-center overflow-hidden",
-            reorderPreview ? "cursor-grabbing select-none" : isDragging ? "cursor-grabbing select-none" : "cursor-grab"
-          )}
-          style={{
-            perspective: 1200,
-            touchAction: 'none',
-          }}
-          onPointerDown={beginDrag}
-          onPointerMove={moveDrag}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          onLostPointerCapture={endDrag}
-          onKeyDown={handleKeyboardNavigation}
-        >
-          <div className="sr-only" aria-live="polite">
-            {centeredItem ? `Centered media ${centeredItem.name}` : 'Timeline media wheel'}
-          </div>
-          {reorderPreview && typeof document !== 'undefined' && (() => {
-            const item = items.find(candidate => candidate.id === reorderPreview.mediaId);
-            if (!item) return null;
-            return createPortal(
-              <div
-                ref={reorderGhostRef}
-                aria-hidden="true"
-                className="pointer-events-none fixed z-[300] overflow-hidden rounded-md border-2 border-indigo-300 bg-zinc-900 shadow-2xl shadow-black/70 ring-2 ring-indigo-400/40"
-                style={{
-                  left: 0,
-                  top: 0,
-                  width: reorderPreview.width,
-                  height: reorderPreview.height,
-                  transform: `translate3d(${reorderPreview.clientX}px, ${reorderPreview.clientY}px, 0) translate(-50%, -50%) scale(1.03)`,
-                  willChange: 'transform',
-                }}
-              >
-                {item.type === 'video' ? (
-                  <video src={item.previewUrl} className="h-full w-full object-cover" muted playsInline />
-                ) : (
-                  <Image src={item.previewUrl} alt="" fill sizes={`${Math.round(reorderPreview.width)}px`} unoptimized className="object-cover" />
+    <div ref={containerRefCallback} className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black px-4 py-6">
+      <div className={cn(
+        "min-h-0 w-full overflow-hidden rounded-md border border-zinc-800/90 bg-zinc-950/85 shadow-2xl shadow-black/60 backdrop-blur-xl",
+        isGallery ? "flex h-full flex-col" : "h-full"
+      )}>
+        {isGallery && scrubSnapshot && (
+          <div className="relative flex flex-1 flex-col min-h-0 items-center justify-center p-4 pb-2">
+            {/* Top area control capsule above preview */}
+            <div className="mb-2.5 flex items-center justify-center gap-2 rounded-full border border-white/5 bg-zinc-900/40 px-2 py-1 shadow-md backdrop-blur-md shrink-0">
+              {/* Play/Pause Button */}
+              <button
+                type="button"
+                onClick={onTogglePlayback}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full text-white transition-all cursor-pointer hover:scale-105 active:scale-95',
+                  isPreviewPlaying ? 'bg-red-650/80 hover:bg-red-700/90' : 'bg-indigo-600/80 hover:bg-indigo-700/90'
                 )}
-                <div className="absolute inset-0 bg-indigo-500/10" />
-              </div>,
-              document.body,
-            );
-          })()}
-          {effect === 'gallery' && scrubSnapshot && (
+                title={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
+                aria-label={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
+              >
+                {isPreviewPlaying ? (
+                  <Pause className="h-3.5 w-3.5 fill-current" />
+                ) : (
+                  <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />
+                )}
+              </button>
+
+              <div className="h-3.5 w-px bg-zinc-800" />
+
+              {/* Loop Toggle */}
+              <button
+                type="button"
+                onClick={onToggleLoop}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
+                  loopPreviewPlayback
+                    ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
+                    : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+                )}
+                title={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
+                aria-label={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
+              >
+                <Repeat className="h-3.5 w-3.5" />
+              </button>
+
+              <div className="h-3.5 w-px bg-zinc-800" />
+
+              {/* Time display */}
+              <span className="font-mono text-[10px] font-bold text-zinc-300 select-none px-1.5">
+                {timelineCurrentTime.toFixed(1)}s
+              </span>
+
+              <div className="h-3.5 w-px bg-zinc-800" />
+
+              {/* Playhead Alignment Toggle */}
+              <button
+                type="button"
+                onClick={togglePlayheadAlignment}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
+                  playheadAlignment === 'left'
+                    ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
+                    : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+                )}
+                title={playheadAlignment === 'left' ? 'Align Playhead to Center' : 'Align Playhead to Left'}
+                aria-label={playheadAlignment === 'left' ? 'Align Playhead to Center' : 'Align Playhead to Left'}
+              >
+                {playheadAlignment === 'left' ? (
+                  <AlignLeft className="h-3.5 w-3.5" />
+                ) : (
+                  <AlignCenter className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
+
             <div
               ref={galleryPreviewRef}
-              className="pointer-events-none absolute left-1/2 top-3 z-[140] -translate-x-1/2 overflow-hidden rounded-md border border-white/10 bg-black shadow-2xl shadow-black/60"
+              className="relative overflow-hidden rounded-md border border-white/10 bg-black shadow-2xl shadow-black/60"
               style={{ height: galleryPreviewHeight, width: galleryPreviewWidth }}
             >
               {isFastNavigating ? (
@@ -1567,7 +1673,8 @@ export function SceneLaunchPreviewWheelV3({
                 <GalleryScrubPreview
                   snapshot={scrubSnapshot}
                   isPlaying={isPreviewPlaying}
-                  loopPlayback={false}
+                  loopPlayback={loopPreviewPlayback}
+                  onPlaybackComplete={onPreviewPlaybackComplete}
                 />
               )}
               {preparedPreviewMedia && !isPreviewPlaying && (
@@ -1603,30 +1710,85 @@ export function SceneLaunchPreviewWheelV3({
                   </div>
                 )}
             </div>
+          </div>
+        )}
+
+
+
+        <div
+          ref={viewportRefCallback}
+          aria-label="Timeline media wheel"
+          className={cn(
+            "relative flex items-center overflow-hidden",
+            isGallery ? "shrink-0 border-t border-zinc-900 bg-zinc-950/20" : "h-full min-h-0",
+            reorderPreview ? "cursor-grabbing select-none" : isDragging ? "cursor-grabbing select-none" : "cursor-grab"
           )}
-          {sizing === 'duration' && (
+          style={{
+            perspective: 1200,
+            touchAction: 'none',
+            ...(isGallery ? { height: rowHeight } : {}),
+          }}
+          onPointerDown={beginDrag}
+          onPointerMove={moveDrag}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onLostPointerCapture={endDrag}
+          onKeyDown={handleKeyboardNavigation}
+        >
+          <div className="sr-only" aria-live="polite">
+            {centeredItem ? `Centered media ${centeredItem.name}` : 'Timeline media wheel'}
+          </div>
+          {reorderPreview && typeof document !== 'undefined' && (() => {
+            const item = items.find(candidate => candidate.id === reorderPreview.mediaId);
+            if (!item) return null;
+            return createPortal(
+              <div
+                ref={reorderGhostRef}
+                aria-hidden="true"
+                className="pointer-events-none fixed z-[300] overflow-hidden rounded-md border-2 border-indigo-300 bg-zinc-900 shadow-2xl shadow-black/70 ring-2 ring-indigo-400/40"
+                style={{
+                  left: 0,
+                  top: 0,
+                  width: reorderPreview.width,
+                  height: reorderPreview.height,
+                  transform: `translate3d(${reorderPreview.clientX}px, ${reorderPreview.clientY}px, 0) translate(-50%, -50%) scale(1.03)`,
+                  willChange: 'transform',
+                }}
+              >
+                {item.type === 'video' ? (
+                  <img src={item.posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                )}
+                <div className="absolute inset-0 bg-indigo-500/10" />
+              </div>,
+              document.body,
+            );
+          })()}
+          {(sizing === 'duration' || isGallery) && (
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute z-[190] -translate-x-1/2"
+              className="pointer-events-none absolute z-[190]"
               style={{
-                left: '50%',
+                left: playheadAlignment === 'left' ? '96px' : '50%',
                 top: rulerTop,
                 height: itemCenterY + itemHeight / 2 - rulerTop,
+                width: 0,
               }}
             >
-              <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded bg-indigo-500 px-1.5 py-0.5 font-mono text-[9px] font-bold text-white shadow-lg shadow-black/50">
+              <div className="absolute left-0 top-0 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded bg-indigo-500 px-1.5 py-0.5 font-mono text-[9px] font-bold text-white shadow-lg shadow-black/50">
                 {formatRulerSeconds(rulerPlayheadTimeSeconds)}
               </div>
-              <div className="absolute left-1/2 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-indigo-400" />
-              <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-indigo-300 shadow-[0_0_8px_rgba(165,180,252,0.9)]" />
+              <div className="absolute left-0 top-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-indigo-400" />
+              <div className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-indigo-300 shadow-[0_0_8px_rgba(165,180,252,0.9)]" />
             </div>
           )}
-          {sizing === 'duration' && (
+          {(sizing === 'duration' || isGallery) && (
             <div className="sr-only" aria-live="polite">
               Playhead at {formatRulerSeconds(rulerPlayheadTimeSeconds)}
             </div>
           )}
-          {sizing !== 'duration' && (
+          {sizing !== 'duration' && !isGallery && (
             <div
               aria-hidden="true"
               className="pointer-events-none absolute inset-y-0 left-1/2 -translate-x-1/2 rounded-lg border-x border-white/10 bg-zinc-800/72 shadow-[inset_14px_0_26px_rgba(0,0,0,0.28),inset_-14px_0_26px_rgba(0,0,0,0.28)]"
@@ -1636,10 +1798,6 @@ export function SceneLaunchPreviewWheelV3({
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-y-0 left-0 w-1/5 bg-gradient-to-r from-black/62 via-black/28 to-transparent"
-          />
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 right-0 w-1/5 bg-gradient-to-l from-black/62 via-black/28 to-transparent"
           />
           <div className="absolute inset-0 will-change-transform" style={{ transformStyle: 'preserve-3d' }}>
             {items.map((item, index) => {
@@ -1653,7 +1811,7 @@ export function SceneLaunchPreviewWheelV3({
               const itemDuration = itemDurations[index] ?? 0.5;
               const itemStartTime = itemStartTimes[index] ?? 0;
               const itemEndTime = itemStartTime + itemDuration;
-              let x = itemCenterOffset;
+              let x = itemCenterOffset + playheadOffsetFromCenter;
               let z = 0;
               let rotateY = 0;
               let translateY = 0;
@@ -1666,7 +1824,7 @@ export function SceneLaunchPreviewWheelV3({
                 const angle = clamp(offsetFromCenter * MAX_WHEEL_ANGLE / 2, -MAX_WHEEL_ANGLE, MAX_WHEEL_ANGLE);
                 const angleRadians = degreesToRadians(angle);
                 const radius = itemStride * 3.05;
-                x = Math.sin(angleRadians) * radius;
+                x = Math.sin(angleRadians) * radius + playheadOffsetFromCenter;
                 z = (Math.cos(angleRadians) - 1) * radius * 0.72;
                 rotateY = -angle;
                 translateY = distance * 4;
@@ -1690,6 +1848,7 @@ export function SceneLaunchPreviewWheelV3({
                         Math.max(0, absOffsetFromCenter - 1) * itemWidth * 0.74,
                     );
                 }
+                x += playheadOffsetFromCenter;
                 z = (Math.cos(angleRadians) - 1) * radius * 0.36;
                 rotateY = -angle * 0.18;
                 translateY = 0;
@@ -1698,7 +1857,7 @@ export function SceneLaunchPreviewWheelV3({
                 brightness = Math.max(0.54, 1 - distance * 0.1);
                 shouldRender = absOffsetFromCenter < 3.7;
               } else if (effect === 'coverflow') {
-                x = itemCenterOffset * 0.82;
+                x = itemCenterOffset * 0.82 + playheadOffsetFromCenter;
                 z = -distance * 74;
                 rotateY = clamp(offsetFromCenter * -36, -58, 58);
                 translateY = distance * 5;
@@ -1709,7 +1868,7 @@ export function SceneLaunchPreviewWheelV3({
                 scale = 1;
                 translateY = 0;
               } else if (effect === 'stack') {
-                x = itemCenterOffset * 0.58;
+                x = itemCenterOffset * 0.58 + playheadOffsetFromCenter;
                 z = -distance * 96;
                 rotateY = clamp(offsetFromCenter * -10, -20, 20);
                 translateY = distance * 7;
@@ -1741,7 +1900,7 @@ export function SceneLaunchPreviewWheelV3({
                         top: rulerTop,
                         width: itemWidth,
                         opacity: effect === 'gallery' ? 1 : opacity,
-                        transform: `translate3d(calc(-50% + ${x}px), 0, ${z}px) rotateY(${rotateY}deg) scale(${scale})`,
+                        transform: `translate3d(${(x - itemWidth / 2).toFixed(2)}px, 0px, ${z}px) rotateY(${rotateY}deg) scale(${scale})`,
                         transformOrigin: 'center bottom',
                         zIndex: effect === 'gallery' ? 150 : Math.round(100 - distance * 10),
                       }}
@@ -1780,7 +1939,7 @@ export function SceneLaunchPreviewWheelV3({
                     height: itemHeight,
                     opacity: reorderPreview?.mediaId === item.id ? 0.12 : opacity,
                     pointerEvents: shouldRender ? 'auto' : 'none',
-                    transform: `translate3d(calc(-50% + ${x}px), calc(-50% + ${translateY}px), ${z}px) rotateY(${rotateY}deg) scale(${scale})`,
+                    transform: `translate3d(${(x - itemWidth / 2).toFixed(2)}px, ${(translateY - itemHeight / 2).toFixed(2)}px, ${z}px) rotateY(${rotateY}deg) scale(${scale})`,
                     transformOrigin: 'center center',
                     zIndex: Math.round(100 - distance * 10),
                   }}
@@ -1814,7 +1973,11 @@ export function SceneLaunchPreviewWheelV3({
                     className="absolute inset-0 overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
                   >
                     {item.type === 'video' ? (
-                      <video src={item.previewUrl} className="pointer-events-none h-full w-full object-cover" muted playsInline />
+                      <img
+                        src={item.posterUrl || VIDEO_PLACEHOLDER}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
                     ) : (
                       <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
                     )}

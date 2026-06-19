@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import type { Scene, TimelineClip, ClipType } from '@/lib/timeline-context';
 
@@ -138,7 +139,42 @@ export function useSceneLaunchBoard({
   const [sceneLaunchGridOrder, setSceneLaunchGridOrder] = React.useState<Array<{ id: string; type: 'media' | 'collection' }>>([]);
   const [hasLoadedSceneLaunchBoard, setHasLoadedSceneLaunchBoard] = React.useState(false);
 
-  const [sceneLaunchBeatPath, setSceneLaunchBeatPath] = React.useState<string[]>([]);
+  const params = useParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // Extract the collection path from URL params
+  const sceneLaunchBeatPath = React.useMemo(() => {
+    const rawPath = params?.path;
+    if (!rawPath) return [];
+    const pathArr = typeof rawPath === 'string' ? [rawPath] : rawPath;
+    const workbenchIndex = pathArr.indexOf('workbench');
+    if (workbenchIndex !== -1) {
+      return pathArr.slice(0, workbenchIndex);
+    }
+    return pathArr;
+  }, [params?.path]);
+
+  // Navigate to the next URL when collection path is set
+  const setSceneLaunchBeatPath = React.useCallback((
+    newPathOrUpdater: string[] | ((prev: string[]) => string[])
+  ) => {
+    let nextPath: string[];
+    if (typeof newPathOrUpdater === 'function') {
+      nextPath = newPathOrUpdater(sceneLaunchBeatPath);
+    } else {
+      nextPath = newPathOrUpdater;
+    }
+
+    const baseSegment = pathname ? pathname.split('/')[1] : 'editor';
+    const baseRoute = `/${baseSegment}`;
+    const pathString = nextPath.length > 0 ? '/' + nextPath.map(encodeURIComponent).join('/') : '';
+    const currentQuery = searchParams ? searchParams.toString() : '';
+    const querySuffix = currentQuery ? `?${currentQuery}` : '';
+
+    router.push(`${baseRoute}${pathString}${querySuffix}`);
+  }, [router, pathname, searchParams, sceneLaunchBeatPath]);
   const [sceneLaunchSearch, setSceneLaunchSearch] = React.useState('');
   const [activeBeatUploadId, setActiveBeatUploadId] = React.useState<string | null>(null);
 

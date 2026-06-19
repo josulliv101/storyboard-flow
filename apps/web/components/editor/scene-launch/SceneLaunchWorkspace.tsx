@@ -2,8 +2,8 @@
 
 import React from 'react';
 import Image from 'next/image';
-import { usePathname, useRouter } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, MonitorPlay, Pause, Play, Plus, Ratio, Repeat, Search, X } from 'lucide-react';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, Pause, Play, Plus, Ratio, Search, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Button,
@@ -52,8 +52,6 @@ interface SceneLaunchWorkspaceProps {
   onDropItem?: (dragKey: string) => void;
   board: ReturnType<typeof useSceneLaunchBoard>;
   headerVariant?: 'default' | 'prompt';
-  viewMode: 'storyboard' | 'workbench';
-  setViewMode: React.Dispatch<React.SetStateAction<'storyboard' | 'workbench'>>;
 }
 
 export function SceneLaunchWorkspace({
@@ -74,8 +72,6 @@ export function SceneLaunchWorkspace({
   onDropItem = () => {},
   board,
   headerVariant = 'default',
-  viewMode,
-  setViewMode,
 }: SceneLaunchWorkspaceProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -134,7 +130,37 @@ export function SceneLaunchWorkspace({
   const [draggedGridItemKey, setDraggedGridItemKey] = React.useState<string | null>(null);
   const [isEditingHeaderName, setIsEditingHeaderName] = React.useState(false);
   const [editingHeaderNameValue, setEditingHeaderNameValue] = React.useState('');
-  const [sceneLaunchPlaybackMode, setSceneLaunchPlaybackMode] = React.useState<SceneLaunchPlaybackMode>('inline');
+  const params = useParams();
+  const searchParams = useSearchParams();
+
+  const rawPath = React.useMemo(() => {
+    const p = params?.path;
+    if (!p) return [];
+    return typeof p === 'string' ? [p] : p;
+  }, [params?.path]);
+
+  const workbenchIndex = rawPath.indexOf('workbench');
+  const sceneLaunchPlaybackMode = workbenchIndex !== -1 ? 'preview' : 'inline';
+  const selectedPreviewMediaId = workbenchIndex !== -1 ? searchParams.get('mediaId') || null : null;
+
+  const navigateToPath = React.useCallback((nextPath: string[], mediaId?: string | null) => {
+    const baseSegment = pathname ? pathname.split('/')[1] : 'editor';
+    const baseRoute = `/${baseSegment}`;
+    const pathString = nextPath.length > 0 ? '/' + nextPath.map(encodeURIComponent).join('/') : '';
+    
+    const currentParams = new URLSearchParams(searchParams ? searchParams.toString() : '');
+    if (mediaId === null) {
+      currentParams.delete('mediaId');
+    } else if (mediaId !== undefined) {
+      currentParams.set('mediaId', mediaId);
+    }
+    
+    const querySuffix = currentParams.toString() ? `?${currentParams.toString()}` : '';
+    router.push(`${baseRoute}${pathString}${querySuffix}`);
+  }, [router, pathname, searchParams]);
+
+
+
   const [isTimelinePlaying, setIsTimelinePlaying] = React.useState(false);
   const [isWheelPreviewPlaying, setIsWheelPreviewPlaying] = React.useState(false);
   const [isTimelineLooping, setIsTimelineLooping] = React.useState(true);
@@ -143,7 +169,6 @@ export function SceneLaunchWorkspace({
   const [sceneLaunchPreviewNow, setSceneLaunchPreviewNow] = React.useState(() => Date.now());
   const [sceneComposerText, setSceneComposerText] = React.useState('');
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
-  const [selectedPreviewMediaId, setSelectedPreviewMediaId] = React.useState<string | null>(null);
   const [thumbnailMode, setThumbnailMode] = React.useState<'grid' | 'single'>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('scene-launch-thumbnail-mode');
@@ -158,7 +183,7 @@ export function SceneLaunchWorkspace({
   const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV3Effect>('gallery');
   const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV3Sizing>('uniform');
   const [previewWheelDurationScale, setPreviewWheelDurationScale] = React.useState(1);
-  const [previewWheelSelectDroppedItem, setPreviewWheelSelectDroppedItem] = React.useState(true);
+  const [previewWheelSelectDroppedItem, setPreviewWheelSelectDroppedItem] = React.useState(false);
   const [previewEditDraft, setPreviewEditDraft] = React.useState<{
     mediaId: string;
     name: string;
@@ -783,8 +808,8 @@ export function SceneLaunchWorkspace({
     setTimelineCurrentTime(time);
     currentTimeRef.current = time;
     setSceneLaunchPreviewHover(null);
-    setSelectedPreviewMediaId(null);
-  }, [setSceneLaunchPreviewHover]);
+    navigateToPath(board.sceneLaunchBeatPath, null);
+  }, [setSceneLaunchPreviewHover, board.sceneLaunchBeatPath, navigateToPath]);
 
   const toggleSceneLaunchTimelinePlayback = React.useCallback(() => {
     if (isWheelSequencePreview) {
@@ -803,29 +828,7 @@ export function SceneLaunchWorkspace({
     }
   }, [isTimelinePlaying, isWheelSequencePreview, setSceneLaunchTimelineTime]);
 
-  const toggleSceneLaunchPreview = React.useCallback(() => {
-    if (sceneLaunchPlaybackMode === 'preview') setIsWheelPreviewPlaying(false);
-    setSceneLaunchPlaybackMode(current => current === 'preview' ? 'inline' : 'preview');
-  }, [sceneLaunchPlaybackMode]);
 
-  const previewSceneLaunchMediaId = React.useCallback((mediaId: string) => {
-    setIsTimelinePlaying(false);
-    setIsWheelPreviewPlaying(false);
-    setSceneLaunchPreviewHover(null);
-    setSceneLaunchManuallyPaused(null);
-    setSceneLaunchPreviewPausedOffset(0);
-    setPreviewEditDraft(null);
-    setSelectedPreviewMediaId(mediaId);
-    setSceneLaunchPlaybackMode('preview');
-  }, [setSceneLaunchPreviewHover]);
-
-  const previewSceneLaunchMedia = React.useCallback((item: SceneLaunchMediaItem) => {
-    previewSceneLaunchMediaId(item.id);
-  }, [previewSceneLaunchMediaId]);
-  const selectPreviewMediaDuringPlayback = React.useCallback((mediaId: string) => {
-    setPreviewEditDraft(null);
-    setSelectedPreviewMediaId(mediaId);
-  }, []);
 
   const handleBoardContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>, insertionIndex: number) => {
     event.preventDefault();
@@ -1298,25 +1301,38 @@ export function SceneLaunchWorkspace({
     return items;
   }, [timelineItems, getRecursiveMediaItems]);
 
-  // Synchronize viewMode and sceneLaunchPlaybackMode
-  React.useEffect(() => {
-    if (viewMode === 'workbench' && sceneLaunchPlaybackMode !== 'preview') {
-      setSceneLaunchPlaybackMode('preview');
-      if (!selectedPreviewMediaId && flattenedTimelineMediaItems.length > 0) {
-        setSelectedPreviewMediaId(flattenedTimelineMediaItems[0].id);
-      }
-    } else if (viewMode === 'storyboard' && sceneLaunchPlaybackMode !== 'inline') {
-      setSceneLaunchPlaybackMode('inline');
-    }
-  }, [viewMode, sceneLaunchPlaybackMode, selectedPreviewMediaId, flattenedTimelineMediaItems]);
 
-  React.useEffect(() => {
-    if (sceneLaunchPlaybackMode === 'preview' && viewMode !== 'workbench') {
-      setViewMode('workbench');
-    } else if (sceneLaunchPlaybackMode === 'inline' && viewMode !== 'storyboard') {
-      setViewMode('storyboard');
+  const previewSceneLaunchMediaId = React.useCallback((mediaId: string) => {
+    setIsTimelinePlaying(false);
+    setIsWheelPreviewPlaying(false);
+    setSceneLaunchPreviewHover(null);
+    setSceneLaunchManuallyPaused(null);
+    setSceneLaunchPreviewPausedOffset(0);
+    setPreviewEditDraft(null);
+    navigateToPath([...board.sceneLaunchBeatPath, 'workbench'], mediaId);
+  }, [setSceneLaunchPreviewHover, board.sceneLaunchBeatPath, navigateToPath]);
+
+  const previewSceneLaunchMedia = React.useCallback((item: SceneLaunchMediaItem) => {
+    previewSceneLaunchMediaId(item.id);
+  }, [previewSceneLaunchMediaId]);
+
+  const selectPreviewMediaDuringPlayback = React.useCallback((mediaId: string) => {
+    setPreviewEditDraft(null);
+    navigateToPath([...board.sceneLaunchBeatPath, 'workbench'], mediaId);
+  }, [board.sceneLaunchBeatPath, navigateToPath]);
+
+  const setViewMode = React.useCallback((mode: 'storyboard' | 'workbench') => {
+    if (mode === 'storyboard') {
+      navigateToPath(board.sceneLaunchBeatPath, null);
+    } else {
+      const firstMediaId = flattenedTimelineMediaItems[0]?.id || '';
+      navigateToPath([...board.sceneLaunchBeatPath, 'workbench'], firstMediaId);
     }
-  }, [sceneLaunchPlaybackMode, viewMode, setViewMode]);
+  }, [navigateToPath, board.sceneLaunchBeatPath, flattenedTimelineMediaItems]);
+
+  const viewMode = sceneLaunchPlaybackMode === 'preview' ? 'workbench' : 'storyboard';
+
+
 
   const previewCanvasKey = activePreviewMedia
     ? [
@@ -1472,6 +1488,7 @@ export function SceneLaunchWorkspace({
               : 'text-zinc-500 hover:text-zinc-300'
           )}
         >
+          <Grid2X2 className="mr-1.5 h-3.5 w-3.5" />
           Storyboard
         </button>
 
@@ -1485,69 +1502,10 @@ export function SceneLaunchWorkspace({
               : 'text-zinc-500 hover:text-zinc-300'
           )}
         >
+          <Clapperboard className="mr-1.5 h-3.5 w-3.5" />
           Workbench
         </button>
       </div>
-
-      <div className="h-4 w-px bg-zinc-800 shrink-0" />
-
-      <button
-        type="button"
-        onClick={() => setIsTimelineLooping(current => !current)}
-        className={cn(
-          'flex h-8 w-8 items-center justify-center rounded-full transition-colors',
-          isTimelineLooping
-            ? 'bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/20'
-            : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
-        )}
-        title={isTimelineLooping ? 'Disable Loop' : 'Enable Loop'}
-        aria-label={isTimelineLooping ? 'Disable Loop' : 'Enable Loop'}
-      >
-        <Repeat className="h-4 w-4" />
-      </button>
-
-      <button
-        type="button"
-        onClick={toggleSceneLaunchTimelinePlayback}
-        className={cn(
-          'flex h-9 w-9 items-center justify-center rounded-full text-white shadow-md transition-all',
-          isPlaybackActive
-            ? 'bg-red-650 hover:bg-red-700'
-            : 'bg-indigo-600 hover:bg-indigo-700'
-        )}
-        title={sceneLaunchPlaybackMode === 'preview'
-          ? isPlaybackActive ? 'Pause Preview' : 'Play Preview'
-          : isPlaybackActive ? 'Pause Timeline' : 'Play Timeline'}
-        aria-label={sceneLaunchPlaybackMode === 'preview'
-          ? isPlaybackActive ? 'Pause Preview' : 'Play Preview'
-          : isPlaybackActive ? 'Pause Timeline' : 'Play Timeline'}
-      >
-        {isPlaybackActive ? (
-          <Pause className="h-4 w-4 fill-current" />
-        ) : (
-          <Play className="ml-0.5 h-4 w-4 fill-current" />
-        )}
-      </button>
-
-      <button
-        type="button"
-        onClick={toggleSceneLaunchPreview}
-        aria-pressed={sceneLaunchPlaybackMode === 'preview'}
-        className={cn(
-          'flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-[9px] font-black uppercase tracking-widest outline-none transition-colors focus-visible:ring-2 focus-visible:ring-indigo-400/70',
-          sceneLaunchPlaybackMode === 'preview'
-            ? 'border-indigo-500/60 bg-indigo-500/20 text-indigo-100 hover:bg-indigo-500/25'
-            : 'border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:text-white'
-        )}
-        title={sceneLaunchPlaybackMode === 'preview' ? 'Hide preview' : 'Show preview'}
-      >
-        <MonitorPlay className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">Preview</span>
-      </button>
-
-      <span className="rounded-full border border-zinc-800/80 bg-zinc-900 px-2 py-0.5 font-mono text-[10px] font-bold text-zinc-300">
-        {timelineCurrentTime.toFixed(1)}s
-      </span>
     </div>
   );
 
@@ -1832,137 +1790,6 @@ export function SceneLaunchWorkspace({
             aria-hidden={sceneLaunchPlaybackMode !== 'preview'}
           >
             <section className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/95 shadow-2xl shadow-black/50">
-              <div className={cn(
-                "grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 border-b border-zinc-800 px-4",
-                activePreviewMedia && previewWheelEffect !== 'gallery' ? 'h-32' : 'h-24',
-              )}>
-                <div className="flex min-w-0 items-center gap-3">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 rounded-full text-zinc-400 hover:bg-white/5 hover:text-white"
-                    onClick={() => {
-                      setIsWheelPreviewPlaying(false);
-                      setSceneLaunchPlaybackMode('inline');
-                    }}
-                    aria-label="Back to scene board"
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                  </Button>
-                  <div className="min-w-0">
-                    <div className="truncate text-xs font-bold uppercase tracking-widest text-zinc-300">
-                      {activePreviewItem?.title || 'Preview'}
-                    </div>
-                    <div className="mt-0.5 text-[9px] font-mono uppercase tracking-widest text-zinc-600">
-                      {activePreviewItem?.label || 'Timeline'} preview
-                    </div>
-                  </div>
-                </div>
-                {activePreviewMedia && activePreviewDraft && previewWheelEffect !== 'gallery' && (
-                  <div className={cn(
-                    "justify-self-center",
-                    activePreviewMedia.type === 'image' ? 'w-40' : 'w-[42rem]',
-                  )}>
-                    {activePreviewMedia.type === 'video' && (
-                      <div className="mb-1 flex items-center justify-between gap-3 text-[9px] font-black uppercase tracking-widest text-zinc-400">
-                        <span>Trim</span>
-                        <span className="font-mono normal-case tracking-normal text-zinc-300">
-                          {activePreviewDraft.trimStartSeconds.toFixed(1)}s - {(activePreviewDraft.trimStartSeconds + activePreviewDraft.durationSeconds).toFixed(1)}s
-                        </span>
-                      </div>
-                    )}
-                    <div
-                      data-preview-trim-track={activePreviewMedia.type === 'video' ? 'true' : undefined}
-                      className={cn(
-                        "relative overflow-hidden rounded-md",
-                        activePreviewMedia.type === 'image'
-                          ? 'h-24'
-                          : 'h-24 border border-zinc-700 bg-zinc-900',
-                      )}
-                    >
-                      {activePreviewMedia.type === 'video' ? (
-                        <>
-                          <VideoFrameFilmstrip
-                            key={activePreviewMedia.id}
-                            src={activePreviewMedia.previewUrl}
-                            durationSeconds={activePreviewSourceDuration}
-                            frameCount={4}
-                          />
-                          <div
-                            className="absolute inset-y-0 left-0 bg-black/65"
-                            style={{ width: `${activePreviewTrimStartPercent}%` }}
-                          />
-                          <div
-                            className="absolute inset-y-0 right-0 bg-black/65"
-                            style={{ width: `${Math.max(0, 100 - activePreviewTrimStartPercent - activePreviewTrimWidthPercent)}%` }}
-                          />
-                          <div
-                            onPointerDown={(event) => beginPreviewTrimDrag(event, 'move')}
-                            className="absolute inset-y-0 cursor-grab rounded-md border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.35),0_0_14px_rgba(255,255,255,0.2)] active:cursor-grabbing"
-                            style={{
-                              left: `${activePreviewTrimStartPercent}%`,
-                              width: `${Math.min(
-                                Math.max(4, activePreviewTrimWidthPercent),
-                                100 - activePreviewTrimStartPercent,
-                              )}%`,
-                            }}
-                          >
-                            <div
-                              onPointerDown={(event) => beginPreviewTrimDrag(event, 'start')}
-                              className="absolute inset-y-0 left-0 flex w-5 cursor-ew-resize items-center justify-center rounded-l bg-white"
-                            >
-                              <div className="h-12 w-[1.5px] rounded-full bg-zinc-400" />
-                            </div>
-                            <div
-                              onPointerDown={(event) => beginPreviewTrimDrag(event, 'end')}
-                              className="absolute inset-y-0 right-0 flex w-5 cursor-ew-resize items-center justify-center rounded-r bg-white"
-                            >
-                              <div className="h-12 w-[1.5px] rounded-full bg-zinc-400" />
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <Image
-                          src={activePreviewMedia.previewUrl}
-                          alt={`Thumbnail of ${activePreviewMedia.name}`}
-                          fill
-                          sizes="160px"
-                          unoptimized
-                          className="object-cover"
-                        />
-                      )}
-                    </div>
-                  </div>
-                )}
-                {activePreviewMedia?.type === 'image' && activePreviewDraft && previewWheelEffect !== 'gallery' && (
-                  <label className="justify-self-end rounded-md border border-zinc-700 bg-zinc-950/85 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-zinc-400 shadow-lg">
-                    <span className="mb-1 block">Duration</span>
-                    <span className="flex h-8 items-center rounded-md border border-zinc-700 bg-black/70 px-2">
-                      <input
-                        type="number"
-                        min={0.5}
-                        max={MAX_IMAGE_DURATION_SECONDS}
-                        step={0.5}
-                        value={Number(activePreviewDraft.durationSeconds.toFixed(1))}
-                        onChange={(event) => {
-                          const nextDuration = Math.max(
-                            0.5,
-                            Math.min(MAX_IMAGE_DURATION_SECONDS, Number(event.target.value) || 0.5),
-                          );
-                          updateActivePreviewDraft(draft => ({
-                            ...draft,
-                            durationSeconds: Number(nextDuration.toFixed(2)),
-                          }));
-                          updateSceneLaunchMediaDuration(activePreviewMedia.id, Number(nextDuration.toFixed(2)));
-                        }}
-                        className="w-16 bg-transparent text-right font-mono text-sm font-bold normal-case tracking-normal text-white outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                      />
-                      <span className="ml-1.5 font-mono text-xs normal-case tracking-normal text-zinc-400">s</span>
-                    </span>
-                  </label>
-                )}
-              </div>
 
               <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center bg-black">
                 {selectedPreviewMediaId ? (
@@ -2071,6 +1898,9 @@ export function SceneLaunchWorkspace({
                       loopPreviewPlayback={isTimelineLooping}
                       onPreviewPlaybackComplete={() => setIsWheelPreviewPlaying(false)}
                       onPlaybackMediaChange={selectPreviewMediaDuringPlayback}
+                      onTogglePlayback={toggleSceneLaunchTimelinePlayback}
+                      timelineCurrentTime={timelineCurrentTime}
+                      onToggleLoop={() => setIsTimelineLooping(current => !current)}
                       />
                     </div>
                     {previewWheelEffect === 'gallery' && activePreviewMedia && activePreviewDraft && (
