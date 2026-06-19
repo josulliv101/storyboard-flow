@@ -1392,19 +1392,16 @@ export function SceneLaunchWorkspace({
 
       const childThumbnails: Record<string, SceneLaunchMediaItem> = {};
       item.collection.gridOrder.forEach(orderItem => {
-        if (orderItem.type === 'media') {
-          const media = item.collection.items.find(candidate => candidate.id === orderItem.id);
-          if (media) childThumbnails[media.id] = media;
-          return;
+        if (orderItem.type === 'collection') {
+          const childCollection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+          if (!childCollection) return;
+          const childRepresentative = getCollectionWheelRepresentative(childCollection);
+          getRecursiveMediaItems(childCollection).forEach(media => {
+            childThumbnails[media.id] = childRepresentative;
+          });
         }
-
-        const childCollection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
-        if (!childCollection) return;
-        const childRepresentative = getRecursiveMediaItems(childCollection)[0];
-        if (!childRepresentative) return;
-        getRecursiveMediaItems(childCollection).forEach(media => {
-          childThumbnails[media.id] = childRepresentative;
-        });
+        // Direct media items are not mapped to prevent wheel thumbnails from changing 
+        // during playback of individual media files (as that is shown in the main display).
       });
       thumbnails[representative.id] = childThumbnails;
     });
@@ -2204,47 +2201,7 @@ export function SceneLaunchWorkspace({
                       onToggleLoop={() => setIsTimelineLooping(current => !current)}
                       />
                     </div>
-                    {previewWheelEffect === 'gallery' && activePreviewMedia && activePreviewDraft && (
-                      <div className="grid h-24 w-full shrink-0 grid-cols-[minmax(12rem,32rem)_1fr] items-center gap-5 border-t border-zinc-800 bg-zinc-950/95 px-5 pr-80">
-                        <label className="min-w-0 rounded-md border border-zinc-700 bg-black/55 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-zinc-400">
-                          <span className="mb-1 block">Name</span>
-                          <input
-                            type="text"
-                            value={activePreviewDraft.name}
-                            onChange={(event) => updateActivePreviewDraft(draft => ({
-                              ...draft,
-                              name: event.target.value,
-                            }))}
-                            onBlur={(event) => updateSceneLaunchMediaName(activePreviewMedia.id, event.target.value)}
-                            className="h-8 w-full min-w-0 bg-transparent text-sm font-bold normal-case tracking-normal text-white outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
-                          />
-                        </label>
-                        {activePreviewMedia.type === 'image' && (
-                          <label className="justify-self-end rounded-md border border-zinc-700 bg-black/55 px-3 py-2 text-[9px] font-black uppercase tracking-widest text-zinc-400">
-                            <span className="mb-1 block">Duration</span>
-                            <span className="flex h-8 items-center rounded-md border border-zinc-700 bg-black/70 px-2">
-                              <input
-                                type="number"
-                                min={0.5}
-                                max={MAX_IMAGE_DURATION_SECONDS}
-                                step={0.5}
-                                value={Number(activePreviewDraft.durationSeconds.toFixed(1))}
-                                onChange={(event) => {
-                                  const nextDuration = Number(Math.max(0.5, Math.min(MAX_IMAGE_DURATION_SECONDS, Number(event.target.value) || 0.5)).toFixed(2));
-                                  updateActivePreviewDraft(draft => ({
-                                    ...draft,
-                                    durationSeconds: nextDuration,
-                                  }));
-                                  updateSceneLaunchMediaDuration(activePreviewMedia.id, nextDuration);
-                                }}
-                                className="w-16 bg-transparent text-right font-mono text-sm font-bold normal-case tracking-normal text-white outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                              />
-                              <span className="ml-1.5 font-mono text-xs normal-case tracking-normal text-zinc-400">s</span>
-                            </span>
-                          </label>
-                        )}
-                      </div>
-                    )}
+
                     <div className="absolute left-4 top-4 z-40 rounded-lg border border-zinc-700/80 bg-zinc-950/92 p-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-2xl shadow-black/50 backdrop-blur-xl">
                       <div className="mb-1 px-1.5 text-[9px] text-zinc-500">Wheel items</div>
                       <div className="flex rounded-md bg-black/70 p-0.5" role="group" aria-label="Wheel items">

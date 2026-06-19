@@ -1,7 +1,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Ban, Clapperboard, CornerUpLeft, FolderInput, Play, Pause, Repeat, AlignLeft, AlignCenter, AlignRight, Trash2 } from 'lucide-react';
+import { ArrowLeft, Ban, Clapperboard, CornerUpLeft, FolderInput, Play, Pause, Repeat, AlignLeft, AlignCenter, AlignRight, Trash2, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { VIDEO_PLACEHOLDER, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
@@ -432,6 +432,7 @@ export function SceneLaunchPreviewWheelV3({
   const reorderAutoPanFrameRef = React.useRef<number | null>(null);
   const reorderPointerRef = React.useRef({ clientX: 0, clientY: 0 });
   const reorderPreviewOrderRef = React.useRef<string[] | null>(null);
+  const wheelTimeoutRef = React.useRef<number | null>(null);
   const [offset, setOffsetState] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
   const [isSpinning, setIsSpinning] = React.useState(false);
@@ -953,6 +954,7 @@ export function SceneLaunchPreviewWheelV3({
     if (!scrubPreview && !deferPreview) {
       updateFastNavigation(0);
       setDirectPreviewMediaId(targetItem?.id ?? null);
+      playbackTimeRef.current = itemStartTimes[boundedIndex] ?? 0;
     }
     const targetOffset = clamp(
       (sizing === 'duration' || isGallery)
@@ -1717,6 +1719,38 @@ export function SceneLaunchPreviewWheelV3({
     }
   }, [centeredIndex, items.length, moveKeyboardFocus]);
 
+  const handleWheelScroll = React.useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    // Prevent default browser scrolling
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Cancel animations
+    stopAnimation();
+
+    // Calculate scroll delta: support both horizontal and vertical mouse wheel / trackpad scrolling
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+
+    // Adjust scale for speed/sensitivity
+    const nextOffset = offsetRef.current - delta * 0.45;
+    
+    // Clamp the next offset and update
+    const boundedOffset = clamp(nextOffset, minOffset, maxOffset);
+    offsetRef.current = boundedOffset;
+    setOffsetState(boundedOffset);
+
+    // Debounce snapToNearest to fire 150ms after the last wheel event
+    if (wheelTimeoutRef.current !== null) {
+      window.clearTimeout(wheelTimeoutRef.current);
+    }
+
+    setIsSpinning(true);
+    wheelTimeoutRef.current = window.setTimeout(() => {
+      wheelTimeoutRef.current = null;
+      setIsSpinning(false);
+      snapToNearest();
+    }, 150);
+  }, [maxOffset, minOffset, snapToNearest, stopAnimation]);
+
   const applyDurationResize = React.useCallback((
     item: SceneLaunchMediaItem,
     edge: 'start' | 'end',
@@ -1849,74 +1883,6 @@ export function SceneLaunchPreviewWheelV3({
       )}>
         {isGallery && scrubSnapshot && (
           <div className="relative flex flex-1 flex-col min-h-0 items-center justify-center p-4 pb-2">
-            {/* Top area control capsule above preview */}
-            <div className="mb-2.5 flex items-center justify-center gap-2 rounded-full border border-white/5 bg-zinc-900/40 px-2 py-1 shadow-md backdrop-blur-md shrink-0">
-              {/* Play/Pause Button */}
-              <button
-                type="button"
-                onClick={onTogglePlayback}
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-full text-white transition-all cursor-pointer hover:scale-105 active:scale-95',
-                  isPreviewPlaying ? 'bg-red-650/80 hover:bg-red-700/90' : 'bg-indigo-600/80 hover:bg-indigo-700/90'
-                )}
-                title={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
-                aria-label={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
-              >
-                {isPreviewPlaying ? (
-                  <Pause className="h-3.5 w-3.5 fill-current" />
-                ) : (
-                  <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />
-                )}
-              </button>
-
-              <div className="h-3.5 w-px bg-zinc-800" />
-
-              {/* Loop Toggle */}
-              <button
-                type="button"
-                onClick={onToggleLoop}
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
-                  loopPreviewPlayback
-                    ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
-                    : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
-                )}
-                title={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
-                aria-label={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
-              >
-                <Repeat className="h-3.5 w-3.5" />
-              </button>
-
-              <div className="h-3.5 w-px bg-zinc-800" />
-
-              {/* Time display */}
-              <span className="font-mono text-[10px] font-bold text-zinc-300 select-none px-1.5">
-                {timelineCurrentTime.toFixed(1)}s
-              </span>
-
-              <div className="h-3.5 w-px bg-zinc-800" />
-
-              {/* Playhead Alignment Toggle */}
-              <button
-                type="button"
-                onClick={togglePlayheadAlignment}
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
-                  playheadAlignment === 'left'
-                    ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
-                    : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
-                )}
-                title={playheadAlignment === 'left' ? 'Align Playhead to Center' : 'Align Playhead to Left'}
-                aria-label={playheadAlignment === 'left' ? 'Align Playhead to Center' : 'Align Playhead to Left'}
-              >
-                {playheadAlignment === 'left' ? (
-                  <AlignLeft className="h-3.5 w-3.5" />
-                ) : (
-                  <AlignCenter className="h-3.5 w-3.5" />
-                )}
-              </button>
-            </div>
-
             <div
               ref={galleryPreviewRef}
               className="relative overflow-hidden rounded-md border border-white/10 bg-black shadow-2xl shadow-black/60"
@@ -1976,6 +1942,134 @@ export function SceneLaunchPreviewWheelV3({
                   </div>
                 )}
             </div>
+
+            {/* Control capsule below preview */}
+            <div className="mt-2.5 flex items-center justify-center gap-2 rounded-full border border-white/5 bg-zinc-900/40 px-2.5 py-1 shadow-md backdrop-blur-md shrink-0">
+              {/* Go to First Button */}
+              <button
+                type="button"
+                onClick={() => snapToIndex(0)}
+                disabled={centeredIndex === 0}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                  'text-zinc-400 hover:bg-white/5 hover:text-white'
+                )}
+                title="Go to First Item"
+                aria-label="Go to First Item"
+              >
+                <ChevronsLeft className="h-3.5 w-3.5" />
+              </button>
+
+              {/* Go to Previous Button */}
+              <button
+                type="button"
+                onClick={() => snapToIndex(centeredIndex - 1)}
+                disabled={centeredIndex === 0}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                  'text-zinc-400 hover:bg-white/5 hover:text-white'
+                )}
+                title="Go to Previous Item"
+                aria-label="Go to Previous Item"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+
+              {/* Play/Pause Button */}
+              <button
+                type="button"
+                onClick={onTogglePlayback}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full text-white transition-all cursor-pointer hover:scale-105 active:scale-95',
+                  isPreviewPlaying ? 'bg-red-650/80 hover:bg-red-700/90' : 'bg-indigo-600/80 hover:bg-indigo-700/90'
+                )}
+                title={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
+                aria-label={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
+              >
+                {isPreviewPlaying ? (
+                  <Pause className="h-3.5 w-3.5 fill-current" />
+                ) : (
+                  <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />
+                )}
+              </button>
+
+              {/* Go to Next Button */}
+              <button
+                type="button"
+                onClick={() => snapToIndex(centeredIndex + 1)}
+                disabled={centeredIndex === items.length - 1}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                  'text-zinc-400 hover:bg-white/5 hover:text-white'
+                )}
+                title="Go to Next Item"
+                aria-label="Go to Next Item"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+
+              {/* Go to Last Button */}
+              <button
+                type="button"
+                onClick={() => snapToIndex(items.length - 1)}
+                disabled={centeredIndex === items.length - 1}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                  'text-zinc-400 hover:bg-white/5 hover:text-white'
+                )}
+                title="Go to Last Item"
+                aria-label="Go to Last Item"
+              >
+                <ChevronsRight className="h-3.5 w-3.5" />
+              </button>
+
+              <div className="h-3.5 w-px bg-zinc-800" />
+
+              {/* Loop Toggle */}
+              <button
+                type="button"
+                onClick={onToggleLoop}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
+                  loopPreviewPlayback
+                    ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
+                    : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+                )}
+                title={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
+                aria-label={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
+              >
+                <Repeat className="h-3.5 w-3.5" />
+              </button>
+
+              <div className="h-3.5 w-px bg-zinc-800" />
+
+              {/* Time display */}
+              <span className="font-mono text-[10px] font-bold text-zinc-300 select-none px-1.5">
+                {timelineCurrentTime.toFixed(1)}s
+              </span>
+
+              <div className="h-3.5 w-px bg-zinc-800" />
+
+              {/* Playhead Alignment Toggle */}
+              <button
+                type="button"
+                onClick={togglePlayheadAlignment}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
+                  playheadAlignment === 'left'
+                    ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
+                    : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+                )}
+                title={playheadAlignment === 'left' ? 'Align Playhead to Center' : 'Align Playhead to Left'}
+                aria-label={playheadAlignment === 'left' ? 'Align Playhead to Center' : 'Align Playhead to Left'}
+              >
+                {playheadAlignment === 'left' ? (
+                  <AlignLeft className="h-3.5 w-3.5" />
+                ) : (
+                  <AlignCenter className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </div>
           </div>
         )}
 
@@ -2000,6 +2094,7 @@ export function SceneLaunchPreviewWheelV3({
           onPointerCancel={endDrag}
           onLostPointerCapture={endDrag}
           onKeyDown={handleKeyboardNavigation}
+          onWheel={handleWheelScroll}
         >
           <div className="sr-only" aria-live="polite">
             {centeredItem ? `Centered media ${centeredItem.name}` : 'Timeline media wheel'}
