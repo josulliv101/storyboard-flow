@@ -35,8 +35,6 @@ type SceneLaunchHeaderProps = {
   searchVariant?: 'default' | 'prompt';
   hideSearch?: boolean;
   centerSlot?: React.ReactNode;
-  thumbnailMode: 'grid' | 'single';
-  setThumbnailMode: (mode: 'grid' | 'single') => void;
 };
 
 export function SceneLaunchHeader({
@@ -60,14 +58,12 @@ export function SceneLaunchHeader({
   searchVariant = 'default',
   hideSearch = false,
   centerSlot,
-  thumbnailMode,
-  setThumbnailMode,
 }: SceneLaunchHeaderProps) {
   const isHeaderEditable = activeSceneLaunchBeatId !== 'trash';
 
   if (searchVariant === 'prompt') {
     return (
-      <header className="flex h-20 shrink-0 items-center justify-between gap-4 px-5">
+      <header className="flex h-16 shrink-0 items-center justify-between gap-4 px-4">
         <div className="flex min-w-0 flex-1 items-center gap-4">
           <button
             type="button"
@@ -277,39 +273,14 @@ export function SceneLaunchHeader({
           >
             <HelpCircle className="h-5 w-5" />
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 outline-none transition-colors hover:bg-white/5 hover:text-white focus-visible:ring-1 focus-visible:ring-ring"
-              title="More options"
-              aria-label="More options"
-            >
-              <MoreVertical className="h-5 w-5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="z-50 w-56 border-zinc-800 bg-[#111114] text-zinc-300">
-              <div className="select-none px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-zinc-500">Thumbnail View</div>
-              <DropdownMenuItem
-                onClick={() => setThumbnailMode('grid')}
-                className="cursor-pointer justify-between text-xs focus:bg-zinc-800 focus:text-white"
-              >
-                <span>Grid of 4 items</span>
-                {thumbnailMode === 'grid' && <span className="text-indigo-300">•</span>}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setThumbnailMode('single')}
-                className="cursor-pointer justify-between text-xs focus:bg-zinc-800 focus:text-white"
-              >
-                <span>Single first item</span>
-                {thumbnailMode === 'single' && <span className="text-indigo-300">•</span>}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+
         </div>
       </header>
     );
   }
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between gap-4 px-5">
+    <header className="flex h-12 shrink-0 items-center justify-between gap-4 px-4">
       <div className="flex min-w-0 items-center gap-4">
         <button
           type="button"
@@ -458,32 +429,7 @@ export function SceneLaunchHeader({
         >
           <HelpCircle className="h-5 w-5" />
         </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 outline-none transition-colors hover:bg-white/5 hover:text-white focus-visible:ring-1 focus-visible:ring-ring"
-            title="More options"
-            aria-label="More options"
-          >
-            <MoreVertical className="h-5 w-5" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="z-50 w-56 border-zinc-800 bg-[#111114] text-zinc-300">
-            <div className="select-none px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-zinc-500">Thumbnail View</div>
-            <DropdownMenuItem
-              onClick={() => setThumbnailMode('grid')}
-              className="cursor-pointer justify-between text-xs focus:bg-zinc-800 focus:text-white"
-            >
-              <span>Grid of 4 items</span>
-              {thumbnailMode === 'grid' && <span className="text-indigo-300">•</span>}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => setThumbnailMode('single')}
-              className="cursor-pointer justify-between text-xs focus:bg-zinc-800 focus:text-white"
-            >
-              <span>Single first item</span>
-              {thumbnailMode === 'single' && <span className="text-indigo-300">•</span>}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+
       </div>
     </header>
   );

@@ -99,6 +99,7 @@ interface SceneLaunchPreviewWheelV3Props {
   onTogglePlayback?: () => void;
   onToggleLoop?: () => void;
   showUniformRuler?: boolean;
+  slideOnClick?: boolean;
 }
 
 const clamp = (value: number, min: number, max: number) => (
@@ -408,6 +409,7 @@ export function SceneLaunchPreviewWheelV3({
   onTogglePlayback,
   onToggleLoop,
   showUniformRuler = true,
+  slideOnClick = true,
 }: SceneLaunchPreviewWheelV3Props) {
   const containerResizeObserverRef = React.useRef<ResizeObserver | null>(null);
   const viewportResizeObserverRef = React.useRef<ResizeObserver | null>(null);
@@ -630,7 +632,7 @@ export function SceneLaunchPreviewWheelV3({
   const galleryPreviewHeight = Math.max(0, Math.min(
     360,
     viewportSize.width * 9 / 16,
-    viewportSize.height - rowHeight - 116,
+    viewportSize.height - rowHeight - 72,
   ));
   const galleryPreviewWidth = galleryPreviewHeight * 16 / 9;
   const uniformItemWidth = sizing === 'uniform'
@@ -1905,10 +1907,28 @@ export function SceneLaunchPreviewWheelV3({
     if (drag.targetMediaId) {
       const targetIndex = items.findIndex(item => item.id === drag.targetMediaId);
       if (targetIndex >= 0) {
-        snapToIndex(targetIndex);
+        const targetItem = items[targetIndex];
+        if (targetItem && collectionItemIds.includes(targetItem.id) && onCollectionOpen) {
+          onCollectionOpen(targetItem.id);
+        } else {
+          if (slideOnClick) {
+            snapToIndex(targetIndex);
+          } else {
+            if (targetItem) {
+              updateFastNavigation(0);
+              setDirectPreviewMediaId(targetItem.id);
+              playbackTimeRef.current = itemStartTimes[targetIndex] ?? 0;
+              if (targetItem.id !== selectedMediaId) {
+                skipNextSelectedAlignmentRef.current = true;
+                setTrimOverlayMediaId(null);
+                onCenteredMediaChange(targetItem.id);
+              }
+            }
+          }
+        }
       }
     }
-  }, [clearClickGuardSoon, getCenteredMediaIdForOrder, items, onCenteredMediaChange, onItemMoveIntoCollection, onItemsReorder, onUtilityDrop, reorderPreview, selectReorderedItem, selectedMediaId, setOffset, sizing, snapToIndex, spinWithMomentum]);
+  }, [clearClickGuardSoon, collectionItemIds, getCenteredMediaIdForOrder, itemStartTimes, items, onCenteredMediaChange, onCollectionOpen, onItemMoveIntoCollection, onItemsReorder, onUtilityDrop, reorderPreview, selectReorderedItem, selectedMediaId, setOffset, sizing, slideOnClick, snapToIndex, spinWithMomentum]);
 
   const focusItem = React.useCallback((index: number) => {
     window.requestAnimationFrame(() => {
@@ -2118,13 +2138,133 @@ export function SceneLaunchPreviewWheelV3({
   if (selectedIndex < 0) return null;
 
   return (
-    <div ref={containerRefCallback} className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black px-4 py-6">
+    <div ref={containerRefCallback} className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black px-4 py-3">
       <div className={cn(
-        "min-h-0 w-full overflow-hidden rounded-md border border-zinc-800/90 bg-zinc-950/85 shadow-2xl shadow-black/60 backdrop-blur-xl",
+        "min-h-0 w-full overflow-hidden rounded-md bg-[#0c0c0e]/85 shadow-lg",
         isGallery ? "flex h-full flex-col" : "h-full"
       )}>
         {isGallery && scrubSnapshot && (
-          <div className="relative flex flex-1 flex-col min-h-0 items-center justify-center p-4 pb-2">
+          <div className="relative flex flex-1 flex-col min-h-0 items-center justify-center p-2 pb-1.5">
+            {/* Playback Controls above display area */}
+            <div className="mb-2 flex shrink-0 justify-center">
+              <div className="flex items-center justify-center gap-2 rounded-full border border-white/5 bg-zinc-900/40 px-2.5 py-1 shadow-md backdrop-blur-md">
+                {/* Go to First Button */}
+                <button
+                  type="button"
+                  onClick={() => snapToIndex(0)}
+                  disabled={centeredIndex === 0}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                    'text-zinc-400 hover:bg-white/5 hover:text-white'
+                  )}
+                  title="Go to First Item"
+                  aria-label="Go to First Item"
+                >
+                  <ChevronsLeft className="h-3.5 w-3.5" />
+                </button>
+
+                {/* Go to Previous Button */}
+                <button
+                  type="button"
+                  onClick={() => snapToIndex(centeredIndex - 1)}
+                  disabled={centeredIndex === 0}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                    'text-zinc-400 hover:bg-white/5 hover:text-white'
+                  )}
+                  title="Go to Previous Item"
+                  aria-label="Go to Previous Item"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+
+                {/* Play/Pause Button */}
+                <button
+                  type="button"
+                  onClick={onTogglePlayback}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-full text-white transition-all cursor-pointer hover:scale-105 active:scale-95',
+                    isPreviewPlaying ? 'bg-red-650/80 hover:bg-red-700/90' : 'bg-indigo-600/80 hover:bg-indigo-700/90'
+                  )}
+                  title={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
+                  aria-label={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
+                >
+                  {isPreviewPlaying ? (
+                    <Pause className="h-3.5 w-3.5 fill-current" />
+                  ) : (
+                    <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />
+                  )}
+                </button>
+
+                {/* Go to Next Button */}
+                <button
+                  type="button"
+                  onClick={() => snapToIndex(centeredIndex + 1)}
+                  disabled={centeredIndex === items.length - 1}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                    'text-zinc-400 hover:bg-white/5 hover:text-white'
+                  )}
+                  title="Go to Next Item"
+                  aria-label="Go to Next Item"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+
+                {/* Go to Last Button */}
+                <button
+                  type="button"
+                  onClick={() => snapToIndex(items.length - 1)}
+                  disabled={centeredIndex === items.length - 1}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                    'text-zinc-400 hover:bg-white/5 hover:text-white'
+                  )}
+                  title="Go to Last Item"
+                  aria-label="Go to Last Item"
+                >
+                  <ChevronsRight className="h-3.5 w-3.5" />
+                </button>
+
+                <div className="h-3.5 w-px bg-zinc-800" />
+
+                {/* Loop Toggle */}
+                <button
+                  type="button"
+                  onClick={onToggleLoop}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
+                    loopPreviewPlayback
+                      ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
+                      : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+                  )}
+                  title={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
+                  aria-label={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
+                >
+                  <Repeat className="h-3.5 w-3.5" />
+                </button>
+
+                <div className="h-3.5 w-px bg-zinc-800" />
+
+                {/* Playhead Center Reset */}
+                <button
+                  type="button"
+                  onClick={centerPlayhead}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
+                    Math.abs(playheadPositionRatio - 0.5) > 0.001
+                      ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
+                      : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+                  )}
+                  title="Center playhead"
+                  aria-label="Center playhead"
+                >
+                  <AlignCenter className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Display Area */}
             <div
               ref={galleryPreviewRef}
               className="relative overflow-hidden rounded-md border border-white/10 bg-black shadow-2xl shadow-black/60"
@@ -2183,129 +2323,14 @@ export function SceneLaunchPreviewWheelV3({
                 )}
             </div>
 
-            {/* Controls and prominent playback timestamp below preview */}
-            <div className="mt-2.5 flex shrink-0 flex-col items-center">
-              <div className="flex items-center justify-center gap-2 rounded-full border border-white/5 bg-zinc-900/40 px-2.5 py-1 shadow-md backdrop-blur-md">
-              {/* Go to First Button */}
-              <button
-                type="button"
-                onClick={() => snapToIndex(0)}
-                disabled={centeredIndex === 0}
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
-                  'text-zinc-400 hover:bg-white/5 hover:text-white'
-                )}
-                title="Go to First Item"
-                aria-label="Go to First Item"
-              >
-                <ChevronsLeft className="h-3.5 w-3.5" />
-              </button>
-
-              {/* Go to Previous Button */}
-              <button
-                type="button"
-                onClick={() => snapToIndex(centeredIndex - 1)}
-                disabled={centeredIndex === 0}
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
-                  'text-zinc-400 hover:bg-white/5 hover:text-white'
-                )}
-                title="Go to Previous Item"
-                aria-label="Go to Previous Item"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-
-              {/* Play/Pause Button */}
-              <button
-                type="button"
-                onClick={onTogglePlayback}
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-full text-white transition-all cursor-pointer hover:scale-105 active:scale-95',
-                  isPreviewPlaying ? 'bg-red-650/80 hover:bg-red-700/90' : 'bg-indigo-600/80 hover:bg-indigo-700/90'
-                )}
-                title={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
-                aria-label={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
-              >
-                {isPreviewPlaying ? (
-                  <Pause className="h-3.5 w-3.5 fill-current" />
-                ) : (
-                  <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />
-                )}
-              </button>
-
-              {/* Go to Next Button */}
-              <button
-                type="button"
-                onClick={() => snapToIndex(centeredIndex + 1)}
-                disabled={centeredIndex === items.length - 1}
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
-                  'text-zinc-400 hover:bg-white/5 hover:text-white'
-                )}
-                title="Go to Next Item"
-                aria-label="Go to Next Item"
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-
-              {/* Go to Last Button */}
-              <button
-                type="button"
-                onClick={() => snapToIndex(items.length - 1)}
-                disabled={centeredIndex === items.length - 1}
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
-                  'text-zinc-400 hover:bg-white/5 hover:text-white'
-                )}
-                title="Go to Last Item"
-                aria-label="Go to Last Item"
-              >
-                <ChevronsRight className="h-3.5 w-3.5" />
-              </button>
-
-              <div className="h-3.5 w-px bg-zinc-800" />
-
-              {/* Loop Toggle */}
-              <button
-                type="button"
-                onClick={onToggleLoop}
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
-                  loopPreviewPlayback
-                    ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
-                    : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
-                )}
-                title={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
-                aria-label={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
-              >
-                <Repeat className="h-3.5 w-3.5" />
-              </button>
-
-              <div className="h-3.5 w-px bg-zinc-800" />
-
-              {/* Playhead Center Reset */}
-              <button
-                type="button"
-                onClick={centerPlayhead}
-                className={cn(
-                  'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
-                  Math.abs(playheadPositionRatio - 0.5) > 0.001
-                    ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
-                    : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
-                )}
-                title="Center playhead"
-                aria-label="Center playhead"
-              >
-                <AlignCenter className="h-3.5 w-3.5" />
-              </button>
-              </div>
+            {/* Timestamp below player */}
+            <div className="mt-2 text-center">
               <div
                 ref={prominentTimestampRef}
                 role="timer"
                 aria-live="off"
                 aria-label="Playback time"
-                className="mt-1.5 min-w-40 rounded-md border border-indigo-400/20 bg-black/70 px-3 py-1 text-center font-mono text-sm font-black tabular-nums tracking-wide text-indigo-100 shadow-lg shadow-black/40"
+                className="inline-block rounded border border-indigo-400/20 bg-black/70 px-3 py-1 font-mono text-xs font-black tabular-nums tracking-wide text-indigo-100 shadow-lg shadow-black/40"
               >
                 {formatPlaybackTimestamp(scrubSnapshot.timelineTimeSeconds, totalDurationSeconds)}
               </div>
@@ -2679,7 +2704,23 @@ export function SceneLaunchPreviewWheelV3({
                         return;
                       }
                       if (event.detail === 0) {
-                        snapToIndex(index);
+                        if (collectionItemIds.includes(item.id) && onCollectionOpen) {
+                          onCollectionOpen(item.id);
+                        } else if (slideOnClick) {
+                          snapToIndex(index);
+                        } else {
+                          const targetItem = items[index];
+                          if (targetItem) {
+                            updateFastNavigation(0);
+                            setDirectPreviewMediaId(targetItem.id);
+                            playbackTimeRef.current = itemStartTimes[index] ?? 0;
+                            if (targetItem.id !== selectedMediaId) {
+                              skipNextSelectedAlignmentRef.current = true;
+                              setTrimOverlayMediaId(null);
+                              onCenteredMediaChange(targetItem.id);
+                            }
+                          }
+                        }
                       }
                     }}
                     className="absolute inset-0 overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
@@ -2722,23 +2763,15 @@ export function SceneLaunchPreviewWheelV3({
                     />
                   )}
                   {collectionItemIds.includes(item.id) && onCollectionOpen ? (
-                    <button
-                      type="button"
-                      title="View Collection"
-                      aria-label={`View collection ${item.name}`}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onCollectionOpen(item.id);
-                      }}
-                      className="group/collection absolute right-0 top-0 z-40 h-[52px] w-[52px] overflow-visible focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
+                    <div
+                      className="absolute right-0 top-0 z-40 h-[52px] w-[52px] pointer-events-none"
                     >
                       <svg
                         width="52"
                         height="52"
                         viewBox="0 0 52 52"
                         aria-hidden="true"
-                        className="pointer-events-none absolute right-0 top-0 overflow-visible"
+                        className="absolute right-0 top-0 overflow-visible"
                         style={{ filter: 'drop-shadow(-1.5px 1.5px 2px rgba(0,0,0,0.5))' }}
                       >
                         <path
@@ -2749,62 +2782,11 @@ export function SceneLaunchPreviewWheelV3({
                           strokeLinejoin="round"
                         />
                       </svg>
-                      <span className="pointer-events-none absolute right-2 top-1.5 font-sans text-[11px] font-extrabold tracking-tight text-white">
+                      <span className="absolute right-2 top-1.5 font-sans text-[11px] font-extrabold tracking-tight text-white">
                         {itemSequences?.[item.id]?.length ?? 0}
                       </span>
-                      <span className="pointer-events-none absolute right-0 top-full mt-2 hidden whitespace-nowrap rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] font-bold normal-case tracking-normal text-white shadow-xl group-hover/collection:block group-focus-visible/collection:block">
-                        View Collection
-                      </span>
-                    </button>
-                  ) : null}
-                  {sizing === 'uniform' && (
-                    <div
-                      onPointerDown={(event) => event.stopPropagation()}
-                      className="absolute bottom-2.5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-full border border-zinc-700 bg-zinc-950/90 px-1.5 py-0.5 shadow-md transition-opacity opacity-0 group-hover/nav:opacity-100 focus-within:opacity-100"
-                    >
-                      <button
-                        type="button"
-                        title="Align Left"
-                        aria-label={`Align ${item.name} start to center`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          const itemWidth = itemWidths[index] ?? uniformItemWidth;
-                          const targetOffset = itemWidth / 2 - itemCenterPositions[index];
-                          alignItemToOffset(index, targetOffset, 0.0);
-                        }}
-                        className="flex h-5 w-5 items-center justify-center rounded-full text-zinc-400 hover:bg-white/5 hover:text-white transition-all hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
-                      >
-                        <AlignLeft className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Align Center"
-                        aria-label={`Align ${item.name} center to center`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          const targetOffset = -itemCenterPositions[index] - playheadOffsetFromCenter;
-                          alignItemToOffset(index, targetOffset, 0.5);
-                        }}
-                        className="flex h-5 w-5 items-center justify-center rounded-full text-zinc-400 hover:bg-white/5 hover:text-white transition-all hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
-                      >
-                        <AlignCenter className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Align Right"
-                        aria-label={`Align ${item.name} end to center`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          const itemWidth = itemWidths[index] ?? uniformItemWidth;
-                          const targetOffset = centerX - itemWidth / 2 - itemCenterPositions[index] - playheadOffsetFromCenter;
-                          alignItemToOffset(index, targetOffset, 1.0);
-                        }}
-                        className="flex h-5 w-5 items-center justify-center rounded-full text-zinc-400 hover:bg-white/5 hover:text-white transition-all hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
-                      >
-                        <AlignRight className="h-3 w-3" />
-                      </button>
                     </div>
-                  )}
+                  ) : null}
                   {collectionDropTargetId === item.id && (
                     <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-emerald-950/45">
                       <span className="rounded-full border border-emerald-300/60 bg-emerald-950/90 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-emerald-100 shadow-xl">

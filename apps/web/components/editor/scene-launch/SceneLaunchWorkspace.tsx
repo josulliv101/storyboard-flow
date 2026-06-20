@@ -3,7 +3,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, Pause, Play, Plus, Ratio, Search, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, Pause, Play, Plus, Ratio, Search, Settings, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Button,
@@ -13,6 +13,11 @@ import {
   DropdownMenuTrigger,
 } from '@storyboard/ui';
 import { toast } from 'sonner';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 
 import { useSceneLaunchBoard, type SceneLaunchBeat, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
 import { SceneLaunchSidebar } from '../SceneLaunchSidebar';
@@ -172,17 +177,7 @@ export function SceneLaunchWorkspace({
   const [sceneLaunchPreviewNow, setSceneLaunchPreviewNow] = React.useState(() => Date.now());
   const [sceneComposerText, setSceneComposerText] = React.useState('');
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
-  const [thumbnailMode, setThumbnailMode] = React.useState<'grid' | 'single'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('scene-launch-thumbnail-mode');
-      if (saved === 'single') return 'single';
-    }
-    return 'grid';
-  });
 
-  React.useEffect(() => {
-    localStorage.setItem('scene-launch-thumbnail-mode', thumbnailMode);
-  }, [thumbnailMode]);
   const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV3Effect>('gallery');
   const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV3Sizing>('uniform');
   const [previewWheelShowUniformRuler, setPreviewWheelShowUniformRuler] = React.useState<boolean>(() => {
@@ -196,6 +191,18 @@ export function SceneLaunchWorkspace({
   React.useEffect(() => {
     localStorage.setItem('scene-launch-preview-wheel-show-uniform-ruler', String(previewWheelShowUniformRuler));
   }, [previewWheelShowUniformRuler]);
+
+  const [previewWheelSlideOnClick, setPreviewWheelSlideOnClick] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-slide-on-click');
+      return saved !== 'false';
+    }
+    return true;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-slide-on-click', String(previewWheelSlideOnClick));
+  }, [previewWheelSlideOnClick]);
   const [previewWheelSequence, setPreviewWheelSequence] = React.useState<PreviewWheelSequence>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('scene-launch-preview-wheel-sequence');
@@ -1934,28 +1941,22 @@ export function SceneLaunchWorkspace({
           setActiveTab={setActiveTab}
           openSceneLibrary={openSceneLibrary}
           searchVariant={headerVariant === 'prompt' ? 'prompt' : 'default'}
-          hideSearch
           centerSlot={headerPlaybackControls}
-          thumbnailMode={thumbnailMode}
-          setThumbnailMode={setThumbnailMode}
         />
 
         <main className="relative min-h-0 flex-1 overflow-hidden">
-          <motion.div
-            className="absolute inset-0 overflow-y-auto px-6 pb-6"
-            animate={{
-              x: '0%',
-              opacity: sceneLaunchPlaybackMode === 'preview' ? 0.18 : 1,
-            }}
-            transition={{
-              x: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
-              opacity: sceneLaunchPlaybackMode === 'preview'
-                ? { duration: 0.22, ease: 'easeOut' }
-                : { duration: 0.48, delay: 0.12, ease: 'easeOut' },
-            }}
-          >
+          <AnimatePresence mode="wait" initial={false}>
+            {sceneLaunchPlaybackMode !== 'preview' ? (
+              <motion.div
+                key="storyboard-grid"
+                className="absolute inset-0 overflow-y-auto px-4 pb-4"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+              >
           {!activeSceneLaunchBeat && rootSceneLaunchGridItemsCount === 0 && (projectHasSceneContent || visibleProjectScenes.length > 1) ? (
-            <div className="mt-8 w-full">
+            <div className="mt-2 w-full">
               <div className="mb-4 flex items-end justify-between gap-4">
                 <div>
                   <h2 className="text-sm font-semibold text-zinc-200">Project scenes</h2>
@@ -2010,8 +2011,7 @@ export function SceneLaunchWorkspace({
               activeSceneLaunchBeatId={activeSceneLaunchBeatId}
               activeSceneLaunchBeat={activeSceneLaunchBeat || null}
               sceneLaunchGridItems={sceneLaunchGridItems}
-              thumbnailMode={thumbnailMode}
-              isTimelinePlaying={sceneLaunchPlaybackMode !== 'preview' && isTimelinePlaying}
+              isTimelinePlaying={isTimelinePlaying}
               activeItemKey={activeItemKey}
               hoveredItemKey={hoveredItemKey}
               setHoveredItemKey={setHoveredItemKey}
@@ -2063,20 +2063,16 @@ export function SceneLaunchWorkspace({
               moveItemToTrash={moveItemToTrash}
             />
           )}
-          </motion.div>
-
-          <motion.div
-            className="absolute inset-0 z-10 flex items-center justify-center p-6"
-            initial={false}
-            animate={{
-              y: sceneLaunchPlaybackMode === 'preview' ? '0%' : '100%',
-              boxShadow: sceneLaunchPlaybackMode === 'preview'
-                ? '0 -32px 80px rgba(0,0,0,0.5)'
-                : '0 -32px 80px rgba(0,0,0,0)',
-            }}
-            transition={{ type: 'spring', stiffness: 145, damping: 18, mass: 1.15 }}
-            aria-hidden={sceneLaunchPlaybackMode !== 'preview'}
-          >
+              </motion.div>
+            ) : (
+              <motion.div
+                key="workbench-preview"
+                className="absolute inset-0 z-10 flex items-center justify-center p-3"
+                initial={{ y: '100%', boxShadow: '0 -32px 80px rgba(0,0,0,0)' }}
+                animate={{ y: '0%', boxShadow: '0 -32px 80px rgba(0,0,0,0.5)' }}
+                exit={{ y: '100%', boxShadow: '0 -32px 80px rgba(0,0,0,0)' }}
+                transition={{ type: 'spring', stiffness: 145, damping: 18, mass: 1.15 }}
+              >
             <section className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/95 shadow-2xl shadow-black/50">
 
               <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center bg-black">
@@ -2098,6 +2094,7 @@ export function SceneLaunchWorkspace({
                       effect={previewWheelEffect}
                       sizing={previewWheelSizing}
                       showUniformRuler={previewWheelShowUniformRuler}
+                      slideOnClick={previewWheelSlideOnClick}
                       durationScale={previewWheelDurationScale}
                       selectedItemDurationSeconds={activePreviewDraft?.durationSeconds}
                       selectedItemTrimStartSeconds={activePreviewDraft?.trimStartSeconds}
@@ -2201,109 +2198,144 @@ export function SceneLaunchWorkspace({
                       />
                     </div>
 
-                    <div className="absolute left-4 top-4 z-40 rounded-lg border border-zinc-700/80 bg-zinc-950/92 p-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-2xl shadow-black/50 backdrop-blur-xl">
-                      <div className="mb-1 px-1.5 text-[9px] text-zinc-500">Wheel items</div>
-                      <div className="flex rounded-md bg-black/70 p-0.5" role="group" aria-label="Wheel items">
-                        {([
-                          ['media', 'All media'],
-                          ['collections', 'Collections'],
-                        ] as const).map(([value, label]) => (
-                          <button
-                            key={value}
-                            type="button"
-                            aria-pressed={previewWheelSequence === value}
-                            onClick={() => {
-                              setPreviewWheelSequence(value);
-                              setPreviewWheelSizing('uniform');
-                              if (value === 'media') setPreviewWheelCollectionPath([]);
-                            }}
-                            className={cn(
-                              'h-7 rounded px-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400',
-                              previewWheelSequence === value
-                                ? 'bg-indigo-500 text-white shadow-sm'
-                                : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100',
+                    <div className="absolute right-4 top-4 z-40">
+                      <Popover>
+                        <PopoverTrigger
+                          className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-700/80 bg-zinc-950/80 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 shadow-lg backdrop-blur-md transition-colors"
+                          title="Workbench Settings"
+                          aria-label="Workbench Settings"
+                        >
+                          <Settings className="h-4 w-4" />
+                        </PopoverTrigger>
+                        <PopoverContent
+                          align="end"
+                          side="bottom"
+                          className="w-72 border border-zinc-800 bg-zinc-950/98 p-4 text-zinc-300 shadow-2xl backdrop-blur-xl z-50 rounded-lg"
+                        >
+                          <div className="space-y-4 text-xs">
+                            <div>
+                              <h4 className="font-black uppercase tracking-widest text-zinc-400 text-[10px] mb-2">Wheel items</h4>
+                              <div className="flex rounded-md bg-zinc-900 border border-zinc-800 p-0.5" role="group" aria-label="Wheel items">
+                                {([
+                                  ['media', 'All media'],
+                                  ['collections', 'Collections'],
+                                ] as const).map(([value, label]) => (
+                                  <button
+                                    key={value}
+                                    type="button"
+                                    aria-pressed={previewWheelSequence === value}
+                                    onClick={() => {
+                                      setPreviewWheelSequence(value);
+                                      setPreviewWheelSizing('uniform');
+                                      if (value === 'media') setPreviewWheelCollectionPath([]);
+                                    }}
+                                    className={cn(
+                                      'flex-1 h-7 rounded text-[10px] font-bold uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400',
+                                      previewWheelSequence === value
+                                        ? 'bg-indigo-500 text-white shadow-sm'
+                                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100',
+                                    )}
+                                  >
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
+                              {previewWheelSizing === 'uniform' && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="mt-2 h-7 w-full border-zinc-800 bg-zinc-900 text-[10px] font-bold uppercase tracking-wider text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                                  onClick={createPreviewWheelCollection}
+                                >
+                                  <Plus className="mr-1 h-3.5 w-3.5" />
+                                  Collection
+                                </Button>
+                              )}
+                            </div>
+
+                            <div className="h-px bg-zinc-800/80" />
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Effect</span>
+                              <select
+                                value={previewWheelEffect}
+                                onChange={(event) => setPreviewWheelEffect(event.target.value as SceneLaunchPreviewWheelV3Effect)}
+                                className="h-7 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
+                              >
+                                <option value="cylinder">Cylinder</option>
+                                <option value="cylinder2">Cylinder 2</option>
+                                <option value="coverflow">Coverflow</option>
+                                <option value="gallery">Gallery</option>
+                                <option value="stack">Stack</option>
+                              </select>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Width Mode</span>
+                              <select
+                                value={previewWheelSizing}
+                                onChange={(event) => setPreviewWheelSizing(event.target.value as SceneLaunchPreviewWheelV3Sizing)}
+                                className="h-7 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
+                              >
+                                <option value="uniform">Uniform</option>
+                                <option value="duration">Duration</option>
+                              </select>
+                            </div>
+
+                            {previewWheelSizing === 'uniform' && (
+                              <div className="flex items-center justify-between gap-4">
+                                <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Show Ruler</span>
+                                <Switch
+                                  size="sm"
+                                  checked={previewWheelShowUniformRuler}
+                                  onCheckedChange={setPreviewWheelShowUniformRuler}
+                                />
+                              </div>
                             )}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      {previewWheelSizing === 'uniform' && (
-                        <button
-                          type="button"
-                          onClick={createPreviewWheelCollection}
-                          className="mt-1.5 flex h-7 w-full items-center justify-center gap-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 text-[9px] text-zinc-200 transition-colors hover:border-indigo-400 hover:bg-indigo-500/15 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
-                        >
-                          <Plus className="h-3 w-3" />
-                          Collection
-                        </button>
-                      )}
-                    </div>
-                    <div className="absolute right-4 top-4 z-40 flex items-center gap-3 rounded-md border border-zinc-700/80 bg-zinc-950/88 px-2.5 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 shadow-2xl shadow-black/50 backdrop-blur-xl">
-                      <label className="flex items-center gap-2">
-                        <span>Effect</span>
-                        <select
-                          value={previewWheelEffect}
-                          onChange={(event) => setPreviewWheelEffect(event.target.value as SceneLaunchPreviewWheelV3Effect)}
-                          className="h-7 rounded-md border border-zinc-700 bg-black/70 px-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
-                        >
-                          <option value="cylinder">Cylinder</option>
-                          <option value="cylinder2">Cylinder 2</option>
-                          <option value="coverflow">Coverflow</option>
-                          <option value="gallery">Gallery</option>
-                          <option value="stack">Stack</option>
-                        </select>
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <span>Width</span>
-                        <select
-                          value={previewWheelSizing}
-                          onChange={(event) => setPreviewWheelSizing(event.target.value as SceneLaunchPreviewWheelV3Sizing)}
-                          className="h-7 rounded-md border border-zinc-700 bg-black/70 px-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
-                        >
-                          <option value="uniform">Uniform</option>
-                          <option value="duration">Duration</option>
-                        </select>
-                      </label>
-                      {previewWheelSizing === 'uniform' && (
-                        <label className="flex items-center gap-2">
-                          <span>Ruler</span>
-                          <Switch
-                            size="sm"
-                            checked={previewWheelShowUniformRuler}
-                            onCheckedChange={setPreviewWheelShowUniformRuler}
-                            aria-label="Show or hide interactive ruler in uniform mode"
-                          />
-                        </label>
-                      )}
-                      {!wheelReflectsCollections && (
-                        <label className="flex items-center gap-2">
-                          <span>Center drop</span>
-                          <Switch
-                            size="sm"
-                            checked={previewWheelSelectDroppedItem}
-                            onCheckedChange={setPreviewWheelSelectDroppedItem}
-                            aria-label="Center and select dropped timeline item"
-                          />
-                        </label>
-                      )}
-                      {previewWheelSizing === 'duration' && (
-                        <label className="flex items-center gap-2">
-                          <span>Scale</span>
-                          <input
-                            type="range"
-                            min={0.5}
-                            max={4}
-                            step={0.25}
-                            value={previewWheelDurationScale}
-                            onChange={(event) => setPreviewWheelDurationScale(Number(event.target.value))}
-                            className="h-5 w-24 cursor-ew-resize accent-indigo-500"
-                          />
-                          <output className="w-9 text-right font-mono text-zinc-200">
-                            {previewWheelDurationScale.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}x
-                          </output>
-                        </label>
-                      )}
+
+                            {!wheelReflectsCollections && (
+                              <div className="flex items-center justify-between gap-4">
+                                <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Center Drop</span>
+                                <Switch
+                                  size="sm"
+                                  checked={previewWheelSelectDroppedItem}
+                                  onCheckedChange={setPreviewWheelSelectDroppedItem}
+                                />
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Slide on Click</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelSlideOnClick}
+                                onCheckedChange={setPreviewWheelSlideOnClick}
+                              />
+                            </div>
+
+                            {previewWheelSizing === 'duration' && (
+                              <div className="space-y-1.5 pt-1">
+                                <div className="flex justify-between items-center text-[10px]">
+                                  <span className="font-bold text-zinc-400 uppercase tracking-wider">Duration Scale</span>
+                                  <output className="font-mono text-zinc-200 font-bold">
+                                    {previewWheelDurationScale.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}x
+                                  </output>
+                                </div>
+                                <input
+                                  type="range"
+                                  min={0.5}
+                                  max={4}
+                                  step={0.25}
+                                  value={previewWheelDurationScale}
+                                  onChange={(event) => setPreviewWheelDurationScale(Number(event.target.value))}
+                                  className="h-5 w-full cursor-ew-resize accent-indigo-500 bg-zinc-900 rounded"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                   </>
                 ) : (
@@ -2311,14 +2343,16 @@ export function SceneLaunchWorkspace({
                     key={previewCanvasKey}
                     media={activePreviewItem?.media ?? null}
                     previewTimeSeconds={activePreviewItem?.previewTimeSeconds ?? 0}
-                    isPlaying={sceneLaunchPlaybackMode === 'preview' && isTimelinePlaying}
-                    isVisible={sceneLaunchPlaybackMode === 'preview'}
+                    isPlaying={isTimelinePlaying}
+                    isVisible={true}
                     getPlaybackSnapshot={getDisplayedPreviewSnapshot}
                   />
                 )}
               </div>
             </section>
-          </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </main>
       </div>
 

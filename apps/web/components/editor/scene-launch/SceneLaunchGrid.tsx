@@ -84,7 +84,6 @@ interface SceneLaunchGridProps {
   moveSceneLaunchItemToParent: (dragKey: string) => void;
   moveSceneLaunchItemToTargetCollection: (dragKey: string, targetId: string) => void;
   moveItemToTrash: (dragKey: string) => void;
-  thumbnailMode: 'grid' | 'single';
 }
 
 export function SceneLaunchGrid({
@@ -135,7 +134,6 @@ export function SceneLaunchGrid({
   moveSceneLaunchItemToParent,
   moveSceneLaunchItemToTargetCollection,
   moveItemToTrash,
-  thumbnailMode,
 }: SceneLaunchGridProps) {
 
   const [utilityDropZone, setUtilityDropZone] = React.useState<'parent' | 'directory' | 'trash' | 'cancel' | null>(null);
@@ -569,7 +567,7 @@ export function SceneLaunchGrid({
   };
 
   return (
-    <section className="relative mt-6 w-full shrink-0">
+    <section className="relative mt-2 w-full shrink-0">
       {activeSceneLaunchBeat ? (
         <>
           {activeSceneLaunchBeatId === 'trash' && (
@@ -595,7 +593,7 @@ export function SceneLaunchGrid({
           )}
 
           <div
-            className="rounded-lg border border-zinc-900 bg-zinc-950/30 p-3"
+            className="w-full"
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => handleBeatDrop(event, activeSceneLaunchBeat.id)}
             onContextMenu={handleGridBackgroundContextMenu}
@@ -681,7 +679,6 @@ export function SceneLaunchGrid({
                       dragPlaceholderContent={renderOriginPlaceholder(dragKey)}
                       allCollections={allCollections}
                       aspectRatio={ratioValue}
-                      thumbnailMode={thumbnailMode}
                     />
                   );
                 })}
@@ -787,7 +784,6 @@ export function SceneLaunchGrid({
                   dragPlaceholderContent={renderOriginPlaceholder(dragKey)}
                   allCollections={allCollections}
                   aspectRatio={ratioValue}
-                  thumbnailMode={thumbnailMode}
                 />
               );
             })}

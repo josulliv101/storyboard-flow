@@ -7,124 +7,6 @@ import { CollectionFrame } from '../Frame';
 import { CollectionProgressBar } from '../CollectionProgressBar';
 import { type SceneLaunchBeat, type SceneLaunchMediaItem, VIDEO_PLACEHOLDER } from './useSceneLaunchBoard';
 
-interface CollectionCanvasThumbnailProps {
-  items: SceneLaunchMediaItem[];
-  aspectRatio: number;
-}
-
-function dataURLtoBlob(dataurl: string): Blob {
-  const arr = dataurl.split(',');
-  if (arr.length < 2) {
-    throw new Error('Invalid data URL');
-  }
-  const mimeMatch = arr[0].match(/:(.*?);/);
-  const mime = mimeMatch ? mimeMatch[1] : '';
-  const bstr = atob(arr[1]);
-  let n = bstr.length;
-  const u8arr = new Uint8Array(n);
-  while (n--) {
-    u8arr[n] = bstr.charCodeAt(n);
-  }
-  return new Blob([u8arr], { type: mime });
-}
-
-export function CollectionCanvasThumbnail({ items, aspectRatio }: CollectionCanvasThumbnailProps) {
-  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
-
-  React.useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const width = 320;
-    const height = 320 / aspectRatio;
-    canvas.width = width;
-    canvas.height = height;
-
-    ctx.fillStyle = '#18181b';
-    ctx.fillRect(0, 0, width, height);
-
-    if (items.length === 0) return;
-
-    const gap = 4;
-    const quadrants = [
-      { x: 0, y: 0, w: width / 2 - gap / 2, h: height / 2 - gap / 2 },
-      { x: width / 2 + gap / 2, y: 0, w: width / 2 - gap / 2, h: height / 2 - gap / 2 },
-      { x: 0, y: height / 2 + gap / 2, w: width / 2 - gap / 2, h: height / 2 - gap / 2 },
-      { x: width / 2 + gap / 2, y: height / 2 + gap / 2, w: width / 2 - gap / 2, h: height / 2 - gap / 2 }
-    ];
-
-    let active = true;
-    const activeLoopIds: number[] = [];
-    const blobUrlsToRevoke: string[] = [];
-
-    // Draw dark gray placeholders for empty spots in the 2x2 grid
-    for (let index = items.length; index < quadrants.length; index++) {
-      const quad = quadrants[index];
-      ctx.fillStyle = '#1c1c1f';
-      ctx.fillRect(quad.x, quad.y, quad.w, quad.h);
-    }
-
-    items.forEach((item, index) => {
-      if (index >= quadrants.length) return;
-      const quad = quadrants[index];
-
-      const drawSource = (srcEl: HTMLImageElement | HTMLVideoElement) => {
-        if (!active) return;
-
-        const imgWidth = srcEl instanceof HTMLVideoElement ? srcEl.videoWidth : srcEl.naturalWidth;
-        const imgHeight = srcEl instanceof HTMLVideoElement ? srcEl.videoHeight : srcEl.naturalHeight;
-
-        if (!imgWidth || !imgHeight) return;
-
-        const imgRatio = imgWidth / imgHeight;
-        const destRatio = quad.w / quad.h;
-
-        let sx = 0, sy = 0, sw = imgWidth, sh = imgHeight;
-
-        if (imgRatio > destRatio) {
-          sw = imgHeight * destRatio;
-          sx = (imgWidth - sw) / 2;
-        } else {
-          sh = imgWidth / destRatio;
-          sy = (imgHeight - sh) / 2;
-        }
-
-        try {
-          ctx.drawImage(srcEl, sx, sy, sw, sh, quad.x, quad.y, quad.w, quad.h);
-        } catch (err) {
-          console.warn('Failed to draw source frame:', err);
-        }
-      };
-
-      const img = new Image();
-      img.onload = () => {
-        drawSource(img);
-      };
-      if (item.type === 'video') {
-        img.src = item.posterUrl || VIDEO_PLACEHOLDER;
-      } else {
-        img.src = item.previewUrl;
-      }
-    });
-
-    return () => {
-      active = false;
-      activeLoopIds.forEach(id => cancelAnimationFrame(id));
-      blobUrlsToRevoke.forEach(url => {
-        try {
-          URL.revokeObjectURL(url);
-        } catch (e) {
-          // ignore
-        }
-      });
-    };
-  }, [items, aspectRatio]);
-
-  return <canvas ref={canvasRef} className="w-full h-full object-cover" />;
-}
-
 interface SceneLaunchCollectionTileProps {
   beat: SceneLaunchBeat;
   dragKey: string;
@@ -168,7 +50,6 @@ interface SceneLaunchCollectionTileProps {
   dragPlaceholderContent?: React.ReactNode;
   allCollections: SceneLaunchBeat[];
   aspectRatio: number;
-  thumbnailMode: 'grid' | 'single';
 }
 
 export function SceneLaunchCollectionTile({
@@ -206,7 +87,6 @@ export function SceneLaunchCollectionTile({
   dragPlaceholderContent,
   allCollections,
   aspectRatio,
-  thumbnailMode,
 }: SceneLaunchCollectionTileProps) {
 
   const preview = getSceneLaunchCollectionPreview(beat);
@@ -292,57 +172,43 @@ export function SceneLaunchCollectionTile({
       >
         {firstFourItems.length > 0 ? (
           <div className="relative w-full h-full overflow-hidden rounded-md">
-            {thumbnailMode === 'single' ? (
-              <>
-                <div className="w-full h-full relative z-10">
-                  {firstFourItems[0].type === 'video' ? (
-                    <img src={firstFourItems[0].posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <img src={firstFourItems[0].previewUrl} alt="" className="h-full w-full object-cover" />
-                  )}
-                </div>
-                {orderedMediaItems.length >= 1 && (
-                  <>
-                    <svg 
-                      width="36" 
-                      height="36" 
-                      viewBox="0 0 36 36" 
-                      className="absolute top-0 right-0 z-20 pointer-events-none overflow-visible"
-                      style={{
-                        filter: 'drop-shadow(-1px 1px 1.5px rgba(0,0,0,0.45))'
-                      }}
-                    >
-                      <path 
-                        d="M 0,0 L 36,0 L 36,36 Z" 
-                        fill="#18181b" 
-                        stroke="#27272a" 
-                        strokeWidth="1.2"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    <div
-                      className="absolute top-0 right-0 w-[36px] h-[36px] z-30 flex items-start justify-end pt-1 pr-1.5 select-none pointer-events-none"
-                    >
-                      <span className="text-[9px] font-extrabold text-white font-sans tracking-tight">
-                        +{orderedMediaItems.length - 1}
-                      </span>
-                    </div>
-                  </>
+            <>
+              <div className="w-full h-full relative z-10">
+                {firstFourItems[0].type === 'video' ? (
+                  <img src={firstFourItems[0].posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <img src={firstFourItems[0].previewUrl} alt="" className="h-full w-full object-cover" />
                 )}
-              </>
-            ) : (
-              <>
-                <CollectionCanvasThumbnail
-                  items={firstFourItems}
-                  aspectRatio={4/3}
-                />
-                {orderedMediaItems.length > 4 && (
-                  <div className="absolute bottom-1 right-1 flex items-center justify-center rounded bg-zinc-950/80 px-1 py-0.2 shadow text-[8px] font-bold text-zinc-300 font-mono">
-                    +{orderedMediaItems.length - 4}
+              </div>
+              {orderedMediaItems.length >= 1 && (
+                <>
+                  <svg 
+                    width="36" 
+                    height="36" 
+                    viewBox="0 0 36 36" 
+                    className="absolute top-0 right-0 z-20 pointer-events-none overflow-visible"
+                    style={{
+                      filter: 'drop-shadow(-1px 1px 1.5px rgba(0,0,0,0.45))'
+                    }}
+                  >
+                    <path 
+                      d="M 0,0 L 36,0 L 36,36 Z" 
+                      fill="#18181b" 
+                      stroke="#27272a" 
+                      strokeWidth="1.2"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <div
+                    className="absolute top-0 right-0 w-[36px] h-[36px] z-30 flex items-start justify-end pt-1 pr-1.5 select-none pointer-events-none"
+                  >
+                    <span className="text-[9px] font-extrabold text-white font-sans tracking-tight">
+                      +{orderedMediaItems.length - 1}
+                    </span>
                   </div>
-                )}
-              </>
-            )}
+                </>
+              )}
+            </>
           </div>
         ) : (
           <Folder className="h-6 w-6 text-amber-500" />
@@ -384,7 +250,6 @@ export function SceneLaunchCollectionTile({
             />
           ) : firstFourItems.length > 0 ? (
             <div className="relative w-full h-full">
-              {thumbnailMode === 'single' ? (
                 <>
                   <div className="w-full h-full relative z-10">
                     {firstFourItems[0].type === 'video' ? (
@@ -422,21 +287,6 @@ export function SceneLaunchCollectionTile({
                     </>
                   )}
                 </>
-              ) : (
-                <>
-                  <CollectionCanvasThumbnail
-                    items={firstFourItems}
-                    aspectRatio={aspectRatio}
-                  />
-                  {orderedMediaItems.length > 4 && (
-                    <div className="absolute bottom-2 right-2 flex items-center justify-center rounded-md bg-zinc-950/85 border border-zinc-700/50 px-2 py-0.5 shadow-lg backdrop-blur-sm pointer-events-none z-20">
-                      <span className="text-[10px] font-bold text-zinc-200 font-mono">
-                        +{orderedMediaItems.length - 4}
-                      </span>
-                    </div>
-                  )}
-                </>
-              )}
             </div>
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center text-center text-zinc-650 transition-colors hover:bg-white/[0.03] hover:text-zinc-300">
