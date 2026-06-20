@@ -1402,8 +1402,33 @@ export function SceneLaunchWorkspace({
     }).filter((item): item is typeof timelineItems[number] => item !== null);
   }, [previewWheelCollectionPath, sceneLaunchBeats, timelineItems]);
 
+  const getCollectionStartingMedia = React.useCallback((collection: SceneLaunchBeat): SceneLaunchMediaItem | null => {
+    const visited = new Set<string>();
+    let currentCollection: SceneLaunchBeat | undefined = collection;
+
+    while (currentCollection) {
+      const currentCollectionId = currentCollection.id;
+      const latestCollection: SceneLaunchBeat = sceneLaunchBeats.find(
+        beat => beat.id === currentCollectionId,
+      ) ?? currentCollection;
+      if (visited.has(latestCollection.id)) return null;
+      visited.add(latestCollection.id);
+
+      const firstChild: SceneLaunchBeat['gridOrder'][number] | undefined = latestCollection.gridOrder[0];
+      if (!firstChild) return null;
+
+      if (firstChild.type === 'media') {
+        return latestCollection.items.find(media => media.id === firstChild.id) ?? null;
+      }
+
+      currentCollection = sceneLaunchBeats.find(beat => beat.id === firstChild.id);
+    }
+
+    return null;
+  }, [sceneLaunchBeats]);
+
   const getCollectionWheelRepresentative = React.useCallback((collection: SceneLaunchBeat): SceneLaunchMediaItem => {
-    const first = getRecursiveMediaItems(collection)[0];
+    const first = getCollectionStartingMedia(collection);
     if (first) {
       return {
         ...first,
@@ -1418,7 +1443,7 @@ export function SceneLaunchWorkspace({
       previewUrl: COLLECTION_WHEEL_PLACEHOLDER,
       durationSeconds: 3,
     };
-  }, [getRecursiveMediaItems]);
+  }, [getCollectionStartingMedia]);
 
   const collectionAwareWheelItems = React.useMemo(() => previewWheelSourceItems.flatMap(item => {
     if (item.type === 'media') return [item.item];
@@ -1597,6 +1622,7 @@ export function SceneLaunchWorkspace({
     const chunks: SceneLaunchMediaItem[][] = [];
     const titles: string[] = [];
     const isCollection: boolean[] = [];
+    const representativeUrls: (string | null)[] = [];
     let currentMediaChunk: SceneLaunchMediaItem[] = [];
 
     for (const item of previewWheelSourceItems) {
@@ -1607,6 +1633,7 @@ export function SceneLaunchWorkspace({
           chunks.push(currentMediaChunk);
           titles.push("Current Collection");
           isCollection.push(false);
+          representativeUrls.push(null);
           currentMediaChunk = [];
         }
 
@@ -1615,6 +1642,12 @@ export function SceneLaunchWorkspace({
           chunks.push(displayItems);
           titles.push(item.collection.name);
           isCollection.push(true);
+          const representative = getCollectionWheelRepresentative(item.collection);
+          representativeUrls.push(
+            representative.type === 'video'
+              ? representative.posterUrl || representative.previewUrl
+              : representative.previewUrl,
+          );
         }
       }
     }
@@ -1623,14 +1656,19 @@ export function SceneLaunchWorkspace({
       chunks.push(currentMediaChunk);
       titles.push("Current Collection");
       isCollection.push(false);
+      representativeUrls.push(null);
     }
 
-    return { chunks, titles, isCollection };
+    return { chunks, titles, isCollection, representativeUrls };
   }, [previewWheelGridView, previewWheelBreakoutCollections, previewWheelSourceItems, sceneLaunchBeats, getCollectionWheelRepresentative, getRecursiveMediaItems, getSceneLaunchMediaPreviewDuration]);
 
   const breakoutChunks = React.useMemo(() => breakoutData?.chunks ?? null, [breakoutData]);
   const breakoutTitles = React.useMemo(() => breakoutData?.titles ?? null, [breakoutData]);
   const breakoutIsCollection = React.useMemo(() => breakoutData?.isCollection ?? null, [breakoutData]);
+  const breakoutRepresentativeUrls = React.useMemo(
+    () => breakoutData?.representativeUrls ?? null,
+    [breakoutData],
+  );
 
   const currentCollectionName = React.useMemo(() => {
     if (previewWheelCollectionPath.length > 0) {
@@ -2353,6 +2391,8 @@ export function SceneLaunchWorkspace({
                       breakoutIsCollection={breakoutIsCollection || undefined}
                       breakoutRepresentativeUrls={breakoutRepresentativeUrls || undefined}
                       currentCollectionName={currentCollectionName}
+                      breakoutCollectionsEnabled={previewWheelBreakoutCollections}
+                      onBreakoutCollectionsChange={setPreviewWheelBreakoutCollections}
                       parentCollectionThumbnailUrl={parentCollectionThumbnailUrl}
                       parentCollectionName={parentCollectionName}
                       breadcrumbs={collectionBreadcrumbs}
@@ -2614,17 +2654,6 @@ export function SceneLaunchWorkspace({
                                 onCheckedChange={setPreviewWheelGridView}
                               />
                             </div>
-
-                            {previewWheelGridView && (
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Breakout Collections</span>
-                                <Switch
-                                  size="sm"
-                                  checked={previewWheelBreakoutCollections}
-                                  onCheckedChange={setPreviewWheelBreakoutCollections}
-                                />
-                              </div>
-                            )}
 
                             {previewWheelSizing === 'duration' && (
                               <div className="space-y-1.5 pt-1">

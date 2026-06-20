@@ -2,6 +2,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, Ban, Clapperboard, Folder, CornerUpLeft, FolderInput, Play, Pause, Repeat, AlignLeft, AlignCenter, AlignRight, Trash2, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
 
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { VIDEO_PLACEHOLDER, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
 
@@ -94,6 +95,8 @@ interface SceneLaunchPreviewWheelV3Props {
   breakoutIsCollection?: boolean[];
   breakoutRepresentativeUrls?: (string | null)[];
   currentCollectionName?: string;
+  breakoutCollectionsEnabled?: boolean;
+  onBreakoutCollectionsChange?: (enabled: boolean) => void;
   rowTitle?: string;
   rowIconUrl?: string;
   rowIsCollection?: boolean;
@@ -519,8 +522,9 @@ export function SceneLaunchPreviewWheelV3({
   breakoutIsCollection,
   breakoutRepresentativeUrls,
   currentCollectionName,
+  breakoutCollectionsEnabled = false,
+  onBreakoutCollectionsChange,
   rowTitle,
-  rowIconUrl,
   rowIsCollection,
   isFirstGridRow = false,
   isPreviewPlaying = false,
@@ -715,6 +719,18 @@ export function SceneLaunchPreviewWheelV3({
   const [trimOverlayMediaId, setTrimOverlayMediaId] = React.useState<string | null>(null);
   const playheadPositionRatioRef = React.useRef(0.5);
   const [playheadPositionRatio, setPlayheadPositionRatio] = React.useState(0.5);
+  const gridPanelResizeRef = React.useRef({
+    isDragging: false,
+    pointerId: -1,
+    startClientY: 0,
+    startHeight: 280,
+  });
+  const [isGridPanelResizing, setIsGridPanelResizing] = React.useState(false);
+  const [gridDisplayPanelHeight, setGridDisplayPanelHeight] = React.useState(() => {
+    if (typeof window === 'undefined') return 280;
+    const savedHeight = Number(localStorage.getItem('scene-launch-grid-display-panel-height'));
+    return Number.isFinite(savedHeight) ? savedHeight : 280;
+  });
 
 
   React.useEffect(() => {
@@ -795,10 +811,22 @@ export function SceneLaunchPreviewWheelV3({
     Math.max(32, viewportSize.width - 32),
   );
   const playheadOffsetFromCenter = playheadX - centerX;
+  const minGridDisplayPanelHeight = 180;
+  const maxGridDisplayPanelHeight = Math.max(
+    minGridDisplayPanelHeight,
+    viewportSize.height - 190,
+  );
+  const boundedGridDisplayPanelHeight = clamp(
+    gridDisplayPanelHeight,
+    minGridDisplayPanelHeight,
+    maxGridDisplayPanelHeight,
+  );
   const galleryPreviewHeight = Math.max(0, Math.min(
-    gridView ? 200 : 360,
+    gridView ? Math.max(96, boundedGridDisplayPanelHeight - 70) : 360,
     viewportSize.width * 9 / 16,
-    viewportSize.height - rowHeight - 72,
+    gridView
+      ? Math.max(96, boundedGridDisplayPanelHeight - 70)
+      : viewportSize.height - rowHeight - 72,
   ));
   const galleryPreviewWidth = galleryPreviewHeight * 16 / 9;
   const uniformItemWidth = hidePreview
@@ -1177,18 +1205,19 @@ export function SceneLaunchPreviewWheelV3({
 
   React.useEffect(() => {
     if (gridView) return;
-    if (onScrubUpdate) {
+    const publishScrubUpdate = onScrubUpdateRef.current;
+    if (publishScrubUpdate) {
       if (scrubSnapshot && isWheelMoving) {
-        onScrubUpdate(
+        publishScrubUpdate(
           scrubSnapshot.media.id,
           scrubSnapshot.sourceTimeSeconds,
           scrubSnapshot.timelineTimeSeconds,
         );
       } else if (!isWheelMoving) {
-        onScrubUpdate(null, null);
+        publishScrubUpdate(null, null);
       }
     }
-  }, [gridView, scrubSnapshot, isWheelMoving, onScrubUpdate]);
+  }, [gridView, scrubSnapshot, isWheelMoving]);
 
   const rulerPlayheadTimeSeconds = React.useMemo(() => {
     if (items.length === 0) return 0;
@@ -2520,6 +2549,60 @@ export function SceneLaunchPreviewWheelV3({
     }
   }, [applyDurationResize, onSelectedItemDurationChangeEnd, selectedItemDurationSeconds, selectedItemTrimStartSeconds]);
 
+  const resizeGridDisplayPanel = React.useCallback((nextHeight: number) => {
+    setGridDisplayPanelHeight(clamp(
+      nextHeight,
+      minGridDisplayPanelHeight,
+      maxGridDisplayPanelHeight,
+    ));
+  }, [maxGridDisplayPanelHeight]);
+
+  const beginGridPanelResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    gridPanelResizeRef.current = {
+      isDragging: true,
+      pointerId: event.pointerId,
+      startClientY: event.clientY,
+      startHeight: boundedGridDisplayPanelHeight,
+    };
+    setIsGridPanelResizing(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [boundedGridDisplayPanelHeight]);
+
+  const moveGridPanelResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const resize = gridPanelResizeRef.current;
+    if (!resize.isDragging || resize.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    resizeGridDisplayPanel(resize.startHeight + event.clientY - resize.startClientY);
+  }, [resizeGridDisplayPanel]);
+
+  const endGridPanelResize = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const resize = gridPanelResizeRef.current;
+    if (!resize.isDragging || resize.pointerId !== event.pointerId) return;
+    resize.isDragging = false;
+    setIsGridPanelResizing(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    localStorage.setItem(
+      'scene-launch-grid-display-panel-height',
+      String(gridDisplayPanelHeight),
+    );
+  }, [gridDisplayPanelHeight]);
+
+  const handleGridPanelResizeKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    let nextHeight: number | null = null;
+    if (event.key === 'ArrowUp') nextHeight = boundedGridDisplayPanelHeight - (event.shiftKey ? 32 : 8);
+    if (event.key === 'ArrowDown') nextHeight = boundedGridDisplayPanelHeight + (event.shiftKey ? 32 : 8);
+    if (event.key === 'Home') nextHeight = minGridDisplayPanelHeight;
+    if (event.key === 'End') nextHeight = maxGridDisplayPanelHeight;
+    if (nextHeight === null) return;
+    event.preventDefault();
+    resizeGridDisplayPanel(nextHeight);
+    localStorage.setItem('scene-launch-grid-display-panel-height', String(nextHeight));
+  }, [boundedGridDisplayPanelHeight, maxGridDisplayPanelHeight, resizeGridDisplayPanel]);
+
   const renderPlayer = () => {
     if (!isGallery || hidePreview || !effectiveScrubSnapshot) return null;
     return (
@@ -2724,10 +2807,36 @@ export function SceneLaunchPreviewWheelV3({
               : "h-full"
       )}>
         {gridView && !hidePreview ? (
-          <div className="sticky top-0 z-45 flex shrink-0 flex-col bg-[#0c0c0e] border-b border-zinc-900 shadow-md">
-            {/* Sticky Header */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800/40">
-              <div className="flex items-center gap-3">
+          <div className="sticky top-0 z-40 flex w-full shrink-0 flex-col bg-[#0c0c0e] shadow-md">
+            <div
+              className="flex w-full shrink-0 items-center justify-center overflow-hidden bg-[#0c0c0e]"
+              style={{ height: boundedGridDisplayPanelHeight }}
+            >
+              {renderPlayer()}
+            </div>
+            <div
+              role="separator"
+              aria-label="Resize display and wheel panels"
+              aria-orientation="horizontal"
+              aria-valuemin={minGridDisplayPanelHeight}
+              aria-valuemax={maxGridDisplayPanelHeight}
+              aria-valuenow={Math.round(boundedGridDisplayPanelHeight)}
+              tabIndex={0}
+              onPointerDown={beginGridPanelResize}
+              onPointerMove={moveGridPanelResize}
+              onPointerUp={endGridPanelResize}
+              onPointerCancel={endGridPanelResize}
+              onLostPointerCapture={endGridPanelResize}
+              onKeyDown={handleGridPanelResizeKeyDown}
+              className={cn(
+                'group relative z-40 flex h-3 w-full shrink-0 touch-none cursor-row-resize items-center justify-center border-y border-zinc-800 bg-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400',
+                isGridPanelResizing && 'bg-zinc-900',
+              )}
+            >
+              <span className="h-1 w-12 rounded-full bg-zinc-600 transition-colors group-hover:bg-zinc-400 group-focus-visible:bg-indigo-300" />
+            </div>
+            <div className="z-30 flex w-full shrink-0 items-center border-b border-zinc-800/60 bg-[#0c0c0e] px-4 py-2 shadow-md">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
                 {onNavigateBack && !isFirstGridRow && (
                   <button
                     type="button"
@@ -2756,7 +2865,7 @@ export function SceneLaunchPreviewWheelV3({
                   </button>
                 )}
                 {breadcrumbs && breadcrumbs.length > 0 ? (
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-bold overflow-hidden select-none">
+                  <div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-xs font-bold text-zinc-400 select-none">
                     {breadcrumbs.map((crumb, idx) => {
                       const isLast = idx === breadcrumbs.length - 1;
                       return (
@@ -2790,9 +2899,18 @@ export function SceneLaunchPreviewWheelV3({
                   </div>
                 )}
               </div>
+              {onBreakoutCollectionsChange && (
+                <div className="ml-auto flex shrink-0 items-center gap-2 pl-4 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                  <span>Break out by collection</span>
+                  <Switch
+                    size="sm"
+                    checked={breakoutCollectionsEnabled}
+                    onCheckedChange={onBreakoutCollectionsChange}
+                    aria-label="Break out by collection"
+                  />
+                </div>
+              )}
             </div>
-            {/* Player preview */}
-            {renderPlayer()}
           </div>
         ) : (
           renderPlayer()
@@ -2801,7 +2919,11 @@ export function SceneLaunchPreviewWheelV3({
 
 
         {gridView ? (
-          <div className={cn("flex shrink-0 flex-col gap-6 px-0 py-4 bg-zinc-950/40", !hidePreview && "border-t border-zinc-900")}>
+          <div className={cn(
+            "flex shrink-0 flex-col overflow-visible px-0 bg-zinc-950/40",
+            customChunks ? "gap-10 py-6" : "gap-6 py-4",
+            !hidePreview && "border-t border-zinc-900",
+          )}>
             {chunks.map((chunk, chunkIndex) => (
               <SceneLaunchPreviewWheelV3
                 key={`chunk-${chunkIndex}`}
@@ -2885,31 +3007,30 @@ export function SceneLaunchPreviewWheelV3({
                     onPointerDown={(event) => event.stopPropagation()}
                     onMouseMove={handleRulerMouseMove}
                     onMouseLeave={handleRulerMouseLeave}
-                    onClick={handleGridSeekRailClick}
-                  >
-                    {rowIsCollection && (
-                      <div className="absolute left-0 inset-y-0 w-[3px] bg-indigo-500/80 rounded-r" />
-                    )}
-                    {rowTitle && (
-                      <span className={cn(
-                        "pointer-events-none select-none flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider font-mono",
-                        rowIsCollection ? "text-indigo-400/95" : "text-zinc-500/95"
-                      )}>
-                        {rowIsCollection ? (
-                          <>
-                            <Folder className="h-3.5 w-3.5 text-indigo-400/80" />
-                            {rowIconUrl && (
-                              <div className="h-9 w-9 shrink-0 rounded-full border-2 border-indigo-400/50 overflow-hidden bg-zinc-950 flex items-center justify-center shadow-md my-0.5">
-                                <img src={rowIconUrl} alt="" className="h-full w-full object-cover" />
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <Clapperboard className="h-3.5 w-3.5 text-zinc-500/80" />
-                        )}
-                        {rowTitle}
-                      </span>
-                    )}
+                      onClick={handleGridSeekRailClick}
+                    >
+                      {rowIsCollection && (
+                        <div className="absolute inset-y-0 left-0 w-1 rounded-r bg-indigo-400" />
+                      )}
+                      {rowTitle && (
+                        <span className={cn(
+                          "pointer-events-none flex select-none items-center font-mono font-black uppercase",
+                          rowIsCollection
+                            ? "gap-2 text-xs tracking-widest text-indigo-100"
+                            : "gap-1.5 text-[10px] tracking-wider text-zinc-500/95"
+                        )}>
+                          {rowIsCollection ? (
+                            <span className="flex size-6 shrink-0 items-center justify-center rounded-md border border-indigo-400/50 bg-indigo-500/20 shadow-sm shadow-indigo-950/60">
+                              <Folder className="size-4 text-indigo-200" />
+                            </span>
+                          ) : (
+                            <Clapperboard className="h-3.5 w-3.5 text-zinc-500/80" />
+                          )}
+                          <span className={cn(rowIsCollection && "[text-box:trim-both_cap_alphabetic]")}>
+                            {rowTitle}
+                          </span>
+                        </span>
+                      )}
                   </div>
                   {rulerHoveredX !== null && (
                     <div
