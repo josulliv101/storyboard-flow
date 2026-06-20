@@ -203,6 +203,32 @@ export function SceneLaunchWorkspace({
   React.useEffect(() => {
     localStorage.setItem('scene-launch-preview-wheel-slide-on-click', String(previewWheelSlideOnClick));
   }, [previewWheelSlideOnClick]);
+
+  const [previewWheelGridView, setPreviewWheelGridView] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-grid-view');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-grid-view', String(previewWheelGridView));
+  }, [previewWheelGridView]);
+
+  const [activePlayingMediaId, setActivePlayingMediaId] = React.useState<string | null>(null);
+  const [activePlayingElapsedSeconds, setActivePlayingElapsedSeconds] = React.useState(0);
+
+  const [scrubbingMediaId, setScrubbingMediaId] = React.useState<string | null>(null);
+  const [scrubbingSourceTime, setScrubbingSourceTime] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    if (!isWheelPreviewPlaying) {
+      setActivePlayingMediaId(null);
+      setActivePlayingElapsedSeconds(0);
+    }
+  }, [isWheelPreviewPlaying]);
+
   const [previewWheelSequence, setPreviewWheelSequence] = React.useState<PreviewWheelSequence>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('scene-launch-preview-wheel-sequence');
@@ -2195,6 +2221,19 @@ export function SceneLaunchWorkspace({
                       onPlaybackMediaChange={selectPreviewMediaDuringPlayback}
                       onTogglePlayback={toggleSceneLaunchTimelinePlayback}
                       onToggleLoop={() => setIsTimelineLooping(current => !current)}
+                      gridView={previewWheelGridView}
+                      activePlayingMediaId={activePlayingMediaId}
+                      activePlayingElapsedSeconds={activePlayingElapsedSeconds}
+                      onPlaybackTimeUpdate={(mediaId, elapsedSeconds) => {
+                        setActivePlayingMediaId(mediaId);
+                        setActivePlayingElapsedSeconds(elapsedSeconds);
+                      }}
+                      externalScrubMediaId={scrubbingMediaId}
+                      externalScrubSourceTime={scrubbingSourceTime}
+                      onScrubUpdate={(mediaId, sourceTimeSeconds) => {
+                        setScrubbingMediaId(mediaId);
+                        setScrubbingSourceTime(sourceTimeSeconds);
+                      }}
                       />
                     </div>
 
@@ -2311,6 +2350,15 @@ export function SceneLaunchWorkspace({
                                 size="sm"
                                 checked={previewWheelSlideOnClick}
                                 onCheckedChange={setPreviewWheelSlideOnClick}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Grid View</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelGridView}
+                                onCheckedChange={setPreviewWheelGridView}
                               />
                             </div>
 

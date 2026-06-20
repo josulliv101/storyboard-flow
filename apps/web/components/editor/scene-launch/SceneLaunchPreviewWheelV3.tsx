@@ -100,6 +100,15 @@ interface SceneLaunchPreviewWheelV3Props {
   onToggleLoop?: () => void;
   showUniformRuler?: boolean;
   slideOnClick?: boolean;
+  gridView?: boolean;
+  hidePreview?: boolean;
+  hideTrack?: boolean;
+  activePlayingMediaId?: string | null;
+  activePlayingElapsedSeconds?: number;
+  onPlaybackTimeUpdate?: (mediaId: string, elapsedSeconds: number) => void;
+  externalScrubMediaId?: string | null;
+  externalScrubSourceTime?: number | null;
+  onScrubUpdate?: (mediaId: string | null, sourceTimeSeconds: number | null) => void;
 }
 
 const clamp = (value: number, min: number, max: number) => (
@@ -410,6 +419,15 @@ export function SceneLaunchPreviewWheelV3({
   onToggleLoop,
   showUniformRuler = true,
   slideOnClick = true,
+  gridView = false,
+  hidePreview = false,
+  hideTrack = false,
+  activePlayingMediaId = null,
+  activePlayingElapsedSeconds = 0,
+  onPlaybackTimeUpdate,
+  externalScrubMediaId = null,
+  externalScrubSourceTime = null,
+  onScrubUpdate,
 }: SceneLaunchPreviewWheelV3Props) {
   const containerResizeObserverRef = React.useRef<ResizeObserver | null>(null);
   const viewportResizeObserverRef = React.useRef<ResizeObserver | null>(null);
@@ -565,6 +583,7 @@ export function SceneLaunchPreviewWheelV3({
   const [playheadPositionRatio, setPlayheadPositionRatio] = React.useState(0.5);
 
   React.useEffect(() => {
+    if (hidePreview) return;
     const savedPosition = Number(localStorage.getItem('scene-launch-playhead-position'));
     const nextPosition = Number.isFinite(savedPosition) && savedPosition > 0 && savedPosition < 1
       ? savedPosition
@@ -578,7 +597,7 @@ export function SceneLaunchPreviewWheelV3({
       setPlayheadPositionRatio(nextPosition);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, []);
+  }, [hidePreview]);
 
   const centerPlayhead = React.useCallback(() => {
     playheadPositionRatioRef.current = 0.5;
@@ -630,18 +649,20 @@ export function SceneLaunchPreviewWheelV3({
   );
   const playheadOffsetFromCenter = playheadX - centerX;
   const galleryPreviewHeight = Math.max(0, Math.min(
-    360,
+    gridView ? 200 : 360,
     viewportSize.width * 9 / 16,
     viewportSize.height - rowHeight - 72,
   ));
   const galleryPreviewWidth = galleryPreviewHeight * 16 / 9;
-  const uniformItemWidth = sizing === 'uniform'
-    ? Math.round(itemHeight * 16 / 9)
-    : Math.round(clamp(
-        itemHeight * 1.6,
-        320,
-        Math.min(760, viewportSize.width * 0.72),
-      ));
+  const uniformItemWidth = hidePreview
+    ? Math.round(itemHeight * 9 / 16)
+    : sizing === 'uniform'
+      ? Math.round(itemHeight * 16 / 9)
+      : Math.round(clamp(
+          itemHeight * 1.6,
+          320,
+          Math.min(760, viewportSize.width * 0.72),
+        ));
   const getMediaDuration = React.useCallback((item: SceneLaunchMediaItem) => Math.max(
     0.5,
     item.durationSeconds ?? 3,
@@ -759,6 +780,24 @@ export function SceneLaunchPreviewWheelV3({
   const selectedIndex = React.useMemo(() => (
     items.findIndex(item => item.id === selectedMediaId)
   ), [items, selectedMediaId]);
+
+  const gridItemWidth = Math.round(GALLERY_ITEM_HEIGHT * 9 / 16);
+  const gridItemGap = 6;
+  const gridColStride = gridItemWidth + gridItemGap;
+  const colStride = uniformItemWidth + itemGap;
+  const itemsPerRow = React.useMemo(() => {
+    return Math.max(2, Math.floor((viewportSize.width - 16) / gridColStride));
+  }, [viewportSize.width, gridColStride]);
+
+  const chunks = React.useMemo(() => {
+    if (!gridView) return [];
+    const result: SceneLaunchMediaItem[][] = [];
+    for (let i = 0; i < items.length; i += itemsPerRow) {
+      result.push(items.slice(i, i + itemsPerRow));
+    }
+    return result;
+  }, [items, itemsPerRow, gridView]);
+
   const selectedItemType = items[selectedIndex]?.type;
   const itemStride = uniformItemWidth + itemGap;
   const finalIndex = items.length - 1;
@@ -794,6 +833,10 @@ export function SceneLaunchPreviewWheelV3({
       ? itemStartPixels.map(startPixel => startPixel - timelineOriginOffset)
       : itemCenterPositions
   ), [itemCenterPositions, itemStartPixels, sizing, isGallery, timelineOriginOffset]);
+  // For grid child rows: offset that places the first item at the left edge with small padding
+  const gridLeftAlignOffset = hidePreview
+    ? clamp(8 - centerX + (uniformItemWidth / 2), minOffset, maxOffset)
+    : maxOffset;
   const centeredIndex = getNearestIndexForOffset(offset, snapReferencePositions);
   const centeredItem = items[centeredIndex] ?? null;
   const preparedPreviewMedia = preparedPreviewMediaId
@@ -904,6 +947,34 @@ export function SceneLaunchPreviewWheelV3({
     timelineOriginOffset,
     totalDurationSeconds,
   ]);
+
+  const effectiveScrubSnapshot = React.useMemo<GalleryScrubSnapshot | null>(() => {
+    if (externalScrubMediaId && externalScrubSourceTime !== null && externalScrubSourceTime !== undefined) {
+      const media = items.find(item => item.id === externalScrubMediaId);
+      if (media) {
+        return {
+          media,
+          sourceTimeSeconds: externalScrubSourceTime,
+          timelineTimeSeconds: 0,
+        };
+      }
+    }
+    return scrubSnapshot;
+  }, [externalScrubMediaId, externalScrubSourceTime, scrubSnapshot, items]);
+
+  const onScrubUpdateRef = React.useRef(onScrubUpdate);
+  React.useEffect(() => { onScrubUpdateRef.current = onScrubUpdate; }, [onScrubUpdate]);
+
+  React.useEffect(() => {
+    if (onScrubUpdate) {
+      if (scrubSnapshot && isWheelMoving) {
+        onScrubUpdate(scrubSnapshot.media.id, scrubSnapshot.sourceTimeSeconds);
+      } else if (!isWheelMoving) {
+        onScrubUpdate(null, null);
+      }
+    }
+  }, [scrubSnapshot, isWheelMoving, onScrubUpdate]);
+
   const rulerPlayheadTimeSeconds = React.useMemo(() => {
     if (items.length === 0) return 0;
 
@@ -940,7 +1011,7 @@ export function SceneLaunchPreviewWheelV3({
       const canShowTrim =
         isInsideDisplay &&
         selectedItemType === 'video' &&
-        scrubSnapshot?.media.id === selectedMediaId;
+        effectiveScrubSnapshot?.media.id === selectedMediaId;
 
       setTrimOverlayMediaId(current => {
         const next = canShowTrim ? selectedMediaId : null;
@@ -950,7 +1021,7 @@ export function SceneLaunchPreviewWheelV3({
 
     document.addEventListener('pointermove', handleDisplayHover, true);
     return () => document.removeEventListener('pointermove', handleDisplayHover, true);
-  }, [effect, scrubSnapshot?.media.id, selectedItemType, selectedMediaId]);
+  }, [effect, effectiveScrubSnapshot?.media.id, selectedItemType, selectedMediaId]);
 
   const setOffset = React.useCallback((nextOffset: number) => {
     const boundedOffset = clamp(nextOffset, minOffset, maxOffset);
@@ -994,6 +1065,7 @@ export function SceneLaunchPreviewWheelV3({
   }, [isPreviewPlaying, scrubSnapshot?.timelineTimeSeconds, selectedMediaId, totalDurationSeconds]);
 
   React.useEffect(() => {
+    if (hidePreview) return;
     if (!isPreviewPlaying || totalDurationSeconds <= 0) {
       playbackResolvedMediaKeyRef.current = null;
       return;
@@ -1045,6 +1117,7 @@ export function SceneLaunchPreviewWheelV3({
           0,
           nextTime - (itemStartTimes[playbackIndex] ?? 0),
         );
+        onPlaybackTimeUpdate?.(playbackItem.id, itemElapsedSeconds);
         const resolvedMedia = resolveItemSnapshot(playbackItem, itemElapsedSeconds).media;
         const resolvedMediaKey = `${playbackIndex}:${resolvedMedia.id}`;
         if (didLoop || playbackResolvedMediaKeyRef.current !== resolvedMediaKey) {
@@ -1089,6 +1162,8 @@ export function SceneLaunchPreviewWheelV3({
     sizing,
     timelineOriginOffset,
     totalDurationSeconds,
+    hidePreview,
+    onPlaybackTimeUpdate,
   ]);
 
   const updateFastNavigation = React.useCallback((velocity: number) => {
@@ -1330,13 +1405,19 @@ export function SceneLaunchPreviewWheelV3({
       return;
     }
     if (
-      selectedIndex < 0 ||
-      isPreviewPlaying ||
+      (isPreviewPlaying && !hidePreview) ||
       pendingReorderSelectionRef.current ||
       skipNextReorderAlignmentRef.current
     ) return;
+    if (selectedIndex < 0) {
+      // In grid child rows where selected item is in another row, align first item to left
+      if (hidePreview) {
+        setOffset(maxOffset);
+      }
+      return;
+    }
     snapToIndexRef.current(selectedIndex, { commit: false });
-  }, [isPreviewPlaying, selectedIndex, selectedMediaId]);
+  }, [isPreviewPlaying, selectedIndex, selectedMediaId, hidePreview, maxOffset, setOffset]);
 
   React.useEffect(() => {
     if (skipNextReorderAlignmentRef.current) {
@@ -1367,8 +1448,7 @@ export function SceneLaunchPreviewWheelV3({
 
     if (
       !geometryChanged ||
-      selectedIndex < 0 ||
-      isPreviewPlaying ||
+      (isPreviewPlaying && !hidePreview) ||
       pendingReorderSelectionRef.current ||
       skipNextReorderAlignmentRef.current ||
       skipNextSelectedAlignmentRef.current ||
@@ -1379,10 +1459,18 @@ export function SceneLaunchPreviewWheelV3({
       return;
     }
 
+    if (selectedIndex < 0) {
+      // In grid child rows where selected item is in another row, align first item to left
+      if (hidePreview) {
+        setOffset(maxOffset);
+      }
+      return;
+    }
+
     setOffset((sizing === 'duration' || isGallery)
       ? timelineOriginOffset - (itemStartPixels[selectedIndex] ?? 0)
       : -(itemCenterPositions[selectedIndex] ?? 0));
-  }, [isPreviewPlaying, itemCenterPositions, itemStartPixels, selectedIndex, setOffset, sizing, isGallery, timelineOriginOffset]);
+  }, [isPreviewPlaying, itemCenterPositions, itemStartPixels, selectedIndex, setOffset, sizing, isGallery, timelineOriginOffset, hidePreview, maxOffset]);
 
   React.useEffect(() => {
     return () => {
@@ -1740,11 +1828,41 @@ export function SceneLaunchPreviewWheelV3({
         dragFrameRef.current = null;
         const pendingOffset = pendingDragOffsetRef.current;
         pendingDragOffsetRef.current = null;
-        if (pendingOffset !== null) setOffset(pendingOffset);
+        if (pendingOffset !== null) {
+          setOffset(pendingOffset);
+          // Imperatively compute scrub position and notify parent immediately
+          if (onScrubUpdateRef.current && items.length > 0) {
+            const currentOffset = clamp(pendingOffset, minOffset, maxOffset);
+            const playheadPixel = clamp(
+              (sizing === 'duration' || isGallery) ? timelineOriginOffset - currentOffset : -currentOffset,
+              0,
+              stripEndPixel,
+            );
+            let scrubbedIdx = finalIndex;
+            for (let idx = 0; idx < items.length; idx += 1) {
+              const itemEndPx = (itemStartPixels[idx] ?? 0) + (itemWidths[idx] ?? 0);
+              if (playheadPixel <= itemEndPx) {
+                scrubbedIdx = idx;
+                break;
+              }
+            }
+            const media = items[scrubbedIdx];
+            if (media && !disabledItemIds.includes(media.id)) {
+              const itemStartPx = itemStartPixels[scrubbedIdx] ?? 0;
+              const itemW = Math.max(1, itemWidths[scrubbedIdx] ?? 1);
+              const progress = clamp((playheadPixel - itemStartPx) / itemW, 0, 1);
+              const itemDur = itemDurations[scrubbedIdx] ?? 0.5;
+              const sourceTime = progress * itemDur;
+              onScrubUpdateRef.current(media.id, media.type === 'video'
+                ? Math.max(0, media.trimStartSeconds ?? 0) + sourceTime
+                : 0);
+            }
+          }
+        }
       });
     }
     event.preventDefault();
-  }, [items, onItemsReorder, prepareFixedCenterPreview, setOffset, startReorderAutoPan, updateFastNavigation, updateReorderTarget]);
+  }, [items, onItemsReorder, prepareFixedCenterPreview, setOffset, startReorderAutoPan, updateFastNavigation, updateReorderTarget, minOffset, maxOffset, sizing, isGallery, timelineOriginOffset, stripEndPixel, finalIndex, itemStartPixels, itemWidths, itemDurations, disabledItemIds]);
 
   const endDrag = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
@@ -2135,18 +2253,37 @@ export function SceneLaunchPreviewWheelV3({
     }
   }, [applyDurationResize, onSelectedItemDurationChangeEnd, selectedItemDurationSeconds, selectedItemTrimStartSeconds]);
 
-  if (selectedIndex < 0) return null;
+  if (items.length === 0) return null;
 
   return (
-    <div ref={containerRefCallback} className="relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden bg-black px-4 py-3">
+    <div
+      ref={containerRefCallback}
+      className={cn(
+        "relative flex min-h-0 w-full items-center justify-center overflow-hidden",
+        hidePreview
+          ? "h-auto py-0.5 px-0 bg-transparent"
+          : "px-4",
+        !hidePreview && gridView
+          ? "h-full pt-1.5 pb-2.5 bg-black"
+          : !hidePreview
+            ? "h-full py-3 bg-black"
+            : ""
+      )}
+    >
       <div className={cn(
-        "min-h-0 w-full overflow-hidden rounded-md bg-[#0c0c0e]/85 shadow-lg",
-        isGallery ? "flex h-full flex-col" : "h-full"
+        "min-h-0 w-full overflow-hidden rounded-md",
+        hidePreview
+          ? "bg-transparent shadow-none border-none h-auto"
+          : "bg-[#0c0c0e]/85 shadow-lg",
+        hidePreview ? "h-auto" : isGallery ? "flex h-full flex-col" : "h-full"
       )}>
-        {isGallery && scrubSnapshot && (
-          <div className="relative flex flex-1 flex-col min-h-0 items-center justify-center p-2 pb-1.5">
+        {isGallery && !hidePreview && effectiveScrubSnapshot && (
+          <div className={cn(
+            "relative flex flex-1 flex-col min-h-0 items-center justify-center p-2 pb-1.5",
+            gridView && "pt-1 pb-1 px-1.5"
+          )}>
             {/* Playback Controls above display area */}
-            <div className="mb-2 flex shrink-0 justify-center">
+            <div className={cn("mb-2 flex shrink-0 justify-center", gridView && "mb-1")}>
               <div className="flex items-center justify-center gap-2 rounded-full border border-white/5 bg-zinc-900/40 px-2.5 py-1 shadow-md backdrop-blur-md">
                 {/* Go to First Button */}
                 <button
@@ -2285,7 +2422,7 @@ export function SceneLaunchPreviewWheelV3({
                 </div>
               ) : (
                 <GalleryScrubPreview
-                  snapshot={scrubSnapshot}
+                  snapshot={effectiveScrubSnapshot}
                   isPlaying={isPreviewPlaying}
                 />
               )}
@@ -2306,8 +2443,8 @@ export function SceneLaunchPreviewWheelV3({
                   />
                 </div>
               )}
-              {scrubSnapshot.media.id === selectedMediaId &&
-                scrubSnapshot.media.type === 'video' &&
+              {effectiveScrubSnapshot.media.id === selectedMediaId &&
+                effectiveScrubSnapshot.media.type === 'video' &&
                 renderGalleryTrimOverlay && (
                   <div
                     ref={trimOverlayRef}
@@ -2318,13 +2455,13 @@ export function SceneLaunchPreviewWheelV3({
                         : "pointer-events-none invisible",
                     )}
                   >
-                    {renderGalleryTrimOverlay(scrubSnapshot.media)}
+                    {renderGalleryTrimOverlay(effectiveScrubSnapshot.media)}
                   </div>
                 )}
             </div>
 
             {/* Timestamp below player */}
-            <div className="mt-2 text-center">
+            <div className={cn("mt-2 text-center", gridView && "mt-1")}>
               <div
                 ref={prominentTimestampRef}
                 role="timer"
@@ -2332,7 +2469,7 @@ export function SceneLaunchPreviewWheelV3({
                 aria-label="Playback time"
                 className="inline-block rounded border border-indigo-400/20 bg-black/70 px-3 py-1 font-mono text-xs font-black tabular-nums tracking-wide text-indigo-100 shadow-lg shadow-black/40"
               >
-                {formatPlaybackTimestamp(scrubSnapshot.timelineTimeSeconds, totalDurationSeconds)}
+                {formatPlaybackTimestamp(effectiveScrubSnapshot.timelineTimeSeconds, totalDurationSeconds)}
               </div>
             </div>
           </div>
@@ -2340,27 +2477,72 @@ export function SceneLaunchPreviewWheelV3({
 
 
 
-        <div
-          ref={viewportRefCallback}
-          aria-label="Timeline media wheel"
-          className={cn(
-            "relative flex items-center overflow-hidden",
-            isGallery ? "shrink-0 border-t border-zinc-900 bg-zinc-950/20" : "h-full min-h-0",
-            reorderPreview ? "cursor-grabbing select-none" : isDragging ? "cursor-grabbing select-none" : "cursor-grab"
-          )}
-          style={{
-            perspective: 1200,
-            touchAction: 'none',
-            ...(isGallery ? { height: rowHeight } : {}),
-          }}
-          onPointerDown={beginDrag}
-          onPointerMove={moveDrag}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          onLostPointerCapture={endDrag}
-          onKeyDown={handleKeyboardNavigation}
-          onWheel={handleWheelScroll}
-        >
+        {gridView ? (
+          <div className="flex flex-col gap-0.5 overflow-y-auto max-h-[520px] px-0 py-1 bg-zinc-950/40 border-t border-zinc-900">
+            {chunks.map((chunk, chunkIndex) => (
+              <SceneLaunchPreviewWheelV3
+                key={chunkIndex}
+                items={chunk}
+                itemSequences={itemSequences}
+                itemSequenceThumbnails={itemSequenceThumbnails}
+                onCollectionOpen={onCollectionOpen}
+                selectedMediaId={selectedMediaId}
+                effect={effect}
+                sizing={sizing}
+                durationScale={durationScale}
+                selectedItemDurationSeconds={selectedItemDurationSeconds}
+                selectedItemTrimStartSeconds={selectedItemTrimStartSeconds}
+                onSelectedItemDurationChange={onSelectedItemDurationChange}
+                onSelectedItemDurationChangeEnd={onSelectedItemDurationChangeEnd}
+                onCenteredMediaChange={onCenteredMediaChange}
+                renderSelectedItemOverlay={renderSelectedItemOverlay}
+                renderGalleryTrimOverlay={renderGalleryTrimOverlay}
+                isPreviewPlaying={isPreviewPlaying}
+                loopPreviewPlayback={loopPreviewPlayback}
+                onPreviewPlaybackComplete={onPreviewPlaybackComplete}
+                onPlaybackMediaChange={onPlaybackMediaChange}
+                onItemsReorder={onItemsReorder}
+                collectionItemIds={collectionItemIds}
+                onItemMoveIntoCollection={onItemMoveIntoCollection}
+                disabledItemIds={disabledItemIds}
+                onUtilityDrop={onUtilityDrop}
+                selectReorderedItem={selectReorderedItem}
+                onTogglePlayback={onTogglePlayback}
+                onToggleLoop={onToggleLoop}
+                showUniformRuler={showUniformRuler}
+                slideOnClick={slideOnClick}
+                gridView={false}
+                hidePreview={true}
+                hideTrack={false}
+                activePlayingMediaId={activePlayingMediaId}
+                activePlayingElapsedSeconds={activePlayingElapsedSeconds}
+                onScrubUpdate={onScrubUpdate}
+              />
+            ))}
+          </div>
+        ) : (
+          !hideTrack && (
+            <div
+              ref={viewportRefCallback}
+              aria-label="Timeline media wheel"
+              className={cn(
+                "relative flex items-center overflow-hidden",
+                (isGallery || hidePreview) ? "shrink-0 border-t border-zinc-900 bg-zinc-950/20" : "h-full min-h-0",
+                reorderPreview ? "cursor-grabbing select-none" : isDragging ? "cursor-grabbing select-none" : "cursor-grab"
+              )}
+              style={{
+                perspective: 1200,
+                touchAction: 'none',
+                ...((isGallery || hidePreview) ? { height: rowHeight } : {}),
+              }}
+              onPointerDown={beginDrag}
+              onPointerMove={moveDrag}
+              onPointerUp={endDrag}
+              onPointerCancel={endDrag}
+              onLostPointerCapture={endDrag}
+              onKeyDown={handleKeyboardNavigation}
+              onWheel={handleWheelScroll}
+            >
           <div className="sr-only" aria-live="polite">
             {centeredItem ? `Centered media ${centeredItem.name}` : 'Timeline media wheel'}
           </div>
@@ -2500,10 +2682,12 @@ export function SceneLaunchPreviewWheelV3({
               style={{ width: (itemWidths[selectedIndex] ?? uniformItemWidth) + itemGap }}
             />
           )}
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 left-0 w-1/5 bg-gradient-to-r from-black/62 via-black/28 to-transparent"
-          />
+          {!hidePreview && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 left-0 w-1/5 bg-gradient-to-r from-black/62 via-black/28 to-transparent"
+            />
+          )}
           <div className="absolute inset-0 will-change-transform" style={{ transformStyle: 'preserve-3d' }}>
             {items.map((item, index) => {
               const thumbnailItem = scrubSnapshot
@@ -2520,19 +2704,23 @@ export function SceneLaunchPreviewWheelV3({
               const itemStartTime = itemStartTimes[index] ?? 0;
               const itemEndTime = itemStartTime + itemDuration;
               const progressTimelineTime = scrubSnapshot?.timelineTimeSeconds ?? 0;
-              const itemElapsedSeconds = clamp(
-                progressTimelineTime - itemStartTime,
-                0,
-                itemDuration,
-              );
+              const isCurrentPlaying = activePlayingMediaId !== null && item.id === activePlayingMediaId;
+              const itemElapsedSeconds = isCurrentPlaying
+                ? activePlayingElapsedSeconds
+                : clamp(
+                    progressTimelineTime - itemStartTime,
+                    0,
+                    itemDuration,
+                  );
               const itemProgress = itemDuration > 0
-                ? itemElapsedSeconds / itemDuration
+                ? clamp(itemElapsedSeconds / itemDuration, 0, 1)
                 : 0;
-              const isItemProgressPlaying =
-                isPreviewPlaying &&
-                itemDuration > 0 &&
-                progressTimelineTime >= itemStartTime &&
-                progressTimelineTime < itemEndTime;
+              const isItemProgressPlaying = isCurrentPlaying
+                ? isPreviewPlaying
+                : isPreviewPlaying &&
+                  itemDuration > 0 &&
+                  progressTimelineTime >= itemStartTime &&
+                  progressTimelineTime < itemEndTime;
               let x = itemCenterOffset + playheadOffsetFromCenter;
               let z = 0;
               let rotateY = 0;
@@ -2840,6 +3028,8 @@ export function SceneLaunchPreviewWheelV3({
             })}
           </div>
         </div>
+          )
+        )}
       </div>
     </div>
   );
