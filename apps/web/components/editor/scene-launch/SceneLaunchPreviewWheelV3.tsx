@@ -1,5 +1,4 @@
 import React from 'react';
-import Image from 'next/image';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, Ban, Clapperboard, CornerUpLeft, FolderInput, Play, Pause, Repeat, AlignLeft, AlignCenter, AlignRight, Trash2, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
 
@@ -101,6 +100,9 @@ interface SceneLaunchPreviewWheelV3Props {
   showUniformRuler?: boolean;
   slideOnClick?: boolean;
   gridView?: boolean;
+  gridColumnCount?: number;
+  showPlayhead?: boolean;
+  playheadIsPlaying?: boolean;
   hidePreview?: boolean;
   hideTrack?: boolean;
   activePlayingMediaId?: string | null;
@@ -108,7 +110,12 @@ interface SceneLaunchPreviewWheelV3Props {
   onPlaybackTimeUpdate?: (mediaId: string, elapsedSeconds: number) => void;
   externalScrubMediaId?: string | null;
   externalScrubSourceTime?: number | null;
-  onScrubUpdate?: (mediaId: string | null, sourceTimeSeconds: number | null) => void;
+  externalScrubTimelineTime?: number | null;
+  onScrubUpdate?: (
+    mediaId: string | null,
+    sourceTimeSeconds: number | null,
+    timelineTimeSeconds?: number | null,
+  ) => void;
 }
 
 const clamp = (value: number, min: number, max: number) => (
@@ -234,155 +241,240 @@ type GalleryScrubSnapshot = {
   timelineTimeSeconds: number;
 };
 
-function GalleryScrubPreview({
+type CanvasVideoElement = HTMLVideoElement & {
+  requestVideoFrameCallback?: (callback: () => void) => number;
+  cancelVideoFrameCallback?: (handle: number) => void;
+};
+
+function GalleryCanvasPreview({
   snapshot,
   isPlaying = false,
 }: {
   snapshot: GalleryScrubSnapshot;
   isPlaying?: boolean;
 }) {
-  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const videoRef = React.useRef<CanvasVideoElement | null>(null);
+  const drawableRef = React.useRef<HTMLVideoElement | HTMLImageElement | null>(null);
+  const imageCacheRef = React.useRef(new Map<string, HTMLImageElement>());
   const targetTimeRef = React.useRef(snapshot.sourceTimeSeconds);
-  const isSeekingRef = React.useRef(false);
+  const mediaKeyRef = React.useRef('');
+  const expectedVideoSourceRef = React.useRef('');
+  const videoFrameHandleRef = React.useRef<number | null>(null);
+  const animationFrameHandleRef = React.useRef<number | null>(null);
+  const isPlayingRef = React.useRef(isPlaying);
 
-  const seekToLatestTarget = React.useCallback((video: HTMLVideoElement) => {
-    if (video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+  const drawCurrentFrame = React.useCallback(() => {
+    const canvas = canvasRef.current;
+    const drawable = drawableRef.current;
+    if (!canvas || !drawable) return;
+
+    const cssWidth = Math.max(1, canvas.clientWidth);
+    const cssHeight = Math.max(1, canvas.clientHeight);
+    const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+    const renderWidth = Math.round(cssWidth * pixelRatio);
+    const renderHeight = Math.round(cssHeight * pixelRatio);
+    if (canvas.width !== renderWidth || canvas.height !== renderHeight) {
+      canvas.width = renderWidth;
+      canvas.height = renderHeight;
+    }
+
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) return;
+    if (
+      drawable instanceof HTMLVideoElement &&
+      (
+        drawable.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+        drawable.currentSrc !== expectedVideoSourceRef.current
+      )
+    ) return;
+    const sourceWidth = drawable instanceof HTMLVideoElement ? drawable.videoWidth : drawable.naturalWidth;
+    const sourceHeight = drawable instanceof HTMLVideoElement ? drawable.videoHeight : drawable.naturalHeight;
+    if (sourceWidth <= 0 || sourceHeight <= 0) return;
+
+    const scale = Math.min(cssWidth / sourceWidth, cssHeight / sourceHeight);
+    const width = sourceWidth * scale;
+    const height = sourceHeight * scale;
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.fillStyle = '#000';
+    context.fillRect(0, 0, cssWidth, cssHeight);
+    context.drawImage(
+      drawable,
+      (cssWidth - width) / 2,
+      (cssHeight - height) / 2,
+      width,
+      height,
+    );
+  }, []);
+
+  const stopFrameLoop = React.useCallback(() => {
+    const video = videoRef.current;
+    if (videoFrameHandleRef.current !== null && video?.cancelVideoFrameCallback) {
+      video.cancelVideoFrameCallback(videoFrameHandleRef.current);
+    }
+    if (animationFrameHandleRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameHandleRef.current);
+    }
+    videoFrameHandleRef.current = null;
+    animationFrameHandleRef.current = null;
+  }, []);
+
+  const startFrameLoop = React.useCallback(() => {
+    stopFrameLoop();
+    const video = videoRef.current;
+    if (!video) return;
+    const frameMediaKey = mediaKeyRef.current;
+    const frameSource = expectedVideoSourceRef.current;
+
+    if (video.requestVideoFrameCallback) {
+      const drawVideoFrame = () => {
+        if (mediaKeyRef.current !== frameMediaKey || video.currentSrc !== frameSource) return;
+        drawCurrentFrame();
+        if (!video.paused && !video.ended) {
+          videoFrameHandleRef.current = video.requestVideoFrameCallback?.(drawVideoFrame) ?? null;
+        }
+      };
+      videoFrameHandleRef.current = video.requestVideoFrameCallback(drawVideoFrame);
+      return;
+    }
+
+    const drawAnimationFrame = () => {
+      if (mediaKeyRef.current !== frameMediaKey || video.currentSrc !== frameSource) return;
+      drawCurrentFrame();
+      if (!video.paused && !video.ended) {
+        animationFrameHandleRef.current = window.requestAnimationFrame(drawAnimationFrame);
+      }
+    };
+    animationFrameHandleRef.current = window.requestAnimationFrame(drawAnimationFrame);
+  }, [drawCurrentFrame, stopFrameLoop]);
+
+  const seekToLatestTarget = React.useCallback((video: CanvasVideoElement) => {
+    if (video.readyState < HTMLMediaElement.HAVE_METADATA || video.seeking) return;
 
     const maximumTime = Number.isFinite(video.duration)
       ? Math.max(0, video.duration - 0.001)
       : targetTimeRef.current;
     const targetTime = clamp(targetTimeRef.current, 0, maximumTime);
     if (Math.abs(video.currentTime - targetTime) <= 0.001) {
-      isSeekingRef.current = false;
+      drawCurrentFrame();
       return;
     }
-
-    isSeekingRef.current = true;
     video.currentTime = targetTime;
-  }, []);
+  }, [drawCurrentFrame]);
+
+  React.useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(drawCurrentFrame);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [drawCurrentFrame]);
+
+  React.useEffect(() => {
+    const video = document.createElement('video') as CanvasVideoElement;
+    video.preload = 'auto';
+    video.playsInline = true;
+    videoRef.current = video;
+    const isCurrentSource = () => (
+      expectedVideoSourceRef.current !== '' &&
+      video.currentSrc === expectedVideoSourceRef.current
+    );
+
+    video.addEventListener('loadedmetadata', () => {
+      if (!isCurrentSource()) return;
+      seekToLatestTarget(video);
+      if (isPlayingRef.current) void video.play().catch(() => undefined);
+    });
+    video.addEventListener('loadeddata', () => {
+      if (!isCurrentSource()) return;
+      if (Math.abs(video.currentTime - targetTimeRef.current) <= 0.001) drawCurrentFrame();
+      else seekToLatestTarget(video);
+    });
+    video.addEventListener('seeked', () => {
+      if (!isCurrentSource()) return;
+      drawCurrentFrame();
+      if (Math.abs(video.currentTime - targetTimeRef.current) > 0.001) {
+        seekToLatestTarget(video);
+      }
+    });
+    video.addEventListener('playing', startFrameLoop);
+    video.addEventListener('pause', drawCurrentFrame);
+
+    return () => {
+      stopFrameLoop();
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      videoRef.current = null;
+    };
+  }, [drawCurrentFrame, seekToLatestTarget, startFrameLoop, stopFrameLoop]);
 
   React.useLayoutEffect(() => {
     targetTimeRef.current = snapshot.sourceTimeSeconds;
-    if (snapshot.media.type !== 'video') {
-      videoRef.current?.pause();
+    const mediaKey = `${snapshot.media.type}:${snapshot.media.id}:${snapshot.media.previewUrl}`;
+    if (mediaKey === mediaKeyRef.current) {
+      if (!isPlaying && snapshot.media.type === 'video' && videoRef.current) {
+        seekToLatestTarget(videoRef.current);
+      }
       return;
     }
-    if (isPlaying) return;
+    mediaKeyRef.current = mediaKey;
+
     const video = videoRef.current;
-    if (video && !isSeekingRef.current) seekToLatestTarget(video);
-  }, [isPlaying, seekToLatestTarget, snapshot.media.type, snapshot.sourceTimeSeconds]);
+    if (snapshot.media.type === 'video') {
+      if (!video) return;
+      stopFrameLoop();
+      video.pause();
+      drawableRef.current = video;
+      video.muted = !isPlaying;
+      expectedVideoSourceRef.current = new URL(snapshot.media.previewUrl, document.baseURI).href;
+      video.src = snapshot.media.previewUrl;
+      video.load();
+      return;
+    }
+
+    video?.pause();
+    stopFrameLoop();
+    expectedVideoSourceRef.current = '';
+    let image = imageCacheRef.current.get(snapshot.media.previewUrl);
+    if (!image) {
+      image = new window.Image();
+      image.decoding = 'async';
+      image.src = snapshot.media.previewUrl;
+      imageCacheRef.current.set(snapshot.media.previewUrl, image);
+    }
+    const targetImage = image;
+    const drawImage = () => {
+      if (mediaKeyRef.current !== mediaKey) return;
+      drawableRef.current = targetImage;
+      drawCurrentFrame();
+    };
+    if (targetImage.complete && targetImage.naturalWidth > 0) drawImage();
+    else targetImage.addEventListener('load', drawImage, { once: true });
+  }, [drawCurrentFrame, isPlaying, seekToLatestTarget, snapshot.media.id, snapshot.media.previewUrl, snapshot.media.type, snapshot.sourceTimeSeconds, stopFrameLoop]);
 
   React.useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    isPlayingRef.current = isPlaying;
+    if (!video || snapshot.media.type !== 'video') return;
+    video.muted = !isPlaying;
     if (!isPlaying || snapshot.media.type !== 'video') {
       video.pause();
+      stopFrameLoop();
+      seekToLatestTarget(video);
       return;
     }
 
     seekToLatestTarget(video);
     void video.play().catch(() => undefined);
-  }, [isPlaying, seekToLatestTarget, snapshot.media.id, snapshot.media.type]);
-
-  const handleLoadedMetadata = React.useCallback(() => {
-    const video = videoRef.current;
-    if (!video || snapshot.media.type !== 'video') return;
-    seekToLatestTarget(video);
-    if (isPlaying) void video.play().catch(() => undefined);
-  }, [isPlaying, seekToLatestTarget, snapshot.media.type]);
-
-  const handleSeeked = React.useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    isSeekingRef.current = false;
-    if (Math.abs(video.currentTime - targetTimeRef.current) > 0.001) {
-      seekToLatestTarget(video);
-      return;
-    }
-    if (isPlaying && video.paused) void video.play().catch(() => undefined);
-  }, [isPlaying, seekToLatestTarget]);
+  }, [isPlaying, seekToLatestTarget, snapshot.media.type, startFrameLoop, stopFrameLoop]);
 
   return (
-    <div
+    <canvas
+      ref={canvasRef}
       role="img"
       aria-label={`${snapshot.media.name} scrub preview`}
-      className="relative h-full w-full overflow-hidden rounded-md bg-black"
-    >
-      <video
-        ref={videoRef}
-        src={snapshot.media.type === 'video' ? snapshot.media.previewUrl : undefined}
-        preload="auto"
-        muted={!isPlaying}
-        playsInline
-        onLoadedMetadata={handleLoadedMetadata}
-        onSeeked={handleSeeked}
-        className={cn(
-          "h-full w-full object-contain",
-          snapshot.media.type !== 'video' && "hidden",
-        )}
-      />
-      {snapshot.media.type === 'image' && (
-        <Image
-          src={snapshot.media.previewUrl}
-          alt=""
-          fill
-          sizes="288px"
-          unoptimized
-          className="object-contain"
-        />
-      )}
-      <div className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/75 px-2 py-1 font-mono text-[10px] text-zinc-200 backdrop-blur-sm">
-        {formatRulerSeconds(snapshot.timelineTimeSeconds)}
-      </div>
-    </div>
-  );
-}
-
-function PreparedGalleryPreview({
-  media,
-  onReady,
-}: {
-  media: SceneLaunchMediaItem;
-  onReady: () => void;
-}) {
-  const videoRef = React.useRef<HTMLVideoElement | null>(null);
-
-  if (media.type === 'image') {
-    return (
-      <Image
-        src={media.previewUrl}
-        alt=""
-        fill
-        sizes="288px"
-        unoptimized
-        onLoad={onReady}
-        className="object-contain"
-      />
-    );
-  }
-
-  const prepareFrame = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    const targetTime = Math.max(0, media.trimStartSeconds ?? 0);
-    if (targetTime <= 0.001 || Math.abs(video.currentTime - targetTime) <= 0.001) {
-      onReady();
-      return;
-    }
-    video.currentTime = Math.min(targetTime, Math.max(0, video.duration - 0.001));
-  };
-
-  return (
-    <video
-      ref={videoRef}
-      src={media.previewUrl}
-      preload="auto"
-      muted
-      playsInline
-      onLoadedData={prepareFrame}
-      onSeeked={onReady}
-      className="h-full w-full object-contain"
+      className="block h-full w-full rounded-md bg-black"
     />
   );
 }
@@ -420,6 +512,9 @@ export function SceneLaunchPreviewWheelV3({
   showUniformRuler = true,
   slideOnClick = true,
   gridView = false,
+  gridColumnCount,
+  showPlayhead = true,
+  playheadIsPlaying,
   hidePreview = false,
   hideTrack = false,
   activePlayingMediaId = null,
@@ -427,6 +522,7 @@ export function SceneLaunchPreviewWheelV3({
   onPlaybackTimeUpdate,
   externalScrubMediaId = null,
   externalScrubSourceTime = null,
+  externalScrubTimelineTime = null,
   onScrubUpdate,
 }: SceneLaunchPreviewWheelV3Props) {
   const containerResizeObserverRef = React.useRef<ResizeObserver | null>(null);
@@ -444,9 +540,10 @@ export function SceneLaunchPreviewWheelV3({
       const updateSize = () => {
         const bounds = node.getBoundingClientRect();
         setViewportSize(prev => {
+          const nextWidth = node.clientWidth || bounds.width || prev.width;
           const nextHeight = bounds.height || 520;
-          if (prev.height === nextHeight) return prev;
-          return { ...prev, height: nextHeight };
+          if (prev.width === nextWidth && prev.height === nextHeight) return prev;
+          return { width: nextWidth, height: nextHeight };
         });
       };
       updateSize();
@@ -471,7 +568,7 @@ export function SceneLaunchPreviewWheelV3({
       const updateSize = () => {
         const bounds = node.getBoundingClientRect();
         setViewportSize(prev => {
-          const nextWidth = bounds.width || 960;
+          const nextWidth = node.clientWidth || bounds.width || 960;
           if (prev.width === nextWidth) return prev;
           return { ...prev, width: nextWidth };
         });
@@ -532,7 +629,7 @@ export function SceneLaunchPreviewWheelV3({
   const reorderAutoPanFrameRef = React.useRef<number | null>(null);
   const reorderPointerRef = React.useRef({ clientX: 0, clientY: 0 });
   const reorderPreviewOrderRef = React.useRef<string[] | null>(null);
-  const wheelTimeoutRef = React.useRef<number | null>(null);
+  const activeGridScrubRowRef = React.useRef<number | null>(null);
   const playheadDragRef = React.useRef<PreviewWheelPlayheadDragState>({
     isDragging: false,
     pointerId: -1,
@@ -540,16 +637,19 @@ export function SceneLaunchPreviewWheelV3({
     startPlayheadX: 0,
     startOffset: 0,
   });
+  const seekGridPlayheadToXRef = React.useRef<(playheadX: number) => void>(() => undefined);
   const [offset, setOffsetState] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
+  const [activeGridPlayheadRow, setActiveGridPlayheadRow] = React.useState<number | null>(null);
+  const [gridPlayheadRatio, setGridPlayheadRatio] = React.useState<number | null>(null);
   const [isPlayheadDragging, setIsPlayheadDragging] = React.useState(false);
   const [isSpinning, setIsSpinning] = React.useState(false);
   const [isSnapping, setIsSnapping] = React.useState(false);
-  const [isFastNavigating, setIsFastNavigating] = React.useState(false);
   const [reorderPreview, setReorderPreview] = React.useState<ReorderPreview | null>(null);
   const [reorderPreviewOrder, setReorderPreviewOrder] = React.useState<string[] | null>(null);
   const [collectionDropTargetId, setCollectionDropTargetId] = React.useState<string | null>(null);
   const [utilityDropTarget, setUtilityDropTarget] = React.useState<PreviewWheelUtilityAction | null>(null);
+  const isSharedPlayheadPlaying = playheadIsPlaying ?? isPreviewPlaying;
 
   React.useLayoutEffect(() => {
     const content = reorderGhostContentRef.current;
@@ -573,9 +673,9 @@ export function SceneLaunchPreviewWheelV3({
     );
     return () => animation.cancel();
   }, [reorderPreview]);
-  const [preparedPreviewMediaId, setPreparedPreviewMediaId] = React.useState<string | null>(null);
-  const [preparedPreviewReady, setPreparedPreviewReady] = React.useState(false);
-  const [visiblePreparedPreviewMediaId, setVisiblePreparedPreviewMediaId] = React.useState<string | null>(null);
+  const [, setPreparedPreviewMediaId] = React.useState<string | null>(null);
+  const [, setPreparedPreviewReady] = React.useState(false);
+  const [, setVisiblePreparedPreviewMediaId] = React.useState<string | null>(null);
   const [directPreviewMediaId, setDirectPreviewMediaId] = React.useState<string | null>(selectedMediaId);
   const [playbackSnapshotTime, setPlaybackSnapshotTime] = React.useState<number | null>(null);
   const [trimOverlayMediaId, setTrimOverlayMediaId] = React.useState<string | null>(null);
@@ -618,8 +718,15 @@ export function SceneLaunchPreviewWheelV3({
     return () => document.removeEventListener('pointerdown', handleOutsidePointerDown, true);
   }, [trimOverlayMediaId]);
 
-  const itemHeight = effect === 'gallery'
-    ? GALLERY_ITEM_HEIGHT
+  const isGallery = effect === 'gallery';
+  const gridItemGap = 6;
+  const responsiveGridItemWidth = hidePreview && gridColumnCount
+    ? Math.max(1, (viewportSize.width - 16 - gridItemGap * (gridColumnCount - 1)) / gridColumnCount)
+    : null;
+  const itemHeight = responsiveGridItemWidth !== null
+    ? responsiveGridItemWidth * 9 / 16
+    : isGallery
+      ? GALLERY_ITEM_HEIGHT
     : Math.round(clamp(
         sizing === 'uniform'
           ? Math.min(viewportSize.height - 64, viewportSize.width * 0.72 * 9 / 16)
@@ -627,7 +734,6 @@ export function SceneLaunchPreviewWheelV3({
         220,
         620,
       ));
-  const isGallery = effect === 'gallery';
   const rowHeight = isGallery
     ? itemHeight + 66
     : itemHeight + 36;
@@ -655,7 +761,7 @@ export function SceneLaunchPreviewWheelV3({
   ));
   const galleryPreviewWidth = galleryPreviewHeight * 16 / 9;
   const uniformItemWidth = hidePreview
-    ? Math.round(itemHeight * 9 / 16)
+    ? responsiveGridItemWidth ?? Math.round(itemHeight * 16 / 9)
     : sizing === 'uniform'
       ? Math.round(itemHeight * 16 / 9)
       : Math.round(clamp(
@@ -729,7 +835,9 @@ export function SceneLaunchPreviewWheelV3({
     return itemDurations.map(duration => duration * durationPixelsPerSecond);
   }, [durationPixelsPerSecond, itemDurations, items, sizing, uniformItemWidth]);
   const isGaplessGallery = effect === 'gallery' && sizing === 'duration';
-  const itemGap = isGaplessGallery
+  const itemGap = hidePreview
+    ? gridItemGap
+    : isGaplessGallery
     ? 0
     : ITEM_GAP * (sizing === 'duration' ? durationScale : 1);
   const itemStartTimes = React.useMemo(() => itemDurations.map((_, index) => (
@@ -781,12 +889,11 @@ export function SceneLaunchPreviewWheelV3({
     items.findIndex(item => item.id === selectedMediaId)
   ), [items, selectedMediaId]);
 
-  const gridItemWidth = Math.round(GALLERY_ITEM_HEIGHT * 9 / 16);
-  const gridItemGap = 6;
+  const gridItemWidth = Math.round(GALLERY_ITEM_HEIGHT * 16 / 9);
   const gridColStride = gridItemWidth + gridItemGap;
   const colStride = uniformItemWidth + itemGap;
   const itemsPerRow = React.useMemo(() => {
-    return Math.max(2, Math.floor((viewportSize.width - 16) / gridColStride));
+    return Math.max(1, Math.floor((viewportSize.width - 16 + gridItemGap) / gridColStride));
   }, [viewportSize.width, gridColStride]);
 
   const chunks = React.useMemo(() => {
@@ -797,6 +904,22 @@ export function SceneLaunchPreviewWheelV3({
     }
     return result;
   }, [items, itemsPerRow, gridView]);
+
+  const getGridRowForMedia = React.useCallback((mediaId: string | null | undefined) => {
+    if (!mediaId) return -1;
+    const itemIndex = items.findIndex(item => (
+      item.id === mediaId || itemSequences?.[item.id]?.some(sequenceItem => sequenceItem.id === mediaId)
+    ));
+    return itemIndex < 0 ? -1 : Math.floor(itemIndex / itemsPerRow);
+  }, [itemSequences, items, itemsPerRow]);
+  const playbackGridRow = getGridRowForMedia(activePlayingMediaId);
+  const externalScrubGridRow = getGridRowForMedia(externalScrubMediaId);
+  const selectedGridRow = getGridRowForMedia(selectedMediaId);
+  const visibleGridPlayheadRow = isPreviewPlaying && playbackGridRow >= 0
+    ? playbackGridRow
+    : externalScrubGridRow >= 0
+      ? externalScrubGridRow
+      : activeGridPlayheadRow ?? Math.max(0, selectedGridRow);
 
   const selectedItemType = items[selectedIndex]?.type;
   const itemStride = uniformItemWidth + itemGap;
@@ -839,9 +962,22 @@ export function SceneLaunchPreviewWheelV3({
     : maxOffset;
   const centeredIndex = getNearestIndexForOffset(offset, snapReferencePositions);
   const centeredItem = items[centeredIndex] ?? null;
-  const preparedPreviewMedia = preparedPreviewMediaId
-    ? items.find(item => item.id === preparedPreviewMediaId) ?? null
-    : null;
+  const activePlayingIndex = activePlayingMediaId
+    ? items.findIndex(item => item.id === activePlayingMediaId)
+    : -1;
+  const activePlayingProgress = activePlayingIndex >= 0
+    ? clamp(activePlayingElapsedSeconds / Math.max(0.001, itemDurations[activePlayingIndex] ?? 0.5), 0, 1)
+    : 0;
+  const playbackPlayheadX = activePlayingIndex >= 0
+    ? playheadX + offset + (itemStartPixels[activePlayingIndex] ?? 0) - timelineOriginOffset +
+      activePlayingProgress * (itemWidths[activePlayingIndex] ?? 0)
+    : playheadX;
+  const renderedPlayheadX = isSharedPlayheadPlaying && activePlayingIndex >= 0
+    ? playbackPlayheadX
+    : hidePreview && gridPlayheadRatio !== null
+      ? gridPlayheadRatio * viewportSize.width
+      : playheadX;
+  const stripVisualLeft = playheadX + offset - timelineOriginOffset;
   const isWheelMoving = isDragging || isPlayheadDragging || isSpinning;
   const scrubSnapshot = React.useMemo<GalleryScrubSnapshot | null>(() => {
     if (selectedIndex < 0 || items.length === 0) return null;
@@ -883,7 +1019,9 @@ export function SceneLaunchPreviewWheelV3({
     }
 
     const playheadPixel = clamp(
-      (sizing === 'duration' || isGallery) ? timelineOriginOffset - offset : -offset,
+      hidePreview
+        ? renderedPlayheadX - playheadX - offset + timelineOriginOffset
+        : (sizing === 'duration' || isGallery) ? timelineOriginOffset - offset : -offset,
       0,
       stripEndPixel,
     );
@@ -931,6 +1069,7 @@ export function SceneLaunchPreviewWheelV3({
     directPreviewMediaId,
     disabledItemIds,
     finalIndex,
+    hidePreview,
     itemDurations,
     itemStartPixels,
     itemStartTimes,
@@ -939,7 +1078,9 @@ export function SceneLaunchPreviewWheelV3({
     isGallery,
     isPreviewPlaying,
     offset,
+    playheadX,
     playbackSnapshotTime,
+    renderedPlayheadX,
     resolveItemSnapshot,
     selectedIndex,
     sizing,
@@ -950,30 +1091,62 @@ export function SceneLaunchPreviewWheelV3({
 
   const effectiveScrubSnapshot = React.useMemo<GalleryScrubSnapshot | null>(() => {
     if (externalScrubMediaId && externalScrubSourceTime !== null && externalScrubSourceTime !== undefined) {
-      const media = items.find(item => item.id === externalScrubMediaId);
+      const media = items.find(item => item.id === externalScrubMediaId) ??
+        Object.values(itemSequences ?? {})
+          .flat()
+          .find(item => item.id === externalScrubMediaId);
       if (media) {
         return {
           media,
           sourceTimeSeconds: externalScrubSourceTime,
-          timelineTimeSeconds: 0,
+          timelineTimeSeconds: externalScrubTimelineTime ?? 0,
         };
       }
     }
     return scrubSnapshot;
-  }, [externalScrubMediaId, externalScrubSourceTime, scrubSnapshot, items]);
+  }, [externalScrubMediaId, externalScrubSourceTime, externalScrubTimelineTime, itemSequences, scrubSnapshot, items]);
 
   const onScrubUpdateRef = React.useRef(onScrubUpdate);
   React.useEffect(() => { onScrubUpdateRef.current = onScrubUpdate; }, [onScrubUpdate]);
 
+  const handleGridScrubUpdate = React.useCallback((
+    rowIndex: number,
+    mediaId: string | null,
+    sourceTimeSeconds: number | null,
+    rowTimelineTimeSeconds?: number | null,
+  ) => {
+    if (mediaId !== null && sourceTimeSeconds !== null) {
+      activeGridScrubRowRef.current = rowIndex;
+      setActiveGridPlayheadRow(rowIndex);
+      const rowStartIndex = rowIndex * itemsPerRow;
+      const rowStartTime = itemDurations
+        .slice(0, rowStartIndex)
+        .reduce((sum, duration) => sum + duration, 0);
+      onScrubUpdateRef.current?.(
+        mediaId,
+        sourceTimeSeconds,
+        rowStartTime + (rowTimelineTimeSeconds ?? 0),
+      );
+      return;
+    }
+    if (activeGridScrubRowRef.current !== rowIndex) return;
+    activeGridScrubRowRef.current = null;
+  }, [itemDurations, itemsPerRow]);
+
   React.useEffect(() => {
+    if (gridView) return;
     if (onScrubUpdate) {
       if (scrubSnapshot && isWheelMoving) {
-        onScrubUpdate(scrubSnapshot.media.id, scrubSnapshot.sourceTimeSeconds);
+        onScrubUpdate(
+          scrubSnapshot.media.id,
+          scrubSnapshot.sourceTimeSeconds,
+          scrubSnapshot.timelineTimeSeconds,
+        );
       } else if (!isWheelMoving) {
         onScrubUpdate(null, null);
       }
     }
-  }, [scrubSnapshot, isWheelMoving, onScrubUpdate]);
+  }, [gridView, scrubSnapshot, isWheelMoving, onScrubUpdate]);
 
   const rulerPlayheadTimeSeconds = React.useMemo(() => {
     if (items.length === 0) return 0;
@@ -1042,9 +1215,10 @@ export function SceneLaunchPreviewWheelV3({
     const nextRatio = boundedPlayheadX / Math.max(1, viewportSize.width);
     playheadPositionRatioRef.current = nextRatio;
     setPlayheadPositionRatio(nextRatio);
+    if (hidePreview) setGridPlayheadRatio(nextRatio);
     setOffset(originOffset - (boundedPlayheadX - originPlayheadX));
     setDirectPreviewMediaId(null);
-  }, [setOffset, viewportSize.width]);
+  }, [hidePreview, setOffset, viewportSize.width]);
 
   React.useLayoutEffect(() => {
     const wasPlaying = wasPreviewPlayingRef.current;
@@ -1053,7 +1227,7 @@ export function SceneLaunchPreviewWheelV3({
 
     const nextTime = wasPlaying
       ? playbackTimeRef.current
-      : scrubSnapshot?.timelineTimeSeconds ?? 0;
+      : effectiveScrubSnapshot?.timelineTimeSeconds ?? 0;
     playbackTimeRef.current = nextTime;
     playbackSelectedMediaIdRef.current = selectedMediaId;
     if (prominentTimestampRef.current) {
@@ -1062,7 +1236,7 @@ export function SceneLaunchPreviewWheelV3({
         totalDurationSeconds,
       );
     }
-  }, [isPreviewPlaying, scrubSnapshot?.timelineTimeSeconds, selectedMediaId, totalDurationSeconds]);
+  }, [effectiveScrubSnapshot?.timelineTimeSeconds, isPreviewPlaying, selectedMediaId, totalDurationSeconds]);
 
   React.useEffect(() => {
     if (hidePreview) return;
@@ -1174,7 +1348,6 @@ export function SceneLaunchPreviewWheelV3({
 
     if (nextFastNavigation === fastNavigationRef.current) return;
     fastNavigationRef.current = nextFastNavigation;
-    setIsFastNavigating(nextFastNavigation);
   }, []);
 
   const stopAnimation = React.useCallback(() => {
@@ -1210,24 +1383,30 @@ export function SceneLaunchPreviewWheelV3({
       isDragging: true,
       pointerId: event.pointerId,
       startClientX: event.clientX,
-      startPlayheadX: playheadX,
+      startPlayheadX: renderedPlayheadX,
       startOffset: offsetRef.current,
     };
     setIsPlayheadDragging(true);
     event.currentTarget.setPointerCapture(event.pointerId);
-  }, [playheadX, stopAnimation]);
+  }, [renderedPlayheadX, stopAnimation]);
 
   const movePlayheadDrag = React.useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = playheadDragRef.current;
     if (!drag.isDragging || drag.pointerId !== event.pointerId) return;
     event.preventDefault();
     event.stopPropagation();
+    if (hidePreview) {
+      seekGridPlayheadToXRef.current(
+        drag.startPlayheadX + event.clientX - drag.startClientX,
+      );
+      return;
+    }
     scrubWithPlayhead(
       drag.startPlayheadX + event.clientX - drag.startClientX,
       drag.startPlayheadX,
       drag.startOffset,
     );
-  }, [scrubWithPlayhead]);
+  }, [hidePreview, scrubWithPlayhead]);
 
   const endPlayheadDrag = React.useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = playheadDragRef.current;
@@ -1236,25 +1415,34 @@ export function SceneLaunchPreviewWheelV3({
     event.stopPropagation();
     playheadDragRef.current.isDragging = false;
     setIsPlayheadDragging(false);
-    localStorage.setItem('scene-launch-playhead-position', String(playheadPositionRatioRef.current));
-  }, []);
+    localStorage.setItem(
+      'scene-launch-playhead-position',
+      String(hidePreview ? gridPlayheadRatio ?? playheadPositionRatioRef.current : playheadPositionRatioRef.current),
+    );
+  }, [gridPlayheadRatio, hidePreview]);
 
   const handlePlayheadKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
     let nextPlayheadX: number | null = null;
-    if (event.key === 'ArrowLeft') nextPlayheadX = playheadX - (event.shiftKey ? 24 : 8);
-    if (event.key === 'ArrowRight') nextPlayheadX = playheadX + (event.shiftKey ? 24 : 8);
-    if (event.key === 'Home') nextPlayheadX = 32;
-    if (event.key === 'End') nextPlayheadX = Math.max(32, viewportSize.width - 32);
+    const currentPlayheadX = hidePreview ? renderedPlayheadX : playheadX;
+    const edgeInset = hidePreview ? 8 : 32;
+    if (event.key === 'ArrowLeft') nextPlayheadX = currentPlayheadX - (event.shiftKey ? 24 : 8);
+    if (event.key === 'ArrowRight') nextPlayheadX = currentPlayheadX + (event.shiftKey ? 24 : 8);
+    if (event.key === 'Home') nextPlayheadX = edgeInset;
+    if (event.key === 'End') nextPlayheadX = Math.max(edgeInset, viewportSize.width - edgeInset);
     if (nextPlayheadX === null) return;
 
     event.preventDefault();
     event.stopPropagation();
     stopAnimation();
+    if (hidePreview) {
+      seekGridPlayheadToXRef.current(nextPlayheadX);
+      return;
+    }
     scrubWithPlayhead(nextPlayheadX, playheadX, offsetRef.current);
     const nextRatio = clamp(nextPlayheadX, 32, Math.max(32, viewportSize.width - 32)) /
       Math.max(1, viewportSize.width);
     localStorage.setItem('scene-launch-playhead-position', String(nextRatio));
-  }, [playheadX, scrubWithPlayhead, stopAnimation, viewportSize.width]);
+  }, [hidePreview, playheadX, renderedPlayheadX, scrubWithPlayhead, stopAnimation, viewportSize.width]);
 
   const snapToIndex = React.useCallback((
     index: number,
@@ -1409,15 +1597,15 @@ export function SceneLaunchPreviewWheelV3({
       pendingReorderSelectionRef.current ||
       skipNextReorderAlignmentRef.current
     ) return;
+    if (hidePreview) {
+      const frame = window.requestAnimationFrame(() => setOffset(gridLeftAlignOffset));
+      return () => window.cancelAnimationFrame(frame);
+    }
     if (selectedIndex < 0) {
-      // In grid child rows where selected item is in another row, align first item to left
-      if (hidePreview) {
-        setOffset(maxOffset);
-      }
       return;
     }
     snapToIndexRef.current(selectedIndex, { commit: false });
-  }, [isPreviewPlaying, selectedIndex, selectedMediaId, hidePreview, maxOffset, setOffset]);
+  }, [isPreviewPlaying, selectedIndex, selectedMediaId, hidePreview, gridLeftAlignOffset, setOffset]);
 
   React.useEffect(() => {
     if (skipNextReorderAlignmentRef.current) {
@@ -1459,18 +1647,22 @@ export function SceneLaunchPreviewWheelV3({
       return;
     }
 
+    if (hidePreview) {
+      const frame = window.requestAnimationFrame(() => setOffset(gridLeftAlignOffset));
+      return () => window.cancelAnimationFrame(frame);
+    }
+
     if (selectedIndex < 0) {
-      // In grid child rows where selected item is in another row, align first item to left
-      if (hidePreview) {
-        setOffset(maxOffset);
-      }
       return;
     }
 
-    setOffset((sizing === 'duration' || isGallery)
-      ? timelineOriginOffset - (itemStartPixels[selectedIndex] ?? 0)
-      : -(itemCenterPositions[selectedIndex] ?? 0));
-  }, [isPreviewPlaying, itemCenterPositions, itemStartPixels, selectedIndex, setOffset, sizing, isGallery, timelineOriginOffset, hidePreview, maxOffset]);
+    const frame = window.requestAnimationFrame(() => {
+      setOffset((sizing === 'duration' || isGallery)
+        ? timelineOriginOffset - (itemStartPixels[selectedIndex] ?? 0)
+        : -(itemCenterPositions[selectedIndex] ?? 0));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isPreviewPlaying, itemCenterPositions, itemStartPixels, selectedIndex, setOffset, sizing, isGallery, timelineOriginOffset, hidePreview, gridLeftAlignOffset]);
 
   React.useEffect(() => {
     return () => {
@@ -1721,7 +1913,6 @@ export function SceneLaunchPreviewWheelV3({
       utilityAction: null,
     };
     clickGuardRef.current = false;
-    setIsDragging(true);
     viewport.setPointerCapture(event.pointerId);
   }, [stopAnimation]);
 
@@ -1749,6 +1940,7 @@ export function SceneLaunchPreviewWheelV3({
       const previewHeight = previewWidth * sourceHeight / Math.max(1, sourceWidth);
       drag.mode = 'reorder';
       drag.didMove = true;
+      setIsDragging(true);
       clickGuardRef.current = true;
       updateFastNavigation(0);
       setReorderPreview({
@@ -1770,6 +1962,7 @@ export function SceneLaunchPreviewWheelV3({
       startReorderAutoPan();
     } else if (drag.mode === 'pending' && Math.abs(deltaX) > DRAG_SELECT_THRESHOLD) {
       drag.mode = 'wheel';
+      setIsDragging(true);
       setDirectPreviewMediaId(null);
     }
 
@@ -1834,7 +2027,9 @@ export function SceneLaunchPreviewWheelV3({
           if (onScrubUpdateRef.current && items.length > 0) {
             const currentOffset = clamp(pendingOffset, minOffset, maxOffset);
             const playheadPixel = clamp(
-              (sizing === 'duration' || isGallery) ? timelineOriginOffset - currentOffset : -currentOffset,
+              hidePreview
+                ? renderedPlayheadX - playheadX - currentOffset + timelineOriginOffset
+                : (sizing === 'duration' || isGallery) ? timelineOriginOffset - currentOffset : -currentOffset,
               0,
               stripEndPixel,
             );
@@ -1852,17 +2047,19 @@ export function SceneLaunchPreviewWheelV3({
               const itemW = Math.max(1, itemWidths[scrubbedIdx] ?? 1);
               const progress = clamp((playheadPixel - itemStartPx) / itemW, 0, 1);
               const itemDur = itemDurations[scrubbedIdx] ?? 0.5;
-              const sourceTime = progress * itemDur;
-              onScrubUpdateRef.current(media.id, media.type === 'video'
-                ? Math.max(0, media.trimStartSeconds ?? 0) + sourceTime
-                : 0);
+              const resolved = resolveItemSnapshot(media, progress * itemDur);
+              onScrubUpdateRef.current(
+                resolved.media.id,
+                resolved.sourceTimeSeconds,
+                (itemStartTimes[scrubbedIdx] ?? 0) + progress * itemDur,
+              );
             }
           }
         }
       });
     }
     event.preventDefault();
-  }, [items, onItemsReorder, prepareFixedCenterPreview, setOffset, startReorderAutoPan, updateFastNavigation, updateReorderTarget, minOffset, maxOffset, sizing, isGallery, timelineOriginOffset, stripEndPixel, finalIndex, itemStartPixels, itemWidths, itemDurations, disabledItemIds]);
+  }, [items, onItemsReorder, prepareFixedCenterPreview, setOffset, startReorderAutoPan, updateFastNavigation, updateReorderTarget, minOffset, maxOffset, sizing, isGallery, hidePreview, playheadX, renderedPlayheadX, timelineOriginOffset, stripEndPixel, finalIndex, itemStartPixels, itemStartTimes, itemWidths, itemDurations, disabledItemIds, resolveItemSnapshot]);
 
   const endDrag = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
@@ -2028,6 +2225,8 @@ export function SceneLaunchPreviewWheelV3({
         const targetItem = items[targetIndex];
         if (targetItem && collectionItemIds.includes(targetItem.id) && onCollectionOpen) {
           onCollectionOpen(targetItem.id);
+        } else if (hidePreview) {
+          return;
         } else {
           if (slideOnClick) {
             snapToIndex(targetIndex);
@@ -2046,7 +2245,7 @@ export function SceneLaunchPreviewWheelV3({
         }
       }
     }
-  }, [clearClickGuardSoon, collectionItemIds, getCenteredMediaIdForOrder, itemStartTimes, items, onCenteredMediaChange, onCollectionOpen, onItemMoveIntoCollection, onItemsReorder, onUtilityDrop, reorderPreview, selectReorderedItem, selectedMediaId, setOffset, sizing, slideOnClick, snapToIndex, spinWithMomentum]);
+  }, [clearClickGuardSoon, collectionItemIds, getCenteredMediaIdForOrder, hidePreview, itemStartTimes, items, onCenteredMediaChange, onCollectionOpen, onItemMoveIntoCollection, onItemsReorder, onUtilityDrop, reorderPreview, selectReorderedItem, selectedMediaId, setOffset, sizing, slideOnClick, snapToIndex, spinWithMomentum]);
 
   const focusItem = React.useCallback((index: number) => {
     window.requestAnimationFrame(() => {
@@ -2059,9 +2258,9 @@ export function SceneLaunchPreviewWheelV3({
   const moveKeyboardFocus = React.useCallback((nextIndex: number) => {
     const boundedIndex = clamp(nextIndex, 0, Math.max(0, items.length - 1));
     stopAnimation();
-    snapToIndex(boundedIndex);
+    if (!hidePreview) snapToIndex(boundedIndex);
     focusItem(boundedIndex);
-  }, [focusItem, items.length, snapToIndex, stopAnimation]);
+  }, [focusItem, hidePreview, items.length, snapToIndex, stopAnimation]);
 
   const handleKeyboardNavigation = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).matches('input, select, textarea, [contenteditable="true"]')) {
@@ -2099,37 +2298,63 @@ export function SceneLaunchPreviewWheelV3({
     }
   }, [centeredIndex, items.length, moveKeyboardFocus]);
 
-  const handleWheelScroll = React.useCallback((event: React.WheelEvent<HTMLDivElement>) => {
-    // Prevent default browser scrolling
-    event.preventDefault();
-    event.stopPropagation();
-
-    // Cancel animations
-    stopAnimation();
-
-    // Calculate scroll delta: support both horizontal and vertical mouse wheel / trackpad scrolling
-    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-
-    // Adjust scale for speed/sensitivity
-    const nextOffset = offsetRef.current - delta * 0.45;
-    
-    // Clamp the next offset and update
-    const boundedOffset = clamp(nextOffset, minOffset, maxOffset);
-    offsetRef.current = boundedOffset;
-    setOffsetState(boundedOffset);
-
-    // Debounce snapToNearest to fire 150ms after the last wheel event
-    if (wheelTimeoutRef.current !== null) {
-      window.clearTimeout(wheelTimeoutRef.current);
+  const seekGridPlayheadToX = React.useCallback((nextPlayheadX: number) => {
+    const boundedPlayheadX = clamp(nextPlayheadX, 8, Math.max(8, viewportSize.width - 8));
+    const timelinePixel = clamp(
+      boundedPlayheadX - playheadX - offsetRef.current + timelineOriginOffset,
+      0,
+      stripEndPixel,
+    );
+    let itemIndex = finalIndex;
+    for (let index = 0; index < items.length; index += 1) {
+      const itemEndPixel = (itemStartPixels[index] ?? 0) + (itemWidths[index] ?? 0);
+      if (timelinePixel <= itemEndPixel) {
+        itemIndex = index;
+        break;
+      }
     }
 
-    setIsSpinning(true);
-    wheelTimeoutRef.current = window.setTimeout(() => {
-      wheelTimeoutRef.current = null;
-      setIsSpinning(false);
-      snapToNearest();
-    }, 150);
-  }, [maxOffset, minOffset, snapToNearest, stopAnimation]);
+    const media = items[itemIndex];
+    setGridPlayheadRatio(boundedPlayheadX / Math.max(1, viewportSize.width));
+    if (!media || disabledItemIds.includes(media.id)) return;
+    const itemStartPixel = itemStartPixels[itemIndex] ?? 0;
+    const itemWidth = Math.max(1, itemWidths[itemIndex] ?? 1);
+    const progress = clamp((timelinePixel - itemStartPixel) / itemWidth, 0, 1);
+    const itemDuration = itemDurations[itemIndex] ?? 0.5;
+    const elapsedSeconds = progress * itemDuration;
+    const resolved = resolveItemSnapshot(media, elapsedSeconds);
+
+    playbackTimeRef.current = (itemStartTimes[itemIndex] ?? 0) + elapsedSeconds;
+    onScrubUpdateRef.current?.(
+      resolved.media.id,
+      resolved.sourceTimeSeconds,
+      playbackTimeRef.current,
+    );
+  }, [disabledItemIds, finalIndex, itemDurations, itemStartPixels, itemStartTimes, itemWidths, items, playheadX, resolveItemSnapshot, stripEndPixel, timelineOriginOffset, viewportSize.width]);
+
+  React.useLayoutEffect(() => {
+    seekGridPlayheadToXRef.current = seekGridPlayheadToX;
+  }, [seekGridPlayheadToX]);
+
+  const handleGridSeekRailClick = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    if (event.detail === 0) return;
+    const viewportBounds = viewportRef.current?.getBoundingClientRect();
+    if (!viewportBounds) return;
+    seekGridPlayheadToX(event.clientX - viewportBounds.left);
+  }, [seekGridPlayheadToX]);
+
+  const handleGridSeekRailKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const currentX = (gridPlayheadRatio ?? playheadPositionRatioRef.current) * viewportSize.width;
+    let nextX: number | null = null;
+    if (event.key === 'ArrowLeft') nextX = currentX - (event.shiftKey ? 24 : 8);
+    if (event.key === 'ArrowRight') nextX = currentX + (event.shiftKey ? 24 : 8);
+    if (event.key === 'Home') nextX = 8;
+    if (event.key === 'End') nextX = Math.max(8, viewportSize.width - 8);
+    if (nextX === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    seekGridPlayheadToX(nextX);
+  }, [gridPlayheadRatio, seekGridPlayheadToX, viewportSize.width]);
 
   const applyDurationResize = React.useCallback((
     item: SceneLaunchMediaItem,
@@ -2259,10 +2484,12 @@ export function SceneLaunchPreviewWheelV3({
     <div
       ref={containerRefCallback}
       className={cn(
-        "relative flex min-h-0 w-full items-center justify-center overflow-hidden",
+        "relative flex min-h-0 w-full",
         hidePreview
-          ? "h-auto py-0.5 px-0 bg-transparent"
-          : "px-4",
+          ? "h-auto items-center justify-center overflow-hidden py-0.5 px-0 bg-transparent"
+          : gridView
+            ? "h-full items-start justify-start overflow-y-auto px-4 [scrollbar-gutter:stable]"
+            : "items-center justify-center overflow-hidden px-4",
         !hidePreview && gridView
           ? "h-full pt-1.5 pb-2.5 bg-black"
           : !hidePreview
@@ -2275,12 +2502,18 @@ export function SceneLaunchPreviewWheelV3({
         hidePreview
           ? "bg-transparent shadow-none border-none h-auto"
           : "bg-[#0c0c0e]/85 shadow-lg",
-        hidePreview ? "h-auto" : isGallery ? "flex h-full flex-col" : "h-full"
+        hidePreview
+          ? "h-auto"
+          : gridView
+            ? "flex min-h-full flex-col overflow-visible"
+            : isGallery
+              ? "flex h-full flex-col"
+              : "h-full"
       )}>
         {isGallery && !hidePreview && effectiveScrubSnapshot && (
           <div className={cn(
-            "relative flex flex-1 flex-col min-h-0 items-center justify-center p-2 pb-1.5",
-            gridView && "pt-1 pb-1 px-1.5"
+            "relative flex min-h-0 flex-col items-center justify-center p-2 pb-1.5",
+            gridView ? "sticky top-0 z-30 shrink-0 bg-[#0c0c0e] pt-1 pb-1 px-1.5" : "flex-1"
           )}>
             {/* Playback Controls above display area */}
             <div className={cn("mb-2 flex shrink-0 justify-center", gridView && "mb-1")}>
@@ -2407,42 +2640,10 @@ export function SceneLaunchPreviewWheelV3({
               className="relative overflow-hidden rounded-md border border-white/10 bg-black shadow-2xl shadow-black/60"
               style={{ height: galleryPreviewHeight, width: galleryPreviewWidth }}
             >
-              {isFastNavigating ? (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="flex h-full w-full flex-col items-center justify-center bg-zinc-950 px-6 text-center"
-                >
-                  <span className="text-xs font-black uppercase tracking-widest text-zinc-200">
-                    Moving quickly
-                  </span>
-                  <span className="mt-2 text-[10px] font-medium text-zinc-500">
-                    Slow down to resume frame preview
-                  </span>
-                </div>
-              ) : (
-                <GalleryScrubPreview
-                  snapshot={effectiveScrubSnapshot}
-                  isPlaying={isPreviewPlaying}
-                />
-              )}
-              {preparedPreviewMedia && !isPreviewPlaying && (
-                <div
-                  aria-hidden="true"
-                  className={cn(
-                    "pointer-events-none absolute inset-0 bg-black transition-opacity duration-75",
-                    visiblePreparedPreviewMediaId === preparedPreviewMedia.id && preparedPreviewReady
-                      ? "opacity-100"
-                      : "opacity-0",
-                  )}
-                >
-                  <PreparedGalleryPreview
-                    key={preparedPreviewMedia.id}
-                    media={preparedPreviewMedia}
-                    onReady={() => setPreparedPreviewReady(true)}
-                  />
-                </div>
-              )}
+              <GalleryCanvasPreview
+                snapshot={effectiveScrubSnapshot}
+                isPlaying={isPreviewPlaying}
+              />
               {effectiveScrubSnapshot.media.id === selectedMediaId &&
                 effectiveScrubSnapshot.media.type === 'video' &&
                 renderGalleryTrimOverlay && (
@@ -2478,7 +2679,7 @@ export function SceneLaunchPreviewWheelV3({
 
 
         {gridView ? (
-          <div className="flex flex-col gap-0.5 overflow-y-auto max-h-[520px] px-0 py-1 bg-zinc-950/40 border-t border-zinc-900">
+          <div className="flex shrink-0 flex-col gap-0.5 px-0 py-1 bg-zinc-950/40 border-t border-zinc-900">
             {chunks.map((chunk, chunkIndex) => (
               <SceneLaunchPreviewWheelV3
                 key={chunkIndex}
@@ -2488,7 +2689,7 @@ export function SceneLaunchPreviewWheelV3({
                 onCollectionOpen={onCollectionOpen}
                 selectedMediaId={selectedMediaId}
                 effect={effect}
-                sizing={sizing}
+                sizing="uniform"
                 durationScale={durationScale}
                 selectedItemDurationSeconds={selectedItemDurationSeconds}
                 selectedItemTrimStartSeconds={selectedItemTrimStartSeconds}
@@ -2497,7 +2698,8 @@ export function SceneLaunchPreviewWheelV3({
                 onCenteredMediaChange={onCenteredMediaChange}
                 renderSelectedItemOverlay={renderSelectedItemOverlay}
                 renderGalleryTrimOverlay={renderGalleryTrimOverlay}
-                isPreviewPlaying={isPreviewPlaying}
+                isPreviewPlaying={false}
+                playheadIsPlaying={isPreviewPlaying}
                 loopPreviewPlayback={loopPreviewPlayback}
                 onPreviewPlaybackComplete={onPreviewPlaybackComplete}
                 onPlaybackMediaChange={onPlaybackMediaChange}
@@ -2512,11 +2714,15 @@ export function SceneLaunchPreviewWheelV3({
                 showUniformRuler={showUniformRuler}
                 slideOnClick={slideOnClick}
                 gridView={false}
+                gridColumnCount={itemsPerRow}
+                showPlayhead={visibleGridPlayheadRow === chunkIndex}
                 hidePreview={true}
                 hideTrack={false}
                 activePlayingMediaId={activePlayingMediaId}
                 activePlayingElapsedSeconds={activePlayingElapsedSeconds}
-                onScrubUpdate={onScrubUpdate}
+                onScrubUpdate={(mediaId, sourceTimeSeconds, timelineTimeSeconds) => {
+                  handleGridScrubUpdate(chunkIndex, mediaId, sourceTimeSeconds, timelineTimeSeconds);
+                }}
               />
             ))}
           </div>
@@ -2532,7 +2738,7 @@ export function SceneLaunchPreviewWheelV3({
               )}
               style={{
                 perspective: 1200,
-                touchAction: 'none',
+                touchAction: hidePreview ? 'pan-y' : 'none',
                 ...((isGallery || hidePreview) ? { height: rowHeight } : {}),
               }}
               onPointerDown={beginDrag}
@@ -2541,7 +2747,6 @@ export function SceneLaunchPreviewWheelV3({
               onPointerCancel={endDrag}
               onLostPointerCapture={endDrag}
               onKeyDown={handleKeyboardNavigation}
-              onWheel={handleWheelScroll}
             >
           <div className="sr-only" aria-live="polite">
             {centeredItem ? `Centered media ${centeredItem.name}` : 'Timeline media wheel'}
@@ -2615,20 +2820,36 @@ export function SceneLaunchPreviewWheelV3({
               document.body,
             );
           })()}
-          {isPreviewPlaying && (sizing === 'duration' || isGallery) && (
+          {hidePreview && showPlayhead && (
+            <button
+              type="button"
+              aria-label="Move shared playhead in this row"
+              title="Click to move the shared playhead"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={handleGridSeekRailClick}
+              onKeyDown={handleGridSeekRailKeyDown}
+              className="absolute z-[185] h-1.5 rounded-full border border-zinc-500/80 bg-zinc-600/90 shadow-inner shadow-black/50 transition-colors hover:bg-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+              style={{
+                left: stripVisualLeft,
+                top: itemTop - 4,
+                width: stripEndPixel,
+              }}
+            />
+          )}
+          {showPlayhead && isSharedPlayheadPlaying && (sizing === 'duration' || isGallery) && (
             <div
               aria-hidden="true"
               className="pointer-events-none absolute inset-y-0 z-[190] w-0"
-              style={{ left: playheadX }}
+              style={{ left: renderedPlayheadX }}
             >
               <div className="absolute inset-y-0 left-0 w-0.5 -translate-x-1/2 bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.95)]" />
             </div>
           )}
-          {!isPreviewPlaying && (sizing === 'duration' || isGallery) && (
+          {showPlayhead && !isSharedPlayheadPlaying && (sizing === 'duration' || isGallery) && (
             <div
               className="pointer-events-none absolute z-[190]"
               style={{
-                left: playheadX,
+                left: renderedPlayheadX,
                 top: itemTop,
                 height: itemHeight,
                 width: 0,
@@ -2670,7 +2891,7 @@ export function SceneLaunchPreviewWheelV3({
               <div aria-hidden="true" className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-indigo-300 shadow-[0_0_8px_rgba(165,180,252,0.9)]" />
             </div>
           )}
-          {!isPreviewPlaying && (sizing === 'duration' || isGallery) && (
+          {showPlayhead && !isSharedPlayheadPlaying && (sizing === 'duration' || isGallery) && (
             <div className="sr-only" aria-live="polite">
               Playhead at {formatRulerSeconds(rulerPlayheadTimeSeconds)}
             </div>
@@ -2894,6 +3115,8 @@ export function SceneLaunchPreviewWheelV3({
                       if (event.detail === 0) {
                         if (collectionItemIds.includes(item.id) && onCollectionOpen) {
                           onCollectionOpen(item.id);
+                        } else if (hidePreview) {
+                          return;
                         } else if (slideOnClick) {
                           snapToIndex(index);
                         } else {

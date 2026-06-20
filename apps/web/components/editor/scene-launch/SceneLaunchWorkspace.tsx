@@ -221,6 +221,7 @@ export function SceneLaunchWorkspace({
 
   const [scrubbingMediaId, setScrubbingMediaId] = React.useState<string | null>(null);
   const [scrubbingSourceTime, setScrubbingSourceTime] = React.useState<number | null>(null);
+  const [scrubbingTimelineTime, setScrubbingTimelineTime] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     if (!isWheelPreviewPlaying) {
@@ -874,7 +875,13 @@ export function SceneLaunchWorkspace({
   const toggleSceneLaunchTimelinePlayback = React.useCallback(() => {
     if (isWheelSequencePreview) {
       setIsTimelinePlaying(false);
-      setIsWheelPreviewPlaying(current => !current);
+      const nextPlaying = !isWheelPreviewPlaying;
+      if (nextPlaying) {
+        setScrubbingMediaId(null);
+        setScrubbingSourceTime(null);
+        setScrubbingTimelineTime(null);
+      }
+      setIsWheelPreviewPlaying(nextPlaying);
       return;
     }
 
@@ -886,7 +893,7 @@ export function SceneLaunchWorkspace({
       setSceneLaunchPreviewPausedOffset(0);
       setSceneLaunchManuallyPaused(null);
     }
-  }, [isTimelinePlaying, isWheelSequencePreview, setSceneLaunchTimelineTime]);
+  }, [isTimelinePlaying, isWheelPreviewPlaying, isWheelSequencePreview, setSceneLaunchTimelineTime]);
 
 
 
@@ -1541,7 +1548,7 @@ export function SceneLaunchWorkspace({
     }
   }, [getCollectionWheelRepresentative, moveItemToTrash, moveSceneLaunchItemToParent, previewWheelSourceItems, setSceneLaunchItemDisabled]);
 
-  const wheelReflectsCollections = previewWheelSizing === 'uniform' && previewWheelSequence === 'collections';
+  const wheelReflectsCollections = previewWheelSequence === 'collections';
   const previewWheelItems = React.useMemo(() => {
     const sourceItems = wheelReflectsCollections
       ? collectionAwareWheelItems
@@ -1572,6 +1579,9 @@ export function SceneLaunchWorkspace({
   const previewSceneLaunchMediaId = React.useCallback((mediaId: string) => {
     setIsTimelinePlaying(false);
     setIsWheelPreviewPlaying(false);
+    setScrubbingMediaId(null);
+    setScrubbingSourceTime(null);
+    setScrubbingTimelineTime(null);
     setSceneLaunchPreviewHover(null);
     setSceneLaunchManuallyPaused(null);
     setSceneLaunchPreviewPausedOffset(0);
@@ -2230,9 +2240,12 @@ export function SceneLaunchWorkspace({
                       }}
                       externalScrubMediaId={scrubbingMediaId}
                       externalScrubSourceTime={scrubbingSourceTime}
-                      onScrubUpdate={(mediaId, sourceTimeSeconds) => {
+                      externalScrubTimelineTime={scrubbingTimelineTime}
+                      onScrubUpdate={(mediaId, sourceTimeSeconds, timelineTimeSeconds) => {
+                        if (mediaId !== null) setIsWheelPreviewPlaying(false);
                         setScrubbingMediaId(mediaId);
                         setScrubbingSourceTime(sourceTimeSeconds);
+                        setScrubbingTimelineTime(timelineTimeSeconds ?? null);
                       }}
                       />
                     </div>
