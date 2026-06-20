@@ -137,7 +137,7 @@ export function SceneLaunchCollectionTile({
     <article
       data-scene-grid-item="true"
       id={`grid-item-${dragKey}`}
-      draggable
+      draggable={dragKey !== 'collection:root-collection'}
       onDragStart={(event) => {
         const ghostEl = document.getElementById(`drag-ghost-${dragKey}`);
         if (ghostEl) {
@@ -153,11 +153,18 @@ export function SceneLaunchCollectionTile({
       onMouseLeave={() => setHoveredItemKey(null)}
       style={getSceneLaunchCollectionTileStyle()}
       className={cn(
-        "group cursor-grab overflow-visible rounded-lg border border-zinc-900 bg-zinc-950/80 transition-all duration-300 active:cursor-grabbing scroll-mt-24 relative",
+        "group overflow-visible rounded-lg border border-zinc-900 bg-zinc-950/80 transition-all duration-300 scroll-mt-24 relative",
+        dragKey !== 'collection:root-collection' ? "cursor-grab active:cursor-grabbing" : "cursor-default",
         isTimelinePlaying && activeItemKey && activeItemKey !== dragKey ? "opacity-30" : "opacity-100",
         gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'inside' && "ring-2 ring-indigo-500 border-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.3)]"
       )}
-      onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
+      onContextMenu={(event) => {
+        if (dragKey === 'collection:root-collection') {
+          event.preventDefault();
+          return;
+        }
+        handleItemContextMenu(event, dragKey);
+      }}
     >
       {/* Hidden drag image template */}
       <div

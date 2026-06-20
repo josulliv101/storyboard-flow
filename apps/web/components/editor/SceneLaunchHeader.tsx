@@ -153,15 +153,17 @@ export function SceneLaunchHeader({
           }}
         >
           <label htmlFor="scene-launch-prompt-search" className="sr-only">Search scenes</label>
-          <button
-            type="button"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-300 transition-colors hover:bg-white/5 hover:text-white"
-            onClick={() => handleAddClipClick('video')}
-            title="Add video scene media"
-            aria-label="Add video scene media"
-          >
-            <Plus className="h-6 w-6 stroke-[1.7]" />
-          </button>
+          {activeSceneLaunchBeatId !== null && (
+            <button
+              type="button"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-300 transition-colors hover:bg-white/5 hover:text-white"
+              onClick={() => handleAddClipClick('video')}
+              title="Add video scene media"
+              aria-label="Add video scene media"
+            >
+              <Plus className="h-6 w-6 stroke-[1.7]" />
+            </button>
+          )}
 
           <input
             id="scene-launch-prompt-search"
@@ -218,17 +220,19 @@ export function SceneLaunchHeader({
         )}
 
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 rounded-full text-zinc-300 hover:bg-white/5 hover:text-white"
-            onClick={() => handleAddClipClick('video')}
-            title="Add video scene media"
-            aria-label="Add video scene media"
-          >
-            <Plus className="h-5 w-5" />
-          </Button>
+          {activeSceneLaunchBeatId !== null && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-full text-zinc-300 hover:bg-white/5 hover:text-white"
+              onClick={() => handleAddClipClick('video')}
+              title="Add video scene media"
+              aria-label="Add video scene media"
+            >
+              <Plus className="h-5 w-5" />
+            </Button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger
               className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 outline-none transition-colors hover:bg-white/5 hover:text-white focus-visible:ring-1 focus-visible:ring-ring"
@@ -374,17 +378,19 @@ export function SceneLaunchHeader({
       )}
 
       <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-9 w-9 rounded-full text-zinc-300 hover:bg-white/5 hover:text-white"
-          onClick={() => handleAddClipClick('video')}
-          title="Add video scene media"
-          aria-label="Add video scene media"
-        >
-          <Plus className="h-5 w-5" />
-        </Button>
+        {activeSceneLaunchBeatId !== null && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 rounded-full text-zinc-300 hover:bg-white/5 hover:text-white"
+            onClick={() => handleAddClipClick('video')}
+            title="Add video scene media"
+            aria-label="Add video scene media"
+          >
+            <Plus className="h-5 w-5" />
+          </Button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger
             className="h-9 w-9 flex items-center justify-center rounded-full text-zinc-300 hover:bg-white/5 hover:text-white transition-colors outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"

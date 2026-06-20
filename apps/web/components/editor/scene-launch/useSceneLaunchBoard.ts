@@ -91,35 +91,124 @@ const writeSceneLaunchBoardToIndexedDb = async (board: SceneLaunchBoardState) =>
   });
 };
 
-const normalizeSceneLaunchBoard = (board: Partial<SceneLaunchBoardState> | null | undefined): SceneLaunchBoardState => ({
-  mediaItems: Array.isArray(board?.mediaItems) ? board.mediaItems : [],
-  collections: (() => {
-    const cols = Array.isArray(board?.collections)
-      ? board.collections.map(collection => {
-          const items = Array.isArray(collection.items) ? collection.items : [];
-          return {
-            ...collection,
-            items,
-            childIds: Array.isArray(collection.childIds) ? collection.childIds : [],
-            gridOrder: Array.isArray(collection.gridOrder)
-              ? collection.gridOrder
-              : items.map(item => ({ id: item.id, type: 'media' as const })),
-          };
-        })
-      : [];
-    if (!cols.some(c => c.id === 'trash')) {
-      cols.push({
-        id: 'trash',
-        name: 'Trash',
-        items: [],
-        childIds: [],
-        gridOrder: []
-      });
+const normalizeSceneLaunchBoard = (board: Partial<SceneLaunchBoardState> | null | undefined): SceneLaunchBoardState => {
+  const rawMediaItems = Array.isArray(board?.mediaItems) ? board.mediaItems : [];
+  const rawCollections = Array.isArray(board?.collections) ? board.collections : [];
+
+  let cols = rawCollections.map(collection => {
+    const items = Array.isArray(collection.items) ? collection.items : [];
+    return {
+      ...collection,
+      items,
+      childIds: Array.isArray(collection.childIds) ? collection.childIds : [],
+      gridOrder: Array.isArray(collection.gridOrder)
+        ? collection.gridOrder
+        : items.map(item => ({ id: item.id, type: 'media' as const })),
+    };
+  });
+
+  if (!cols.some(c => c.id === 'trash')) {
+    cols.push({
+      id: 'trash',
+      name: 'Trash',
+      items: [],
+      childIds: [],
+      gridOrder: []
+    });
+  }
+
+  // Find or create 'root-collection'
+  let rootCollection = cols.find(c => c.id === 'root-collection');
+  if (!rootCollection) {
+    rootCollection = {
+      id: 'root-collection',
+      name: 'Main Collection',
+      items: [],
+      childIds: [],
+      gridOrder: []
+    };
+    cols.push(rootCollection);
+  }
+
+  // Find all child collections to identify orphans (root-level collections)
+  const childCollectionIds = new Set<string>();
+  cols.forEach(c => {
+    if (c.id !== 'root-collection') {
+      c.childIds.forEach(id => childCollectionIds.add(id));
     }
-    return cols;
-  })(),
-  gridOrder: Array.isArray(board?.gridOrder) ? board.gridOrder : [],
-});
+  });
+
+  // Root-level collections (excluding trash, root-collection, and sub-collections)
+  const rootCollections = cols.filter(c => 
+    c.id !== 'trash' && 
+    c.id !== 'root-collection' && 
+    !childCollectionIds.has(c.id)
+  );
+
+  // Migrate top-level media items (rawMediaItems) to rootCollection
+  const migratedMedia = [...rawMediaItems];
+  rootCollection.items = [...rootCollection.items, ...migratedMedia];
+  const seenMediaIds = new Set<string>();
+  rootCollection.items = rootCollection.items.filter(item => {
+    if (seenMediaIds.has(item.id)) return false;
+    seenMediaIds.add(item.id);
+    return true;
+  });
+
+  // Migrate top-level collections to rootCollection
+  const migratedChildIds = rootCollections.map(c => c.id);
+  rootCollection.childIds = [...rootCollection.childIds, ...migratedChildIds];
+  const seenChildIds = new Set<string>();
+  rootCollection.childIds = rootCollection.childIds.filter(id => {
+    if (seenChildIds.has(id)) return false;
+    seenChildIds.add(id);
+    return true;
+  });
+
+  // Rebuild gridOrder for rootCollection to merge existing grid items and append migrated ones
+  const existingGridOrder = rootCollection.gridOrder || [];
+  const newGridItems: Array<{ id: string; type: 'media' | 'collection' }> = [];
+  const rootCollectionGridSet = new Set<string>();
+
+  existingGridOrder.forEach(item => {
+    if (item.type === 'media' && rootCollection!.items.some(m => m.id === item.id)) {
+      if (!rootCollectionGridSet.has(item.id)) {
+        rootCollectionGridSet.add(item.id);
+        newGridItems.push(item);
+      }
+    } else if (item.type === 'collection' && rootCollection!.childIds.includes(item.id)) {
+      if (!rootCollectionGridSet.has(item.id)) {
+        rootCollectionGridSet.add(item.id);
+        newGridItems.push(item);
+      }
+    }
+  });
+
+  // Append any missing items
+  rootCollection.items.forEach(m => {
+    if (!rootCollectionGridSet.has(m.id)) {
+      rootCollectionGridSet.add(m.id);
+      newGridItems.push({ id: m.id, type: 'media' });
+    }
+  });
+  rootCollection.childIds.forEach(cid => {
+    if (!rootCollectionGridSet.has(cid)) {
+      rootCollectionGridSet.add(cid);
+      newGridItems.push({ id: cid, type: 'collection' });
+    }
+  });
+
+  rootCollection.gridOrder = newGridItems;
+
+  // Enforce root level only contains root-collection
+  const finalGridOrder = [{ id: 'root-collection', type: 'collection' as const }];
+
+  return {
+    mediaItems: [],
+    collections: cols,
+    gridOrder: finalGridOrder,
+  };
+};
 
 interface UseSceneLaunchBoardParams {
   activeScene: Scene | undefined;
@@ -803,6 +892,7 @@ export function useSceneLaunchBoard({
         toast.success(`Moved "${mediaItem.name}" to "${targetBeat?.name || 'collection'}"`);
       }
     } else if (type === 'collection') {
+      if (id === 'root-collection') return;
       if (id === targetId) return;
 
       if (targetId !== '__root__' && targetId !== 'root' && isDescendantCollection(id, targetId)) {
@@ -859,6 +949,7 @@ export function useSceneLaunchBoard({
   const moveItemToTrash = (dragKey: string) => {
     const [type, id] = dragKey.split(':');
     if (!type || !id) return;
+    if (id === 'root-collection') return;
     if (activeSceneLaunchBeatId === 'trash') return;
 
     let itemTitle = '';
@@ -937,6 +1028,7 @@ export function useSceneLaunchBoard({
   const setSceneLaunchItemDisabled = (dragKey: string, disabled: boolean) => {
     const [type, id] = dragKey.split(':');
     if (!id) return;
+    if (id === 'root-collection') return;
     if (type === 'media') {
       setSceneLaunchMediaItems(previous => previous.map(item => item.id === id ? { ...item, disabled } : item));
       setSceneLaunchBeats(previous => previous.map(beat => ({
@@ -1257,6 +1349,8 @@ export function useSceneLaunchBoard({
   };
 
   const handleItemContextMenu = (event: React.MouseEvent, dragKey: string) => {
+    const [type, id] = dragKey.split(':');
+    if (id === 'root-collection') return;
     event.preventDefault();
     event.stopPropagation();
     setSceneLaunchContextMenu({

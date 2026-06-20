@@ -19,7 +19,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 
-import { useSceneLaunchBoard, type SceneLaunchBeat, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
+import { useSceneLaunchBoard, VIDEO_PLACEHOLDER, type SceneLaunchBeat, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
 import { SceneLaunchSidebar } from '../SceneLaunchSidebar';
 import { SceneLaunchHeader } from '../SceneLaunchHeader';
 import { SceneLaunchCanvasPreview, type SceneLaunchCanvasPreviewSnapshot } from './SceneLaunchCanvasPreview';
@@ -216,6 +216,18 @@ export function SceneLaunchWorkspace({
     localStorage.setItem('scene-launch-preview-wheel-grid-view', String(previewWheelGridView));
   }, [previewWheelGridView]);
 
+  const [previewWheelBreakoutCollections, setPreviewWheelBreakoutCollections] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-breakout-collections');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-breakout-collections', String(previewWheelBreakoutCollections));
+  }, [previewWheelBreakoutCollections]);
+
   const [activePlayingMediaId, setActivePlayingMediaId] = React.useState<string | null>(null);
   const [activePlayingElapsedSeconds, setActivePlayingElapsedSeconds] = React.useState(0);
 
@@ -314,14 +326,15 @@ export function SceneLaunchWorkspace({
     collection: SceneLaunchBeat,
     visited = new Set<string>()
   ): SceneLaunchMediaItem[] => {
-    if (visited.has(collection.id)) return [];
-    visited.add(collection.id);
+    const latestCollection = sceneLaunchBeats.find(b => b.id === collection.id) || collection;
+    if (visited.has(latestCollection.id)) return [];
+    visited.add(latestCollection.id);
 
     const items: SceneLaunchMediaItem[] = [];
 
-    for (const gridItem of collection.gridOrder) {
+    for (const gridItem of latestCollection.gridOrder) {
       if (gridItem.type === 'media') {
-        const found = collection.items.find(x => x.id === gridItem.id);
+        const found = latestCollection.items.find(x => x.id === gridItem.id);
         if (found) {
           items.push(found);
         }
@@ -354,12 +367,13 @@ export function SceneLaunchWorkspace({
     collection: SceneLaunchBeat,
     visited = new Set<string>()
   ): number => {
-    if (visited.has(collection.id)) return 0;
-    visited.add(collection.id);
+    const latestCollection = sceneLaunchBeats.find(b => b.id === collection.id) || collection;
+    if (visited.has(latestCollection.id)) return 0;
+    visited.add(latestCollection.id);
 
-    return collection.gridOrder.reduce((sum, orderItem) => {
+    return latestCollection.gridOrder.reduce((sum, orderItem) => {
       if (orderItem.type === 'media') {
-        const m = collection.items.find(x => x.id === orderItem.id);
+        const m = latestCollection.items.find(x => x.id === orderItem.id);
         if (!m) return sum;
         const d = resizingItem && resizingItem.id === m.id
           ? resizingItem.currentDuration
@@ -628,13 +642,14 @@ export function SceneLaunchWorkspace({
       targetId: string,
       visited = new Set<string>()
     ): number | null => {
-      if (visited.has(parent.id)) return null;
-      visited.add(parent.id);
+      const latestParent = sceneLaunchBeats.find(b => b.id === parent.id) || parent;
+      if (visited.has(latestParent.id)) return null;
+      visited.add(latestParent.id);
 
       let relTime = 0;
-      for (const g of parent.gridOrder) {
+      for (const g of latestParent.gridOrder) {
         if (g.type === 'media') {
-          const m = parent.items.find(x => x.id === g.id);
+          const m = latestParent.items.find(x => x.id === g.id);
           const d = m ? getSceneLaunchMediaTimelineDuration(m) : 3;
           relTime += d;
         } else {
@@ -899,13 +914,14 @@ export function SceneLaunchWorkspace({
 
   const handleBoardContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>, insertionIndex: number) => {
     event.preventDefault();
+    if (!activeSceneLaunchBeatId) return; // Prevent context menu at workspace root level
     setSceneLaunchContextMenu({
       type: 'board',
       x: event.clientX,
       y: event.clientY,
       insertionIndex,
     });
-  }, [setSceneLaunchContextMenu]);
+  }, [setSceneLaunchContextMenu, activeSceneLaunchBeatId]);
 
   // Preview animation tick effect
   React.useEffect(() => {
@@ -1033,6 +1049,7 @@ export function SceneLaunchWorkspace({
 
   const handleSceneLaunchDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+    if (!activeSceneLaunchBeatId) return; // Block files drop at root level
     if (event.dataTransfer.getData('text/plain')) return;
     addFilesToSceneLaunchMedia(Array.from(event.dataTransfer.files || []));
   };
@@ -1385,16 +1402,23 @@ export function SceneLaunchWorkspace({
     }).filter((item): item is typeof timelineItems[number] => item !== null);
   }, [previewWheelCollectionPath, sceneLaunchBeats, timelineItems]);
 
-  const getCollectionWheelRepresentative = React.useCallback((collection: SceneLaunchBeat): SceneLaunchMediaItem => (
-    getRecursiveMediaItems(collection)[0] ?? {
+  const getCollectionWheelRepresentative = React.useCallback((collection: SceneLaunchBeat): SceneLaunchMediaItem => {
+    const first = getRecursiveMediaItems(collection)[0];
+    if (first) {
+      return {
+        ...first,
+        id: `collection-placeholder:${collection.id}`,
+      };
+    }
+    return {
       id: `collection-placeholder:${collection.id}`,
       clipId: '',
       name: collection.name,
       type: 'image',
       previewUrl: COLLECTION_WHEEL_PLACEHOLDER,
       durationSeconds: 3,
-    }
-  ), [getRecursiveMediaItems]);
+    };
+  }, [getRecursiveMediaItems]);
 
   const collectionAwareWheelItems = React.useMemo(() => previewWheelSourceItems.flatMap(item => {
     if (item.type === 'media') return [item.item];
@@ -1414,50 +1438,45 @@ export function SceneLaunchWorkspace({
 
   const collectionAwareWheelSequences = React.useMemo(() => {
     const sequences: Record<string, SceneLaunchMediaItem[]> = {};
-    previewWheelSourceItems.forEach(item => {
-      if (item.type !== 'collection') return;
-      const collectionMedia = getRecursiveMediaItems(item.collection);
-      const representative = getCollectionWheelRepresentative(item.collection);
+    sceneLaunchBeats.forEach(beat => {
+      const collectionMedia = getRecursiveMediaItems(beat);
+      const representative = getCollectionWheelRepresentative(beat);
       sequences[representative.id] = collectionMedia;
     });
     return sequences;
-  }, [previewWheelSourceItems, getCollectionWheelRepresentative, getRecursiveMediaItems]);
+  }, [sceneLaunchBeats, getCollectionWheelRepresentative, getRecursiveMediaItems]);
 
   const collectionAwareWheelThumbnails = React.useMemo(() => {
     const thumbnails: Record<string, Record<string, SceneLaunchMediaItem>> = {};
 
-    previewWheelSourceItems.forEach(item => {
-      if (item.type !== 'collection') return;
-      const representative = getCollectionWheelRepresentative(item.collection);
+    sceneLaunchBeats.forEach(beat => {
+      const representative = getCollectionWheelRepresentative(beat);
 
       const childThumbnails: Record<string, SceneLaunchMediaItem> = {};
-      item.collection.gridOrder.forEach(orderItem => {
+      beat.gridOrder.forEach(orderItem => {
         if (orderItem.type === 'collection') {
-          const childCollection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+          const childCollection = sceneLaunchBeats.find(b => b.id === orderItem.id);
           if (!childCollection) return;
           const childRepresentative = getCollectionWheelRepresentative(childCollection);
           getRecursiveMediaItems(childCollection).forEach(media => {
             childThumbnails[media.id] = childRepresentative;
           });
         }
-        // Direct media items are not mapped to prevent wheel thumbnails from changing 
-        // during playback of individual media files (as that is shown in the main display).
       });
       thumbnails[representative.id] = childThumbnails;
     });
 
     return thumbnails;
-  }, [getCollectionWheelRepresentative, getRecursiveMediaItems, previewWheelSourceItems, sceneLaunchBeats]);
+  }, [getCollectionWheelRepresentative, getRecursiveMediaItems, sceneLaunchBeats]);
 
   const wheelCollectionIds = React.useMemo(() => {
     const ids: Record<string, string> = {};
-    previewWheelSourceItems.forEach(item => {
-      if (item.type !== 'collection') return;
-      const representative = getCollectionWheelRepresentative(item.collection);
-      ids[representative.id] = item.collection.id;
+    sceneLaunchBeats.forEach(beat => {
+      const representative = getCollectionWheelRepresentative(beat);
+      ids[representative.id] = beat.id;
     });
     return ids;
-  }, [getCollectionWheelRepresentative, previewWheelSourceItems]);
+  }, [getCollectionWheelRepresentative, sceneLaunchBeats]);
 
   const reorderCollectionAwareWheelItem = React.useCallback((
     draggedWheelId: string,
@@ -1549,7 +1568,149 @@ export function SceneLaunchWorkspace({
   }, [getCollectionWheelRepresentative, moveItemToTrash, moveSceneLaunchItemToParent, previewWheelSourceItems, setSceneLaunchItemDisabled]);
 
   const wheelReflectsCollections = previewWheelSequence === 'collections';
+
+  const breakoutData = React.useMemo(() => {
+    if (!previewWheelGridView || !previewWheelBreakoutCollections) return null;
+
+    const getCollectionDisplayItems = (collection: SceneLaunchBeat): SceneLaunchMediaItem[] => {
+      const latestCollection = sceneLaunchBeats.find(b => b.id === collection.id) || collection;
+      return latestCollection.gridOrder.map(orderItem => {
+        if (orderItem.type === 'media') {
+          return latestCollection.items.find(m => m.id === orderItem.id);
+        } else {
+          const childCollection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+          if (!childCollection) return null;
+          const childMedia = getRecursiveMediaItems(childCollection);
+          const representative = getCollectionWheelRepresentative(childCollection);
+          return {
+            ...representative,
+            name: childCollection.name,
+            disabled: childCollection.disabled,
+            durationSeconds: childMedia.reduce((total, media) => (
+              total + getSceneLaunchMediaPreviewDuration(media)
+            ), 0),
+          };
+        }
+      }).filter((x): x is SceneLaunchMediaItem => x !== null);
+    };
+
+    const chunks: SceneLaunchMediaItem[][] = [];
+    const titles: string[] = [];
+    const isCollection: boolean[] = [];
+    let currentMediaChunk: SceneLaunchMediaItem[] = [];
+
+    for (const item of previewWheelSourceItems) {
+      if (item.type === 'media') {
+        currentMediaChunk.push(item.item);
+      } else if (item.type === 'collection') {
+        if (currentMediaChunk.length > 0) {
+          chunks.push(currentMediaChunk);
+          titles.push("Current Collection");
+          isCollection.push(false);
+          currentMediaChunk = [];
+        }
+
+        const displayItems = getCollectionDisplayItems(item.collection);
+        if (displayItems.length > 0) {
+          chunks.push(displayItems);
+          titles.push(item.collection.name);
+          isCollection.push(true);
+        }
+      }
+    }
+
+    if (currentMediaChunk.length > 0) {
+      chunks.push(currentMediaChunk);
+      titles.push("Current Collection");
+      isCollection.push(false);
+    }
+
+    return { chunks, titles, isCollection };
+  }, [previewWheelGridView, previewWheelBreakoutCollections, previewWheelSourceItems, sceneLaunchBeats, getCollectionWheelRepresentative, getRecursiveMediaItems, getSceneLaunchMediaPreviewDuration]);
+
+  const breakoutChunks = React.useMemo(() => breakoutData?.chunks ?? null, [breakoutData]);
+  const breakoutTitles = React.useMemo(() => breakoutData?.titles ?? null, [breakoutData]);
+  const breakoutIsCollection = React.useMemo(() => breakoutData?.isCollection ?? null, [breakoutData]);
+
+  const currentCollectionName = React.useMemo(() => {
+    if (previewWheelCollectionPath.length > 0) {
+      const activeId = previewWheelCollectionPath[previewWheelCollectionPath.length - 1];
+      const activeBeat = sceneLaunchBeats.find(b => b.id === activeId);
+      return activeBeat ? activeBeat.name : 'Workspace';
+    }
+    if (board.sceneLaunchBeatPath.length > 0) {
+      const activeId = board.sceneLaunchBeatPath[board.sceneLaunchBeatPath.length - 1];
+      const activeBeat = sceneLaunchBeats.find(b => b.id === activeId);
+      return activeBeat ? activeBeat.name : 'Workspace';
+    }
+    return 'Workspace';
+  }, [previewWheelCollectionPath, board.sceneLaunchBeatPath, sceneLaunchBeats]);
+
+  const parentCollection = React.useMemo(() => {
+    if (previewWheelCollectionPath.length > 0) {
+      const parentId = previewWheelCollectionPath[previewWheelCollectionPath.length - 2];
+      if (parentId) {
+        return sceneLaunchBeats.find(beat => beat.id === parentId) ?? null;
+      }
+      return null;
+    }
+    if (board.sceneLaunchBeatPath.length > 0) {
+      const parentPath = board.sceneLaunchBeatPath.slice(0, -1);
+      const parentId = parentPath[parentPath.length - 1];
+      if (parentId) {
+        return sceneLaunchBeats.find(beat => beat.id === parentId) ?? null;
+      }
+      return null;
+    }
+    return null;
+  }, [previewWheelCollectionPath, board.sceneLaunchBeatPath, sceneLaunchBeats]);
+
+  const parentCollectionName = React.useMemo(() => {
+    if (parentCollection) return parentCollection.name;
+    const canNavBack = previewWheelCollectionPath.length > 0 || board.sceneLaunchBeatPath.length > 0;
+    return canNavBack ? 'Workspace' : undefined;
+  }, [parentCollection, previewWheelCollectionPath.length, board.sceneLaunchBeatPath.length]);
+
+  const parentCollectionThumbnailUrl = React.useMemo(() => {
+    if (parentCollection) {
+      const representative = getCollectionWheelRepresentative(parentCollection);
+      return representative.type === 'video'
+        ? representative.posterUrl || representative.previewUrl
+        : representative.previewUrl;
+    }
+    const canNavBack = previewWheelCollectionPath.length > 0 || board.sceneLaunchBeatPath.length > 0;
+    if (canNavBack && flattenedTimelineMediaItems.length > 0) {
+      const firstWorkspaceItem = flattenedTimelineMediaItems[0];
+      return firstWorkspaceItem.type === 'video'
+        ? firstWorkspaceItem.posterUrl || firstWorkspaceItem.previewUrl
+        : firstWorkspaceItem.previewUrl;
+    }
+    return undefined;
+  }, [parentCollection, getCollectionWheelRepresentative, previewWheelCollectionPath.length, board.sceneLaunchBeatPath.length, flattenedTimelineMediaItems]);
+
+  const collectionBreadcrumbs = React.useMemo(() => {
+    const path = previewWheelCollectionPath.length > 0
+      ? previewWheelCollectionPath
+      : board.sceneLaunchBeatPath;
+
+    const crumbs = [{ id: 'root', name: 'Workspace' }];
+
+    path.forEach(beatId => {
+      const beat = sceneLaunchBeats.find(b => b.id === beatId);
+      if (beat) {
+        crumbs.push({ id: beat.id, name: beat.name });
+      }
+    });
+
+    return crumbs;
+  }, [previewWheelCollectionPath, board.sceneLaunchBeatPath, sceneLaunchBeats]);
+
+
+
   const previewWheelItems = React.useMemo(() => {
+    if (previewWheelGridView && previewWheelBreakoutCollections && breakoutChunks) {
+      return breakoutChunks.flat();
+    }
     const sourceItems = wheelReflectsCollections
       ? collectionAwareWheelItems
       : flattenedTimelineMediaItems;
@@ -1559,9 +1720,34 @@ export function SceneLaunchWorkspace({
       seenIds.add(item.id);
       return true;
     });
-  }, [collectionAwareWheelItems, flattenedTimelineMediaItems, wheelReflectsCollections]);
+  }, [breakoutChunks, collectionAwareWheelItems, flattenedTimelineMediaItems, wheelReflectsCollections, previewWheelGridView, previewWheelBreakoutCollections]);
 
   const previewWheelSelectedMediaId = React.useMemo(() => {
+    if (previewWheelGridView && previewWheelBreakoutCollections && breakoutChunks) {
+      if (!selectedPreviewMediaId) return '';
+      const flatDisplayItems = breakoutChunks.flat();
+      for (const displayItem of flatDisplayItems) {
+        if (displayItem.id === selectedPreviewMediaId) {
+          return displayItem.id;
+        }
+        if (displayItem.id.startsWith('collection-placeholder:')) {
+          const collectionId = displayItem.id.slice('collection-placeholder:'.length);
+          const col = sceneLaunchBeats.find(b => b.id === collectionId);
+          if (col && getRecursiveMediaItems(col).some(m => m.id === selectedPreviewMediaId)) {
+            return displayItem.id;
+          }
+        } else {
+          const collection = sceneLaunchBeats.find(beat => {
+            const rep = getCollectionWheelRepresentative(beat);
+            return rep.id === displayItem.id;
+          });
+          if (collection && getRecursiveMediaItems(collection).some(m => m.id === selectedPreviewMediaId)) {
+            return displayItem.id;
+          }
+        }
+      }
+      return selectedPreviewMediaId;
+    }
     if (!wheelReflectsCollections || !selectedPreviewMediaId) return selectedPreviewMediaId || '';
 
     const containingItem = previewWheelSourceItems.find(item => (
@@ -1573,7 +1759,7 @@ export function SceneLaunchWorkspace({
     if (!containingItem) return selectedPreviewMediaId;
     if (containingItem.type === 'media') return containingItem.item.id;
     return getCollectionWheelRepresentative(containingItem.collection).id;
-  }, [getCollectionWheelRepresentative, getRecursiveMediaItems, previewWheelSourceItems, selectedPreviewMediaId, wheelReflectsCollections]);
+  }, [getCollectionWheelRepresentative, getRecursiveMediaItems, previewWheelSourceItems, selectedPreviewMediaId, wheelReflectsCollections, previewWheelGridView, previewWheelBreakoutCollections]);
 
 
   const previewSceneLaunchMediaId = React.useCallback((mediaId: string) => {
@@ -1593,8 +1779,54 @@ export function SceneLaunchWorkspace({
     previewSceneLaunchMediaId(item.id);
   }, [previewSceneLaunchMediaId]);
 
+  const navigateToBreadcrumb = React.useCallback((crumbIndex: number) => {
+    const path = previewWheelCollectionPath.length > 0
+      ? previewWheelCollectionPath
+      : board.sceneLaunchBeatPath;
+
+    if (crumbIndex === 0) {
+      setPreviewWheelCollectionPath([]);
+      const parentPath: string[] = [];
+      let firstMedia: SceneLaunchMediaItem | undefined;
+      for (const orderItem of sceneLaunchGridOrder) {
+        if (orderItem.type === 'media') {
+          firstMedia = sceneLaunchMediaItems.find(media => media.id === orderItem.id);
+        } else {
+          const collection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+          firstMedia = collection ? getRecursiveMediaItems(collection)[0] : undefined;
+        }
+        if (firstMedia) break;
+      }
+      if (firstMedia) {
+        navigateToPath([...parentPath, 'workbench'], firstMedia.id);
+      }
+      return;
+    }
+
+    const nextPath = path.slice(0, crumbIndex);
+    const targetBeatId = nextPath[nextPath.length - 1];
+    const beat = targetBeatId ? sceneLaunchBeats.find(b => b.id === targetBeatId) : null;
+    const firstMedia = beat
+      ? getRecursiveMediaItems(beat)[0]
+      : flattenedTimelineMediaItems[0];
+
+    if (previewWheelCollectionPath.length > 0) {
+      setPreviewWheelCollectionPath(nextPath);
+      if (firstMedia) {
+        previewSceneLaunchMediaId(firstMedia.id);
+      }
+    } else {
+      if (firstMedia) {
+        navigateToPath([...nextPath, 'workbench'], firstMedia.id);
+      }
+    }
+  }, [previewWheelCollectionPath, board.sceneLaunchBeatPath, sceneLaunchBeats, sceneLaunchGridOrder, sceneLaunchMediaItems, getRecursiveMediaItems, navigateToPath, flattenedTimelineMediaItems, previewSceneLaunchMediaId]);
+
   const openPreviewWheelCollection = React.useCallback((representativeMediaId: string) => {
-    const collectionId = wheelCollectionIds[representativeMediaId];
+    let collectionId = wheelCollectionIds[representativeMediaId];
+    if (!collectionId && representativeMediaId.startsWith('collection-placeholder:')) {
+      collectionId = representativeMediaId.slice('collection-placeholder:'.length);
+    }
     const collection = collectionId
       ? sceneLaunchBeats.find(beat => beat.id === collectionId)
       : null;
@@ -2110,13 +2342,21 @@ export function SceneLaunchWorkspace({
                 transition={{ type: 'spring', stiffness: 145, damping: 18, mass: 1.15 }}
               >
             <section className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/95 shadow-2xl shadow-black/50">
-
-              <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center bg-black">
+<div className="relative flex min-h-0 flex-1 flex-col items-center justify-center bg-black">
                 {selectedPreviewMediaId ? (
                   <>
                     <div className="min-h-0 w-full flex-1">
                       <SceneLaunchPreviewWheelV3
                       items={previewWheelItems}
+                      customChunks={breakoutChunks || undefined}
+                      breakoutTitles={breakoutTitles || undefined}
+                      breakoutIsCollection={breakoutIsCollection || undefined}
+                      breakoutRepresentativeUrls={breakoutRepresentativeUrls || undefined}
+                      currentCollectionName={currentCollectionName}
+                      parentCollectionThumbnailUrl={parentCollectionThumbnailUrl}
+                      parentCollectionName={parentCollectionName}
+                      breadcrumbs={collectionBreadcrumbs}
+                      onBreadcrumbClick={navigateToBreadcrumb}
                       itemSequences={wheelReflectsCollections ? collectionAwareWheelSequences : undefined}
                       itemSequenceThumbnails={wheelReflectsCollections ? collectionAwareWheelThumbnails : undefined}
                       onCollectionOpen={wheelReflectsCollections ? openPreviewWheelCollection : undefined}
@@ -2250,7 +2490,7 @@ export function SceneLaunchWorkspace({
                       />
                     </div>
 
-                    <div className="absolute right-4 top-4 z-40">
+                    <div className="absolute right-4 top-4 z-50">
                       <Popover>
                         <PopoverTrigger
                           className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-700/80 bg-zinc-950/80 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 shadow-lg backdrop-blur-md transition-colors"
@@ -2374,6 +2614,17 @@ export function SceneLaunchWorkspace({
                                 onCheckedChange={setPreviewWheelGridView}
                               />
                             </div>
+
+                            {previewWheelGridView && (
+                              <div className="flex items-center justify-between gap-4">
+                                <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Breakout Collections</span>
+                                <Switch
+                                  size="sm"
+                                  checked={previewWheelBreakoutCollections}
+                                  onCheckedChange={setPreviewWheelBreakoutCollections}
+                                />
+                              </div>
+                            )}
 
                             {previewWheelSizing === 'duration' && (
                               <div className="space-y-1.5 pt-1">

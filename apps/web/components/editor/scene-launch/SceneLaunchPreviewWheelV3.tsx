@@ -1,6 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Ban, Clapperboard, CornerUpLeft, FolderInput, Play, Pause, Repeat, AlignLeft, AlignCenter, AlignRight, Trash2, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
+import { ArrowLeft, Ban, Clapperboard, Folder, CornerUpLeft, FolderInput, Play, Pause, Repeat, AlignLeft, AlignCenter, AlignRight, Trash2, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { VIDEO_PLACEHOLDER, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
@@ -74,6 +74,10 @@ interface SceneLaunchPreviewWheelV3Props {
   onCollectionOpen?: (representativeMediaId: string) => void;
   canNavigateBack?: boolean;
   onNavigateBack?: () => void;
+  parentCollectionThumbnailUrl?: string;
+  parentCollectionName?: string;
+  breadcrumbs?: { id: string; name: string }[];
+  onBreadcrumbClick?: (index: number) => void;
   selectedMediaId: string;
   effect: SceneLaunchPreviewWheelV3Effect;
   sizing: SceneLaunchPreviewWheelV3Sizing;
@@ -85,6 +89,15 @@ interface SceneLaunchPreviewWheelV3Props {
   onCenteredMediaChange: (mediaId: string) => void;
   renderSelectedItemOverlay?: (item: SceneLaunchMediaItem) => React.ReactNode;
   renderGalleryTrimOverlay?: (item: SceneLaunchMediaItem) => React.ReactNode;
+  customChunks?: SceneLaunchMediaItem[][];
+  breakoutTitles?: string[];
+  breakoutIsCollection?: boolean[];
+  breakoutRepresentativeUrls?: (string | null)[];
+  currentCollectionName?: string;
+  rowTitle?: string;
+  rowIconUrl?: string;
+  rowIsCollection?: boolean;
+  isFirstGridRow?: boolean;
   isPreviewPlaying?: boolean;
   loopPreviewPlayback?: boolean;
   onPreviewPlaybackComplete?: () => void;
@@ -486,6 +499,10 @@ export function SceneLaunchPreviewWheelV3({
   onCollectionOpen,
   canNavigateBack = false,
   onNavigateBack,
+  parentCollectionThumbnailUrl,
+  parentCollectionName,
+  breadcrumbs,
+  onBreadcrumbClick,
   selectedMediaId,
   effect,
   sizing,
@@ -497,6 +514,15 @@ export function SceneLaunchPreviewWheelV3({
   onCenteredMediaChange,
   renderSelectedItemOverlay,
   renderGalleryTrimOverlay,
+  customChunks,
+  breakoutTitles,
+  breakoutIsCollection,
+  breakoutRepresentativeUrls,
+  currentCollectionName,
+  rowTitle,
+  rowIconUrl,
+  rowIsCollection,
+  isFirstGridRow = false,
   isPreviewPlaying = false,
   loopPreviewPlayback = false,
   onPreviewPlaybackComplete,
@@ -642,6 +668,14 @@ export function SceneLaunchPreviewWheelV3({
   const [isDragging, setIsDragging] = React.useState(false);
   const [activeGridPlayheadRow, setActiveGridPlayheadRow] = React.useState<number | null>(null);
   const [gridPlayheadRatio, setGridPlayheadRatio] = React.useState<number | null>(null);
+  const [rulerHoveredX, setRulerHoveredX] = React.useState<number | null>(null);
+  const handleRulerMouseMove = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setRulerHoveredX(event.clientX - rect.left);
+  }, []);
+  const handleRulerMouseLeave = React.useCallback(() => {
+    setRulerHoveredX(null);
+  }, []);
   const [isPlayheadDragging, setIsPlayheadDragging] = React.useState(false);
   const [isSpinning, setIsSpinning] = React.useState(false);
   const [isSnapping, setIsSnapping] = React.useState(false);
@@ -681,6 +715,7 @@ export function SceneLaunchPreviewWheelV3({
   const [trimOverlayMediaId, setTrimOverlayMediaId] = React.useState<string | null>(null);
   const playheadPositionRatioRef = React.useRef(0.5);
   const [playheadPositionRatio, setPlayheadPositionRatio] = React.useState(0.5);
+
 
   React.useEffect(() => {
     if (hidePreview) return;
@@ -734,18 +769,24 @@ export function SceneLaunchPreviewWheelV3({
         220,
         620,
       ));
-  const rowHeight = isGallery
-    ? itemHeight + 66
-    : itemHeight + 36;
-  const itemCenterY = isGallery
-    ? rowHeight - 12 - itemHeight / 2
-    : Math.max(
-        itemHeight / 2 + 32,
-        viewportSize.height - itemHeight / 2 - 24,
-      );
-  const rulerTop = isGallery
-    ? 22
-    : Math.max(2, itemCenterY - itemHeight / 2 - 28);
+  const rowHeight = hidePreview
+    ? itemHeight + 40
+    : isGallery
+      ? itemHeight + 66
+      : itemHeight + 36;
+  const itemCenterY = hidePreview
+    ? itemHeight / 2 + 32
+    : isGallery
+      ? rowHeight - 12 - itemHeight / 2
+      : Math.max(
+          itemHeight / 2 + 32,
+          viewportSize.height - itemHeight / 2 - 24,
+        );
+  const rulerTop = hidePreview
+    ? 4
+    : isGallery
+      ? 22
+      : Math.max(2, itemCenterY - itemHeight / 2 - 28);
   const itemTop = itemCenterY - itemHeight / 2;
   const centerX = viewportSize.width > 0 ? viewportSize.width / 2 : 480;
   const playheadX = clamp(
@@ -897,13 +938,14 @@ export function SceneLaunchPreviewWheelV3({
   }, [viewportSize.width, gridColStride]);
 
   const chunks = React.useMemo(() => {
+    if (customChunks) return customChunks;
     if (!gridView) return [];
     const result: SceneLaunchMediaItem[][] = [];
     for (let i = 0; i < items.length; i += itemsPerRow) {
       result.push(items.slice(i, i + itemsPerRow));
     }
     return result;
-  }, [items, itemsPerRow, gridView]);
+  }, [customChunks, items, itemsPerRow, gridView]);
 
   const getGridRowForMedia = React.useCallback((mediaId: string | null | undefined) => {
     if (!mediaId) return -1;
@@ -2336,7 +2378,7 @@ export function SceneLaunchPreviewWheelV3({
     seekGridPlayheadToXRef.current = seekGridPlayheadToX;
   }, [seekGridPlayheadToX]);
 
-  const handleGridSeekRailClick = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+  const handleGridSeekRailClick = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (event.detail === 0) return;
     const viewportBounds = viewportRef.current?.getBoundingClientRect();
     if (!viewportBounds) return;
@@ -2478,6 +2520,177 @@ export function SceneLaunchPreviewWheelV3({
     }
   }, [applyDurationResize, onSelectedItemDurationChangeEnd, selectedItemDurationSeconds, selectedItemTrimStartSeconds]);
 
+  const renderPlayer = () => {
+    if (!isGallery || hidePreview || !effectiveScrubSnapshot) return null;
+    return (
+      <div
+        className={cn(
+          "relative flex min-h-0 flex-col items-center justify-center p-2 pb-1.5",
+          gridView ? "w-full bg-[#0c0c0e] pt-1 pb-1 px-1.5" : "flex-1"
+        )}
+      >
+        {/* Playback Controls above display area */}
+        <div className={cn("mb-2 flex shrink-0 justify-center", gridView && "mb-1")}>
+          <div className="flex items-center justify-center gap-2 rounded-full border border-white/5 bg-zinc-900/40 px-2.5 py-1 shadow-md backdrop-blur-md">
+            {/* Go to First Button */}
+            <button
+              type="button"
+              onClick={() => snapToIndex(0)}
+              disabled={centeredIndex === 0}
+              className={cn(
+                'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                'text-zinc-400 hover:bg-white/5 hover:text-white'
+              )}
+              title="Go to First Item"
+              aria-label="Go to First Item"
+            >
+              <ChevronsLeft className="h-3.5 w-3.5" />
+            </button>
+
+            {/* Go to Previous Button */}
+            <button
+              type="button"
+              onClick={() => snapToIndex(centeredIndex - 1)}
+              disabled={centeredIndex === 0}
+              className={cn(
+                'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                'text-zinc-400 hover:bg-white/5 hover:text-white'
+              )}
+              title="Go to Previous Item"
+              aria-label="Go to Previous Item"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+
+            {/* Play/Pause Button */}
+            <button
+              type="button"
+              onClick={onTogglePlayback}
+              className={cn(
+                'flex h-7 w-7 items-center justify-center rounded-full text-white transition-all cursor-pointer hover:scale-105 active:scale-95',
+                isPreviewPlaying ? 'bg-red-650/80 hover:bg-red-700/90' : 'bg-indigo-600/80 hover:bg-indigo-700/90'
+              )}
+              title={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
+              aria-label={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
+            >
+              {isPreviewPlaying ? (
+                <Pause className="h-3.5 w-3.5 fill-current" />
+              ) : (
+                <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />
+              )}
+            </button>
+
+            {/* Go to Next Button */}
+            <button
+              type="button"
+              onClick={() => snapToIndex(centeredIndex + 1)}
+              disabled={centeredIndex === items.length - 1}
+              className={cn(
+                'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                'text-zinc-400 hover:bg-white/5 hover:text-white'
+              )}
+              title="Go to Next Item"
+              aria-label="Go to Next Item"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+
+            {/* Go to Last Button */}
+            <button
+              type="button"
+              onClick={() => snapToIndex(items.length - 1)}
+              disabled={centeredIndex === items.length - 1}
+              className={cn(
+                'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
+                'text-zinc-400 hover:bg-white/5 hover:text-white'
+              )}
+              title="Go to Last Item"
+              aria-label="Go to Last Item"
+            >
+              <ChevronsRight className="h-3.5 w-3.5" />
+            </button>
+
+            <div className="h-3.5 w-px bg-zinc-800" />
+
+            {/* Loop Toggle */}
+            <button
+              type="button"
+              onClick={onToggleLoop}
+              className={cn(
+                'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
+                loopPreviewPlayback
+                  ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
+                  : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+              )}
+              title={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
+              aria-label={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
+            >
+              <Repeat className="h-3.5 w-3.5" />
+            </button>
+
+            <div className="h-3.5 w-px bg-zinc-800" />
+
+            {/* Playhead Center Reset */}
+            <button
+              type="button"
+              onClick={centerPlayhead}
+              className={cn(
+                'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
+                Math.abs(playheadPositionRatio - 0.5) > 0.001
+                  ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
+                  : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+              )}
+              title="Center playhead"
+              aria-label="Center playhead"
+            >
+              <AlignCenter className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Display Area */}
+        <div
+          ref={galleryPreviewRef}
+          className="relative overflow-hidden rounded-md border border-white/10 bg-black shadow-2xl shadow-black/60"
+          style={{ height: galleryPreviewHeight, width: galleryPreviewWidth }}
+        >
+          <GalleryCanvasPreview
+            snapshot={effectiveScrubSnapshot}
+            isPlaying={isPreviewPlaying}
+          />
+          {effectiveScrubSnapshot.media.id === selectedMediaId &&
+            effectiveScrubSnapshot.media.type === 'video' &&
+            renderGalleryTrimOverlay && (
+              <div
+                ref={trimOverlayRef}
+                className={cn(
+                  "absolute inset-x-3 bottom-3 z-20",
+                  trimOverlayMediaId === selectedMediaId
+                    ? "pointer-events-auto visible"
+                    : "pointer-events-none invisible",
+                )}
+              >
+                {renderGalleryTrimOverlay(effectiveScrubSnapshot.media)}
+              </div>
+            )}
+        </div>
+
+        {/* Timestamp below player */}
+        <div className={cn("mt-2 text-center", gridView && "mt-1")}>
+          <div
+            ref={prominentTimestampRef}
+            role="timer"
+            aria-live="off"
+            aria-label="Playback time"
+            className="inline-block rounded border border-indigo-400/20 bg-black/70 px-3 py-1 font-mono text-xs font-black tabular-nums tracking-wide text-indigo-100 shadow-lg shadow-black/40"
+          >
+            {formatPlaybackTimestamp(effectiveScrubSnapshot.timelineTimeSeconds, totalDurationSeconds)}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   if (items.length === 0) return null;
 
   return (
@@ -2510,179 +2723,88 @@ export function SceneLaunchPreviewWheelV3({
               ? "flex h-full flex-col"
               : "h-full"
       )}>
-        {isGallery && !hidePreview && effectiveScrubSnapshot && (
-          <div className={cn(
-            "relative flex min-h-0 flex-col items-center justify-center p-2 pb-1.5",
-            gridView ? "sticky top-0 z-30 shrink-0 bg-[#0c0c0e] pt-1 pb-1 px-1.5" : "flex-1"
-          )}>
-            {/* Playback Controls above display area */}
-            <div className={cn("mb-2 flex shrink-0 justify-center", gridView && "mb-1")}>
-              <div className="flex items-center justify-center gap-2 rounded-full border border-white/5 bg-zinc-900/40 px-2.5 py-1 shadow-md backdrop-blur-md">
-                {/* Go to First Button */}
-                <button
-                  type="button"
-                  onClick={() => snapToIndex(0)}
-                  disabled={centeredIndex === 0}
-                  className={cn(
-                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
-                    'text-zinc-400 hover:bg-white/5 hover:text-white'
-                  )}
-                  title="Go to First Item"
-                  aria-label="Go to First Item"
-                >
-                  <ChevronsLeft className="h-3.5 w-3.5" />
-                </button>
-
-                {/* Go to Previous Button */}
-                <button
-                  type="button"
-                  onClick={() => snapToIndex(centeredIndex - 1)}
-                  disabled={centeredIndex === 0}
-                  className={cn(
-                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
-                    'text-zinc-400 hover:bg-white/5 hover:text-white'
-                  )}
-                  title="Go to Previous Item"
-                  aria-label="Go to Previous Item"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </button>
-
-                {/* Play/Pause Button */}
-                <button
-                  type="button"
-                  onClick={onTogglePlayback}
-                  className={cn(
-                    'flex h-7 w-7 items-center justify-center rounded-full text-white transition-all cursor-pointer hover:scale-105 active:scale-95',
-                    isPreviewPlaying ? 'bg-red-650/80 hover:bg-red-700/90' : 'bg-indigo-600/80 hover:bg-indigo-700/90'
-                  )}
-                  title={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
-                  aria-label={isPreviewPlaying ? 'Pause Preview' : 'Play Preview'}
-                >
-                  {isPreviewPlaying ? (
-                    <Pause className="h-3.5 w-3.5 fill-current" />
-                  ) : (
-                    <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />
-                  )}
-                </button>
-
-                {/* Go to Next Button */}
-                <button
-                  type="button"
-                  onClick={() => snapToIndex(centeredIndex + 1)}
-                  disabled={centeredIndex === items.length - 1}
-                  className={cn(
-                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
-                    'text-zinc-400 hover:bg-white/5 hover:text-white'
-                  )}
-                  title="Go to Next Item"
-                  aria-label="Go to Next Item"
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </button>
-
-                {/* Go to Last Button */}
-                <button
-                  type="button"
-                  onClick={() => snapToIndex(items.length - 1)}
-                  disabled={centeredIndex === items.length - 1}
-                  className={cn(
-                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-30',
-                    'text-zinc-400 hover:bg-white/5 hover:text-white'
-                  )}
-                  title="Go to Last Item"
-                  aria-label="Go to Last Item"
-                >
-                  <ChevronsRight className="h-3.5 w-3.5" />
-                </button>
-
-                <div className="h-3.5 w-px bg-zinc-800" />
-
-                {/* Loop Toggle */}
-                <button
-                  type="button"
-                  onClick={onToggleLoop}
-                  className={cn(
-                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
-                    loopPreviewPlayback
-                      ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
-                      : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
-                  )}
-                  title={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
-                  aria-label={loopPreviewPlayback ? 'Disable Loop' : 'Enable Loop'}
-                >
-                  <Repeat className="h-3.5 w-3.5" />
-                </button>
-
-                <div className="h-3.5 w-px bg-zinc-800" />
-
-                {/* Playhead Center Reset */}
-                <button
-                  type="button"
-                  onClick={centerPlayhead}
-                  className={cn(
-                    'flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 cursor-pointer',
-                    Math.abs(playheadPositionRatio - 0.5) > 0.001
-                      ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30'
-                      : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
-                  )}
-                  title="Center playhead"
-                  aria-label="Center playhead"
-                >
-                  <AlignCenter className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Display Area */}
-            <div
-              ref={galleryPreviewRef}
-              className="relative overflow-hidden rounded-md border border-white/10 bg-black shadow-2xl shadow-black/60"
-              style={{ height: galleryPreviewHeight, width: galleryPreviewWidth }}
-            >
-              <GalleryCanvasPreview
-                snapshot={effectiveScrubSnapshot}
-                isPlaying={isPreviewPlaying}
-              />
-              {effectiveScrubSnapshot.media.id === selectedMediaId &&
-                effectiveScrubSnapshot.media.type === 'video' &&
-                renderGalleryTrimOverlay && (
-                  <div
-                    ref={trimOverlayRef}
-                    className={cn(
-                      "absolute inset-x-3 bottom-3 z-20",
-                      trimOverlayMediaId === selectedMediaId
-                        ? "pointer-events-auto visible"
-                        : "pointer-events-none invisible",
-                    )}
+        {gridView && !hidePreview ? (
+          <div className="sticky top-0 z-45 flex shrink-0 flex-col bg-[#0c0c0e] border-b border-zinc-900 shadow-md">
+            {/* Sticky Header */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800/40">
+              <div className="flex items-center gap-3">
+                {onNavigateBack && !isFirstGridRow && (
+                  <button
+                    type="button"
+                    title={canNavigateBack ? (parentCollectionName ? `Back to ${parentCollectionName}` : 'Back to parent collection') : 'No parent collection'}
+                    aria-label={canNavigateBack ? (parentCollectionName ? `Back to ${parentCollectionName}` : 'Back to parent collection') : 'No parent collection'}
+                    disabled={!canNavigateBack}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onNavigateBack();
+                    }}
+                    className="group relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-zinc-700 bg-zinc-800 text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    {renderGalleryTrimOverlay(effectiveScrubSnapshot.media)}
+                    {canNavigateBack && parentCollectionThumbnailUrl ? (
+                      <>
+                        <img
+                          src={parentCollectionThumbnailUrl}
+                          alt=""
+                          className="absolute inset-0 h-full w-full object-cover opacity-60 transition-opacity duration-200 group-hover:opacity-80"
+                        />
+                        <div className="absolute inset-0 bg-black/40 transition-colors duration-200 group-hover:bg-black/25" />
+                        <ArrowLeft className="relative z-10 h-4 w-4 text-white drop-shadow-[0_1.5px_2px_rgba(0,0,0,0.85)] transition-transform duration-200 group-hover:-translate-x-0.5" />
+                      </>
+                    ) : (
+                      <ArrowLeft className="h-4 w-4" />
+                    )}
+                  </button>
+                )}
+                {breadcrumbs && breadcrumbs.length > 0 ? (
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-bold overflow-hidden select-none">
+                    {breadcrumbs.map((crumb, idx) => {
+                      const isLast = idx === breadcrumbs.length - 1;
+                      return (
+                        <React.Fragment key={crumb.id}>
+                          {idx > 0 && <span className="text-zinc-600 text-[10px] select-none font-mono">/</span>}
+                          {isLast ? (
+                            <span className="text-zinc-100 font-black truncate max-w-[150px]">
+                              {crumb.name}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => onBreadcrumbClick?.(idx)}
+                              className="hover:text-zinc-200 transition-colors truncate max-w-[120px] font-black"
+                            >
+                              {crumb.name}
+                            </button>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">
+                      {rowTitle || 'Current Collection'}
+                    </span>
+                    <span className="text-xs font-black text-zinc-200">
+                      {currentCollectionName || 'Workspace'}
+                    </span>
                   </div>
                 )}
-            </div>
-
-            {/* Timestamp below player */}
-            <div className={cn("mt-2 text-center", gridView && "mt-1")}>
-              <div
-                ref={prominentTimestampRef}
-                role="timer"
-                aria-live="off"
-                aria-label="Playback time"
-                className="inline-block rounded border border-indigo-400/20 bg-black/70 px-3 py-1 font-mono text-xs font-black tabular-nums tracking-wide text-indigo-100 shadow-lg shadow-black/40"
-              >
-                {formatPlaybackTimestamp(effectiveScrubSnapshot.timelineTimeSeconds, totalDurationSeconds)}
               </div>
             </div>
+            {/* Player preview */}
+            {renderPlayer()}
           </div>
+        ) : (
+          renderPlayer()
         )}
 
 
 
         {gridView ? (
-          <div className="flex shrink-0 flex-col gap-0.5 px-0 py-1 bg-zinc-950/40 border-t border-zinc-900">
+          <div className={cn("flex shrink-0 flex-col gap-6 px-0 py-4 bg-zinc-950/40", !hidePreview && "border-t border-zinc-900")}>
             {chunks.map((chunk, chunkIndex) => (
               <SceneLaunchPreviewWheelV3
-                key={chunkIndex}
+                key={`chunk-${chunkIndex}`}
                 items={chunk}
                 itemSequences={itemSequences}
                 itemSequenceThumbnails={itemSequenceThumbnails}
@@ -2713,6 +2835,9 @@ export function SceneLaunchPreviewWheelV3({
                 onToggleLoop={onToggleLoop}
                 showUniformRuler={showUniformRuler}
                 slideOnClick={slideOnClick}
+                rowTitle={breakoutTitles?.[chunkIndex]}
+                rowIconUrl={breakoutRepresentativeUrls?.[chunkIndex] || undefined}
+                rowIsCollection={breakoutIsCollection?.[chunkIndex]}
                 gridView={false}
                 gridColumnCount={itemsPerRow}
                 showPlayhead={visibleGridPlayheadRow === chunkIndex}
@@ -2733,7 +2858,7 @@ export function SceneLaunchPreviewWheelV3({
               aria-label="Timeline media wheel"
               className={cn(
                 "relative flex items-center overflow-hidden",
-                (isGallery || hidePreview) ? "shrink-0 border-t border-zinc-900 bg-zinc-950/20" : "h-full min-h-0",
+                (isGallery || hidePreview) ? cn("shrink-0 bg-zinc-950/20", !hidePreview && "border-t border-zinc-900") : "h-full min-h-0",
                 reorderPreview ? "cursor-grabbing select-none" : isDragging ? "cursor-grabbing select-none" : "cursor-grab"
               )}
               style={{
@@ -2748,6 +2873,56 @@ export function SceneLaunchPreviewWheelV3({
               onLostPointerCapture={endDrag}
               onKeyDown={handleKeyboardNavigation}
             >
+              {hidePreview && (
+                <>
+                  <div
+                    className={cn(
+                      "absolute left-0 right-0 top-0 z-[20] h-8 cursor-ew-resize pointer-events-auto flex items-center pl-4",
+                      rowIsCollection
+                        ? "bg-zinc-900/35 border-b border-indigo-950/45"
+                        : "bg-zinc-900/60 border-b border-zinc-800"
+                    )}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onMouseMove={handleRulerMouseMove}
+                    onMouseLeave={handleRulerMouseLeave}
+                    onClick={handleGridSeekRailClick}
+                  >
+                    {rowIsCollection && (
+                      <div className="absolute left-0 inset-y-0 w-[3px] bg-indigo-500/80 rounded-r" />
+                    )}
+                    {rowTitle && (
+                      <span className={cn(
+                        "pointer-events-none select-none flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider font-mono",
+                        rowIsCollection ? "text-indigo-400/95" : "text-zinc-500/95"
+                      )}>
+                        {rowIsCollection ? (
+                          <>
+                            <Folder className="h-3.5 w-3.5 text-indigo-400/80" />
+                            {rowIconUrl && (
+                              <div className="h-9 w-9 shrink-0 rounded-full border-2 border-indigo-400/50 overflow-hidden bg-zinc-950 flex items-center justify-center shadow-md my-0.5">
+                                <img src={rowIconUrl} alt="" className="h-full w-full object-cover" />
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <Clapperboard className="h-3.5 w-3.5 text-zinc-500/80" />
+                        )}
+                        {rowTitle}
+                      </span>
+                    )}
+                  </div>
+                  {rulerHoveredX !== null && (
+                    <div
+                      className="pointer-events-none absolute bottom-0 z-[195] w-px bg-indigo-400/50 shadow-[0_0_6px_rgba(129,140,248,0.7)]"
+                      style={{
+                        left: rulerHoveredX,
+                        top: 0,
+                        height: rowHeight,
+                      }}
+                    />
+                  )}
+                </>
+              )}
           <div className="sr-only" aria-live="polite">
             {centeredItem ? `Centered media ${centeredItem.name}` : 'Timeline media wheel'}
           </div>
@@ -2808,10 +2983,34 @@ export function SceneLaunchPreviewWheelV3({
                     className="relative h-full w-full overflow-hidden rounded-md border-2 border-indigo-300 bg-zinc-900 shadow-2xl shadow-black/70 ring-2 ring-indigo-400/40"
                     style={{ transformOrigin: 'center center', willChange: 'transform' }}
                   >
-                    {item.type === 'video' ? (
-                      <img src={item.posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
+                    {collectionItemIds.includes(item.id) ? (
+                      <div className="absolute inset-0 bg-zinc-900/40 p-1 select-none pointer-events-none flex items-center justify-center">
+                        <div className="h-[96%] aspect-square relative flex items-center justify-center">
+                          {/* Stack Circle 4 (bottom-most) */}
+                          <div className="absolute inset-0 rounded-full border border-zinc-800 bg-zinc-900/80 translate-x-[6px] -translate-y-[6px] opacity-50 scale-[0.97] shadow-sm z-0" />
+                          {/* Stack Circle 3 (middle-bottom) */}
+                          <div className="absolute inset-0 rounded-full border border-zinc-800/80 bg-zinc-900/90 translate-x-[4px] -translate-y-[4px] opacity-75 scale-[0.98] shadow-sm z-[3]" />
+                          {/* Stack Circle 2 (middle-top) */}
+                          <div className="absolute inset-0 rounded-full border border-zinc-700 bg-zinc-800 translate-x-[2px] -translate-y-[2px] opacity-90 scale-[0.99] shadow-md z-[6]" />
+                          {/* Top Circle 1 (main cover) */}
+                          <div className="relative w-full h-full rounded-full border-2 border-zinc-600/70 shadow-lg overflow-hidden bg-zinc-950 z-10 flex items-center justify-center">
+                            {item.type === 'video' ? (
+                              <img src={item.posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                            )}
+                          </div>
+                        </div>
+                        <div className="absolute top-2 left-2 flex items-center justify-center rounded-full bg-black/60 p-1.5 text-indigo-300 border border-zinc-800/30 z-20">
+                          <Folder className="h-2.5 w-2.5" />
+                        </div>
+                      </div>
                     ) : (
-                      <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                      item.type === 'video' ? (
+                        <img src={item.posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
+                      )
                     )}
                     <div className="absolute inset-0 bg-indigo-500/10" />
                   </div>
@@ -2820,22 +3019,7 @@ export function SceneLaunchPreviewWheelV3({
               document.body,
             );
           })()}
-          {hidePreview && showPlayhead && (
-            <button
-              type="button"
-              aria-label="Move shared playhead in this row"
-              title="Click to move the shared playhead"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={handleGridSeekRailClick}
-              onKeyDown={handleGridSeekRailKeyDown}
-              className="absolute z-[185] h-1.5 rounded-full border border-zinc-500/80 bg-zinc-600/90 shadow-inner shadow-black/50 transition-colors hover:bg-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
-              style={{
-                left: stripVisualLeft,
-                top: itemTop - 4,
-                width: stripEndPixel,
-              }}
-            />
-          )}
+
           {showPlayhead && isSharedPlayheadPlaying && (sizing === 'duration' || isGallery) && (
             <div
               aria-hidden="true"
@@ -2872,20 +3056,32 @@ export function SceneLaunchPreviewWheelV3({
               >
                 <span className="h-0 w-0 border-x-[15px] border-t-[20px] border-x-transparent border-t-indigo-500 drop-shadow-[0_3px_4px_rgba(0,0,0,0.7)]" />
               </button>
-              {onNavigateBack && (
+              {onNavigateBack && !isFirstGridRow && (
                 <button
                   type="button"
-                  title={canNavigateBack ? 'Back to parent collection' : 'No parent collection'}
-                  aria-label="Back to parent collection"
+                  title={canNavigateBack ? (parentCollectionName ? `Back to ${parentCollectionName}` : 'Back to parent collection') : 'No parent collection'}
+                  aria-label={canNavigateBack ? (parentCollectionName ? `Back to ${parentCollectionName}` : 'Back to parent collection') : 'No parent collection'}
                   disabled={!canNavigateBack}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
                     onNavigateBack();
                   }}
-                  className="pointer-events-auto absolute right-7 top-0 flex h-5 w-5 -translate-y-full items-center justify-center rounded-full border border-indigo-300/40 bg-indigo-500 text-white shadow-lg shadow-black/50 transition-colors hover:bg-indigo-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-500"
+                  className="group pointer-events-auto absolute right-7 top-0 flex h-6 w-6 -translate-y-full items-center justify-center overflow-hidden rounded-full border border-indigo-300/40 bg-indigo-500 text-white shadow-lg shadow-black/50 transition-colors hover:bg-indigo-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 disabled:cursor-not-allowed disabled:border-zinc-700 disabled:bg-zinc-800 disabled:text-zinc-500"
                 >
-                  <ArrowLeft className="h-3 w-3" />
+                  {canNavigateBack && parentCollectionThumbnailUrl ? (
+                    <>
+                      <img
+                        src={parentCollectionThumbnailUrl}
+                        alt=""
+                        className="absolute inset-0 h-full w-full object-cover opacity-60 transition-opacity duration-200 group-hover:opacity-85"
+                      />
+                      <div className="absolute inset-0 bg-black/35 transition-colors duration-200 group-hover:bg-black/20" />
+                      <ArrowLeft className="relative z-10 h-3.5 w-3.5 text-white drop-shadow-[0_1px_1.5px_rgba(0,0,0,0.85)] transition-transform duration-200 group-hover:-translate-x-0.5" />
+                    </>
+                  ) : (
+                    <ArrowLeft className="h-3 w-3" />
+                  )}
                 </button>
               )}
               <div aria-hidden="true" className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-indigo-300 shadow-[0_0_8px_rgba(165,180,252,0.9)]" />
@@ -3031,7 +3227,7 @@ export function SceneLaunchPreviewWheelV3({
               }
 
               return (
-                <React.Fragment key={item.id}>
+                <React.Fragment key={`${item.id}-${index}`}>
                   {(sizing === 'duration' || (sizing === 'uniform' && showUniformRuler)) && (
                     <div
                       aria-hidden="true"
@@ -3136,14 +3332,42 @@ export function SceneLaunchPreviewWheelV3({
                     }}
                     className="absolute inset-0 overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
                   >
-                    {thumbnailItem.type === 'video' ? (
-                      <img
-                        src={thumbnailItem.posterUrl || VIDEO_PLACEHOLDER}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
+                    {collectionItemIds.includes(item.id) ? (
+                      <div className="absolute inset-0 bg-zinc-900/40 p-1 select-none pointer-events-none flex items-center justify-center">
+                        <div className="h-[96%] aspect-square relative flex items-center justify-center">
+                          {/* Stack Circle 4 (bottom-most) */}
+                          <div className="absolute inset-0 rounded-full border border-zinc-800 bg-zinc-900/80 translate-x-[6px] -translate-y-[6px] opacity-50 scale-[0.97] shadow-sm z-0" />
+                          {/* Stack Circle 3 (middle-bottom) */}
+                          <div className="absolute inset-0 rounded-full border border-zinc-800/80 bg-zinc-900/90 translate-x-[4px] -translate-y-[4px] opacity-75 scale-[0.98] shadow-sm z-[3]" />
+                          {/* Stack Circle 2 (middle-top) */}
+                          <div className="absolute inset-0 rounded-full border border-zinc-700 bg-zinc-800 translate-x-[2px] -translate-y-[2px] opacity-90 scale-[0.99] shadow-md z-[6]" />
+                          {/* Top Circle 1 (main cover) */}
+                          <div className="relative w-full h-full rounded-full border-2 border-zinc-600/70 shadow-lg overflow-hidden bg-zinc-950 z-10 flex items-center justify-center">
+                            {thumbnailItem.type === 'video' ? (
+                              <img
+                                src={thumbnailItem.posterUrl || VIDEO_PLACEHOLDER}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <img src={thumbnailItem.previewUrl} alt="" className="h-full w-full object-cover" />
+                            )}
+                          </div>
+                        </div>
+                        <div className="absolute top-2 left-2 flex items-center justify-center rounded-full bg-black/60 p-1.5 text-indigo-300 border border-zinc-800/30 z-20">
+                          <Folder className="h-2.5 w-2.5" />
+                        </div>
+                      </div>
                     ) : (
-                      <img src={thumbnailItem.previewUrl} alt="" className="h-full w-full object-cover" />
+                      thumbnailItem.type === 'video' ? (
+                        <img
+                          src={thumbnailItem.posterUrl || VIDEO_PLACEHOLDER}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <img src={thumbnailItem.previewUrl} alt="" className="h-full w-full object-cover" />
+                      )
                     )}
                     <div className={cn(
                       "absolute inset-0 transition-colors",

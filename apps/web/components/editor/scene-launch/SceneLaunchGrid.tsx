@@ -240,6 +240,10 @@ export function SceneLaunchGrid({
     return flatList;
   }, [allCollections, availableDirectoryCollections]);
   const handleGridItemDragStart = (event: React.DragEvent<HTMLElement>, dragKey: string) => {
+    if (dragKey === 'collection:root-collection') {
+      event.preventDefault();
+      return;
+    }
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', dragKey);
     setDirectoryPendingKey(null);
@@ -788,15 +792,17 @@ export function SceneLaunchGrid({
               );
             })}
 
-            <button
-              type="button"
-              style={getSceneLaunchCollectionTileStyle()}
-              className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-900 bg-zinc-950/40 text-zinc-650 transition-colors hover:border-zinc-700 hover:bg-zinc-950 hover:text-zinc-300 h-36 sm:h-40 lg:h-44"
-              onClick={createSceneLaunchBeat}
-            >
-              <Plus className="h-6 w-6" />
-              <span className="mt-2 text-[10px] font-semibold uppercase tracking-widest">Add collection</span>
-            </button>
+            {activeSceneLaunchBeatId !== null && (
+              <button
+                type="button"
+                style={getSceneLaunchCollectionTileStyle()}
+                className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-900 bg-zinc-950/40 text-zinc-650 transition-colors hover:border-zinc-700 hover:bg-zinc-950 hover:text-zinc-300 h-36 sm:h-40 lg:h-44"
+                onClick={createSceneLaunchBeat}
+              >
+                <Plus className="h-6 w-6" />
+                <span className="mt-2 text-[10px] font-semibold uppercase tracking-widest">Add collection</span>
+              </button>
+            )}
           </div>
         </>
       )}
