@@ -96,11 +96,19 @@ interface SceneLaunchPreviewWheelV3Props {
   breakoutRepresentativeUrls?: (string | null)[];
   currentCollectionName?: string;
   breakoutCollectionsEnabled?: boolean;
+  timelineWrapped?: boolean;
+  onTimelineWrappedChange?: (wrapped: boolean) => void;
+  subRowIndex?: number;
+  breakoutSelectedMediaIds?: string[];
+  allCollections?: any[];
+  getRecursiveMediaItems?: (collection: any) => any[];
   onBreakoutCollectionsChange?: (enabled: boolean) => void;
   rowTitle?: string;
   rowIconUrl?: string;
   rowIsCollection?: boolean;
   isFirstGridRow?: boolean;
+  isIndented?: boolean;
+  isLastGridRow?: boolean;
   isPreviewPlaying?: boolean;
   loopPreviewPlayback?: boolean;
   onPreviewPlaybackComplete?: () => void;
@@ -523,10 +531,18 @@ export function SceneLaunchPreviewWheelV3({
   breakoutRepresentativeUrls,
   currentCollectionName,
   breakoutCollectionsEnabled = false,
+  breakoutSelectedMediaIds,
+  allCollections,
+  getRecursiveMediaItems,
   onBreakoutCollectionsChange,
+  timelineWrapped = false,
+  onTimelineWrappedChange,
+  subRowIndex = 0,
   rowTitle,
   rowIsCollection,
   isFirstGridRow = false,
+  isIndented = false,
+  isLastGridRow = false,
   isPreviewPlaying = false,
   loopPreviewPlayback = false,
   onPreviewPlaybackComplete,
@@ -716,7 +732,12 @@ export function SceneLaunchPreviewWheelV3({
   const [, setVisiblePreparedPreviewMediaId] = React.useState<string | null>(null);
   const [directPreviewMediaId, setDirectPreviewMediaId] = React.useState<string | null>(selectedMediaId);
   const [playbackSnapshotTime, setPlaybackSnapshotTime] = React.useState<number | null>(null);
-  const [trimOverlayMediaId, setTrimOverlayMediaId] = React.useState<string | null>(null);
+  const [trimOverlayMediaId, setTrimOverlayMediaIdState] = React.useState<string | null>(null);
+  const trimOverlayMediaIdRef = React.useRef<string | null>(null);
+  const setTrimOverlayMediaId = React.useCallback((value: string | null) => {
+    trimOverlayMediaIdRef.current = value;
+    setTrimOverlayMediaIdState(value);
+  }, []);
   const playheadPositionRatioRef = React.useRef(0.5);
   const [playheadPositionRatio, setPlayheadPositionRatio] = React.useState(0.5);
   const gridPanelResizeRef = React.useRef({
@@ -965,23 +986,116 @@ export function SceneLaunchPreviewWheelV3({
     return Math.max(1, Math.floor((viewportSize.width - 16 + gridItemGap) / gridColStride));
   }, [viewportSize.width, gridColStride]);
 
-  const chunks = React.useMemo(() => {
-    if (customChunks) return customChunks;
+  const childGridItemWidth = React.useMemo(() => {
+    const responsiveWidth = itemsPerRow
+      ? Math.max(1, (viewportSize.width - 16 - gridItemGap * (itemsPerRow - 1)) / itemsPerRow)
+      : Math.round(GALLERY_ITEM_HEIGHT * 16 / 9);
+    return responsiveWidth;
+  }, [itemsPerRow, viewportSize.width, gridItemGap]);
+
+  const wrappedRows = React.useMemo(() => {
     if (!gridView) return [];
-    const result: SceneLaunchMediaItem[][] = [];
-    for (let i = 0; i < items.length; i += itemsPerRow) {
-      result.push(items.slice(i, i + itemsPerRow));
+
+    const result: {
+      items: SceneLaunchMediaItem[];
+      parentChunkIndex: number;
+      subRowIndex: number;
+      isIndented: boolean;
+      rowTitle?: string;
+      rowIconUrl?: string;
+      rowIsCollection?: boolean;
+    }[] = [];
+
+    if (customChunks) {
+      customChunks.forEach((originalChunk, parentIndex) => {
+        const title = breakoutTitles?.[parentIndex];
+        const isCollection = breakoutIsCollection?.[parentIndex];
+        const repUrl = breakoutRepresentativeUrls?.[parentIndex];
+        const isIndented = breakoutCollectionsEnabled && parentIndex > 0;
+
+        if (timelineWrapped) {
+          let subRowIdx = 0;
+          for (let i = 0; i < originalChunk.length; i += itemsPerRow) {
+            const subItems = originalChunk.slice(i, i + itemsPerRow);
+            result.push({
+              items: subItems,
+              parentChunkIndex: parentIndex,
+              subRowIndex: subRowIdx,
+              isIndented,
+              rowTitle: subRowIdx === 0 ? title : undefined,
+              rowIconUrl: (subRowIdx === 0 ? repUrl : undefined) || undefined,
+              rowIsCollection: isCollection,
+            });
+            subRowIdx++;
+          }
+        } else {
+          result.push({
+            items: originalChunk,
+            parentChunkIndex: parentIndex,
+            subRowIndex: 0,
+            isIndented,
+            rowTitle: title,
+            rowIconUrl: repUrl || undefined,
+            rowIsCollection: isCollection,
+          });
+        }
+      });
+    } else {
+      if (timelineWrapped) {
+        let subRowIdx = 0;
+        for (let i = 0; i < items.length; i += itemsPerRow) {
+          const subItems = items.slice(i, i + itemsPerRow);
+          result.push({
+            items: subItems,
+            parentChunkIndex: 0,
+            subRowIndex: subRowIdx,
+            isIndented: false,
+            rowTitle: undefined,
+            rowIconUrl: undefined,
+            rowIsCollection: false,
+          });
+          subRowIdx++;
+        }
+      } else {
+        result.push({
+          items: items,
+          parentChunkIndex: 0,
+          subRowIndex: 0,
+          isIndented: false,
+          rowTitle: undefined,
+          rowIconUrl: undefined,
+          rowIsCollection: false,
+        });
+      }
     }
+
     return result;
-  }, [customChunks, items, itemsPerRow, gridView]);
+  }, [
+    customChunks,
+    items,
+    itemsPerRow,
+    gridView,
+    timelineWrapped,
+    breakoutTitles,
+    breakoutIsCollection,
+    breakoutRepresentativeUrls,
+    breakoutCollectionsEnabled,
+  ]);
 
   const getGridRowForMedia = React.useCallback((mediaId: string | null | undefined) => {
     if (!mediaId) return -1;
-    const itemIndex = items.findIndex(item => (
-      item.id === mediaId || itemSequences?.[item.id]?.some(sequenceItem => sequenceItem.id === mediaId)
-    ));
-    return itemIndex < 0 ? -1 : Math.floor(itemIndex / itemsPerRow);
-  }, [itemSequences, items, itemsPerRow]);
+    return wrappedRows.findIndex(row =>
+      row.items.some(item => (
+        item.id === mediaId ||
+        itemSequences?.[item.id]?.some(sequenceItem => sequenceItem.id === mediaId) ||
+        (item.id.startsWith('collection-placeholder:') && (() => {
+          const collectionId = item.id.slice('collection-placeholder:'.length);
+          const col = allCollections?.find(b => b.id === collectionId);
+          return col && getRecursiveMediaItems ? getRecursiveMediaItems(col).some(m => m.id === mediaId) : false;
+        })())
+      ))
+    );
+  }, [wrappedRows, itemSequences, allCollections, getRecursiveMediaItems]);
   const playbackGridRow = getGridRowForMedia(activePlayingMediaId);
   const externalScrubGridRow = getGridRowForMedia(externalScrubMediaId);
   const selectedGridRow = getGridRowForMedia(selectedMediaId);
@@ -1000,27 +1114,63 @@ export function SceneLaunchPreviewWheelV3({
   const selectedScrubOriginOffset = selectedIndex >= 0
     ? (itemStartPixels[selectedIndex] ?? 0) - (itemCenterPositions[selectedIndex] ?? 0)
     : 0;
-  const maxOffset = (sizing === 'duration')
-    ? timelineOriginOffset
-    : (sizing === 'uniform')
-      ? Math.max(
-          centerX - ((itemWidths[0] ?? uniformItemWidth) / 2),
-          centerX - ((itemWidths[0] ?? uniformItemWidth) / 2) - playheadOffsetFromCenter
-        ) + 120
-      : isGallery
-        ? timelineOriginOffset
-        : Math.max(0, selectedScrubOriginOffset);
+  const verticalLineX = childGridItemWidth / 2 + 8;
+  const indentOffset = isIndented ? (childGridItemWidth + 8 + gridItemGap) : 8;
+  const maxOffset = hidePreview
+    ? indentOffset - centerX + (uniformItemWidth / 2) - playheadOffsetFromCenter
+    : (sizing === 'duration')
+      ? timelineOriginOffset
+      : (sizing === 'uniform')
+        ? Math.max(
+            centerX - ((itemWidths[0] ?? uniformItemWidth) / 2),
+            centerX - ((itemWidths[0] ?? uniformItemWidth) / 2) - playheadOffsetFromCenter
+          ) + 120
+        : isGallery
+          ? timelineOriginOffset
+          : Math.max(0, selectedScrubOriginOffset);
 
-  const minOffset = (sizing === 'duration')
-    ? timelineOriginOffset - stripEndPixel
-    : (sizing === 'uniform')
-      ? Math.min(
-          -centerX - ((itemCenterPositions[finalIndex] ?? 0) - (itemWidths[finalIndex] ?? uniformItemWidth) / 2),
-          -itemCenterPositions[finalIndex] - playheadOffsetFromCenter
-        ) - 120
-      : isGallery
-        ? timelineOriginOffset - stripEndPixel
-        : Math.min(finalCenterOffset, selectedScrubOriginOffset - stripEndPixel);
+  const minOffset = hidePreview
+    ? Math.min(maxOffset, viewportSize.width - stripEndPixel - 8 - centerX + (uniformItemWidth / 2) - playheadOffsetFromCenter)
+    : (sizing === 'duration')
+      ? timelineOriginOffset - stripEndPixel
+      : (sizing === 'uniform')
+        ? Math.min(
+            -centerX - ((itemCenterPositions[finalIndex] ?? 0) - (itemWidths[finalIndex] ?? uniformItemWidth) / 2),
+            -itemCenterPositions[finalIndex] - playheadOffsetFromCenter
+          ) + 120 - stripEndPixel
+        : isGallery
+          ? timelineOriginOffset - stripEndPixel
+          : Math.min(maxOffset, viewportSize.width - stripEndPixel - 8 - centerX + (uniformItemWidth / 2) - playheadOffsetFromCenter);
+
+  const onScrubUpdateRef = React.useRef(onScrubUpdate);
+  React.useEffect(() => { onScrubUpdateRef.current = onScrubUpdate; }, [onScrubUpdate]);
+
+  const handleGridScrubUpdate = React.useCallback((
+    rowIndex: number,
+    mediaId: string | null,
+    sourceTimeSeconds: number | null,
+    rowTimelineTimeSeconds?: number | null,
+  ) => {
+    if (mediaId !== null && sourceTimeSeconds !== null) {
+      activeGridScrubRowRef.current = rowIndex;
+      setActiveGridPlayheadRow(rowIndex);
+      
+      const rowItems = wrappedRows[rowIndex]?.items;
+      const firstItem = rowItems?.[0];
+      const firstItemIndex = firstItem ? items.findIndex(item => item.id === firstItem.id) : -1;
+      const rowStartTime = firstItemIndex >= 0 ? (itemStartTimes[firstItemIndex] ?? 0) : 0;
+      
+      onScrubUpdateRef.current?.(
+        mediaId,
+        sourceTimeSeconds,
+        rowStartTime + (rowTimelineTimeSeconds ?? 0),
+      );
+      return;
+    }
+    if (activeGridScrubRowRef.current !== rowIndex) return;
+    activeGridScrubRowRef.current = null;
+  }, [items, itemStartTimes, wrappedRows]);
+
   const snapReferencePositions = React.useMemo(() => (
     (sizing === 'duration' || isGallery)
       ? itemStartPixels.map(startPixel => startPixel - timelineOriginOffset)
@@ -1028,7 +1178,7 @@ export function SceneLaunchPreviewWheelV3({
   ), [itemCenterPositions, itemStartPixels, sizing, isGallery, timelineOriginOffset]);
   // For grid child rows: offset that places the first item at the left edge with small padding
   const gridLeftAlignOffset = hidePreview
-    ? clamp(8 - centerX + (uniformItemWidth / 2), minOffset, maxOffset)
+    ? clamp(indentOffset - centerX + (uniformItemWidth / 2) - playheadOffsetFromCenter, minOffset, maxOffset)
     : maxOffset;
   const centeredIndex = getNearestIndexForOffset(offset, snapReferencePositions);
   const centeredItem = items[centeredIndex] ?? null;
@@ -1176,33 +1326,6 @@ export function SceneLaunchPreviewWheelV3({
     return scrubSnapshot;
   }, [externalScrubMediaId, externalScrubSourceTime, externalScrubTimelineTime, itemSequences, scrubSnapshot, items]);
 
-  const onScrubUpdateRef = React.useRef(onScrubUpdate);
-  React.useEffect(() => { onScrubUpdateRef.current = onScrubUpdate; }, [onScrubUpdate]);
-
-  const handleGridScrubUpdate = React.useCallback((
-    rowIndex: number,
-    mediaId: string | null,
-    sourceTimeSeconds: number | null,
-    rowTimelineTimeSeconds?: number | null,
-  ) => {
-    if (mediaId !== null && sourceTimeSeconds !== null) {
-      activeGridScrubRowRef.current = rowIndex;
-      setActiveGridPlayheadRow(rowIndex);
-      const rowStartIndex = rowIndex * itemsPerRow;
-      const rowStartTime = itemDurations
-        .slice(0, rowStartIndex)
-        .reduce((sum, duration) => sum + duration, 0);
-      onScrubUpdateRef.current?.(
-        mediaId,
-        sourceTimeSeconds,
-        rowStartTime + (rowTimelineTimeSeconds ?? 0),
-      );
-      return;
-    }
-    if (activeGridScrubRowRef.current !== rowIndex) return;
-    activeGridScrubRowRef.current = null;
-  }, [itemDurations, itemsPerRow]);
-
   React.useEffect(() => {
     if (gridView) return;
     const publishScrubUpdate = onScrubUpdateRef.current;
@@ -1257,10 +1380,13 @@ export function SceneLaunchPreviewWheelV3({
         selectedItemType === 'video' &&
         effectiveScrubSnapshot?.media.id === selectedMediaId;
 
-      setTrimOverlayMediaId(current => {
-        const next = canShowTrim ? selectedMediaId : null;
-        return current === next ? current : next;
-      });
+      const next = canShowTrim ? selectedMediaId : null;
+      if (trimOverlayMediaIdRef.current !== next) {
+        trimOverlayMediaIdRef.current = next;
+        window.requestAnimationFrame(() => {
+          setTrimOverlayMediaIdState(next);
+        });
+      }
     };
 
     document.addEventListener('pointermove', handleDisplayHover, true);
@@ -2782,7 +2908,7 @@ export function SceneLaunchPreviewWheelV3({
       className={cn(
         "relative flex min-h-0 w-full",
         hidePreview
-          ? "h-auto items-center justify-center overflow-hidden py-0.5 px-0 bg-transparent"
+          ? "h-auto items-center justify-center overflow-visible py-0.5 px-0 bg-transparent"
           : gridView
             ? "h-full items-start justify-start overflow-y-auto px-4 [scrollbar-gutter:stable]"
             : "items-center justify-center overflow-hidden px-4",
@@ -2793,11 +2919,81 @@ export function SceneLaunchPreviewWheelV3({
             : ""
       )}
     >
+      {isIndented && (
+        <div
+          className="absolute pointer-events-none z-[10]"
+          style={{
+            left: 0,
+            right: 0,
+            top: -40,
+            bottom: 0,
+          }}
+        >
+          {subRowIndex && subRowIndex > 0 ? (
+            <>
+              {/* Continuous vertical line from top of the gap to the center of this row's seek bar */}
+              <div 
+                className="absolute w-px border-l border-dashed border-zinc-600/65"
+                style={{ 
+                  height: 56, 
+                  top: 0,
+                  left: verticalLineX
+                }}
+              />
+              {/* Continue vertical line down to bottom of wrapper if not the last row in the grid */}
+              {!isLastGridRow && (
+                <div 
+                  className="absolute w-px border-l border-dashed border-zinc-600/65"
+                  style={{ 
+                    top: 56,
+                    bottom: 0,
+                    left: verticalLineX
+                  }}
+                />
+              )}
+            </>
+          ) : (
+            <>
+              {/* Vertical line: from top of the connector box to the center of the current header (top: 16px + 40px offset = 56px) */}
+              <div 
+                className="absolute w-px border-l border-dashed border-zinc-600/65"
+                style={{ 
+                  height: 56, 
+                  top: 0,
+                  left: verticalLineX
+                }}
+              />
+              
+              {/* If there are more rows below, continue the vertical line down to the bottom of this row wrapper */}
+              {!isLastGridRow && (
+                <div 
+                  className="absolute w-px border-l border-dashed border-zinc-600/65"
+                  style={{ 
+                    top: 56,
+                    bottom: 0,
+                    left: verticalLineX
+                  }}
+                />
+              )}
+
+              {/* Horizontal line turning right to the child row header */}
+              <div 
+                className="absolute h-px border-t border-dashed border-zinc-600/65"
+                style={{ 
+                  top: 56, 
+                  left: verticalLineX, 
+                  width: Math.max(0, indentOffset - verticalLineX)
+                }}
+              />
+            </>
+          )}
+        </div>
+      )}
       <div className={cn(
-        "min-h-0 w-full overflow-hidden rounded-md",
+        "min-h-0 w-full rounded-md",
         hidePreview
-          ? "bg-transparent shadow-none border-none h-auto"
-          : "bg-[#0c0c0e]/85 shadow-lg",
+          ? "bg-transparent shadow-none border-none h-auto overflow-visible"
+          : "bg-[#0c0c0e]/85 shadow-lg overflow-hidden",
         hidePreview
           ? "h-auto"
           : gridView
@@ -2899,17 +3095,34 @@ export function SceneLaunchPreviewWheelV3({
                   </div>
                 )}
               </div>
-              {onBreakoutCollectionsChange && (
-                <div className="ml-auto flex shrink-0 items-center gap-2 pl-4 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                  <span>Break out by collection</span>
-                  <Switch
-                    size="sm"
-                    checked={breakoutCollectionsEnabled}
-                    onCheckedChange={onBreakoutCollectionsChange}
-                    aria-label="Break out by collection"
-                  />
-                </div>
-              )}
+              <div className="ml-auto flex shrink-0 items-center gap-4 pl-4 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                {onBreakoutCollectionsChange && (
+                  <div className="flex items-center gap-2">
+                    <span>Break out by collection</span>
+                    <Switch
+                      size="sm"
+                      checked={breakoutCollectionsEnabled}
+                      onCheckedChange={onBreakoutCollectionsChange}
+                      aria-label="Break out by collection"
+                    />
+                  </div>
+                )}
+                {onTimelineWrappedChange && (
+                  <div className={cn(
+                    "flex items-center gap-2 transition-opacity",
+                    breakoutCollectionsEnabled && "opacity-45 pointer-events-none"
+                  )}>
+                    <span>Wrap timeline</span>
+                    <Switch
+                      size="sm"
+                      checked={timelineWrapped && !breakoutCollectionsEnabled}
+                      onCheckedChange={onTimelineWrappedChange}
+                      disabled={breakoutCollectionsEnabled}
+                      aria-label="Wrap timeline"
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         ) : (
@@ -2924,54 +3137,64 @@ export function SceneLaunchPreviewWheelV3({
             customChunks ? "gap-10 py-6" : "gap-6 py-4",
             !hidePreview && "border-t border-zinc-900",
           )}>
-            {chunks.map((chunk, chunkIndex) => (
-              <SceneLaunchPreviewWheelV3
-                key={`chunk-${chunkIndex}`}
-                items={chunk}
-                itemSequences={itemSequences}
-                itemSequenceThumbnails={itemSequenceThumbnails}
-                onCollectionOpen={onCollectionOpen}
-                selectedMediaId={selectedMediaId}
-                effect={effect}
-                sizing="uniform"
-                durationScale={durationScale}
-                selectedItemDurationSeconds={selectedItemDurationSeconds}
-                selectedItemTrimStartSeconds={selectedItemTrimStartSeconds}
-                onSelectedItemDurationChange={onSelectedItemDurationChange}
-                onSelectedItemDurationChangeEnd={onSelectedItemDurationChangeEnd}
-                onCenteredMediaChange={onCenteredMediaChange}
-                renderSelectedItemOverlay={renderSelectedItemOverlay}
-                renderGalleryTrimOverlay={renderGalleryTrimOverlay}
-                isPreviewPlaying={false}
-                playheadIsPlaying={isPreviewPlaying}
-                loopPreviewPlayback={loopPreviewPlayback}
-                onPreviewPlaybackComplete={onPreviewPlaybackComplete}
-                onPlaybackMediaChange={onPlaybackMediaChange}
-                onItemsReorder={onItemsReorder}
-                collectionItemIds={collectionItemIds}
-                onItemMoveIntoCollection={onItemMoveIntoCollection}
-                disabledItemIds={disabledItemIds}
-                onUtilityDrop={onUtilityDrop}
-                selectReorderedItem={selectReorderedItem}
-                onTogglePlayback={onTogglePlayback}
-                onToggleLoop={onToggleLoop}
-                showUniformRuler={showUniformRuler}
-                slideOnClick={slideOnClick}
-                rowTitle={breakoutTitles?.[chunkIndex]}
-                rowIconUrl={breakoutRepresentativeUrls?.[chunkIndex] || undefined}
-                rowIsCollection={breakoutIsCollection?.[chunkIndex]}
-                gridView={false}
-                gridColumnCount={itemsPerRow}
-                showPlayhead={visibleGridPlayheadRow === chunkIndex}
-                hidePreview={true}
-                hideTrack={false}
-                activePlayingMediaId={activePlayingMediaId}
-                activePlayingElapsedSeconds={activePlayingElapsedSeconds}
-                onScrubUpdate={(mediaId, sourceTimeSeconds, timelineTimeSeconds) => {
-                  handleGridScrubUpdate(chunkIndex, mediaId, sourceTimeSeconds, timelineTimeSeconds);
-                }}
-              />
-            ))}
+            {wrappedRows.map((rowInfo, chunkIndex) => {
+              return (
+                <div
+                  key={`chunk-wrapper-${chunkIndex}`}
+                  className="relative overflow-visible w-full"
+                >
+                  <SceneLaunchPreviewWheelV3
+                    key={`chunk-${chunkIndex}`}
+                    items={rowInfo.items}
+                    itemSequences={itemSequences}
+                    itemSequenceThumbnails={itemSequenceThumbnails}
+                    onCollectionOpen={onCollectionOpen}
+                    selectedMediaId={breakoutSelectedMediaIds?.[rowInfo.parentChunkIndex] ?? selectedMediaId}
+                    effect={effect}
+                    sizing="uniform"
+                    durationScale={durationScale}
+                    selectedItemDurationSeconds={selectedItemDurationSeconds}
+                    selectedItemTrimStartSeconds={selectedItemTrimStartSeconds}
+                    onSelectedItemDurationChange={onSelectedItemDurationChange}
+                    onSelectedItemDurationChangeEnd={onSelectedItemDurationChangeEnd}
+                    onCenteredMediaChange={onCenteredMediaChange}
+                    renderSelectedItemOverlay={renderSelectedItemOverlay}
+                    renderGalleryTrimOverlay={renderGalleryTrimOverlay}
+                    isPreviewPlaying={false}
+                    playheadIsPlaying={isPreviewPlaying}
+                    loopPreviewPlayback={loopPreviewPlayback}
+                    onPreviewPlaybackComplete={onPreviewPlaybackComplete}
+                    onPlaybackMediaChange={onPlaybackMediaChange}
+                    onItemsReorder={onItemsReorder}
+                    collectionItemIds={collectionItemIds}
+                    onItemMoveIntoCollection={onItemMoveIntoCollection}
+                    disabledItemIds={disabledItemIds}
+                    onUtilityDrop={onUtilityDrop}
+                    selectReorderedItem={selectReorderedItem}
+                    onTogglePlayback={onTogglePlayback}
+                    onToggleLoop={onToggleLoop}
+                    showUniformRuler={showUniformRuler}
+                    slideOnClick={slideOnClick}
+                    rowTitle={rowInfo.rowTitle}
+                    rowIconUrl={rowInfo.rowIconUrl}
+                    rowIsCollection={rowInfo.rowIsCollection}
+                    gridView={false}
+                    gridColumnCount={itemsPerRow}
+                    isIndented={rowInfo.isIndented}
+                    subRowIndex={rowInfo.subRowIndex}
+                    isLastGridRow={chunkIndex === wrappedRows.length - 1}
+                    showPlayhead={visibleGridPlayheadRow === chunkIndex}
+                    hidePreview={true}
+                    hideTrack={false}
+                    activePlayingMediaId={activePlayingMediaId}
+                    activePlayingElapsedSeconds={activePlayingElapsedSeconds}
+                    onScrubUpdate={(mediaId, sourceTimeSeconds, timelineTimeSeconds) => {
+                      handleGridScrubUpdate(chunkIndex, mediaId, sourceTimeSeconds, timelineTimeSeconds);
+                    }}
+                  />
+                </div>
+              );
+            })}
           </div>
         ) : (
           !hideTrack && (
@@ -2999,18 +3222,26 @@ export function SceneLaunchPreviewWheelV3({
                 <>
                   <div
                     className={cn(
-                      "absolute left-0 right-0 top-0 z-[20] h-8 cursor-ew-resize pointer-events-auto flex items-center pl-4",
+                      "absolute left-0 right-0 top-0 z-[20] h-8 cursor-ew-resize pointer-events-auto flex items-center",
                       rowIsCollection
                         ? "bg-zinc-900/35 border-b border-indigo-950/45"
                         : "bg-zinc-900/60 border-b border-zinc-800"
                     )}
+                    style={{
+                      paddingLeft: isIndented ? indentOffset : 16,
+                    }}
                     onPointerDown={(event) => event.stopPropagation()}
                     onMouseMove={handleRulerMouseMove}
                     onMouseLeave={handleRulerMouseLeave}
-                      onClick={handleGridSeekRailClick}
+                    onClick={handleGridSeekRailClick}
                     >
                       {rowIsCollection && (
-                        <div className="absolute inset-y-0 left-0 w-1 rounded-r bg-indigo-400" />
+                        <div 
+                          className="absolute inset-y-0 w-1 rounded-r bg-indigo-400" 
+                          style={{
+                            left: isIndented ? indentOffset - 16 : 0
+                          }}
+                        />
                       )}
                       {rowTitle && (
                         <span className={cn(
@@ -3120,6 +3351,11 @@ export function SceneLaunchPreviewWheelV3({
                             ) : (
                               <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
                             )}
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/35 z-20">
+                              <span className="flex min-w-10 h-10 px-2.5 items-center justify-center rounded-full bg-zinc-950 border border-zinc-700/80 text-sm font-black font-sans text-indigo-250 shadow-lg shadow-black/60">
+                                {itemSequences?.[item.id]?.length ?? 0}
+                              </span>
+                            </div>
                           </div>
                         </div>
                         <div className="absolute top-2 left-2 flex items-center justify-center rounded-full bg-black/60 p-1.5 text-indigo-300 border border-zinc-800/30 z-20">
@@ -3473,6 +3709,11 @@ export function SceneLaunchPreviewWheelV3({
                             ) : (
                               <img src={thumbnailItem.previewUrl} alt="" className="h-full w-full object-cover" />
                             )}
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/35 z-20">
+                              <span className="flex min-w-10 h-10 px-2.5 items-center justify-center rounded-full bg-zinc-950 border border-zinc-700/80 text-sm font-black font-sans text-indigo-250 shadow-lg shadow-black/60">
+                                {itemSequences?.[item.id]?.length ?? 0}
+                              </span>
+                            </div>
                           </div>
                         </div>
                         <div className="absolute top-2 left-2 flex items-center justify-center rounded-full bg-black/60 p-1.5 text-indigo-300 border border-zinc-800/30 z-20">
@@ -3518,31 +3759,7 @@ export function SceneLaunchPreviewWheelV3({
                       timelineTimeSeconds={progressTimelineTime}
                     />
                   )}
-                  {collectionItemIds.includes(item.id) && onCollectionOpen ? (
-                    <div
-                      className="absolute right-0 top-0 z-40 h-[52px] w-[52px] pointer-events-none"
-                    >
-                      <svg
-                        width="52"
-                        height="52"
-                        viewBox="0 0 52 52"
-                        aria-hidden="true"
-                        className="absolute right-0 top-0 overflow-visible"
-                        style={{ filter: 'drop-shadow(-1.5px 1.5px 2px rgba(0,0,0,0.5))' }}
-                      >
-                        <path
-                          d="M 0,0 L 52,0 L 52,52 Z"
-                          fill="#18181b"
-                          stroke="#27272a"
-                          strokeWidth="1.5"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                      <span className="absolute right-2 top-1.5 font-sans text-[11px] font-extrabold tracking-tight text-white">
-                        {itemSequences?.[item.id]?.length ?? 0}
-                      </span>
-                    </div>
-                  ) : null}
+
                   {collectionDropTargetId === item.id && (
                     <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-emerald-950/45">
                       <span className="rounded-full border border-emerald-300/60 bg-emerald-950/90 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-emerald-100 shadow-xl">
