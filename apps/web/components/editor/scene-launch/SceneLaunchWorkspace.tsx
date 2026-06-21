@@ -3,7 +3,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, Pause, Play, Plus, Ratio, Search, Settings, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, Minimize2, Maximize2, Pause, Play, Plus, Ratio, Search, Settings, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Button,
@@ -239,6 +239,33 @@ export function SceneLaunchWorkspace({
   React.useEffect(() => {
     localStorage.setItem('scene-launch-preview-wheel-wrap-timeline', String(previewWheelWrapTimeline));
   }, [previewWheelWrapTimeline]);
+
+  const [previewWheelBreakoutNestingDepth, setPreviewWheelBreakoutNestingDepth] = React.useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-breakout-nesting-depth');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed)) return parsed;
+      }
+    }
+    return 1;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-breakout-nesting-depth', String(previewWheelBreakoutNestingDepth));
+  }, [previewWheelBreakoutNestingDepth]);
+
+  const [previewPlayerMinimized, setPreviewPlayerMinimized] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-player-minimized');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-player-minimized', String(previewPlayerMinimized));
+  }, [previewPlayerMinimized]);
 
   const [activePlayingMediaId, setActivePlayingMediaId] = React.useState<string | null>(null);
   const [activePlayingElapsedSeconds, setActivePlayingElapsedSeconds] = React.useState(0);
@@ -1649,13 +1676,45 @@ export function SceneLaunchWorkspace({
     const titles: string[] = [];
     const isCollection: boolean[] = [];
     const representativeUrls: (string | null)[] = [];
+    const nestingLevels: number[] = [];
+
+    const expandCollection = (
+      collectionId: string,
+      currentDepth: number,
+      maxDepth: number
+    ) => {
+      if (currentDepth > maxDepth) return;
+
+      const collection = sceneLaunchBeats.find(b => b.id === collectionId);
+      if (!collection) return;
+
+      const displayItems = getCollectionDisplayItems(collection);
+      if (displayItems.length === 0) return;
+
+      chunks.push(displayItems);
+      titles.push(`${collection.name} (${collection.gridOrder.length})`);
+      isCollection.push(true);
+      
+      const representative = getCollectionWheelRepresentative(collection);
+      representativeUrls.push(
+        representative.type === 'video'
+          ? representative.posterUrl || representative.previewUrl
+          : representative.previewUrl,
+      );
+      nestingLevels.push(currentDepth);
+
+      const childCollectionIds = collection.gridOrder
+        .filter((orderItem): orderItem is { id: string; type: 'collection' } => orderItem.type === 'collection')
+        .map(orderItem => orderItem.id);
+
+      childCollectionIds.forEach(childId => {
+        expandCollection(childId, currentDepth + 1, maxDepth);
+      });
+    };
 
     // Push the initial wheelpicker for that collection
     if (collectionAwareWheelItems.length > 0) {
       chunks.push(collectionAwareWheelItems);
-      titles.push(currentCollectionName);
-      isCollection.push(true);
-
       const activeCollectionId = previewWheelCollectionPath.length > 0
         ? previewWheelCollectionPath[previewWheelCollectionPath.length - 1]
         : board.sceneLaunchBeatPath.length > 0
@@ -1664,6 +1723,13 @@ export function SceneLaunchWorkspace({
       const activeCollection = activeCollectionId
         ? sceneLaunchBeats.find(b => b.id === activeCollectionId)
         : null;
+
+      const directCount = activeCollection
+        ? activeCollection.gridOrder.length
+        : previewWheelSourceItems.length;
+
+      titles.push(`${currentCollectionName} (${directCount})`);
+      isCollection.push(true);
 
       let currentCollectionThumbnailUrl: string | null = null;
       if (activeCollection) {
@@ -1678,26 +1744,16 @@ export function SceneLaunchWorkspace({
           : firstWorkspaceItem.previewUrl;
       }
       representativeUrls.push(currentCollectionThumbnailUrl);
+      nestingLevels.push(0);
     }
 
     for (const item of previewWheelSourceItems) {
       if (item.type === 'collection') {
-        const displayItems = getCollectionDisplayItems(item.collection);
-        if (displayItems.length > 0) {
-          chunks.push(displayItems);
-          titles.push(item.collection.name);
-          isCollection.push(true);
-          const representative = getCollectionWheelRepresentative(item.collection);
-          representativeUrls.push(
-            representative.type === 'video'
-              ? representative.posterUrl || representative.previewUrl
-              : representative.previewUrl,
-          );
-        }
+        expandCollection(item.collection.id, 1, previewWheelBreakoutNestingDepth);
       }
     }
 
-    return { chunks, titles, isCollection, representativeUrls };
+    return { chunks, titles, isCollection, representativeUrls, nestingLevels };
   }, [
     previewWheelGridView,
     previewWheelBreakoutCollections,
@@ -1710,12 +1766,14 @@ export function SceneLaunchWorkspace({
     currentCollectionName,
     previewWheelCollectionPath,
     board.sceneLaunchBeatPath,
-    flattenedTimelineMediaItems
+    flattenedTimelineMediaItems,
+    previewWheelBreakoutNestingDepth
   ]);
 
   const breakoutChunks = React.useMemo(() => breakoutData?.chunks ?? null, [breakoutData]);
   const breakoutTitles = React.useMemo(() => breakoutData?.titles ?? null, [breakoutData]);
   const breakoutIsCollection = React.useMemo(() => breakoutData?.isCollection ?? null, [breakoutData]);
+  const breakoutNestingLevels = React.useMemo(() => breakoutData?.nestingLevels ?? null, [breakoutData]);
   const breakoutRepresentativeUrls = React.useMemo(
     () => breakoutData?.representativeUrls ?? null,
     [breakoutData],
@@ -1795,17 +1853,18 @@ export function SceneLaunchWorkspace({
       ? previewWheelCollectionPath
       : board.sceneLaunchBeatPath;
 
-    const crumbs = [{ id: 'root', name: 'Workspace' }];
+    const rootCount = previewWheelSourceItems.length;
+    const crumbs = [{ id: 'root', name: `Workspace (${rootCount})` }];
 
     path.forEach(beatId => {
       const beat = sceneLaunchBeats.find(b => b.id === beatId);
       if (beat) {
-        crumbs.push({ id: beat.id, name: beat.name });
+        crumbs.push({ id: beat.id, name: `${beat.name} (${beat.gridOrder.length})` });
       }
     });
 
     return crumbs;
-  }, [previewWheelCollectionPath, board.sceneLaunchBeatPath, sceneLaunchBeats]);
+  }, [previewWheelCollectionPath, board.sceneLaunchBeatPath, sceneLaunchBeats, previewWheelSourceItems]);
 
 
 
@@ -2457,6 +2516,10 @@ export function SceneLaunchWorkspace({
                       currentCollectionName={currentCollectionName}
                       breakoutCollectionsEnabled={previewWheelBreakoutCollections}
                       onBreakoutCollectionsChange={setPreviewWheelBreakoutCollections}
+                      breakoutNestingLevels={previewWheelBreakoutCollections && breakoutNestingLevels ? breakoutNestingLevels : undefined}
+                      breakoutNestingDepth={previewWheelBreakoutNestingDepth}
+                      onBreakoutNestingDepthChange={setPreviewWheelBreakoutNestingDepth}
+                      minimized={previewPlayerMinimized}
                       timelineWrapped={previewWheelWrapTimeline}
                       onTimelineWrappedChange={setPreviewWheelWrapTimeline}
                       parentCollectionThumbnailUrl={parentCollectionThumbnailUrl}
@@ -2599,7 +2662,20 @@ export function SceneLaunchWorkspace({
                       />
                     </div>
 
-                    <div className="absolute right-4 top-4 z-50">
+                    <div className="absolute right-4 top-4 z-50 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewPlayerMinimized(m => !m)}
+                        className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-700/80 bg-zinc-950/80 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 shadow-lg backdrop-blur-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                        title={previewPlayerMinimized ? "Maximize top panel" : "Minimize top panel"}
+                        aria-label={previewPlayerMinimized ? "Maximize top panel" : "Minimize top panel"}
+                      >
+                        {previewPlayerMinimized ? (
+                          <Maximize2 className="h-4 w-4" />
+                        ) : (
+                          <Minimize2 className="h-4 w-4" />
+                        )}
+                      </button>
                       <Popover>
                         <PopoverTrigger
                           className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-700/80 bg-zinc-950/80 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 shadow-lg backdrop-blur-md transition-colors"

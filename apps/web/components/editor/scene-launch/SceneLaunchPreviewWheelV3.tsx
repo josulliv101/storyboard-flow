@@ -99,6 +99,13 @@ interface SceneLaunchPreviewWheelV3Props {
   timelineWrapped?: boolean;
   onTimelineWrappedChange?: (wrapped: boolean) => void;
   subRowIndex?: number;
+  breakoutNestingLevels?: number[];
+  breakoutNestingDepth?: number;
+  onBreakoutNestingDepthChange?: (depth: number) => void;
+  nestingLevel?: number;
+  gridNestingLevels?: number[];
+  rowIndex?: number;
+  minimized?: boolean;
   breakoutSelectedMediaIds?: string[];
   allCollections?: any[];
   getRecursiveMediaItems?: (collection: any) => any[];
@@ -538,6 +545,13 @@ export function SceneLaunchPreviewWheelV3({
   timelineWrapped = false,
   onTimelineWrappedChange,
   subRowIndex = 0,
+  breakoutNestingLevels,
+  breakoutNestingDepth = 1,
+  onBreakoutNestingDepthChange,
+  nestingLevel = 0,
+  gridNestingLevels = [],
+  rowIndex = 0,
+  minimized = false,
   rowTitle,
   rowIsCollection,
   isFirstGridRow = false,
@@ -571,6 +585,7 @@ export function SceneLaunchPreviewWheelV3({
   externalScrubTimelineTime = null,
   onScrubUpdate,
 }: SceneLaunchPreviewWheelV3Props) {
+  const shouldShowPlayhead = showPlayhead && !minimized;
   const containerResizeObserverRef = React.useRef<ResizeObserver | null>(null);
   const viewportResizeObserverRef = React.useRef<ResizeObserver | null>(null);
   const viewportRef = React.useRef<HTMLDivElement | null>(null);
@@ -807,12 +822,12 @@ export function SceneLaunchPreviewWheelV3({
         620,
       ));
   const rowHeight = hidePreview
-    ? itemHeight + 40
+    ? (subRowIndex > 0 ? itemHeight + 8 : itemHeight + 40)
     : isGallery
       ? itemHeight + 66
       : itemHeight + 36;
   const itemCenterY = hidePreview
-    ? itemHeight / 2 + 32
+    ? (subRowIndex > 0 ? itemHeight / 2 + 8 : itemHeight / 2 + 32)
     : isGallery
       ? rowHeight - 12 - itemHeight / 2
       : Math.max(
@@ -820,7 +835,7 @@ export function SceneLaunchPreviewWheelV3({
           viewportSize.height - itemHeight / 2 - 24,
         );
   const rulerTop = hidePreview
-    ? 4
+    ? (subRowIndex > 0 ? 0 : 4)
     : isGallery
       ? 22
       : Math.max(2, itemCenterY - itemHeight / 2 - 28);
@@ -916,6 +931,24 @@ export function SceneLaunchPreviewWheelV3({
         : 0,
     };
   }, [disabledItemIds, getMediaDuration, itemSequences]);
+
+  const getCollectionDirectCount = React.useCallback((itemId: string): number => {
+    let collectionId = '';
+    if (itemId.startsWith('collection-placeholder:')) {
+      collectionId = itemId.substring('collection-placeholder:'.length);
+    } else if (allCollections?.some(b => b.id === itemId)) {
+      collectionId = itemId;
+    }
+
+    if (collectionId) {
+      const collection = allCollections?.find(b => b.id === collectionId);
+      if (collection) {
+        return collection.gridOrder?.length ?? 0;
+      }
+    }
+    return itemSequences?.[itemId]?.length ?? 0;
+  }, [allCollections, itemSequences]);
+
   const durationPixelsPerSecond = uniformItemWidth / DURATION_REFERENCE_SECONDS * durationScale;
   const itemWidths = React.useMemo(() => {
     if (sizing === 'uniform') {
@@ -1001,6 +1034,7 @@ export function SceneLaunchPreviewWheelV3({
       parentChunkIndex: number;
       subRowIndex: number;
       isIndented: boolean;
+      nestingLevel: number;
       rowTitle?: string;
       rowIconUrl?: string;
       rowIsCollection?: boolean;
@@ -1011,7 +1045,8 @@ export function SceneLaunchPreviewWheelV3({
         const title = breakoutTitles?.[parentIndex];
         const isCollection = breakoutIsCollection?.[parentIndex];
         const repUrl = breakoutRepresentativeUrls?.[parentIndex];
-        const isIndented = breakoutCollectionsEnabled && parentIndex > 0;
+        const nestingLevel = breakoutNestingLevels?.[parentIndex] ?? (parentIndex > 0 ? 1 : 0);
+        const isIndented = nestingLevel > 0;
 
         if (timelineWrapped) {
           let subRowIdx = 0;
@@ -1022,6 +1057,7 @@ export function SceneLaunchPreviewWheelV3({
               parentChunkIndex: parentIndex,
               subRowIndex: subRowIdx,
               isIndented,
+              nestingLevel,
               rowTitle: subRowIdx === 0 ? title : undefined,
               rowIconUrl: (subRowIdx === 0 ? repUrl : undefined) || undefined,
               rowIsCollection: isCollection,
@@ -1034,6 +1070,7 @@ export function SceneLaunchPreviewWheelV3({
             parentChunkIndex: parentIndex,
             subRowIndex: 0,
             isIndented,
+            nestingLevel,
             rowTitle: title,
             rowIconUrl: repUrl || undefined,
             rowIsCollection: isCollection,
@@ -1050,6 +1087,7 @@ export function SceneLaunchPreviewWheelV3({
             parentChunkIndex: 0,
             subRowIndex: subRowIdx,
             isIndented: false,
+            nestingLevel: 0,
             rowTitle: undefined,
             rowIconUrl: undefined,
             rowIsCollection: false,
@@ -1062,6 +1100,7 @@ export function SceneLaunchPreviewWheelV3({
           parentChunkIndex: 0,
           subRowIndex: 0,
           isIndented: false,
+          nestingLevel: 0,
           rowTitle: undefined,
           rowIconUrl: undefined,
           rowIsCollection: false,
@@ -1080,6 +1119,7 @@ export function SceneLaunchPreviewWheelV3({
     breakoutIsCollection,
     breakoutRepresentativeUrls,
     breakoutCollectionsEnabled,
+    breakoutNestingLevels,
   ]);
 
   const getGridRowForMedia = React.useCallback((mediaId: string | null | undefined) => {
@@ -1115,7 +1155,7 @@ export function SceneLaunchPreviewWheelV3({
     ? (itemStartPixels[selectedIndex] ?? 0) - (itemCenterPositions[selectedIndex] ?? 0)
     : 0;
   const verticalLineX = childGridItemWidth / 2 + 8;
-  const indentOffset = isIndented ? (childGridItemWidth + 8 + gridItemGap) : 8;
+  const indentOffset = nestingLevel > 0 ? (nestingLevel * (childGridItemWidth + gridItemGap) + 8) : 8;
   const maxOffset = hidePreview
     ? indentOffset - centerX + (uniformItemWidth / 2) - playheadOffsetFromCenter
     : (sizing === 'duration')
@@ -2919,7 +2959,7 @@ export function SceneLaunchPreviewWheelV3({
             : ""
       )}
     >
-      {isIndented && (
+      {nestingLevel > 0 && (
         <div
           className="absolute pointer-events-none z-[10]"
           style={{
@@ -2929,64 +2969,61 @@ export function SceneLaunchPreviewWheelV3({
             bottom: 0,
           }}
         >
-          {subRowIndex && subRowIndex > 0 ? (
-            <>
-              {/* Continuous vertical line from top of the gap to the center of this row's seek bar */}
-              <div 
-                className="absolute w-px border-l border-dashed border-zinc-600/65"
-                style={{ 
-                  height: 56, 
-                  top: 0,
-                  left: verticalLineX
-                }}
-              />
-              {/* Continue vertical line down to bottom of wrapper if not the last row in the grid */}
-              {!isLastGridRow && (
-                <div 
-                  className="absolute w-px border-l border-dashed border-zinc-600/65"
-                  style={{ 
-                    top: 56,
-                    bottom: 0,
-                    left: verticalLineX
-                  }}
-                />
-              )}
-            </>
-          ) : (
-            <>
-              {/* Vertical line: from top of the connector box to the center of the current header (top: 16px + 40px offset = 56px) */}
-              <div 
-                className="absolute w-px border-l border-dashed border-zinc-600/65"
-                style={{ 
-                  height: 56, 
-                  top: 0,
-                  left: verticalLineX
-                }}
-              />
-              
-              {/* If there are more rows below, continue the vertical line down to the bottom of this row wrapper */}
-              {!isLastGridRow && (
-                <div 
-                  className="absolute w-px border-l border-dashed border-zinc-600/65"
-                  style={{ 
-                    top: 56,
-                    bottom: 0,
-                    left: verticalLineX
-                  }}
-                />
-              )}
+          {Array.from({ length: nestingLevel }).map((_, i) => {
+            const lineX = i * (childGridItemWidth + gridItemGap) + childGridItemWidth / 2 + 8;
+            const isImmediateParent = i === nestingLevel - 1;
+            
+            // Find the boundary of the current parent collection's subtree (when nesting level goes up to level i or shallower)
+            let subtreeBoundary = gridNestingLevels.length;
+            for (let idx = rowIndex + 1; idx < gridNestingLevels.length; idx++) {
+              if (gridNestingLevels[idx] <= i) {
+                subtreeBoundary = idx;
+                break;
+              }
+            }
+            
+            const hasSubsequent = gridNestingLevels.slice(rowIndex + 1, subtreeBoundary).some(
+              level => level >= i + 1
+            );
 
-              {/* Horizontal line turning right to the child row header */}
-              <div 
-                className="absolute h-px border-t border-dashed border-zinc-600/65"
-                style={{ 
-                  top: 56, 
-                  left: verticalLineX, 
-                  width: Math.max(0, indentOffset - verticalLineX)
-                }}
-              />
-            </>
-          )}
+            return (
+              <React.Fragment key={`guide-line-${i}`}>
+                {/* Vertical line: from top of the row to the horizontal branch level (56px) */}
+                <div 
+                  className="absolute w-px border-l border-dashed border-zinc-600/65"
+                  style={{ 
+                    height: 56, 
+                    top: 0,
+                    left: lineX
+                  }}
+                />
+                
+                {/* Continue vertical line down if there are subsequent sibling or descendant items at level i + 1 or deeper */}
+                {hasSubsequent && (
+                  <div 
+                    className="absolute w-px border-l border-dashed border-zinc-600/65"
+                    style={{ 
+                      top: 56,
+                      bottom: 0,
+                      left: lineX
+                    }}
+                  />
+                )}
+
+                {/* Horizontal branch turning right to connect to the collection header (only on the first row of a sub-collection, for the immediate parent line) */}
+                {isImmediateParent && (!subRowIndex || subRowIndex === 0) && (
+                  <div 
+                    className="absolute h-px border-t border-dashed border-zinc-600/65"
+                    style={{ 
+                      top: 56, 
+                      left: lineX, 
+                      width: Math.max(0, indentOffset - lineX)
+                    }}
+                  />
+                )}
+              </React.Fragment>
+            );
+          })}
         </div>
       )}
       <div className={cn(
@@ -3004,33 +3041,37 @@ export function SceneLaunchPreviewWheelV3({
       )}>
         {gridView && !hidePreview ? (
           <div className="sticky top-0 z-40 flex w-full shrink-0 flex-col bg-[#0c0c0e] shadow-md">
-            <div
-              className="flex w-full shrink-0 items-center justify-center overflow-hidden bg-[#0c0c0e]"
-              style={{ height: boundedGridDisplayPanelHeight }}
-            >
-              {renderPlayer()}
-            </div>
-            <div
-              role="separator"
-              aria-label="Resize display and wheel panels"
-              aria-orientation="horizontal"
-              aria-valuemin={minGridDisplayPanelHeight}
-              aria-valuemax={maxGridDisplayPanelHeight}
-              aria-valuenow={Math.round(boundedGridDisplayPanelHeight)}
-              tabIndex={0}
-              onPointerDown={beginGridPanelResize}
-              onPointerMove={moveGridPanelResize}
-              onPointerUp={endGridPanelResize}
-              onPointerCancel={endGridPanelResize}
-              onLostPointerCapture={endGridPanelResize}
-              onKeyDown={handleGridPanelResizeKeyDown}
-              className={cn(
-                'group relative z-40 flex h-3 w-full shrink-0 touch-none cursor-row-resize items-center justify-center border-y border-zinc-800 bg-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400',
-                isGridPanelResizing && 'bg-zinc-900',
-              )}
-            >
-              <span className="h-1 w-12 rounded-full bg-zinc-600 transition-colors group-hover:bg-zinc-400 group-focus-visible:bg-indigo-300" />
-            </div>
+            {!minimized && (
+              <div
+                className="flex w-full shrink-0 items-center justify-center overflow-hidden bg-[#0c0c0e]"
+                style={{ height: boundedGridDisplayPanelHeight }}
+              >
+                {renderPlayer()}
+              </div>
+            )}
+            {!minimized && (
+              <div
+                role="separator"
+                aria-label="Resize display and wheel panels"
+                aria-orientation="horizontal"
+                aria-valuemin={minGridDisplayPanelHeight}
+                aria-valuemax={maxGridDisplayPanelHeight}
+                aria-valuenow={Math.round(boundedGridDisplayPanelHeight)}
+                tabIndex={0}
+                onPointerDown={beginGridPanelResize}
+                onPointerMove={moveGridPanelResize}
+                onPointerUp={endGridPanelResize}
+                onPointerCancel={endGridPanelResize}
+                onLostPointerCapture={endGridPanelResize}
+                onKeyDown={handleGridPanelResizeKeyDown}
+                className={cn(
+                  'group relative z-40 flex h-3 w-full shrink-0 touch-none cursor-row-resize items-center justify-center border-y border-zinc-800 bg-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400',
+                  isGridPanelResizing && 'bg-zinc-900',
+                )}
+              >
+                <span className="h-1 w-12 rounded-full bg-zinc-600 transition-colors group-hover:bg-zinc-400 group-focus-visible:bg-indigo-300" />
+              </div>
+            )}
             <div className="z-30 flex w-full shrink-0 items-center border-b border-zinc-800/60 bg-[#0c0c0e] px-4 py-2 shadow-md">
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 {onNavigateBack && !isFirstGridRow && (
@@ -3091,6 +3132,7 @@ export function SceneLaunchPreviewWheelV3({
                     </span>
                     <span className="text-xs font-black text-zinc-200">
                       {currentCollectionName || 'Workspace'}
+                      {items && ` (${items.length})`}
                     </span>
                   </div>
                 )}
@@ -3107,17 +3149,27 @@ export function SceneLaunchPreviewWheelV3({
                     />
                   </div>
                 )}
+                {breakoutCollectionsEnabled && onBreakoutNestingDepthChange && (
+                  <div className="flex items-center gap-1.5 border border-zinc-800 bg-zinc-900/60 rounded px-1.5 py-0.5 text-[9px] text-zinc-300">
+                    <span>Depth:</span>
+                    <select
+                      value={breakoutNestingDepth}
+                      onChange={(e) => onBreakoutNestingDepthChange(Number(e.target.value))}
+                      className="bg-transparent border-none text-zinc-100 font-bold focus:outline-none cursor-pointer"
+                    >
+                      <option value="1" className="bg-zinc-950 text-zinc-200">1 Level</option>
+                      <option value="2" className="bg-zinc-950 text-zinc-200">2 Levels</option>
+                      <option value="3" className="bg-zinc-950 text-zinc-200">3 Levels</option>
+                    </select>
+                  </div>
+                )}
                 {onTimelineWrappedChange && (
-                  <div className={cn(
-                    "flex items-center gap-2 transition-opacity",
-                    breakoutCollectionsEnabled && "opacity-45 pointer-events-none"
-                  )}>
+                  <div className="flex items-center gap-2">
                     <span>Wrap timeline</span>
                     <Switch
                       size="sm"
-                      checked={timelineWrapped && !breakoutCollectionsEnabled}
+                      checked={timelineWrapped}
                       onCheckedChange={onTimelineWrappedChange}
-                      disabled={breakoutCollectionsEnabled}
                       aria-label="Wrap timeline"
                     />
                   </div>
@@ -3134,14 +3186,25 @@ export function SceneLaunchPreviewWheelV3({
         {gridView ? (
           <div className={cn(
             "flex shrink-0 flex-col overflow-visible px-0 bg-zinc-950/40",
-            customChunks ? "gap-10 py-6" : "gap-6 py-4",
             !hidePreview && "border-t border-zinc-900",
+            customChunks ? "py-4" : "py-3"
           )}>
             {wrappedRows.map((rowInfo, chunkIndex) => {
               return (
                 <div
                   key={`chunk-wrapper-${chunkIndex}`}
-                  className="relative overflow-visible w-full"
+                  className={cn(
+                    "relative overflow-visible w-full",
+                    customChunks
+                      ? rowInfo.subRowIndex > 0
+                        ? "mt-0" // minimal gap between wrapped rows of the same collection
+                        : chunkIndex > 0
+                          ? "mt-10" // large gap between different collections
+                          : "mt-0"
+                      : chunkIndex > 0
+                        ? "mt-6" // default gap for flat rows
+                        : "mt-0"
+                  )}
                 >
                   <SceneLaunchPreviewWheelV3
                     key={`chunk-${chunkIndex}`}
@@ -3181,6 +3244,9 @@ export function SceneLaunchPreviewWheelV3({
                     gridView={false}
                     gridColumnCount={itemsPerRow}
                     isIndented={rowInfo.isIndented}
+                    nestingLevel={rowInfo.nestingLevel}
+                    gridNestingLevels={wrappedRows.map(r => r.nestingLevel)}
+                    rowIndex={chunkIndex}
                     subRowIndex={rowInfo.subRowIndex}
                     isLastGridRow={chunkIndex === wrappedRows.length - 1}
                     showPlayhead={visibleGridPlayheadRow === chunkIndex}
@@ -3222,10 +3288,15 @@ export function SceneLaunchPreviewWheelV3({
                 <>
                   <div
                     className={cn(
-                      "absolute left-0 right-0 top-0 z-[20] h-8 cursor-ew-resize pointer-events-auto flex items-center",
-                      rowIsCollection
-                        ? "bg-zinc-900/35 border-b border-indigo-950/45"
-                        : "bg-zinc-900/60 border-b border-zinc-800"
+                      "absolute left-0 right-0 top-0 z-[20] cursor-ew-resize pointer-events-auto flex items-center",
+                      subRowIndex > 0
+                        ? "h-2 bg-transparent border-none"
+                        : cn(
+                            "h-8",
+                            rowIsCollection
+                              ? "bg-zinc-900/35 border-b border-indigo-950/45"
+                              : "bg-zinc-900/60 border-b border-zinc-800"
+                          )
                     )}
                     style={{
                       paddingLeft: isIndented ? indentOffset : 16,
@@ -3235,7 +3306,7 @@ export function SceneLaunchPreviewWheelV3({
                     onMouseLeave={handleRulerMouseLeave}
                     onClick={handleGridSeekRailClick}
                     >
-                      {rowIsCollection && (
+                      {rowIsCollection && (!subRowIndex || subRowIndex === 0) && (
                         <div 
                           className="absolute inset-y-0 w-1 rounded-r bg-indigo-400" 
                           style={{
@@ -3353,7 +3424,7 @@ export function SceneLaunchPreviewWheelV3({
                             )}
                             <div className="absolute inset-0 flex items-center justify-center bg-black/35 z-20">
                               <span className="flex min-w-10 h-10 px-2.5 items-center justify-center rounded-full bg-zinc-950 border border-zinc-700/80 text-sm font-black font-sans text-indigo-250 shadow-lg shadow-black/60">
-                                {itemSequences?.[item.id]?.length ?? 0}
+                                {getCollectionDirectCount(item.id)}
                               </span>
                             </div>
                           </div>
@@ -3377,7 +3448,7 @@ export function SceneLaunchPreviewWheelV3({
             );
           })()}
 
-          {showPlayhead && isSharedPlayheadPlaying && (sizing === 'duration' || isGallery) && (
+          {shouldShowPlayhead && isSharedPlayheadPlaying && (sizing === 'duration' || isGallery) && (
             <div
               aria-hidden="true"
               className="pointer-events-none absolute inset-y-0 z-[190] w-0"
@@ -3386,7 +3457,7 @@ export function SceneLaunchPreviewWheelV3({
               <div className="absolute inset-y-0 left-0 w-0.5 -translate-x-1/2 bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.95)]" />
             </div>
           )}
-          {showPlayhead && !isSharedPlayheadPlaying && (sizing === 'duration' || isGallery) && (
+          {shouldShowPlayhead && !isSharedPlayheadPlaying && (sizing === 'duration' || isGallery) && (
             <div
               className="pointer-events-none absolute z-[190]"
               style={{
@@ -3444,7 +3515,7 @@ export function SceneLaunchPreviewWheelV3({
               <div aria-hidden="true" className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-indigo-300 shadow-[0_0_8px_rgba(165,180,252,0.9)]" />
             </div>
           )}
-          {showPlayhead && !isSharedPlayheadPlaying && (sizing === 'duration' || isGallery) && (
+          {shouldShowPlayhead && !isSharedPlayheadPlaying && (sizing === 'duration' || isGallery) && (
             <div className="sr-only" aria-live="polite">
               Playhead at {formatRulerSeconds(rulerPlayheadTimeSeconds)}
             </div>
@@ -3711,7 +3782,7 @@ export function SceneLaunchPreviewWheelV3({
                             )}
                             <div className="absolute inset-0 flex items-center justify-center bg-black/35 z-20">
                               <span className="flex min-w-10 h-10 px-2.5 items-center justify-center rounded-full bg-zinc-950 border border-zinc-700/80 text-sm font-black font-sans text-indigo-250 shadow-lg shadow-black/60">
-                                {itemSequences?.[item.id]?.length ?? 0}
+                                {getCollectionDirectCount(item.id)}
                               </span>
                             </div>
                           </div>
