@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ArrowLeft, ArrowRight, HelpCircle, MoreVertical, Pencil, Plus, Ratio, Search, Settings } from 'lucide-react';
+import { ArrowRight, HelpCircle, MoreVertical, Pencil, Plus, Ratio, Search, Settings } from 'lucide-react';
 
 import {
   Button,
@@ -65,79 +65,8 @@ export function SceneLaunchHeader({
     return (
       <header className="flex h-16 shrink-0 items-center justify-between gap-4 px-4">
         <div className="flex min-w-0 flex-1 items-center gap-4">
-          <button
-            type="button"
-            className={cn(
-              'flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 transition-all duration-200',
-              activeSceneLaunchBeatId
-                ? 'hover:bg-white/5 hover:text-white'
-                : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-200'
-            )}
-            aria-label="Back home"
-            onClick={() => {
-              if (activeSceneLaunchBeatId) {
-                setSceneLaunchBeatPath(previous => previous.slice(0, -1));
-                return;
-              }
-              onNavigateHome();
-            }}
-            onDragOver={(event) => {
-              if (!activeSceneLaunchBeatId) return;
-              event.preventDefault();
-              event.currentTarget.classList.add('bg-zinc-800', 'text-white', 'border', 'border-zinc-700');
-            }}
-            onDragLeave={(event) => {
-              event.currentTarget.classList.remove('bg-zinc-800', 'text-white', 'border', 'border-zinc-700');
-            }}
-            onDrop={(event) => {
-              if (!activeSceneLaunchBeatId) return;
-              event.preventDefault();
-              event.currentTarget.classList.remove('bg-zinc-800', 'text-white', 'border', 'border-zinc-700');
-              const dragKey = event.dataTransfer.getData('text/plain');
-              if (dragKey) {
-                moveSceneLaunchItemToParent(dragKey);
-              }
-            }}
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </button>
-          <div className="hidden min-w-0 lg:block">
-            {isEditingHeaderName && isHeaderEditable ? (
-              <input
-                type="text"
-                value={editingHeaderNameValue}
-                onChange={(event) => setEditingHeaderNameValue(event.target.value)}
-                onBlur={saveHeaderName}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') saveHeaderName();
-                  if (event.key === 'Escape') setIsEditingHeaderName(false);
-                }}
-                autoFocus
-                className="w-auto min-w-[150px] border-b border-zinc-700 bg-transparent px-0 py-0.5 text-sm font-semibold text-zinc-100 outline-none focus:border-indigo-500"
-              />
-            ) : (
-              <div
-                className={cn(
-                  'flex items-center gap-1.5 truncate text-sm font-semibold text-zinc-100 select-none',
-                  isHeaderEditable && 'cursor-pointer hover:text-white group'
-                )}
-                onClick={() => {
-                  if (isHeaderEditable) {
-                    setEditingHeaderNameValue(headerName);
-                    setIsEditingHeaderName(true);
-                  }
-                }}
-              >
-                <span className="truncate">{headerName}</span>
-                {isHeaderEditable && (
-                  <Pencil className="h-3 w-3 text-zinc-500 opacity-0 transition-opacity group-hover:opacity-100" />
-                )}
-              </div>
-            )}
-            <div className="mt-0.5 text-[10px] font-medium text-zinc-600">
-              {new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-            </div>
-          </div>
+
+
         </div>
 
         {centerSlot ? (
@@ -286,79 +215,8 @@ export function SceneLaunchHeader({
   return (
     <header className="flex h-12 shrink-0 items-center justify-between gap-4 px-4">
       <div className="flex min-w-0 items-center gap-4">
-        <button
-          type="button"
-          className={cn(
-            'flex h-9 w-9 items-center justify-center rounded-full text-zinc-300 transition-all duration-200',
-            activeSceneLaunchBeatId
-              ? 'hover:bg-white/5 hover:text-white'
-              : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-200'
-          )}
-          aria-label="Back home"
-          onClick={() => {
-            if (activeSceneLaunchBeatId) {
-              setSceneLaunchBeatPath(previous => previous.slice(0, -1));
-              return;
-            }
-            onNavigateHome();
-          }}
-          onDragOver={(event) => {
-            if (!activeSceneLaunchBeatId) return;
-            event.preventDefault();
-            event.currentTarget.classList.add('bg-zinc-800', 'text-white', 'border', 'border-zinc-700');
-          }}
-          onDragLeave={(event) => {
-            event.currentTarget.classList.remove('bg-zinc-800', 'text-white', 'border', 'border-zinc-700');
-          }}
-          onDrop={(event) => {
-            if (!activeSceneLaunchBeatId) return;
-            event.preventDefault();
-            event.currentTarget.classList.remove('bg-zinc-800', 'text-white', 'border', 'border-zinc-700');
-            const dragKey = event.dataTransfer.getData('text/plain');
-            if (dragKey) {
-              moveSceneLaunchItemToParent(dragKey);
-            }
-          }}
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <div className="min-w-0">
-          {isEditingHeaderName && isHeaderEditable ? (
-            <input
-              type="text"
-              value={editingHeaderNameValue}
-              onChange={(event) => setEditingHeaderNameValue(event.target.value)}
-              onBlur={saveHeaderName}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') saveHeaderName();
-                if (event.key === 'Escape') setIsEditingHeaderName(false);
-              }}
-              autoFocus
-              className="bg-transparent text-sm font-semibold text-zinc-100 border-b border-zinc-700 outline-none focus:border-indigo-500 py-0.5 px-0 w-auto min-w-[150px]"
-            />
-          ) : (
-            <div
-              className={cn(
-                'flex items-center gap-1.5 truncate text-sm font-semibold text-zinc-100 select-none',
-                isHeaderEditable && 'cursor-pointer hover:text-white group'
-              )}
-              onClick={() => {
-                if (isHeaderEditable) {
-                  setEditingHeaderNameValue(headerName);
-                  setIsEditingHeaderName(true);
-                }
-              }}
-            >
-              <span className="truncate">{headerName}</span>
-              {isHeaderEditable && (
-                <Pencil className="h-3 w-3 text-zinc-500 opacity-0 group-hover:opacity-100 transition-opacity" />
-              )}
-            </div>
-          )}
-          <div className="mt-0.5 text-[10px] font-medium text-zinc-600">
-            {new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-          </div>
-        </div>
+
+
       </div>
 
       {centerSlot ? (
