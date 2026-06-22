@@ -7,21 +7,8 @@ import type { Scene, TimelineClip, ClipType } from '@/lib/timeline-context';
 
 const MAX_IMAGE_DURATION_SECONDS = 60 * 60;
 
-export const VIDEO_PLACEHOLDER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='300' viewBox='0 0 400 300'><rect width='100%' height='100%' fill='%2309090b'/><g fill='%2327272a'><path d='M150 120h60a8 8 0 0 1 8 8v44a8 8 0 0 1-8 8h-60a8 8 0 0 1-8-8v-44a8 8 0 0 1 8-8z'/><path d='M226 130l24-15v50l-24-15z'/></g></svg>";
-
-export type SceneLaunchMediaItem = {
-  id: string;
-  clipId: string;
-  name: string;
-  type: 'image' | 'video';
-  previewUrl: string;
-  posterUrl?: string;
-  durationSeconds?: number;
-  trimStartSeconds?: number;
-  mediaDurationSeconds?: number;
-  fileSize?: number;
-  disabled?: boolean;
-};
+import { type SceneLaunchMediaItem, VIDEO_PLACEHOLDER } from '@storyboard/ui';
+export { type SceneLaunchMediaItem, VIDEO_PLACEHOLDER };
 
 export type SceneLaunchBeat = {
   id: string;

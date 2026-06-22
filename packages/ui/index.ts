@@ -10,3 +10,6 @@ export * from "./core/slider";
 export * from "./core/sonner";
 export * from "./core/tabs";
 export * from "./core/tooltip";
+export * from "./core/switch";
+export * from "./wheel-picker/SceneLaunchPreviewWheelV3";
+

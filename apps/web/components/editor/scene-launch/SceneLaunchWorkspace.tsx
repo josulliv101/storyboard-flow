@@ -28,7 +28,7 @@ import {
   SceneLaunchPreviewWheelV3,
   type SceneLaunchPreviewWheelV3Effect,
   type SceneLaunchPreviewWheelV3Sizing,
-} from './SceneLaunchPreviewWheelV3';
+} from '@storyboard/ui';
 import { VideoFrameFilmstrip } from './VideoFrameFilmstrip';
 import type { SceneLaunchPlaybackMode } from '../SceneLaunchTimeline';
 import { SceneLaunchContextMenu } from '../SceneLaunchContextMenu';
@@ -180,6 +180,20 @@ export function SceneLaunchWorkspace({
 
   const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV3Effect>('gallery');
   const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV3Sizing>('uniform');
+  const [previewWheelThumbnailSize, setPreviewWheelThumbnailSize] = React.useState<'sm' | 'md' | 'lg' | 'xl'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-thumbnail-size');
+      if (saved === 'sm' || saved === 'md' || saved === 'lg' || saved === 'xl') {
+        return saved;
+      }
+    }
+    return 'md';
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-thumbnail-size', previewWheelThumbnailSize);
+  }, [previewWheelThumbnailSize]);
+
   const [previewWheelShowUniformRuler, setPreviewWheelShowUniformRuler] = React.useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('scene-launch-preview-wheel-show-uniform-ruler');
@@ -239,6 +253,18 @@ export function SceneLaunchWorkspace({
   React.useEffect(() => {
     localStorage.setItem('scene-launch-preview-wheel-wrap-timeline', String(previewWheelWrapTimeline));
   }, [previewWheelWrapTimeline]);
+
+  const [previewWheelCollectionMultiCircle, setPreviewWheelCollectionMultiCircle] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-collection-multi-circle');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-collection-multi-circle', String(previewWheelCollectionMultiCircle));
+  }, [previewWheelCollectionMultiCircle]);
 
   const [previewWheelBreakoutNestingDepth, setPreviewWheelBreakoutNestingDepth] = React.useState<number>(() => {
     if (typeof window !== 'undefined') {
@@ -2515,6 +2541,7 @@ export function SceneLaunchWorkspace({
                       breakoutRepresentativeUrls={previewWheelBreakoutCollections && breakoutRepresentativeUrls ? breakoutRepresentativeUrls : undefined}
                       currentCollectionName={currentCollectionName}
                       breakoutCollectionsEnabled={previewWheelBreakoutCollections}
+                      collectionMultiCircleEnabled={previewWheelCollectionMultiCircle}
                       onBreakoutCollectionsChange={setPreviewWheelBreakoutCollections}
                       breakoutNestingLevels={previewWheelBreakoutCollections && breakoutNestingLevels ? breakoutNestingLevels : undefined}
                       breakoutNestingDepth={previewWheelBreakoutNestingDepth}
@@ -2537,6 +2564,7 @@ export function SceneLaunchWorkspace({
                       onNavigateBack={closePreviewWheelCollection}
                       selectedMediaId={previewWheelSelectedMediaId}
                       effect={previewWheelEffect}
+                      thumbnailSize={previewWheelThumbnailSize}
                       sizing={previewWheelSizing}
                       showUniformRuler={previewWheelShowUniformRuler}
                       slideOnClick={previewWheelSlideOnClick}
@@ -2749,6 +2777,20 @@ export function SceneLaunchWorkspace({
                             </div>
 
                             <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Thumb Size</span>
+                              <select
+                                value={previewWheelThumbnailSize}
+                                onChange={(event) => setPreviewWheelThumbnailSize(event.target.value as any)}
+                                className="h-7 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
+                              >
+                                <option value="sm">SM</option>
+                                <option value="md">MD</option>
+                                <option value="lg">LG</option>
+                                <option value="xl">XL</option>
+                              </select>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
                               <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Width Mode</span>
                               <select
                                 value={previewWheelSizing}
@@ -2760,16 +2802,14 @@ export function SceneLaunchWorkspace({
                               </select>
                             </div>
 
-                            {previewWheelSizing === 'uniform' && (
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Show Ruler</span>
-                                <Switch
-                                  size="sm"
-                                  checked={previewWheelShowUniformRuler}
-                                  onCheckedChange={setPreviewWheelShowUniformRuler}
-                                />
-                              </div>
-                            )}
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Show Ruler</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelShowUniformRuler}
+                                onCheckedChange={setPreviewWheelShowUniformRuler}
+                              />
+                            </div>
 
                             {!wheelReflectsCollections && (
                               <div className="flex items-center justify-between gap-4">
@@ -2797,6 +2837,33 @@ export function SceneLaunchWorkspace({
                                 size="sm"
                                 checked={previewWheelGridView}
                                 onCheckedChange={setPreviewWheelGridView}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Break out by collection</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelBreakoutCollections}
+                                onCheckedChange={setPreviewWheelBreakoutCollections}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Wrap timeline</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelWrapTimeline}
+                                onCheckedChange={setPreviewWheelWrapTimeline}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Multi circle view</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelCollectionMultiCircle}
+                                onCheckedChange={setPreviewWheelCollectionMultiCircle}
                               />
                             </div>
 

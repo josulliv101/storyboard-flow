@@ -8,7 +8,6 @@ import {
   Cloud,
   Download,
   Info,
-  Layers,
   Loader2,
   Lock,
   LogOut,
@@ -18,6 +17,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Ruler,
   Settings,
   Sparkles,
   Trash2,
@@ -312,7 +312,7 @@ export default function HomePage() {
         }
       : {
           label: 'Workbench',
-          icon: Layers,
+          icon: Ruler,
           className: 'border-sky-300/25 bg-sky-500/18 text-sky-100 shadow-sky-950/30',
         };
   };
@@ -420,7 +420,7 @@ export default function HomePage() {
           className="h-8 border-zinc-700 bg-zinc-900 text-[10px] font-black uppercase tracking-widest text-zinc-300 hover:border-indigo-500/40 hover:bg-indigo-500/10 hover:text-indigo-100"
           onClick={() => void handleOpenScene(scene.id, '/editor', scene.isPublished)}
         >
-          <Layers className="h-3.5 w-3.5" />
+          <Ruler className="h-3.5 w-3.5" />
           Edit
         </Button>
         <Button
@@ -752,7 +752,7 @@ export default function HomePage() {
                     }}
                     className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-zinc-800 hover:text-white"
                   >
-                    <Layers className="h-4 w-4" />
+                    <Ruler className="h-4 w-4" />
                     Open Editor
                   </button>
                   <button
@@ -842,7 +842,7 @@ export default function HomePage() {
               className="inline-flex h-7 items-center gap-1.5 rounded px-2.5 text-[9px] font-black uppercase tracking-widest text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-zinc-200"
               onClick={() => verifyAuthAndNavigate('/editor')}
             >
-              <Layers className="h-3.5 w-3.5" />
+              <Ruler className="h-3.5 w-3.5" />
               Editor
             </button>
             <button

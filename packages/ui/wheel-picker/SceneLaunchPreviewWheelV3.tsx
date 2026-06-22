@@ -2,9 +2,24 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, Ban, Clapperboard, Folder, CornerUpLeft, FolderInput, Play, Pause, Repeat, AlignLeft, AlignCenter, AlignRight, Trash2, ChevronsLeft, ChevronLeft, ChevronRight, ChevronsRight } from 'lucide-react';
 
-import { Switch } from '@/components/ui/switch';
-import { cn } from '@/lib/utils';
-import { VIDEO_PLACEHOLDER, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
+import { Switch } from '../core/switch';
+import { cn } from '../lib/utils';
+
+export const VIDEO_PLACEHOLDER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='300' viewBox='0 0 400 300'><rect width='100%' height='100%' fill='%2309090b'/><g fill='%2327272a'><path d='M150 120h60a8 8 0 0 1 8 8v44a8 8 0 0 1-8 8h-60a8 8 0 0 1-8-8v-44a8 8 0 0 1 8-8z'/><path d='M226 130l24-15v50l-24-15z'/></g></svg>";
+
+export type SceneLaunchMediaItem = {
+  id: string;
+  clipId: string;
+  name: string;
+  type: 'image' | 'video';
+  previewUrl: string;
+  posterUrl?: string;
+  durationSeconds?: number;
+  trimStartSeconds?: number;
+  mediaDurationSeconds?: number;
+  fileSize?: number;
+  disabled?: boolean;
+};
 
 const ITEM_GAP = 24;
 const DRAG_SELECT_THRESHOLD = 5;
@@ -98,6 +113,8 @@ interface SceneLaunchPreviewWheelV3Props {
   breakoutCollectionsEnabled?: boolean;
   timelineWrapped?: boolean;
   onTimelineWrappedChange?: (wrapped: boolean) => void;
+  prevRowPreviewItem?: SceneLaunchMediaItem;
+  nextRowPreviewItem?: SceneLaunchMediaItem;
   subRowIndex?: number;
   breakoutNestingLevels?: number[];
   breakoutNestingDepth?: number;
@@ -108,6 +125,7 @@ interface SceneLaunchPreviewWheelV3Props {
   minimized?: boolean;
   breakoutSelectedMediaIds?: string[];
   allCollections?: any[];
+  collectionMultiCircleEnabled?: boolean;
   getRecursiveMediaItems?: (collection: any) => any[];
   onBreakoutCollectionsChange?: (enabled: boolean) => void;
   rowTitle?: string;
@@ -147,6 +165,7 @@ interface SceneLaunchPreviewWheelV3Props {
     sourceTimeSeconds: number | null,
     timelineTimeSeconds?: number | null,
   ) => void;
+  thumbnailSize?: 'sm' | 'md' | 'lg' | 'xl';
 }
 
 const clamp = (value: number, min: number, max: number) => (
@@ -544,6 +563,8 @@ export function SceneLaunchPreviewWheelV3({
   onBreakoutCollectionsChange,
   timelineWrapped = false,
   onTimelineWrappedChange,
+  prevRowPreviewItem,
+  nextRowPreviewItem,
   subRowIndex = 0,
   breakoutNestingLevels,
   breakoutNestingDepth = 1,
@@ -584,6 +605,8 @@ export function SceneLaunchPreviewWheelV3({
   externalScrubSourceTime = null,
   externalScrubTimelineTime = null,
   onScrubUpdate,
+  thumbnailSize = 'md',
+  collectionMultiCircleEnabled = false,
 }: SceneLaunchPreviewWheelV3Props) {
   const shouldShowPlayhead = showPlayhead && !minimized;
   const containerResizeObserverRef = React.useRef<ResizeObserver | null>(null);
@@ -810,17 +833,27 @@ export function SceneLaunchPreviewWheelV3({
   const responsiveGridItemWidth = hidePreview && gridColumnCount
     ? Math.max(1, (viewportSize.width - 16 - gridItemGap * (gridColumnCount - 1)) / gridColumnCount)
     : null;
+  const galleryItemHeight = thumbnailSize === 'sm' ? 80
+    : thumbnailSize === 'lg' ? 160
+    : thumbnailSize === 'xl' ? 200
+    : 120; // 'md'
+
+  const sizeFactor = thumbnailSize === 'sm' ? 0.65
+    : thumbnailSize === 'lg' ? 1.35
+    : thumbnailSize === 'xl' ? 1.7
+    : 1.0;
+
   const itemHeight = responsiveGridItemWidth !== null
     ? responsiveGridItemWidth * 9 / 16
     : isGallery
-      ? GALLERY_ITEM_HEIGHT
-    : Math.round(clamp(
-        sizing === 'uniform'
-          ? Math.min(viewportSize.height - 64, viewportSize.width * 0.72 * 9 / 16)
-          : viewportSize.height - 64,
-        220,
-        620,
-      ));
+      ? galleryItemHeight
+      : Math.round(clamp(
+          sizing === 'uniform'
+            ? Math.min(viewportSize.height - 64, viewportSize.width * 0.72 * 9 / 16)
+            : viewportSize.height - 64,
+          220,
+          620,
+        ) * sizeFactor);
   const rowHeight = hidePreview
     ? (subRowIndex > 0 ? itemHeight + 8 : itemHeight + 40)
     : isGallery
@@ -949,6 +982,8 @@ export function SceneLaunchPreviewWheelV3({
     return itemSequences?.[itemId]?.length ?? 0;
   }, [allCollections, itemSequences]);
 
+
+
   const durationPixelsPerSecond = uniformItemWidth / DURATION_REFERENCE_SECONDS * durationScale;
   const itemWidths = React.useMemo(() => {
     if (sizing === 'uniform') {
@@ -1012,7 +1047,7 @@ export function SceneLaunchPreviewWheelV3({
     items.findIndex(item => item.id === selectedMediaId)
   ), [items, selectedMediaId]);
 
-  const gridItemWidth = Math.round(GALLERY_ITEM_HEIGHT * 16 / 9);
+  const gridItemWidth = Math.round(galleryItemHeight * 16 / 9);
   const gridColStride = gridItemWidth + gridItemGap;
   const colStride = uniformItemWidth + itemGap;
   const itemsPerRow = React.useMemo(() => {
@@ -1022,7 +1057,7 @@ export function SceneLaunchPreviewWheelV3({
   const childGridItemWidth = React.useMemo(() => {
     const responsiveWidth = itemsPerRow
       ? Math.max(1, (viewportSize.width - 16 - gridItemGap * (itemsPerRow - 1)) / itemsPerRow)
-      : Math.round(GALLERY_ITEM_HEIGHT * 16 / 9);
+      : Math.round(galleryItemHeight * 16 / 9);
     return responsiveWidth;
   }, [itemsPerRow, viewportSize.width, gridItemGap]);
 
@@ -1050,8 +1085,9 @@ export function SceneLaunchPreviewWheelV3({
 
         if (timelineWrapped) {
           let subRowIdx = 0;
-          for (let i = 0; i < originalChunk.length; i += itemsPerRow) {
-            const subItems = originalChunk.slice(i, i + itemsPerRow);
+          const itemsPerRowForLevel = Math.max(1, itemsPerRow - nestingLevel);
+          for (let i = 0; i < originalChunk.length; i += itemsPerRowForLevel) {
+            const subItems = originalChunk.slice(i, i + itemsPerRowForLevel);
             result.push({
               items: subItems,
               parentChunkIndex: parentIndex,
@@ -1222,6 +1258,73 @@ export function SceneLaunchPreviewWheelV3({
     : maxOffset;
   const centeredIndex = getNearestIndexForOffset(offset, snapReferencePositions);
   const centeredItem = items[centeredIndex] ?? null;
+
+  const { leftOffscreenCount, rightOffscreenCount } = React.useMemo(() => {
+    let leftCount = 0;
+    let rightCount = 0;
+    const halfViewportWidth = viewportSize.width / 2;
+
+    items.forEach((item, index) => {
+      const itemWidth = itemWidths[index] ?? uniformItemWidth;
+      const itemCenterOffset = (reorderItemCenterPositions?.get(item.id) ?? itemCenterPositions[index] ?? 0) + offset;
+      const offsetFromCenter = itemCenterOffset / itemStride;
+
+      let x = itemCenterOffset + playheadOffsetFromCenter;
+
+      if (effect === 'cylinder') {
+        const angle = clamp(offsetFromCenter * MAX_WHEEL_ANGLE / 2, -MAX_WHEEL_ANGLE, MAX_WHEEL_ANGLE);
+        const angleRadians = degreesToRadians(angle);
+        const radius = itemStride * 3.05;
+        x = Math.sin(angleRadians) * radius + playheadOffsetFromCenter;
+      } else if (effect === 'cylinder2') {
+        const angle = clamp(offsetFromCenter * 20, -54, 54);
+        const angleRadians = degreesToRadians(angle);
+        const radius = itemStride * 2.9;
+        const centeredItemWidth = itemWidths[centeredIndex] ?? uniformItemWidth;
+        const minimumCenterSpacing = (itemWidth + centeredItemWidth) / 2 + itemGap;
+        x = Math.sin(angleRadians) * radius;
+        const absOffsetFromCenter = Math.abs(offsetFromCenter);
+        if (absOffsetFromCenter >= 0.5) {
+          x =
+            Math.sign(offsetFromCenter) *
+            Math.max(
+              Math.abs(x),
+              minimumCenterSpacing +
+                Math.max(0, absOffsetFromCenter - 1) * itemWidth * 0.74,
+            );
+        }
+        x += playheadOffsetFromCenter;
+      } else if (effect === 'coverflow') {
+        x = itemCenterOffset * 0.82 + playheadOffsetFromCenter;
+      } else if (effect === 'stack') {
+        x = itemCenterOffset * 0.58 + playheadOffsetFromCenter;
+      }
+
+      const itemLeft = x - itemWidth / 2;
+      const itemRight = x + itemWidth / 2;
+
+      if (itemRight < -halfViewportWidth) {
+        leftCount++;
+      } else if (itemLeft > halfViewportWidth) {
+        rightCount++;
+      }
+    });
+
+    return { leftOffscreenCount: leftCount, rightOffscreenCount: rightCount };
+  }, [
+    items,
+    itemWidths,
+    uniformItemWidth,
+    reorderItemCenterPositions,
+    itemCenterPositions,
+    offset,
+    itemStride,
+    playheadOffsetFromCenter,
+    effect,
+    centeredIndex,
+    itemGap,
+    viewportSize.width,
+  ]);
   const activePlayingIndex = activePlayingMediaId
     ? items.findIndex(item => item.id === activePlayingMediaId)
     : -1;
@@ -1366,6 +1469,143 @@ export function SceneLaunchPreviewWheelV3({
     return scrubSnapshot;
   }, [externalScrubMediaId, externalScrubSourceTime, externalScrubTimelineTime, itemSequences, scrubSnapshot, items]);
 
+  const getCollectionMediaItems = React.useCallback((collectionId: string): SceneLaunchMediaItem[] => {
+    let realCollectionId = '';
+    if (collectionId.startsWith('collection-placeholder:')) {
+      realCollectionId = collectionId.substring('collection-placeholder:'.length);
+    } else if (allCollections?.some(b => b.id === collectionId)) {
+      realCollectionId = collectionId;
+    }
+
+    if (realCollectionId) {
+      if (allCollections && getRecursiveMediaItems) {
+        const collection = allCollections.find(b => b.id === realCollectionId);
+        if (collection) {
+          return getRecursiveMediaItems(collection);
+        }
+      }
+    }
+
+    return itemSequences?.[collectionId] ?? [];
+  }, [allCollections, getRecursiveMediaItems, itemSequences]);
+
+  const renderCollectionContent = React.useCallback((collectionId: string, fallbackItem: SceneLaunchMediaItem) => {
+    const isMultiCircle = collectionMultiCircleEnabled;
+    const mediaItems = getCollectionMediaItems(collectionId);
+
+    if (isMultiCircle && mediaItems.length > 0) {
+      const first = mediaItems[0];
+      const last = mediaItems[mediaItems.length - 1];
+      
+      let longest = mediaItems[0];
+      let maxDur = -1;
+      for (const m of mediaItems) {
+        const d = m.durationSeconds ?? 3;
+        if (d > maxDur) {
+          maxDur = d;
+          longest = m;
+        }
+      }
+
+      const durations = mediaItems.map(m => m.durationSeconds ?? 3);
+      const maxDuration = Math.max(...durations);
+      const minDuration = Math.min(...durations);
+
+      const getCircleSizePercent = (duration: number) => {
+        return 45 + ((duration - minDuration) / (maxDuration - minDuration || 1)) * 25;
+      };
+
+      const renderCircle = (m: SceneLaunchMediaItem, left: string, top: string) => {
+        const d = m.durationSeconds ?? 3;
+        const size = getCircleSizePercent(d);
+        const subThumbnail = scrubSnapshot
+          ? itemSequenceThumbnails?.[m.id]?.[scrubSnapshot.media.id] ?? m
+          : m;
+
+        return (
+          <div
+            key={m.id}
+            className="absolute rounded-full border border-zinc-600/50 shadow-lg overflow-hidden bg-zinc-950 flex items-center justify-center"
+            style={{
+              left,
+              top,
+              width: `${size}%`,
+              height: `${size}%`,
+              transform: 'translate(-50%, -50%)',
+              zIndex: 10,
+            }}
+          >
+            {subThumbnail.type === 'video' ? (
+              <img src={subThumbnail.posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover pointer-events-none" />
+            ) : (
+              <img src={subThumbnail.previewUrl} alt="" className="h-full w-full object-cover pointer-events-none" />
+            )}
+          </div>
+        );
+      };
+
+      return (
+        <div className="absolute inset-0 bg-zinc-900/40 p-1 select-none pointer-events-none flex items-center justify-center">
+          <div className="h-[96%] aspect-square relative">
+            {renderCircle(first, '50%', '18%')}
+            {renderCircle(last, '78%', '67%')}
+            {renderCircle(longest, '22%', '67%')}
+
+            <div
+              className="absolute flex items-center justify-center bg-black/35 rounded-full"
+              style={{
+                left: '50%',
+                top: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: 30,
+              }}
+            >
+              <span className="flex min-w-10 h-10 px-2.5 items-center justify-center rounded-full bg-zinc-950 border border-zinc-700/80 text-sm font-black font-sans text-indigo-250 shadow-lg shadow-black/60">
+                {getCollectionDirectCount(collectionId)}
+              </span>
+            </div>
+          </div>
+          <div className="absolute top-2 left-2 flex items-center justify-center rounded-full bg-black/60 p-1.5 text-indigo-300 border border-zinc-800/30 z-20">
+            <Folder className="h-2.5 w-2.5" />
+          </div>
+        </div>
+      );
+    }
+
+    const mainThumbnailItem = scrubSnapshot
+      ? itemSequenceThumbnails?.[fallbackItem.id]?.[scrubSnapshot.media.id] ?? fallbackItem
+      : fallbackItem;
+
+    return (
+      <div className="absolute inset-0 bg-zinc-900/40 p-1 select-none pointer-events-none flex items-center justify-center">
+        <div className="h-[96%] aspect-square relative flex items-center justify-center">
+          <div className="absolute inset-0 rounded-full border border-zinc-800 bg-zinc-900/80 translate-x-[6px] -translate-y-[6px] opacity-50 scale-[0.97] shadow-sm z-0" />
+          <div className="absolute inset-0 rounded-full border border-zinc-800/80 bg-zinc-900/90 translate-x-[4px] -translate-y-[4px] opacity-75 scale-[0.98] shadow-sm z-[3]" />
+          <div className="absolute inset-0 rounded-full border border-zinc-700 bg-zinc-800 translate-x-[2px] -translate-y-[2px] opacity-90 scale-[0.99] shadow-md z-[6]" />
+          <div className="relative w-full h-full rounded-full border-2 border-zinc-600/70 shadow-lg overflow-hidden bg-zinc-950 z-10 flex items-center justify-center">
+            {mainThumbnailItem.type === 'video' ? (
+              <img
+                src={mainThumbnailItem.posterUrl || VIDEO_PLACEHOLDER}
+                alt=""
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <img src={mainThumbnailItem.previewUrl} alt="" className="h-full w-full object-cover" />
+            )}
+            <div className="absolute inset-0 flex items-center justify-center bg-black/35 z-20">
+              <span className="flex min-w-10 h-10 px-2.5 items-center justify-center rounded-full bg-zinc-950 border border-zinc-700/80 text-sm font-black font-sans text-indigo-250 shadow-lg shadow-black/60">
+                {getCollectionDirectCount(collectionId)}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="absolute top-2 left-2 flex items-center justify-center rounded-full bg-black/60 p-1.5 text-indigo-300 border border-zinc-800/30 z-20">
+          <Folder className="h-2.5 w-2.5" />
+        </div>
+      </div>
+    );
+  }, [collectionMultiCircleEnabled, getCollectionDirectCount, getCollectionMediaItems, itemSequenceThumbnails, scrubSnapshot]);
+
   React.useEffect(() => {
     if (gridView) return;
     const publishScrubUpdate = onScrubUpdateRef.current;
@@ -1434,10 +1674,13 @@ export function SceneLaunchPreviewWheelV3({
   }, [effect, effectiveScrubSnapshot?.media.id, selectedItemType, selectedMediaId]);
 
   const setOffset = React.useCallback((nextOffset: number) => {
-    const boundedOffset = clamp(nextOffset, minOffset, maxOffset);
+    const isDragMode = dragRef.current.isDragging && hidePreview;
+    const boundedOffset = isDragMode
+      ? nextOffset
+      : clamp(nextOffset, minOffset, maxOffset);
     offsetRef.current = boundedOffset;
     setOffsetState(boundedOffset);
-  }, [maxOffset, minOffset]);
+  }, [maxOffset, minOffset, hidePreview]);
 
   const scrubWithPlayhead = React.useCallback((
     nextPlayheadX: number,
@@ -1818,6 +2061,86 @@ export function SceneLaunchPreviewWheelV3({
       { scrubPreview: true },
     );
   }, [snapReferencePositions, snapToIndex]);
+
+  const snapToGridLeftAlign = React.useCallback(() => {
+    if (snapFrameRef.current !== null) {
+      window.cancelAnimationFrame(snapFrameRef.current);
+      snapFrameRef.current = null;
+    }
+    setIsSpinning(true);
+    setIsSnapping(true);
+    let didFinish = false;
+    const finish = () => {
+      if (didFinish) return;
+      didFinish = true;
+      setIsSpinning(false);
+      setIsSnapping(false);
+    };
+    snapCompletionRef.current = {
+      mediaId: items[0]?.id ?? 'grid-left',
+      finish,
+    };
+    setOffset(gridLeftAlignOffset);
+  }, [gridLeftAlignOffset, setOffset, items]);
+
+  const renderPreviewItem = React.useCallback((item: SceneLaunchMediaItem, centerOffset: number, direction: 'prev' | 'next') => {
+    const thumbnailItem = scrubSnapshot
+      ? itemSequenceThumbnails?.[item.id]?.[scrubSnapshot.media.id] ?? item
+      : item;
+    
+    const x = centerOffset + offset + playheadOffsetFromCenter;
+    const isCollection = collectionItemIds.includes(item.id);
+
+    return (
+      <div
+        key={`preview-tile-${item.id}`}
+        className={cn(
+          "group/nav absolute left-1/2 shrink-0 overflow-hidden border bg-zinc-900 shadow-lg pointer-events-none",
+          isGaplessGallery ? 'rounded-none' : 'rounded-md',
+          "border-zinc-800"
+        )}
+        style={{
+          top: itemCenterY,
+          width: uniformItemWidth,
+          height: itemHeight,
+          transform: `translate3d(${(x - uniformItemWidth / 2).toFixed(2)}px, ${(-itemHeight / 2).toFixed(2)}px, 0px)`,
+          transformOrigin: 'center center',
+          zIndex: 55,
+          maskImage: direction === 'prev'
+            ? 'linear-gradient(to right, transparent, black)'
+            : 'linear-gradient(to left, transparent, black)',
+          WebkitMaskImage: direction === 'prev'
+            ? 'linear-gradient(to right, transparent, black)'
+            : 'linear-gradient(to left, transparent, black)',
+        }}
+      >
+        {isCollection ? (
+          renderCollectionContent(item.id, thumbnailItem)
+        ) : (
+          <>
+            {thumbnailItem.type === 'video' ? (
+              <img
+                src={thumbnailItem.posterUrl || VIDEO_PLACEHOLDER}
+                alt=""
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <img src={thumbnailItem.previewUrl} alt="" className="h-full w-full object-cover" />
+            )}
+            <div className="absolute inset-0 bg-black/40" />
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-2.5">
+              <div className="truncate text-xs font-black uppercase text-zinc-100">
+                {item.name}
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-1 font-mono text-[9px] uppercase tracking-widest text-zinc-400">
+                <span>{item.type}</span>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }, [scrubSnapshot, itemSequenceThumbnails, playheadOffsetFromCenter, collectionItemIds, isGaplessGallery, itemCenterY, uniformItemWidth, itemHeight, getCollectionDirectCount, offset]);
 
   const snapToIndexRef = React.useRef(snapToIndex);
   React.useEffect(() => {
@@ -2449,6 +2772,10 @@ export function SceneLaunchPreviewWheelV3({
     if (drag.didMove) {
       clickGuardRef.current = true;
       clearClickGuardSoon();
+      if (hidePreview) {
+        snapToGridLeftAlign();
+        return;
+      }
       if (sizing === 'duration' || isGallery) {
         return;
       }
@@ -2482,7 +2809,7 @@ export function SceneLaunchPreviewWheelV3({
         }
       }
     }
-  }, [clearClickGuardSoon, collectionItemIds, getCenteredMediaIdForOrder, hidePreview, itemStartTimes, items, onCenteredMediaChange, onCollectionOpen, onItemMoveIntoCollection, onItemsReorder, onUtilityDrop, reorderPreview, selectReorderedItem, selectedMediaId, setOffset, sizing, slideOnClick, snapToIndex, spinWithMomentum]);
+  }, [clearClickGuardSoon, collectionItemIds, getCenteredMediaIdForOrder, hidePreview, itemStartTimes, items, onCenteredMediaChange, onCollectionOpen, onItemMoveIntoCollection, onItemsReorder, onUtilityDrop, reorderPreview, selectReorderedItem, selectedMediaId, setOffset, sizing, slideOnClick, snapToIndex, spinWithMomentum, snapToGridLeftAlign]);
 
   const focusItem = React.useCallback((index: number) => {
     window.requestAnimationFrame(() => {
@@ -3190,6 +3517,11 @@ export function SceneLaunchPreviewWheelV3({
             customChunks ? "py-4" : "py-3"
           )}>
             {wrappedRows.map((rowInfo, chunkIndex) => {
+              const prevRow = wrappedRows[chunkIndex - 1];
+              const nextRow = wrappedRows[chunkIndex + 1];
+              const prevRowPreviewItem = prevRow ? prevRow.items[prevRow.items.length - 1] : undefined;
+              const nextRowPreviewItem = nextRow ? nextRow.items[0] : undefined;
+
               return (
                 <div
                   key={`chunk-wrapper-${chunkIndex}`}
@@ -3209,11 +3541,17 @@ export function SceneLaunchPreviewWheelV3({
                   <SceneLaunchPreviewWheelV3
                     key={`chunk-${chunkIndex}`}
                     items={rowInfo.items}
+                    prevRowPreviewItem={prevRowPreviewItem}
+                    nextRowPreviewItem={nextRowPreviewItem}
                     itemSequences={itemSequences}
                     itemSequenceThumbnails={itemSequenceThumbnails}
                     onCollectionOpen={onCollectionOpen}
+                    allCollections={allCollections}
+                    getRecursiveMediaItems={getRecursiveMediaItems}
+                    collectionMultiCircleEnabled={collectionMultiCircleEnabled}
                     selectedMediaId={breakoutSelectedMediaIds?.[rowInfo.parentChunkIndex] ?? selectedMediaId}
                     effect={effect}
+                    thumbnailSize={thumbnailSize}
                     sizing="uniform"
                     durationScale={durationScale}
                     selectedItemDurationSeconds={selectedItemDurationSeconds}
@@ -3407,32 +3745,7 @@ export function SceneLaunchPreviewWheelV3({
                     style={{ transformOrigin: 'center center', willChange: 'transform' }}
                   >
                     {collectionItemIds.includes(item.id) ? (
-                      <div className="absolute inset-0 bg-zinc-900/40 p-1 select-none pointer-events-none flex items-center justify-center">
-                        <div className="h-[96%] aspect-square relative flex items-center justify-center">
-                          {/* Stack Circle 4 (bottom-most) */}
-                          <div className="absolute inset-0 rounded-full border border-zinc-800 bg-zinc-900/80 translate-x-[6px] -translate-y-[6px] opacity-50 scale-[0.97] shadow-sm z-0" />
-                          {/* Stack Circle 3 (middle-bottom) */}
-                          <div className="absolute inset-0 rounded-full border border-zinc-800/80 bg-zinc-900/90 translate-x-[4px] -translate-y-[4px] opacity-75 scale-[0.98] shadow-sm z-[3]" />
-                          {/* Stack Circle 2 (middle-top) */}
-                          <div className="absolute inset-0 rounded-full border border-zinc-700 bg-zinc-800 translate-x-[2px] -translate-y-[2px] opacity-90 scale-[0.99] shadow-md z-[6]" />
-                          {/* Top Circle 1 (main cover) */}
-                          <div className="relative w-full h-full rounded-full border-2 border-zinc-600/70 shadow-lg overflow-hidden bg-zinc-950 z-10 flex items-center justify-center">
-                            {item.type === 'video' ? (
-                              <img src={item.posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
-                            ) : (
-                              <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
-                            )}
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/35 z-20">
-                              <span className="flex min-w-10 h-10 px-2.5 items-center justify-center rounded-full bg-zinc-950 border border-zinc-700/80 text-sm font-black font-sans text-indigo-250 shadow-lg shadow-black/60">
-                                {getCollectionDirectCount(item.id)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="absolute top-2 left-2 flex items-center justify-center rounded-full bg-black/60 p-1.5 text-indigo-300 border border-zinc-800/30 z-20">
-                          <Folder className="h-2.5 w-2.5" />
-                        </div>
-                      </div>
+                      renderCollectionContent(item.id, item)
                     ) : (
                       item.type === 'video' ? (
                         <img src={item.posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
@@ -3534,6 +3847,7 @@ export function SceneLaunchPreviewWheelV3({
             />
           )}
           <div className="absolute inset-0 will-change-transform" style={{ transformStyle: 'preserve-3d' }}>
+            {(isDragging || isSnapping) && prevRowPreviewItem && (rowIndex > 0 || subRowIndex > 0) && renderPreviewItem(prevRowPreviewItem, -uniformItemWidth - itemGap, 'prev')}
             {items.map((item, index) => {
               const thumbnailItem = scrubSnapshot
                 ? itemSequenceThumbnails?.[item.id]?.[scrubSnapshot.media.id] ?? item
@@ -3761,36 +4075,7 @@ export function SceneLaunchPreviewWheelV3({
                     className="absolute inset-0 overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
                   >
                     {collectionItemIds.includes(item.id) ? (
-                      <div className="absolute inset-0 bg-zinc-900/40 p-1 select-none pointer-events-none flex items-center justify-center">
-                        <div className="h-[96%] aspect-square relative flex items-center justify-center">
-                          {/* Stack Circle 4 (bottom-most) */}
-                          <div className="absolute inset-0 rounded-full border border-zinc-800 bg-zinc-900/80 translate-x-[6px] -translate-y-[6px] opacity-50 scale-[0.97] shadow-sm z-0" />
-                          {/* Stack Circle 3 (middle-bottom) */}
-                          <div className="absolute inset-0 rounded-full border border-zinc-800/80 bg-zinc-900/90 translate-x-[4px] -translate-y-[4px] opacity-75 scale-[0.98] shadow-sm z-[3]" />
-                          {/* Stack Circle 2 (middle-top) */}
-                          <div className="absolute inset-0 rounded-full border border-zinc-700 bg-zinc-800 translate-x-[2px] -translate-y-[2px] opacity-90 scale-[0.99] shadow-md z-[6]" />
-                          {/* Top Circle 1 (main cover) */}
-                          <div className="relative w-full h-full rounded-full border-2 border-zinc-600/70 shadow-lg overflow-hidden bg-zinc-950 z-10 flex items-center justify-center">
-                            {thumbnailItem.type === 'video' ? (
-                              <img
-                                src={thumbnailItem.posterUrl || VIDEO_PLACEHOLDER}
-                                alt=""
-                                className="h-full w-full object-cover"
-                              />
-                            ) : (
-                              <img src={thumbnailItem.previewUrl} alt="" className="h-full w-full object-cover" />
-                            )}
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/35 z-20">
-                              <span className="flex min-w-10 h-10 px-2.5 items-center justify-center rounded-full bg-zinc-950 border border-zinc-700/80 text-sm font-black font-sans text-indigo-250 shadow-lg shadow-black/60">
-                                {getCollectionDirectCount(item.id)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="absolute top-2 left-2 flex items-center justify-center rounded-full bg-black/60 p-1.5 text-indigo-300 border border-zinc-800/30 z-20">
-                          <Folder className="h-2.5 w-2.5" />
-                        </div>
-                      </div>
+                      renderCollectionContent(item.id, thumbnailItem)
                     ) : (
                       thumbnailItem.type === 'video' ? (
                         <img
@@ -3881,8 +4166,53 @@ export function SceneLaunchPreviewWheelV3({
                   </div>
                 </React.Fragment>
               );
-            })}
+             })}
+             {(isDragging || isSnapping) && nextRowPreviewItem && !isLastGridRow && renderPreviewItem(nextRowPreviewItem, itemCenterPositions[finalIndex] + uniformItemWidth + itemGap, 'next')}
           </div>
+
+          {leftOffscreenCount > 0 && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!hidePreview) {
+                  snapToIndex(Math.max(0, centeredIndex - 1));
+                } else {
+                  setOffset(offset + uniformItemWidth);
+                }
+              }}
+              style={{
+                top: itemCenterY,
+              }}
+              className="absolute left-2 z-[210] -translate-y-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-zinc-800/90 bg-zinc-950/80 backdrop-blur-md text-[10px] font-black tracking-wider text-zinc-300 font-sans uppercase shadow-lg shadow-black/60 hover:bg-zinc-900 hover:border-indigo-500/50 hover:text-white transition-all select-none cursor-pointer"
+            >
+              <ChevronLeft className="size-3 text-indigo-400" />
+              <span>{leftOffscreenCount}</span>
+            </button>
+          )}
+
+          {rightOffscreenCount > 0 && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!hidePreview) {
+                  snapToIndex(Math.min(items.length - 1, centeredIndex + 1));
+                } else {
+                  setOffset(offset - uniformItemWidth);
+                }
+              }}
+              style={{
+                top: itemCenterY,
+              }}
+              className="absolute right-2 z-[210] -translate-y-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-zinc-800/90 bg-zinc-950/80 backdrop-blur-md text-[10px] font-black tracking-wider text-zinc-300 font-sans uppercase shadow-lg shadow-black/60 hover:bg-zinc-900 hover:border-indigo-500/50 hover:text-white transition-all select-none cursor-pointer"
+            >
+              <span>{rightOffscreenCount}</span>
+              <ChevronRight className="size-3 text-indigo-400" />
+            </button>
+          )}
         </div>
           )
         )}
