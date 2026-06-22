@@ -1,0 +1,42 @@
+component: PreviewWheelPlayer
+
+category: editor
+
+purpose: >
+  Houses playback controllers and coordinates canvas rendering with stateful timeline overlays. Enables skipping bounds, looping media tracks, and positioning timeline playheads.
+
+inputs:
+  - isGallery: boolean
+  - hidePreview: boolean
+  - effectiveScrubSnapshot: GalleryScrubSnapshot | null (timeline canvas snapshot content)
+  - gridView: boolean (multiline display alignment)
+  - isPreviewPlaying: boolean (playing toggled flag)
+  - loopPreviewPlayback: boolean (loop status flag)
+  - playheadPositionRatio: number
+  - centeredIndex: number
+  - itemsCount: number
+  - selectedMediaId: string
+  - showSelectedTrimOverlay: boolean
+  - trimOverlayMediaId: string | null
+  - galleryPreviewHeight: number
+  - galleryPreviewWidth: number
+  - totalDurationSeconds: number
+
+outputs:
+  - snapToIndex: callback to slide focus to items
+  - onTogglePlayback: callback to play/pause media
+  - onToggleLoop: callback to loop media
+  - centerPlayhead: callback to reset playhead alignments
+  - renderGalleryTrimOverlay: custom overlay render function
+
+dependencies:
+  - React
+  - GalleryCanvasPreview
+  - Lucide React (ChevronsLeft, ChevronLeft, Play, Pause, ChevronRight, ChevronsRight, Repeat, AlignCenter)
+
+always:
+  - Expose a reference object (prominentTimestampRef) to imperatively modify timestamp text content without initiating heavy component re-renders.
+  - Disable navigation buttons when centeredIndex hits the boundary extremes.
+
+never:
+  - Render player display panels if isGallery is false or hidePreview is true.

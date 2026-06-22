@@ -1,0 +1,95 @@
+name: usePreviewWheelDragDrop
+type: hook
+description: A React custom hook managing all dragging, reordering, autoscrolling, momentum scrolling, and snapping animations for SceneLaunchPreviewWheelV3.
+inputs:
+  items:
+    type: SceneLaunchMediaItem[]
+  disabledItemIds:
+    type: string[]
+  selectedMediaId:
+    type: string
+  sizing:
+    type: SceneLaunchPreviewWheelV3Sizing
+  durationScale:
+    type: number
+  effect:
+    type: SceneLaunchPreviewWheelV3Effect
+  hidePreview:
+    type: boolean
+  viewportSize:
+    type: object
+  gridView:
+    type: boolean
+  offset:
+    type: number
+  setOffset:
+    type: function
+  playheadX:
+    type: number
+  renderedPlayheadX:
+    type: number
+  playheadPositionRatio:
+    type: number
+  setPlayheadPositionRatio:
+    type: function
+  setGridPlayheadRatio:
+    type: function
+  onCenteredMediaChange:
+    type: function
+  onCollectionOpen:
+    type: function
+  onItemsReorder:
+    type: function
+  onItemMoveIntoCollection:
+    type: function
+  onUtilityDrop:
+    type: function
+  selectReorderedItem:
+    type: boolean
+  slideOnClick:
+    type: boolean
+  selectItemsWhilePreviewHidden:
+    type: boolean
+  syncPreviewToPlayhead:
+    type: boolean
+  resolveItemSnapshot:
+    type: function
+  viewportRef:
+    type: object
+  reorderGhostRef:
+    type: object
+  reorderGhostContentRef:
+    type: object
+outputs:
+  isDragging:
+    type: boolean
+  reorderPreview:
+    type: ReorderPreview | null
+  reorderPreviewOrder:
+    type: string[] | null
+  collectionDropTargetId:
+    type: string | null
+  utilityDropTarget:
+    type: PreviewWheelUtilityAction | null
+  isSpinning:
+    type: boolean
+  isSnapping:
+    type: boolean
+  beginDrag:
+    type: function
+  moveDrag:
+    type: function
+  endDrag:
+    type: function
+  snapToIndex:
+    type: function
+  snapToNearest:
+    type: function
+  snapToGridLeftAlign:
+    type: function
+  alignItemToOffset:
+    type: function
+  spinWithMomentum:
+    type: function
+  stopAnimation:
+    type: function

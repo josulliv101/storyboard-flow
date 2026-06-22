@@ -1,0 +1,24 @@
+name: PreviewWheelGridView
+description: Recursively mounts horizontal track row component instances (SceneLaunchPreviewWheelV3) in a vertical grid list based on row indentation, folder structures, and row wrapping limits.
+properties:
+  wrappedRows: Metadata layout info representing each horizontal track row inside the grid.
+  hidePreview: Flag indicating whether preview players are globally hidden (useful in list-only modes).
+  customChunks: Optional array partition grouping items by folder nesting level.
+  itemSequences: Folder sub-item sequence timelines.
+  itemSequenceThumbnails: Nested video/image frame maps.
+  onCollectionOpen: Event callback triggered when opening a collection folder.
+  allCollections: Collections metadata.
+  getRecursiveMediaItems: Method resolving children media items.
+  collectionMultiCircleEnabled: Option to display concentric overlapping circles inside folder covers.
+  breakoutSelectedMediaIds: Track selection state arrays for each collection row.
+  selectedMediaId: Globally centered active media identifier.
+  effect: Active 3D/Flat presentation effect (e.g. cylinder, coverflow, gallery).
+  thumbnailSize: Layout sizing factor for media cards.
+  durationScale: Zoom factor for duration-proportional sizing.
+  onCenteredMediaChange: Callback notifying parent of newly focused/centered timeline tiles.
+  itemsPerRow: Horizontal row wrap count limits.
+  showPlayhead: Playhead visibility status flag.
+  visibleGridPlayheadRow: Index denoting which row holds the playing/active playhead track.
+  activePlayingMediaId: Identifier of the currently playing media item.
+  activePlayingElapsedSeconds: Playing elapsed seconds value.
+  handleGridScrubUpdate: Custom scroll/scrub synchronizer callback tracking multi-row scrub events.

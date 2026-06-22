@@ -1,0 +1,23 @@
+component: GalleryCanvasPreview
+
+category: editor
+
+purpose: >
+  A canvas rendering wrapper that draws HTML5 video frames and images. Synchronizes frame-accurate seeks on video streams when timeline scrubbing, and maintains video audio muting flags during preview playbacks.
+
+inputs:
+  - snapshot: GalleryScrubSnapshot (contains target media item, source time offset, and global timeline offset)
+  - isPlaying: boolean (canvas play state toggle)
+
+outputs: []
+
+dependencies:
+  - React
+
+always:
+  - Maintain an internal image object cache to avoid flashing layout renders.
+  - Listen to canvas size modifications via ResizeObserver to recompute frame aspect ratio transformations on the canvas context.
+  - Clean up audio stream connections, pause video playback, and empty DOM sources on unmount lifecycle events.
+
+never:
+  - Render frame draws synchronously inside React rendering cycles (delegate to requestAnimationFrame or requestVideoFrameCallback handlers).

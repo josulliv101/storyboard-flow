@@ -1,0 +1,114 @@
+component: SceneLaunchPreviewWheelV3
+
+category: editor
+
+purpose: >
+  A rich-visual timeline picker and media viewer component. It offers 3D/flat wheel presentation modes (cylinder, cylinder2, coverflow, gallery, stack), uniform or duration-based timeline spacing, media reordering/nesting, trim handling, and frame-accurate HTML5 video canvas sync. It can act as a flat gallery view or a multi-row grid view with tree-based nesting and collection guides.
+
+inputs:
+  - items: SceneLaunchMediaItem[] (clips to render)
+  - itemSequences: Record<string, SceneLaunchMediaItem[]> (sequences for collections)
+  - itemSequenceThumbnails: Record<string, Record<string, SceneLaunchMediaItem>>
+  - selectedMediaId: string (currently active media item)
+  - effect: SceneLaunchPreviewWheelV3Effect ('cylinder' | 'cylinder2' | 'coverflow' | 'gallery' | 'stack')
+  - sizing: SceneLaunchPreviewWheelV3Sizing ('uniform' | 'duration')
+  - durationScale: number (spacing zoom multiplier)
+  - selectedItemDurationSeconds: number (trimmed duration of selected clip)
+  - selectedItemTrimStartSeconds: number (trimmed start offset of selected clip)
+  - breadcrumbs: { id: string; name: string }[] (hierarchy path)
+  - customChunks: SceneLaunchMediaItem[][] (timeline rows split for collection sections)
+  - breakoutTitles: string[] (row labels)
+  - breakoutIsCollection: boolean[]
+  - breakoutRepresentativeUrls: (string | null)[]
+  - currentCollectionName: string
+  - breakoutCollectionsEnabled: boolean
+  - timelineWrapped: boolean (wraps grid timeline elements on new lines)
+  - minimized: boolean (collapses/hides the player canvas)
+  - activePlayingMediaId: string | null (active media item key under preview playback)
+  - activePlayingElapsedSeconds: number (playback timestamp offset)
+  - externalScrubMediaId: string | null (scrub target item synchronizing with external editor timeline)
+  - externalScrubSourceTime: number | null
+  - externalScrubTimelineTime: number | null
+  - disabledItemIds: string[] (ignored clips rendered in grayscale with disable status badge)
+  - collectionItemIds: string[] (elements acting as folder directories)
+  - collectionMultiCircleEnabled: boolean (folders render concentric circular miniatures of nested items)
+  - showRuler: boolean (displays timeline second markings)
+  - showPlayhead: boolean (displays pointer alignment overlay line)
+  - gridView: boolean (switches component layout into a multiline grid layout)
+  - syncPreviewToPlayhead: boolean (synchronizes video canvas seek to dragging coordinates)
+
+outputs:
+  - onCenteredMediaChange: callback when focused/selected item changes
+  - onScrubUpdate: callback when scrubbing (mediaId, sourceTimeSeconds, timelineTimeSeconds)
+  - onSelectedItemDurationChange: callback during trim handle adjustments
+  - onSelectedItemDurationChangeEnd: callback when trim handle dragging finishes
+  - onItemsReorder: callback when reorder drag-and-drop finishes (draggedId, targetId, position)
+  - onItemMoveIntoCollection: callback when a media item is dropped inside a folder
+  - onUtilityDrop: callback when clip is dropped onto workspace utility actions (parent, directory, trash, disable)
+  - onCollectionOpen: callback when double clicking/clicking a collection folder
+  - onNavigateBack: callback when backing out of a sub-collection
+  - onBreadcrumbClick: callback when a breadcrumb node is clicked
+  - onTogglePlayback: callback to toggle preview playing status
+  - onToggleLoop: callback to toggle loop playing status
+  - onPlaybackMediaChange: callback when playback sweeps past clip boundaries
+  - onPlaybackTimeUpdate: callback yielding current playing item ID and elapsed seconds
+  - onPreviewPlaybackComplete: callback when playback reaches the end of the timeline
+  - onTimelineWrappedChange: callback toggling wrap option
+  - onBreakoutCollectionsChange: callback toggling collection-based grouping
+  - onBreakoutNestingDepthChange: callback updating hierarchy level selection depth
+
+dependencies:
+  - React (State, refs, effects, layout effects, canvas context binding)
+  - react-dom (createPortal for drag ghost & utility target overlays)
+  - Lucide React (Lucide icons for playback controls & utility targets)
+  - Switch (core UI toggle component)
+  - cn (class name union utility)
+
+always:
+  - Synchronize timeline offset coordinates when selectedMediaId changes.
+  - Scale timeline coordinates and spacing variables proportionally to durationScale in duration-based sizing.
+  - Render video frames on HTML5 canvas using ResizeObserver and window.devicePixelRatio to ensure clean pixel-aligned scaling without blur.
+  - Use Pointer Capture APIs during dragging to capture events even if pointer temporarily slips out of boundary area.
+  - Keep track of dragging speed, timestamp deltas, and friction constants to perform momentum-based wheel spinning.
+
+never:
+  - Mutate list items locally inside the component.
+  - Trigger video playback directly on the main element (delegate updates through canvas frame rendering using requestVideoFrameCallback or requestAnimationFrame).
+  - Fire click selections during drags that exceed select distance threshold (DRAG_SELECT_THRESHOLD / REORDER_LIFT_THRESHOLD).
+
+accessibility:
+  - Accessible roles: role="timer" for timestamp readout, role="separator" for vertical panel resizing handle.
+  - Screen reader announce alerts: aria-live="polite" for playhead coordinates.
+  - Full keyboard mapping: ArrowLeft/ArrowRight to scrub playhead (Shift-modified for larger steps), Home/End to snap to boundary limits.
+
+performance:
+  - Throttles drag coordinates calculations to requestAnimationFrame ticks via dragFrameRef.
+  - Memoizes item duration calculations, center positioning offsets, and wrapping rows geometry to prevent layout thrashing.
+  - Implements image tag decoding="async" and caches loaded Image objects to prevent main thread rendering hiccups.
+
+common_mistakes:
+  - Mutating state variables locally instead of pushing reorders or trims up to container props callbacks.
+  - Forgetting to handle coordinates adjustments when viewportSize width changes dynamically.
+  - Bypassing the clickGuard timeout, causing a snap focus event to trigger right at the end of a drag release.
+
+related_components:
+  - SceneLaunchWorkspace (Parent page workspace mapping controls, filters, and timeline configurations)
+
+extension_points:
+  - Custom presentation effects: add new SceneLaunchPreviewWheelV3Effect formats to the transform calculation functions.
+  - Additional drop action utilities: update PreviewWheelUtilityAction union and render/handling maps.
+  - Alternative custom overlays: override renderSelectedItemOverlay or renderGalleryTrimOverlay prop implementations.
+
+agent_summary:
+  critical_rules:
+    - Always delegate media modifications (trim, reorder, delete, disable) back to the parent component via callbacks.
+    - Keep canvas previews synchronized using requestVideoFrameCallback and requestAnimationFrame to avoid frame rendering lags.
+    - Maintain clickGuard mechanics to prevent selection changes during track scrubbing or item reordering.
+  safe_modifications:
+    - Adding new 3D style transitions or presentation math inside the transform calculations.
+    - Styling panel buttons, playhead buttons, or collection guides.
+    - Adjusting visual overlays, labels, or hover details.
+  risky_modifications:
+    - Modifying pointer capture event listener sequence (can break scrub and drag-and-drop operations on touch screens).
+    - Altering calculations for offset clamping, minOffset, or maxOffset (can cause layout shifts or scroll clipping).
+    - Modifying requestVideoFrameCallback setup, causing synchronization failures between timeline playhead and frame visuals.
