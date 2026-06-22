@@ -180,10 +180,10 @@ export function SceneLaunchWorkspace({
 
   const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV3Effect>('gallery');
   const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV3Sizing>('uniform');
-  const [previewWheelThumbnailSize, setPreviewWheelThumbnailSize] = React.useState<'sm' | 'md' | 'lg' | 'xl'>(() => {
+  const [previewWheelThumbnailSize, setPreviewWheelThumbnailSize] = React.useState<'xs' | 'sm' | 'md' | 'lg' | 'xl'>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('scene-launch-preview-wheel-thumbnail-size');
-      if (saved === 'sm' || saved === 'md' || saved === 'lg' || saved === 'xl') {
+      if (saved === 'xs' || saved === 'sm' || saved === 'md' || saved === 'lg' || saved === 'xl') {
         return saved;
       }
     }
@@ -229,6 +229,18 @@ export function SceneLaunchWorkspace({
   React.useEffect(() => {
     localStorage.setItem('scene-launch-preview-wheel-grid-view', String(previewWheelGridView));
   }, [previewWheelGridView]);
+
+  const [previewWheelShowAllItemsPanel, setPreviewWheelShowAllItemsPanel] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-show-all-items-panel');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-show-all-items-panel', String(previewWheelShowAllItemsPanel));
+  }, [previewWheelShowAllItemsPanel]);
 
   const [previewWheelBreakoutCollections, setPreviewWheelBreakoutCollections] = React.useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -295,6 +307,7 @@ export function SceneLaunchWorkspace({
 
   const [activePlayingMediaId, setActivePlayingMediaId] = React.useState<string | null>(null);
   const [activePlayingElapsedSeconds, setActivePlayingElapsedSeconds] = React.useState(0);
+  const [allItemsPanelEditMediaId, setAllItemsPanelEditMediaId] = React.useState<string | null>(null);
 
   const [scrubbingMediaId, setScrubbingMediaId] = React.useState<string | null>(null);
   const [scrubbingSourceTime, setScrubbingSourceTime] = React.useState<number | null>(null);
@@ -1909,6 +1922,31 @@ export function SceneLaunchWorkspace({
     });
   }, [breakoutChunks, collectionAwareWheelItems, flattenedTimelineMediaItems, wheelReflectsCollections, previewWheelGridView, previewWheelBreakoutCollections]);
 
+  const allItemsPanelItems = React.useMemo(() => {
+    const activeCollectionId = previewWheelCollectionPath[previewWheelCollectionPath.length - 1]
+      ?? board.sceneLaunchBeatPath[board.sceneLaunchBeatPath.length - 1];
+    const activeCollection = activeCollectionId
+      ? sceneLaunchBeats.find(beat => beat.id === activeCollectionId)
+      : null;
+    const sourceItems = activeCollection
+      ? getRecursiveMediaItems(activeCollection)
+      : flattenedTimelineMediaItems;
+    const seenIds = new Set<string>();
+
+    return sourceItems.filter(item => {
+      if (seenIds.has(item.id)) return false;
+      seenIds.add(item.id);
+      return true;
+    });
+  }, [board.sceneLaunchBeatPath, flattenedTimelineMediaItems, getRecursiveMediaItems, previewWheelCollectionPath, sceneLaunchBeats]);
+
+  const allItemsPanelSelectedMediaId = React.useMemo(() => {
+    if (selectedPreviewMediaId && allItemsPanelItems.some(item => item.id === selectedPreviewMediaId)) {
+      return selectedPreviewMediaId;
+    }
+    return allItemsPanelItems[0]?.id ?? '';
+  }, [allItemsPanelItems, selectedPreviewMediaId]);
+
   const previewWheelSelectedMediaId = React.useMemo(() => {
     if (previewWheelGridView && previewWheelBreakoutCollections && breakoutChunks) {
       if (!selectedPreviewMediaId) return '';
@@ -2567,6 +2605,7 @@ export function SceneLaunchWorkspace({
                       thumbnailSize={previewWheelThumbnailSize}
                       sizing={previewWheelSizing}
                       showUniformRuler={previewWheelShowUniformRuler}
+                      showRuler={!previewWheelShowAllItemsPanel}
                       slideOnClick={previewWheelSlideOnClick}
                       durationScale={previewWheelDurationScale}
                       selectedItemDurationSeconds={activePreviewDraft?.durationSeconds}
@@ -2586,7 +2625,10 @@ export function SceneLaunchWorkspace({
                           updateSceneLaunchMediaDuration(activePreviewMedia.id, durationSeconds);
                         }
                       }}
-                      onCenteredMediaChange={previewSceneLaunchMediaId}
+                      onCenteredMediaChange={(mediaId) => {
+                        setAllItemsPanelEditMediaId(null);
+                        previewSceneLaunchMediaId(mediaId);
+                      }}
                       onItemsReorder={wheelReflectsCollections ? reorderCollectionAwareWheelItem : reorderSceneLaunchMedia}
                       selectReorderedItem={previewWheelSelectDroppedItem}
                       renderGalleryTrimOverlay={(item) => {
@@ -2640,6 +2682,7 @@ export function SceneLaunchWorkspace({
                           </div>
                         );
                       }}
+                      showSelectedTrimOverlay={allItemsPanelEditMediaId === selectedPreviewMediaId}
                       renderSelectedItemOverlay={(item) => {
                         if (wheelReflectsCollections || !activePreviewDraft || activePreviewMedia?.id !== item.id) return null;
 
@@ -2669,6 +2712,7 @@ export function SceneLaunchWorkspace({
                       onTogglePlayback={toggleSceneLaunchTimelinePlayback}
                       onToggleLoop={() => setIsTimelineLooping(current => !current)}
                       gridView={previewWheelGridView}
+                      showPlayhead={!previewWheelShowAllItemsPanel}
                       activePlayingMediaId={activePlayingMediaId}
                       activePlayingElapsedSeconds={activePlayingElapsedSeconds}
                       onPlaybackTimeUpdate={(mediaId, elapsedSeconds) => {
@@ -2678,17 +2722,65 @@ export function SceneLaunchWorkspace({
                       externalScrubMediaId={scrubbingMediaId}
                       externalScrubSourceTime={scrubbingSourceTime}
                       externalScrubTimelineTime={scrubbingTimelineTime}
-                      onScrubUpdate={(mediaId, sourceTimeSeconds, timelineTimeSeconds) => {
-                        if (mediaId !== null) setIsWheelPreviewPlaying(false);
-                        setScrubbingMediaId(mediaId);
-                        setScrubbingSourceTime(sourceTimeSeconds);
-                        setScrubbingTimelineTime(timelineTimeSeconds ?? null);
-                      }}
+                      onScrubUpdate={previewWheelShowAllItemsPanel
+                        ? undefined
+                        : (mediaId, sourceTimeSeconds, timelineTimeSeconds) => {
+                            if (mediaId !== null) setIsWheelPreviewPlaying(false);
+                            setScrubbingMediaId(mediaId);
+                            setScrubbingSourceTime(sourceTimeSeconds);
+                            setScrubbingTimelineTime(timelineTimeSeconds ?? null);
+                          }}
                       allCollections={sceneLaunchBeats}
                       getRecursiveMediaItems={getRecursiveMediaItems}
                       breakoutSelectedMediaIds={breakoutSelectedMediaIds || undefined}
                       />
                     </div>
+
+                    {previewWheelShowAllItemsPanel && allItemsPanelItems.length > 0 && (
+                      <section
+                        aria-label="All media items"
+                        className="w-full shrink-0 border-t border-zinc-800 bg-zinc-950/95 shadow-[0_-12px_30px_rgba(0,0,0,0.28)]"
+                      >
+                        <div className="flex h-8 items-center justify-between border-b border-zinc-800/70 px-4">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-300">
+                            All media
+                          </span>
+                          <span className="font-mono text-[9px] font-bold text-zinc-500">
+                            {allItemsPanelItems.length} items
+                          </span>
+                        </div>
+                        <SceneLaunchPreviewWheelV3
+                          items={allItemsPanelItems}
+                          selectedMediaId={allItemsPanelSelectedMediaId}
+                          effect={previewWheelEffect}
+                          thumbnailSize="md"
+                          sizing="duration"
+                          durationScale={previewWheelDurationScale}
+                          onCenteredMediaChange={(mediaId) => {
+                            setPreviewWheelSequence('media');
+                            setAllItemsPanelEditMediaId(mediaId);
+                            previewSceneLaunchMediaId(mediaId);
+                          }}
+                          disabledItemIds={disabledWheelItemIds}
+                          showUniformRuler={previewWheelShowUniformRuler}
+                          slideOnClick={previewWheelSlideOnClick}
+                          showPlayhead={true}
+                          playheadIsPlaying={isWheelPreviewPlaying}
+                          activePlayingMediaId={activePlayingMediaId}
+                          activePlayingElapsedSeconds={activePlayingElapsedSeconds}
+                          hidePreview={true}
+                          freeDrag={true}
+                          selectItemsWhilePreviewHidden={true}
+                          syncPreviewToPlayhead={true}
+                          onScrubUpdate={(mediaId, sourceTimeSeconds, timelineTimeSeconds) => {
+                            if (mediaId !== null) setIsWheelPreviewPlaying(false);
+                            setScrubbingMediaId(mediaId);
+                            setScrubbingSourceTime(sourceTimeSeconds);
+                            setScrubbingTimelineTime(timelineTimeSeconds ?? null);
+                          }}
+                        />
+                      </section>
+                    )}
 
                     <div className="absolute right-4 top-4 z-50 flex items-center gap-2">
                       <button
@@ -2783,6 +2875,7 @@ export function SceneLaunchWorkspace({
                                 onChange={(event) => setPreviewWheelThumbnailSize(event.target.value as any)}
                                 className="h-7 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
                               >
+                                <option value="xs">XS</option>
                                 <option value="sm">SM</option>
                                 <option value="md">MD</option>
                                 <option value="lg">LG</option>
@@ -2837,6 +2930,16 @@ export function SceneLaunchWorkspace({
                                 size="sm"
                                 checked={previewWheelGridView}
                                 onCheckedChange={setPreviewWheelGridView}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">All Items Panel</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelShowAllItemsPanel}
+                                onCheckedChange={setPreviewWheelShowAllItemsPanel}
+                                aria-label="Show all items panel"
                               />
                             </div>
 
