@@ -1,513 +1,676 @@
-'use client';
+"use client"
 
-import React, {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { Button } from '../core/button';
-import { cn } from '../lib/utils';
+import type React from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Button } from "../core/button"
+import { cn } from "../lib/utils"
 
-type SmoothScrollImage = {
-  src: string;
-  alt?: string;
-  width?: number;
-};
-
-export interface SmoothScrollListProps
-  extends React.HTMLAttributes<HTMLDivElement> {
-  itemCount?: number;
-  width?: number | string;
-  images?: SmoothScrollImage[];
+export interface SmoothScrollListProps extends React.HTMLAttributes<HTMLDivElement> {
+  itemCount?: number
+  /** Width of the scrollable viewport. `width` is kept as a backwards-compatible alias. */
+  viewportWidth?: number | string
+  width?: number | string
+  /** Timeline zoom level. Larger values make clips visually wider. */
+  pixelsPerSecond?: number
 }
 
-function getRandomInt(min: number, max: number) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+type MediaKind = "image" | "video"
+
+type TimelineClip = {
+  id: string
+  index: number
+  kind: MediaKind
+  src: string
+  alt: string
+  poster?: string
+  aspect: number
+  trackIndex: number
+
+  /** Absolute timeline position. */
+  startTime: number
+  /** Visible duration after trimming. */
+  duration: number
+  /** Total source duration available for this clip. */
+  sourceDuration: number
+  /** Amount trimmed from the source beginning. */
+  trimIn: number
+  /** Amount trimmed from the source end. */
+  trimOut: number
 }
 
-const randomWidth = (() => {
-  const cache = new Map<string, number>();
+type MediaSpec =
+  | { kind: "image"; aspect: number }
+  | { kind: "video"; aspect: number; src: string }
 
-  return (id: string) => {
-    const value = cache.get(id);
+const VIDEO_SOURCES = [
+  "https://www.w3schools.com/html/mov_bbb.mp4",
+  "https://www.w3schools.com/html/movie.mp4",
+  "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+]
 
-    if (value !== undefined) {
-      return value;
-    }
+const MEDIA: MediaSpec[] = [
+  { kind: "image", aspect: 16 / 9 },
+  { kind: "video", aspect: 16 / 9, src: VIDEO_SOURCES[0] },
+  { kind: "image", aspect: 2 / 3 },
+  { kind: "image", aspect: 1 },
+  { kind: "video", aspect: 3 / 2, src: VIDEO_SOURCES[1] },
+  { kind: "image", aspect: 16 / 9 },
+  { kind: "image", aspect: 2 / 3 },
+  { kind: "video", aspect: 1, src: VIDEO_SOURCES[2] },
+  { kind: "image", aspect: 3 / 2 },
+]
 
-    const v = getRandomInt(90, 220);
-    cache.set(id, v);
+const ITEM_HEIGHT = 200
+const MIN_WIDTH = 60
+const MAX_WIDTH = 500
+const DEFAULT_PIXELS_PER_SECOND = 100
+const CLIP_GAP_SECONDS = 0.12
+const DRAG_THRESHOLD_PX = 3
+const RESIZE_KEY_STEP_PX = 10
+const VISIBLE_OVERSCAN_PX = 700
 
-    return v;
-  };
-})();
-
-const ITEM_HEIGHT = 120;
-const MIN_ITEM_WIDTH = 72;
-const MAX_ITEM_WIDTH = 420;
-
-type DragState = {
-  pointerId: number | null;
-  isDragging: boolean;
-  startX: number;
-  lastX: number;
-  lastTime: number;
-  velocity: number;
-  moved: boolean;
-  pressedIndex: number | null;
-};
-
-type ResizeState = {
-  pointerId: number | null;
-  isResizing: boolean;
-  index: number;
-  edge: 'left' | 'right';
-  startX: number;
-  startWidth: number;
-  startScrollLeft: number;
-};
+// Gives the first clips room to grow left before hitting time 0.
+// Without this, a packed sequence cannot expand a middle clip to the left
+// without overlapping earlier clips.
+const TIMELINE_LEADING_PADDING_SECONDS = 5
+const TIMELINE_TRAILING_PADDING_SECONDS = 5
 
 function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(value, max));
+  return Math.min(Math.max(value, min), max)
 }
 
-function getFallbackImage(index: number, imageWidth: number) {
+function getFallbackImage(index: number, imageWidth: number): { src: string; alt: string } {
   return {
     src: `https://picsum.photos/seed/smooth-scroll-${index}/${imageWidth}/${ITEM_HEIGHT}`,
     alt: `Image ${index}`,
-  };
+  }
+}
+
+function getSpec(index: number) {
+  return MEDIA[index % MEDIA.length]
+}
+
+function baseWidth(index: number) {
+  return Math.round(ITEM_HEIGHT * getSpec(index).aspect)
+}
+
+function createClip(index: number, startTime: number, pixelsPerSecond: number): TimelineClip {
+  const spec = getSpec(index)
+  const visibleWidth = clamp(baseWidth(index), MIN_WIDTH, MAX_WIDTH)
+  const sourceWidth = MAX_WIDTH
+  const sourceDuration = sourceWidth / pixelsPerSecond
+  const duration = visibleWidth / pixelsPerSecond
+
+  // Demo clips have hidden source material on both sides so either handle can
+  // shrink and then expand again. Real media should use real source duration,
+  // trimIn, and trimOut values instead.
+  const hiddenDuration = Math.max(0, sourceDuration - duration)
+  const trimIn = hiddenDuration / 2
+  const trimOut = hiddenDuration - trimIn
+
+  if (spec.kind === "video") {
+    return {
+      id: `clip-${index}`,
+      index,
+      kind: "video",
+      src: spec.src,
+      alt: `Video ${index}`,
+      aspect: spec.aspect,
+      trackIndex: 0,
+      startTime,
+      duration,
+      sourceDuration,
+      trimIn,
+      trimOut,
+    }
+  }
+
+  const image = getFallbackImage(index, sourceWidth)
+
+  return {
+    id: `clip-${index}`,
+    index,
+    kind: "image",
+    src: image.src,
+    alt: image.alt,
+    aspect: spec.aspect,
+    trackIndex: 0,
+    startTime,
+    duration,
+    sourceDuration,
+    trimIn,
+    trimOut,
+  }
+}
+
+function createInitialClips(itemCount: number, pixelsPerSecond: number) {
+  const clips: TimelineClip[] = []
+  let nextStartTime = TIMELINE_LEADING_PADDING_SECONDS
+
+  for (let index = 0; index < itemCount; index += 1) {
+    const clip = createClip(index, nextStartTime, pixelsPerSecond)
+    clips.push(clip)
+    nextStartTime += clip.duration + CLIP_GAP_SECONDS
+  }
+
+  return clips
+}
+
+function getPackedDurationBefore(clips: TimelineClip[], anchorIndex: number) {
+  let durationBefore = 0
+
+  for (let index = 0; index < anchorIndex; index += 1) {
+    durationBefore += clips[index].duration
+    durationBefore += CLIP_GAP_SECONDS
+  }
+
+  return durationBefore
+}
+
+function layoutClipsAroundAnchor(clips: TimelineClip[], anchorIndex: number, anchorClip: TimelineClip) {
+  const nextClips = clips.map((clip) => ({ ...clip }))
+  nextClips[anchorIndex] = anchorClip
+
+  // Pack clips before the anchor backwards. This is the key difference from
+  // the awkward version: when the left handle moves, the selected clip's left
+  // edge actually moves, while earlier clips respond by sliding with it.
+  for (let index = anchorIndex - 1; index >= 0; index -= 1) {
+    const clipToRight = nextClips[index + 1]
+    const endTime = clipToRight.startTime - CLIP_GAP_SECONDS
+    nextClips[index] = {
+      ...nextClips[index],
+      startTime: endTime - nextClips[index].duration,
+    }
+  }
+
+  // Pack clips after the anchor forwards. Right trimming moves downstream clips;
+  // left trimming keeps the right edge fixed, so downstream clips usually stay put.
+  for (let index = anchorIndex + 1; index < nextClips.length; index += 1) {
+    const clipToLeft = nextClips[index - 1]
+    nextClips[index] = {
+      ...nextClips[index],
+      startTime: clipToLeft.startTime + clipToLeft.duration + CLIP_GAP_SECONDS,
+    }
+  }
+
+  return nextClips
+}
+
+function resizeClipsFromBaseline({
+  baselineClips,
+  anchorIndex,
+  edge,
+  deltaTime,
+  minDuration,
+}: {
+  baselineClips: TimelineClip[]
+  anchorIndex: number
+  edge: "left" | "right"
+  deltaTime: number
+  minDuration: number
+}) {
+  const clip = baselineClips[anchorIndex]
+  if (!clip) return baselineClips
+
+  if (edge === "left") {
+    const fixedRightTime = clip.startTime + clip.duration
+    const maxDurationFromSource = clip.sourceDuration - clip.trimOut
+    const earliestStartFromSource = fixedRightTime - maxDurationFromSource
+    const earliestStartFromLayout = getPackedDurationBefore(baselineClips, anchorIndex)
+    const latestStart = fixedRightTime - minDuration
+
+    const nextStartTime = clamp(
+      clip.startTime + deltaTime,
+      Math.max(earliestStartFromSource, earliestStartFromLayout),
+      latestStart,
+    )
+    const nextDuration = fixedRightTime - nextStartTime
+    const nextTrimIn = clamp(
+      clip.sourceDuration - clip.trimOut - nextDuration,
+      0,
+      clip.sourceDuration - clip.trimOut - minDuration,
+    )
+
+    const resizedClip: TimelineClip = {
+      ...clip,
+      startTime: nextStartTime,
+      duration: nextDuration,
+      trimIn: nextTrimIn,
+    }
+
+    return layoutClipsAroundAnchor(baselineClips, anchorIndex, resizedClip)
+  }
+
+  const maxDurationFromSource = clip.sourceDuration - clip.trimIn
+  const nextDuration = clamp(clip.duration + deltaTime, minDuration, maxDurationFromSource)
+  const nextTrimOut = clamp(
+    clip.sourceDuration - clip.trimIn - nextDuration,
+    0,
+    clip.sourceDuration - clip.trimIn - minDuration,
+  )
+
+  const resizedClip: TimelineClip = {
+    ...clip,
+    duration: nextDuration,
+    trimOut: nextTrimOut,
+  }
+
+  return layoutClipsAroundAnchor(baselineClips, anchorIndex, resizedClip)
 }
 
 export function SmoothScrollList({
-  itemCount = 1002,
-  width = '100%',
-  images,
+  itemCount = 100,
+  viewportWidth,
+  width = "100%",
+  pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND,
   className,
+  style,
   ...props
 }: SmoothScrollListProps) {
-  const parentRef = useRef<HTMLDivElement>(null);
-  const inertiaFrameRef = useRef<number | null>(null);
-  const lastFrameTimeRef = useRef<number | null>(null);
-  const measureFrameRef = useRef<number | null>(null);
+  const parentRef = useRef<HTMLDivElement>(null)
+  const scrollFrameRef = useRef<number | null>(null)
+  const inertiaFrameRef = useRef<number | null>(null)
+  const resizeFrameRef = useRef<number | null>(null)
+  const pendingClipsRef = useRef<TimelineClip[] | null>(null)
 
-  const [isDragging, setIsDragging] = useState(false);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [itemWidths, setItemWidths] = useState<Record<number, number>>({});
+  const safeItemCount = Math.max(0, Math.floor(itemCount))
+  const resolvedViewportWidth = viewportWidth ?? width
+  const safePixelsPerSecond = Math.max(20, pixelsPerSecond)
+  const minDuration = MIN_WIDTH / safePixelsPerSecond
 
-  const dragRef = useRef<DragState>({
-    pointerId: null,
+  const [clips, setClips] = useState<TimelineClip[]>(() => createInitialClips(safeItemCount, safePixelsPerSecond))
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+  const [scrollLeft, setScrollLeft] = useState(0)
+  const [viewportClientWidth, setViewportClientWidth] = useState(0)
+
+  const dragState = useRef({
     isDragging: false,
     startX: 0,
+    startScrollLeft: 0,
     lastX: 0,
     lastTime: 0,
     velocity: 0,
     moved: false,
-    pressedIndex: null,
-  });
+    pointerId: -1,
+    pressedIndex: null as number | null,
+  })
 
-  const resizeRef = useRef<ResizeState>({
-    pointerId: null,
-    isResizing: false,
-    index: -1,
-    edge: 'right',
+  const resizeState = useRef({
+    active: false,
+    anchorIndex: -1,
+    edge: "right" as "left" | "right",
     startX: 0,
-    startWidth: 0,
-    startScrollLeft: 0,
-  });
+    baselineClips: null as TimelineClip[] | null,
+  })
 
-  const columnVirtualizer = useVirtualizer({
-    horizontal: true,
-    count: itemCount,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 150,
-    overscan: 8,
-  });
+  useEffect(() => {
+    setClips(createInitialClips(safeItemCount, safePixelsPerSecond))
+    setSelectedIndex(null)
+    setScrollLeft(0)
 
-  const getImageForIndex = useCallback(
-    (index: number) => {
-      if (!images?.length) {
-        return undefined;
-      }
-
-      return images[index % images.length];
-    },
-    [images]
-  );
-
-  const getItemWidth = useCallback(
-    (index: number) => {
-      const resizedWidth = itemWidths[index];
-
-      if (resizedWidth !== undefined) {
-        return resizedWidth;
-      }
-
-      const image = getImageForIndex(index);
-
-      return image?.width ?? randomWidth(index.toString());
-    },
-    [getImageForIndex, itemWidths]
-  );
-
-  const scheduleMeasure = useCallback(() => {
-    if (measureFrameRef.current !== null) {
-      return;
+    if (parentRef.current) {
+      parentRef.current.scrollLeft = 0
     }
+  }, [safeItemCount, safePixelsPerSecond])
 
-    measureFrameRef.current = requestAnimationFrame(() => {
-      measureFrameRef.current = null;
-      columnVirtualizer.measure();
-    });
-  }, [columnVirtualizer]);
+  const totalDuration = useMemo(() => {
+    if (clips.length === 0) return 0
 
-  useLayoutEffect(() => {
-    scheduleMeasure();
-  }, [itemWidths, scheduleMeasure]);
+    return clips.reduce((max, clip) => Math.max(max, clip.startTime + clip.duration), 0) + TIMELINE_TRAILING_PADDING_SECONDS
+  }, [clips])
+
+  const timelineWidth = Math.max(viewportClientWidth || 1, Math.ceil(totalDuration * safePixelsPerSecond))
+
+  const visibleClips = useMemo(() => {
+    const visibleStartTime = Math.max(0, (scrollLeft - VISIBLE_OVERSCAN_PX) / safePixelsPerSecond)
+    const visibleEndTime = (scrollLeft + viewportClientWidth + VISIBLE_OVERSCAN_PX) / safePixelsPerSecond
+
+    return clips.filter((clip) => {
+      const clipStart = clip.startTime
+      const clipEnd = clip.startTime + clip.duration
+      return clipEnd >= visibleStartTime && clipStart <= visibleEndTime
+    })
+  }, [clips, safePixelsPerSecond, scrollLeft, viewportClientWidth])
 
   const stopInertia = useCallback(() => {
     if (inertiaFrameRef.current !== null) {
-      cancelAnimationFrame(inertiaFrameRef.current);
-      inertiaFrameRef.current = null;
+      cancelAnimationFrame(inertiaFrameRef.current)
+      inertiaFrameRef.current = null
+    }
+  }, [])
+
+  const syncScrollState = useCallback(() => {
+    const el = parentRef.current
+    if (!el) return
+
+    setScrollLeft(el.scrollLeft)
+    setViewportClientWidth(el.clientWidth)
+  }, [])
+
+  const handleScroll = useCallback(() => {
+    if (scrollFrameRef.current !== null) return
+
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null
+      syncScrollState()
+    })
+  }, [syncScrollState])
+
+  useEffect(() => {
+    const el = parentRef.current
+    if (!el) return
+
+    syncScrollState()
+
+    const observer = new ResizeObserver(() => {
+      syncScrollState()
+    })
+
+    observer.observe(el)
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [syncScrollState])
+
+  const scheduleClips = useCallback((nextClips: TimelineClip[]) => {
+    pendingClipsRef.current = nextClips
+
+    if (resizeFrameRef.current !== null) return
+
+    resizeFrameRef.current = requestAnimationFrame(() => {
+      const pendingClips = pendingClipsRef.current
+      pendingClipsRef.current = null
+      resizeFrameRef.current = null
+
+      if (!pendingClips) return
+      setClips(pendingClips)
+    })
+  }, [])
+
+  const applyClipsNow = useCallback((nextClips: TimelineClip[]) => {
+    if (resizeFrameRef.current !== null) {
+      cancelAnimationFrame(resizeFrameRef.current)
+      resizeFrameRef.current = null
     }
 
-    lastFrameTimeRef.current = null;
-  }, []);
+    pendingClipsRef.current = null
+    setClips(nextClips)
+  }, [])
 
-  const clampScrollLeft = useCallback((value: number) => {
-    const el = parentRef.current;
+  const runInertia = useCallback(() => {
+    const el = parentRef.current
+    if (!el) return
 
-    if (!el) {
-      return value;
-    }
+    const friction = 0.95
+    const minVelocity = 0.1
 
-    const maxScrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+    const step = () => {
+      const state = dragState.current
+      state.velocity *= friction
 
-    return clamp(value, 0, maxScrollLeft);
-  }, []);
-
-  const startInertia = useCallback(
-    (initialVelocity: number) => {
-      const el = parentRef.current;
-
-      if (!el) {
-        return;
+      if (Math.abs(state.velocity) < minVelocity) {
+        inertiaFrameRef.current = null
+        return
       }
 
-      stopInertia();
+      const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
+      const next = clamp(el.scrollLeft + state.velocity, 0, maxScroll)
+      el.scrollLeft = next
+      setScrollLeft(next)
 
-      let velocity = initialVelocity;
+      if (next === 0 || next === maxScroll) {
+        state.velocity = 0
+        inertiaFrameRef.current = null
+        return
+      }
 
-      const step = (time: number) => {
-        const lastTime = lastFrameTimeRef.current ?? time;
-        const deltaTime = time - lastTime;
+      inertiaFrameRef.current = requestAnimationFrame(step)
+    }
 
-        lastFrameTimeRef.current = time;
+    inertiaFrameRef.current = requestAnimationFrame(step)
+  }, [])
 
-        if (Math.abs(velocity) < 0.02) {
-          stopInertia();
-          return;
-        }
+  const scrollToClipIndex = useCallback(
+    (targetIndex: number) => {
+      const el = parentRef.current
+      if (!el || clips.length === 0) return
 
-        const before = el.scrollLeft;
-        const next = clampScrollLeft(before + velocity * deltaTime);
+      stopInertia()
 
-        el.scrollLeft = next;
+      const index = clamp(Math.floor(targetIndex), 0, clips.length - 1)
+      const clip = clips[index]
+      const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
+      const nextScrollLeft = clamp(clip.startTime * safePixelsPerSecond, 0, maxScroll)
 
-        const hitLeft = next <= 0 && velocity < 0;
-        const hitRight =
-          next >= el.scrollWidth - el.clientWidth && velocity > 0;
-
-        if (hitLeft || hitRight) {
-          stopInertia();
-          return;
-        }
-
-        const friction = Math.pow(0.95, deltaTime / 16.67);
-        velocity *= friction;
-
-        inertiaFrameRef.current = requestAnimationFrame(step);
-      };
-
-      inertiaFrameRef.current = requestAnimationFrame(step);
+      el.scrollTo({ left: nextScrollLeft, behavior: "smooth" })
     },
-    [clampScrollLeft, stopInertia]
-  );
+    [clips, safePixelsPerSecond, stopInertia],
+  )
 
   const handlePointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const el = parentRef.current;
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return
 
-      if (!el || resizeRef.current.isResizing) {
-        return;
-      }
+      const el = parentRef.current
+      if (!el) return
 
-      if (event.pointerType === 'mouse' && event.button !== 0) {
-        return;
-      }
+      stopInertia()
 
-      const target = event.target;
+      const target = e.target as HTMLElement
+      const item = target.closest("[data-clip-index]") as HTMLElement | null
+      const rawIndex = item?.dataset.clipIndex
+      const pressedIndex = rawIndex === undefined ? null : Number(rawIndex)
 
-      const clipElement =
-        target instanceof Element
-          ? target.closest<HTMLElement>('[data-clip-index]')
-          : null;
+      const state = dragState.current
+      state.isDragging = true
+      state.moved = false
+      state.startX = e.clientX
+      state.startScrollLeft = el.scrollLeft
+      state.lastX = e.clientX
+      state.lastTime = e.timeStamp
+      state.velocity = 0
+      state.pointerId = e.pointerId
+      state.pressedIndex = Number.isFinite(pressedIndex) ? pressedIndex : null
 
-      const rawIndex = clipElement?.dataset.clipIndex;
-      const pressedIndex =
-        rawIndex === undefined ? null : Number(rawIndex);
-
-      stopInertia();
-
-      dragRef.current = {
-        pointerId: event.pointerId,
-        isDragging: true,
-        startX: event.clientX,
-        lastX: event.clientX,
-        lastTime: performance.now(),
-        velocity: 0,
-        moved: false,
-        pressedIndex: Number.isFinite(pressedIndex) ? pressedIndex : null,
-      };
-
-      el.setPointerCapture(event.pointerId);
-      setIsDragging(true);
+      el.setPointerCapture(e.pointerId)
     },
-    [stopInertia]
-  );
+    [stopInertia],
+  )
 
-  const handlePointerMove = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const el = parentRef.current;
-      const drag = dragRef.current;
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const state = dragState.current
+    const el = parentRef.current
+    if (!state.isDragging || !el) return
 
-      if (!el || !drag.isDragging || drag.pointerId !== event.pointerId) {
-        return;
+    const dx = e.clientX - state.startX
+
+    if (!state.moved && Math.abs(dx) <= DRAG_THRESHOLD_PX) return
+
+    state.moved = true
+    e.preventDefault()
+
+    const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
+    const nextScrollLeft = clamp(state.startScrollLeft - dx, 0, maxScroll)
+    el.scrollLeft = nextScrollLeft
+    setScrollLeft(nextScrollLeft)
+
+    const dt = e.timeStamp - state.lastTime
+    if (dt > 0) {
+      const instantaneous = (-(e.clientX - state.lastX) / dt) * 16.67
+      state.velocity = 0.7 * instantaneous + 0.3 * state.velocity
+    }
+
+    state.lastX = e.clientX
+    state.lastTime = e.timeStamp
+  }, [])
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const state = dragState.current
+      const el = parentRef.current
+      if (!state.isDragging || !el) return
+
+      state.isDragging = false
+
+      if (el.hasPointerCapture(e.pointerId)) {
+        el.releasePointerCapture(e.pointerId)
       }
 
-      const now = performance.now();
-      const dx = event.clientX - drag.lastX;
-
-      if (dx === 0) {
-        return;
+      if (!state.moved && state.pressedIndex !== null) {
+        const index = state.pressedIndex
+        setSelectedIndex((previous) => (previous === index ? null : index))
+      } else if (Math.abs(state.velocity) > 1) {
+        runInertia()
       }
 
-      const before = el.scrollLeft;
-      const next = clampScrollLeft(before - dx);
+      state.pointerId = -1
+      state.pressedIndex = null
+    },
+    [runInertia],
+  )
 
-      el.scrollLeft = next;
+  const handleResizeDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>, clip: TimelineClip, edge: "left" | "right") => {
+      e.stopPropagation()
+      e.preventDefault()
+      stopInertia()
+      setSelectedIndex(clip.index)
 
-      const deltaTime = Math.max(1, now - drag.lastTime);
-      const instantVelocity = (next - before) / deltaTime;
+      const rs = resizeState.current
+      rs.active = true
+      rs.anchorIndex = clip.index
+      rs.edge = edge
+      rs.startX = e.clientX
+      rs.baselineClips = clips.map((currentClip) => ({ ...currentClip }))
 
-      drag.velocity = drag.velocity * 0.2 + instantVelocity * 0.8;
-      drag.lastX = event.clientX;
-      drag.lastTime = now;
+      const target = e.currentTarget as HTMLElement
+      target.setPointerCapture(e.pointerId)
+    },
+    [clips, stopInertia],
+  )
 
-      if (Math.abs(event.clientX - drag.startX) > 3) {
-        drag.moved = true;
-        event.preventDefault();
+  const handleResizeMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const rs = resizeState.current
+      if (!rs.active || !rs.baselineClips) return
+
+      e.stopPropagation()
+      e.preventDefault()
+
+      const deltaTime = (e.clientX - rs.startX) / safePixelsPerSecond
+      const nextClips = resizeClipsFromBaseline({
+        baselineClips: rs.baselineClips,
+        anchorIndex: rs.anchorIndex,
+        edge: rs.edge,
+        deltaTime,
+        minDuration,
+      })
+
+      scheduleClips(nextClips)
+    },
+    [minDuration, safePixelsPerSecond, scheduleClips],
+  )
+
+  const handleResizeUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const rs = resizeState.current
+      if (!rs.active || !rs.baselineClips) return
+
+      e.stopPropagation()
+      e.preventDefault()
+
+      const deltaTime = (e.clientX - rs.startX) / safePixelsPerSecond
+      const nextClips = resizeClipsFromBaseline({
+        baselineClips: rs.baselineClips,
+        anchorIndex: rs.anchorIndex,
+        edge: rs.edge,
+        deltaTime,
+        minDuration,
+      })
+
+      applyClipsNow(nextClips)
+
+      rs.active = false
+      rs.anchorIndex = -1
+      rs.baselineClips = null
+
+      const target = e.currentTarget as HTMLElement
+      if (target.hasPointerCapture(e.pointerId)) {
+        target.releasePointerCapture(e.pointerId)
       }
     },
-    [clampScrollLeft]
-  );
+    [applyClipsNow, minDuration, safePixelsPerSecond],
+  )
 
-  const endDrag = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const el = parentRef.current;
-      const drag = dragRef.current;
+  const handleResizeKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>, clip: TimelineClip, edge: "left" | "right") => {
+      let deltaPx = 0
 
-      if (!drag.isDragging || drag.pointerId !== event.pointerId) {
-        return;
+      if (e.key === "Home") {
+        deltaPx = edge === "left" ? -MAX_WIDTH : -MAX_WIDTH
+      } else if (e.key === "End") {
+        deltaPx = edge === "left" ? MAX_WIDTH : MAX_WIDTH
+      } else if (e.key === "ArrowLeft") {
+        deltaPx = -RESIZE_KEY_STEP_PX
+      } else if (e.key === "ArrowRight") {
+        deltaPx = RESIZE_KEY_STEP_PX
+      } else {
+        return
       }
 
-      const shouldSelect = !drag.moved && drag.pressedIndex !== null;
-      const selectedItemIndex = drag.pressedIndex;
+      e.preventDefault()
+      e.stopPropagation()
+      stopInertia()
+      setSelectedIndex(clip.index)
 
-      drag.isDragging = false;
-      drag.pointerId = null;
-      drag.pressedIndex = null;
-
-      setIsDragging(false);
-
-      if (el?.hasPointerCapture(event.pointerId)) {
-        el.releasePointerCapture(event.pointerId);
-      }
-
-      if (shouldSelect) {
-        setSelectedIndex(selectedItemIndex);
-        return;
-      }
-
-      if (Math.abs(drag.velocity) > 0.05) {
-        startInertia(drag.velocity);
-      }
-    },
-    [startInertia]
-  );
-
-  const handleClickCapture = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (!dragRef.current.moved) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      dragRef.current.moved = false;
-    },
-    []
-  );
-
-  const handleResizePointerDown = useCallback(
-    (
-      event: React.PointerEvent<HTMLDivElement>,
-      index: number,
-      edge: 'left' | 'right'
-    ) => {
-      const el = parentRef.current;
-
-      if (!el) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      stopInertia();
-
-      dragRef.current.isDragging = false;
-      dragRef.current.pointerId = null;
-      dragRef.current.moved = false;
-      dragRef.current.pressedIndex = null;
-
-      resizeRef.current = {
-        pointerId: event.pointerId,
-        isResizing: true,
-        index,
+      const nextClips = resizeClipsFromBaseline({
+        baselineClips: clips.map((currentClip) => ({ ...currentClip })),
+        anchorIndex: clip.index,
         edge,
-        startX: event.clientX,
-        startWidth: getItemWidth(index),
-        startScrollLeft: el.scrollLeft,
-      };
+        deltaTime: deltaPx / safePixelsPerSecond,
+        minDuration,
+      })
 
-      setSelectedIndex(index);
-      setIsDragging(false);
-
-      event.currentTarget.setPointerCapture(event.pointerId);
+      applyClipsNow(nextClips)
     },
-    [getItemWidth, stopInertia]
-  );
-
-  const handleResizePointerMove = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const resize = resizeRef.current;
-      const el = parentRef.current;
-
-      if (
-        !el ||
-        !resize.isResizing ||
-        resize.pointerId !== event.pointerId
-      ) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      const dx = event.clientX - resize.startX;
-
-      let nextWidth =
-        resize.edge === 'right'
-          ? resize.startWidth + dx
-          : resize.startWidth - dx;
-
-      nextWidth = clamp(nextWidth, MIN_ITEM_WIDTH, MAX_ITEM_WIDTH);
-
-      setItemWidths((current) => {
-        if (current[resize.index] === nextWidth) {
-          return current;
-        }
-
-        return {
-          ...current,
-          [resize.index]: nextWidth,
-        };
-      });
-
-      if (resize.edge === 'left') {
-        const appliedDelta = resize.startWidth - nextWidth;
-
-        el.scrollLeft = clampScrollLeft(
-          resize.startScrollLeft - appliedDelta
-        );
-      }
-
-      scheduleMeasure();
-    },
-    [clampScrollLeft, scheduleMeasure]
-  );
-
-  const endResize = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      const resize = resizeRef.current;
-
-      if (!resize.isResizing || resize.pointerId !== event.pointerId) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      resizeRef.current = {
-        pointerId: null,
-        isResizing: false,
-        index: -1,
-        edge: 'right',
-        startX: 0,
-        startWidth: 0,
-        startScrollLeft: 0,
-      };
-
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-
-      scheduleMeasure();
-    },
-    [scheduleMeasure]
-  );
+    [applyClipsNow, clips, minDuration, safePixelsPerSecond, stopInertia],
+  )
 
   useEffect(() => {
     return () => {
-      stopInertia();
+      stopInertia()
 
-      if (measureFrameRef.current !== null) {
-        cancelAnimationFrame(measureFrameRef.current);
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current)
       }
-    };
-  }, [stopInertia]);
+
+      if (resizeFrameRef.current !== null) {
+        cancelAnimationFrame(resizeFrameRef.current)
+      }
+    }
+  }, [stopInertia])
 
   return (
     <div
-      className={cn(
-        'flex flex-col gap-4 w-[600px] max-w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl font-sans',
-        className
-      )}
       {...props}
+      className={cn(
+        "flex w-[600px] max-w-full flex-col gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4 font-sans shadow-2xl",
+        className,
+      )}
+      style={style}
     >
-      <div className="flex justify-between items-center">
-        <h3 className="text-sm font-semibold text-zinc-200">
-          Image Strip
-        </h3>
-
-        <span className="text-[10px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded font-mono">
-          {itemCount.toLocaleString()} Images
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-zinc-200">Anchored Timeline Trim</h3>
+        <span className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-400">
+          {visibleClips.length}/{clips.length} rendered
         </span>
       </div>
+
+      <p className="-mt-1 text-[11px] leading-relaxed text-zinc-500">
+        Drag to scroll. Click a clip to select it. Left trim moves the left edge under your pointer while keeping the
+        right edge fixed; neighboring clips repack around the selected clip.
+      </p>
 
       <div className="flex gap-2">
         <Button
@@ -515,45 +678,28 @@ export function SmoothScrollList({
           size="sm"
           id="scroll-to-100"
           className="flex-1"
-          onClick={() => {
-            stopInertia();
-            columnVirtualizer.scrollToIndex(100, {
-              behavior: 'smooth',
-              align: 'start',
-            });
-          }}
+          disabled={clips.length === 0}
+          onClick={() => scrollToClipIndex(100)}
         >
           To 100
         </Button>
-
         <Button
           variant="outline"
           size="sm"
           id="scroll-to-800"
           className="flex-1"
-          onClick={() => {
-            stopInertia();
-            columnVirtualizer.scrollToIndex(Math.min(800, itemCount - 1), {
-              behavior: 'smooth',
-              align: 'start',
-            });
-          }}
+          disabled={clips.length === 0}
+          onClick={() => scrollToClipIndex(800)}
         >
           To 800
         </Button>
-
         <Button
           variant="outline"
           size="sm"
           id="scroll-to-0"
           className="flex-1"
-          onClick={() => {
-            stopInertia();
-            columnVirtualizer.scrollToIndex(0, {
-              behavior: 'smooth',
-              align: 'start',
-            });
-          }}
+          disabled={clips.length === 0}
+          onClick={() => scrollToClipIndex(0)}
         >
           Start
         </Button>
@@ -561,111 +707,207 @@ export function SmoothScrollList({
 
       <div
         ref={parentRef}
+        onScroll={handleScroll}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onClickCapture={handleClickCapture}
-        className={cn(
-          'w-full overflow-x-auto overflow-y-hidden border border-zinc-800 rounded-lg bg-zinc-950 select-none',
-          isDragging ? 'cursor-grabbing' : 'cursor-grab'
-        )}
-        style={{
-          width,
-          height: ITEM_HEIGHT,
-          contain: 'strict',
-          touchAction: 'none',
-          userSelect: isDragging ? 'none' : undefined,
-        }}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        className="w-full cursor-grab touch-none select-none overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950 active:cursor-grabbing"
+        style={{ width: resolvedViewportWidth, contain: "layout paint" }}
       >
         <div
           className="relative"
           style={{
-            width: `${columnVirtualizer.getTotalSize()}px`,
+            width: `${timelineWidth}px`,
             height: `${ITEM_HEIGHT}px`,
           }}
         >
-          {columnVirtualizer.getVirtualItems().map((virtualCol) => {
-            const index = virtualCol.index;
-            const imageWidth = getItemWidth(index);
-            const image = getImageForIndex(index);
-            const finalImage =
-              image ?? getFallbackImage(index, imageWidth);
-            const isSelected = selectedIndex === index;
-
-            return (
-              <div
-                key={index}
-                ref={columnVirtualizer.measureElement}
-                data-index={index}
-                data-clip-index={index}
-                className={cn(
-                  'absolute top-0 left-0 h-full overflow-hidden border-r border-zinc-950 bg-zinc-900',
-                  'transition-[box-shadow,outline-color] duration-150',
-                  isSelected
-                    ? 'z-10 outline outline-2 outline-white shadow-[0_0_0_1px_rgba(0,0,0,0.6),0_0_24px_rgba(255,255,255,0.18)]'
-                    : 'z-0'
-                )}
-                style={{
-                  width: `${imageWidth}px`,
-                  transform: `translateX(${virtualCol.start}px)`,
-                }}
-              >
-                <img
-                  src={finalImage.src}
-                  alt={finalImage.alt ?? `Image ${index}`}
-                  draggable={false}
-                  className="h-full w-full object-cover pointer-events-none"
-                />
-
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-black/50 px-2 py-1 text-[10px] text-white/80">
-                  <span className="truncate">Image {index}</span>
-
-                  <span className="shrink-0 font-mono text-white/50">
-                    {imageWidth}px
-                  </span>
-                </div>
-
-                {isSelected && (
-                  <>
-                    <div className="pointer-events-none absolute inset-0 bg-white/5" />
-
-                    <div
-                      role="slider"
-                      aria-label={`Resize image ${index} from left edge`}
-                      tabIndex={0}
-                      onPointerDown={(event) =>
-                        handleResizePointerDown(event, index, 'left')
-                      }
-                      onPointerMove={handleResizePointerMove}
-                      onPointerUp={endResize}
-                      onPointerCancel={endResize}
-                      className="absolute inset-y-0 left-0 z-20 flex w-5 cursor-ew-resize items-center justify-center bg-white/20 hover:bg-white/35"
-                    >
-                      <div className="h-12 w-1 rounded-full bg-white shadow" />
-                    </div>
-
-                    <div
-                      role="slider"
-                      aria-label={`Resize image ${index} from right edge`}
-                      tabIndex={0}
-                      onPointerDown={(event) =>
-                        handleResizePointerDown(event, index, 'right')
-                      }
-                      onPointerMove={handleResizePointerMove}
-                      onPointerUp={endResize}
-                      onPointerCancel={endResize}
-                      className="absolute inset-y-0 right-0 z-20 flex w-5 cursor-ew-resize items-center justify-center bg-white/20 hover:bg-white/35"
-                    >
-                      <div className="h-12 w-1 rounded-full bg-white shadow" />
-                    </div>
-                  </>
-                )}
-              </div>
-            );
-          })}
+          {clips.length === 0 ? (
+            <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">No items</div>
+          ) : (
+            visibleClips.map((clip) => (
+              <TimelineClipItem
+                key={clip.id}
+                clip={clip}
+                pixelsPerSecond={safePixelsPerSecond}
+                height={ITEM_HEIGHT}
+                isSelected={selectedIndex === clip.index}
+                onResizeDown={handleResizeDown}
+                onResizeMove={handleResizeMove}
+                onResizeUp={handleResizeUp}
+                onResizeKeyDown={handleResizeKeyDown}
+              />
+            ))
+          )}
         </div>
       </div>
     </div>
-  );
+  )
+}
+
+type TimelineClipItemProps = {
+  clip: TimelineClip
+  pixelsPerSecond: number
+  height: number
+  isSelected: boolean
+  onResizeDown: (e: React.PointerEvent<HTMLDivElement>, clip: TimelineClip, edge: "left" | "right") => void
+  onResizeMove: (e: React.PointerEvent<HTMLDivElement>) => void
+  onResizeUp: (e: React.PointerEvent<HTMLDivElement>) => void
+  onResizeKeyDown: (e: React.KeyboardEvent<HTMLDivElement>, clip: TimelineClip, edge: "left" | "right") => void
+}
+
+const TimelineClipItem = memo(function TimelineClipItem({
+  clip,
+  pixelsPerSecond,
+  height,
+  isSelected,
+  onResizeDown,
+  onResizeMove,
+  onResizeUp,
+  onResizeKeyDown,
+}: TimelineClipItemProps) {
+  const left = clip.startTime * pixelsPerSecond
+  const width = clip.duration * pixelsPerSecond
+  const sourceWidth = clip.sourceDuration * pixelsPerSecond
+  const trimInPx = clip.trimIn * pixelsPerSecond
+
+  return (
+    <div
+      data-clip-index={clip.index}
+      className="absolute top-0 h-full p-1.5"
+      style={{
+        width: `${width}px`,
+        transform: `translateX(${left}px)`,
+      }}
+    >
+      <div
+        className={cn(
+          "relative h-full w-full overflow-hidden rounded-md bg-zinc-800 transition-shadow",
+          isSelected ? "ring-2 ring-amber-400 shadow-lg shadow-amber-400/20" : "ring-1 ring-transparent",
+        )}
+      >
+        <div
+          className="pointer-events-none h-full"
+          style={{
+            width: `${sourceWidth}px`,
+            transform: `translateX(${-trimInPx}px)`,
+          }}
+        >
+          {clip.kind === "video" ? (
+            <VideoTile src={clip.src} poster={clip.poster} alt={clip.alt} active={isSelected} />
+          ) : (
+            <img src={clip.src} alt={clip.alt} draggable={false} className="h-full w-full object-cover" />
+          )}
+        </div>
+
+        {clip.kind === "video" && (
+          <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+            VIDEO
+          </span>
+        )}
+
+        <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100">
+          {Math.round(width)}px · {clip.startTime.toFixed(1)}s
+        </span>
+
+        {isSelected && (
+          <>
+            <div className="pointer-events-none absolute inset-0 rounded-md border-2 border-amber-400" />
+            <TrimHandle
+              edge="left"
+              currentWidth={width}
+              onPointerDown={(e) => onResizeDown(e, clip, "left")}
+              onPointerMove={onResizeMove}
+              onPointerUp={onResizeUp}
+              onPointerCancel={onResizeUp}
+              onKeyDown={(e) => onResizeKeyDown(e, clip, "left")}
+            />
+            <TrimHandle
+              edge="right"
+              currentWidth={width}
+              onPointerDown={(e) => onResizeDown(e, clip, "right")}
+              onPointerMove={onResizeMove}
+              onPointerUp={onResizeUp}
+              onPointerCancel={onResizeUp}
+              onKeyDown={(e) => onResizeKeyDown(e, clip, "right")}
+            />
+          </>
+        )}
+      </div>
+    </div>
+  )
+})
+
+type VideoTileProps = {
+  src: string
+  alt: string
+  active: boolean
+  poster?: string
+}
+
+function VideoTile({ src, poster, alt, active }: VideoTileProps) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    if (active) {
+      void video.play().catch(() => {
+        // Ignore autoplay failures. The user can still select/scroll normally.
+      })
+      return
+    }
+
+    video.pause()
+
+    try {
+      video.currentTime = 0
+    } catch {
+      // Some browsers can reject seeking before metadata is available.
+    }
+  }, [active, src])
+
+  return (
+    <video
+      ref={videoRef}
+      src={src}
+      poster={poster}
+      muted
+      loop={active}
+      playsInline
+      preload={active ? "auto" : "metadata"}
+      aria-label={alt}
+      className="h-full w-full object-cover"
+    />
+  )
+}
+
+type TrimHandleProps = {
+  edge: "left" | "right"
+  currentWidth: number
+} & Pick<
+  React.HTMLAttributes<HTMLDivElement>,
+  "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onKeyDown"
+>
+
+function TrimHandle({ edge, currentWidth, ...handlers }: TrimHandleProps) {
+  return (
+    <div
+      role="slider"
+      tabIndex={0}
+      aria-label={`Trim ${edge} edge`}
+      aria-valuemin={MIN_WIDTH}
+      aria-valuemax={MAX_WIDTH}
+      aria-valuenow={Math.round(currentWidth)}
+      className={cn(
+        "absolute top-0 z-10 flex h-full w-4 cursor-ew-resize touch-none items-center justify-center bg-amber-400 outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
+        edge === "left" ? "left-0 rounded-l-md" : "right-0 rounded-r-md",
+      )}
+      onClick={(e) => e.stopPropagation()}
+      {...handlers}
+    >
+      <span className="h-8 w-0.5 rounded bg-zinc-900/70" />
+    </div>
+  )
 }
