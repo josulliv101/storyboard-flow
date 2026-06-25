@@ -57,6 +57,15 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   return (
     <div
       data-clip-index={clip.index}
+      data-testid={`timeline-clip-${clip.index}`}
+      data-clip-id={clip.id}
+      data-start-time={clip.startTime}
+      data-duration={clip.duration}
+      data-source-duration={clip.sourceDuration}
+      data-trim-in={clip.trimIn}
+      data-trim-out={clip.trimOut}
+      data-selected={isSelected}
+      data-is-first={clip.index === 0}
       className="absolute"
       style={{
         top: `${itemTop}px`,

@@ -64,6 +64,8 @@ export function VideoSourceFilmStrip({
   return (
     <div
       data-video-filmstrip="true"
+      data-testid="timeline-source-filmstrip"
+      data-clip-index={clip.index}
       className="absolute left-0 top-0 touch-none rounded-md border border-zinc-600 bg-zinc-950 shadow-[0_10px_24px_rgba(0,0,0,0.35)]"
       onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "move")}
       onPointerCancel={(e) => e.stopPropagation()}
@@ -106,6 +108,7 @@ export function VideoSourceFilmStrip({
       </div>
 
       <div
+        data-testid="timeline-source-window"
         className="absolute inset-y-0 cursor-grab touch-none select-none rounded-sm border-2 border-amber-300 bg-amber-300/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)] active:cursor-grabbing"
         style={{
           width: `${selectedWidth}px`,
@@ -117,11 +120,13 @@ export function VideoSourceFilmStrip({
         title="Drag to move the source window"
       >
         <div
+          data-testid="timeline-source-trim-left"
           className="absolute inset-y-0 left-0 w-2 cursor-ew-resize touch-none rounded-l-sm bg-amber-200/90"
           onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "left")}
           title="Adjust source start"
         />
         <div
+          data-testid="timeline-source-trim-right"
           className="absolute inset-y-0 right-0 w-2 cursor-ew-resize touch-none rounded-r-sm bg-amber-200/90"
           onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "right")}
           title="Adjust source end"

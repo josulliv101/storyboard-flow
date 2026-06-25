@@ -19,6 +19,8 @@ export function TrimHandle({ edge, currentWidth, currentDuration, ...handlers }:
   return (
     <div
       data-trim-handle="true"
+      data-testid={`timeline-trim-${edge}`}
+      data-trim-edge={edge}
       role="slider"
       tabIndex={0}
       aria-label={`Trim ${edge} edge`}
