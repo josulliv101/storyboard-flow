@@ -3,4 +3,5 @@
 
 @source "../../web/app";
 @source "../../web/components";
+@source "../../timeline-gstudio001/components";
 @source "../../../packages/ui";

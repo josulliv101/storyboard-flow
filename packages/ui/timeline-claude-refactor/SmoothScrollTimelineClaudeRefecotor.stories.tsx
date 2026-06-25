@@ -22,7 +22,7 @@ const StoryShell = ({
 );
 
 const meta = {
-  title: 'UI/Timeline/SmoothScrollExample',
+  title: 'UI/Timeline/SmoothScrollExample (Refactor)',
   component: SmoothScrollList,
   parameters: {
     layout: 'fullscreen',

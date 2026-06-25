@@ -15,6 +15,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["../web/*"],
+      "@gstudio/*": ["../timeline-gstudio001/*"],
       "@storyboard/db": ["../../packages/db"],
       "@storyboard/db/*": ["../../packages/db/*"],
       "@storyboard/ui": ["../../packages/ui"],
@@ -26,6 +27,8 @@
     ".storybook/**/*.tsx",
     "../web/components/**/*.ts",
     "../web/components/**/*.tsx",
+    "../timeline-gstudio001/components/**/*.ts",
+    "../timeline-gstudio001/components/**/*.tsx",
     "../../packages/ui/**/*.ts",
     "../../packages/ui/**/*.tsx"
   ],
