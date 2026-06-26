@@ -5,11 +5,17 @@ import { ITEM_HEIGHT } from "./constants";
 import { cn } from "@/lib/utils";
 import { RepeatedMediaTile } from "./repeated-media-tile";
 import { TrimHandle } from "./trim-handle";
+import type { ReorderPreview } from "./hooks/use-timeline-pan";
+import {
+  getTimelineGridItemLayout,
+  type TimelineGridMetrics,
+} from "./timeline-grid";
 
 type TimelineClipItemProps = {
   clip: TimelineClip;
   pixelsPerSecond: number;
   itemTop: number;
+  gridMetrics?: TimelineGridMetrics;
   thumbnailMode?: boolean;
   thumbnailWidth?: number;
   thumbnailGap?: number;
@@ -17,6 +23,8 @@ type TimelineClipItemProps = {
   isSelected: boolean;
   scrubPreviewTime?: number | null;
   isGrowingOpposite?: boolean;
+  isReordering?: boolean;
+  reorderPreview?: ReorderPreview | null;
   onResizeDown: (
     e: React.PointerEvent<HTMLDivElement>,
     clip: TimelineClip,
@@ -36,6 +44,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   clip,
   pixelsPerSecond,
   itemTop,
+  gridMetrics,
   itemHeight,
   thumbnailMode = false,
   thumbnailWidth = (itemHeight * 16) / 9,
@@ -43,16 +52,32 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   isSelected,
   scrubPreviewTime = null,
   isGrowingOpposite = false,
+  isReordering = false,
+  reorderPreview = null,
   onResizeDown,
   onResizeMove,
   onResizeUp,
   onResizeKeyDown,
   onDurationLoaded,
 }: TimelineClipItemProps) {
-  const left = thumbnailMode ? clip.index * (thumbnailWidth + thumbnailGap) : clip.startTime * pixelsPerSecond;
-  const width = thumbnailMode ? thumbnailWidth : clip.duration * pixelsPerSecond;
+  const gridLayout =
+    thumbnailMode && gridMetrics?.enabled
+      ? getTimelineGridItemLayout(clip.index, gridMetrics)
+      : null;
+  const left = gridLayout
+    ? gridLayout.left
+    : thumbnailMode
+    ? clip.index * (thumbnailWidth + thumbnailGap)
+    : clip.startTime * pixelsPerSecond;
+  const top = itemTop + (gridLayout?.top ?? 0);
+  const width = gridLayout
+    ? gridLayout.width
+    : thumbnailMode
+    ? thumbnailWidth
+    : clip.duration * pixelsPerSecond;
   const sourceWidth = clip.sourceDuration * pixelsPerSecond;
   const trimInPx = clip.trimIn * pixelsPerSecond;
+  const isLifted = reorderPreview !== null;
 
   return (
     <div
@@ -65,20 +90,29 @@ export const TimelineClipItem = memo(function TimelineClipItem({
       data-trim-in={clip.trimIn}
       data-trim-out={clip.trimOut}
       data-selected={isSelected}
+      data-reordering={isLifted}
       data-is-first={clip.index === 0}
-      className="absolute"
+      className={cn(
+        "absolute",
+        isReordering && !isLifted && "transition-transform duration-200 ease-out",
+        isLifted && "pointer-events-none",
+      )}
       style={{
-        top: `${itemTop}px`,
+        top: isLifted ? 0 : `${top}px`,
         width: `${width}px`,
         height: `${itemHeight}px`,
-        transform: `translateX(${left}px)`,
-        zIndex: isSelected ? 30 : 0,
+        transform: isLifted
+          ? `translate(${reorderPreview.dragLeft}px, ${reorderPreview.dragTop}px) scale(1.03)`
+          : `translateX(${left}px)`,
+        zIndex: isLifted ? 60 : isSelected ? 30 : 0,
       }}
     >
       <div
         className={cn(
           "relative h-full w-full overflow-hidden rounded-md bg-zinc-800 transition-shadow",
-          isSelected
+          isLifted
+            ? "ring-2 ring-sky-300 shadow-2xl shadow-sky-400/30"
+            : isSelected
             ? "ring-2 ring-amber-400 shadow-lg shadow-amber-400/20"
             : "ring-1 ring-zinc-900",
         )}

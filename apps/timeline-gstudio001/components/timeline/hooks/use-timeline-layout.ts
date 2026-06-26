@@ -7,6 +7,11 @@ import {
   TIMELINE_TRAILING_PADDING_SECONDS,
   VISIBLE_OVERSCAN_PX,
 } from "../constants";
+import {
+  getTimelineGridContentWidth,
+  getTimelineGridItemLayout,
+  type TimelineGridMetrics,
+} from "../timeline-grid";
 import type { TimelineClip } from "../types";
 
 type UseTimelineLayoutOptions = {
@@ -17,6 +22,7 @@ type UseTimelineLayoutOptions = {
   lastOverhang: number;
   pixelsPerSecond: number;
   scrollLeft: number;
+  gridMetrics: TimelineGridMetrics;
   thumbnailMode: boolean;
   thumbnailWidth: number;
   viewportClientWidth: number;
@@ -30,6 +36,7 @@ export function useTimelineLayout({
   lastOverhang,
   pixelsPerSecond,
   scrollLeft,
+  gridMetrics,
   thumbnailMode,
   thumbnailWidth,
   viewportClientWidth,
@@ -61,6 +68,13 @@ export function useTimelineLayout({
     const visibleEndTime = visibleEndPx / pixelsPerSecond;
 
     return clips.filter((clip) => {
+      if (thumbnailMode && gridMetrics.enabled) {
+        const layout = getTimelineGridItemLayout(clip.index, gridMetrics);
+        const clipStartPx = layout.left;
+        const clipEndPx = clipStartPx + layout.width;
+        return clipEndPx >= visibleStartPx && clipStartPx <= visibleEndPx;
+      }
+
       if (thumbnailMode) {
         const clipStartPx = clip.index * (thumbnailWidth + THUMBNAIL_GAP);
         const clipEndPx = clipStartPx + thumbnailWidth;
@@ -76,6 +90,7 @@ export function useTimelineLayout({
     clips,
     closingOverhangOffset,
     firstOverhang,
+    gridMetrics,
     pixelsPerSecond,
     scrollLeft,
     thumbnailMode,
@@ -83,7 +98,9 @@ export function useTimelineLayout({
     viewportClientWidth,
   ]);
 
-  const contentWidth = thumbnailMode
+  const contentWidth = thumbnailMode && gridMetrics.enabled
+    ? getTimelineGridContentWidth(clips.length, gridMetrics)
+    : thumbnailMode
     ? clips.length * thumbnailWidth +
       Math.max(0, clips.length - 1) * THUMBNAIL_GAP
     : Math.ceil(totalDuration * pixelsPerSecond);

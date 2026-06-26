@@ -3,10 +3,14 @@ import { cn } from "@/lib/utils";
 import { ITEM_HEIGHTS, type ItemSize } from "./constants";
 
 type TimelineToolbarProps = {
+  gridMode: boolean;
   itemSize: ItemSize;
   manualOverhangScroll: boolean;
+  showPassiveFilmstrips: boolean;
+  onGridModeChange: (enabled: boolean) => void;
   onItemSizeChange: (size: ItemSize) => void;
   onManualOverhangScrollChange: (enabled: boolean) => void;
+  onPassiveFilmstripsChange: (enabled: boolean) => void;
   onThumbnailModeChange: (enabled: boolean) => void;
   onZoomChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   renderedCount: number;
@@ -65,10 +69,14 @@ function ToggleSwitch({
 }
 
 export function TimelineToolbar({
+  gridMode,
   itemSize,
   manualOverhangScroll,
+  showPassiveFilmstrips,
+  onGridModeChange,
   onItemSizeChange,
   onManualOverhangScrollChange,
+  onPassiveFilmstripsChange,
   onThumbnailModeChange,
   onZoomChange,
   renderedCount,
@@ -91,6 +99,21 @@ export function TimelineToolbar({
           label="Thumbnail Mode"
           checked={thumbnailMode}
           onChange={onThumbnailModeChange}
+        />
+        {thumbnailMode && (
+          <ToggleSwitch
+            id="grid-mode"
+            label="Grid Mode"
+            checked={gridMode}
+            onChange={onGridModeChange}
+          />
+        )}
+        <ToggleSwitch
+          id="passive-filmstrips"
+          label="Filmstrips"
+          checked={showPassiveFilmstrips}
+          onChange={onPassiveFilmstripsChange}
+          title="Show read-only filmstrips for inactive video clips"
         />
         <div className="flex items-center gap-2">
           <label

@@ -23,15 +23,21 @@ function InteractiveToolbar({
   const [itemSize, setItemSize] = useState<ItemSize>(initialItemSize);
   const [manualOverhangScroll, setManualOverhangScroll] =
     useState(initialPinScroll);
+  const [showPassiveFilmstrips, setShowPassiveFilmstrips] = useState(false);
   const [thumbnailMode, setThumbnailMode] = useState(initialThumbnailMode);
+  const [gridMode, setGridMode] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(initialZoom);
 
   return (
     <TimelineToolbar
+      gridMode={gridMode}
       itemSize={itemSize}
       manualOverhangScroll={manualOverhangScroll}
+      showPassiveFilmstrips={showPassiveFilmstrips}
+      onGridModeChange={setGridMode}
       onItemSizeChange={setItemSize}
       onManualOverhangScrollChange={setManualOverhangScroll}
+      onPassiveFilmstripsChange={setShowPassiveFilmstrips}
       onThumbnailModeChange={setThumbnailMode}
       onZoomChange={(event) => setZoomLevel(Number(event.target.value))}
       renderedCount={renderedCount}
@@ -56,10 +62,14 @@ const meta = {
     ),
   ],
   args: {
+    gridMode: false,
     itemSize: "md",
     manualOverhangScroll: true,
+    showPassiveFilmstrips: false,
+    onGridModeChange: () => {},
     onItemSizeChange: () => {},
     onManualOverhangScrollChange: () => {},
+    onPassiveFilmstripsChange: () => {},
     onThumbnailModeChange: () => {},
     onZoomChange: () => {},
     renderedCount: 12,
@@ -97,13 +107,16 @@ export const InteractiveControls: Story = {
       name: "Thumbnail Mode",
     });
     const pinSwitch = canvas.getByRole("switch", { name: "Pin scroll" });
+    const filmstripSwitch = canvas.getByRole("switch", { name: "Filmstrips" });
 
     await userEvent.click(thumbnailSwitch);
     await userEvent.click(pinSwitch);
+    await userEvent.click(filmstripSwitch);
     await userEvent.selectOptions(canvas.getByLabelText("Size"), "xl");
 
     await expect(thumbnailSwitch).toHaveAttribute("aria-checked", "true");
     await expect(pinSwitch).toHaveAttribute("aria-checked", "false");
+    await expect(filmstripSwitch).toHaveAttribute("aria-checked", "true");
     await expect(canvas.getByLabelText("Size")).toHaveValue("xl");
     await expect(canvas.getByTestId("timeline-rendered-count")).toHaveTextContent(
       "12/1000 rendered",

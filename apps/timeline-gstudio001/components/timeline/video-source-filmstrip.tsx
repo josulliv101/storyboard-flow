@@ -4,10 +4,15 @@ import { clamp, formatSeconds } from "./utils";
 import { FILMSTRIP_HEIGHT, FILMSTRIP_MAX_FRAMES, FILMSTRIP_TARGET_FRAME_WIDTH } from "./constants";
 import { cn } from "@/lib/utils";
 import { VideoTile } from "./video-tile";
+import {
+  getTimelineGridItemLayout,
+  type TimelineGridMetrics,
+} from "./timeline-grid";
 
 type VideoSourceFilmStripProps = {
   clip: TimelineClip;
   pixelsPerSecond: number;
+  gridMetrics?: TimelineGridMetrics;
   thumbnailMode?: boolean;
   thumbnailWidth?: number;
   thumbnailGap?: number;
@@ -22,17 +27,31 @@ type VideoSourceFilmStripProps = {
 export function VideoSourceFilmStrip({
   clip,
   pixelsPerSecond,
+  gridMetrics,
   thumbnailMode = false,
   thumbnailWidth = (200 * 16) / 9,
   thumbnailGap = 16,
   editingMode = null,
   onSourceWindowPointerDown,
 }: VideoSourceFilmStripProps) {
-  const selectedLeft = thumbnailMode ? clip.index * (thumbnailWidth + thumbnailGap) : clip.startTime * pixelsPerSecond;
+  const gridLayout =
+    thumbnailMode && gridMetrics?.enabled
+      ? getTimelineGridItemLayout(clip.index, gridMetrics)
+      : null;
+  const selectedLeft = gridLayout
+    ? gridLayout.left
+    : thumbnailMode
+    ? clip.index * (thumbnailWidth + thumbnailGap)
+    : clip.startTime * pixelsPerSecond;
+  const top = gridLayout?.top ?? 0;
   const selectedWidth = clip.duration * pixelsPerSecond;
   const sourceWidth = clip.sourceDuration * pixelsPerSecond;
   const trimInWidth = clip.trimIn * pixelsPerSecond;
-  const clipDisplayWidth = thumbnailMode ? thumbnailWidth : selectedWidth;
+  const clipDisplayWidth = gridLayout
+    ? gridLayout.width
+    : thumbnailMode
+    ? thumbnailWidth
+    : selectedWidth;
   const computedSourceLeft = selectedLeft + clipDisplayWidth / 2 - (trimInWidth + selectedWidth / 2);
 
   const [frozenState, setFrozenState] = React.useState<{ editingMode: VideoSourceWindowEditMode | null, sourceLeft: number | null }>({
@@ -73,7 +92,7 @@ export function VideoSourceFilmStrip({
       style={{
         width: `${sourceWidth}px`,
         height: `${FILMSTRIP_HEIGHT}px`,
-        transform: `translateX(${sourceLeft}px)`,
+        transform: `translate(${sourceLeft}px, ${top}px)`,
         transition: editingMode ? "none" : "transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
         zIndex: 35,
       }}
@@ -135,6 +154,99 @@ export function VideoSourceFilmStrip({
 
       <div className="pointer-events-none absolute left-1/2 top-0.5 -translate-x-1/2 rounded-full bg-black/75 px-2 py-0.5 font-mono text-[9px] text-zinc-100">
         full clip {formatSeconds(clip.sourceDuration)}
+      </div>
+    </div>
+  );
+}
+
+type PassiveVideoFilmStripProps = {
+  clip: TimelineClip;
+  pixelsPerSecond: number;
+  gridMetrics?: TimelineGridMetrics;
+  thumbnailMode?: boolean;
+  thumbnailWidth?: number;
+  thumbnailGap?: number;
+  onPointerDown?: (
+    event: React.PointerEvent<HTMLDivElement>,
+    clip: TimelineClip,
+  ) => void;
+};
+
+export function PassiveVideoFilmStrip({
+  clip,
+  pixelsPerSecond,
+  gridMetrics,
+  thumbnailMode = false,
+  thumbnailWidth = (200 * 16) / 9,
+  thumbnailGap = 16,
+  onPointerDown,
+}: PassiveVideoFilmStripProps) {
+  if (clip.kind !== "video") return null;
+
+  const gridLayout =
+    thumbnailMode && gridMetrics?.enabled
+      ? getTimelineGridItemLayout(clip.index, gridMetrics)
+      : null;
+  const left = gridLayout
+    ? gridLayout.left
+    : thumbnailMode
+    ? clip.index * (thumbnailWidth + thumbnailGap)
+    : clip.startTime * pixelsPerSecond;
+  const top = gridLayout?.top ?? 0;
+  const width = gridLayout
+    ? gridLayout.width
+    : thumbnailMode
+    ? thumbnailWidth
+    : clip.duration * pixelsPerSecond;
+  const frameCount = clamp(
+    Math.ceil(width / FILMSTRIP_TARGET_FRAME_WIDTH),
+    2,
+    FILMSTRIP_MAX_FRAMES,
+  );
+  const frameEpsilon = Math.min(1 / 30, clip.sourceDuration / 100);
+  const visibleStart = clip.trimIn;
+  const visibleEnd = Math.min(
+    clip.sourceDuration - frameEpsilon,
+    clip.trimIn + clip.duration,
+  );
+  const frameTimes = Array.from({ length: frameCount }, (_, index) => {
+    if (frameCount === 1) return visibleStart;
+    const progress = index / (frameCount - 1);
+    return visibleStart + (visibleEnd - visibleStart) * progress;
+  });
+
+  return (
+    <div
+      data-testid="timeline-passive-filmstrip"
+      data-clip-index={clip.index}
+      className="absolute left-0 top-0 touch-none overflow-hidden rounded-md border border-zinc-700/80 bg-zinc-950 shadow-[0_6px_18px_rgba(0,0,0,0.28)]"
+      onPointerDown={(event) => onPointerDown?.(event, clip)}
+      onPointerCancel={(event) => event.stopPropagation()}
+      onDragStart={(event) => event.preventDefault()}
+      style={{
+        width: `${width}px`,
+        height: `${FILMSTRIP_HEIGHT}px`,
+        transform: `translate(${left}px, ${top}px)`,
+        zIndex: 10,
+      }}
+      aria-hidden="true"
+    >
+      <div className="flex h-full w-full select-none overflow-hidden rounded-md">
+        {frameTimes.map((time, index) => (
+          <div
+            key={`${clip.id}-passive-film-frame-${index}`}
+            className="relative h-full min-w-0 overflow-hidden border-r border-black/70 last:border-r-0"
+            style={{ flex: `0 0 ${100 / frameTimes.length}%` }}
+          >
+            <VideoTile
+              src={clip.src}
+              poster={clip.poster}
+              alt=""
+              previewTime={time}
+              sourceDuration={clip.sourceDuration}
+            />
+          </div>
+        ))}
       </div>
     </div>
   );

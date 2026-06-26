@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 
+import type { TimelineGridMetrics } from "../timeline-grid";
 import type { TimelineClip, TrimScrubPreview } from "../types";
 import type {
   SetScrollLeft,
@@ -15,6 +16,7 @@ type UseTimelineInteractionsProps = {
   clips: TimelineClip[];
   safePixelsPerSecond: number;
   minDuration: number;
+  gridMetrics: TimelineGridMetrics;
   thumbnailMode?: boolean;
   thumbnailWidth?: number;
   setScrollLeft: SetScrollLeft;
@@ -30,7 +32,9 @@ export function useTimelineInteractions({
   clips,
   safePixelsPerSecond,
   minDuration,
+  gridMetrics,
   thumbnailMode = false,
+  thumbnailWidth = 0,
   setScrollLeft,
   setSelectedIndex,
   setScrubPreview,
@@ -55,9 +59,15 @@ export function useTimelineInteractions({
   );
 
   const pan = useTimelinePan({
+    applyClipsNow,
+    clips,
     parentRef,
+    safePixelsPerSecond,
     setScrollLeft,
     setSelectedIndex,
+    gridMetrics,
+    thumbnailMode,
+    thumbnailWidth: thumbnailWidth ?? 0,
     windowDrag,
   });
 
@@ -107,6 +117,8 @@ export function useTimelineInteractions({
     stopInertia: pan.stopInertia,
     runInertia: pan.runInertia,
     trackTranslateX,
+    isReordering: pan.isReordering,
+    reorderPreview: pan.reorderPreview,
     isResizing: resize.isResizing,
     activeResize: resize.activeResize,
     isSnappingBack: resize.isSnappingBack,

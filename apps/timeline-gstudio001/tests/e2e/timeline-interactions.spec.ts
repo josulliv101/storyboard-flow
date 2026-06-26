@@ -29,6 +29,17 @@ async function dragFromVisibleRightEdge(page: Page, locator: Locator, dx: number
   await page.mouse.up();
 }
 
+async function beginLiftedReorder(page: Page, locator: Locator) {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("Timeline clip is not visible");
+
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y - 60, { steps: 6 });
+}
+
 async function numberAttribute(locator: Locator, name: string) {
   const value = await locator.getAttribute(name);
   if (value === null) throw new Error(`Missing ${name}`);
@@ -65,6 +76,137 @@ test("selects a clip and exposes its source filmstrip", async ({ page }) => {
 
   await expect(clip).toHaveAttribute("data-selected", "true");
   await expect(page.getByTestId("timeline-source-filmstrip")).toBeVisible();
+});
+
+test("filmstrip setting shows passive read-only filmstrips for inactive video clips", async ({ page }) => {
+  const editor = page.getByTestId("timeline-editor");
+
+  await expect(editor).toHaveAttribute("data-passive-filmstrips", "false");
+  await expect(page.getByTestId("timeline-passive-filmstrip")).toHaveCount(0);
+
+  await page.getByRole("switch", { name: "Filmstrips" }).click();
+
+  await expect(editor).toHaveAttribute("data-passive-filmstrips", "true");
+  await expect(page.getByTestId("timeline-passive-filmstrip").first()).toBeVisible();
+  await expect(page.getByTestId("timeline-source-trim-left")).toHaveCount(0);
+  await expect(page.getByTestId("timeline-source-trim-right")).toHaveCount(0);
+});
+
+test("grid mode is available only in thumbnail mode", async ({ page }) => {
+  const editor = page.getByTestId("timeline-editor");
+
+  await expect(page.getByRole("switch", { name: "Grid Mode" })).toHaveCount(0);
+
+  await page.getByRole("switch", { name: "Thumbnail Mode" }).click();
+  const gridSwitch = page.getByRole("switch", { name: "Grid Mode" });
+  await expect(gridSwitch).toBeVisible();
+
+  await gridSwitch.click();
+  await expect(editor).toHaveAttribute("data-grid-mode", "true");
+  await expect.poll(() => numberAttribute(editor, "data-grid-columns")).toBeGreaterThan(0);
+  await expect.poll(() => numberAttribute(editor, "data-grid-rows")).toBe(2);
+
+  await page.getByRole("switch", { name: "Thumbnail Mode" }).click();
+  await expect(editor).toHaveAttribute("data-thumbnail-mode", "false");
+  await expect(editor).toHaveAttribute("data-grid-mode", "false");
+  await expect(page.getByRole("switch", { name: "Grid Mode" })).toHaveCount(0);
+});
+
+test("grid mode fits each row to the available timeline width", async ({ page }) => {
+  const editor = page.getByTestId("timeline-editor");
+  const viewport = page.getByTestId("timeline-scroll-viewport");
+
+  await page.getByRole("switch", { name: "Thumbnail Mode" }).click();
+  await page.getByRole("switch", { name: "Grid Mode" }).click();
+  await expect(editor).toHaveAttribute("data-grid-mode", "true");
+
+  const columns = await numberAttribute(editor, "data-grid-columns");
+  const viewportWidth = await numberAttribute(editor, "data-viewport-width");
+  expect(columns).toBeGreaterThan(1);
+
+  const firstClip = page.getByTestId("timeline-clip-0");
+  const lastClipInFirstRow = page.getByTestId(`timeline-clip-${columns - 1}`);
+  const firstClipInSecondRow = page.getByTestId(`timeline-clip-${columns}`);
+  await expect(firstClip).toBeVisible();
+  await expect(lastClipInFirstRow).toBeVisible();
+  await expect(firstClipInSecondRow).toBeVisible();
+
+  const firstBox = await firstClip.boundingBox();
+  const lastFirstRowBox = await lastClipInFirstRow.boundingBox();
+  const secondRowBox = await firstClipInSecondRow.boundingBox();
+  if (!firstBox || !lastFirstRowBox || !secondRowBox) {
+    throw new Error("Grid clips are not visible");
+  }
+
+  expect(lastFirstRowBox.x + lastFirstRowBox.width - firstBox.x).toBeCloseTo(
+    viewportWidth,
+    0,
+  );
+  expect(secondRowBox.y).toBeGreaterThan(firstBox.y);
+  expect(secondRowBox.x).toBeCloseTo(firstBox.x, 0);
+
+  const initialScroll = await numberAttribute(viewport, "data-scroll-left");
+  await dragBy(page, viewport, -300);
+  await expect.poll(() => numberAttribute(viewport, "data-scroll-left")).toBeGreaterThan(initialScroll);
+});
+
+test("passive filmstrip is hidden for the active video clip", async ({ page }) => {
+  await page.getByRole("switch", { name: "Filmstrips" }).click();
+  await expect(page.locator('[data-testid="timeline-passive-filmstrip"][data-clip-index="0"]')).toBeVisible();
+
+  await page.getByTestId("timeline-clip-0").click();
+
+  await expect(page.getByTestId("timeline-source-filmstrip")).toHaveAttribute("data-clip-index", "0");
+  await expect(page.locator('[data-testid="timeline-passive-filmstrip"][data-clip-index="0"]')).toHaveCount(0);
+  await expect(page.getByTestId("timeline-source-trim-left")).toBeVisible();
+  await expect(page.getByTestId("timeline-source-trim-right")).toBeVisible();
+});
+
+test("selecting a video hides all passive filmstrips", async ({ page }) => {
+  await page.getByRole("switch", { name: "Filmstrips" }).click();
+  await page.getByTestId("timeline-clip-0").click();
+
+  await expect(page.getByTestId("timeline-source-filmstrip")).toHaveAttribute("data-clip-index", "0");
+  await expect(page.getByTestId("timeline-passive-filmstrip")).toHaveCount(0);
+});
+
+test("dragging a passive filmstrip scrubs without panning the timeline", async ({ page }) => {
+  const viewport = page.getByTestId("timeline-scroll-viewport");
+  await page.getByRole("switch", { name: "Filmstrips" }).click();
+
+  const firstFilmstrip = page.locator(
+    '[data-testid="timeline-passive-filmstrip"][data-clip-index="0"]',
+  );
+  const nextFilmstrip = page.locator(
+    '[data-testid="timeline-passive-filmstrip"][data-clip-index="4"]',
+  );
+  await expect(firstFilmstrip).toBeVisible();
+  await expect(nextFilmstrip).toBeVisible();
+
+  const firstBox = await firstFilmstrip.boundingBox();
+  const nextBox = await nextFilmstrip.boundingBox();
+  if (!firstBox || !nextBox) throw new Error("Passive filmstrips are not visible");
+  const initialScroll = await numberAttribute(viewport, "data-scroll-left");
+
+  await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2);
+  await page.mouse.down();
+  const overlay = page.getByTestId("timeline-passive-scrub-overlay");
+  await expect(overlay).toHaveAttribute("data-anchor-clip-index", "0");
+  await expect(overlay).toHaveAttribute("data-preview-clip-index", "0");
+  const overlayBox = await overlay.boundingBox();
+  if (!overlayBox) throw new Error("Passive scrub overlay is not visible");
+  expect(overlayBox.width).toBeGreaterThan(300);
+  expect(overlayBox.height).toBeGreaterThan(180);
+  expect(overlayBox.y).toBeLessThan(firstBox.y);
+
+  await page.mouse.move(nextBox.x + nextBox.width / 2, nextBox.y + nextBox.height / 2, { steps: 12 });
+
+  await expect(overlay).toHaveAttribute("data-anchor-clip-index", "0");
+  await expect(overlay).toHaveAttribute("data-preview-clip-index", "4");
+  await expect.poll(() => numberAttribute(viewport, "data-scroll-left")).toBe(initialScroll);
+
+  await page.mouse.up();
+  await expect(page.getByTestId("timeline-passive-scrub-overlay")).toHaveCount(0);
 });
 
 test("left trim grows the first clip into available source", async ({ page }) => {
@@ -116,6 +258,100 @@ test("pans with a real pointer drag and virtualizes a large list", async ({ page
   await expect.poll(() => numberAttribute(viewport, "data-scroll-left")).toBeGreaterThan(initialScroll);
   await expect(page.getByTestId("timeline-rendered-count")).toContainText("/1000 rendered");
   await expect(page.locator("[data-testid^='timeline-clip-']")).not.toHaveCount(1000);
+});
+
+test("horizontal drag on a clip pans instead of reordering", async ({ page }) => {
+  const viewport = page.getByTestId("timeline-scroll-viewport");
+  const clip = page.locator('[data-clip-id="clip-0"]');
+  const initialScroll = await numberAttribute(viewport, "data-scroll-left");
+
+  await dragBy(page, clip, -240);
+
+  await expect.poll(() => numberAttribute(viewport, "data-scroll-left")).toBeGreaterThan(initialScroll);
+  await expect(clip).toHaveAttribute("data-clip-index", "0");
+  await expect(page.getByTestId("timeline-editor")).toHaveAttribute("data-reordering", "false");
+});
+
+test("upward lift on a clip reorders it in the timeline", async ({ page }) => {
+  const editor = page.getByTestId("timeline-editor");
+  const clip = page.locator('[data-clip-id="clip-0"]');
+  const target = page.locator('[data-clip-id="clip-3"]');
+  const clipBox = await clip.boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!clipBox || !targetBox) throw new Error("Timeline clips are not visible");
+
+  const startX = clipBox.x + clipBox.width / 2;
+  const startY = clipBox.y + clipBox.height / 2;
+  const targetX = targetBox.x + targetBox.width / 2;
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX, startY - 60, { steps: 6 });
+  await expect(editor).toHaveAttribute("data-reordering", "true");
+  await page.mouse.move(targetX, startY - 60, { steps: 12 });
+  await page.mouse.up();
+
+  await expect(editor).toHaveAttribute("data-reordering", "false");
+  await expect(clip).not.toHaveAttribute("data-clip-index", "0");
+});
+
+test("lifted reorder hides passive filmstrips while dragging", async ({ page }) => {
+  const editor = page.getByTestId("timeline-editor");
+  const clip = page.locator('[data-clip-id="clip-0"]');
+
+  await page.getByRole("switch", { name: "Filmstrips" }).click();
+  await expect(page.getByTestId("timeline-passive-filmstrip").first()).toBeVisible();
+
+  await beginLiftedReorder(page, clip);
+
+  await expect(editor).toHaveAttribute("data-reordering", "true");
+  await expect(page.getByTestId("timeline-passive-filmstrip")).toHaveCount(0);
+  await expect(page.getByTestId("timeline-source-filmstrip")).toHaveCount(0);
+
+  await page.mouse.up();
+  await expect(editor).toHaveAttribute("data-reordering", "false");
+});
+
+test("lifted reorder hides the selected source filmstrip while dragging", async ({ page }) => {
+  const editor = page.getByTestId("timeline-editor");
+  const clip = page.locator('[data-clip-id="clip-0"]');
+
+  await clip.click();
+  await expect(page.getByTestId("timeline-source-filmstrip")).toHaveAttribute("data-clip-index", "0");
+
+  await beginLiftedReorder(page, clip);
+
+  await expect(editor).toHaveAttribute("data-reordering", "true");
+  await expect(page.getByTestId("timeline-source-filmstrip")).toHaveCount(0);
+  await expect(page.getByTestId("timeline-passive-filmstrip")).toHaveCount(0);
+
+  await page.mouse.up();
+  await expect(editor).toHaveAttribute("data-reordering", "false");
+});
+
+test("lifted reorder auto-scrolls when dragged past the visible timeline edge", async ({ page }) => {
+  const editor = page.getByTestId("timeline-editor");
+  const viewport = page.getByTestId("timeline-scroll-viewport");
+  const clip = page.locator('[data-clip-id="clip-0"]');
+  const clipBox = await clip.boundingBox();
+  const viewportBox = await viewport.boundingBox();
+  if (!clipBox || !viewportBox) throw new Error("Timeline clips are not visible");
+
+  const startX = clipBox.x + clipBox.width / 2;
+  const startY = clipBox.y + clipBox.height / 2;
+  const initialScroll = await numberAttribute(viewport, "data-scroll-left");
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX, startY - 60, { steps: 6 });
+  await expect(editor).toHaveAttribute("data-reordering", "true");
+  await page.mouse.move(viewportBox.x + viewportBox.width + 80, startY - 60, { steps: 12 });
+
+  await expect.poll(() => numberAttribute(viewport, "data-scroll-left")).toBeGreaterThan(initialScroll);
+  await page.mouse.up();
+
+  await expect(editor).toHaveAttribute("data-reordering", "false");
+  await expect(clip).not.toHaveAttribute("data-clip-index", "0");
 });
 
 test("preserves time-space behavior after zoom changes", async ({ page }) => {

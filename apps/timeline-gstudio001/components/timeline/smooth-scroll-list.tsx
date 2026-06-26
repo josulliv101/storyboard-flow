@@ -24,6 +24,10 @@ import { useTimelineZoom } from "./hooks/use-timeline-zoom";
 import { TimelineNavigation } from "./timeline-navigation";
 import { TimelineOverhangHint } from "./timeline-overhang-hint";
 import { TimelineToolbar } from "./timeline-toolbar";
+import {
+  getTimelineGridItemLayout,
+  getTimelineGridMetrics,
+} from "./timeline-grid";
 import { TimelineViewport } from "./timeline-viewport";
 import { clamp } from "./utils";
 
@@ -52,17 +56,38 @@ export function SmoothScrollList({
   const initialScrollLeft = TIMELINE_LEADING_PADDING_SECONDS * 100;
 
   const [thumbnailMode, setThumbnailMode] = useState(false);
+  const [gridMode, setGridMode] = useState(false);
   const [itemSize, setItemSize] = useState<ItemSize>("md");
   const [manualOverhangScroll, setManualOverhangScroll] = useState(true);
+  const [showPassiveFilmstrips, setShowPassiveFilmstrips] = useState(false);
 
   const itemHeight = ITEM_HEIGHTS[itemSize];
   const thumbnailWidth = (itemHeight * 16) / 9;
-  const timelineHeight = itemHeight + TIMELINE_ITEM_TOP;
 
   const scrollState = useTimelineScrollState({
     initialScrollLeft,
     parentRef,
   });
+
+  const gridModeEnabled = thumbnailMode && gridMode;
+  const gridMetrics = useMemo(
+    () =>
+      getTimelineGridMetrics({
+        enabled: gridModeEnabled,
+        fallbackItemWidth: thumbnailWidth,
+        itemHeight,
+        viewportWidth: scrollState.viewportClientWidth,
+      }),
+    [gridModeEnabled, itemHeight, scrollState.viewportClientWidth, thumbnailWidth],
+  );
+  const effectiveThumbnailWidth = gridModeEnabled
+    ? gridMetrics.itemWidth
+    : thumbnailWidth;
+  const timelineHeight = gridModeEnabled
+    ? TIMELINE_ITEM_TOP +
+      gridMetrics.rowsPerPage * itemHeight +
+      Math.max(0, gridMetrics.rowsPerPage - 1) * THUMBNAIL_GAP
+    : itemHeight + TIMELINE_ITEM_TOP;
 
   const clipState = useTimelineClipState({
     itemCount: safeItemCount,
@@ -90,7 +115,7 @@ export function SmoothScrollList({
     selectedIndex: clipState.selectedIndex,
     setScrollLeft: scrollState.setScrollLeft,
     thumbnailMode,
-    thumbnailWidth,
+    thumbnailWidth: effectiveThumbnailWidth,
   });
 
   const minDuration = MIN_WIDTH / zoom.safePixelsPerSecond;
@@ -106,7 +131,8 @@ export function SmoothScrollList({
     safePixelsPerSecond: zoom.safePixelsPerSecond,
     minDuration,
     thumbnailMode,
-    thumbnailWidth,
+    thumbnailWidth: effectiveThumbnailWidth,
+    gridMetrics,
     setScrollLeft: scrollState.setScrollLeft,
     setSelectedIndex: clipState.setSelectedIndex,
     setScrubPreview: clipState.setScrubPreview,
@@ -130,7 +156,7 @@ export function SmoothScrollList({
     selectedVideoClip,
     setScrollLeft: scrollState.setScrollLeft,
     thumbnailMode,
-    thumbnailWidth,
+    thumbnailWidth: effectiveThumbnailWidth,
   });
 
   const layout = useTimelineLayout({
@@ -141,8 +167,9 @@ export function SmoothScrollList({
     lastOverhang: overhang.lastOverhang,
     pixelsPerSecond: zoom.safePixelsPerSecond,
     scrollLeft: scrollState.scrollLeft,
+    gridMetrics,
     thumbnailMode,
-    thumbnailWidth,
+    thumbnailWidth: effectiveThumbnailWidth,
     viewportClientWidth: scrollState.viewportClientWidth,
   });
 
@@ -159,9 +186,15 @@ export function SmoothScrollList({
       );
       const clip = clipState.clips[index];
       const maxScroll = Math.max(0, element.scrollWidth - element.clientWidth);
+      const gridLayout =
+        gridModeEnabled && thumbnailMode
+          ? getTimelineGridItemLayout(clip.index, gridMetrics)
+          : null;
       const nextScrollLeft = clamp(
-        thumbnailMode
-          ? clip.index * (thumbnailWidth + THUMBNAIL_GAP)
+        gridLayout
+          ? gridLayout.left
+          : thumbnailMode
+          ? clip.index * (effectiveThumbnailWidth + THUMBNAIL_GAP)
           : clip.startTime * zoom.safePixelsPerSecond,
         0,
         maxScroll,
@@ -170,12 +203,20 @@ export function SmoothScrollList({
     },
     [
       clipState.clips,
+      effectiveThumbnailWidth,
+      gridMetrics,
+      gridModeEnabled,
       interactions,
       thumbnailMode,
-      thumbnailWidth,
       zoom.safePixelsPerSecond,
     ],
   );
+
+  useEffect(() => {
+    if (!thumbnailMode && gridMode) {
+      setGridMode(false);
+    }
+  }, [gridMode, thumbnailMode]);
 
   useEffect(() => {
     const currentInteractions = interactions;
@@ -196,9 +237,15 @@ export function SmoothScrollList({
       data-selected-index={clipState.selectedIndex ?? ""}
       data-zoom={zoom.safePixelsPerSecond}
       data-thumbnail-mode={thumbnailMode}
+      data-grid-mode={gridModeEnabled}
+      data-grid-columns={gridMetrics.columnsPerPage}
+      data-grid-rows={gridMetrics.rowsPerPage}
+      data-passive-filmstrips={showPassiveFilmstrips}
       data-item-count={clipState.clips.length}
       data-first-overhang={overhang.firstOverhang}
       data-last-overhang={overhang.lastOverhang}
+      data-reordering={interactions.isReordering}
+      data-reorder-target-index={interactions.reorderPreview?.targetIndex ?? ""}
       data-timeline-width={layout.timelineWidth}
       data-viewport-width={scrollState.viewportClientWidth}
       data-max-scroll={Math.max(
@@ -220,8 +267,12 @@ export function SmoothScrollList({
       <TimelineToolbar
         itemSize={itemSize}
         manualOverhangScroll={manualOverhangScroll}
+        showPassiveFilmstrips={showPassiveFilmstrips}
+        gridMode={gridModeEnabled}
         onItemSizeChange={setItemSize}
+        onGridModeChange={setGridMode}
         onManualOverhangScrollChange={setManualOverhangScroll}
+        onPassiveFilmstripsChange={setShowPassiveFilmstrips}
         onThumbnailModeChange={setThumbnailMode}
         onZoomChange={zoom.handleZoomChange}
         renderedCount={layout.visibleClips.length}
@@ -229,13 +280,6 @@ export function SmoothScrollList({
         totalCount={clipState.clips.length}
         zoomLevel={zoom.zoomLevel}
       />
-
-      <p className="-mt-1 w-full min-w-0 text-[11px] leading-relaxed text-zinc-500">
-        Drag the timeline or any clip body to scroll. Click a clip to select
-        it. For a selected video, use the filmstrip above the item to move or
-        resize the source window; drag the item handles to trim the timeline
-        edges.
-      </p>
 
       <TimelineNavigation
         disabled={clipState.clips.length === 0}
@@ -265,8 +309,10 @@ export function SmoothScrollList({
           scrollLeft={scrollState.scrollLeft}
           selectedIndex={clipState.selectedIndex}
           selectedVideoClip={selectedVideoClip}
+          showPassiveFilmstrips={showPassiveFilmstrips}
+          gridMetrics={gridMetrics}
           thumbnailMode={thumbnailMode}
-          thumbnailWidth={thumbnailWidth}
+          thumbnailWidth={effectiveThumbnailWidth}
           timelineHeight={timelineHeight}
           timelineWidth={layout.timelineWidth}
           visibleClips={layout.visibleClips}

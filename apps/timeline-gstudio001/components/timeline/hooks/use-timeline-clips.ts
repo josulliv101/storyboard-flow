@@ -198,6 +198,39 @@ export function packClipsLeftToRight(
   return nextClips;
 }
 
+export function reindexAndPackClips(clips: TimelineClip[]) {
+  let nextStartTime = TIMELINE_LEADING_PADDING_SECONDS;
+
+  return clips.map((clip, index) => {
+    const nextClip = {
+      ...clip,
+      index,
+      startTime: nextStartTime,
+    };
+    nextStartTime += nextClip.duration + CLIP_GAP_SECONDS;
+    return nextClip;
+  });
+}
+
+export function reorderClipsFromBaseline({
+  activeClipId,
+  baselineClips,
+  targetIndex,
+}: {
+  activeClipId: string;
+  baselineClips: TimelineClip[];
+  targetIndex: number;
+}) {
+  const sourceIndex = baselineClips.findIndex((clip) => clip.id === activeClipId);
+  if (sourceIndex === -1) return baselineClips;
+
+  const nextClips = baselineClips.map((clip) => ({ ...clip }));
+  const [activeClip] = nextClips.splice(sourceIndex, 1);
+  nextClips.splice(clamp(Math.floor(targetIndex), 0, nextClips.length), 0, activeClip);
+
+  return reindexAndPackClips(nextClips);
+}
+
 export function editVideoSourceWindowFromBaseline({
   baselineClips,
   anchorIndex,
