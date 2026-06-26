@@ -25,6 +25,7 @@ type UseTimelineInteractionsProps = {
   scheduleClips: (clips: TimelineClip[]) => void;
   applyClipsNow: (clips: TimelineClip[]) => void;
   pendingScrollLeftRef?: React.MutableRefObject<number | null>;
+  timelineId?: string;
 };
 
 export function useTimelineInteractions({
@@ -40,6 +41,7 @@ export function useTimelineInteractions({
   setScrubPreview,
   applyClipsNow,
   pendingScrollLeftRef,
+  timelineId,
 }: UseTimelineInteractionsProps) {
   const [trackTranslateX, setTrackTranslateX] = useState(0);
   const windowDragCleanupRef = useRef<(() => void) | null>(null);
@@ -69,6 +71,7 @@ export function useTimelineInteractions({
     thumbnailMode,
     thumbnailWidth: thumbnailWidth ?? 0,
     windowDrag,
+    timelineId,
   });
 
   const sharedOptions = {

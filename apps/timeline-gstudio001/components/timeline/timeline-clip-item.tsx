@@ -41,6 +41,7 @@ type TimelineClipItemProps = {
   onDurationLoaded?: (index: number, duration: number) => void;
   getCollectionHref?: (timelineId: string) => string;
   onOpenCollection?: (timelineId: string, href: string) => void;
+  timelineId?: string;
 };
 
 export const TimelineClipItem = memo(function TimelineClipItem({
@@ -64,6 +65,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   onDurationLoaded,
   getCollectionHref,
   onOpenCollection,
+  timelineId,
 }: TimelineClipItemProps) {
   const gridLayout =
     thumbnailMode && gridMetrics?.enabled
@@ -97,10 +99,11 @@ export const TimelineClipItem = memo(function TimelineClipItem({
       data-selected={isSelected}
       data-reordering={isLifted}
       data-is-first={clip.index === 0}
+      draggable={false}
       className={cn(
-        "absolute",
+        "absolute cursor-grab active:cursor-grabbing",
         isReordering && !isLifted && "transition-transform duration-200 ease-out",
-        isLifted && "pointer-events-none",
+        isLifted && "pointer-events-none opacity-0",
       )}
       style={{
         top: isLifted ? 0 : `${top}px`,

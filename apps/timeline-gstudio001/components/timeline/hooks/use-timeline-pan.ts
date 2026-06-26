@@ -29,6 +29,7 @@ type UseTimelinePanOptions = {
   thumbnailMode: boolean;
   thumbnailWidth: number;
   windowDrag: WindowDragCoordinator;
+  timelineId?: string;
 };
 
 export type ReorderPreview = {
@@ -50,6 +51,7 @@ export function useTimelinePan({
   thumbnailMode,
   thumbnailWidth,
   windowDrag,
+  timelineId,
 }: UseTimelinePanOptions) {
   const inertiaFrameRef = useRef<number | null>(null);
   const reorderAutoScrollFrameRef = useRef<number | null>(null);
@@ -333,6 +335,23 @@ export function useTimelinePan({
           dragOffsetY: clientY - currentState.startY,
           targetIndex,
         });
+
+        // Dispatch window event for cross-timeline pointer dragging
+        const activeClip = currentState.baselineClips.find(c => c.id === currentState.activeClipId);
+        if (activeClip) {
+          window.dispatchEvent(
+            new CustomEvent("gstudio-clip-drag", {
+              detail: {
+                clip: activeClip,
+                sourceTimelineId: timelineId || "",
+                clientX,
+                clientY,
+                isDropping: false,
+              },
+            })
+          );
+        }
+
         applyClipsNow(
           reorderClipsFromBaseline({
             activeClipId: currentState.activeClipId,
@@ -350,6 +369,12 @@ export function useTimelinePan({
         if (currentState.pressedIndex !== null) {
           setSelectedIndex(currentState.pressedIndex);
         }
+
+        // Dispatch global start so other viewports show their drop state highlight
+        window.dispatchEvent(
+          new CustomEvent("gstudio-drag-start", { detail: { type: "clip" } })
+        );
+
         previewReorder(clientX, clientY);
       };
 
@@ -497,15 +522,40 @@ export function useTimelinePan({
         ) {
           stopReorderAutoScroll();
           const targetIndex = currentState.targetIndex;
-          applyClipsNow(
-            reorderClipsFromBaseline({
-              activeClipId: currentState.activeClipId,
-              baselineClips: currentState.baselineClips,
-              targetIndex,
-            }),
-          );
-          setSelectedIndex(targetIndex);
-          setReorderPreview(null);
+
+          // Dispatch drop event on window for cross-timeline drag
+          const activeClip = currentState.baselineClips.find(c => c.id === currentState.activeClipId);
+          let wasHandledByOtherTimeline = false;
+          if (activeClip) {
+            const dropEvent = new CustomEvent("gstudio-clip-drag", {
+              detail: {
+                clip: activeClip,
+                sourceTimelineId: timelineId || "",
+                clientX: currentState.lastClientX,
+                clientY: currentState.lastClientY,
+                isDropping: true,
+                handled: false,
+              },
+            });
+            window.dispatchEvent(dropEvent);
+            wasHandledByOtherTimeline = !!dropEvent.detail.handled;
+          }
+
+          window.dispatchEvent(new CustomEvent("gstudio-drag-end"));
+
+          if (wasHandledByOtherTimeline) {
+            setReorderPreview(null);
+          } else {
+            applyClipsNow(
+              reorderClipsFromBaseline({
+                activeClipId: currentState.activeClipId,
+                baselineClips: currentState.baselineClips,
+                targetIndex,
+              }),
+            );
+            setSelectedIndex(targetIndex);
+            setReorderPreview(null);
+          }
         }
 
         currentState.isDragging = false;

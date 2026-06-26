@@ -8,7 +8,7 @@ import {
   type RefObject,
 } from "react";
 
-import { THUMBNAIL_GAP, TIMELINE_ITEM_TOP } from "./constants";
+import { THUMBNAIL_GAP, TIMELINE_ITEM_TOP, TIMELINE_LEADING_PADDING_SECONDS, CLIP_GAP_SECONDS } from "./constants";
 import type { useTimelineInteractions } from "./hooks/use-timeline-interactions";
 import { TimelineClipItem } from "./timeline-clip-item";
 import {
@@ -66,6 +66,9 @@ type TimelineViewportProps = {
   timelineWidth: number;
   visibleClips: TimelineClip[];
   onDropFiles?: (insertIndex: number, files: File[]) => void;
+  onDropClip?: (insertIndex: number, clip: TimelineClip, sourceTimelineId: string) => void;
+  onDropSidebarClip?: (insertIndex: number, type: "collection" | "image" | "video") => void;
+  timelineId?: string;
 };
 
 export function TimelineViewport({
@@ -99,6 +102,9 @@ export function TimelineViewport({
   timelineWidth,
   visibleClips,
   onDropFiles,
+  onDropClip,
+  onDropSidebarClip,
+  timelineId,
 }: TimelineViewportProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const passiveScrubCleanupRef = useRef<(() => void) | null>(null);
@@ -106,6 +112,29 @@ export function TimelineViewport({
     useState<PassiveScrubPreview | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounterRef = useRef(0);
+  const [activeDropIndex, setActiveDropIndex] = useState<number | null>(null);
+  const [isAnyDragActive, setIsAnyDragActive] = useState(false);
+
+  useEffect(() => {
+    const handleDragStartGlobal = (e: Event) => {
+      const customEvent = e as CustomEvent<{ type: string }>;
+      const type = customEvent.detail.type;
+      if (type !== "timeline") {
+        setIsAnyDragActive(true);
+      }
+    };
+
+    const handleDragEndGlobal = () => {
+      setIsAnyDragActive(false);
+    };
+
+    window.addEventListener("gstudio-drag-start", handleDragStartGlobal);
+    window.addEventListener("gstudio-drag-end", handleDragEndGlobal);
+    return () => {
+      window.removeEventListener("gstudio-drag-start", handleDragStartGlobal);
+      window.removeEventListener("gstudio-drag-end", handleDragEndGlobal);
+    };
+  }, []);
 
   const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -120,12 +149,10 @@ export function TimelineViewport({
     dragCounterRef.current--;
     if (dragCounterRef.current === 0) {
       setIsDragOver(false);
+      setActiveDropIndex(null);
     }
   }, []);
 
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  }, []);
 
 
   const trackTransition =
@@ -195,12 +222,185 @@ export function TimelineViewport({
         : clip.duration * pixelsPerSecond,
     [gridMetrics, pixelsPerSecond, thumbnailMode, thumbnailWidth],
   );
+  const getDropIndicatorLeft = useCallback(
+    (index: number) => {
+      if (visibleClips.length === 0) {
+        return TIMELINE_LEADING_PADDING_SECONDS * pixelsPerSecond;
+      }
+      if (index === 0) {
+        return getClipLeft(visibleClips[0]);
+      }
+      if (index >= visibleClips.length) {
+        const lastClip = visibleClips[visibleClips.length - 1];
+        return getClipLeft(lastClip) + getClipWidth(lastClip) + CLIP_GAP_SECONDS * pixelsPerSecond;
+      }
+      const prevClip = visibleClips[index - 1];
+      const nextClip = visibleClips[index];
+      const prevRight = getClipLeft(prevClip) + getClipWidth(prevClip);
+      const nextLeft = getClipLeft(nextClip);
+      return prevRight + (nextLeft - prevRight) / 2;
+    },
+    [getClipLeft, getClipWidth, pixelsPerSecond, visibleClips],
+  );
+
+  useEffect(() => {
+    const handleClipDragGlobal = (e: Event) => {
+      const customEvent = e as CustomEvent<{
+        clip: TimelineClip;
+        sourceTimelineId: string;
+        clientX: number;
+        clientY: number;
+        isDropping: boolean;
+        handled?: boolean;
+      }>;
+      const { clip, sourceTimelineId, clientX, clientY, isDropping } = customEvent.detail;
+      const thisTimelineId = timelineId || "";
+
+      // Ignore if it's the source timeline
+      if (sourceTimelineId === thisTimelineId) return;
+
+      const rect = contentRef.current?.getBoundingClientRect();
+      const isInside = rect && 
+                        clientX >= rect.left && 
+                        clientX <= rect.right && 
+                        clientY >= rect.top && 
+                        clientY <= rect.bottom;
+
+      if (isInside) {
+        // Calculate insert index
+        let insertIndex = visibleClips.length;
+        if (hasClips && contentRef.current) {
+          const dropX = clientX - rect.left;
+          insertIndex = visibleClips.length;
+          for (let i = 0; i < visibleClips.length; i++) {
+            const c = visibleClips[i];
+            const left = getClipLeft(c);
+            const width = getClipWidth(c);
+            const midpoint = left + width / 2;
+            if (dropX < midpoint) {
+              insertIndex = c.index;
+              break;
+            }
+          }
+        }
+
+        if (isDropping) {
+          setActiveDropIndex(null);
+          if (onDropClip) {
+            onDropClip(insertIndex, clip, sourceTimelineId);
+            customEvent.detail.handled = true;
+          }
+        } else {
+          setActiveDropIndex(insertIndex);
+        }
+      } else {
+        setActiveDropIndex(null);
+      }
+    };
+
+    window.addEventListener("gstudio-clip-drag", handleClipDragGlobal);
+    return () => {
+      window.removeEventListener("gstudio-clip-drag", handleClipDragGlobal);
+    };
+  }, [timelineId, getClipLeft, getClipWidth, hasClips, visibleClips, onDropClip]);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+
+    const isFiles = e.dataTransfer.types.includes("Files");
+    const isClip = e.dataTransfer.types.includes("application/json") || 
+                   e.dataTransfer.types.includes("application/x-gstudio-type");
+
+    if (!isFiles && !isClip) return;
+
+    let insertIndex = 0;
+    if (hasClips && contentRef.current) {
+      const rect = contentRef.current.getBoundingClientRect();
+      const dropX = e.clientX - rect.left;
+
+      insertIndex = visibleClips.length;
+      for (let i = 0; i < visibleClips.length; i++) {
+        const clip = visibleClips[i];
+        const left = getClipLeft(clip);
+        const width = getClipWidth(clip);
+        const midpoint = left + width / 2;
+        if (dropX < midpoint) {
+          insertIndex = clip.index;
+          break;
+        }
+      }
+    }
+    setActiveDropIndex(insertIndex);
+  }, [getClipLeft, getClipWidth, hasClips, visibleClips]);
+
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
       setIsDragOver(false);
+      setActiveDropIndex(null);
       dragCounterRef.current = 0;
 
+      // 1. Try parsing sidebar block drop data
+      const sidebarType = e.dataTransfer.getData("application/x-gstudio-type") as "collection" | "image" | "video" | "";
+      if (sidebarType && (sidebarType === "collection" || sidebarType === "image" || sidebarType === "video")) {
+        let insertIndex = 0;
+        if (hasClips && contentRef.current) {
+          const rect = contentRef.current.getBoundingClientRect();
+          const dropX = e.clientX - rect.left;
+
+          insertIndex = visibleClips.length;
+          for (let i = 0; i < visibleClips.length; i++) {
+            const clip = visibleClips[i];
+            const left = getClipLeft(clip);
+            const width = getClipWidth(clip);
+            const midpoint = left + width / 2;
+            if (dropX < midpoint) {
+              insertIndex = clip.index;
+              break;
+            }
+          }
+        }
+        if (onDropSidebarClip) {
+          onDropSidebarClip(insertIndex, sidebarType);
+          return;
+        }
+      }
+
+      // 2. Try parsing drag-and-drop clip data (dragging clips between timelines)
+      const rawData = e.dataTransfer.getData("application/json");
+      if (rawData) {
+        try {
+          const data = JSON.parse(rawData);
+          if (data && data.clip && data.sourceTimelineId !== undefined) {
+            let insertIndex = 0;
+            if (hasClips && contentRef.current) {
+              const rect = contentRef.current.getBoundingClientRect();
+              const dropX = e.clientX - rect.left;
+
+              insertIndex = visibleClips.length;
+              for (let i = 0; i < visibleClips.length; i++) {
+                const clip = visibleClips[i];
+                const left = getClipLeft(clip);
+                const width = getClipWidth(clip);
+                const midpoint = left + width / 2;
+                if (dropX < midpoint) {
+                  insertIndex = clip.index;
+                  break;
+                }
+              }
+            }
+
+            if (onDropClip) {
+              onDropClip(insertIndex, data.clip, data.sourceTimelineId);
+              return;
+            }
+          }
+        } catch (err) {
+          // not JSON, fallback to files
+        }
+      }
+
+      // 3. Fallback to files drop
       if (!onDropFiles || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
 
       const files = Array.from(e.dataTransfer.files);
@@ -229,7 +429,7 @@ export function TimelineViewport({
 
       onDropFiles(insertIndex, mediaFiles);
     },
-    [getClipLeft, getClipWidth, hasClips, onDropFiles, visibleClips],
+    [getClipLeft, getClipWidth, hasClips, onDropFiles, onDropClip, onDropSidebarClip, visibleClips],
   );
 
 
@@ -406,7 +606,11 @@ export function TimelineViewport({
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       className={`relative block w-full max-w-full min-w-0 select-none rounded-lg border transition-all duration-200 ${
-        isDragOver ? "border-sky-500 bg-sky-950/20 ring-2 ring-sky-500/50" : "border-zinc-800 bg-zinc-950"
+        isDragOver
+          ? "border-sky-500 bg-sky-950/20 ring-2 ring-sky-500/50"
+          : isAnyDragActive
+          ? "border-dashed border-sky-400 bg-sky-950/5 animate-pulse"
+          : "border-zinc-800 bg-zinc-950"
       } ${
         gridMetrics.enabled
           ? "overflow-x-clip overflow-y-visible"
@@ -476,6 +680,7 @@ export function TimelineViewport({
                 onDurationLoaded={handleClipDurationLoad}
                 getCollectionHref={getCollectionHref}
                 onOpenCollection={onOpenCollection}
+                timelineId={timelineId}
               />
             ))}
 
@@ -545,6 +750,20 @@ export function TimelineViewport({
             </svg>
             <p className="font-semibold text-sm">Drop to insert media</p>
             <p className="text-xs text-sky-300/80">Images or Video clips (clamped to max 12s)</p>
+          </div>
+        </div>
+      )}
+      {activeDropIndex !== null && (
+        <div
+          className="absolute z-40 w-[4px] -ml-[2px] bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)] pointer-events-none transition-all duration-100"
+          style={{
+            left: `${getDropIndicatorLeft(activeDropIndex)}px`,
+            height: `${itemHeight}px`,
+            top: `${TIMELINE_ITEM_TOP}px`,
+          }}
+        >
+          <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-full bg-sky-400 w-3.5 h-3.5 flex items-center justify-center text-[9px] font-extrabold text-zinc-950 shadow-md">
+            +
           </div>
         </div>
       )}

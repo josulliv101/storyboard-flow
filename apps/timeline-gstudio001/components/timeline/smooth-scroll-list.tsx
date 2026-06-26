@@ -13,6 +13,7 @@ import {
   TIMELINE_ITEM_TOP,
   TIMELINE_LEADING_PADDING_SECONDS,
   type ItemSize,
+  VIDEO_SOURCES,
 } from "./constants";
 import { useTimelineClipState } from "./hooks/use-timeline-clip-state";
 import { useTimelineInteractions } from "./hooks/use-timeline-interactions";
@@ -292,6 +293,143 @@ export function SmoothScrollList({
     [clipState],
   );
 
+  const handleDropClip = useCallback(
+    (insertIndex: number, clip: TimelineClip, sourceTimelineId: string) => {
+      const thisTimelineId = timelineId || "";
+
+      if (sourceTimelineId === thisTimelineId) {
+        // Reordering within the same timeline
+        const sourceIndex = clipState.clips.findIndex((c) => c.id === clip.id);
+        if (sourceIndex === -1) return;
+
+        const nextClips = [...clipState.clips];
+        const [removed] = nextClips.splice(sourceIndex, 1);
+
+        // Adjust target index if inserting after the source position
+        let targetIndex = insertIndex;
+        if (sourceIndex < insertIndex) {
+          targetIndex = insertIndex - 1;
+        }
+
+        nextClips.splice(targetIndex, 0, removed);
+        const packed = reindexAndPackClips(nextClips);
+        clipState.applyClipsNow(packed);
+      } else {
+        // Dragged from another timeline to this timeline
+        // 1. Insert clip locally
+        const nextClips = [...clipState.clips];
+        const newClip = {
+          ...clip,
+          index: insertIndex,
+        };
+
+        nextClips.splice(insertIndex, 0, newClip);
+        const packed = reindexAndPackClips(nextClips);
+        clipState.applyClipsNow(packed);
+
+        // 2. Notify the source timeline to remove it
+        window.dispatchEvent(
+          new CustomEvent("timeline-clip-moved", {
+            detail: {
+              clipId: clip.id,
+              sourceTimelineId,
+              targetTimelineId: thisTimelineId,
+            },
+          })
+        );
+      }
+    },
+    [clipState, timelineId],
+  );
+
+  const handleDropSidebarClip = useCallback(
+    (insertIndex: number, type: "collection" | "image" | "video") => {
+      const uniqueId = `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      let newClip: TimelineClip;
+
+      if (type === "collection") {
+        newClip = {
+          id: uniqueId,
+          index: insertIndex,
+          kind: "collection",
+          title: "New Collection",
+          childTimelineId: `timeline-${Date.now()}`,
+          itemCount: 0,
+          duration: 3,
+          sourceDuration: 3,
+          trimIn: 0,
+          trimOut: 0,
+          alt: "New Collection",
+          aspect: 16 / 9,
+          trackIndex: 0,
+          startTime: 0,
+        };
+      } else if (type === "image") {
+        newClip = {
+          id: uniqueId,
+          index: insertIndex,
+          kind: "image",
+          src: `https://picsum.photos/seed/${uniqueId}/360/200`,
+          alt: "New Image",
+          aspect: 16 / 9,
+          trackIndex: 0,
+          startTime: 0,
+          duration: 4,
+          sourceDuration: 4,
+          trimIn: 0,
+          trimOut: 0,
+        };
+      } else {
+        // video
+        newClip = {
+          id: uniqueId,
+          index: insertIndex,
+          kind: "video",
+          src: VIDEO_SOURCES[0],
+          alt: "New Video",
+          aspect: 16 / 9,
+          trackIndex: 0,
+          startTime: 0,
+          duration: 5,
+          sourceDuration: 12,
+          trimIn: 0,
+          trimOut: 7,
+        };
+      }
+
+      const nextClips = [...clipState.clips];
+      nextClips.splice(insertIndex, 0, newClip);
+
+      const packedClips = reindexAndPackClips(nextClips);
+      clipState.applyClipsNow(packedClips);
+    },
+    [clipState],
+  );
+
+  useEffect(() => {
+    const handleClipMoved = (e: Event) => {
+      const customEvent = e as CustomEvent<{
+        clipId: string;
+        sourceTimelineId: string;
+        targetTimelineId: string;
+      }>;
+      const { clipId, sourceTimelineId, targetTimelineId } = customEvent.detail;
+      const thisTimelineId = timelineId || "";
+
+      if (sourceTimelineId === thisTimelineId && targetTimelineId !== thisTimelineId) {
+        const nextClips = clipState.clips.filter((c) => c.id !== clipId);
+        const packed = reindexAndPackClips(nextClips);
+        clipState.applyClipsNow(packed);
+      }
+    };
+
+    window.addEventListener("timeline-clip-moved", handleClipMoved);
+    return () => {
+      window.removeEventListener("timeline-clip-moved", handleClipMoved);
+    };
+  }, [clipState, timelineId]);
+
+
   const interactions = useTimelineInteractions({
     parentRef,
     clips: clipState.clips,
@@ -306,6 +444,7 @@ export function SmoothScrollList({
     scheduleClips: clipState.scheduleClips,
     applyClipsNow: clipState.applyClipsNow,
     pendingScrollLeftRef: scrollState.pendingScrollLeftRef,
+    timelineId,
   });
 
   const overhang = useTimelineOverhang({
@@ -424,6 +563,7 @@ export function SmoothScrollList({
         thumbnailMode={thumbnailMode}
         totalCount={clipState.clips.length}
         zoomLevel={zoom.zoomLevel}
+        timelineId={timelineId}
       />
 
       <div className="relative w-full max-w-full min-w-0">
@@ -462,6 +602,9 @@ export function SmoothScrollList({
           timelineWidth={layout.timelineWidth}
           visibleClips={layout.visibleClips}
           onDropFiles={handleDropFiles}
+          onDropClip={handleDropClip}
+          onDropSidebarClip={handleDropSidebarClip}
+          timelineId={timelineId}
         />
 
         {overhang.hasOffscreenOverhang && (

@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 
 import { ITEM_HEIGHTS, type ItemSize } from "./constants";
+import { GripVertical } from "lucide-react";
 
 type TimelineToolbarProps = {
   gridMode: boolean;
@@ -18,6 +19,7 @@ type TimelineToolbarProps = {
   thumbnailMode: boolean;
   totalCount: number;
   zoomLevel: number;
+  timelineId?: string;
 };
 
 function ToggleSwitch({
@@ -85,6 +87,7 @@ export function TimelineToolbar({
   thumbnailMode,
   totalCount,
   zoomLevel,
+  timelineId,
 }: TimelineToolbarProps) {
   const pinScrollTitle = manualOverhangScroll
     ? "Pin scroll is ON — selecting the first video clip keeps the viewport in place. Scroll left manually to reveal the filmstrip overhang."
@@ -92,9 +95,75 @@ export function TimelineToolbar({
 
   return (
     <div className="flex w-full min-w-0 items-center justify-between gap-3">
-      <h3 className="min-w-0 truncate text-sm font-semibold text-zinc-200">
-        {title}
-      </h3>
+      <div className="flex items-center gap-2 min-w-0">
+        {timelineId && (
+          <div
+            draggable={false}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const target = e.currentTarget;
+              target.setPointerCapture(e.pointerId);
+
+              window.dispatchEvent(
+                new CustomEvent("gstudio-timeline-drag", {
+                  detail: {
+                    timelineId,
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                    isDropping: false,
+                    type: "start"
+                  }
+                })
+              );
+
+              const onPointerMove = (moveEv: PointerEvent) => {
+                window.dispatchEvent(
+                  new CustomEvent("gstudio-timeline-drag", {
+                    detail: {
+                      timelineId,
+                      clientX: moveEv.clientX,
+                      clientY: moveEv.clientY,
+                      isDropping: false,
+                      type: "move"
+                    }
+                  })
+                );
+              };
+
+              const onPointerUp = (upEv: PointerEvent) => {
+                try {
+                  target.releasePointerCapture(upEv.pointerId);
+                } catch {}
+                window.removeEventListener("pointermove", onPointerMove);
+                window.removeEventListener("pointerup", onPointerUp);
+
+                window.dispatchEvent(
+                  new CustomEvent("gstudio-timeline-drag", {
+                    detail: {
+                      timelineId,
+                      clientX: upEv.clientX,
+                      clientY: upEv.clientY,
+                      isDropping: true,
+                      type: "drop"
+                    }
+                  })
+                );
+              };
+
+              window.addEventListener("pointermove", onPointerMove);
+              window.addEventListener("pointerup", onPointerUp);
+            }}
+            className="cursor-grab active:cursor-grabbing p-1 hover:bg-zinc-800 rounded transition-colors shrink-0 flex items-center justify-center text-zinc-500 hover:text-zinc-300"
+            title="Drag to reorder timeline"
+          >
+            <GripVertical className="h-4 w-4 pointer-events-none" />
+          </div>
+        )}
+        <h3 className="min-w-0 truncate text-sm font-semibold text-zinc-200">
+          {title}
+        </h3>
+      </div>
       <div className="flex items-center gap-4">
         <ToggleSwitch
           id="thumbnail-mode"
