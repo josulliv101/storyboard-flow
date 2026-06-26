@@ -1,7 +1,6 @@
-import { THUMBNAIL_GAP } from "./constants";
+import { THUMBNAIL_GAP, TIMELINE_ITEM_TOP } from "./constants";
 import { clamp } from "./utils";
 
-const GRID_ROWS = 2;
 const MIN_GRID_ITEM_WIDTH = 160;
 
 export type TimelineGridMetrics = {
@@ -30,11 +29,13 @@ export function getTimelineGridMetrics({
   enabled,
   fallbackItemWidth,
   itemHeight,
+  itemCount,
   viewportWidth,
 }: {
   enabled: boolean;
   fallbackItemWidth: number;
   itemHeight: number;
+  itemCount: number;
   viewportWidth: number;
 }): TimelineGridMetrics {
   const availableWidth = Math.max(1, viewportWidth || fallbackItemWidth);
@@ -51,7 +52,9 @@ export function getTimelineGridMetrics({
   const itemWidth = enabled
     ? (availableWidth - THUMBNAIL_GAP * (columnsPerPage - 1)) / columnsPerPage
     : fallbackItemWidth;
-  const rowsPerPage = enabled ? GRID_ROWS : 1;
+  const rowsPerPage = enabled
+    ? Math.max(1, Math.ceil(Math.max(0, itemCount) / columnsPerPage))
+    : 1;
 
   return {
     enabled,
@@ -62,7 +65,7 @@ export function getTimelineGridMetrics({
     itemHeight,
     gap: THUMBNAIL_GAP,
     pageWidth: availableWidth,
-    rowStride: itemHeight + THUMBNAIL_GAP,
+    rowStride: TIMELINE_ITEM_TOP + itemHeight + THUMBNAIL_GAP,
     columnStride: itemWidth + THUMBNAIL_GAP,
   };
 }
@@ -72,8 +75,8 @@ export function getTimelineGridItemLayout(
   metrics: TimelineGridMetrics,
 ): TimelineGridItemLayout {
   const safeIndex = Math.max(0, Math.floor(index));
-  const page = Math.floor(safeIndex / metrics.itemsPerPage);
-  const indexInPage = safeIndex % metrics.itemsPerPage;
+  const page = 0;
+  const indexInPage = safeIndex;
   const row = Math.floor(indexInPage / metrics.columnsPerPage);
   const column = indexInPage % metrics.columnsPerPage;
 
@@ -92,7 +95,15 @@ export function getTimelineGridContentWidth(
   metrics: TimelineGridMetrics,
 ) {
   if (itemCount <= 0) return 0;
-  return Math.ceil(itemCount / metrics.itemsPerPage) * metrics.pageWidth;
+  return metrics.pageWidth;
+}
+
+export function getTimelineGridContentHeight(metrics: TimelineGridMetrics) {
+  return (
+    (metrics.rowsPerPage - 1) * metrics.rowStride +
+    TIMELINE_ITEM_TOP +
+    metrics.itemHeight
+  );
 }
 
 export function getTimelineGridTargetIndex({
@@ -107,8 +118,7 @@ export function getTimelineGridTargetIndex({
   metrics: TimelineGridMetrics;
 }) {
   const safeX = Math.max(0, contentX);
-  const page = Math.max(0, Math.floor(safeX / metrics.pageWidth));
-  const pageX = safeX - page * metrics.pageWidth;
+  const pageX = clamp(safeX, 0, metrics.pageWidth);
   const rawColumn = Math.floor(pageX / metrics.columnStride);
   let column = clamp(rawColumn, 0, metrics.columnsPerPage - 1);
   let row = clamp(
@@ -127,9 +137,9 @@ export function getTimelineGridTargetIndex({
     row += 1;
   }
 
-  let targetIndex = page * metrics.itemsPerPage + row * metrics.columnsPerPage + column;
+  let targetIndex = row * metrics.columnsPerPage + column;
   if (row >= metrics.rowsPerPage) {
-    targetIndex = (page + 1) * metrics.itemsPerPage;
+    targetIndex = metrics.itemsPerPage;
   }
 
   return clamp(targetIndex, 0, Math.max(0, itemCount - 1));

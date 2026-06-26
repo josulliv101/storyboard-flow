@@ -53,6 +53,7 @@ type TimelineViewportProps = {
   resolvedViewportWidth: number | string;
   scrubPreview: TrimScrubPreview | null;
   scrollLeft: number;
+  scrollTop: number;
   selectedIndex: number | null;
   selectedVideoClip: TimelineClip | null;
   showPassiveFilmstrips: boolean;
@@ -82,6 +83,7 @@ export function TimelineViewport({
   resolvedViewportWidth,
   scrubPreview,
   scrollLeft,
+  scrollTop,
   selectedIndex,
   selectedVideoClip,
   showPassiveFilmstrips,
@@ -130,7 +132,7 @@ export function TimelineViewport({
     maxWidth: "100%",
     minWidth: 0,
     boxSizing: "border-box",
-    scrollbarGutter: "stable both-edges",
+    scrollbarGutter: gridMetrics.enabled ? undefined : "stable both-edges",
     WebkitOverflowScrolling: "touch",
   };
 
@@ -329,11 +331,16 @@ export function TimelineViewport({
       ref={parentRef}
       data-testid="timeline-scroll-viewport"
       data-scroll-left={scrollLeft}
+      data-scroll-top={scrollTop}
       onScroll={handleScroll}
       onPointerDown={interactions.handlePointerDown}
       onPointerCancel={interactions.handlePointerCancel}
       onDragStart={(event) => event.preventDefault()}
-      className="relative block w-full max-w-full min-w-0 cursor-grab touch-none select-none overflow-x-scroll overflow-y-hidden rounded-lg border border-zinc-800 bg-zinc-950 active:cursor-grabbing"
+      className={`relative block w-full max-w-full min-w-0 select-none rounded-lg border border-zinc-800 bg-zinc-950 ${
+        gridMetrics.enabled
+          ? "overflow-x-clip overflow-y-visible"
+          : "cursor-grab touch-none overflow-x-scroll overflow-y-hidden active:cursor-grabbing"
+      }`}
       style={viewportStyle}
     >
       <div

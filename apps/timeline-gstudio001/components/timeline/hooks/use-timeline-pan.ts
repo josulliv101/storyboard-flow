@@ -60,6 +60,7 @@ export function useTimelinePan({
     startX: 0,
     startY: 0,
     startScrollLeft: 0,
+    startScrollTop: 0,
     lastClientX: 0,
     lastClientY: 0,
     lastX: 0,
@@ -196,6 +197,7 @@ export function useTimelinePan({
         startX: event.clientX,
         startY: event.clientY,
         startScrollLeft: element.scrollLeft,
+        startScrollTop: gridMetrics.enabled ? window.scrollY : element.scrollTop,
         lastClientX: event.clientX,
         lastClientY: event.clientY,
         lastX: event.clientX,
@@ -274,7 +276,14 @@ export function useTimelinePan({
 
       const getPointerContentY = (clientY: number) => {
         const currentState = dragState.current;
-        return clientY - currentState.contentOriginY;
+        const currentElement = parentRef.current;
+        const scrollDelta =
+          (gridMetrics.enabled
+            ? window.scrollY
+            : currentElement?.scrollTop ?? currentState.startScrollTop) -
+          currentState.startScrollTop;
+
+        return clientY - currentState.contentOriginY + scrollDelta;
       };
 
       const getReorderTargetIndex = (clientX: number, clientY: number) => {
@@ -344,34 +353,60 @@ export function useTimelinePan({
         previewReorder(clientX, clientY);
       };
 
-      const getReorderAutoScrollVelocity = (clientX: number) => {
+      const getReorderAutoScrollVelocity = (clientX: number, clientY: number) => {
         const currentElement = parentRef.current;
-        if (!currentElement) return 0;
+        if (!currentElement) return { x: 0, y: 0 };
 
         const rect = currentElement.getBoundingClientRect();
-        const maxScroll = Math.max(
+        const maxScrollLeft = Math.max(
           0,
           currentElement.scrollWidth - currentElement.clientWidth,
         );
-        if (maxScroll === 0) return 0;
+        const maxScrollTop = gridMetrics.enabled
+          ? Math.max(
+              0,
+              document.documentElement.scrollHeight - window.innerHeight,
+            )
+          : Math.max(
+              0,
+              currentElement.scrollHeight - currentElement.clientHeight,
+            );
+        let x = 0;
+        let y = 0;
 
         const leftDistance = clientX - rect.left;
-        if (leftDistance < REORDER_AUTO_SCROLL_ZONE_PX) {
+        if (maxScrollLeft > 0 && leftDistance < REORDER_AUTO_SCROLL_ZONE_PX) {
           const intensity =
             (REORDER_AUTO_SCROLL_ZONE_PX - leftDistance) /
             REORDER_AUTO_SCROLL_ZONE_PX;
-          return -REORDER_MAX_AUTO_SCROLL_PX_PER_FRAME * clamp(intensity, 0, 1.5);
+          x = -REORDER_MAX_AUTO_SCROLL_PX_PER_FRAME * clamp(intensity, 0, 1.5);
         }
 
         const rightDistance = rect.right - clientX;
-        if (rightDistance < REORDER_AUTO_SCROLL_ZONE_PX) {
+        if (maxScrollLeft > 0 && rightDistance < REORDER_AUTO_SCROLL_ZONE_PX) {
           const intensity =
             (REORDER_AUTO_SCROLL_ZONE_PX - rightDistance) /
             REORDER_AUTO_SCROLL_ZONE_PX;
-          return REORDER_MAX_AUTO_SCROLL_PX_PER_FRAME * clamp(intensity, 0, 1.5);
+          x = REORDER_MAX_AUTO_SCROLL_PX_PER_FRAME * clamp(intensity, 0, 1.5);
         }
 
-        return 0;
+        const topDistance = clientY - rect.top;
+        if (maxScrollTop > 0 && topDistance < REORDER_AUTO_SCROLL_ZONE_PX) {
+          const intensity =
+            (REORDER_AUTO_SCROLL_ZONE_PX - topDistance) /
+            REORDER_AUTO_SCROLL_ZONE_PX;
+          y = -REORDER_MAX_AUTO_SCROLL_PX_PER_FRAME * clamp(intensity, 0, 1.5);
+        }
+
+        const bottomDistance = rect.bottom - clientY;
+        if (maxScrollTop > 0 && bottomDistance < REORDER_AUTO_SCROLL_ZONE_PX) {
+          const intensity =
+            (REORDER_AUTO_SCROLL_ZONE_PX - bottomDistance) /
+            REORDER_AUTO_SCROLL_ZONE_PX;
+          y = REORDER_MAX_AUTO_SCROLL_PX_PER_FRAME * clamp(intensity, 0, 1.5);
+        }
+
+        return { x, y };
       };
 
       const runReorderAutoScroll = () => {
@@ -386,30 +421,61 @@ export function useTimelinePan({
           return;
         }
 
-        const velocity = getReorderAutoScrollVelocity(currentState.lastClientX);
-        if (velocity === 0) {
+        const velocity = getReorderAutoScrollVelocity(
+          currentState.lastClientX,
+          currentState.lastClientY,
+        );
+        if (velocity.x === 0 && velocity.y === 0) {
           reorderAutoScrollFrameRef.current = null;
           return;
         }
 
-        const maxScroll = Math.max(
+        const maxScrollLeft = Math.max(
           0,
           currentElement.scrollWidth - currentElement.clientWidth,
         );
+        const currentScrollTop = gridMetrics.enabled
+          ? window.scrollY
+          : currentElement.scrollTop;
+        const maxScrollTop = gridMetrics.enabled
+          ? Math.max(
+              0,
+              document.documentElement.scrollHeight - window.innerHeight,
+            )
+          : Math.max(
+              0,
+              currentElement.scrollHeight - currentElement.clientHeight,
+            );
         const nextScrollLeft = clamp(
-          currentElement.scrollLeft + velocity,
+          currentElement.scrollLeft + velocity.x,
           0,
-          maxScroll,
+          maxScrollLeft,
+        );
+        const nextScrollTop = clamp(
+          currentScrollTop + velocity.y,
+          0,
+          maxScrollTop,
         );
 
-        if (nextScrollLeft !== currentElement.scrollLeft) {
+        if (
+          nextScrollLeft !== currentElement.scrollLeft ||
+          nextScrollTop !== currentScrollTop
+        ) {
           currentElement.scrollLeft = nextScrollLeft;
+          if (gridMetrics.enabled) {
+            window.scrollTo({ top: nextScrollTop });
+          } else {
+            currentElement.scrollTop = nextScrollTop;
+          }
           setScrollLeft(nextScrollLeft);
           previewReorder(currentState.lastClientX, currentState.lastClientY);
         }
 
         reorderAutoScrollFrameRef.current =
-          nextScrollLeft === 0 || nextScrollLeft === maxScroll
+          (velocity.x < 0 && nextScrollLeft === 0) ||
+          (velocity.x > 0 && nextScrollLeft === maxScrollLeft) ||
+          (velocity.y < 0 && nextScrollTop === 0) ||
+          (velocity.y > 0 && nextScrollTop === maxScrollTop)
             ? null
             : requestAnimationFrame(runReorderAutoScroll);
       };

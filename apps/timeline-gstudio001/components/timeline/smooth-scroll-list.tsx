@@ -25,6 +25,7 @@ import { TimelineNavigation } from "./timeline-navigation";
 import { TimelineOverhangHint } from "./timeline-overhang-hint";
 import { TimelineToolbar } from "./timeline-toolbar";
 import {
+  getTimelineGridContentHeight,
   getTimelineGridItemLayout,
   getTimelineGridMetrics,
 } from "./timeline-grid";
@@ -76,17 +77,22 @@ export function SmoothScrollList({
         enabled: gridModeEnabled,
         fallbackItemWidth: thumbnailWidth,
         itemHeight,
+        itemCount: safeItemCount,
         viewportWidth: scrollState.viewportClientWidth,
       }),
-    [gridModeEnabled, itemHeight, scrollState.viewportClientWidth, thumbnailWidth],
+    [
+      gridModeEnabled,
+      itemHeight,
+      safeItemCount,
+      scrollState.viewportClientWidth,
+      thumbnailWidth,
+    ],
   );
   const effectiveThumbnailWidth = gridModeEnabled
     ? gridMetrics.itemWidth
     : thumbnailWidth;
   const timelineHeight = gridModeEnabled
-    ? TIMELINE_ITEM_TOP +
-      gridMetrics.rowsPerPage * itemHeight +
-      Math.max(0, gridMetrics.rowsPerPage - 1) * THUMBNAIL_GAP
+    ? getTimelineGridContentHeight(gridMetrics)
     : itemHeight + TIMELINE_ITEM_TOP;
 
   const clipState = useTimelineClipState({
@@ -167,9 +173,13 @@ export function SmoothScrollList({
     lastOverhang: overhang.lastOverhang,
     pixelsPerSecond: zoom.safePixelsPerSecond,
     scrollLeft: scrollState.scrollLeft,
+    scrollTop: gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop,
     gridMetrics,
     thumbnailMode,
     thumbnailWidth: effectiveThumbnailWidth,
+    viewportClientHeight: gridModeEnabled
+      ? scrollState.pageViewportHeight
+      : scrollState.viewportClientHeight,
     viewportClientWidth: scrollState.viewportClientWidth,
   });
 
@@ -190,10 +200,17 @@ export function SmoothScrollList({
         gridModeEnabled && thumbnailMode
           ? getTimelineGridItemLayout(clip.index, gridMetrics)
           : null;
+      if (gridLayout) {
+        const rect = element.getBoundingClientRect();
+        window.scrollTo({
+          top: window.scrollY + rect.top + gridLayout.top,
+          behavior: "smooth",
+        });
+        return;
+      }
+
       const nextScrollLeft = clamp(
-        gridLayout
-          ? gridLayout.left
-          : thumbnailMode
+        thumbnailMode
           ? clip.index * (effectiveThumbnailWidth + THUMBNAIL_GAP)
           : clip.startTime * zoom.safePixelsPerSecond,
         0,
@@ -248,9 +265,25 @@ export function SmoothScrollList({
       data-reorder-target-index={interactions.reorderPreview?.targetIndex ?? ""}
       data-timeline-width={layout.timelineWidth}
       data-viewport-width={scrollState.viewportClientWidth}
+      data-scroll-top={
+        gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop
+      }
+      data-viewport-height={
+        gridModeEnabled
+          ? scrollState.pageViewportHeight
+          : scrollState.viewportClientHeight
+      }
+      data-timeline-height={timelineHeight}
       data-max-scroll={Math.max(
         0,
         layout.timelineWidth - scrollState.viewportClientWidth,
+      )}
+      data-max-scroll-top={Math.max(
+        0,
+        timelineHeight -
+          (gridModeEnabled
+            ? scrollState.pageViewportHeight
+            : scrollState.viewportClientHeight),
       )}
       className={cn(
         "box-border grid w-full max-w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4 font-sans shadow-2xl",
@@ -307,6 +340,9 @@ export function SmoothScrollList({
           resolvedViewportWidth={resolvedViewportWidth}
           scrubPreview={clipState.scrubPreview}
           scrollLeft={scrollState.scrollLeft}
+          scrollTop={
+            gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop
+          }
           selectedIndex={clipState.selectedIndex}
           selectedVideoClip={selectedVideoClip}
           showPassiveFilmstrips={showPassiveFilmstrips}

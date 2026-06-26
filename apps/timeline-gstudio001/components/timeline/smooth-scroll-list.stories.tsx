@@ -120,3 +120,12 @@ export const VirtualizedThousandClips: Story = {
     await expect(canvas.getByTestId("timeline-rendered-count")).toHaveTextContent(/\/1000 rendered$/);
   },
 };
+
+export const MultipleTimelines: Story = {
+  render: (args) => (
+    <div className="grid gap-16">
+      <SmoothScrollList {...args} itemCount={1000} />
+      <SmoothScrollList {...args} itemCount={1000} />
+    </div>
+  ),
+};

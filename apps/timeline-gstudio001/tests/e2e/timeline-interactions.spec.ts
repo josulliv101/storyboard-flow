@@ -3,6 +3,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 const STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--default&viewMode=story";
 const FIRST_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--first-clip-selected-at-timeline-start&viewMode=story";
 const LAST_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--last-clip-selected-at-timeline-end&viewMode=story";
+const MULTIPLE_TIMELINES_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--multiple-timelines&viewMode=story";
 
 async function dragBy(page: Page, locator: Locator, dx: number, dy = 0) {
   const box = await locator.boundingBox();
@@ -103,8 +104,11 @@ test("grid mode is available only in thumbnail mode", async ({ page }) => {
 
   await gridSwitch.click();
   await expect(editor).toHaveAttribute("data-grid-mode", "true");
-  await expect.poll(() => numberAttribute(editor, "data-grid-columns")).toBeGreaterThan(0);
-  await expect.poll(() => numberAttribute(editor, "data-grid-rows")).toBe(2);
+  const columns = await numberAttribute(editor, "data-grid-columns");
+  const totalCount = await numberAttribute(editor, "data-item-count");
+  await expect.poll(() => numberAttribute(editor, "data-grid-rows")).toBe(
+    Math.ceil(totalCount / columns),
+  );
 
   await page.getByRole("switch", { name: "Thumbnail Mode" }).click();
   await expect(editor).toHaveAttribute("data-thumbnail-mode", "false");
@@ -112,7 +116,7 @@ test("grid mode is available only in thumbnail mode", async ({ page }) => {
   await expect(page.getByRole("switch", { name: "Grid Mode" })).toHaveCount(0);
 });
 
-test("grid mode fits each row to the available timeline width", async ({ page }) => {
+test("grid mode fits all items in viewport-width rows", async ({ page }) => {
   const editor = page.getByTestId("timeline-editor");
   const viewport = page.getByTestId("timeline-scroll-viewport");
 
@@ -121,8 +125,12 @@ test("grid mode fits each row to the available timeline width", async ({ page })
   await expect(editor).toHaveAttribute("data-grid-mode", "true");
 
   const columns = await numberAttribute(editor, "data-grid-columns");
+  const rows = await numberAttribute(editor, "data-grid-rows");
+  const totalCount = await numberAttribute(editor, "data-item-count");
   const viewportWidth = await numberAttribute(editor, "data-viewport-width");
   expect(columns).toBeGreaterThan(1);
+  expect(rows).toBe(Math.ceil(totalCount / columns));
+  await expect.poll(() => numberAttribute(editor, "data-max-scroll")).toBe(0);
 
   const firstClip = page.getByTestId("timeline-clip-0");
   const lastClipInFirstRow = page.getByTestId(`timeline-clip-${columns - 1}`);
@@ -147,7 +155,64 @@ test("grid mode fits each row to the available timeline width", async ({ page })
 
   const initialScroll = await numberAttribute(viewport, "data-scroll-left");
   await dragBy(page, viewport, -300);
-  await expect.poll(() => numberAttribute(viewport, "data-scroll-left")).toBeGreaterThan(initialScroll);
+  await expect.poll(() => numberAttribute(viewport, "data-scroll-left")).toBe(initialScroll);
+});
+
+test("grid mode virtualizes rows for huge item counts", async ({ page }) => {
+  await page.goto("/iframe.html?id=gstudio-timeline-smoothscrolllist--virtualized-thousand-clips&viewMode=story");
+  const editor = page.getByTestId("timeline-editor");
+  const viewport = page.getByTestId("timeline-scroll-viewport");
+
+  await page.getByRole("switch", { name: "Thumbnail Mode" }).click();
+  await page.getByRole("switch", { name: "Grid Mode" }).click();
+  await expect(editor).toHaveAttribute("data-grid-mode", "true");
+
+  const totalCount = await numberAttribute(editor, "data-item-count");
+  await expect.poll(() => numberAttribute(editor, "data-max-scroll")).toBe(0);
+  await expect.poll(() => numberAttribute(editor, "data-max-scroll-top")).toBeGreaterThan(0);
+  await expect.poll(async () => {
+    const text = await page.getByTestId("timeline-rendered-count").textContent();
+    const rendered = Number(text?.match(/^(\d+)\//)?.[1] ?? totalCount);
+    return rendered < totalCount;
+  }).toBe(true);
+
+  await viewport.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    window.scrollTo({ top: document.documentElement.scrollHeight });
+    window.dispatchEvent(new Event("scroll"));
+  });
+
+  await expect.poll(() => numberAttribute(viewport, "data-scroll-top")).toBeGreaterThan(0);
+  await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect(page.getByTestId(`timeline-clip-${totalCount - 1}`)).toBeVisible();
+});
+
+test("grid mode virtualizes independently for multiple timelines", async ({ page }) => {
+  await page.goto(MULTIPLE_TIMELINES_URL);
+  const editors = page.getByTestId("timeline-editor");
+  const firstEditor = editors.nth(0);
+  const secondEditor = editors.nth(1);
+
+  await expect(firstEditor).toBeVisible();
+  await expect(secondEditor).toBeVisible();
+
+  await page.getByRole("switch", { name: "Thumbnail Mode" }).nth(0).click();
+  await page.getByRole("switch", { name: "Grid Mode" }).nth(0).click();
+  await page.getByRole("switch", { name: "Thumbnail Mode" }).nth(1).click();
+  await page.getByRole("switch", { name: "Grid Mode" }).nth(1).click();
+
+  await expect(firstEditor).toHaveAttribute("data-grid-mode", "true");
+  await expect(secondEditor).toHaveAttribute("data-grid-mode", "true");
+  await expect.poll(() => numberAttribute(firstEditor, "data-scroll-top")).toBeGreaterThanOrEqual(0);
+  await expect.poll(() => numberAttribute(secondEditor, "data-scroll-top")).toBeLessThan(0);
+
+  await secondEditor.evaluate((element) => {
+    element.scrollIntoView({ block: "start" });
+    window.dispatchEvent(new Event("scroll"));
+  });
+
+  await expect.poll(() => numberAttribute(secondEditor, "data-scroll-top")).toBeGreaterThanOrEqual(0);
+  await expect(secondEditor.getByTestId("timeline-clip-0")).toBeVisible();
 });
 
 test("passive filmstrip is hidden for the active video clip", async ({ page }) => {

@@ -4,6 +4,7 @@ import { useMemo, useRef } from "react";
 
 import {
   THUMBNAIL_GAP,
+  TIMELINE_ITEM_TOP,
   TIMELINE_TRAILING_PADDING_SECONDS,
   VISIBLE_OVERSCAN_PX,
 } from "../constants";
@@ -22,9 +23,11 @@ type UseTimelineLayoutOptions = {
   lastOverhang: number;
   pixelsPerSecond: number;
   scrollLeft: number;
+  scrollTop: number;
   gridMetrics: TimelineGridMetrics;
   thumbnailMode: boolean;
   thumbnailWidth: number;
+  viewportClientHeight: number;
   viewportClientWidth: number;
 };
 
@@ -36,9 +39,11 @@ export function useTimelineLayout({
   lastOverhang,
   pixelsPerSecond,
   scrollLeft,
+  scrollTop,
   gridMetrics,
   thumbnailMode,
   thumbnailWidth,
+  viewportClientHeight,
   viewportClientWidth,
 }: UseTimelineLayoutOptions) {
   const maxDurationDuringDragRef = useRef<number | null>(null);
@@ -64,6 +69,11 @@ export function useTimelineLayout({
     const visibleStartPx = scrollLeft - offset - VISIBLE_OVERSCAN_PX;
     const visibleEndPx =
       scrollLeft - offset + viewportClientWidth + VISIBLE_OVERSCAN_PX;
+    const visibleStartY = scrollTop - VISIBLE_OVERSCAN_PX;
+    const visibleEndY =
+      scrollTop +
+      (viewportClientHeight || gridMetrics.rowStride) +
+      VISIBLE_OVERSCAN_PX;
     const visibleStartTime = Math.max(0, visibleStartPx / pixelsPerSecond);
     const visibleEndTime = visibleEndPx / pixelsPerSecond;
 
@@ -72,7 +82,14 @@ export function useTimelineLayout({
         const layout = getTimelineGridItemLayout(clip.index, gridMetrics);
         const clipStartPx = layout.left;
         const clipEndPx = clipStartPx + layout.width;
-        return clipEndPx >= visibleStartPx && clipStartPx <= visibleEndPx;
+        const rowStartY = layout.top;
+        const rowEndY = layout.top + TIMELINE_ITEM_TOP + gridMetrics.itemHeight;
+        return (
+          clipEndPx >= visibleStartPx &&
+          clipStartPx <= visibleEndPx &&
+          rowEndY >= visibleStartY &&
+          rowStartY <= visibleEndY
+        );
       }
 
       if (thumbnailMode) {
@@ -93,8 +110,10 @@ export function useTimelineLayout({
     gridMetrics,
     pixelsPerSecond,
     scrollLeft,
+    scrollTop,
     thumbnailMode,
     thumbnailWidth,
+    viewportClientHeight,
     viewportClientWidth,
   ]);
 
