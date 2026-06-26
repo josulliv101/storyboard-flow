@@ -10,13 +10,17 @@ import {
 export const MEDIA: MediaSpec[] = [
   { kind: "image", aspect: 16 / 9 },
   { kind: "video", aspect: 16 / 9, src: VIDEO_SOURCES[0], duration: 10 },
+  { kind: "video", aspect: 4 / 3, src: VIDEO_SOURCES[3], duration: 12 },
   { kind: "image", aspect: 2 / 3 },
   { kind: "image", aspect: 1 },
-  { kind: "video", aspect: 3 / 2, src: VIDEO_SOURCES[1], duration: 15 },
+  { kind: "video", aspect: 3 / 2, src: VIDEO_SOURCES[1], duration: 9 },
+  { kind: "video", aspect: 16 / 9, src: VIDEO_SOURCES[4], duration: 11 },
   { kind: "image", aspect: 16 / 9 },
   { kind: "image", aspect: 2 / 3 },
-  { kind: "video", aspect: 1, src: VIDEO_SOURCES[2], duration: 14 },
+  { kind: "video", aspect: 1, src: VIDEO_SOURCES[2], duration: 8 },
+  { kind: "video", aspect: 16 / 9, src: VIDEO_SOURCES[5], duration: 12 },
   { kind: "image", aspect: 3 / 2 },
+  { kind: "video", aspect: 4 / 3, src: VIDEO_SOURCES[6], duration: 10 },
 ];
 
 export function clamp(value: number, min: number, max: number) {

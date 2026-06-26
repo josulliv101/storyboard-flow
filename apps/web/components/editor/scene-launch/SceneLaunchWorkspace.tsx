@@ -2383,7 +2383,7 @@ export function SceneLaunchWorkspace({
 
   return (
     <div
-      className="relative flex min-h-0 flex-1 overflow-hidden bg-black text-zinc-100 animate-fade-in"
+      className="relative flex min-h-0 flex-1 overflow-hidden bg-black text-zinc-100"
       onDragOver={(event) => event.preventDefault()}
       onDrop={handleSceneLaunchDrop}
     >
@@ -2441,12 +2441,12 @@ export function SceneLaunchWorkspace({
           <AnimatePresence mode="wait" initial={false}>
             {sceneLaunchPlaybackMode !== 'preview' ? (
               <motion.div
-                key="storyboard-grid"
+                key={`storyboard-grid-${activeSceneLaunchBeatId || 'root'}`}
                 className="absolute inset-0 overflow-y-auto px-4 pb-4"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
+                exit={{ opacity: 0, transition: { duration: 0 } }}
+                transition={{ duration: 0.6, ease: 'easeOut' }}
               >
           {!activeSceneLaunchBeat && rootSceneLaunchGridItemsCount === 0 && (projectHasSceneContent || visibleProjectScenes.length > 1) ? (
             <div className="mt-2 w-full">

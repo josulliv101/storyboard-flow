@@ -65,6 +65,7 @@ type TimelineViewportProps = {
   timelineHeight: number;
   timelineWidth: number;
   visibleClips: TimelineClip[];
+  onDropFiles?: (insertIndex: number, files: File[]) => void;
 };
 
 export function TimelineViewport({
@@ -97,11 +98,35 @@ export function TimelineViewport({
   timelineHeight,
   timelineWidth,
   visibleClips,
+  onDropFiles,
 }: TimelineViewportProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const passiveScrubCleanupRef = useRef<(() => void) | null>(null);
   const [passiveScrubPreview, setPassiveScrubPreview] =
     useState<PassiveScrubPreview | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounterRef = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  }, []);
+
 
   const trackTransition =
     interactions.isResizing ||
@@ -170,6 +195,43 @@ export function TimelineViewport({
         : clip.duration * pixelsPerSecond,
     [gridMetrics, pixelsPerSecond, thumbnailMode, thumbnailWidth],
   );
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setIsDragOver(false);
+      dragCounterRef.current = 0;
+
+      if (!onDropFiles || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+
+      const files = Array.from(e.dataTransfer.files);
+      const mediaFiles = files.filter(
+        (file) => file.type.startsWith("image/") || file.type.startsWith("video/")
+      );
+      if (mediaFiles.length === 0) return;
+
+      let insertIndex = 0;
+      if (hasClips && contentRef.current) {
+        const rect = contentRef.current.getBoundingClientRect();
+        const dropX = e.clientX - rect.left;
+
+        insertIndex = visibleClips.length;
+        for (let i = 0; i < visibleClips.length; i++) {
+          const clip = visibleClips[i];
+          const left = getClipLeft(clip);
+          const width = getClipWidth(clip);
+          const midpoint = left + width / 2;
+          if (dropX < midpoint) {
+            insertIndex = clip.index;
+            break;
+          }
+        }
+      }
+
+      onDropFiles(insertIndex, mediaFiles);
+    },
+    [getClipLeft, getClipWidth, hasClips, onDropFiles, visibleClips],
+  );
+
 
   const getPassiveScrubTarget = useCallback(
     (clientX: number, clientY: number) => {
@@ -339,7 +401,13 @@ export function TimelineViewport({
       onPointerDown={interactions.handlePointerDown}
       onPointerCancel={interactions.handlePointerCancel}
       onDragStart={(event) => event.preventDefault()}
-      className={`relative block w-full max-w-full min-w-0 select-none rounded-lg border border-zinc-800 bg-zinc-950 ${
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      className={`relative block w-full max-w-full min-w-0 select-none rounded-lg border transition-all duration-200 ${
+        isDragOver ? "border-sky-500 bg-sky-950/20 ring-2 ring-sky-500/50" : "border-zinc-800 bg-zinc-950"
+      } ${
         gridMetrics.enabled
           ? "overflow-x-clip overflow-y-visible"
           : "cursor-grab touch-none overflow-x-scroll overflow-y-hidden pb-1.5 active:cursor-grabbing"
@@ -458,6 +526,28 @@ export function TimelineViewport({
         )}
       </div>
       {passiveScrubOverlay}
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-sky-400 bg-sky-950/40 backdrop-blur-sm transition-all duration-300">
+          <div className="flex flex-col items-center gap-2 p-6 text-center text-sky-200 pointer-events-none">
+            <svg
+              className="h-10 w-10 animate-bounce text-sky-400"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+              />
+            </svg>
+            <p className="font-semibold text-sm">Drop to insert media</p>
+            <p className="text-xs text-sky-300/80">Images or Video clips (clamped to max 12s)</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -24,7 +24,7 @@ function clip(overrides: Partial<TimelineClip> = {}): TimelineClip {
     trimIn: 3,
     trimOut: 3,
     ...overrides,
-  };
+  } as TimelineClip;
 }
 
 describe("timeline clip math", () => {

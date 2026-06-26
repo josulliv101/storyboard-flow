@@ -26,7 +26,7 @@ export function createClip(
       ...spec,
       kind: "video",
       src: VIDEO_SOURCES[index % VIDEO_SOURCES.length],
-      duration: 15,
+      duration: 12,
     };
   }
 

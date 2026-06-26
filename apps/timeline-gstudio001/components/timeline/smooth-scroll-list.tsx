@@ -34,6 +34,7 @@ import {
 } from "./timeline-view-state";
 import { startTimelineFadeNavigation } from "./timeline-route-fade";
 import type { TimelineClip } from "./types";
+import { reindexAndPackClips } from "./hooks/use-timeline-clips";
 
 export interface SmoothScrollListProps
   extends React.HTMLAttributes<HTMLDivElement> {
@@ -214,6 +215,83 @@ export function SmoothScrollList({
     setClips: clipState.setClips,
   });
 
+  const handleDropFiles = useCallback(
+    async (insertIndex: number, files: File[]) => {
+      const getMediaDuration = (file: File): Promise<number> => {
+        return new Promise((resolve) => {
+          if (file.type.startsWith("video/")) {
+            const video = document.createElement("video");
+            video.preload = "metadata";
+            video.onloadedmetadata = () => {
+              resolve(video.duration);
+            };
+            video.onerror = () => {
+              resolve(5); // fallback
+            };
+            video.src = URL.createObjectURL(file);
+          } else {
+            resolve(4); // default duration for images
+          }
+        });
+      };
+
+      const newClipsPromises = files.map(async (file, idx) => {
+        const isVideo = file.type.startsWith("video/");
+        const isImage = file.type.startsWith("image/");
+        if (!isVideo && !isImage) return null;
+
+        const duration = await getMediaDuration(file);
+        const uniqueId = `clip-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        if (isVideo) {
+          const clipDuration = Math.min(12, duration);
+          return {
+            id: uniqueId,
+            index: insertIndex + idx,
+            kind: "video",
+            src: URL.createObjectURL(file),
+            alt: file.name,
+            aspect: 16 / 9,
+            trackIndex: 0,
+            startTime: 0,
+            duration: clipDuration,
+            sourceDuration: duration,
+            trimIn: 0,
+            trimOut: Math.max(0, duration - clipDuration),
+          } as TimelineClip;
+        } else {
+          return {
+            id: uniqueId,
+            index: insertIndex + idx,
+            kind: "image",
+            src: URL.createObjectURL(file),
+            alt: file.name,
+            aspect: 16 / 9,
+            trackIndex: 0,
+            startTime: 0,
+            duration: 4,
+            sourceDuration: 4,
+            trimIn: 0,
+            trimOut: 0,
+          } as TimelineClip;
+        }
+      });
+
+      const newClips = (await Promise.all(newClipsPromises)).filter(
+        (clip): clip is TimelineClip => clip !== null
+      );
+
+      if (newClips.length === 0) return;
+
+      const nextClips = [...clipState.clips];
+      nextClips.splice(insertIndex, 0, ...newClips);
+
+      const packedClips = reindexAndPackClips(nextClips);
+      clipState.applyClipsNow(packedClips);
+    },
+    [clipState],
+  );
+
   const interactions = useTimelineInteractions({
     parentRef,
     clips: clipState.clips,
@@ -383,6 +461,7 @@ export function SmoothScrollList({
           timelineHeight={timelineHeight}
           timelineWidth={layout.timelineWidth}
           visibleClips={layout.visibleClips}
+          onDropFiles={handleDropFiles}
         />
 
         {overhang.hasOffscreenOverhang && (

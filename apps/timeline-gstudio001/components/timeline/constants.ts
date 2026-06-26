@@ -2,6 +2,10 @@ export const VIDEO_SOURCES = [
   "https://www.w3schools.com/html/mov_bbb.mp4",
   "https://www.w3schools.com/html/movie.mp4",
   "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+  "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/classroom.mp4",
+  "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/people-detection.mp4",
+  "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/store-aisle-detection.mp4",
+  "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/bottle-detection.mp4",
 ];
 
 export type ItemSize = "sm" | "md" | "lg" | "xl";
