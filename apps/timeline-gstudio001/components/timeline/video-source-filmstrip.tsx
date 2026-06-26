@@ -1,5 +1,8 @@
 import React, { useRef } from "react";
-import { TimelineClip, VideoSourceWindowEditMode } from "./types";
+import type {
+  VideoSourceWindowEditMode,
+  VideoTimelineClip,
+} from "./types";
 import { clamp, formatSeconds } from "./utils";
 import { FILMSTRIP_HEIGHT, FILMSTRIP_MAX_FRAMES, FILMSTRIP_TARGET_FRAME_WIDTH } from "./constants";
 import { cn } from "@/lib/utils";
@@ -10,7 +13,7 @@ import {
 } from "./timeline-grid";
 
 type VideoSourceFilmStripProps = {
-  clip: TimelineClip;
+  clip: VideoTimelineClip;
   pixelsPerSecond: number;
   gridMetrics?: TimelineGridMetrics;
   thumbnailMode?: boolean;
@@ -19,7 +22,7 @@ type VideoSourceFilmStripProps = {
   editingMode?: VideoSourceWindowEditMode | null;
   onSourceWindowPointerDown: (
     e: React.PointerEvent<HTMLDivElement>,
-    clip: TimelineClip,
+    clip: VideoTimelineClip,
     mode: VideoSourceWindowEditMode,
   ) => void;
 };
@@ -160,7 +163,7 @@ export function VideoSourceFilmStrip({
 }
 
 type PassiveVideoFilmStripProps = {
-  clip: TimelineClip;
+  clip: VideoTimelineClip;
   pixelsPerSecond: number;
   gridMetrics?: TimelineGridMetrics;
   thumbnailMode?: boolean;
@@ -168,7 +171,7 @@ type PassiveVideoFilmStripProps = {
   thumbnailGap?: number;
   onPointerDown?: (
     event: React.PointerEvent<HTMLDivElement>,
-    clip: TimelineClip,
+    clip: VideoTimelineClip,
   ) => void;
 };
 
@@ -181,8 +184,6 @@ export function PassiveVideoFilmStrip({
   thumbnailGap = 16,
   onPointerDown,
 }: PassiveVideoFilmStripProps) {
-  if (clip.kind !== "video") return null;
-
   const gridLayout =
     thumbnailMode && gridMetrics?.enabled
       ? getTimelineGridItemLayout(clip.index, gridMetrics)

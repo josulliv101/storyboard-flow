@@ -15,7 +15,7 @@ import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,
 } from "./timeline-grid";
-import type { TimelineClip, TrimScrubPreview } from "./types";
+import type { TimelineClip, TrimScrubPreview, VideoTimelineClip } from "./types";
 import { PassiveVideoFilmStrip, VideoSourceFilmStrip } from "./video-source-filmstrip";
 import { VideoTile } from "./video-tile";
 import { formatSeconds } from "./utils";
@@ -31,7 +31,7 @@ type PassiveScrubPreview = {
   anchorClipIndex: number;
   overlayLeft: number;
   overlayTop: number;
-  previewClip: TimelineClip;
+  previewClip: VideoTimelineClip;
   previewTime: number;
 };
 
@@ -55,9 +55,11 @@ type TimelineViewportProps = {
   scrollLeft: number;
   scrollTop: number;
   selectedIndex: number | null;
-  selectedVideoClip: TimelineClip | null;
+  selectedVideoClip: VideoTimelineClip | null;
   showPassiveFilmstrips: boolean;
   gridMetrics: TimelineGridMetrics;
+  getCollectionHref?: (timelineId: string) => string;
+  onOpenCollection?: (timelineId: string, href: string) => void;
   thumbnailMode: boolean;
   thumbnailWidth: number;
   timelineHeight: number;
@@ -88,6 +90,8 @@ export function TimelineViewport({
   selectedVideoClip,
   showPassiveFilmstrips,
   gridMetrics,
+  getCollectionHref,
+  onOpenCollection,
   thumbnailMode,
   thumbnailWidth,
   timelineHeight,
@@ -175,7 +179,8 @@ export function TimelineViewport({
       const rect = content.getBoundingClientRect();
       const contentX = clientX - rect.left;
       const contentY = clientY - rect.top;
-      const clip = visibleClips.find((currentClip) => {
+      const clip = visibleClips.find(
+        (currentClip): currentClip is VideoTimelineClip => {
         if (currentClip.kind !== "video") return false;
         const left = getClipLeft(currentClip);
         const top = getClipTop(currentClip);
@@ -187,7 +192,8 @@ export function TimelineViewport({
           contentY >= filmstripTop &&
           contentY <= top + itemHeight
         );
-      });
+        },
+      );
       if (!clip) return null;
 
       const left = getClipLeft(clip);
@@ -211,7 +217,7 @@ export function TimelineViewport({
   const handlePassiveFilmStripPointerDown = useCallback(
     (
       event: ReactPointerEvent<HTMLDivElement>,
-      clip: TimelineClip,
+      clip: VideoTimelineClip,
     ) => {
       if (event.pointerType === "mouse" && event.button !== 0) return;
 
@@ -287,9 +293,6 @@ export function TimelineViewport({
     },
     [
       cleanupPassiveScrub,
-      getClipLeft,
-      getClipTop,
-      getClipWidth,
       getPassiveScrubTarget,
     ],
   );
@@ -339,7 +342,7 @@ export function TimelineViewport({
       className={`relative block w-full max-w-full min-w-0 select-none rounded-lg border border-zinc-800 bg-zinc-950 ${
         gridMetrics.enabled
           ? "overflow-x-clip overflow-y-visible"
-          : "cursor-grab touch-none overflow-x-scroll overflow-y-hidden active:cursor-grabbing"
+          : "cursor-grab touch-none overflow-x-scroll overflow-y-hidden pb-1.5 active:cursor-grabbing"
       }`}
       style={viewportStyle}
     >
@@ -403,6 +406,8 @@ export function TimelineViewport({
                 onResizeUp={interactions.handleResizeUp}
                 onResizeKeyDown={interactions.handleResizeKeyDown}
                 onDurationLoaded={handleClipDurationLoad}
+                getCollectionHref={getCollectionHref}
+                onOpenCollection={onOpenCollection}
               />
             ))}
 

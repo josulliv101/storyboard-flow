@@ -1,6 +1,7 @@
 "use client";
 
 import type React from "react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
@@ -9,7 +10,6 @@ import {
   DEFAULT_PIXELS_PER_SECOND,
   ITEM_HEIGHTS,
   MIN_WIDTH,
-  THUMBNAIL_GAP,
   TIMELINE_ITEM_TOP,
   TIMELINE_LEADING_PADDING_SECONDS,
   type ItemSize,
@@ -21,20 +21,29 @@ import { useTimelineMediaDuration } from "./hooks/use-timeline-media-duration";
 import { useTimelineOverhang } from "./hooks/use-timeline-overhang";
 import { useTimelineScrollState } from "./hooks/use-timeline-scroll-state";
 import { useTimelineZoom } from "./hooks/use-timeline-zoom";
-import { TimelineNavigation } from "./timeline-navigation";
 import { TimelineOverhangHint } from "./timeline-overhang-hint";
 import { TimelineToolbar } from "./timeline-toolbar";
 import {
   getTimelineGridContentHeight,
-  getTimelineGridItemLayout,
   getTimelineGridMetrics,
 } from "./timeline-grid";
 import { TimelineViewport } from "./timeline-viewport";
-import { clamp } from "./utils";
+import {
+  appendTimelineViewStateToHref,
+  type TimelineViewState,
+} from "./timeline-view-state";
+import { startTimelineFadeNavigation } from "./timeline-route-fade";
+import type { TimelineClip } from "./types";
 
 export interface SmoothScrollListProps
   extends React.HTMLAttributes<HTMLDivElement> {
+  collectionHrefPrefix?: string;
+  initialClips?: TimelineClip[];
+  initialViewState?: Partial<TimelineViewState>;
   itemCount?: number;
+  onOpenCollection?: (timelineId: string) => void;
+  timelineId?: string;
+  timelineTitle?: string;
   viewportWidth?: number | string;
   width?: number | string;
   pixelsPerSecond?: number;
@@ -42,7 +51,13 @@ export interface SmoothScrollListProps
 }
 
 export function SmoothScrollList({
+  collectionHrefPrefix = "/timeline",
+  initialClips,
+  initialViewState,
   itemCount = 1000,
+  onOpenCollection,
+  timelineId,
+  timelineTitle,
   viewportWidth,
   width: _deprecatedWidth,
   pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND,
@@ -51,16 +66,36 @@ export function SmoothScrollList({
   style,
   ...props
 }: SmoothScrollListProps) {
+  const router = useRouter();
   const parentRef = useRef<HTMLDivElement>(null);
-  const safeItemCount = Math.max(0, Math.floor(itemCount));
+  const safeItemCount = initialClips
+    ? initialClips.length
+    : Math.max(0, Math.floor(itemCount));
   const resolvedViewportWidth = viewportWidth ?? "100%";
   const initialScrollLeft = TIMELINE_LEADING_PADDING_SECONDS * 100;
+  const timelineResetKey = useMemo(
+    () =>
+      initialClips
+        ? (timelineId ?? initialClips.map((clip) => clip.id).join("|"))
+        : `generated:${safeItemCount}`,
+    [initialClips, safeItemCount, timelineId],
+  );
 
-  const [thumbnailMode, setThumbnailMode] = useState(false);
-  const [gridMode, setGridMode] = useState(false);
-  const [itemSize, setItemSize] = useState<ItemSize>("md");
-  const [manualOverhangScroll, setManualOverhangScroll] = useState(true);
-  const [showPassiveFilmstrips, setShowPassiveFilmstrips] = useState(false);
+  const [thumbnailMode, setThumbnailMode] = useState(
+    initialViewState?.thumbnailMode ?? false,
+  );
+  const [gridMode, setGridMode] = useState(
+    initialViewState?.gridMode ?? false,
+  );
+  const [itemSize, setItemSize] = useState<ItemSize>(
+    initialViewState?.itemSize ?? "md",
+  );
+  const [manualOverhangScroll, setManualOverhangScroll] = useState(
+    initialViewState?.manualOverhangScroll ?? true,
+  );
+  const [showPassiveFilmstrips, setShowPassiveFilmstrips] = useState(
+    initialViewState?.showPassiveFilmstrips ?? false,
+  );
 
   const itemHeight = ITEM_HEIGHTS[itemSize];
   const thumbnailWidth = (itemHeight * 16) / 9;
@@ -96,9 +131,11 @@ export function SmoothScrollList({
     : itemHeight + TIMELINE_ITEM_TOP;
 
   const clipState = useTimelineClipState({
+    initialClips,
     itemCount: safeItemCount,
     parentRef,
     pendingScrollLeftRef: scrollState.pendingScrollLeftRef,
+    resetKey: timelineResetKey,
     setScrollLeft: scrollState.setScrollLeft,
   });
 
@@ -113,9 +150,30 @@ export function SmoothScrollList({
   const selectedVideoClip =
     selectedClip?.kind === "video" ? selectedClip : null;
 
+  const handleOpenCollection = useCallback(
+    (nextTimelineId: string, href: string) => {
+      if (onOpenCollection) {
+        onOpenCollection(nextTimelineId);
+        return;
+      }
+
+      startTimelineFadeNavigation({
+        navigate: () => router.push(href),
+      });
+    },
+    [onOpenCollection, router],
+  );
+
+  const handleThumbnailModeChange = useCallback((enabled: boolean) => {
+    setThumbnailMode(enabled);
+    if (!enabled) {
+      setGridMode(false);
+    }
+  }, []);
+
   const zoom = useTimelineZoom({
     clips: clipState.clips,
-    initialZoom: pixelsPerSecond,
+    initialZoom: initialViewState?.zoom ?? pixelsPerSecond,
     parentRef,
     prevScrollLeftRef: scrollState.prevScrollLeftRef,
     selectedIndex: clipState.selectedIndex,
@@ -123,6 +181,31 @@ export function SmoothScrollList({
     thumbnailMode,
     thumbnailWidth: effectiveThumbnailWidth,
   });
+
+  const getCollectionHref = useCallback(
+    (nextTimelineId: string) => {
+      const basePath = collectionHrefPrefix.replace(/\/$/, "");
+      const href = `${basePath}/${encodeURIComponent(nextTimelineId)}`;
+
+      return appendTimelineViewStateToHref(href, {
+        thumbnailMode,
+        gridMode,
+        itemSize,
+        manualOverhangScroll,
+        showPassiveFilmstrips,
+        zoom: zoom.zoomLevel,
+      });
+    },
+    [
+      collectionHrefPrefix,
+      gridMode,
+      itemSize,
+      manualOverhangScroll,
+      showPassiveFilmstrips,
+      thumbnailMode,
+      zoom.zoomLevel,
+    ],
+  );
 
   const minDuration = MIN_WIDTH / zoom.safePixelsPerSecond;
   const handleClipDurationLoad = useTimelineMediaDuration({
@@ -183,58 +266,6 @@ export function SmoothScrollList({
     viewportClientWidth: scrollState.viewportClientWidth,
   });
 
-  const scrollToClipIndex = useCallback(
-    (targetIndex: number) => {
-      const element = parentRef.current;
-      if (!element || clipState.clips.length === 0) return;
-
-      interactions.stopInertia();
-      const index = clamp(
-        Math.floor(targetIndex),
-        0,
-        clipState.clips.length - 1,
-      );
-      const clip = clipState.clips[index];
-      const maxScroll = Math.max(0, element.scrollWidth - element.clientWidth);
-      const gridLayout =
-        gridModeEnabled && thumbnailMode
-          ? getTimelineGridItemLayout(clip.index, gridMetrics)
-          : null;
-      if (gridLayout) {
-        const rect = element.getBoundingClientRect();
-        window.scrollTo({
-          top: window.scrollY + rect.top + gridLayout.top,
-          behavior: "smooth",
-        });
-        return;
-      }
-
-      const nextScrollLeft = clamp(
-        thumbnailMode
-          ? clip.index * (effectiveThumbnailWidth + THUMBNAIL_GAP)
-          : clip.startTime * zoom.safePixelsPerSecond,
-        0,
-        maxScroll,
-      );
-      element.scrollTo({ left: nextScrollLeft, behavior: "smooth" });
-    },
-    [
-      clipState.clips,
-      effectiveThumbnailWidth,
-      gridMetrics,
-      gridModeEnabled,
-      interactions,
-      thumbnailMode,
-      zoom.safePixelsPerSecond,
-    ],
-  );
-
-  useEffect(() => {
-    if (!thumbnailMode && gridMode) {
-      setGridMode(false);
-    }
-  }, [gridMode, thumbnailMode]);
-
   useEffect(() => {
     const currentInteractions = interactions;
     return () => {
@@ -251,6 +282,8 @@ export function SmoothScrollList({
     <div
       {...props}
       data-testid="timeline-editor"
+      data-timeline-id={timelineId ?? ""}
+      data-timeline-title={timelineTitle ?? ""}
       data-selected-index={clipState.selectedIndex ?? ""}
       data-zoom={zoom.safePixelsPerSecond}
       data-thumbnail-mode={thumbnailMode}
@@ -301,22 +334,18 @@ export function SmoothScrollList({
         itemSize={itemSize}
         manualOverhangScroll={manualOverhangScroll}
         showPassiveFilmstrips={showPassiveFilmstrips}
+        title={timelineTitle}
         gridMode={gridModeEnabled}
         onItemSizeChange={setItemSize}
         onGridModeChange={setGridMode}
         onManualOverhangScrollChange={setManualOverhangScroll}
         onPassiveFilmstripsChange={setShowPassiveFilmstrips}
-        onThumbnailModeChange={setThumbnailMode}
+        onThumbnailModeChange={handleThumbnailModeChange}
         onZoomChange={zoom.handleZoomChange}
         renderedCount={layout.visibleClips.length}
         thumbnailMode={thumbnailMode}
         totalCount={clipState.clips.length}
         zoomLevel={zoom.zoomLevel}
-      />
-
-      <TimelineNavigation
-        disabled={clipState.clips.length === 0}
-        onScrollToIndex={scrollToClipIndex}
       />
 
       <div className="relative w-full max-w-full min-w-0">
@@ -334,6 +363,8 @@ export function SmoothScrollList({
           isZooming={zoom.isZooming}
           itemHeight={itemHeight}
           manualOverhangScroll={manualOverhangScroll}
+          getCollectionHref={getCollectionHref}
+          onOpenCollection={handleOpenCollection}
           parentRef={parentRef}
           pixelsPerSecond={zoom.safePixelsPerSecond}
           prevFirstOverhang={overhang.prevFirstOverhangRef.current}

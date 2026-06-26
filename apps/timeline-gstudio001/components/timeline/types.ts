@@ -1,12 +1,9 @@
 export type MediaKind = "image" | "video";
 
-export type TimelineClip = {
+export type TimelineItemBase = {
   id: string;
   index: number;
-  kind: MediaKind;
-  src: string;
   alt: string;
-  poster?: string;
   aspect: number;
   trackIndex: number;
 
@@ -20,6 +17,43 @@ export type TimelineClip = {
   trimIn: number;
   /** Amount trimmed from the source end. */
   trimOut: number;
+};
+
+export type ImageTimelineClip = TimelineItemBase & {
+  kind: "image";
+  src: string;
+  poster?: string;
+};
+
+export type VideoTimelineClip = TimelineItemBase & {
+  kind: "video";
+  src: string;
+  poster?: string;
+};
+
+export type MediaTimelineClip = ImageTimelineClip | VideoTimelineClip;
+
+export type CollectionTimelineClip = TimelineItemBase & {
+  kind: "collection";
+  title: string;
+  childTimelineId: string;
+  itemCount: number;
+  previewItems?: Array<{
+    id: string;
+    kind: MediaKind;
+    src: string;
+    poster?: string;
+    alt: string;
+  }>;
+};
+
+export type TimelineClip = MediaTimelineClip | CollectionTimelineClip;
+
+export type TimelineDocument = {
+  id: string;
+  title: string;
+  description?: string;
+  clips: TimelineClip[];
 };
 
 export type TrimScrubPreview = {

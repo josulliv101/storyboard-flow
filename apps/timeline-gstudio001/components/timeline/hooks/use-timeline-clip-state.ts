@@ -7,16 +7,31 @@ import type { TimelineClip, TrimScrubPreview } from "../types";
 import { createInitialClips } from "./use-timeline-clips";
 
 type UseTimelineClipStateOptions = {
+  initialClips?: TimelineClip[];
   itemCount: number;
   parentRef: React.RefObject<HTMLDivElement | null>;
   pendingScrollLeftRef: React.MutableRefObject<number | null>;
+  resetKey: string;
   setScrollLeft: React.Dispatch<React.SetStateAction<number>>;
 };
 
+function cloneTimelineClips(clips: TimelineClip[]) {
+  return clips.map((clip) =>
+    clip.kind === "collection"
+      ? {
+          ...clip,
+          previewItems: clip.previewItems?.map((item) => ({ ...item })),
+        }
+      : { ...clip },
+  );
+}
+
 export function useTimelineClipState({
+  initialClips,
   itemCount,
   parentRef,
   pendingScrollLeftRef,
+  resetKey,
   setScrollLeft,
 }: UseTimelineClipStateOptions) {
   const resizeFrameRef = useRef<number | null>(null);
@@ -24,7 +39,9 @@ export function useTimelineClipState({
   const isInitialMount = useRef(true);
 
   const [clips, setClips] = useState<TimelineClip[]>(() =>
-    createInitialClips(itemCount, 100),
+    initialClips
+      ? cloneTimelineClips(initialClips)
+      : createInitialClips(itemCount, 100),
   );
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [scrubPreview, setScrubPreview] = useState<TrimScrubPreview | null>(null);
@@ -35,7 +52,9 @@ export function useTimelineClipState({
       return;
     }
 
-    const nextClips = createInitialClips(itemCount, 100);
+    const nextClips = initialClips
+      ? cloneTimelineClips(initialClips)
+      : createInitialClips(itemCount, 100);
     const nextScrollLeft = TIMELINE_LEADING_PADDING_SECONDS * 100;
     setClips(nextClips);
     setSelectedIndex(null);
@@ -45,7 +64,7 @@ export function useTimelineClipState({
     if (parentRef.current) {
       parentRef.current.scrollLeft = nextScrollLeft;
     }
-  }, [itemCount, parentRef, setScrollLeft]);
+  }, [initialClips, itemCount, parentRef, resetKey, setScrollLeft]);
 
   const scheduleClips = useCallback((nextClips: TimelineClip[]) => {
     pendingClipsRef.current = nextClips;

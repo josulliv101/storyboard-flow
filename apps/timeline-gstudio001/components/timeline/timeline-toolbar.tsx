@@ -7,6 +7,7 @@ type TimelineToolbarProps = {
   itemSize: ItemSize;
   manualOverhangScroll: boolean;
   showPassiveFilmstrips: boolean;
+  title?: string;
   onGridModeChange: (enabled: boolean) => void;
   onItemSizeChange: (size: ItemSize) => void;
   onManualOverhangScrollChange: (enabled: boolean) => void;
@@ -73,6 +74,7 @@ export function TimelineToolbar({
   itemSize,
   manualOverhangScroll,
   showPassiveFilmstrips,
+  title = "Timeline",
   onGridModeChange,
   onItemSizeChange,
   onManualOverhangScrollChange,
@@ -91,7 +93,7 @@ export function TimelineToolbar({
   return (
     <div className="flex w-full min-w-0 items-center justify-between gap-3">
       <h3 className="min-w-0 truncate text-sm font-semibold text-zinc-200">
-        Anchored Timeline Trim
+        {title}
       </h3>
       <div className="flex items-center gap-4">
         <ToggleSwitch

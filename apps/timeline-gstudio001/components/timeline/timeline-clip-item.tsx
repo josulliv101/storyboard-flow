@@ -1,4 +1,5 @@
 import React, { memo } from "react";
+import Link from "next/link";
 import { TimelineClip } from "./types";
 import { formatSeconds } from "./utils";
 import { ITEM_HEIGHT } from "./constants";
@@ -38,6 +39,8 @@ type TimelineClipItemProps = {
     edge: "left" | "right",
   ) => void;
   onDurationLoaded?: (index: number, duration: number) => void;
+  getCollectionHref?: (timelineId: string) => string;
+  onOpenCollection?: (timelineId: string, href: string) => void;
 };
 
 export const TimelineClipItem = memo(function TimelineClipItem({
@@ -59,6 +62,8 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   onResizeUp,
   onResizeKeyDown,
   onDurationLoaded,
+  getCollectionHref,
+  onOpenCollection,
 }: TimelineClipItemProps) {
   const gridLayout =
     thumbnailMode && gridMetrics?.enabled
@@ -75,9 +80,9 @@ export const TimelineClipItem = memo(function TimelineClipItem({
     : thumbnailMode
     ? thumbnailWidth
     : clip.duration * pixelsPerSecond;
-  const sourceWidth = clip.sourceDuration * pixelsPerSecond;
-  const trimInPx = clip.trimIn * pixelsPerSecond;
   const isLifted = reorderPreview !== null;
+  const collectionHref =
+    clip.kind === "collection" ? getCollectionHref?.(clip.childTimelineId) : null;
 
   return (
     <div
@@ -131,9 +136,45 @@ export const TimelineClipItem = memo(function TimelineClipItem({
           </span>
         )}
 
+        {clip.kind === "collection" && (
+          <>
+            <span className="absolute left-1 top-1 rounded bg-sky-950/80 px-1.5 py-0.5 text-[10px] font-medium text-sky-200">
+              COLLECTION
+            </span>
+            {collectionHref ? (
+              <Link
+                href={collectionHref}
+                className="absolute bottom-1 left-1 rounded border border-sky-300/40 bg-black/75 px-2 py-1 text-[10px] font-semibold text-sky-100 shadow"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (
+                    !onOpenCollection ||
+                    event.defaultPrevented ||
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  ) {
+                    return;
+                  }
+
+                  event.preventDefault();
+                  onOpenCollection(clip.childTimelineId, collectionHref);
+                }}
+              >
+                Open timeline
+              </Link>
+            ) : null}
+          </>
+        )}
+
         <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100">
           {clip.kind === "video"
             ? `${formatSeconds(clip.duration)} / ${formatSeconds(clip.sourceDuration)}`
+            : clip.kind === "collection"
+            ? `${clip.itemCount} items`
             : formatSeconds(clip.duration)}
         </span>
 

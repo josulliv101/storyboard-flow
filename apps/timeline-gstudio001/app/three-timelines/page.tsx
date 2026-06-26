@@ -1,26 +1,23 @@
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
-
-const timelines = [
-  { label: "Timeline 1", itemCount: 1000 },
-  { label: "Timeline 2", itemCount: 1000 },
-  { label: "Timeline 3", itemCount: 1000 },
-];
+import { getTimelinePage } from "@/lib/timeline-documents";
 
 export default function ThreeTimelinesPage() {
+  const page = getTimelinePage("three");
+  const timelines = page?.timelines ?? [];
+
   return (
     <main className="min-h-screen bg-zinc-950 px-8 py-10 text-white">
       <div className="mx-auto grid w-full max-w-[1400px] gap-16">
         {timelines.map((timeline) => (
           <section
-            key={timeline.label}
-            aria-label={timeline.label}
-            className="grid gap-3"
+            key={timeline.id}
+            aria-label={timeline.title}
+            className="grid"
           >
-            <h2 className="text-sm font-semibold text-zinc-300">
-              {timeline.label}
-            </h2>
             <SmoothScrollList
-              itemCount={timeline.itemCount}
+              timelineId={timeline.id}
+              timelineTitle={timeline.title}
+              initialClips={timeline.clips}
               syncMediaDuration={false}
             />
           </section>

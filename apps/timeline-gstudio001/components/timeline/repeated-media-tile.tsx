@@ -1,6 +1,5 @@
 import React from "react";
 import { TimelineClip } from "./types";
-import { ITEM_HEIGHT } from "./constants";
 import { cn } from "@/lib/utils";
 import { VideoTile } from "./video-tile";
 
@@ -24,6 +23,56 @@ export function RepeatedMediaTile({
   itemHeight,
   onDurationLoaded,
 }: RepeatedMediaTileProps) {
+  if (clip.kind === "collection") {
+    const previewItems = clip.previewItems ?? [];
+
+    return (
+      <div className="relative flex h-full w-full flex-col justify-between overflow-hidden bg-zinc-900 p-3">
+        <div className="grid h-[58%] grid-cols-3 gap-1 overflow-hidden rounded">
+          {Array.from({ length: 3 }).map((_, index) => {
+            const item = previewItems[index];
+
+            return (
+              <div
+                key={item?.id ?? `${clip.id}-empty-preview-${index}`}
+                className="relative overflow-hidden rounded-sm bg-zinc-800"
+              >
+                {item ? (
+                  item.kind === "video" ? (
+                    <VideoTile
+                      src={item.src}
+                      poster={item.poster}
+                      alt={item.alt}
+                      previewTime={0}
+                    />
+                  ) : (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={item.src}
+                      alt={item.alt}
+                      draggable={false}
+                      className="h-full w-full object-cover"
+                    />
+                  )
+                ) : (
+                  <div className="h-full w-full bg-zinc-800" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-xs font-semibold text-zinc-100">
+            {clip.title}
+          </div>
+          <div className="mt-1 text-[10px] uppercase tracking-wide text-zinc-400">
+            {clip.itemCount} nested items
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const naturalAspect = clip.kind === "image" ? 16 / 9 : clip.aspect;
   const naturalFrameWidth = Math.max(120, Math.round(itemHeight * naturalAspect));
   const tileCount = getOddTileCount(displayWidth / naturalFrameWidth);
