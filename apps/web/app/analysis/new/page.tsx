@@ -31,23 +31,9 @@ import {
   extractCharacterAvatarFromVideo, 
   extractBeatThumbnailFromVideo 
 } from '@/lib/video-helpers';
+import { localUpload } from '@/components/editor/editor-media-utils';
 import ThemeToggle from '@/components/ThemeToggle';
 import LogoMark from '@/components/LogoMark';
-
-async function localUpload(filename: string, file: Blob): Promise<{ pathname: string }> {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('filename', filename);
-  const uploadRes = await fetch('/api/scenes/media-upload', {
-    method: 'POST',
-    body: formData,
-  });
-  if (uploadRes.ok) {
-    const data = await uploadRes.json();
-    return { pathname: data.pathname };
-  }
-  throw new Error("Local upload failed");
-}
 
 const clipOverlapsFrameRange = (
   clip: { startFrame: number; duration: number },

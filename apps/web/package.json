@@ -26,6 +26,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "firebase-admin": "^14.1.0",
     "idb-keyval": "^6.2.2",
     "jsonrepair": "^3.14.0",
     "lucide-react": "^0.553.0",

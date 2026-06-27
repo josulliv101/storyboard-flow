@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  background: #09090b;
+  scrollbar-color: #52525b #09090b;
+}
+
+body {
+  background: #09090b;
+  opacity: 1;
+}
+
+[data-testid="timeline-scroll-viewport"] {
+  color-scheme: dark;
+  scrollbar-color: #52525b #09090b;
+  scrollbar-width: thin;
+}
+
+[data-testid="timeline-scroll-viewport"]::-webkit-scrollbar {
+  height: 16px;
+  width: 12px;
+}
+
+[data-testid="timeline-scroll-viewport"]::-webkit-scrollbar-track {
+  background: #09090b;
+  border-radius: 999px;
+}
+
+[data-testid="timeline-scroll-viewport"]::-webkit-scrollbar-thumb {
+  background: #52525b;
+  border: 3px solid #09090b;
+  border-radius: 999px;
+}
+
+[data-testid="timeline-scroll-viewport"]::-webkit-scrollbar-thumb:hover {
+  background: #71717a;
+}
+
+[data-testid="timeline-scroll-viewport"]::-webkit-scrollbar-thumb:active {
+  background: #a1a1aa;
+}
+
+[data-testid="timeline-scroll-viewport"]::-webkit-scrollbar-corner {
+  background: #09090b;
+}
+
+html[data-timeline-route-fade="out"] body {
+  opacity: 0.18;
+  transition: opacity 120ms ease-out;
+}
+
+html[data-timeline-route-fade="in"] body {
+  animation: timeline-route-fade-in 180ms ease-out both;
+}
+
+@keyframes timeline-route-fade-in {
+  from {
+    opacity: 0.18;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-timeline-route-fade] body {
+    animation: none !important;
+    opacity: 1;
+    transition: none !important;
+  }
+}

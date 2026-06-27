@@ -2,11 +2,10 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
+import { createMediaReadStream, getMediaMetadata, isAllowedMediaPathname } from '@/lib/firebase-media-store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const ALLOWED_MEDIA_DIRS = ['timeline-videos/', 'timeline-thumbnails/'] as const;
 
 function getPublicRoots() {
   return Array.from(new Set([
@@ -40,21 +39,71 @@ function resolveMediaFile(pathname: string) {
   return null;
 }
 
-function isValidMediaPath(pathname: string | null): pathname is string {
-  return !!pathname && ALLOWED_MEDIA_DIRS.some(dir => pathname.startsWith(dir));
-}
-
 async function handleMediaRequest(request: Request, includeBody: boolean) {
   const pathname = new URL(request.url).searchParams.get('pathname');
 
-  if (!isValidMediaPath(pathname)) {
+  if (!isAllowedMediaPathname(pathname)) {
     return NextResponse.json({ error: 'Invalid hosted media path.' }, { status: 400 });
   }
 
   try {
+    let storageMedia: Awaited<ReturnType<typeof getMediaMetadata>> = null;
+    let storageLookupError: unknown;
+
+    try {
+      storageMedia = await getMediaMetadata(pathname);
+    } catch (error) {
+      storageLookupError = error;
+    }
+
+    if (storageMedia) {
+      const range = request.headers.get('range');
+
+      if (range && storageMedia.contentType.startsWith('video/')) {
+        const match = range.match(/bytes=(\d*)-(\d*)/);
+        const start = match?.[1] ? Number(match[1]) : 0;
+        const end = match?.[2] ? Number(match[2]) : storageMedia.size - 1;
+
+        if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= storageMedia.size) {
+          return new NextResponse(null, {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${storageMedia.size}`,
+            },
+          });
+        }
+
+        const chunkEnd = Math.min(end, storageMedia.size - 1);
+        const chunkSize = chunkEnd - start + 1;
+
+        return new NextResponse(includeBody ? createMediaReadStream(pathname, { start, end: chunkEnd }) : null, {
+          status: 206,
+          headers: {
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': storageMedia.cacheControl,
+            'Content-Length': String(chunkSize),
+            'Content-Range': `bytes ${start}-${chunkEnd}/${storageMedia.size}`,
+            'Content-Type': storageMedia.contentType,
+          },
+        });
+      }
+
+      return new NextResponse(includeBody ? createMediaReadStream(pathname) : null, {
+        headers: {
+          'Accept-Ranges': storageMedia.contentType.startsWith('video/') ? 'bytes' : 'none',
+          'Cache-Control': storageMedia.cacheControl,
+          'Content-Length': String(storageMedia.size),
+          'Content-Type': storageMedia.contentType,
+        },
+      });
+    }
+
     const filePath = resolveMediaFile(pathname);
 
     if (!filePath) {
+      if (storageLookupError) {
+        throw storageLookupError;
+      }
       return new NextResponse('Video not found.', { status: 404 });
     }
 
@@ -106,7 +155,7 @@ async function handleMediaRequest(request: Request, includeBody: boolean) {
       },
     });
   } catch (error) {
-    console.error('[LOCAL_VIDEO_READ_ERROR]', error);
+    console.error('[FIREBASE_MEDIA_READ_ERROR]', error);
     return new NextResponse('Unable to load hosted video.', { status: 500 });
   }
 }

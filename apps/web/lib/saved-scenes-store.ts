@@ -1,3 +1,3 @@
 import 'server-only';
 
-export * from '@storyboard/db';
+export * from './firebase-scene-store';

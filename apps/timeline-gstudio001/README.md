@@ -1,0 +1,21 @@
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+</div>
+
+# Run and deploy your AI Studio app
+
+This contains everything you need to run your app locally.
+
+View your app in AI Studio: https://ai.studio/apps/96d4de9e-9f71-423e-abb1-e9f897f31811
+
+## Run Locally
+
+**Prerequisites:**  Node.js
+
+
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Configure Firebase in `.env.local` for persistent timelines, and set `CLOUDINARY_URL` for uploaded media. See [.env.example](.env.example). Firebase Storage is only needed as a fallback when Cloudinary is not configured.
+4. Run the app:
+   `npm run dev`

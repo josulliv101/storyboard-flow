@@ -3,7 +3,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, Pause, Play, Plus, Ratio, Search, Settings, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Clapperboard, Grid2X2, Minimize2, Maximize2, Pause, Play, Plus, Ratio, Search, Settings, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Button,
@@ -19,7 +19,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 
-import { useSceneLaunchBoard, type SceneLaunchBeat, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
+import { useSceneLaunchBoard, VIDEO_PLACEHOLDER, type SceneLaunchBeat, type SceneLaunchMediaItem } from './useSceneLaunchBoard';
 import { SceneLaunchSidebar } from '../SceneLaunchSidebar';
 import { SceneLaunchHeader } from '../SceneLaunchHeader';
 import { SceneLaunchCanvasPreview, type SceneLaunchCanvasPreviewSnapshot } from './SceneLaunchCanvasPreview';
@@ -28,7 +28,7 @@ import {
   SceneLaunchPreviewWheelV3,
   type SceneLaunchPreviewWheelV3Effect,
   type SceneLaunchPreviewWheelV3Sizing,
-} from './SceneLaunchPreviewWheelV3';
+} from '@storyboard/ui';
 import { VideoFrameFilmstrip } from './VideoFrameFilmstrip';
 import type { SceneLaunchPlaybackMode } from '../SceneLaunchTimeline';
 import { SceneLaunchContextMenu } from '../SceneLaunchContextMenu';
@@ -180,6 +180,20 @@ export function SceneLaunchWorkspace({
 
   const [previewWheelEffect, setPreviewWheelEffect] = React.useState<SceneLaunchPreviewWheelV3Effect>('gallery');
   const [previewWheelSizing, setPreviewWheelSizing] = React.useState<SceneLaunchPreviewWheelV3Sizing>('uniform');
+  const [previewWheelThumbnailSize, setPreviewWheelThumbnailSize] = React.useState<'xs' | 'sm' | 'md' | 'lg' | 'xl'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-thumbnail-size');
+      if (saved === 'xs' || saved === 'sm' || saved === 'md' || saved === 'lg' || saved === 'xl') {
+        return saved;
+      }
+    }
+    return 'md';
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-thumbnail-size', previewWheelThumbnailSize);
+  }, [previewWheelThumbnailSize]);
+
   const [previewWheelShowUniformRuler, setPreviewWheelShowUniformRuler] = React.useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('scene-launch-preview-wheel-show-uniform-ruler');
@@ -203,6 +217,109 @@ export function SceneLaunchWorkspace({
   React.useEffect(() => {
     localStorage.setItem('scene-launch-preview-wheel-slide-on-click', String(previewWheelSlideOnClick));
   }, [previewWheelSlideOnClick]);
+
+  const [previewWheelGridView, setPreviewWheelGridView] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-grid-view');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-grid-view', String(previewWheelGridView));
+  }, [previewWheelGridView]);
+
+  const [previewWheelShowAllItemsPanel, setPreviewWheelShowAllItemsPanel] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-show-all-items-panel');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-show-all-items-panel', String(previewWheelShowAllItemsPanel));
+  }, [previewWheelShowAllItemsPanel]);
+
+  const [previewWheelBreakoutCollections, setPreviewWheelBreakoutCollections] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-breakout-collections');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-breakout-collections', String(previewWheelBreakoutCollections));
+  }, [previewWheelBreakoutCollections]);
+
+  const [previewWheelWrapTimeline, setPreviewWheelWrapTimeline] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-wrap-timeline');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-wrap-timeline', String(previewWheelWrapTimeline));
+  }, [previewWheelWrapTimeline]);
+
+  const [previewWheelCollectionMultiCircle, setPreviewWheelCollectionMultiCircle] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-collection-multi-circle');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-collection-multi-circle', String(previewWheelCollectionMultiCircle));
+  }, [previewWheelCollectionMultiCircle]);
+
+  const [previewWheelBreakoutNestingDepth, setPreviewWheelBreakoutNestingDepth] = React.useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-wheel-breakout-nesting-depth');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed)) return parsed;
+      }
+    }
+    return 1;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-wheel-breakout-nesting-depth', String(previewWheelBreakoutNestingDepth));
+  }, [previewWheelBreakoutNestingDepth]);
+
+  const [previewPlayerMinimized, setPreviewPlayerMinimized] = React.useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('scene-launch-preview-player-minimized');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('scene-launch-preview-player-minimized', String(previewPlayerMinimized));
+  }, [previewPlayerMinimized]);
+
+  const [activePlayingMediaId, setActivePlayingMediaId] = React.useState<string | null>(null);
+  const [activePlayingElapsedSeconds, setActivePlayingElapsedSeconds] = React.useState(0);
+  const [allItemsPanelEditMediaId, setAllItemsPanelEditMediaId] = React.useState<string | null>(null);
+
+  const [scrubbingMediaId, setScrubbingMediaId] = React.useState<string | null>(null);
+  const [scrubbingSourceTime, setScrubbingSourceTime] = React.useState<number | null>(null);
+  const [scrubbingTimelineTime, setScrubbingTimelineTime] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    if (!isWheelPreviewPlaying) {
+      setActivePlayingMediaId(null);
+      setActivePlayingElapsedSeconds(0);
+    }
+  }, [isWheelPreviewPlaying]);
+
   const [previewWheelSequence, setPreviewWheelSequence] = React.useState<PreviewWheelSequence>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('scene-launch-preview-wheel-sequence');
@@ -287,14 +404,15 @@ export function SceneLaunchWorkspace({
     collection: SceneLaunchBeat,
     visited = new Set<string>()
   ): SceneLaunchMediaItem[] => {
-    if (visited.has(collection.id)) return [];
-    visited.add(collection.id);
+    const latestCollection = sceneLaunchBeats.find(b => b.id === collection.id) || collection;
+    if (visited.has(latestCollection.id)) return [];
+    visited.add(latestCollection.id);
 
     const items: SceneLaunchMediaItem[] = [];
 
-    for (const gridItem of collection.gridOrder) {
+    for (const gridItem of latestCollection.gridOrder) {
       if (gridItem.type === 'media') {
-        const found = collection.items.find(x => x.id === gridItem.id);
+        const found = latestCollection.items.find(x => x.id === gridItem.id);
         if (found) {
           items.push(found);
         }
@@ -327,12 +445,13 @@ export function SceneLaunchWorkspace({
     collection: SceneLaunchBeat,
     visited = new Set<string>()
   ): number => {
-    if (visited.has(collection.id)) return 0;
-    visited.add(collection.id);
+    const latestCollection = sceneLaunchBeats.find(b => b.id === collection.id) || collection;
+    if (visited.has(latestCollection.id)) return 0;
+    visited.add(latestCollection.id);
 
-    return collection.gridOrder.reduce((sum, orderItem) => {
+    return latestCollection.gridOrder.reduce((sum, orderItem) => {
       if (orderItem.type === 'media') {
-        const m = collection.items.find(x => x.id === orderItem.id);
+        const m = latestCollection.items.find(x => x.id === orderItem.id);
         if (!m) return sum;
         const d = resizingItem && resizingItem.id === m.id
           ? resizingItem.currentDuration
@@ -601,13 +720,14 @@ export function SceneLaunchWorkspace({
       targetId: string,
       visited = new Set<string>()
     ): number | null => {
-      if (visited.has(parent.id)) return null;
-      visited.add(parent.id);
+      const latestParent = sceneLaunchBeats.find(b => b.id === parent.id) || parent;
+      if (visited.has(latestParent.id)) return null;
+      visited.add(latestParent.id);
 
       let relTime = 0;
-      for (const g of parent.gridOrder) {
+      for (const g of latestParent.gridOrder) {
         if (g.type === 'media') {
-          const m = parent.items.find(x => x.id === g.id);
+          const m = latestParent.items.find(x => x.id === g.id);
           const d = m ? getSceneLaunchMediaTimelineDuration(m) : 3;
           relTime += d;
         } else {
@@ -848,7 +968,13 @@ export function SceneLaunchWorkspace({
   const toggleSceneLaunchTimelinePlayback = React.useCallback(() => {
     if (isWheelSequencePreview) {
       setIsTimelinePlaying(false);
-      setIsWheelPreviewPlaying(current => !current);
+      const nextPlaying = !isWheelPreviewPlaying;
+      if (nextPlaying) {
+        setScrubbingMediaId(null);
+        setScrubbingSourceTime(null);
+        setScrubbingTimelineTime(null);
+      }
+      setIsWheelPreviewPlaying(nextPlaying);
       return;
     }
 
@@ -860,19 +986,20 @@ export function SceneLaunchWorkspace({
       setSceneLaunchPreviewPausedOffset(0);
       setSceneLaunchManuallyPaused(null);
     }
-  }, [isTimelinePlaying, isWheelSequencePreview, setSceneLaunchTimelineTime]);
+  }, [isTimelinePlaying, isWheelPreviewPlaying, isWheelSequencePreview, setSceneLaunchTimelineTime]);
 
 
 
   const handleBoardContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>, insertionIndex: number) => {
     event.preventDefault();
+    if (!activeSceneLaunchBeatId) return; // Prevent context menu at workspace root level
     setSceneLaunchContextMenu({
       type: 'board',
       x: event.clientX,
       y: event.clientY,
       insertionIndex,
     });
-  }, [setSceneLaunchContextMenu]);
+  }, [setSceneLaunchContextMenu, activeSceneLaunchBeatId]);
 
   // Preview animation tick effect
   React.useEffect(() => {
@@ -1000,6 +1127,7 @@ export function SceneLaunchWorkspace({
 
   const handleSceneLaunchDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
+    if (!activeSceneLaunchBeatId) return; // Block files drop at root level
     if (event.dataTransfer.getData('text/plain')) return;
     addFilesToSceneLaunchMedia(Array.from(event.dataTransfer.files || []));
   };
@@ -1352,16 +1480,48 @@ export function SceneLaunchWorkspace({
     }).filter((item): item is typeof timelineItems[number] => item !== null);
   }, [previewWheelCollectionPath, sceneLaunchBeats, timelineItems]);
 
-  const getCollectionWheelRepresentative = React.useCallback((collection: SceneLaunchBeat): SceneLaunchMediaItem => (
-    getRecursiveMediaItems(collection)[0] ?? {
+  const getCollectionStartingMedia = React.useCallback((collection: SceneLaunchBeat): SceneLaunchMediaItem | null => {
+    const visited = new Set<string>();
+    let currentCollection: SceneLaunchBeat | undefined = collection;
+
+    while (currentCollection) {
+      const currentCollectionId = currentCollection.id;
+      const latestCollection: SceneLaunchBeat = sceneLaunchBeats.find(
+        beat => beat.id === currentCollectionId,
+      ) ?? currentCollection;
+      if (visited.has(latestCollection.id)) return null;
+      visited.add(latestCollection.id);
+
+      const firstChild: SceneLaunchBeat['gridOrder'][number] | undefined = latestCollection.gridOrder[0];
+      if (!firstChild) return null;
+
+      if (firstChild.type === 'media') {
+        return latestCollection.items.find(media => media.id === firstChild.id) ?? null;
+      }
+
+      currentCollection = sceneLaunchBeats.find(beat => beat.id === firstChild.id);
+    }
+
+    return null;
+  }, [sceneLaunchBeats]);
+
+  const getCollectionWheelRepresentative = React.useCallback((collection: SceneLaunchBeat): SceneLaunchMediaItem => {
+    const first = getCollectionStartingMedia(collection);
+    if (first) {
+      return {
+        ...first,
+        id: `collection-placeholder:${collection.id}`,
+      };
+    }
+    return {
       id: `collection-placeholder:${collection.id}`,
       clipId: '',
       name: collection.name,
       type: 'image',
       previewUrl: COLLECTION_WHEEL_PLACEHOLDER,
       durationSeconds: 3,
-    }
-  ), [getRecursiveMediaItems]);
+    };
+  }, [getCollectionStartingMedia]);
 
   const collectionAwareWheelItems = React.useMemo(() => previewWheelSourceItems.flatMap(item => {
     if (item.type === 'media') return [item.item];
@@ -1381,50 +1541,45 @@ export function SceneLaunchWorkspace({
 
   const collectionAwareWheelSequences = React.useMemo(() => {
     const sequences: Record<string, SceneLaunchMediaItem[]> = {};
-    previewWheelSourceItems.forEach(item => {
-      if (item.type !== 'collection') return;
-      const collectionMedia = getRecursiveMediaItems(item.collection);
-      const representative = getCollectionWheelRepresentative(item.collection);
+    sceneLaunchBeats.forEach(beat => {
+      const collectionMedia = getRecursiveMediaItems(beat);
+      const representative = getCollectionWheelRepresentative(beat);
       sequences[representative.id] = collectionMedia;
     });
     return sequences;
-  }, [previewWheelSourceItems, getCollectionWheelRepresentative, getRecursiveMediaItems]);
+  }, [sceneLaunchBeats, getCollectionWheelRepresentative, getRecursiveMediaItems]);
 
   const collectionAwareWheelThumbnails = React.useMemo(() => {
     const thumbnails: Record<string, Record<string, SceneLaunchMediaItem>> = {};
 
-    previewWheelSourceItems.forEach(item => {
-      if (item.type !== 'collection') return;
-      const representative = getCollectionWheelRepresentative(item.collection);
+    sceneLaunchBeats.forEach(beat => {
+      const representative = getCollectionWheelRepresentative(beat);
 
       const childThumbnails: Record<string, SceneLaunchMediaItem> = {};
-      item.collection.gridOrder.forEach(orderItem => {
+      beat.gridOrder.forEach(orderItem => {
         if (orderItem.type === 'collection') {
-          const childCollection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+          const childCollection = sceneLaunchBeats.find(b => b.id === orderItem.id);
           if (!childCollection) return;
           const childRepresentative = getCollectionWheelRepresentative(childCollection);
           getRecursiveMediaItems(childCollection).forEach(media => {
             childThumbnails[media.id] = childRepresentative;
           });
         }
-        // Direct media items are not mapped to prevent wheel thumbnails from changing 
-        // during playback of individual media files (as that is shown in the main display).
       });
       thumbnails[representative.id] = childThumbnails;
     });
 
     return thumbnails;
-  }, [getCollectionWheelRepresentative, getRecursiveMediaItems, previewWheelSourceItems, sceneLaunchBeats]);
+  }, [getCollectionWheelRepresentative, getRecursiveMediaItems, sceneLaunchBeats]);
 
   const wheelCollectionIds = React.useMemo(() => {
     const ids: Record<string, string> = {};
-    previewWheelSourceItems.forEach(item => {
-      if (item.type !== 'collection') return;
-      const representative = getCollectionWheelRepresentative(item.collection);
-      ids[representative.id] = item.collection.id;
+    sceneLaunchBeats.forEach(beat => {
+      const representative = getCollectionWheelRepresentative(beat);
+      ids[representative.id] = beat.id;
     });
     return ids;
-  }, [getCollectionWheelRepresentative, previewWheelSourceItems]);
+  }, [getCollectionWheelRepresentative, sceneLaunchBeats]);
 
   const reorderCollectionAwareWheelItem = React.useCallback((
     draggedWheelId: string,
@@ -1515,8 +1670,247 @@ export function SceneLaunchWorkspace({
     }
   }, [getCollectionWheelRepresentative, moveItemToTrash, moveSceneLaunchItemToParent, previewWheelSourceItems, setSceneLaunchItemDisabled]);
 
-  const wheelReflectsCollections = previewWheelSizing === 'uniform' && previewWheelSequence === 'collections';
+  const wheelReflectsCollections = previewWheelSequence === 'collections';
+
+  const currentCollectionName = React.useMemo(() => {
+    if (previewWheelCollectionPath.length > 0) {
+      const activeId = previewWheelCollectionPath[previewWheelCollectionPath.length - 1];
+      const activeBeat = sceneLaunchBeats.find(b => b.id === activeId);
+      return activeBeat ? activeBeat.name : 'Workspace';
+    }
+    if (board.sceneLaunchBeatPath.length > 0) {
+      const activeId = board.sceneLaunchBeatPath[board.sceneLaunchBeatPath.length - 1];
+      const activeBeat = sceneLaunchBeats.find(b => b.id === activeId);
+      return activeBeat ? activeBeat.name : 'Workspace';
+    }
+    return 'Workspace';
+  }, [previewWheelCollectionPath, board.sceneLaunchBeatPath, sceneLaunchBeats]);
+
+  const breakoutData = React.useMemo(() => {
+    if (!previewWheelGridView || !previewWheelBreakoutCollections) return null;
+
+    const getCollectionDisplayItems = (collection: SceneLaunchBeat): SceneLaunchMediaItem[] => {
+      const latestCollection = sceneLaunchBeats.find(b => b.id === collection.id) || collection;
+      return latestCollection.gridOrder.map(orderItem => {
+        if (orderItem.type === 'media') {
+          return latestCollection.items.find(m => m.id === orderItem.id);
+        } else {
+          const childCollection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+          if (!childCollection) return null;
+          const childMedia = getRecursiveMediaItems(childCollection);
+          const representative = getCollectionWheelRepresentative(childCollection);
+          return {
+            ...representative,
+            name: childCollection.name,
+            disabled: childCollection.disabled,
+            durationSeconds: childMedia.reduce((total, media) => (
+              total + getSceneLaunchMediaPreviewDuration(media)
+            ), 0),
+          };
+        }
+      }).filter((x): x is SceneLaunchMediaItem => x !== null);
+    };
+
+    const chunks: SceneLaunchMediaItem[][] = [];
+    const titles: string[] = [];
+    const isCollection: boolean[] = [];
+    const representativeUrls: (string | null)[] = [];
+    const nestingLevels: number[] = [];
+
+    const expandCollection = (
+      collectionId: string,
+      currentDepth: number,
+      maxDepth: number
+    ) => {
+      if (currentDepth > maxDepth) return;
+
+      const collection = sceneLaunchBeats.find(b => b.id === collectionId);
+      if (!collection) return;
+
+      const displayItems = getCollectionDisplayItems(collection);
+      if (displayItems.length === 0) return;
+
+      chunks.push(displayItems);
+      titles.push(`${collection.name} (${collection.gridOrder.length})`);
+      isCollection.push(true);
+      
+      const representative = getCollectionWheelRepresentative(collection);
+      representativeUrls.push(
+        representative.type === 'video'
+          ? representative.posterUrl || representative.previewUrl
+          : representative.previewUrl,
+      );
+      nestingLevels.push(currentDepth);
+
+      const childCollectionIds = collection.gridOrder
+        .filter((orderItem): orderItem is { id: string; type: 'collection' } => orderItem.type === 'collection')
+        .map(orderItem => orderItem.id);
+
+      childCollectionIds.forEach(childId => {
+        expandCollection(childId, currentDepth + 1, maxDepth);
+      });
+    };
+
+    // Push the initial wheelpicker for that collection
+    if (collectionAwareWheelItems.length > 0) {
+      chunks.push(collectionAwareWheelItems);
+      const activeCollectionId = previewWheelCollectionPath.length > 0
+        ? previewWheelCollectionPath[previewWheelCollectionPath.length - 1]
+        : board.sceneLaunchBeatPath.length > 0
+          ? board.sceneLaunchBeatPath[board.sceneLaunchBeatPath.length - 1]
+          : null;
+      const activeCollection = activeCollectionId
+        ? sceneLaunchBeats.find(b => b.id === activeCollectionId)
+        : null;
+
+      const directCount = activeCollection
+        ? activeCollection.gridOrder.length
+        : previewWheelSourceItems.length;
+
+      titles.push(`${currentCollectionName} (${directCount})`);
+      isCollection.push(true);
+
+      let currentCollectionThumbnailUrl: string | null = null;
+      if (activeCollection) {
+        const representative = getCollectionWheelRepresentative(activeCollection);
+        currentCollectionThumbnailUrl = representative.type === 'video'
+          ? representative.posterUrl || representative.previewUrl
+          : representative.previewUrl;
+      } else if (flattenedTimelineMediaItems.length > 0) {
+        const firstWorkspaceItem = flattenedTimelineMediaItems[0];
+        currentCollectionThumbnailUrl = firstWorkspaceItem.type === 'video'
+          ? firstWorkspaceItem.posterUrl || firstWorkspaceItem.previewUrl
+          : firstWorkspaceItem.previewUrl;
+      }
+      representativeUrls.push(currentCollectionThumbnailUrl);
+      nestingLevels.push(0);
+    }
+
+    for (const item of previewWheelSourceItems) {
+      if (item.type === 'collection') {
+        expandCollection(item.collection.id, 1, previewWheelBreakoutNestingDepth);
+      }
+    }
+
+    return { chunks, titles, isCollection, representativeUrls, nestingLevels };
+  }, [
+    previewWheelGridView,
+    previewWheelBreakoutCollections,
+    previewWheelSourceItems,
+    sceneLaunchBeats,
+    getCollectionWheelRepresentative,
+    getRecursiveMediaItems,
+    getSceneLaunchMediaPreviewDuration,
+    collectionAwareWheelItems,
+    currentCollectionName,
+    previewWheelCollectionPath,
+    board.sceneLaunchBeatPath,
+    flattenedTimelineMediaItems,
+    previewWheelBreakoutNestingDepth
+  ]);
+
+  const breakoutChunks = React.useMemo(() => breakoutData?.chunks ?? null, [breakoutData]);
+  const breakoutTitles = React.useMemo(() => breakoutData?.titles ?? null, [breakoutData]);
+  const breakoutIsCollection = React.useMemo(() => breakoutData?.isCollection ?? null, [breakoutData]);
+  const breakoutNestingLevels = React.useMemo(() => breakoutData?.nestingLevels ?? null, [breakoutData]);
+  const breakoutRepresentativeUrls = React.useMemo(
+    () => breakoutData?.representativeUrls ?? null,
+    [breakoutData],
+  );
+
+  const breakoutSelectedMediaIds = React.useMemo(() => {
+    if (!breakoutChunks) return [];
+    return breakoutChunks.map(chunk => {
+      if (!selectedPreviewMediaId) return '';
+
+      const hasDirectMatch = chunk.some(item => item.id === selectedPreviewMediaId);
+      if (hasDirectMatch) return selectedPreviewMediaId;
+
+      const containingPlaceholder = chunk.find(item => {
+        if (item.id.startsWith('collection-placeholder:')) {
+          const collectionId = item.id.slice('collection-placeholder:'.length);
+          const col = sceneLaunchBeats.find(b => b.id === collectionId);
+          if (col) {
+            return getRecursiveMediaItems(col).some(m => m.id === selectedPreviewMediaId);
+          }
+        }
+        return false;
+      });
+
+      if (containingPlaceholder) {
+        return containingPlaceholder.id;
+      }
+
+      return '';
+    });
+  }, [breakoutChunks, selectedPreviewMediaId, sceneLaunchBeats, getRecursiveMediaItems]);
+
+  const parentCollection = React.useMemo(() => {
+    if (previewWheelCollectionPath.length > 0) {
+      const parentId = previewWheelCollectionPath[previewWheelCollectionPath.length - 2];
+      if (parentId) {
+        return sceneLaunchBeats.find(beat => beat.id === parentId) ?? null;
+      }
+      return null;
+    }
+    if (board.sceneLaunchBeatPath.length > 0) {
+      const parentPath = board.sceneLaunchBeatPath.slice(0, -1);
+      const parentId = parentPath[parentPath.length - 1];
+      if (parentId) {
+        return sceneLaunchBeats.find(beat => beat.id === parentId) ?? null;
+      }
+      return null;
+    }
+    return null;
+  }, [previewWheelCollectionPath, board.sceneLaunchBeatPath, sceneLaunchBeats]);
+
+  const parentCollectionName = React.useMemo(() => {
+    if (parentCollection) return parentCollection.name;
+    const canNavBack = previewWheelCollectionPath.length > 0 || board.sceneLaunchBeatPath.length > 0;
+    return canNavBack ? 'Workspace' : undefined;
+  }, [parentCollection, previewWheelCollectionPath.length, board.sceneLaunchBeatPath.length]);
+
+  const parentCollectionThumbnailUrl = React.useMemo(() => {
+    if (parentCollection) {
+      const representative = getCollectionWheelRepresentative(parentCollection);
+      return representative.type === 'video'
+        ? representative.posterUrl || representative.previewUrl
+        : representative.previewUrl;
+    }
+    const canNavBack = previewWheelCollectionPath.length > 0 || board.sceneLaunchBeatPath.length > 0;
+    if (canNavBack && flattenedTimelineMediaItems.length > 0) {
+      const firstWorkspaceItem = flattenedTimelineMediaItems[0];
+      return firstWorkspaceItem.type === 'video'
+        ? firstWorkspaceItem.posterUrl || firstWorkspaceItem.previewUrl
+        : firstWorkspaceItem.previewUrl;
+    }
+    return undefined;
+  }, [parentCollection, getCollectionWheelRepresentative, previewWheelCollectionPath.length, board.sceneLaunchBeatPath.length, flattenedTimelineMediaItems]);
+
+  const collectionBreadcrumbs = React.useMemo(() => {
+    const path = previewWheelCollectionPath.length > 0
+      ? previewWheelCollectionPath
+      : board.sceneLaunchBeatPath;
+
+    const rootCount = previewWheelSourceItems.length;
+    const crumbs = [{ id: 'root', name: `Workspace (${rootCount})` }];
+
+    path.forEach(beatId => {
+      const beat = sceneLaunchBeats.find(b => b.id === beatId);
+      if (beat) {
+        crumbs.push({ id: beat.id, name: `${beat.name} (${beat.gridOrder.length})` });
+      }
+    });
+
+    return crumbs;
+  }, [previewWheelCollectionPath, board.sceneLaunchBeatPath, sceneLaunchBeats, previewWheelSourceItems]);
+
+
+
   const previewWheelItems = React.useMemo(() => {
+    if (previewWheelGridView && previewWheelBreakoutCollections && breakoutChunks) {
+      return breakoutChunks.flat();
+    }
     const sourceItems = wheelReflectsCollections
       ? collectionAwareWheelItems
       : flattenedTimelineMediaItems;
@@ -1526,9 +1920,59 @@ export function SceneLaunchWorkspace({
       seenIds.add(item.id);
       return true;
     });
-  }, [collectionAwareWheelItems, flattenedTimelineMediaItems, wheelReflectsCollections]);
+  }, [breakoutChunks, collectionAwareWheelItems, flattenedTimelineMediaItems, wheelReflectsCollections, previewWheelGridView, previewWheelBreakoutCollections]);
+
+  const allItemsPanelItems = React.useMemo(() => {
+    const activeCollectionId = previewWheelCollectionPath[previewWheelCollectionPath.length - 1]
+      ?? board.sceneLaunchBeatPath[board.sceneLaunchBeatPath.length - 1];
+    const activeCollection = activeCollectionId
+      ? sceneLaunchBeats.find(beat => beat.id === activeCollectionId)
+      : null;
+    const sourceItems = activeCollection
+      ? getRecursiveMediaItems(activeCollection)
+      : flattenedTimelineMediaItems;
+    const seenIds = new Set<string>();
+
+    return sourceItems.filter(item => {
+      if (seenIds.has(item.id)) return false;
+      seenIds.add(item.id);
+      return true;
+    });
+  }, [board.sceneLaunchBeatPath, flattenedTimelineMediaItems, getRecursiveMediaItems, previewWheelCollectionPath, sceneLaunchBeats]);
+
+  const allItemsPanelSelectedMediaId = React.useMemo(() => {
+    if (selectedPreviewMediaId && allItemsPanelItems.some(item => item.id === selectedPreviewMediaId)) {
+      return selectedPreviewMediaId;
+    }
+    return allItemsPanelItems[0]?.id ?? '';
+  }, [allItemsPanelItems, selectedPreviewMediaId]);
 
   const previewWheelSelectedMediaId = React.useMemo(() => {
+    if (previewWheelGridView && previewWheelBreakoutCollections && breakoutChunks) {
+      if (!selectedPreviewMediaId) return '';
+      const flatDisplayItems = breakoutChunks.flat();
+      for (const displayItem of flatDisplayItems) {
+        if (displayItem.id === selectedPreviewMediaId) {
+          return displayItem.id;
+        }
+        if (displayItem.id.startsWith('collection-placeholder:')) {
+          const collectionId = displayItem.id.slice('collection-placeholder:'.length);
+          const col = sceneLaunchBeats.find(b => b.id === collectionId);
+          if (col && getRecursiveMediaItems(col).some(m => m.id === selectedPreviewMediaId)) {
+            return displayItem.id;
+          }
+        } else {
+          const collection = sceneLaunchBeats.find(beat => {
+            const rep = getCollectionWheelRepresentative(beat);
+            return rep.id === displayItem.id;
+          });
+          if (collection && getRecursiveMediaItems(collection).some(m => m.id === selectedPreviewMediaId)) {
+            return displayItem.id;
+          }
+        }
+      }
+      return selectedPreviewMediaId;
+    }
     if (!wheelReflectsCollections || !selectedPreviewMediaId) return selectedPreviewMediaId || '';
 
     const containingItem = previewWheelSourceItems.find(item => (
@@ -1540,12 +1984,15 @@ export function SceneLaunchWorkspace({
     if (!containingItem) return selectedPreviewMediaId;
     if (containingItem.type === 'media') return containingItem.item.id;
     return getCollectionWheelRepresentative(containingItem.collection).id;
-  }, [getCollectionWheelRepresentative, getRecursiveMediaItems, previewWheelSourceItems, selectedPreviewMediaId, wheelReflectsCollections]);
+  }, [getCollectionWheelRepresentative, getRecursiveMediaItems, previewWheelSourceItems, selectedPreviewMediaId, wheelReflectsCollections, previewWheelGridView, previewWheelBreakoutCollections]);
 
 
   const previewSceneLaunchMediaId = React.useCallback((mediaId: string) => {
     setIsTimelinePlaying(false);
     setIsWheelPreviewPlaying(false);
+    setScrubbingMediaId(null);
+    setScrubbingSourceTime(null);
+    setScrubbingTimelineTime(null);
     setSceneLaunchPreviewHover(null);
     setSceneLaunchManuallyPaused(null);
     setSceneLaunchPreviewPausedOffset(0);
@@ -1557,8 +2004,54 @@ export function SceneLaunchWorkspace({
     previewSceneLaunchMediaId(item.id);
   }, [previewSceneLaunchMediaId]);
 
+  const navigateToBreadcrumb = React.useCallback((crumbIndex: number) => {
+    const path = previewWheelCollectionPath.length > 0
+      ? previewWheelCollectionPath
+      : board.sceneLaunchBeatPath;
+
+    if (crumbIndex === 0) {
+      setPreviewWheelCollectionPath([]);
+      const parentPath: string[] = [];
+      let firstMedia: SceneLaunchMediaItem | undefined;
+      for (const orderItem of sceneLaunchGridOrder) {
+        if (orderItem.type === 'media') {
+          firstMedia = sceneLaunchMediaItems.find(media => media.id === orderItem.id);
+        } else {
+          const collection = sceneLaunchBeats.find(beat => beat.id === orderItem.id);
+          firstMedia = collection ? getRecursiveMediaItems(collection)[0] : undefined;
+        }
+        if (firstMedia) break;
+      }
+      if (firstMedia) {
+        navigateToPath([...parentPath, 'workbench'], firstMedia.id);
+      }
+      return;
+    }
+
+    const nextPath = path.slice(0, crumbIndex);
+    const targetBeatId = nextPath[nextPath.length - 1];
+    const beat = targetBeatId ? sceneLaunchBeats.find(b => b.id === targetBeatId) : null;
+    const firstMedia = beat
+      ? getRecursiveMediaItems(beat)[0]
+      : flattenedTimelineMediaItems[0];
+
+    if (previewWheelCollectionPath.length > 0) {
+      setPreviewWheelCollectionPath(nextPath);
+      if (firstMedia) {
+        previewSceneLaunchMediaId(firstMedia.id);
+      }
+    } else {
+      if (firstMedia) {
+        navigateToPath([...nextPath, 'workbench'], firstMedia.id);
+      }
+    }
+  }, [previewWheelCollectionPath, board.sceneLaunchBeatPath, sceneLaunchBeats, sceneLaunchGridOrder, sceneLaunchMediaItems, getRecursiveMediaItems, navigateToPath, flattenedTimelineMediaItems, previewSceneLaunchMediaId]);
+
   const openPreviewWheelCollection = React.useCallback((representativeMediaId: string) => {
-    const collectionId = wheelCollectionIds[representativeMediaId];
+    let collectionId = wheelCollectionIds[representativeMediaId];
+    if (!collectionId && representativeMediaId.startsWith('collection-placeholder:')) {
+      collectionId = representativeMediaId.slice('collection-placeholder:'.length);
+    }
     const collection = collectionId
       ? sceneLaunchBeats.find(beat => beat.id === collectionId)
       : null;
@@ -1890,7 +2383,7 @@ export function SceneLaunchWorkspace({
 
   return (
     <div
-      className="relative flex min-h-0 flex-1 overflow-hidden bg-black text-zinc-100 animate-fade-in"
+      className="relative flex min-h-0 flex-1 overflow-hidden bg-black text-zinc-100"
       onDragOver={(event) => event.preventDefault()}
       onDrop={handleSceneLaunchDrop}
     >
@@ -1948,12 +2441,12 @@ export function SceneLaunchWorkspace({
           <AnimatePresence mode="wait" initial={false}>
             {sceneLaunchPlaybackMode !== 'preview' ? (
               <motion.div
-                key="storyboard-grid"
+                key={`storyboard-grid-${activeSceneLaunchBeatId || 'root'}`}
                 className="absolute inset-0 overflow-y-auto px-4 pb-4"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
+                exit={{ opacity: 0, transition: { duration: 0 } }}
+                transition={{ duration: 0.6, ease: 'easeOut' }}
               >
           {!activeSceneLaunchBeat && rootSceneLaunchGridItemsCount === 0 && (projectHasSceneContent || visibleProjectScenes.length > 1) ? (
             <div className="mt-2 w-full">
@@ -2074,13 +2567,30 @@ export function SceneLaunchWorkspace({
                 transition={{ type: 'spring', stiffness: 145, damping: 18, mass: 1.15 }}
               >
             <section className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/95 shadow-2xl shadow-black/50">
-
-              <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center bg-black">
+<div className="relative flex min-h-0 flex-1 flex-col items-center justify-center bg-black">
                 {selectedPreviewMediaId ? (
                   <>
                     <div className="min-h-0 w-full flex-1">
                       <SceneLaunchPreviewWheelV3
                       items={previewWheelItems}
+                      customChunks={previewWheelBreakoutCollections && breakoutChunks ? breakoutChunks : undefined}
+                      breakoutTitles={previewWheelBreakoutCollections && breakoutTitles ? breakoutTitles : undefined}
+                      breakoutIsCollection={previewWheelBreakoutCollections && breakoutIsCollection ? breakoutIsCollection : undefined}
+                      breakoutRepresentativeUrls={previewWheelBreakoutCollections && breakoutRepresentativeUrls ? breakoutRepresentativeUrls : undefined}
+                      currentCollectionName={currentCollectionName}
+                      breakoutCollectionsEnabled={previewWheelBreakoutCollections}
+                      collectionMultiCircleEnabled={previewWheelCollectionMultiCircle}
+                      onBreakoutCollectionsChange={setPreviewWheelBreakoutCollections}
+                      breakoutNestingLevels={previewWheelBreakoutCollections && breakoutNestingLevels ? breakoutNestingLevels : undefined}
+                      breakoutNestingDepth={previewWheelBreakoutNestingDepth}
+                      onBreakoutNestingDepthChange={setPreviewWheelBreakoutNestingDepth}
+                      minimized={previewPlayerMinimized}
+                      timelineWrapped={previewWheelWrapTimeline}
+                      onTimelineWrappedChange={setPreviewWheelWrapTimeline}
+                      parentCollectionThumbnailUrl={parentCollectionThumbnailUrl}
+                      parentCollectionName={parentCollectionName}
+                      breadcrumbs={collectionBreadcrumbs}
+                      onBreadcrumbClick={navigateToBreadcrumb}
                       itemSequences={wheelReflectsCollections ? collectionAwareWheelSequences : undefined}
                       itemSequenceThumbnails={wheelReflectsCollections ? collectionAwareWheelThumbnails : undefined}
                       onCollectionOpen={wheelReflectsCollections ? openPreviewWheelCollection : undefined}
@@ -2092,8 +2602,10 @@ export function SceneLaunchWorkspace({
                       onNavigateBack={closePreviewWheelCollection}
                       selectedMediaId={previewWheelSelectedMediaId}
                       effect={previewWheelEffect}
+                      thumbnailSize={previewWheelThumbnailSize}
                       sizing={previewWheelSizing}
                       showUniformRuler={previewWheelShowUniformRuler}
+                      showRuler={!previewWheelShowAllItemsPanel}
                       slideOnClick={previewWheelSlideOnClick}
                       durationScale={previewWheelDurationScale}
                       selectedItemDurationSeconds={activePreviewDraft?.durationSeconds}
@@ -2113,7 +2625,10 @@ export function SceneLaunchWorkspace({
                           updateSceneLaunchMediaDuration(activePreviewMedia.id, durationSeconds);
                         }
                       }}
-                      onCenteredMediaChange={previewSceneLaunchMediaId}
+                      onCenteredMediaChange={(mediaId) => {
+                        setAllItemsPanelEditMediaId(null);
+                        previewSceneLaunchMediaId(mediaId);
+                      }}
                       onItemsReorder={wheelReflectsCollections ? reorderCollectionAwareWheelItem : reorderSceneLaunchMedia}
                       selectReorderedItem={previewWheelSelectDroppedItem}
                       renderGalleryTrimOverlay={(item) => {
@@ -2167,6 +2682,7 @@ export function SceneLaunchWorkspace({
                           </div>
                         );
                       }}
+                      showSelectedTrimOverlay={allItemsPanelEditMediaId === selectedPreviewMediaId}
                       renderSelectedItemOverlay={(item) => {
                         if (wheelReflectsCollections || !activePreviewDraft || activePreviewMedia?.id !== item.id) return null;
 
@@ -2195,10 +2711,91 @@ export function SceneLaunchWorkspace({
                       onPlaybackMediaChange={selectPreviewMediaDuringPlayback}
                       onTogglePlayback={toggleSceneLaunchTimelinePlayback}
                       onToggleLoop={() => setIsTimelineLooping(current => !current)}
+                      gridView={previewWheelGridView}
+                      showPlayhead={!previewWheelShowAllItemsPanel}
+                      activePlayingMediaId={activePlayingMediaId}
+                      activePlayingElapsedSeconds={activePlayingElapsedSeconds}
+                      onPlaybackTimeUpdate={(mediaId, elapsedSeconds) => {
+                        setActivePlayingMediaId(mediaId);
+                        setActivePlayingElapsedSeconds(elapsedSeconds);
+                      }}
+                      externalScrubMediaId={scrubbingMediaId}
+                      externalScrubSourceTime={scrubbingSourceTime}
+                      externalScrubTimelineTime={scrubbingTimelineTime}
+                      onScrubUpdate={previewWheelShowAllItemsPanel
+                        ? undefined
+                        : (mediaId, sourceTimeSeconds, timelineTimeSeconds) => {
+                            if (mediaId !== null) setIsWheelPreviewPlaying(false);
+                            setScrubbingMediaId(mediaId);
+                            setScrubbingSourceTime(sourceTimeSeconds);
+                            setScrubbingTimelineTime(timelineTimeSeconds ?? null);
+                          }}
+                      allCollections={sceneLaunchBeats}
+                      getRecursiveMediaItems={getRecursiveMediaItems}
+                      breakoutSelectedMediaIds={breakoutSelectedMediaIds || undefined}
                       />
                     </div>
 
-                    <div className="absolute right-4 top-4 z-40">
+                    {previewWheelShowAllItemsPanel && allItemsPanelItems.length > 0 && (
+                      <section
+                        aria-label="All media items"
+                        className="w-full shrink-0 border-t border-zinc-800 bg-zinc-950/95 shadow-[0_-12px_30px_rgba(0,0,0,0.28)]"
+                      >
+                        <div className="flex h-8 items-center justify-between border-b border-zinc-800/70 px-4">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-300">
+                            All media
+                          </span>
+                          <span className="font-mono text-[9px] font-bold text-zinc-500">
+                            {allItemsPanelItems.length} items
+                          </span>
+                        </div>
+                        <SceneLaunchPreviewWheelV3
+                          items={allItemsPanelItems}
+                          selectedMediaId={allItemsPanelSelectedMediaId}
+                          effect={previewWheelEffect}
+                          thumbnailSize="md"
+                          sizing="duration"
+                          durationScale={previewWheelDurationScale}
+                          onCenteredMediaChange={(mediaId) => {
+                            setPreviewWheelSequence('media');
+                            setAllItemsPanelEditMediaId(mediaId);
+                            previewSceneLaunchMediaId(mediaId);
+                          }}
+                          disabledItemIds={disabledWheelItemIds}
+                          showUniformRuler={previewWheelShowUniformRuler}
+                          slideOnClick={previewWheelSlideOnClick}
+                          showPlayhead={true}
+                          playheadIsPlaying={isWheelPreviewPlaying}
+                          activePlayingMediaId={activePlayingMediaId}
+                          activePlayingElapsedSeconds={activePlayingElapsedSeconds}
+                          hidePreview={true}
+                          freeDrag={true}
+                          selectItemsWhilePreviewHidden={true}
+                          syncPreviewToPlayhead={true}
+                          onScrubUpdate={(mediaId, sourceTimeSeconds, timelineTimeSeconds) => {
+                            if (mediaId !== null) setIsWheelPreviewPlaying(false);
+                            setScrubbingMediaId(mediaId);
+                            setScrubbingSourceTime(sourceTimeSeconds);
+                            setScrubbingTimelineTime(timelineTimeSeconds ?? null);
+                          }}
+                        />
+                      </section>
+                    )}
+
+                    <div className="absolute right-4 top-4 z-50 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewPlayerMinimized(m => !m)}
+                        className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-700/80 bg-zinc-950/80 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 shadow-lg backdrop-blur-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                        title={previewPlayerMinimized ? "Maximize top panel" : "Minimize top panel"}
+                        aria-label={previewPlayerMinimized ? "Maximize top panel" : "Minimize top panel"}
+                      >
+                        {previewPlayerMinimized ? (
+                          <Maximize2 className="h-4 w-4" />
+                        ) : (
+                          <Minimize2 className="h-4 w-4" />
+                        )}
+                      </button>
                       <Popover>
                         <PopoverTrigger
                           className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-700/80 bg-zinc-950/80 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200 shadow-lg backdrop-blur-md transition-colors"
@@ -2272,6 +2869,21 @@ export function SceneLaunchWorkspace({
                             </div>
 
                             <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Thumb Size</span>
+                              <select
+                                value={previewWheelThumbnailSize}
+                                onChange={(event) => setPreviewWheelThumbnailSize(event.target.value as any)}
+                                className="h-7 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-[10px] font-bold uppercase tracking-widest text-zinc-100 outline-none focus:border-indigo-400"
+                              >
+                                <option value="xs">XS</option>
+                                <option value="sm">SM</option>
+                                <option value="md">MD</option>
+                                <option value="lg">LG</option>
+                                <option value="xl">XL</option>
+                              </select>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
                               <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Width Mode</span>
                               <select
                                 value={previewWheelSizing}
@@ -2283,16 +2895,14 @@ export function SceneLaunchWorkspace({
                               </select>
                             </div>
 
-                            {previewWheelSizing === 'uniform' && (
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Show Ruler</span>
-                                <Switch
-                                  size="sm"
-                                  checked={previewWheelShowUniformRuler}
-                                  onCheckedChange={setPreviewWheelShowUniformRuler}
-                                />
-                              </div>
-                            )}
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Show Ruler</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelShowUniformRuler}
+                                onCheckedChange={setPreviewWheelShowUniformRuler}
+                              />
+                            </div>
 
                             {!wheelReflectsCollections && (
                               <div className="flex items-center justify-between gap-4">
@@ -2311,6 +2921,52 @@ export function SceneLaunchWorkspace({
                                 size="sm"
                                 checked={previewWheelSlideOnClick}
                                 onCheckedChange={setPreviewWheelSlideOnClick}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Grid View</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelGridView}
+                                onCheckedChange={setPreviewWheelGridView}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">All Items Panel</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelShowAllItemsPanel}
+                                onCheckedChange={setPreviewWheelShowAllItemsPanel}
+                                aria-label="Show all items panel"
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Break out by collection</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelBreakoutCollections}
+                                onCheckedChange={setPreviewWheelBreakoutCollections}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Wrap timeline</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelWrapTimeline}
+                                onCheckedChange={setPreviewWheelWrapTimeline}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-bold text-zinc-400 uppercase tracking-wider text-[10px]">Multi circle view</span>
+                              <Switch
+                                size="sm"
+                                checked={previewWheelCollectionMultiCircle}
+                                onCheckedChange={setPreviewWheelCollectionMultiCircle}
                               />
                             </div>
 

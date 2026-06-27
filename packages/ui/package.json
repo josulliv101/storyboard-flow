@@ -6,6 +6,7 @@
   "types": "index.ts",
   "dependencies": {
     "@base-ui/react": "^1.4.1",
+    "@tanstack/react-virtual": "^3.14.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.553.0",

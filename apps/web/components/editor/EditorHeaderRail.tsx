@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { Activity, Check, Cloud, CloudOff, Download, Layers, Loader2, LogOut, Settings, Share2, Upload, UserCircle } from 'lucide-react';
+import { Activity, Check, Cloud, CloudOff, Download, Loader2, LogOut, Ruler, Settings, Share2, Upload, UserCircle } from 'lucide-react';
 import { Button } from '@storyboard/ui';
 import ThemeToggle from '@/components/ThemeToggle';
 import LogoMark from '@/components/LogoMark';
@@ -204,7 +204,7 @@ export function EditorHeaderRail({
             )}
             onClick={onNavigateEditor}
           >
-            <Layers className="h-3.5 w-3.5" />
+            <Ruler className="h-3.5 w-3.5" />
             Editor
           </button>
 

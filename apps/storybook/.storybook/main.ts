@@ -9,6 +9,7 @@ const config: StorybookConfig = {
   stories: [
     '../../web/components/**/*.stories.@(ts|tsx)',
     '../../../packages/ui/**/*.stories.@(ts|tsx)',
+    '../../timeline-gstudio001/components/**/*.stories.@(ts|tsx)',
   ],
   addons: ['@storybook/addon-vitest'],
   framework: {
@@ -24,6 +25,7 @@ const config: StorybookConfig = {
       alias: [
         ...(Array.isArray(config.resolve?.alias) ? config.resolve.alias : []),
         { find: '@', replacement: resolve(storybookDir, '../../web') },
+        { find: '@gstudio', replacement: resolve(storybookDir, '../../timeline-gstudio001') },
         { find: 'es-toolkit/compat/get', replacement: compatShim('get') },
         { find: 'es-toolkit/compat/isPlainObject', replacement: compatShim('isPlainObject') },
         { find: 'es-toolkit/compat/last', replacement: compatShim('last') },

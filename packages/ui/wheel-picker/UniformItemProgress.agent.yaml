@@ -1,0 +1,24 @@
+component: UniformItemProgress
+
+category: editor
+
+purpose: >
+  A linear progress bar tracking visual playback offset for media items rendered under uniform sizing mode. Smoothly animates the scale transitions based on requestAnimationFrame ticks.
+
+inputs:
+  - progress: number (current relative offset from 0 to 1)
+  - durationSeconds: number (total duration of item)
+  - isPlaying: boolean (playback playing status)
+  - timelineTimeSeconds: number (global timeline clock context)
+
+outputs: []
+
+dependencies:
+  - React
+
+always:
+  - Keep transition state in sync with isPlaying and reset boundaries correctly when timeline resets.
+  - Scale progress indicator via CSS scaleX transformation for optimal rendering performance.
+
+never:
+  - Handle general layout adjustments of the parent card inside the progress bar.

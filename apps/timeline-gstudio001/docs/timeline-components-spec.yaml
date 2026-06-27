@@ -1,0 +1,83 @@
+timeline_components:
+  SmoothScrollList:
+    description: "The main timeline container that orchestrates clip layout, horizontal scrolling, visible window rendering, and interactions. Acts as the controller for all drag-and-drop and resizing behaviors."
+    props:
+      itemCount: "Number of mock clips to generate initially (default: 1000)."
+      viewportWidth: "Optional explicit width for the component."
+      pixelsPerSecond: "Scale factor determining how many horizontal pixels represent one second of time (zoom level)."
+    state:
+      zoomLevel: "Tracks current zoom (pixels per second)."
+      scrollLeft: "Current horizontal scroll offset (px)."
+      clips: "Array of TimelineClip objects, each defining startTime, duration, trimIn, trimOut, etc."
+      selectedIndex: "Index of the currently selected clip."
+      scrubPreview: "Tracks { clipIndex, time } when dragging trim handles or filmstrip to seek video preview."
+    behavior:
+      rendering: "Calculates total duration and timelineWidth. Uses a visibleClips filter (based on scrollLeft and overscan) to only render clips currently in the viewport (windowing) for performance."
+      interactions: "Delegates complex pointer interactions to useTimelineInteractions hook (track dragging, inertia scrolling, resizing)."
+      filmstrip: "Conditionally renders VideoSourceFilmStrip for the selected video clip."
+      snapping: "When trim actions result in empty space, it smoothly animates track translation to snap back to the new total duration bounds."
+
+  TimelineClipItem:
+    description: "Renders an individual clip on the timeline at a specific absolute position."
+    props:
+      clip: "TimelineClip object."
+      pixelsPerSecond: "Current zoom level to calculate width and position."
+      itemTop: "Vertical offset."
+      isSelected: "Boolean."
+      scrubPreviewTime: "Optional seek time when scrubbing this clip."
+      onResizeDown: "Pointer event handler for trim handles."
+      onResizeMove: "Pointer event handler for dragging trim handles."
+      onResizeUp: "Pointer event handler for releasing trim handles."
+      onResizeKeyDown: "Keyboard handler for fine-tuning trim handles."
+      onDurationLoaded: "Callback when the underlying video metadata loads real duration."
+    layout: "Absolute positioning. left = startTime * pixelsPerSecond. width = duration * pixelsPerSecond."
+    contents:
+      - "RepeatedMediaTile: renders the actual image/video content, repeating horizontally if the clip duration is longer than the source duration."
+      - "Metadata labels: type (VIDEO), duration text."
+      - "Trim handles (left/right) if selected."
+
+  RepeatedMediaTile:
+    description: "Renders a background of repeated video/image tiles within a clip to visually represent when a clip loops or extends beyond its source duration."
+    props:
+      clip: "TimelineClip object."
+      displayWidth: "Current pixel width of the clip container."
+      previewTime: "Time to seek video to."
+      onDurationLoaded: "Callback for actual source duration."
+    layout: "Flex container hiding overflow. Calculates number of tiles needed based on sourceWidth = sourceDuration * pixelsPerSecond. Maps over tile array and renders VideoTile for videos or img for images."
+
+  VideoSourceFilmStrip:
+    description: "A floating edit window rendered over a selected video clip that allows the user to slide the 'source window' or trim source edges relative to the whole video file."
+    props:
+      clip: "TimelineClip object."
+      pixelsPerSecond: "Zoom level."
+      onSourceWindowPointerDown: "Handler for dragging the filmstrip or its edges."
+    layout:
+      - "Absolute positioned above the main timeline."
+      - "Background shows evenly spaced frame thumbnails of the full source video."
+      - "A highlighted 'window' overlays the active trim region (trimIn to trimOut)."
+      - "Window has its own edge handles to adjust trim boundaries relative to the source."
+
+  VideoTile:
+    description: "A low-level wrapper around the HTML <video> element designed to show a specific static frame."
+    props:
+      src: "Video URL."
+      poster: "Thumbnail URL."
+      previewTime: "Target seek time."
+      sourceDuration: "Timeline source duration used to normalize seek position."
+      onDurationLoaded: "Fired onLoadedMetadata."
+    behavior: "Maintains a paused state. Uses requestAnimationFrame/timeout-safe seeking logic to update currentTime when previewTime changes. Safely handles browser metadata loading edge cases."
+
+  TrimHandle:
+    description: "A draggable edge component attached to the left/right of selected clips or filmstrips."
+    props:
+      edge: "'left' | 'right'."
+      currentWidth: "Pixel width of parent."
+      currentDuration: "Duration in seconds."
+      onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onKeyDown: "Interaction callbacks."
+    layout: "Absolute positioned div with cursor-ew-resize. Has visual affordances (stripes/dots) for grab capability."
+
+  Hooks:
+    useTimelineClips:
+      description: "Utility functions to pack clips sequentially left-to-right, resize clips from a baseline state, and adjust video source windows."
+    useTimelineInteractions:
+      description: "Complex state machine managing pointer capture, drag thresholds, inertia scrolling, resizing calculations, and keyboard nudging. Returns normalized handlers for the UI components."
