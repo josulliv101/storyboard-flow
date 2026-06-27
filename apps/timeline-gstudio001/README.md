@@ -16,5 +16,6 @@ View your app in AI Studio: https://ai.studio/apps/96d4de9e-9f71-423e-abb1-e9f89
 1. Install dependencies:
    `npm install`
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+3. Configure Firebase in `.env.local` for persistent timelines, and set `CLOUDINARY_URL` for uploaded media. See [.env.example](.env.example). Firebase Storage is only needed as a fallback when Cloudinary is not configured.
+4. Run the app:
    `npm run dev`

@@ -1,7 +1,31 @@
-export async function localUpload(filename: string, file: Blob): Promise<{ pathname: string }> {
+export type LocalUploadResult = {
+  pathname: string;
+  thumbnailPathname?: string;
+  thumbnailUrl?: string;
+};
+
+function isVideoUpload(filename: string, file: Blob) {
+  return file.type.startsWith('video/') || /\.(mp4|webm|mov)$/i.test(filename);
+}
+
+export async function localUpload(filename: string, file: Blob): Promise<LocalUploadResult> {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('filename', filename);
+
+  if (isVideoUpload(filename, file)) {
+    const thumbnail = await captureVideoThumbnail(file);
+    if (thumbnail) {
+      const baseName = filename
+        .split(/[\\/]/)
+        .pop()
+        ?.replace(/\.[^/.]+$/, '')
+        .replace(/[^a-zA-Z0-9._-]/g, '-')
+        .slice(0, 90) || 'video';
+      formData.append('thumbnail', thumbnail);
+      formData.append('thumbnailFilename', `timeline-thumbnails/${baseName}-thumbnail-${Date.now()}.jpg`);
+    }
+  }
 
   const res = await fetch('/api/scenes/media-upload', {
     method: 'POST',
@@ -10,7 +34,7 @@ export async function localUpload(filename: string, file: Blob): Promise<{ pathn
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Local upload failed: ${errText}`);
+    throw new Error(`Media upload failed: ${errText}`);
   }
 
   return res.json();

@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Layers, FolderPlus, Image, Video, Film, Hammer } from "lucide-react";
+import { Layers, FolderPlus, Image, Video, Film, Hammer, FolderOpen } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
+import type { ProjectViewMode } from "./timeline-view-state";
 
 type DraggableItem = {
   type: "timeline" | "collection" | "image" | "video";
@@ -42,7 +43,29 @@ const ITEMS: DraggableItem[] = [
 
 export function TimelineSidebar() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const pathSegments = pathname.split("/").filter(Boolean);
+  const activeProjectId =
+    pathSegments[0] === "timeline" && pathSegments[1]?.startsWith("project-")
+      ? pathSegments[1]
+      : undefined;
+  const projectView: ProjectViewMode | null = activeProjectId
+    ? pathSegments[2] === "workbench"
+      ? "workbench"
+      : "storyboard"
+    : null;
+  const activeTimelinePath = activeProjectId ? pathSegments.slice(3).join("/") : "";
+
+  const getProjectViewHref = (mode: ProjectViewMode) => {
+    if (!activeProjectId) return mode === "storyboard" ? "/storyboard" : "/workbench";
+
+    const search = searchParams.toString();
+    const childPath = activeTimelinePath ? `/${activeTimelinePath}` : "";
+    return `/timeline/${encodeURIComponent(activeProjectId)}/${mode}${childPath}${
+      search ? `?${search}` : ""
+    }`;
+  };
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -84,21 +107,48 @@ export function TimelineSidebar() {
 
       <div className="flex flex-col gap-2">
         <Link
-          href="/storyboard"
+          href="/"
           className={cn(
             "flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer select-none group",
-            pathname === "/storyboard"
+            pathname === "/"
               ? "border-amber-500 bg-amber-500/10 text-amber-300 shadow-lg shadow-amber-500/5"
               : "border-zinc-800 bg-zinc-900/40 hover:border-amber-500/50 hover:bg-amber-500/5"
           )}
         >
           <div className={cn(
             "p-2 rounded transition-colors",
-            pathname === "/storyboard" ? "bg-amber-500/20 text-amber-400" : "bg-zinc-800 group-hover:bg-amber-500/20 group-hover:text-amber-400"
+            pathname === "/" ? "bg-amber-500/20 text-amber-400" : "bg-zinc-800 group-hover:bg-amber-500/20 group-hover:text-amber-400"
+          )}>
+            <FolderOpen className={cn(
+              "h-4 w-4 transition-colors",
+              pathname === "/" ? "text-amber-400" : "text-zinc-400 group-hover:text-amber-400"
+            )} />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-xs font-semibold text-zinc-200">
+              Projects
+            </span>
+            <span className="text-[9px] text-zinc-500">
+              All timelines
+            </span>
+          </div>
+        </Link>
+        <Link
+          href={getProjectViewHref("storyboard")}
+          className={cn(
+            "flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer select-none group",
+            activeProjectId ? projectView === "storyboard" : pathname === "/storyboard"
+              ? "border-amber-500 bg-amber-500/10 text-amber-300 shadow-lg shadow-amber-500/5"
+              : "border-zinc-800 bg-zinc-900/40 hover:border-amber-500/50 hover:bg-amber-500/5"
+          )}
+        >
+          <div className={cn(
+            "p-2 rounded transition-colors",
+            (activeProjectId ? projectView === "storyboard" : pathname === "/storyboard") ? "bg-amber-500/20 text-amber-400" : "bg-zinc-800 group-hover:bg-amber-500/20 group-hover:text-amber-400"
           )}>
             <Film className={cn(
               "h-4 w-4 transition-colors",
-              pathname === "/storyboard" ? "text-amber-400" : "text-zinc-400 group-hover:text-amber-400"
+              (activeProjectId ? projectView === "storyboard" : pathname === "/storyboard") ? "text-amber-400" : "text-zinc-400 group-hover:text-amber-400"
             )} />
           </div>
           <div className="flex flex-col">
@@ -106,26 +156,26 @@ export function TimelineSidebar() {
               Storyboard
             </span>
             <span className="text-[9px] text-zinc-500">
-              Go to storyboard
+              {activeProjectId ? "Project storyboard" : "Go to storyboard"}
             </span>
           </div>
         </Link>
         <Link
-          href="/workbench"
+          href={getProjectViewHref("workbench")}
           className={cn(
             "flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer select-none group",
-            pathname === "/workbench"
+            activeProjectId ? projectView === "workbench" : pathname === "/workbench"
               ? "border-amber-500 bg-amber-500/10 text-amber-300 shadow-lg shadow-amber-500/5"
               : "border-zinc-800 bg-zinc-900/40 hover:border-amber-500/50 hover:bg-amber-500/5"
           )}
         >
           <div className={cn(
             "p-2 rounded transition-colors",
-            pathname === "/workbench" ? "bg-amber-500/20 text-amber-400" : "bg-zinc-800 group-hover:bg-amber-500/20 group-hover:text-amber-400"
+            (activeProjectId ? projectView === "workbench" : pathname === "/workbench") ? "bg-amber-500/20 text-amber-400" : "bg-zinc-800 group-hover:bg-amber-500/20 group-hover:text-amber-400"
           )}>
             <Hammer className={cn(
               "h-4 w-4 transition-colors",
-              pathname === "/workbench" ? "text-amber-400" : "text-zinc-400 group-hover:text-amber-400"
+              (activeProjectId ? projectView === "workbench" : pathname === "/workbench") ? "text-amber-400" : "text-zinc-400 group-hover:text-amber-400"
             )} />
           </div>
           <div className="flex flex-col">
@@ -133,7 +183,7 @@ export function TimelineSidebar() {
               Workbench
             </span>
             <span className="text-[9px] text-zinc-500">
-              Go to workbench
+              {activeProjectId ? "Project workbench" : "Go to workbench"}
             </span>
           </div>
         </Link>

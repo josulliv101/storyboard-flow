@@ -95,6 +95,10 @@ function packClips(clips: TimelineClip[]) {
   });
 }
 
+function cloneTimelineDocument(document: TimelineDocument): TimelineDocument {
+  return JSON.parse(JSON.stringify(document)) as TimelineDocument;
+}
+
 const sceneADetailsClips = createMediaClips("scene-a-details", 18);
 const sceneBClips = createMediaClips("scene-b", 26);
 const collectionBoardActOneClips = createMediaClips(
@@ -279,8 +283,35 @@ const timelinePages: Record<string, TimelinePageDocument> = {
   },
 };
 
+function persistTimelineDocument(document: TimelineDocument) {
+  if (typeof window === "undefined") return;
+
+  window
+    .fetch(`/api/timelines/${encodeURIComponent(document.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document }),
+    })
+    .catch((error) => {
+      console.warn(`Failed to persist timeline "${document.id}" to Firebase`, error);
+    });
+}
+
 export function getTimelineDocument(id: string) {
   return timelineDocuments[id] ?? null;
+}
+
+export function registerTimelineDocument(
+  document: TimelineDocument,
+  options: { persist?: boolean } = {},
+) {
+  timelineDocuments[document.id] = cloneTimelineDocument(document);
+
+  if (options.persist) {
+    persistTimelineDocument(timelineDocuments[document.id]);
+  }
+
+  return timelineDocuments[document.id];
 }
 
 export function getTimelinePath(targetId: string): { id: string; title: string }[] {
@@ -338,6 +369,7 @@ export function syncParentCollections(collectionTimelineId: string, childClips: 
 
     if (updated) {
       parentDoc.clips = packClips(parentDoc.clips);
+      persistTimelineDocument(parentDoc);
       
       if (typeof window !== "undefined") {
         window.dispatchEvent(
@@ -363,6 +395,7 @@ export function addClipToCollection(collectionTimelineId: string, clip: any) {
   // Add and pack
   const nextClips = [...doc.clips, newClip];
   doc.clips = packClips(nextClips);
+  persistTimelineDocument(doc);
 
   // Sync parent collections
   syncParentCollections(collectionTimelineId, doc.clips);
@@ -379,12 +412,11 @@ export function addClipToCollection(collectionTimelineId: string, clip: any) {
 }
 
 export function createCollectionTimelineDocument(id: string, title: string) {
-  timelineDocuments[id] = {
+  return registerTimelineDocument({
     id,
     title,
     clips: [],
-  };
-  return timelineDocuments[id];
+  }, { persist: true });
 }
 
 export function getCollectionFramePreview(collectionTimelineId: string, time: number) {

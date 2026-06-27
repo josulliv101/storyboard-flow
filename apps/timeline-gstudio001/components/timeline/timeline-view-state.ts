@@ -9,6 +9,8 @@ export type TimelineViewState = {
   zoom: number;
 };
 
+export type ProjectViewMode = "storyboard" | "workbench";
+
 type TimelineSearchParams =
   | URLSearchParams
   | Record<string, string | string[] | undefined>;
@@ -56,6 +58,39 @@ export function parseTimelineViewState(
     showPassiveFilmstrips: parseBoolean(getParam(searchParams, "filmstrips")),
     zoom: parseZoom(getParam(searchParams, "zoom")),
   };
+}
+
+export function parseProjectViewMode(
+  searchParams: TimelineSearchParams,
+): ProjectViewMode {
+  return getParam(searchParams, "view") === "workbench" ? "workbench" : "storyboard";
+}
+
+export function setSearchParam(
+  searchParams: TimelineSearchParams,
+  key: string,
+  value: string,
+) {
+  const nextSearchParams =
+    searchParams instanceof URLSearchParams
+      ? new URLSearchParams(searchParams)
+      : new URLSearchParams();
+
+  if (!(searchParams instanceof URLSearchParams)) {
+    Object.entries(searchParams).forEach(([entryKey, entryValue]) => {
+      if (Array.isArray(entryValue)) {
+        entryValue.forEach((item) => nextSearchParams.append(entryKey, item));
+        return;
+      }
+
+      if (entryValue !== undefined) {
+        nextSearchParams.set(entryKey, entryValue);
+      }
+    });
+  }
+
+  nextSearchParams.set(key, value);
+  return nextSearchParams;
 }
 
 export function serializeTimelineViewState(state: TimelineViewState) {

@@ -1,9 +1,9 @@
-import { del, list } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 
 import type { TimelineProjectJson } from '@/lib/timeline-context';
 import { deleteSavedScene, getOtherSavedSceneProjects, getSavedScene, updateSavedSceneProject, updateSavedSceneThumbnail, updateSavedScenePublishStatus } from '@/lib/saved-scenes-store';
 import { getAuthUser } from '@/lib/auth-store';
+import { deleteMediaPathnames, listMediaPathnames } from '@/lib/firebase-media-store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,6 +16,7 @@ function savedSceneStorageErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && (
     error.message.startsWith('Scene storage is not configured')
     || error.message.startsWith('Unable to connect to scene storage')
+    || error.message.startsWith('Firebase Storage is not configured')
     || error.message.includes('timed out')
   )) {
     return error.message;
@@ -104,7 +105,7 @@ export async function PATCH(
         return NextResponse.json({ error: 'Forbidden. Admin role required to publish/unpublish scenes.' }, { status: 403 });
       }
       const isPublished = !!body.isPublished;
-      const scene = await updateSavedScenePublishStatus(id, isPublished, user.id);
+      const scene = await updateSavedScenePublishStatus(id, isPublished, user.id, user.username);
       if (!scene) {
         return NextResponse.json({ error: 'Saved scene was not found.' }, { status: 404 });
       }
@@ -169,30 +170,19 @@ export async function DELETE(
       getHostedMediaPathnames(project).forEach(pathname => referencedPathnames.add(pathname));
     });
 
-    // 2. Query Vercel Blob store to list all hosted files under the media prefixes
+    // 2. Query Firebase Storage to list all hosted files under the media prefixes.
     let deletedCount = 0;
     try {
-      const videoResults = await list({ prefix: 'timeline-videos/' });
-      const thumbnailResults = await list({ prefix: 'timeline-thumbnails/' });
-      const blobs = [...videoResults.blobs, ...thumbnailResults.blobs];
+      const blobs = [
+        ...await listMediaPathnames('timeline-videos/'),
+        ...await listMediaPathnames('timeline-thumbnails/'),
+      ];
       
-      // Identify blobs that are not in the referenced set and are older than 5 minutes (300,000 ms)
-      const now = Date.now();
-      const urlsToDelete: string[] = [];
+      const pathnamesToDelete = blobs.filter(pathname => !referencedPathnames.has(pathname));
 
-      blobs.forEach(blob => {
-        const isReferenced = referencedPathnames.has(blob.pathname);
-        const uploadedTime = new Date(blob.uploadedAt).getTime();
-        const isOldEnough = (now - uploadedTime) > 300_000;
-
-        if (!isReferenced && isOldEnough) {
-          urlsToDelete.push(blob.url);
-        }
-      });
-
-      if (urlsToDelete.length > 0) {
-        await del(urlsToDelete);
-        deletedCount = urlsToDelete.length;
+      if (pathnamesToDelete.length > 0) {
+        await deleteMediaPathnames(pathnamesToDelete);
+        deletedCount = pathnamesToDelete.length;
       }
     } catch (blobError) {
       console.error('[CLEANUP_ORPHANED_BLOBS_ERROR]', blobError);
@@ -201,13 +191,12 @@ export async function DELETE(
       const hostedVideoPathnames = getHostedMediaPathnames(scene.project);
       const unusedVideoPathnames = [...hostedVideoPathnames].filter(pathname => !referencedPathnames.has(pathname));
       if (unusedVideoPathnames.length > 0) {
-        // Fallback: pass unused pathnames directly
-        await del(unusedVideoPathnames);
+        await deleteMediaPathnames(unusedVideoPathnames);
         deletedCount = unusedVideoPathnames.length;
       }
     }
 
-    // 3. Delete the saved scene metadata from the Postgres database
+    // 3. Delete the saved scene metadata from Firestore.
     await deleteSavedScene(id);
 
     return NextResponse.json({

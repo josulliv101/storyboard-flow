@@ -220,7 +220,12 @@ export function useSavedScenes({
     const hostedVideo = await localUpload(fileName, file);
     setSceneSaveStatus(`Uploading ${fileName} (100%)`);
 
-    return `/api/scenes/media?pathname=${encodeURIComponent(hostedVideo.pathname)}`;
+    return {
+      videoUrl: `/api/scenes/media?pathname=${encodeURIComponent(hostedVideo.pathname)}`,
+      thumbnailUrl: hostedVideo.thumbnailPathname
+        ? `/api/scenes/media?pathname=${encodeURIComponent(hostedVideo.thumbnailPathname)}`
+        : hostedVideo.thumbnailUrl,
+    };
   };
 
   const uploadSceneThumbnail = React.useCallback(async (sceneName: string, thumbnail: Blob) => {
@@ -318,8 +323,13 @@ export function useSavedScenes({
         }
 
         const sanitizedClipName = (clip.name || 'scene-video.mp4').replace(/[^a-zA-Z0-9._-]/g, '-');
-        const publicUrl = await uploadSceneVideo(sanitizedClipName, video);
-        portableClips.push({ ...clip, name: sanitizedClipName, src: publicUrl });
+        const uploadedVideo = await uploadSceneVideo(sanitizedClipName, video);
+        portableClips.push({
+          ...clip,
+          name: sanitizedClipName,
+          src: uploadedVideo.videoUrl,
+          thumbnailUrl: clip.thumbnailUrl || uploadedVideo.thumbnailUrl,
+        });
       }
 
       if (!thumbnailBlob && activeScene.clips.some(clip => clip.type === 'video')) {

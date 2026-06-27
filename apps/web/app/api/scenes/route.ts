@@ -24,10 +24,11 @@ function storageErrorResponse(error: unknown) {
   const message = error instanceof Error && (
     error.message.startsWith('Scene storage is not configured')
     || error.message.startsWith('Unable to connect to scene storage')
+    || error.message.startsWith('Firebase Storage is not configured')
     || error.message.includes('timed out')
   )
     ? error.message
-    : 'Unable to access saved scenes.';
+    : 'Unable to access Firebase saved scenes.';
   console.error('[SAVED_SCENES_ERROR]', error);
   return NextResponse.json({ error: message }, { status: 500 });
 }

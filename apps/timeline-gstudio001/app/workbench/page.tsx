@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -8,7 +8,7 @@ import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
 import { getTimelineDocument, getTimelinePath } from "@/lib/timeline-documents";
 import { parseTimelineViewState } from "@/components/timeline/timeline-view-state";
 
-export default function WorkbenchPage() {
+function WorkbenchPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -113,5 +113,13 @@ export default function WorkbenchPage() {
         syncMediaDuration={false}
       />
     </div>
+  );
+}
+
+export default function WorkbenchPage() {
+  return (
+    <Suspense fallback={null}>
+      <WorkbenchPageContent />
+    </Suspense>
   );
 }
