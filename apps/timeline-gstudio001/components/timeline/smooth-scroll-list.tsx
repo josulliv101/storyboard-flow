@@ -33,15 +33,22 @@ import {
   appendTimelineViewStateToHref,
   type TimelineViewState,
 } from "./timeline-view-state";
+import { Folder } from "lucide-react";
 import { startTimelineFadeNavigation } from "./timeline-route-fade";
 import type { TimelineClip } from "./types";
 import { reindexAndPackClips } from "./hooks/use-timeline-clips";
+import {
+  getTimelineDocument,
+  addClipToCollection,
+  createCollectionTimelineDocument,
+  syncParentCollections,
+} from "@/lib/timeline-documents";
 
 export interface SmoothScrollListProps
   extends React.HTMLAttributes<HTMLDivElement> {
   collectionHrefPrefix?: string;
   initialClips?: TimelineClip[];
-  initialViewState?: Partial<TimelineViewState>;
+  initialViewState?: Partial<TimelineViewState & { hierarchyMode?: boolean }>;
   itemCount?: number;
   onOpenCollection?: (timelineId: string) => void;
   timelineId?: string;
@@ -50,6 +57,8 @@ export interface SmoothScrollListProps
   width?: number | string;
   pixelsPerSecond?: number;
   syncMediaDuration?: boolean;
+  isChildTimeline?: boolean;
+  hierarchyMode?: boolean;
 }
 
 export function SmoothScrollList({
@@ -64,6 +73,8 @@ export function SmoothScrollList({
   width: _deprecatedWidth,
   pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND,
   syncMediaDuration = true,
+  isChildTimeline = false,
+  hierarchyMode: propHierarchyMode,
   className,
   style,
   ...props
@@ -86,6 +97,18 @@ export function SmoothScrollList({
   const [thumbnailMode, setThumbnailMode] = useState(
     initialViewState?.thumbnailMode ?? false,
   );
+  const [hierarchyMode, setHierarchyMode] = useState(
+    initialViewState?.hierarchyMode ?? propHierarchyMode ?? false,
+  );
+  const [childCollectionsExpanded, setChildCollectionsExpanded] = useState(false);
+
+  const [prevPropHierarchyMode, setPrevPropHierarchyMode] = useState(propHierarchyMode);
+  if (propHierarchyMode !== prevPropHierarchyMode) {
+    setPrevPropHierarchyMode(propHierarchyMode);
+    if (propHierarchyMode !== undefined) {
+      setHierarchyMode(propHierarchyMode);
+    }
+  }
   const [gridMode, setGridMode] = useState(
     initialViewState?.gridMode ?? false,
   );
@@ -150,7 +173,12 @@ export function SmoothScrollList({
     );
   }, [clipState.clips, clipState.selectedIndex]);
   const selectedVideoClip =
-    selectedClip?.kind === "video" ? selectedClip : null;
+    selectedClip?.kind === "video" || selectedClip?.kind === "collection" || selectedClip?.kind === "image" ? selectedClip : null;
+
+  const childCollections = useMemo(() => {
+    if (!hierarchyMode || !thumbnailMode) return [];
+    return clipState.clips.filter((c) => c.kind === "collection");
+  }, [clipState.clips, hierarchyMode, thumbnailMode]);
 
   const handleOpenCollection = useCallback(
     (nextTimelineId: string, href: string) => {
@@ -348,12 +376,14 @@ export function SmoothScrollList({
       let newClip: TimelineClip;
 
       if (type === "collection") {
+        const childId = `timeline-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+        createCollectionTimelineDocument(childId, "New Collection");
         newClip = {
           id: uniqueId,
           index: insertIndex,
           kind: "collection",
           title: "New Collection",
-          childTimelineId: `timeline-${Date.now()}`,
+          childTimelineId: childId,
           itemCount: 0,
           duration: 3,
           sourceDuration: 3,
@@ -406,7 +436,98 @@ export function SmoothScrollList({
     [clipState],
   );
 
+  const handleDropClipIntoCollection = useCallback(
+    (clip: TimelineClip, targetCollectionTimelineId: string, sourceTimelineId: string) => {
+      addClipToCollection(targetCollectionTimelineId, clip);
+
+      // Notify source timeline to remove it
+      window.dispatchEvent(
+        new CustomEvent("gstudio-clip-remove", {
+          detail: { clipId: clip.id, timelineId: sourceTimelineId },
+        })
+      );
+    },
+    []
+  );
+
+  const handleDropSidebarClipIntoCollection = useCallback(
+    (type: "collection" | "image" | "video", targetCollectionTimelineId: string) => {
+      const uniqueId = `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      let newClip: any = {
+        id: uniqueId,
+        kind: type,
+        aspect: 16 / 9,
+        trackIndex: 0,
+        startTime: 0,
+        duration: type === "collection" ? 3 : type === "image" ? 4 : 5,
+        sourceDuration: type === "collection" ? 3 : type === "image" ? 4 : 12,
+        trimIn: 0,
+        trimOut: type === "collection" ? 0 : type === "image" ? 0 : 7,
+      };
+
+      if (type === "collection") {
+        const childId = `timeline-${Date.now()}`;
+        createCollectionTimelineDocument(childId, "Nested Collection");
+        newClip = {
+          ...newClip,
+          title: "Nested Collection",
+          alt: "Nested Collection",
+          childTimelineId: childId,
+          itemCount: 0,
+          previewItems: [],
+        };
+      } else if (type === "image") {
+        newClip.title = "New Image";
+        newClip.alt = "New Image";
+        newClip.src = `https://picsum.photos/seed/${uniqueId}/360/200`;
+      } else {
+        newClip.title = "New Video";
+        newClip.alt = "New Video";
+        newClip.src = VIDEO_SOURCES[0];
+      }
+
+      addClipToCollection(targetCollectionTimelineId, newClip);
+    },
+    []
+  );
+
   useEffect(() => {
+    const thisTimelineId = timelineId || "";
+    if (thisTimelineId) {
+      const doc = getTimelineDocument(thisTimelineId);
+      if (doc) {
+        doc.clips = clipState.clips;
+      }
+    }
+  }, [clipState.clips, timelineId]);
+
+  useEffect(() => {
+    const handleTimelineUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<{ timelineId: string }>;
+      if (customEvent.detail.timelineId === timelineId) {
+        const doc = getTimelineDocument(timelineId);
+        if (doc) {
+          clipState.applyClipsNow(doc.clips);
+        }
+      }
+    };
+
+    const handleClipRemove = (e: Event) => {
+      const customEvent = e as CustomEvent<{ clipId: string; timelineId: string }>;
+      const thisTimelineId = timelineId || "";
+      if (customEvent.detail.timelineId === thisTimelineId) {
+        const doc = getTimelineDocument(thisTimelineId);
+        if (doc) {
+          const nextClips = doc.clips.filter((c) => c.id !== customEvent.detail.clipId);
+          const packed = reindexAndPackClips(nextClips);
+          
+          doc.clips = packed;
+          clipState.applyClipsNow(packed);
+          syncParentCollections(thisTimelineId, packed);
+        }
+      }
+    };
+
     const handleClipMoved = (e: Event) => {
       const customEvent = e as CustomEvent<{
         clipId: string;
@@ -417,14 +538,24 @@ export function SmoothScrollList({
       const thisTimelineId = timelineId || "";
 
       if (sourceTimelineId === thisTimelineId && targetTimelineId !== thisTimelineId) {
-        const nextClips = clipState.clips.filter((c) => c.id !== clipId);
-        const packed = reindexAndPackClips(nextClips);
-        clipState.applyClipsNow(packed);
+        const doc = getTimelineDocument(thisTimelineId);
+        if (doc) {
+          const nextClips = doc.clips.filter((c) => c.id !== clipId);
+          const packed = reindexAndPackClips(nextClips);
+          
+          doc.clips = packed;
+          clipState.applyClipsNow(packed);
+          syncParentCollections(thisTimelineId, packed);
+        }
       }
     };
 
+    window.addEventListener("gstudio-timeline-update", handleTimelineUpdate);
+    window.addEventListener("gstudio-clip-remove", handleClipRemove);
     window.addEventListener("timeline-clip-moved", handleClipMoved);
     return () => {
+      window.removeEventListener("gstudio-timeline-update", handleTimelineUpdate);
+      window.removeEventListener("gstudio-clip-remove", handleClipRemove);
       window.removeEventListener("timeline-clip-moved", handleClipMoved);
     };
   }, [clipState, timelineId]);
@@ -496,121 +627,155 @@ export function SmoothScrollList({
   }, []);
 
   return (
-    <div
-      {...props}
-      data-testid="timeline-editor"
-      data-timeline-id={timelineId ?? ""}
-      data-timeline-title={timelineTitle ?? ""}
-      data-selected-index={clipState.selectedIndex ?? ""}
-      data-zoom={zoom.safePixelsPerSecond}
-      data-thumbnail-mode={thumbnailMode}
-      data-grid-mode={gridModeEnabled}
-      data-grid-columns={gridMetrics.columnsPerPage}
-      data-grid-rows={gridMetrics.rowsPerPage}
-      data-passive-filmstrips={showPassiveFilmstrips}
-      data-item-count={clipState.clips.length}
-      data-first-overhang={overhang.firstOverhang}
-      data-last-overhang={overhang.lastOverhang}
-      data-reordering={interactions.isReordering}
-      data-reorder-target-index={interactions.reorderPreview?.targetIndex ?? ""}
-      data-timeline-width={layout.timelineWidth}
-      data-viewport-width={scrollState.viewportClientWidth}
-      data-scroll-top={
-        gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop
-      }
-      data-viewport-height={
-        gridModeEnabled
-          ? scrollState.pageViewportHeight
-          : scrollState.viewportClientHeight
-      }
-      data-timeline-height={timelineHeight}
-      data-max-scroll={Math.max(
-        0,
-        layout.timelineWidth - scrollState.viewportClientWidth,
-      )}
-      data-max-scroll-top={Math.max(
-        0,
-        timelineHeight -
-          (gridModeEnabled
+    <>
+      <div
+        {...props}
+        data-testid="timeline-editor"
+        data-timeline-id={timelineId ?? ""}
+        data-timeline-title={timelineTitle ?? ""}
+        data-selected-index={clipState.selectedIndex ?? ""}
+        data-zoom={zoom.safePixelsPerSecond}
+        data-thumbnail-mode={thumbnailMode}
+        data-grid-mode={gridModeEnabled}
+        data-grid-columns={gridMetrics.columnsPerPage}
+        data-grid-rows={gridMetrics.rowsPerPage}
+        data-passive-filmstrips={showPassiveFilmstrips}
+        data-item-count={clipState.clips.length}
+        data-first-overhang={overhang.firstOverhang}
+        data-last-overhang={overhang.lastOverhang}
+        data-reordering={interactions.isReordering}
+        data-reorder-target-index={interactions.reorderPreview?.targetIndex ?? ""}
+        data-timeline-width={layout.timelineWidth}
+        data-viewport-width={scrollState.viewportClientWidth}
+        data-scroll-top={
+          gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop
+        }
+        data-viewport-height={
+          gridModeEnabled
             ? scrollState.pageViewportHeight
-            : scrollState.viewportClientHeight),
-      )}
-      className={cn(
-        "box-border grid w-full max-w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4 font-sans shadow-2xl",
-        className,
-      )}
-      style={{
-        width: "100%",
-        maxWidth: "min(100%, calc(100vw - 2rem))",
-        minWidth: 0,
-        boxSizing: "border-box",
-        ...style,
-      }}
-    >
-      <TimelineToolbar
-        itemSize={itemSize}
-        manualOverhangScroll={manualOverhangScroll}
-        showPassiveFilmstrips={showPassiveFilmstrips}
-        title={timelineTitle}
-        gridMode={gridModeEnabled}
-        onItemSizeChange={setItemSize}
-        onGridModeChange={setGridMode}
-        onManualOverhangScrollChange={setManualOverhangScroll}
-        onPassiveFilmstripsChange={setShowPassiveFilmstrips}
-        onThumbnailModeChange={handleThumbnailModeChange}
-        onZoomChange={zoom.handleZoomChange}
-        renderedCount={layout.visibleClips.length}
-        thumbnailMode={thumbnailMode}
-        totalCount={clipState.clips.length}
-        zoomLevel={zoom.zoomLevel}
-        timelineId={timelineId}
-      />
-
-      <div className="relative w-full max-w-full min-w-0">
-        <TimelineViewport
-          closingOverhangOffset={overhang.closingOverhangOffset}
-          firstOverhang={overhang.firstOverhang}
-          handleClipDurationLoad={
-            syncMediaDuration ? handleClipDurationLoad : undefined
-          }
-          handleScroll={scrollState.handleScroll}
-          hasClips={clipState.clips.length > 0}
-          interactions={interactions}
-          isClosingOverhang={overhang.isClosingOverhang}
-          isResizingFirstClipLeft={overhang.isResizingFirstClipLeft}
-          isZooming={zoom.isZooming}
-          itemHeight={itemHeight}
+            : scrollState.viewportClientHeight
+        }
+        data-timeline-height={timelineHeight}
+        data-max-scroll={Math.max(
+          0,
+          layout.timelineWidth - scrollState.viewportClientWidth,
+        )}
+        data-max-scroll-top={Math.max(
+          0,
+          timelineHeight -
+            (gridModeEnabled
+              ? scrollState.pageViewportHeight
+              : scrollState.viewportClientHeight),
+        )}
+        className={cn(
+          "box-border grid w-full max-w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4 font-sans shadow-2xl",
+          className,
+        )}
+        style={{
+          width: "100%",
+          maxWidth: "min(100%, calc(100vw - 2rem))",
+          minWidth: 0,
+          boxSizing: "border-box",
+          ...style,
+        }}
+      >
+        <TimelineToolbar
+          itemSize={itemSize}
           manualOverhangScroll={manualOverhangScroll}
-          getCollectionHref={getCollectionHref}
-          onOpenCollection={handleOpenCollection}
-          parentRef={parentRef}
-          pixelsPerSecond={zoom.safePixelsPerSecond}
-          prevFirstOverhang={overhang.prevFirstOverhangRef.current}
-          resolvedViewportWidth={resolvedViewportWidth}
-          scrubPreview={clipState.scrubPreview}
-          scrollLeft={scrollState.scrollLeft}
-          scrollTop={
-            gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop
-          }
-          selectedIndex={clipState.selectedIndex}
-          selectedVideoClip={selectedVideoClip}
           showPassiveFilmstrips={showPassiveFilmstrips}
-          gridMetrics={gridMetrics}
+          title={timelineTitle}
+          gridMode={gridModeEnabled}
+          onItemSizeChange={setItemSize}
+          onGridModeChange={setGridMode}
+          onManualOverhangScrollChange={setManualOverhangScroll}
+          onPassiveFilmstripsChange={setShowPassiveFilmstrips}
+          onThumbnailModeChange={handleThumbnailModeChange}
+          onZoomChange={zoom.handleZoomChange}
+          renderedCount={layout.visibleClips.length}
           thumbnailMode={thumbnailMode}
-          thumbnailWidth={effectiveThumbnailWidth}
-          timelineHeight={timelineHeight}
-          timelineWidth={layout.timelineWidth}
-          visibleClips={layout.visibleClips}
-          onDropFiles={handleDropFiles}
-          onDropClip={handleDropClip}
-          onDropSidebarClip={handleDropSidebarClip}
+          totalCount={clipState.clips.length}
+          zoomLevel={zoom.zoomLevel}
           timelineId={timelineId}
+          hierarchyMode={hierarchyMode}
+          onHierarchyModeChange={setHierarchyMode}
+          hasChildCollections={childCollections.length > 0}
+          childCollectionsExpanded={childCollectionsExpanded}
+          onToggleChildCollections={() => setChildCollectionsExpanded(!childCollectionsExpanded)}
         />
 
-        {overhang.hasOffscreenOverhang && (
-          <TimelineOverhangHint onClick={overhang.scrollToOverhang} />
-        )}
+        <div className="relative w-full max-w-full min-w-0">
+          <TimelineViewport
+            closingOverhangOffset={overhang.closingOverhangOffset}
+            firstOverhang={overhang.firstOverhang}
+            handleClipDurationLoad={
+              syncMediaDuration ? handleClipDurationLoad : undefined
+            }
+            handleScroll={scrollState.handleScroll}
+            hasClips={clipState.clips.length > 0}
+            interactions={interactions}
+            isClosingOverhang={overhang.isClosingOverhang}
+            isResizingFirstClipLeft={overhang.isResizingFirstClipLeft}
+            isZooming={zoom.isZooming}
+            itemHeight={itemHeight}
+            manualOverhangScroll={manualOverhangScroll}
+            getCollectionHref={getCollectionHref}
+            onOpenCollection={handleOpenCollection}
+            parentRef={parentRef}
+            pixelsPerSecond={zoom.safePixelsPerSecond}
+            prevFirstOverhang={overhang.prevFirstOverhangRef.current}
+            resolvedViewportWidth={resolvedViewportWidth}
+            scrubPreview={clipState.scrubPreview}
+            scrollLeft={scrollState.scrollLeft}
+            scrollTop={
+              gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop
+            }
+            selectedIndex={clipState.selectedIndex}
+            selectedVideoClip={selectedVideoClip}
+            showPassiveFilmstrips={showPassiveFilmstrips}
+            gridMetrics={gridMetrics}
+            thumbnailMode={thumbnailMode}
+            thumbnailWidth={effectiveThumbnailWidth}
+            timelineHeight={timelineHeight}
+            timelineWidth={layout.timelineWidth}
+            visibleClips={layout.visibleClips}
+            onDropFiles={handleDropFiles}
+            onDropClip={handleDropClip}
+            onDropSidebarClip={handleDropSidebarClip}
+            onDropClipIntoCollection={handleDropClipIntoCollection}
+            onDropSidebarClipIntoCollection={handleDropSidebarClipIntoCollection}
+            timelineId={timelineId}
+          />
+
+          {overhang.hasOffscreenOverhang && (
+            <TimelineOverhangHint onClick={overhang.scrollToOverhang} />
+          )}
+        </div>
       </div>
-    </div>
+
+      {childCollections.length > 0 && childCollectionsExpanded && (
+        <div className="flex flex-col gap-5 pl-20 border-l border-zinc-800/80 mt-0 w-full max-w-full min-w-0">
+          {childCollections.map((col) => {
+            const doc = getTimelineDocument(col.childTimelineId);
+            return (
+              <SmoothScrollList
+                key={`hierarchy-${col.childTimelineId}`}
+                timelineId={col.childTimelineId}
+                timelineTitle={col.title}
+                initialClips={doc ? doc.clips : []}
+                initialViewState={{
+                  thumbnailMode: true,
+                  itemSize: "sm",
+                  gridMode: false,
+                  showPassiveFilmstrips: showPassiveFilmstrips,
+                }}
+                isChildTimeline={true}
+                syncMediaDuration={syncMediaDuration}
+                hierarchyMode={hierarchyMode}
+              />
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }

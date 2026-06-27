@@ -9,6 +9,10 @@ import type {
   TimelineDocument,
 } from "@/components/timeline/types";
 
+function clamp(val: number, min: number, max: number) {
+  return Math.min(Math.max(val, min), max);
+}
+
 type TimelinePageDocument = {
   id: string;
   title: string;
@@ -246,6 +250,18 @@ const timelineDocuments: Record<string, TimelineDocument> = {
     description: "A larger server-provided timeline for grid virtualization.",
     clips: archiveClips,
   },
+  storyboard: {
+    id: "storyboard",
+    title: "Storyboard Workspace",
+    description: "Your main storyboard preview timeline.",
+    clips: rootClips.map((c) => ({ ...c })),
+  },
+  workbench: {
+    id: "workbench",
+    title: "Workbench Workspace",
+    description: "Your workbench assembly timeline.",
+    clips: sceneAClips.map((c) => ({ ...c })),
+  },
 };
 
 const timelinePages: Record<string, TimelinePageDocument> = {
@@ -265,6 +281,155 @@ const timelinePages: Record<string, TimelinePageDocument> = {
 
 export function getTimelineDocument(id: string) {
   return timelineDocuments[id] ?? null;
+}
+
+export function getTimelinePath(targetId: string): { id: string; title: string }[] {
+  const path: { id: string; title: string }[] = [];
+  
+  let currentId = targetId;
+  while (currentId && currentId !== "root") {
+    let parentId: string | null = null;
+    let parentTitle = "";
+    
+    for (const doc of Object.values(timelineDocuments)) {
+      const hasChild = doc.clips.some(
+        (clip) => clip.kind === "collection" && clip.childTimelineId === currentId
+      );
+      if (hasChild) {
+        parentId = doc.id;
+        parentTitle = doc.title;
+        break;
+      }
+    }
+    
+    if (parentId) {
+      path.unshift({ id: parentId, title: parentTitle });
+      currentId = parentId;
+    } else {
+      break;
+    }
+  }
+  
+  return path;
+}
+
+export function syncParentCollections(collectionTimelineId: string, childClips: any[]) {
+  let totalDuration = 3;
+  if (childClips.length > 0) {
+    const lastClip = childClips[childClips.length - 1];
+    totalDuration = lastClip.startTime + lastClip.duration + TIMELINE_LEADING_PADDING_SECONDS;
+  }
+
+  for (const parentDoc of Object.values(timelineDocuments)) {
+    let updated = false;
+    parentDoc.clips = parentDoc.clips.map((c) => {
+      if (c.kind === "collection" && c.childTimelineId === collectionTimelineId) {
+        updated = true;
+        return {
+          ...c,
+          itemCount: childClips.length,
+          previewItems: previewItemsFrom(childClips),
+          duration: totalDuration,
+          sourceDuration: totalDuration,
+        };
+      }
+      return c;
+    });
+
+    if (updated) {
+      parentDoc.clips = packClips(parentDoc.clips);
+      
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("gstudio-timeline-update", {
+            detail: { timelineId: parentDoc.id },
+          })
+        );
+      }
+    }
+  }
+}
+
+export function addClipToCollection(collectionTimelineId: string, clip: any) {
+  const doc = timelineDocuments[collectionTimelineId];
+  if (!doc) return null;
+
+  // Create clean copy of the clip with a new unique ID
+  const newClip = {
+    ...clip,
+    id: `${collectionTimelineId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+  };
+
+  // Add and pack
+  const nextClips = [...doc.clips, newClip];
+  doc.clips = packClips(nextClips);
+
+  // Sync parent collections
+  syncParentCollections(collectionTimelineId, doc.clips);
+
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("gstudio-timeline-update", {
+        detail: { timelineId: collectionTimelineId }
+      })
+    );
+  }
+
+  return newClip;
+}
+
+export function createCollectionTimelineDocument(id: string, title: string) {
+  timelineDocuments[id] = {
+    id,
+    title,
+    clips: [],
+  };
+  return timelineDocuments[id];
+}
+
+export function getCollectionFramePreview(collectionTimelineId: string, time: number) {
+  const doc = timelineDocuments[collectionTimelineId];
+  const childClips = doc ? doc.clips : [];
+  
+  if (childClips.length === 0) return null;
+
+  let activeClip: any = null;
+  let minDistance = Infinity;
+  let nearestClip: any = null;
+
+  for (const c of childClips) {
+    const start = c.startTime;
+    const end = c.startTime + c.duration;
+    if (time >= start && time <= end) {
+      activeClip = c;
+      break;
+    }
+    
+    // Find nearest clip to fill any gap smoothly
+    const dist = Math.min(Math.abs(time - start), Math.abs(time - end));
+    if (dist < minDistance) {
+      minDistance = dist;
+      nearestClip = c;
+    }
+  }
+
+  const c = activeClip || nearestClip;
+  if (c) {
+    const start = c.startTime;
+    const relativeOffset = clamp(time - start, 0, c.duration);
+    const previewTime = c.kind === "video" ? (c as any).trimIn + relativeOffset : relativeOffset;
+    return {
+      id: c.id,
+      kind: c.kind,
+      src: (c as any).src,
+      poster: (c as any).poster,
+      alt: c.alt,
+      previewTime,
+      sourceDuration: (c as any).sourceDuration,
+    };
+  }
+  
+  return null;
 }
 
 export function getTimelinePage(id: string) {

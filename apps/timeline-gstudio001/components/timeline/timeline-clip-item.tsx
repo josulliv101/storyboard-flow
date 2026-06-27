@@ -25,6 +25,7 @@ type TimelineClipItemProps = {
   scrubPreviewTime?: number | null;
   isGrowingOpposite?: boolean;
   isReordering?: boolean;
+  isCollectionHovered?: boolean;
   reorderPreview?: ReorderPreview | null;
   onResizeDown: (
     e: React.PointerEvent<HTMLDivElement>,
@@ -57,6 +58,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   scrubPreviewTime = null,
   isGrowingOpposite = false,
   isReordering = false,
+  isCollectionHovered = false,
   reorderPreview = null,
   onResizeDown,
   onResizeMove,
@@ -104,6 +106,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
         "absolute cursor-grab active:cursor-grabbing",
         isReordering && !isLifted && "transition-transform duration-200 ease-out",
         isLifted && "pointer-events-none opacity-0",
+        isCollectionHovered && "scale-[1.03] z-50 transition-transform duration-200",
       )}
       style={{
         top: isLifted ? 0 : `${top}px`,
@@ -117,9 +120,11 @@ export const TimelineClipItem = memo(function TimelineClipItem({
     >
       <div
         className={cn(
-          "relative h-full w-full overflow-hidden rounded-md bg-zinc-800 transition-shadow",
+          "relative h-full w-full overflow-hidden rounded-md bg-zinc-800 transition-all duration-200",
           isLifted
             ? "ring-2 ring-sky-300 shadow-2xl shadow-sky-400/30"
+            : isCollectionHovered
+            ? "ring-2 ring-sky-400 bg-sky-950/20 shadow-lg shadow-sky-400/40"
             : isSelected
             ? "ring-2 ring-amber-400 shadow-lg shadow-amber-400/20"
             : "ring-1 ring-zinc-900",

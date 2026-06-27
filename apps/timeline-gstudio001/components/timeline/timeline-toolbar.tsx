@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 import { ITEM_HEIGHTS, type ItemSize } from "./constants";
-import { GripVertical } from "lucide-react";
+import { GripVertical, ChevronDown, ChevronRight } from "lucide-react";
 
 type TimelineToolbarProps = {
   gridMode: boolean;
@@ -20,6 +20,11 @@ type TimelineToolbarProps = {
   totalCount: number;
   zoomLevel: number;
   timelineId?: string;
+  hierarchyMode?: boolean;
+  onHierarchyModeChange?: (enabled: boolean) => void;
+  hasChildCollections?: boolean;
+  childCollectionsExpanded?: boolean;
+  onToggleChildCollections?: () => void;
 };
 
 function ToggleSwitch({
@@ -88,6 +93,11 @@ export function TimelineToolbar({
   totalCount,
   zoomLevel,
   timelineId,
+  hierarchyMode = false,
+  onHierarchyModeChange,
+  hasChildCollections = false,
+  childCollectionsExpanded = false,
+  onToggleChildCollections,
 }: TimelineToolbarProps) {
   const pinScrollTitle = manualOverhangScroll
     ? "Pin scroll is ON — selecting the first video clip keeps the viewport in place. Scroll left manually to reveal the filmstrip overhang."
@@ -96,6 +106,20 @@ export function TimelineToolbar({
   return (
     <div className="flex w-full min-w-0 items-center justify-between gap-3">
       <div className="flex items-center gap-2 min-w-0">
+        {hierarchyMode && hasChildCollections && onToggleChildCollections && (
+          <button
+            type="button"
+            onClick={onToggleChildCollections}
+            className="p-1 hover:bg-zinc-800 rounded transition-colors text-zinc-400 hover:text-zinc-200 shrink-0 flex items-center justify-center"
+            title={childCollectionsExpanded ? "Collapse nested collections" : "Expand nested collections"}
+          >
+            {childCollectionsExpanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
+        )}
         {timelineId && (
           <div
             draggable={false}
@@ -177,6 +201,14 @@ export function TimelineToolbar({
             label="Grid Mode"
             checked={gridMode}
             onChange={onGridModeChange}
+          />
+        )}
+        {thumbnailMode && onHierarchyModeChange && (
+          <ToggleSwitch
+            id="hierarchy-mode"
+            label="Hierarchy Mode"
+            checked={hierarchyMode}
+            onChange={onHierarchyModeChange}
           />
         )}
         <ToggleSwitch

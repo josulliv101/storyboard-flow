@@ -19,6 +19,7 @@ import type { TimelineClip, TrimScrubPreview, VideoTimelineClip } from "./types"
 import { PassiveVideoFilmStrip, VideoSourceFilmStrip } from "./video-source-filmstrip";
 import { VideoTile } from "./video-tile";
 import { formatSeconds } from "./utils";
+import { getCollectionFramePreview } from "@/lib/timeline-documents";
 
 type TimelineInteractions = ReturnType<typeof useTimelineInteractions>;
 
@@ -55,7 +56,7 @@ type TimelineViewportProps = {
   scrollLeft: number;
   scrollTop: number;
   selectedIndex: number | null;
-  selectedVideoClip: VideoTimelineClip | null;
+  selectedVideoClip: TimelineClip | null;
   showPassiveFilmstrips: boolean;
   gridMetrics: TimelineGridMetrics;
   getCollectionHref?: (timelineId: string) => string;
@@ -68,6 +69,8 @@ type TimelineViewportProps = {
   onDropFiles?: (insertIndex: number, files: File[]) => void;
   onDropClip?: (insertIndex: number, clip: TimelineClip, sourceTimelineId: string) => void;
   onDropSidebarClip?: (insertIndex: number, type: "collection" | "image" | "video") => void;
+  onDropClipIntoCollection?: (clip: TimelineClip, targetCollectionTimelineId: string, sourceTimelineId: string) => void;
+  onDropSidebarClipIntoCollection?: (type: "collection" | "image" | "video", targetCollectionTimelineId: string) => void;
   timelineId?: string;
 };
 
@@ -104,6 +107,8 @@ export function TimelineViewport({
   onDropFiles,
   onDropClip,
   onDropSidebarClip,
+  onDropClipIntoCollection,
+  onDropSidebarClipIntoCollection,
   timelineId,
 }: TimelineViewportProps) {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -112,6 +117,7 @@ export function TimelineViewport({
     useState<PassiveScrubPreview | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounterRef = useRef(0);
+  const [activeCollectionHoverId, setActiveCollectionHoverId] = useState<string | null>(null);
   const [activeDropIndex, setActiveDropIndex] = useState<number | null>(null);
   const [isAnyDragActive, setIsAnyDragActive] = useState(false);
 
@@ -150,6 +156,7 @@ export function TimelineViewport({
     if (dragCounterRef.current === 0) {
       setIsDragOver(false);
       setActiveDropIndex(null);
+      setActiveCollectionHoverId(null);
     }
   }, []);
 
@@ -255,9 +262,7 @@ export function TimelineViewport({
       }>;
       const { clip, sourceTimelineId, clientX, clientY, isDropping } = customEvent.detail;
       const thisTimelineId = timelineId || "";
-
-      // Ignore if it's the source timeline
-      if (sourceTimelineId === thisTimelineId) return;
+      const isSameTimeline = sourceTimelineId === thisTimelineId;
 
       const rect = contentRef.current?.getBoundingClientRect();
       const isInside = rect && 
@@ -267,34 +272,74 @@ export function TimelineViewport({
                         clientY <= rect.bottom;
 
       if (isInside) {
-        // Calculate insert index
+        let hoveredCollection: TimelineClip | null = null;
         let insertIndex = visibleClips.length;
+
         if (hasClips && contentRef.current) {
           const dropX = clientX - rect.left;
-          insertIndex = visibleClips.length;
+
+          // Check if hovering middle 60% of another collection clip
           for (let i = 0; i < visibleClips.length; i++) {
             const c = visibleClips[i];
-            const left = getClipLeft(c);
-            const width = getClipWidth(c);
-            const midpoint = left + width / 2;
-            if (dropX < midpoint) {
-              insertIndex = c.index;
-              break;
+            if (c.kind === "collection" && c.id !== clip.id) {
+              const left = getClipLeft(c);
+              const width = getClipWidth(c);
+              const paddingX = width * 0.2;
+              if (dropX >= left + paddingX && dropX <= left + width - paddingX) {
+                hoveredCollection = c;
+                break;
+              }
+            }
+          }
+
+          if (!hoveredCollection) {
+            if (!isSameTimeline) {
+              insertIndex = visibleClips.length;
+              for (let i = 0; i < visibleClips.length; i++) {
+                const c = visibleClips[i];
+                const left = getClipLeft(c);
+                const width = getClipWidth(c);
+                const midpoint = left + width / 2;
+                if (dropX < midpoint) {
+                  insertIndex = c.index;
+                  break;
+                }
+              }
             }
           }
         }
 
         if (isDropping) {
           setActiveDropIndex(null);
-          if (onDropClip) {
-            onDropClip(insertIndex, clip, sourceTimelineId);
-            customEvent.detail.handled = true;
+          setActiveCollectionHoverId(null);
+
+          if (hoveredCollection) {
+            if (hoveredCollection.kind === "collection" && onDropClipIntoCollection) {
+              onDropClipIntoCollection(clip, hoveredCollection.childTimelineId, sourceTimelineId);
+              customEvent.detail.handled = true;
+            }
+          } else {
+            if (!isSameTimeline && onDropClip) {
+              onDropClip(insertIndex, clip, sourceTimelineId);
+              customEvent.detail.handled = true;
+            }
           }
         } else {
-          setActiveDropIndex(insertIndex);
+          if (hoveredCollection) {
+            setActiveCollectionHoverId(hoveredCollection.id);
+            setActiveDropIndex(null);
+          } else {
+            setActiveCollectionHoverId(null);
+            if (!isSameTimeline) {
+              setActiveDropIndex(insertIndex);
+            } else {
+              setActiveDropIndex(null);
+            }
+          }
         }
       } else {
         setActiveDropIndex(null);
+        setActiveCollectionHoverId(null);
       }
     };
 
@@ -302,7 +347,7 @@ export function TimelineViewport({
     return () => {
       window.removeEventListener("gstudio-clip-drag", handleClipDragGlobal);
     };
-  }, [timelineId, getClipLeft, getClipWidth, hasClips, visibleClips, onDropClip]);
+  }, [timelineId, getClipLeft, getClipWidth, hasClips, visibleClips, onDropClip, onDropClipIntoCollection]);
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -313,24 +358,49 @@ export function TimelineViewport({
 
     if (!isFiles && !isClip) return;
 
+    let hoveredCollection: TimelineClip | null = null;
     let insertIndex = 0;
+
     if (hasClips && contentRef.current) {
       const rect = contentRef.current.getBoundingClientRect();
       const dropX = e.clientX - rect.left;
 
-      insertIndex = visibleClips.length;
+      // Check if hovering middle 60% of any collection clip
       for (let i = 0; i < visibleClips.length; i++) {
-        const clip = visibleClips[i];
-        const left = getClipLeft(clip);
-        const width = getClipWidth(clip);
-        const midpoint = left + width / 2;
-        if (dropX < midpoint) {
-          insertIndex = clip.index;
-          break;
+        const c = visibleClips[i];
+        if (c.kind === "collection") {
+          const left = getClipLeft(c);
+          const width = getClipWidth(c);
+          const paddingX = width * 0.2;
+          if (dropX >= left + paddingX && dropX <= left + width - paddingX) {
+            hoveredCollection = c;
+            break;
+          }
+        }
+      }
+
+      if (!hoveredCollection) {
+        insertIndex = visibleClips.length;
+        for (let i = 0; i < visibleClips.length; i++) {
+          const clip = visibleClips[i];
+          const left = getClipLeft(clip);
+          const width = getClipWidth(clip);
+          const midpoint = left + width / 2;
+          if (dropX < midpoint) {
+            insertIndex = clip.index;
+            break;
+          }
         }
       }
     }
-    setActiveDropIndex(insertIndex);
+
+    if (hoveredCollection) {
+      setActiveCollectionHoverId(hoveredCollection.id);
+      setActiveDropIndex(null);
+    } else {
+      setActiveCollectionHoverId(null);
+      setActiveDropIndex(insertIndex);
+    }
   }, [getClipLeft, getClipWidth, hasClips, visibleClips]);
 
   const handleDrop = useCallback(
@@ -343,6 +413,15 @@ export function TimelineViewport({
       // 1. Try parsing sidebar block drop data
       const sidebarType = e.dataTransfer.getData("application/x-gstudio-type") as "collection" | "image" | "video" | "";
       if (sidebarType && (sidebarType === "collection" || sidebarType === "image" || sidebarType === "video")) {
+        if (activeCollectionHoverId) {
+          const targetCol = visibleClips.find(c => c.id === activeCollectionHoverId);
+          if (targetCol && targetCol.kind === "collection" && onDropSidebarClipIntoCollection) {
+            onDropSidebarClipIntoCollection(sidebarType, targetCol.childTimelineId);
+          }
+          setActiveCollectionHoverId(null);
+          return;
+        }
+
         let insertIndex = 0;
         if (hasClips && contentRef.current) {
           const rect = contentRef.current.getBoundingClientRect();
@@ -362,8 +441,9 @@ export function TimelineViewport({
         }
         if (onDropSidebarClip) {
           onDropSidebarClip(insertIndex, sidebarType);
-          return;
         }
+        setActiveCollectionHoverId(null);
+        return;
       }
 
       // 2. Try parsing drag-and-drop clip data (dragging clips between timelines)
@@ -372,6 +452,15 @@ export function TimelineViewport({
         try {
           const data = JSON.parse(rawData);
           if (data && data.clip && data.sourceTimelineId !== undefined) {
+            if (activeCollectionHoverId) {
+              const targetCol = visibleClips.find(c => c.id === activeCollectionHoverId);
+              if (targetCol && targetCol.kind === "collection" && onDropClipIntoCollection) {
+                onDropClipIntoCollection(data.clip, targetCol.childTimelineId, data.sourceTimelineId);
+              }
+              setActiveCollectionHoverId(null);
+              return;
+            }
+
             let insertIndex = 0;
             if (hasClips && contentRef.current) {
               const rect = contentRef.current.getBoundingClientRect();
@@ -392,8 +481,9 @@ export function TimelineViewport({
 
             if (onDropClip) {
               onDropClip(insertIndex, data.clip, data.sourceTimelineId);
-              return;
             }
+            setActiveCollectionHoverId(null);
+            return;
           }
         } catch (err) {
           // not JSON, fallback to files
@@ -401,13 +491,19 @@ export function TimelineViewport({
       }
 
       // 3. Fallback to files drop
-      if (!onDropFiles || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+      if (!onDropFiles || !e.dataTransfer.files || e.dataTransfer.files.length === 0) {
+        setActiveCollectionHoverId(null);
+        return;
+      }
 
       const files = Array.from(e.dataTransfer.files);
       const mediaFiles = files.filter(
         (file) => file.type.startsWith("image/") || file.type.startsWith("video/")
       );
-      if (mediaFiles.length === 0) return;
+      if (mediaFiles.length === 0) {
+        setActiveCollectionHoverId(null);
+        return;
+      }
 
       let insertIndex = 0;
       if (hasClips && contentRef.current) {
@@ -428,8 +524,9 @@ export function TimelineViewport({
       }
 
       onDropFiles(insertIndex, mediaFiles);
+      setActiveCollectionHoverId(null);
     },
-    [getClipLeft, getClipWidth, hasClips, onDropFiles, onDropClip, onDropSidebarClip, visibleClips],
+    [getClipLeft, getClipWidth, hasClips, onDropFiles, onDropClip, onDropSidebarClip, onDropClipIntoCollection, onDropSidebarClipIntoCollection, activeCollectionHoverId, visibleClips],
   );
 
 
@@ -442,8 +539,8 @@ export function TimelineViewport({
       const contentX = clientX - rect.left;
       const contentY = clientY - rect.top;
       const clip = visibleClips.find(
-        (currentClip): currentClip is VideoTimelineClip => {
-        if (currentClip.kind !== "video") return false;
+        (currentClip) => {
+        if (currentClip.kind !== "video" && currentClip.kind !== "collection" && currentClip.kind !== "image") return false;
         const left = getClipLeft(currentClip);
         const top = getClipTop(currentClip);
         const filmstripTop = top - TIMELINE_ITEM_TOP;
@@ -461,10 +558,30 @@ export function TimelineViewport({
       const left = getClipLeft(clip);
       const width = Math.max(1, getClipWidth(clip));
       const progress = Math.min(Math.max((contentX - left) / width, 0), 1);
+      const trimIn = (clip.kind === "collection" || clip.kind === "image") ? 0 : (clip as VideoTimelineClip).trimIn || 0;
+      const time = trimIn + progress * clip.duration;
+
+      let previewClip: any = clip;
+      let previewTime = time;
+
+      if (clip.kind === "collection") {
+        const activePreview = getCollectionFramePreview(clip.childTimelineId, time);
+        if (activePreview) {
+          previewClip = {
+            id: activePreview.id,
+            index: clip.index,
+            kind: activePreview.kind,
+            src: activePreview.src,
+            poster: activePreview.poster,
+            sourceDuration: activePreview.sourceDuration,
+          };
+          previewTime = activePreview.previewTime;
+        }
+      }
 
       return {
-        clip,
-        previewTime: clip.trimIn + progress * clip.duration,
+        clip: previewClip,
+        previewTime,
       };
     },
     [getClipLeft, getClipTop, getClipWidth, itemHeight, visibleClips],
@@ -479,7 +596,7 @@ export function TimelineViewport({
   const handlePassiveFilmStripPointerDown = useCallback(
     (
       event: ReactPointerEvent<HTMLDivElement>,
-      clip: VideoTimelineClip,
+      clip: TimelineClip,
     ) => {
       if (event.pointerType === "mouse" && event.button !== 0) return;
 
@@ -507,10 +624,26 @@ export function TimelineViewport({
 
       const updatePreview = (clientX: number, clientY: number) => {
         const scrubTarget = getPassiveScrubTarget(clientX, clientY);
-        const previewClip = scrubTarget?.clip ?? clip;
-        const previewTime =
+        let previewClip = scrubTarget?.clip ?? clip;
+        const trimIn = clip.kind === "collection" ? 0 : (clip as any).trimIn || 0;
+        let previewTime =
           scrubTarget?.previewTime ??
-          clip.trimIn + clip.duration / 2;
+          trimIn + clip.duration / 2;
+
+        if (scrubTarget === null && clip.kind === "collection") {
+          const activePreview = getCollectionFramePreview(clip.childTimelineId, previewTime);
+          if (activePreview) {
+            previewClip = {
+              id: activePreview.id,
+              index: clip.index,
+              kind: activePreview.kind,
+              src: activePreview.src,
+              poster: activePreview.poster,
+              sourceDuration: activePreview.sourceDuration,
+            };
+            previewTime = activePreview.previewTime;
+          }
+        }
 
         setPassiveScrubPreview({
           anchorClipId: clip.id,
@@ -577,13 +710,27 @@ export function TimelineViewport({
         zIndex: 70,
       }}
     >
-      <VideoTile
-        src={passiveScrubPreview.previewClip.src}
-        poster={passiveScrubPreview.previewClip.poster}
-        alt=""
-        previewTime={passiveScrubPreview.previewTime}
-        sourceDuration={passiveScrubPreview.previewClip.sourceDuration}
-      />
+      {passiveScrubPreview.previewClip.kind === "video" ? (
+        <VideoTile
+          src={passiveScrubPreview.previewClip.src}
+          poster={passiveScrubPreview.previewClip.poster}
+          alt=""
+          previewTime={passiveScrubPreview.previewTime}
+          sourceDuration={passiveScrubPreview.previewClip.sourceDuration}
+        />
+      ) : passiveScrubPreview.previewClip.src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={passiveScrubPreview.previewClip.src}
+          alt=""
+          className="h-full w-full object-cover"
+          draggable={false}
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-zinc-900/60 text-xs text-zinc-500 font-medium">
+          Empty Collection
+        </div>
+      )}
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-black/75 px-2 py-1 font-mono text-[10px] text-zinc-100">
         <span>clip {passiveScrubPreview.previewClip.index}</span>
         <span>{formatSeconds(passiveScrubPreview.previewTime)}</span>
@@ -668,6 +815,7 @@ export function TimelineViewport({
                     : null
                 }
                 isReordering={interactions.isReordering}
+                isCollectionHovered={activeCollectionHoverId === clip.id}
                 reorderPreview={
                   interactions.reorderPreview?.activeClipId === clip.id
                     ? interactions.reorderPreview
@@ -684,11 +832,10 @@ export function TimelineViewport({
               />
             ))}
 
-            {showPassiveFilmstrips &&
-              !interactions.isReordering &&
+            {!interactions.isReordering &&
               selectedIndex === null &&
               visibleClips.map((clip) =>
-                clip.kind === "video" ? (
+                clip.kind === "video" || clip.kind === "collection" || clip.kind === "image" ? (
                   <PassiveVideoFilmStrip
                     key={`${clip.id}-passive-filmstrip`}
                     clip={clip}
@@ -698,6 +845,7 @@ export function TimelineViewport({
                     thumbnailWidth={thumbnailWidth}
                     thumbnailGap={THUMBNAIL_GAP}
                     onPointerDown={handlePassiveFilmStripPointerDown}
+                    showFilmstrip={showPassiveFilmstrips}
                   />
                 ) : null,
               )}
