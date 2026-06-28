@@ -11,6 +11,7 @@ import {
   toMediaUrl,
   uploadMedia,
 } from "@/lib/firebase-media-store";
+import { requireAuthUser } from "@/lib/firebase-auth-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,6 +39,9 @@ function getUploadPathname(filename: string, contentType: string) {
 
 export async function POST(request: Request) {
   try {
+    const { response } = await requireAuthUser();
+    if (response) return response;
+
     const formData = await request.formData();
     const file = formData.get("file") as Blob | null;
     const filename = formData.get("filename") as string | null;

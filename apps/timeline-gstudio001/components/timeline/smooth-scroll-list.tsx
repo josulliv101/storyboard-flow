@@ -61,6 +61,7 @@ export interface SmoothScrollListProps
   syncMediaDuration?: boolean;
   isChildTimeline?: boolean;
   hierarchyMode?: boolean;
+  disablePersistence?: boolean;
 }
 
 export function SmoothScrollList({
@@ -77,6 +78,7 @@ export function SmoothScrollList({
   syncMediaDuration = true,
   isChildTimeline = false,
   hierarchyMode: propHierarchyMode,
+  disablePersistence = false,
   className,
   style,
   ...props
@@ -133,10 +135,14 @@ export function SmoothScrollList({
   const [manualOverhangScroll, setManualOverhangScroll] = useState(
     initialViewState?.manualOverhangScroll ?? true,
   );
+  const [showPlayBarArea, setShowPlayBarArea] = useState(
+    initialViewState?.showPlayBarArea ?? true,
+  );
   const [showPassiveFilmstrips, setShowPassiveFilmstrips] = useState(
     initialViewState?.showPassiveFilmstrips ?? false,
   );
 
+  const itemTop = showPlayBarArea ? TIMELINE_ITEM_TOP : 0;
   const itemHeight = ITEM_HEIGHTS[itemSize];
   const thumbnailWidth = (itemHeight * 16) / 9;
 
@@ -152,12 +158,14 @@ export function SmoothScrollList({
         enabled: gridModeEnabled,
         fallbackItemWidth: thumbnailWidth,
         itemHeight,
+        itemTop,
         itemCount: safeItemCount,
         viewportWidth: scrollState.viewportClientWidth,
       }),
     [
       gridModeEnabled,
       itemHeight,
+      itemTop,
       safeItemCount,
       scrollState.viewportClientWidth,
       thumbnailWidth,
@@ -167,8 +175,8 @@ export function SmoothScrollList({
     ? gridMetrics.itemWidth
     : thumbnailWidth;
   const timelineHeight = gridModeEnabled
-    ? getTimelineGridContentHeight(gridMetrics)
-    : itemHeight + TIMELINE_ITEM_TOP;
+    ? getTimelineGridContentHeight(gridMetrics, itemTop)
+    : itemHeight + itemTop;
 
   const clipState = useTimelineClipState({
     initialClips,
@@ -197,6 +205,7 @@ export function SmoothScrollList({
   );
 
   useEffect(() => {
+    if (disablePersistence) return;
     if (!timelineId) return;
 
     let isCurrent = true;
@@ -250,7 +259,7 @@ export function SmoothScrollList({
     return () => {
       isCurrent = false;
     };
-  }, [clipState.applyClipsNow, timelineId]);
+  }, [clipState.applyClipsNow, disablePersistence, timelineId]);
 
   const selectedClip = useMemo(() => {
     if (clipState.selectedIndex === null) return null;
@@ -310,6 +319,7 @@ export function SmoothScrollList({
         gridMode,
         itemSize,
         manualOverhangScroll,
+        showPlayBarArea,
         showPassiveFilmstrips,
         zoom: zoom.zoomLevel,
       });
@@ -319,6 +329,7 @@ export function SmoothScrollList({
       gridMode,
       itemSize,
       manualOverhangScroll,
+      showPlayBarArea,
       showPassiveFilmstrips,
       thumbnailMode,
       zoom.zoomLevel,
@@ -510,9 +521,13 @@ export function SmoothScrollList({
       } else {
         // Dragged from another timeline to this timeline
         // 1. Insert clip locally
+        const isAssetLibrarySource = sourceTimelineId === "asset-library";
         const nextClips = [...clipState.clips];
         const newClip = {
           ...clip,
+          id: isAssetLibrarySource
+            ? `${clip.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+            : clip.id,
           index: insertIndex,
         };
 
@@ -535,16 +550,18 @@ export function SmoothScrollList({
 
         applyLocalClipsNow(packed);
 
-        // 2. Notify the source timeline to remove it
-        window.dispatchEvent(
-          new CustomEvent("timeline-clip-moved", {
-            detail: {
-              clipId: clip.id,
-              sourceTimelineId,
-              targetTimelineId: thisTimelineId,
-            },
-          })
-        );
+        // 2. Notify the source timeline to remove it. Assets are copied, not moved.
+        if (!isAssetLibrarySource) {
+          window.dispatchEvent(
+            new CustomEvent("timeline-clip-moved", {
+              detail: {
+                clipId: clip.id,
+                sourceTimelineId,
+                targetTimelineId: thisTimelineId,
+              },
+            })
+          );
+        }
       }
     },
     [applyLocalClipsNow, clipState, timelineId],
@@ -631,14 +648,25 @@ export function SmoothScrollList({
 
   const handleDropClipIntoCollection = useCallback(
     (clip: TimelineClip, targetCollectionTimelineId: string, sourceTimelineId: string) => {
-      addClipToCollection(targetCollectionTimelineId, clip);
-
-      // Notify source timeline to remove it
-      window.dispatchEvent(
-        new CustomEvent("gstudio-clip-remove", {
-          detail: { clipId: clip.id, timelineId: sourceTimelineId },
-        })
+      const isAssetLibrarySource = sourceTimelineId === "asset-library";
+      addClipToCollection(
+        targetCollectionTimelineId,
+        isAssetLibrarySource
+          ? {
+              ...clip,
+              id: `${clip.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            }
+          : clip,
       );
+
+      // Notify source timeline to remove it. Assets are copied, not moved.
+      if (!isAssetLibrarySource) {
+        window.dispatchEvent(
+          new CustomEvent("gstudio-clip-remove", {
+            detail: { clipId: clip.id, timelineId: sourceTimelineId },
+          })
+        );
+      }
     },
     []
   );
@@ -685,6 +713,7 @@ export function SmoothScrollList({
   );
 
   useEffect(() => {
+    if (disablePersistence) return;
     const thisTimelineId = timelineId || "";
     if (thisTimelineId) {
       const doc = getTimelineDocument(thisTimelineId);
@@ -732,7 +761,7 @@ export function SmoothScrollList({
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [clipState.clips, persistedTimelineTitle, timelineId, timelineTitle]);
+  }, [clipState.clips, disablePersistence, persistedTimelineTitle, timelineId, timelineTitle]);
 
   useEffect(() => {
     const handleTimelineUpdate = (e: Event) => {
@@ -816,6 +845,7 @@ export function SmoothScrollList({
     thumbnailMode,
     thumbnailWidth: effectiveThumbnailWidth,
     gridMetrics,
+    itemTop,
     setScrollLeft: scrollState.setScrollLeft,
     setSelectedIndex: clipState.setSelectedIndex,
     setScrubPreview: clipState.setScrubPreview,
@@ -837,7 +867,7 @@ export function SmoothScrollList({
     pixelsPerSecond: zoom.safePixelsPerSecond,
     prevScrollLeftRef: scrollState.prevScrollLeftRef,
     scrollLeft: scrollState.scrollLeft,
-    selectedVideoClip,
+    selectedVideoClip: showPlayBarArea ? selectedVideoClip : null,
     setScrollLeft: scrollState.setScrollLeft,
     thumbnailMode,
     thumbnailWidth: effectiveThumbnailWidth,
@@ -853,6 +883,7 @@ export function SmoothScrollList({
     scrollLeft: scrollState.scrollLeft,
     scrollTop: gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop,
     gridMetrics,
+    itemTop,
     thumbnailMode,
     thumbnailWidth: effectiveThumbnailWidth,
     viewportClientHeight: gridModeEnabled
@@ -886,6 +917,7 @@ export function SmoothScrollList({
         data-grid-mode={gridModeEnabled}
         data-grid-columns={gridMetrics.columnsPerPage}
         data-grid-rows={gridMetrics.rowsPerPage}
+        data-playbar-area={showPlayBarArea}
         data-passive-filmstrips={showPassiveFilmstrips}
         data-item-count={clipState.clips.length}
         data-first-overhang={overhang.firstOverhang}
@@ -929,18 +961,18 @@ export function SmoothScrollList({
         <TimelineToolbar
           itemSize={itemSize}
           manualOverhangScroll={manualOverhangScroll}
+          showPlayBarArea={showPlayBarArea}
           showPassiveFilmstrips={showPassiveFilmstrips}
           title={persistedTimelineTitle}
           gridMode={gridModeEnabled}
           onItemSizeChange={setItemSize}
           onGridModeChange={setGridMode}
           onManualOverhangScrollChange={setManualOverhangScroll}
+          onPlayBarAreaChange={setShowPlayBarArea}
           onPassiveFilmstripsChange={setShowPassiveFilmstrips}
           onThumbnailModeChange={handleThumbnailModeChange}
           onZoomChange={zoom.handleZoomChange}
-          renderedCount={layout.visibleClips.length}
           thumbnailMode={thumbnailMode}
-          totalCount={clipState.clips.length}
           zoomLevel={zoom.zoomLevel}
           timelineId={timelineId}
           hierarchyMode={hierarchyMode}
@@ -994,6 +1026,7 @@ export function SmoothScrollList({
             isResizingFirstClipLeft={overhang.isResizingFirstClipLeft}
             isZooming={zoom.isZooming}
             itemHeight={itemHeight}
+            itemTop={itemTop}
             manualOverhangScroll={manualOverhangScroll}
             getCollectionHref={getCollectionHref}
             onOpenCollection={handleOpenCollection}
@@ -1007,7 +1040,8 @@ export function SmoothScrollList({
               gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop
             }
             selectedIndex={clipState.selectedIndex}
-            selectedVideoClip={selectedVideoClip}
+            selectedVideoClip={showPlayBarArea ? selectedVideoClip : null}
+            showPlayBarArea={showPlayBarArea}
             showPassiveFilmstrips={showPassiveFilmstrips}
             gridMetrics={gridMetrics}
             thumbnailMode={thumbnailMode}
@@ -1043,6 +1077,7 @@ export function SmoothScrollList({
                   thumbnailMode: true,
                   itemSize: "sm",
                   gridMode: false,
+                  showPlayBarArea: showPlayBarArea,
                   showPassiveFilmstrips: showPassiveFilmstrips,
                 }}
                 isChildTimeline={true}

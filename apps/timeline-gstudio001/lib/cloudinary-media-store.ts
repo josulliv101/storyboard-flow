@@ -13,6 +13,19 @@ export type CloudinaryMediaUpload = {
   size?: number;
 };
 
+export type CloudinaryAsset = {
+  id: string;
+  pathname: string;
+  url: string;
+  thumbnailUrl: string;
+  resourceType: "image" | "video";
+  format?: string;
+  width?: number;
+  height?: number;
+  size?: number;
+  createdAt?: string;
+};
+
 type CloudinaryConfig = {
   cloudName: string;
   apiKey: string;
@@ -26,6 +39,23 @@ type CloudinaryUploadResponse = {
   public_id: string;
   resource_type: "image" | "video" | "raw";
   secure_url: string;
+};
+
+type CloudinaryResource = {
+  bytes?: number;
+  created_at?: string;
+  format?: string;
+  height?: number;
+  public_id: string;
+  resource_type: "image" | "video" | "raw";
+  secure_url: string;
+  width?: number;
+};
+
+type CloudinaryListResponse = {
+  next_cursor?: string;
+  resources?: CloudinaryResource[];
+  error?: { message?: string };
 };
 
 export function hasCloudinaryConfig() {
@@ -81,6 +111,90 @@ function sanitizePublicId(filename: string) {
 
 function cloudinaryVideoThumbnailUrl(config: CloudinaryConfig, publicId: string) {
   return `https://res.cloudinary.com/${config.cloudName}/video/upload/so_0.35,w_640,h_360,c_fill,q_auto,f_jpg/${publicId}.jpg`;
+}
+
+function cloudinaryImageThumbnailUrl(config: CloudinaryConfig, publicId: string) {
+  return `https://res.cloudinary.com/${config.cloudName}/image/upload/w_640,h_360,c_fill,q_auto,f_auto/${publicId}`;
+}
+
+function toAsset(config: CloudinaryConfig, resource: CloudinaryResource): CloudinaryAsset | null {
+  if (resource.resource_type !== "image" && resource.resource_type !== "video") return null;
+
+  return {
+    id: resource.public_id,
+    pathname: resource.public_id,
+    url: resource.secure_url,
+    thumbnailUrl:
+      resource.resource_type === "video"
+        ? cloudinaryVideoThumbnailUrl(config, resource.public_id)
+        : cloudinaryImageThumbnailUrl(config, resource.public_id),
+    resourceType: resource.resource_type,
+    format: resource.format,
+    width: resource.width,
+    height: resource.height,
+    size: resource.bytes,
+    createdAt: resource.created_at,
+  };
+}
+
+async function listCloudinaryResources(
+  config: CloudinaryConfig,
+  resourceType: "image" | "video",
+) {
+  const assets: CloudinaryAsset[] = [];
+  let nextCursor: string | undefined;
+  let pageCount = 0;
+
+  do {
+    const params = new URLSearchParams({
+      prefix: `${config.folder}/`,
+      max_results: "100",
+      direction: "desc",
+    });
+
+    if (nextCursor) {
+      params.set("next_cursor", nextCursor);
+    }
+
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/${config.cloudName}/resources/${resourceType}/upload?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString("base64")}`,
+        },
+        cache: "no-store",
+      },
+    );
+    const body = (await response.json().catch(() => null)) as CloudinaryListResponse | null;
+
+    if (!response.ok || !body) {
+      throw new Error(body?.error?.message || `Cloudinary asset listing failed with ${response.status}.`);
+    }
+
+    assets.push(
+      ...(body.resources || [])
+        .map((resource) => toAsset(config, resource))
+        .filter((asset): asset is CloudinaryAsset => !!asset),
+    );
+    nextCursor = body.next_cursor;
+    pageCount += 1;
+  } while (nextCursor && pageCount < 5);
+
+  return assets;
+}
+
+export async function listCloudinaryAssets() {
+  const config = getCloudinaryConfig();
+  const [images, videos] = await Promise.all([
+    listCloudinaryResources(config, "image"),
+    listCloudinaryResources(config, "video"),
+  ]);
+
+  return [...images, ...videos].sort((left, right) => {
+    const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0;
+    const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0;
+    return rightTime - leftTime;
+  });
 }
 
 export async function uploadCloudinaryMedia(

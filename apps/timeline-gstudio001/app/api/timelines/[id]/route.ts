@@ -6,6 +6,7 @@ import {
   saveFirebaseTimelineDocument,
   deleteFirebaseTimelineDocument,
 } from "@/lib/firebase-timeline-store";
+import { requireAuthUser } from "@/lib/firebase-auth-session";
 import { getTimelineDocument } from "@/lib/timeline-documents";
 
 export const runtime = "nodejs";
@@ -43,6 +44,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { response } = await requireAuthUser();
+    if (response) return response;
+
     const { id } = await params;
     if (!isValidTimelineId(id)) {
       return NextResponse.json({ error: "Invalid timeline id." }, { status: 400 });
@@ -70,6 +74,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { response } = await requireAuthUser();
+    if (response) return response;
+
     const { id } = await params;
     if (!isValidTimelineId(id)) {
       return NextResponse.json({ error: "Invalid timeline id." }, { status: 400 });
@@ -95,6 +102,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { response } = await requireAuthUser();
+    if (response) return response;
+
     const { id } = await params;
     if (!isValidTimelineId(id)) {
       return NextResponse.json({ error: "Invalid timeline id." }, { status: 400 });

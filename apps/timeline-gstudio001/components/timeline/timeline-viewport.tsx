@@ -8,7 +8,7 @@ import {
   type RefObject,
 } from "react";
 
-import { THUMBNAIL_GAP, TIMELINE_ITEM_TOP, TIMELINE_LEADING_PADDING_SECONDS, CLIP_GAP_SECONDS } from "./constants";
+import { THUMBNAIL_GAP, TIMELINE_LEADING_PADDING_SECONDS, CLIP_GAP_SECONDS } from "./constants";
 import type { useTimelineInteractions } from "./hooks/use-timeline-interactions";
 import { TimelineClipItem } from "./timeline-clip-item";
 import {
@@ -46,6 +46,7 @@ type TimelineViewportProps = {
   isResizingFirstClipLeft: boolean;
   isZooming: boolean;
   itemHeight: number;
+  itemTop: number;
   hasClips: boolean;
   manualOverhangScroll: boolean;
   parentRef: RefObject<HTMLDivElement | null>;
@@ -57,6 +58,7 @@ type TimelineViewportProps = {
   scrollTop: number;
   selectedIndex: number | null;
   selectedVideoClip: TimelineClip | null;
+  showPlayBarArea: boolean;
   showPassiveFilmstrips: boolean;
   gridMetrics: TimelineGridMetrics;
   getCollectionHref?: (timelineId: string) => string;
@@ -84,6 +86,7 @@ export function TimelineViewport({
   isResizingFirstClipLeft,
   isZooming,
   itemHeight,
+  itemTop,
   hasClips,
   manualOverhangScroll,
   parentRef,
@@ -95,6 +98,7 @@ export function TimelineViewport({
   scrollTop,
   selectedIndex,
   selectedVideoClip,
+  showPlayBarArea,
   showPassiveFilmstrips,
   gridMetrics,
   getCollectionHref,
@@ -212,12 +216,12 @@ export function TimelineViewport({
   const getClipTop = useCallback(
     (clip: TimelineClip) =>
       thumbnailMode
-        ? TIMELINE_ITEM_TOP +
+        ? itemTop +
           (gridMetrics.enabled
             ? getTimelineGridItemLayout(clip.index, gridMetrics).top
             : 0)
-        : TIMELINE_ITEM_TOP,
-    [gridMetrics, thumbnailMode],
+        : itemTop,
+    [gridMetrics, itemTop, thumbnailMode],
   );
 
   const getClipWidth = useCallback(
@@ -543,7 +547,7 @@ export function TimelineViewport({
         if (currentClip.kind !== "video" && currentClip.kind !== "collection" && currentClip.kind !== "image") return false;
         const left = getClipLeft(currentClip);
         const top = getClipTop(currentClip);
-        const filmstripTop = top - TIMELINE_ITEM_TOP;
+        const filmstripTop = Math.max(0, top - itemTop);
         const width = getClipWidth(currentClip);
         return (
           contentX >= left &&
@@ -584,7 +588,7 @@ export function TimelineViewport({
         previewTime,
       };
     },
-    [getClipLeft, getClipTop, getClipWidth, itemHeight, visibleClips],
+    [getClipLeft, getClipTop, getClipWidth, itemHeight, itemTop, visibleClips],
   );
 
   const cleanupPassiveScrub = useCallback(() => {
@@ -797,7 +801,7 @@ export function TimelineViewport({
                   key={clip.id}
                   clip={clip}
                   pixelsPerSecond={pixelsPerSecond}
-                  itemTop={TIMELINE_ITEM_TOP}
+                  itemTop={itemTop}
                   itemHeight={itemHeight}
                   thumbnailMode={thumbnailMode}
                   gridMetrics={gridMetrics}
@@ -834,6 +838,7 @@ export function TimelineViewport({
 
               {!interactions.isReordering &&
                 selectedIndex === null &&
+                showPlayBarArea &&
                 visibleClips.map((clip) =>
                   clip.kind === "video" || clip.kind === "collection" || clip.kind === "image" ? (
                     <PassiveVideoFilmStrip
@@ -850,7 +855,7 @@ export function TimelineViewport({
                   ) : null,
                 )}
 
-              {selectedVideoClip && !interactions.isReordering && (
+              {showPlayBarArea && selectedVideoClip && !interactions.isReordering && (
                 <VideoSourceFilmStrip
                   key={`filmstrip-${selectedVideoClip.id}`}
                   clip={selectedVideoClip}
@@ -908,7 +913,7 @@ export function TimelineViewport({
           style={{
             left: `${getDropIndicatorLeft(activeDropIndex)}px`,
             height: `${itemHeight}px`,
-            top: `${TIMELINE_ITEM_TOP}px`,
+            top: `${itemTop}px`,
           }}
         >
           <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-full bg-sky-400 w-3.5 h-3.5 flex items-center justify-center text-[9px] font-extrabold text-zinc-950 shadow-md">

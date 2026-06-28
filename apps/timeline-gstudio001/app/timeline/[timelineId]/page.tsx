@@ -4,14 +4,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, use, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Film, Hammer } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
 import {
   parseProjectViewMode,
   parseTimelineViewState,
-  setSearchParam,
-  type ProjectViewMode,
 } from "@/components/timeline/timeline-view-state";
 import {
   createCollectionTimelineDocument,
@@ -20,7 +18,6 @@ import {
   registerTimelineDocument,
 } from "@/lib/timeline-documents";
 import type { TimelineDocument } from "@/components/timeline/types";
-import { cn } from "@/lib/utils";
 
 type TimelineDocumentPageProps = {
   params: Promise<{
@@ -104,11 +101,6 @@ export default function TimelineDocumentPage({
         }
       : viewState;
 
-  const getProjectViewHref = (mode: ProjectViewMode) => {
-    const search = setSearchParam(resolvedSearchParams, "view", mode).toString();
-    return `/timeline/${encodeURIComponent(timelineId)}${search ? `?${search}` : ""}`;
-  };
-
   return (
     <div className="mx-auto grid w-full max-w-[1400px] gap-5">
       <div className="flex flex-col gap-3">
@@ -144,39 +136,6 @@ export default function TimelineDocumentPage({
             </span>
           </nav>
         </div>
-
-        {isProjectTimeline && (
-          <div
-            className="inline-grid w-fit grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950 p-1"
-            role="tablist"
-            aria-label="Project view"
-          >
-            {[
-              { mode: "storyboard" as const, label: "Storyboard", icon: Film },
-              { mode: "workbench" as const, label: "Workbench", icon: Hammer },
-            ].map(({ mode, label, icon: Icon }) => {
-              const active = projectView === mode;
-
-              return (
-                <Link
-                  key={mode}
-                  href={getProjectViewHref(mode)}
-                  role="tab"
-                  aria-selected={active}
-                  className={cn(
-                    "flex h-9 items-center justify-center gap-2 rounded-md px-3 text-xs font-semibold transition-colors",
-                    active
-                      ? "bg-amber-400 text-zinc-950"
-                      : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100",
-                  )}
-                >
-                  <Icon className="h-4 w-4" />
-                  {label}
-                </Link>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       <SmoothScrollList

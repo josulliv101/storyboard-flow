@@ -7,17 +7,17 @@ type TimelineToolbarProps = {
   gridMode: boolean;
   itemSize: ItemSize;
   manualOverhangScroll: boolean;
+  showPlayBarArea: boolean;
   showPassiveFilmstrips: boolean;
   title?: string;
   onGridModeChange: (enabled: boolean) => void;
   onItemSizeChange: (size: ItemSize) => void;
   onManualOverhangScrollChange: (enabled: boolean) => void;
+  onPlayBarAreaChange: (enabled: boolean) => void;
   onPassiveFilmstripsChange: (enabled: boolean) => void;
   onThumbnailModeChange: (enabled: boolean) => void;
   onZoomChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
-  renderedCount: number;
   thumbnailMode: boolean;
-  totalCount: number;
   zoomLevel: number;
   timelineId?: string;
   hierarchyMode?: boolean;
@@ -80,17 +80,17 @@ export function TimelineToolbar({
   gridMode,
   itemSize,
   manualOverhangScroll,
+  showPlayBarArea,
   showPassiveFilmstrips,
   title = "Timeline",
   onGridModeChange,
   onItemSizeChange,
   onManualOverhangScrollChange,
+  onPlayBarAreaChange,
   onPassiveFilmstripsChange,
   onThumbnailModeChange,
   onZoomChange,
-  renderedCount,
   thumbnailMode,
-  totalCount,
   zoomLevel,
   timelineId,
   hierarchyMode = false,
@@ -212,12 +212,21 @@ export function TimelineToolbar({
           />
         )}
         <ToggleSwitch
-          id="passive-filmstrips"
-          label="Filmstrips"
-          checked={showPassiveFilmstrips}
-          onChange={onPassiveFilmstripsChange}
-          title="Show read-only filmstrips for inactive video clips"
+          id="playbar-area"
+          label="Play bar"
+          checked={showPlayBarArea}
+          onChange={onPlayBarAreaChange}
+          title="Show the scrub/play bar above timeline items"
         />
+        {showPlayBarArea && (
+          <ToggleSwitch
+            id="passive-filmstrips"
+            label="Filmstrips"
+            checked={showPassiveFilmstrips}
+            onChange={onPassiveFilmstripsChange}
+            title="Show read-only filmstrips for inactive video clips"
+          />
+        )}
         <div className="flex items-center gap-2">
           <label
             htmlFor="size-select"
@@ -263,11 +272,6 @@ export function TimelineToolbar({
           onChange={onManualOverhangScrollChange}
           title={pinScrollTitle}
         />
-        <span className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-400">
-          <span data-testid="timeline-rendered-count">
-            {renderedCount}/{totalCount} rendered
-          </span>
-        </span>
       </div>
     </div>
   );

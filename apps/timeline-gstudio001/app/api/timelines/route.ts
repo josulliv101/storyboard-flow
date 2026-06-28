@@ -4,6 +4,7 @@ import {
   createFirebaseTimelineProject,
   listFirebaseTimelineProjects,
 } from "@/lib/firebase-timeline-store";
+import { requireAuthUser } from "@/lib/firebase-auth-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,9 @@ function storageErrorResponse(error: unknown, fallback: string) {
 
 export async function GET() {
   try {
+    const { response } = await requireAuthUser();
+    if (response) return response;
+
     return NextResponse.json({ projects: await listFirebaseTimelineProjects() });
   } catch (error) {
     return storageErrorResponse(error, "Unable to load timeline projects.");
@@ -30,6 +34,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const { response } = await requireAuthUser();
+    if (response) return response;
+
     const body = (await request.json().catch(() => ({}))) as { title?: unknown };
     const title = typeof body.title === "string" ? body.title : undefined;
     const project = await createFirebaseTimelineProject(title);

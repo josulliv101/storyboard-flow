@@ -5,6 +5,7 @@ import {
   getMediaMetadata,
   isAllowedMediaPathname,
 } from "@/lib/firebase-media-store";
+import { requireAuthUser } from "@/lib/firebase-auth-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,9 @@ async function handleMediaRequest(request: Request, includeBody: boolean) {
   }
 
   try {
+    const { response } = await requireAuthUser();
+    if (response) return response;
+
     const media = await getMediaMetadata(pathname);
     if (!media) {
       return new NextResponse("Media not found.", { status: 404 });

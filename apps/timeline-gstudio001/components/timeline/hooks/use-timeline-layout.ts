@@ -4,7 +4,6 @@ import { useMemo, useRef } from "react";
 
 import {
   THUMBNAIL_GAP,
-  TIMELINE_ITEM_TOP,
   TIMELINE_TRAILING_PADDING_SECONDS,
   VISIBLE_OVERSCAN_PX,
 } from "../constants";
@@ -25,6 +24,7 @@ type UseTimelineLayoutOptions = {
   scrollLeft: number;
   scrollTop: number;
   gridMetrics: TimelineGridMetrics;
+  itemTop: number;
   thumbnailMode: boolean;
   thumbnailWidth: number;
   viewportClientHeight: number;
@@ -41,6 +41,7 @@ export function useTimelineLayout({
   scrollLeft,
   scrollTop,
   gridMetrics,
+  itemTop,
   thumbnailMode,
   thumbnailWidth,
   viewportClientHeight,
@@ -83,7 +84,7 @@ export function useTimelineLayout({
         const clipStartPx = layout.left;
         const clipEndPx = clipStartPx + layout.width;
         const rowStartY = layout.top;
-        const rowEndY = layout.top + TIMELINE_ITEM_TOP + gridMetrics.itemHeight;
+        const rowEndY = layout.top + itemTop + gridMetrics.itemHeight;
         return (
           clipEndPx >= visibleStartPx &&
           clipStartPx <= visibleEndPx &&
@@ -108,6 +109,7 @@ export function useTimelineLayout({
     closingOverhangOffset,
     firstOverhang,
     gridMetrics,
+    itemTop,
     pixelsPerSecond,
     scrollLeft,
     scrollTop,

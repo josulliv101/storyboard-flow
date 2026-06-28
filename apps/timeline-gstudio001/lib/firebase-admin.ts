@@ -7,6 +7,7 @@ import {
   initializeApp,
   type App,
 } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 
@@ -44,12 +45,6 @@ export function getFirebaseApp() {
   const privateKey = getPrivateKey();
   const storageBucket = getFirebaseBucketNames()[0];
 
-  if (!storageBucket) {
-    throw new Error(
-      "Firebase Storage is not configured. Add FIREBASE_STORAGE_BUCKET to the timeline-gstudio001 environment.",
-    );
-  }
-
   const existingApp = getApps()[0];
   if (existingApp) {
     globals.gstudioFirebaseApp = existingApp;
@@ -64,7 +59,7 @@ export function getFirebaseApp() {
   globals.gstudioFirebaseApp = initializeApp({
     credential,
     projectId,
-    storageBucket,
+    ...(storageBucket ? { storageBucket } : {}),
   });
 
   return globals.gstudioFirebaseApp;
@@ -75,9 +70,20 @@ export function getFirebaseDb() {
 }
 
 export function getFirebaseBucket() {
-  return getStorage(getFirebaseApp()).bucket();
+  const bucketName = getFirebaseBucketNames()[0];
+  if (!bucketName) {
+    throw new Error(
+      "Firebase Storage is not configured. Add FIREBASE_STORAGE_BUCKET to the timeline-gstudio001 environment.",
+    );
+  }
+
+  return getStorage(getFirebaseApp()).bucket(bucketName);
 }
 
 export function getFirebaseBucketByName(bucketName: string) {
   return getStorage(getFirebaseApp()).bucket(bucketName);
+}
+
+export function getFirebaseAuth() {
+  return getAuth(getFirebaseApp());
 }

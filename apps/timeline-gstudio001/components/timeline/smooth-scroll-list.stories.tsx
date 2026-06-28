@@ -117,7 +117,7 @@ export const VirtualizedThousandClips: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByTestId("timeline-rendered-count")).toHaveTextContent(/\/1000 rendered$/);
+    await expect(canvas.getByTestId("timeline-editor")).toHaveAttribute("data-item-count", "1000");
   },
 };
 

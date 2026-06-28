@@ -29,12 +29,14 @@ export function getTimelineGridMetrics({
   enabled,
   fallbackItemWidth,
   itemHeight,
+  itemTop = TIMELINE_ITEM_TOP,
   itemCount,
   viewportWidth,
 }: {
   enabled: boolean;
   fallbackItemWidth: number;
   itemHeight: number;
+  itemTop?: number;
   itemCount: number;
   viewportWidth: number;
 }): TimelineGridMetrics {
@@ -65,7 +67,7 @@ export function getTimelineGridMetrics({
     itemHeight,
     gap: THUMBNAIL_GAP,
     pageWidth: availableWidth,
-    rowStride: TIMELINE_ITEM_TOP + itemHeight + THUMBNAIL_GAP,
+    rowStride: itemTop + itemHeight + THUMBNAIL_GAP,
     columnStride: itemWidth + THUMBNAIL_GAP,
   };
 }
@@ -98,10 +100,13 @@ export function getTimelineGridContentWidth(
   return metrics.pageWidth;
 }
 
-export function getTimelineGridContentHeight(metrics: TimelineGridMetrics) {
+export function getTimelineGridContentHeight(
+  metrics: TimelineGridMetrics,
+  itemTop = TIMELINE_ITEM_TOP,
+) {
   return (
     (metrics.rowsPerPage - 1) * metrics.rowStride +
-    TIMELINE_ITEM_TOP +
+    itemTop +
     metrics.itemHeight
   );
 }

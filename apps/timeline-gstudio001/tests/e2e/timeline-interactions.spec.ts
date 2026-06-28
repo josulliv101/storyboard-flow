@@ -170,11 +170,7 @@ test("grid mode virtualizes rows for huge item counts", async ({ page }) => {
   const totalCount = await numberAttribute(editor, "data-item-count");
   await expect.poll(() => numberAttribute(editor, "data-max-scroll")).toBe(0);
   await expect.poll(() => numberAttribute(editor, "data-max-scroll-top")).toBeGreaterThan(0);
-  await expect.poll(async () => {
-    const text = await page.getByTestId("timeline-rendered-count").textContent();
-    const rendered = Number(text?.match(/^(\d+)\//)?.[1] ?? totalCount);
-    return rendered < totalCount;
-  }).toBe(true);
+  await expect.poll(() => page.locator("[data-testid^='timeline-clip-']").count()).toBeLessThan(totalCount);
 
   await viewport.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
@@ -225,6 +221,27 @@ test("passive filmstrip is hidden for the active video clip", async ({ page }) =
   await expect(page.locator('[data-testid="timeline-passive-filmstrip"][data-clip-index="0"]')).toHaveCount(0);
   await expect(page.getByTestId("timeline-source-trim-left")).toBeVisible();
   await expect(page.getByTestId("timeline-source-trim-right")).toBeVisible();
+});
+
+test("play bar setting hides the bar area above timeline items", async ({ page }) => {
+  const editor = page.getByTestId("timeline-editor");
+  const firstClip = page.getByTestId("timeline-clip-0");
+  const initialHeight = await numberAttribute(editor, "data-timeline-height");
+
+  await expect(editor).toHaveAttribute("data-playbar-area", "true");
+  await expect(page.getByTestId("timeline-passive-filmstrip").first()).toBeVisible();
+
+  await page.getByRole("switch", { name: "Play bar" }).click();
+
+  await expect(editor).toHaveAttribute("data-playbar-area", "false");
+  await expect(page.getByTestId("timeline-passive-filmstrip")).toHaveCount(0);
+  await expect(page.getByTestId("timeline-source-filmstrip")).toHaveCount(0);
+  await expect(page.getByRole("switch", { name: "Filmstrips" })).toHaveCount(0);
+  await expect.poll(() => numberAttribute(editor, "data-timeline-height")).toBeLessThan(initialHeight);
+
+  await firstClip.click();
+  await expect(firstClip).toHaveAttribute("data-selected", "true");
+  await expect(page.getByTestId("timeline-source-filmstrip")).toHaveCount(0);
 });
 
 test("selecting a video hides all passive filmstrips", async ({ page }) => {
@@ -321,7 +338,6 @@ test("pans with a real pointer drag and virtualizes a large list", async ({ page
   await dragBy(page, viewport, -300);
 
   await expect.poll(() => numberAttribute(viewport, "data-scroll-left")).toBeGreaterThan(initialScroll);
-  await expect(page.getByTestId("timeline-rendered-count")).toContainText("/1000 rendered");
   await expect(page.locator("[data-testid^='timeline-clip-']")).not.toHaveCount(1000);
 });
 

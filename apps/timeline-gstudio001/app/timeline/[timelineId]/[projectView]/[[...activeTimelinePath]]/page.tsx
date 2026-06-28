@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, use } from "react";
-import { ArrowLeft, Film, Hammer } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
 import {
@@ -11,7 +11,6 @@ import {
   type ProjectViewMode,
 } from "@/components/timeline/timeline-view-state";
 import type { TimelineDocument } from "@/components/timeline/types";
-import { cn } from "@/lib/utils";
 import {
   createCollectionTimelineDocument,
   getTimelineDocument,
@@ -27,44 +26,6 @@ type ProjectTimelinePageProps = {
   }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
-
-function cleanSearchParams(
-  searchParams: Record<string, string | string[] | undefined>,
-) {
-  const nextSearchParams = new URLSearchParams();
-
-  Object.entries(searchParams).forEach(([key, value]) => {
-    if (key === "view") return;
-
-    if (Array.isArray(value)) {
-      value.forEach((item) => nextSearchParams.append(key, item));
-      return;
-    }
-
-    if (value !== undefined) {
-      nextSearchParams.set(key, value);
-    }
-  });
-
-  return nextSearchParams;
-}
-
-function getProjectSurfaceHref({
-  activeTimelineId,
-  mode,
-  projectId,
-  searchParams,
-}: {
-  activeTimelineId: string;
-  mode: ProjectViewMode;
-  projectId: string;
-  searchParams: Record<string, string | string[] | undefined>;
-}) {
-  const childPath = activeTimelineId === projectId ? "" : `/${encodeURIComponent(activeTimelineId)}`;
-  const search = cleanSearchParams(searchParams).toString();
-
-  return `/timeline/${encodeURIComponent(projectId)}/${mode}${childPath}${search ? `?${search}` : ""}`;
-}
 
 export default function ProjectTimelinePage({
   params,
@@ -176,42 +137,6 @@ export default function ProjectTimelinePage({
               {document.title}
             </span>
           </nav>
-        </div>
-
-        <div
-          className="inline-grid w-fit grid-cols-2 rounded-lg border border-zinc-800 bg-zinc-950 p-1"
-          role="tablist"
-          aria-label="Project view"
-        >
-          {[
-            { mode: "storyboard" as const, label: "Storyboard", icon: Film },
-            { mode: "workbench" as const, label: "Workbench", icon: Hammer },
-          ].map(({ mode, label, icon: Icon }) => {
-            const active = normalizedProjectView === mode;
-
-            return (
-              <Link
-                key={mode}
-                href={getProjectSurfaceHref({
-                  activeTimelineId,
-                  mode,
-                  projectId,
-                  searchParams: resolvedSearchParams,
-                })}
-                role="tab"
-                aria-selected={active}
-                className={cn(
-                  "flex h-9 items-center justify-center gap-2 rounded-md px-3 text-xs font-semibold transition-colors",
-                  active
-                    ? "bg-amber-400 text-zinc-950"
-                    : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100",
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {label}
-              </Link>
-            );
-          })}
         </div>
       </div>
 

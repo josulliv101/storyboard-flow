@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-import { DRAG_THRESHOLD_PX, THUMBNAIL_GAP, TIMELINE_ITEM_TOP } from "../constants";
+import { DRAG_THRESHOLD_PX, THUMBNAIL_GAP } from "../constants";
 import {
   getTimelineGridItemLayout,
   getTimelineGridTargetIndex,
@@ -26,6 +26,7 @@ type UseTimelinePanOptions = {
   setScrollLeft: SetScrollLeft;
   setSelectedIndex: SetSelectedIndex;
   gridMetrics: TimelineGridMetrics;
+  itemTop: number;
   thumbnailMode: boolean;
   thumbnailWidth: number;
   windowDrag: WindowDragCoordinator;
@@ -52,6 +53,7 @@ export function useTimelinePan({
   setScrollLeft,
   setSelectedIndex,
   gridMetrics,
+  itemTop,
   thumbnailMode,
   thumbnailWidth,
   windowDrag,
@@ -99,12 +101,12 @@ export function useTimelinePan({
   const getClipTop = useCallback(
     (clip: TimelineClip) =>
       thumbnailMode
-        ? TIMELINE_ITEM_TOP +
+        ? itemTop +
           (gridMetrics.enabled
             ? getTimelineGridItemLayout(clip.index, gridMetrics).top
             : 0)
-        : TIMELINE_ITEM_TOP,
-    [gridMetrics, thumbnailMode],
+        : itemTop,
+    [gridMetrics, itemTop, thumbnailMode],
   );
 
   const getClipWidth = useCallback(
@@ -302,7 +304,7 @@ export function useTimelinePan({
         if (thumbnailMode && gridMetrics.enabled) {
           return getTimelineGridTargetIndex({
             contentX: pointerContentX,
-            contentY: getPointerContentY(clientY) - TIMELINE_ITEM_TOP,
+            contentY: getPointerContentY(clientY) - itemTop,
             itemCount: currentState.baselineClips.length,
             metrics: gridMetrics,
           });
@@ -655,6 +657,7 @@ export function useTimelinePan({
       getClipTop,
       getClipWidth,
       gridMetrics,
+      itemTop,
       parentRef,
       runInertia,
       setScrollLeft,
