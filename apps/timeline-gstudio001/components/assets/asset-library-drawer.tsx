@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, Fragment } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, Fragment } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertCircle,
@@ -85,18 +85,21 @@ function createAssetClip(asset: CloudinaryAsset, index: number, startTime: numbe
 
 export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps) {
   const { user } = useAuth();
+  const panelRef = useRef<HTMLElement | null>(null);
   const [assets, setAssets] = useState<CloudinaryAsset[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isMounted, setIsMounted] = useState(false);
   const [activeTimelineId, setActiveTimelineId] = useState(`asset-library-${user?.uid || "default"}`);
+  const [prevUserRootTimelineId, setPrevUserRootTimelineId] = useState(activeTimelineId);
   const [assetsVersion, setAssetsVersion] = useState(0);
+  const userRootTimelineId = `asset-library-${user?.uid || "default"}`;
 
-  useEffect(() => {
-    if (user?.uid) {
-      setActiveTimelineId(`asset-library-${user.uid}`);
-    }
-  }, [user]);
+  if (userRootTimelineId !== prevUserRootTimelineId) {
+    setPrevUserRootTimelineId(userRootTimelineId);
+    setActiveTimelineId((current) =>
+      current === prevUserRootTimelineId ? userRootTimelineId : current,
+    );
+  }
 
   const loadAssets = useCallback(async () => {
     setIsLoading(true);
@@ -127,12 +130,12 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
   const path = getTimelinePath(activeTimelineId);
 
   useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  useEffect(() => {
     if (!isOpen) return;
-    void loadAssets();
+    const timeoutId = window.setTimeout(() => {
+      void loadAssets();
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [isOpen, loadAssets]);
 
   useEffect(() => {
@@ -148,7 +151,37 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
-  if (!isMounted || !isOpen) return null;
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+
+    if (!isOpen) {
+      root.style.setProperty("--asset-library-height", "0px");
+      return;
+    }
+
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const publishHeight = () => {
+      root.style.setProperty(
+        "--asset-library-height",
+        `${panel.getBoundingClientRect().height}px`,
+      );
+    };
+
+    publishHeight();
+    const observer = new ResizeObserver(publishHeight);
+    observer.observe(panel);
+    window.addEventListener("resize", publishHeight);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", publishHeight);
+      root.style.setProperty("--asset-library-height", "0px");
+    };
+  }, [isOpen]);
+
+  if (!isOpen || typeof document === "undefined") return null;
 
   return createPortal(
     <section
@@ -172,12 +205,13 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
         }
       `}</style>
       <aside
+        ref={panelRef}
         role="dialog"
         aria-modal="false"
         aria-labelledby="asset-library-title"
-        className="asset-library-panel pointer-events-auto ml-[72px] flex max-h-[48vh] flex-col border-t border-zinc-800 bg-zinc-950 text-white shadow-2xl shadow-black/50"
+        className="asset-library-panel pointer-events-auto ml-[72px] flex max-h-[48vh] flex-col border-t border-zinc-800 bg-transparent text-white shadow-2xl shadow-black/50"
       >
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-5 py-3">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800/75 bg-zinc-950/70 px-5 py-3 backdrop-blur-xl backdrop-saturate-150 supports-[backdrop-filter]:bg-zinc-950/45">
           <div className="flex items-center gap-3 min-w-0">
             {activeTimelineId !== `asset-library-${user?.uid || "default"}` && (
               <Button
@@ -255,7 +289,7 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
           </div>
         </header>
 
-        <div className="min-h-0 p-3">
+        <div className="min-h-0 bg-zinc-950 p-3">
           {error ? (
             <div className="flex items-start gap-3 rounded-lg border border-red-500/25 bg-red-500/10 p-4 text-sm text-red-100">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />

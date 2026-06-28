@@ -68,6 +68,9 @@ export interface SmoothScrollListProps
   isChildTimeline?: boolean;
   hierarchyMode?: boolean;
   onHierarchyModeChange?: (enabled: boolean) => void;
+  thumbnailMode?: boolean;
+  playheadTime?: number | null;
+  onPlayheadTimeChange?: (time: number) => void;
   dragBarEnabled?: boolean;
   disablePersistence?: boolean;
   onTimelineIdChange?: (newTimelineId: string) => void;
@@ -88,6 +91,9 @@ export function SmoothScrollList({
   isChildTimeline = false,
   hierarchyMode: propHierarchyMode,
   onHierarchyModeChange,
+  thumbnailMode: propThumbnailMode,
+  playheadTime,
+  onPlayheadTimeChange,
   dragBarEnabled = false,
   disablePersistence = false,
   className,
@@ -111,9 +117,10 @@ export function SmoothScrollList({
     [initialClips, safeItemCount, timelineId],
   );
 
-  const [thumbnailMode, setThumbnailMode] = useState(
+  const [thumbnailModeState] = useState(
     initialViewState?.thumbnailMode ?? false,
   );
+  const thumbnailMode = propThumbnailMode ?? thumbnailModeState;
   const [hierarchyModeState, setHierarchyModeState] = useState(
     initialViewState?.hierarchyMode ?? propHierarchyMode ?? false,
   );
@@ -416,13 +423,6 @@ export function SmoothScrollList({
     },
     [onOpenCollection, router],
   );
-
-  const handleThumbnailModeChange = useCallback((enabled: boolean) => {
-    setThumbnailMode(enabled);
-    if (!enabled) {
-      setGridMode(false);
-    }
-  }, []);
 
   const zoom = useTimelineZoom({
     clips: clipState.clips,
@@ -1142,7 +1142,6 @@ export function SmoothScrollList({
           onGridModeChange={setGridMode}
           onPlayBarAreaChange={setShowPlayBarArea}
           onPassiveFilmstripsChange={setShowPassiveFilmstrips}
-          onThumbnailModeChange={handleThumbnailModeChange}
           onZoomChange={zoom.handleZoomChange}
           thumbnailMode={thumbnailMode}
           zoomLevel={zoom.zoomLevel}
@@ -1233,6 +1232,8 @@ export function SmoothScrollList({
             onDropSidebarClipIntoCollection={handleDropSidebarClipIntoCollection}
             timelineId={timelineId}
             dragBarEnabled={dragBarEnabled}
+            playheadTime={playheadTime}
+            onPlayheadTimeChange={onPlayheadTimeChange}
           />
 
           {overhang.hasOffscreenOverhang && (
@@ -1252,12 +1253,13 @@ export function SmoothScrollList({
                 timelineTitle={col.title}
                 initialClips={doc ? doc.clips : []}
                 initialViewState={{
-                  thumbnailMode: true,
+                  thumbnailMode,
                   itemSize: "sm",
                   gridMode: false,
                   showPlayBarArea: showPlayBarArea,
                   showPassiveFilmstrips: showPassiveFilmstrips,
                 }}
+                thumbnailMode={thumbnailMode}
                 isChildTimeline={true}
                 syncMediaDuration={syncMediaDuration}
                 hierarchyMode={hierarchyMode}
@@ -1286,6 +1288,7 @@ export function SmoothScrollList({
                   showPlayBarArea: showPlayBarArea,
                   showPassiveFilmstrips: showPassiveFilmstrips,
                 }}
+                thumbnailMode={thumbnailMode}
                 isChildTimeline={true}
                 syncMediaDuration={syncMediaDuration}
                 hierarchyMode={hierarchyMode}

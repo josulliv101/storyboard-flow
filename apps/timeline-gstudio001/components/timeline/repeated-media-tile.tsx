@@ -1,7 +1,10 @@
 import React from "react";
 import { TimelineClip, VideoTimelineClip } from "./types";
-import { cn } from "@/lib/utils";
-import { getVideoThumbnailUrl } from "./video-source-filmstrip";
+import {
+  getEndpointFrameTimes,
+  getThumbnailSlotCount,
+  getVideoThumbnailUrl,
+} from "./video-source-filmstrip";
 import { Folder, Plus } from "lucide-react";
 
 type RepeatedMediaTileProps = {
@@ -13,14 +16,19 @@ type RepeatedMediaTileProps = {
   onDurationLoaded?: (duration: number) => void;
 };
 
+function handleImageFallback(
+  event: React.SyntheticEvent<HTMLImageElement>,
+  fallbackSrc?: string,
+) {
+  if (!fallbackSrc || event.currentTarget.src === fallbackSrc) return;
+  event.currentTarget.src = fallbackSrc;
+}
 
 
 export function RepeatedMediaTile({
   clip,
   displayWidth,
-  previewTime,
   itemHeight,
-  pixelsPerSecond,
   onDurationLoaded,
 }: RepeatedMediaTileProps) {
   React.useEffect(() => {
@@ -71,6 +79,7 @@ export function RepeatedMediaTile({
                       alt={item.alt}
                       className="h-full w-full object-cover grayscale-[10%] contrast-[105%] brightness-[95%] transition-transform duration-300 group-hover:scale-105"
                       draggable={false}
+                      onError={(event) => handleImageFallback(event, item.poster)}
                     />
                   ) : (
                     /* eslint-disable-next-line @next/next/no-img-element */
@@ -107,30 +116,25 @@ export function RepeatedMediaTile({
     );
   }
 
-  const naturalAspect = clip.kind === "image" ? 16 / 9 : clip.aspect;
-  const naturalFrameWidth = Math.max(120, Math.round(itemHeight * naturalAspect));
-  const tileCount = Math.max(1, Math.ceil(displayWidth / naturalFrameWidth));
-
-  const pps = pixelsPerSecond ?? 50;
+  const frameSize = Math.max(56, Math.min(itemHeight, 96));
+  const tileCount = getThumbnailSlotCount(displayWidth, frameSize);
   const sourceDuration = (clip as VideoTimelineClip).sourceDuration || clip.duration || 10;
+  const start = (clip as VideoTimelineClip).trimIn || 0;
+  const frameTimes = getEndpointFrameTimes({
+    count: tileCount,
+    startTime: start,
+    endTime: Math.min(Math.max(0, sourceDuration - 0.05), start + (clip.duration || 10)),
+  });
 
   return (
     <div className="pointer-events-none relative h-full w-full overflow-hidden">
-      <div className="absolute left-0 top-0 flex h-full">
-        {Array.from({ length: tileCount }, (_, index) => {
-          const start = (clip as VideoTimelineClip).trimIn || 0;
-          const duration = clip.duration || 10;
-          const progress = index / Math.max(1, tileCount - 1 || 1);
-          const tileTime = Math.min(
-            sourceDuration - 0.05,
-            Math.max(0, start + duration * progress)
-          );
-
+      <div className="absolute inset-0 flex items-center">
+        {frameTimes.map((tileTime, index) => {
           return (
             <div
               key={`${clip.id}-repeat-frame-${index}`}
-              className="h-full shrink-0 overflow-hidden border-r border-black/35 last:border-r-0 relative bg-black"
-              style={{ width: `${naturalFrameWidth}px` }}
+              className="relative shrink-0 overflow-hidden border-r border-black/35 last:border-r-0 bg-black"
+              style={{ width: `${frameSize}px`, height: `${frameSize}px` }}
             >
               <div className="h-full w-full">
                 {clip.kind === "video" ? (
@@ -139,6 +143,7 @@ export function RepeatedMediaTile({
                     alt={`${clip.alt} frame ${index + 1}`}
                     className="h-full w-full object-cover"
                     draggable={false}
+                    onError={(event) => handleImageFallback(event, clip.poster)}
                   />
                 ) : (
                   /* eslint-disable-next-line @next/next/no-img-element */

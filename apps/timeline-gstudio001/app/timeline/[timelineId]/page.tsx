@@ -39,7 +39,7 @@ export default function TimelineDocumentPage({
   const projectView = parseProjectViewMode(resolvedSearchParams);
   const isProjectTimeline = timelineId.startsWith("project-");
   const normalizedProjectSearchParams = new URLSearchParams();
-  const [globalHierarchyMode, setGlobalHierarchyMode] = useState(true);
+  const [globalHierarchyMode, setGlobalHierarchyMode] = useState(false);
   const [globalDragBar, setGlobalDragBar] = useState(false);
 
   Object.entries(resolvedSearchParams).forEach(([key, value]) => {
@@ -99,12 +99,13 @@ export default function TimelineDocumentPage({
       ? {
           ...viewState,
           thumbnailMode: true,
-          hierarchyMode: true,
+          hierarchyMode: false,
           itemSize: "sm" as const,
         }
       : isProjectTimeline
       ? {
           ...viewState,
+          hierarchyMode: false,
           itemSize: viewState.itemSize ?? ("md" as const),
         }
       : viewState;

@@ -14,7 +14,6 @@ type TimelineToolbarProps = {
   onItemSizeChange: (size: ItemSize) => void;
   onPlayBarAreaChange: (enabled: boolean) => void;
   onPassiveFilmstripsChange: (enabled: boolean) => void;
-  onThumbnailModeChange: (enabled: boolean) => void;
   onZoomChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   thumbnailMode: boolean;
   zoomLevel: number;
@@ -86,7 +85,6 @@ export function TimelineToolbar({
   onItemSizeChange,
   onPlayBarAreaChange,
   onPassiveFilmstripsChange,
-  onThumbnailModeChange,
   onZoomChange,
   thumbnailMode,
   zoomLevel,
@@ -232,12 +230,6 @@ export function TimelineToolbar({
         )}
       </div>
       <div className="flex items-center gap-4">
-        <ToggleSwitch
-          id="thumbnail-mode"
-          label="Thumbnail Mode"
-          checked={thumbnailMode}
-          onChange={onThumbnailModeChange}
-        />
         {thumbnailMode && (
           <ToggleSwitch
             id="grid-mode"

@@ -29,6 +29,14 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
 
+export const ThumbnailMode: Story = {
+  args: {
+    initialViewState: {
+      thumbnailMode: true,
+    },
+  },
+};
+
 export const FirstClipSelectedAtTimelineStart: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -41,9 +49,13 @@ export const FirstClipSelectedAtTimelineStart: Story = {
 };
 
 export const FirstClipSelectedWithThumbnailOverhang: Story = {
+  args: {
+    initialViewState: {
+      thumbnailMode: true,
+    },
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole("switch", { name: "Thumbnail Mode" }));
     const clip = await canvas.findByTestId("timeline-clip-0");
     await userEvent.click(clip);
 
@@ -70,9 +82,13 @@ export const LastClipSelectedAtTimelineEnd: Story = {
 };
 
 export const LastClipSelectedWithThumbnailOverhang: Story = {
+  args: {
+    initialViewState: {
+      thumbnailMode: true,
+    },
+  },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole("switch", { name: "Thumbnail Mode" }));
     await userEvent.click(canvas.getByRole("button", { name: "To 800" }));
 
     await waitFor(async () => {
@@ -121,11 +137,34 @@ export const VirtualizedThousandClips: Story = {
   },
 };
 
+export const VirtualizedThousandClipsThumbnail: Story = {
+  args: {
+    itemCount: 1000,
+    initialViewState: {
+      thumbnailMode: true,
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByTestId("timeline-editor")).toHaveAttribute("data-item-count", "1000");
+    await expect(canvas.getByTestId("timeline-editor")).toHaveAttribute("data-thumbnail-mode", "true");
+  },
+};
+
 export const MultipleTimelines: Story = {
   render: (args) => (
     <div className="grid gap-16">
       <SmoothScrollList {...args} itemCount={1000} />
       <SmoothScrollList {...args} itemCount={1000} />
+    </div>
+  ),
+};
+
+export const MultipleTimelinesThumbnail: Story = {
+  render: (args) => (
+    <div className="grid gap-16">
+      <SmoothScrollList {...args} itemCount={1000} initialViewState={{ thumbnailMode: true }} />
+      <SmoothScrollList {...args} itemCount={1000} initialViewState={{ thumbnailMode: true }} />
     </div>
   ),
 };

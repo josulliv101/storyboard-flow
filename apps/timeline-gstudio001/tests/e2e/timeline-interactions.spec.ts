@@ -1,9 +1,12 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--default&viewMode=story";
+const THUMBNAIL_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--thumbnail-mode&viewMode=story";
 const FIRST_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--first-clip-selected-at-timeline-start&viewMode=story";
 const LAST_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--last-clip-selected-at-timeline-end&viewMode=story";
 const MULTIPLE_TIMELINES_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--multiple-timelines&viewMode=story";
+const MULTIPLE_THUMBNAIL_TIMELINES_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--multiple-timelines-thumbnail&viewMode=story";
+const THUMBNAIL_VIRTUALIZED_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--virtualized-thousand-clips-thumbnail&viewMode=story";
 
 async function dragBy(page: Page, locator: Locator, dx: number, dy = 0) {
   const box = await locator.boundingBox();
@@ -93,12 +96,12 @@ test("filmstrip setting shows passive read-only filmstrips for inactive video cl
   await expect(page.getByTestId("timeline-source-trim-right")).toHaveCount(0);
 });
 
-test("grid mode is available only in thumbnail mode", async ({ page }) => {
+test("grid mode is available only when the timeline is in thumbnail mode", async ({ page }) => {
   const editor = page.getByTestId("timeline-editor");
 
   await expect(page.getByRole("switch", { name: "Grid Mode" })).toHaveCount(0);
 
-  await page.getByRole("switch", { name: "Thumbnail Mode" }).click();
+  await openStory(page, THUMBNAIL_STORY_URL);
   const gridSwitch = page.getByRole("switch", { name: "Grid Mode" });
   await expect(gridSwitch).toBeVisible();
 
@@ -110,17 +113,13 @@ test("grid mode is available only in thumbnail mode", async ({ page }) => {
     Math.ceil(totalCount / columns),
   );
 
-  await page.getByRole("switch", { name: "Thumbnail Mode" }).click();
-  await expect(editor).toHaveAttribute("data-thumbnail-mode", "false");
-  await expect(editor).toHaveAttribute("data-grid-mode", "false");
-  await expect(page.getByRole("switch", { name: "Grid Mode" })).toHaveCount(0);
 });
 
 test("grid mode fits all items in viewport-width rows", async ({ page }) => {
+  await openStory(page, THUMBNAIL_STORY_URL);
   const editor = page.getByTestId("timeline-editor");
   const viewport = page.getByTestId("timeline-scroll-viewport");
 
-  await page.getByRole("switch", { name: "Thumbnail Mode" }).click();
   await page.getByRole("switch", { name: "Grid Mode" }).click();
   await expect(editor).toHaveAttribute("data-grid-mode", "true");
 
@@ -159,11 +158,10 @@ test("grid mode fits all items in viewport-width rows", async ({ page }) => {
 });
 
 test("grid mode virtualizes rows for huge item counts", async ({ page }) => {
-  await page.goto("/iframe.html?id=gstudio-timeline-smoothscrolllist--virtualized-thousand-clips&viewMode=story");
+  await page.goto(THUMBNAIL_VIRTUALIZED_URL);
   const editor = page.getByTestId("timeline-editor");
   const viewport = page.getByTestId("timeline-scroll-viewport");
 
-  await page.getByRole("switch", { name: "Thumbnail Mode" }).click();
   await page.getByRole("switch", { name: "Grid Mode" }).click();
   await expect(editor).toHaveAttribute("data-grid-mode", "true");
 
@@ -184,7 +182,7 @@ test("grid mode virtualizes rows for huge item counts", async ({ page }) => {
 });
 
 test("grid mode virtualizes independently for multiple timelines", async ({ page }) => {
-  await page.goto(MULTIPLE_TIMELINES_URL);
+  await page.goto(MULTIPLE_THUMBNAIL_TIMELINES_URL);
   const editors = page.getByTestId("timeline-editor");
   const firstEditor = editors.nth(0);
   const secondEditor = editors.nth(1);
@@ -192,9 +190,7 @@ test("grid mode virtualizes independently for multiple timelines", async ({ page
   await expect(firstEditor).toBeVisible();
   await expect(secondEditor).toBeVisible();
 
-  await page.getByRole("switch", { name: "Thumbnail Mode" }).nth(0).click();
   await page.getByRole("switch", { name: "Grid Mode" }).nth(0).click();
-  await page.getByRole("switch", { name: "Thumbnail Mode" }).nth(1).click();
   await page.getByRole("switch", { name: "Grid Mode" }).nth(1).click();
 
   await expect(firstEditor).toHaveAttribute("data-grid-mode", "true");

@@ -61,6 +61,13 @@ function TooltipLabel({ id, label, description }: TooltipLabelProps) {
   );
 }
 
+const SIDEBAR_ICON_BASE =
+  "group/sidebar-item relative flex size-11 items-center justify-center rounded-lg border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400";
+const SIDEBAR_ICON_IDLE =
+  "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-zinc-100";
+const SIDEBAR_ICON_PRESSED =
+  "translate-y-px border-zinc-600 bg-zinc-800 text-zinc-100 shadow-inner shadow-black/50 ring-1 ring-inset ring-zinc-700/70";
+
 type IconLinkProps = {
   href: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -83,11 +90,10 @@ function IconLink({
       href={href}
       aria-label={label}
       aria-describedby={tooltipId}
+      aria-current={isActive ? "page" : undefined}
       className={cn(
-        "group/sidebar-item relative flex size-11 items-center justify-center rounded-lg border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400",
-        isActive
-          ? "border-amber-500 bg-amber-500/10 text-amber-300 shadow-lg shadow-amber-500/5"
-          : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-amber-500/50 hover:bg-amber-500/5 hover:text-amber-400",
+        SIDEBAR_ICON_BASE,
+        isActive ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
       )}
     >
       <Icon className="h-4 w-4 transition-colors" />
@@ -258,7 +264,7 @@ export function TimelineSidebar() {
       <Link
         href="/"
         aria-label="Storyboard Workbench home"
-        className="flex size-11 items-center justify-center rounded-lg border border-amber-500/50 bg-amber-500/10 text-[13px] font-black text-amber-300 shadow-lg shadow-amber-500/5 transition-colors hover:bg-amber-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+        className="flex size-11 items-center justify-center rounded-lg border border-zinc-700/55 bg-zinc-800/35 text-[13px] font-black text-zinc-400 shadow-sm shadow-black/10 transition-colors hover:border-zinc-600/70 hover:bg-zinc-800/55 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
       >
         SW
       </Link>
@@ -326,6 +332,9 @@ export function TimelineSidebar() {
         {UTILITY_ITEMS.map((item) => {
           const Icon = item.icon;
           const tooltipId = `sidebar-tooltip-utility-${item.id}`;
+          const isPressed =
+            (item.id === "assets" && isAssetLibraryOpen) ||
+            (item.id === "trash" && isTrashOpen);
           const handleClick =
             item.id === "assets"
               ? () => {
@@ -345,8 +354,12 @@ export function TimelineSidebar() {
               type="button"
               aria-label={item.label}
               aria-describedby={tooltipId}
+              aria-pressed={item.id === "settings" ? undefined : isPressed}
               onClick={handleClick}
-              className="group/sidebar-item relative flex size-11 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900/40 text-zinc-400 transition-all duration-200 hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
+              className={cn(
+                SIDEBAR_ICON_BASE,
+                isPressed ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+              )}
             >
               <Icon className="h-4 w-4 transition-colors" />
               <TooltipLabel
@@ -363,12 +376,11 @@ export function TimelineSidebar() {
           type="button"
           aria-label="Account"
           aria-describedby="sidebar-tooltip-utility-account"
+          aria-pressed={isProfileOpen}
           onClick={() => setIsProfileOpen((open) => !open)}
           className={cn(
-            "group/sidebar-item relative flex size-11 items-center justify-center rounded-lg border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400",
-            isProfileOpen
-              ? "border-amber-500 bg-amber-500/10 text-amber-300 shadow-lg shadow-amber-500/5"
-              : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-zinc-100"
+            SIDEBAR_ICON_BASE,
+            isProfileOpen ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE
           )}
         >
           {user?.picture ? (
@@ -378,7 +390,7 @@ export function TimelineSidebar() {
               className="h-5 w-5 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors"
             />
           ) : (
-            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/10 border border-amber-500/30 text-[9px] font-bold text-amber-400 group-hover/sidebar-item:bg-amber-500/20 group-hover/sidebar-item:text-amber-300 transition-colors select-none">
+            <div className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-[9px] font-bold text-zinc-400 transition-colors select-none group-hover/sidebar-item:border-zinc-600 group-hover/sidebar-item:bg-zinc-800 group-hover/sidebar-item:text-zinc-100">
               {user?.name ? user.name[0].toUpperCase() : (user?.email ? user.email[0].toUpperCase() : "U")}
             </div>
           )}
@@ -402,7 +414,7 @@ export function TimelineSidebar() {
                   className="h-10 w-10 rounded-full object-cover border border-zinc-800"
                 />
               ) : (
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10 border border-amber-500/30 text-sm font-bold text-amber-400">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-sm font-bold text-zinc-300">
                   {user?.name ? user.name[0].toUpperCase() : (user?.email ? user.email[0].toUpperCase() : "U")}
                 </div>
               )}

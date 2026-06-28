@@ -22,7 +22,7 @@ import type { TimelineClip, TrimScrubPreview, VideoTimelineClip } from "./types"
 import { PassiveVideoFilmStrip, VideoSourceFilmStrip, getVideoThumbnailUrl } from "./video-source-filmstrip";
 import { VideoTile } from "./video-tile";
 import { formatSeconds } from "./utils";
-import { getCollectionFramePreview } from "@/lib/timeline-documents";
+import { getCollectionClipFramePreview } from "@/lib/timeline-documents";
 
 type TimelineInteractions = ReturnType<typeof useTimelineInteractions>;
 
@@ -78,6 +78,8 @@ type TimelineViewportProps = {
   onDropSidebarClipIntoCollection?: (type: "collection" | "image" | "video", targetCollectionTimelineId: string) => void;
   timelineId?: string;
   dragBarEnabled?: boolean;
+  playheadTime?: number | null;
+  onPlayheadTimeChange?: (time: number) => void;
 };
 
 export function TimelineViewport({
@@ -119,6 +121,8 @@ export function TimelineViewport({
   onDropSidebarClipIntoCollection,
   timelineId,
   dragBarEnabled = false,
+  playheadTime: propPlayheadTime,
+  onPlayheadTimeChange,
 }: TimelineViewportProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const passiveScrubCleanupRef = useRef<(() => void) | null>(null);
@@ -588,7 +592,12 @@ export function TimelineViewport({
     };
   }, [contextMenu]);
 
-  const [playheadTime, setPlayheadTime] = useState<number | null>(null);
+  const [playheadTimeState, setPlayheadTimeState] = useState<number | null>(null);
+  const playheadTime = propPlayheadTime ?? playheadTimeState;
+  const updatePlayheadTime = useCallback((time: number) => {
+    setPlayheadTimeState(time);
+    onPlayheadTimeChange?.(time);
+  }, [onPlayheadTimeChange]);
   const [scrubbingState, setScrubbingState] = useState<{
     startX: number;
     startContentX: number;
@@ -622,13 +631,22 @@ export function TimelineViewport({
 
   const getPlayheadLeft = useCallback((time: number | null) => {
     if (time === null) return null;
+    const activeClip = visibleClips.find(
+      (clip) => time >= clip.startTime && time <= clip.startTime + clip.duration,
+    );
+    if (activeClip) {
+      const ratio = Math.max(
+        0,
+        Math.min(1, (time - activeClip.startTime) / Math.max(0.1, activeClip.duration)),
+      );
+      return getClipLeft(activeClip) + ratio * getClipWidth(activeClip);
+    }
+
     if (!thumbnailMode) {
       return time * pixelsPerSecond;
     }
-    const c = visibleClips.find(clip => time >= clip.startTime && time <= clip.startTime + clip.duration);
-    if (!c) return null;
-    const ratio = Math.max(0, Math.min(1, (time - c.startTime) / Math.max(0.1, c.duration)));
-    return getClipLeft(c) + ratio * getClipWidth(c);
+
+    return null;
   }, [thumbnailMode, pixelsPerSecond, visibleClips, getClipLeft, getClipWidth]);
 
   const dragBars = useMemo(() => {
@@ -680,7 +698,7 @@ export function TimelineViewport({
       const initialTime = thumbnailMode
         ? initialClip.startTime + ratio * initialClip.duration
         : initialContentX / pixelsPerSecond;
-      setPlayheadTime(initialTime);
+      updatePlayheadTime(initialTime);
     }
 
     setScrubbingState({
@@ -690,7 +708,7 @@ export function TimelineViewport({
       clientX: e.clientX,
       clientY: e.clientY,
     });
-  }, [getClipAtX, getClipLeft, getClipWidth, thumbnailMode, pixelsPerSecond]);
+  }, [getClipAtX, getClipLeft, getClipWidth, thumbnailMode, pixelsPerSecond, updatePlayheadTime]);
 
   const handleDragBarPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!scrubbingState) return;
@@ -707,7 +725,7 @@ export function TimelineViewport({
       const globalTime = thumbnailMode
         ? clip.startTime + ratio * clip.duration
         : currentContentX / pixelsPerSecond;
-      setPlayheadTime(globalTime);
+      updatePlayheadTime(globalTime);
     }
 
     setScrubbingState({
@@ -716,7 +734,7 @@ export function TimelineViewport({
       clientX: e.clientX,
       clientY: e.clientY,
     });
-  }, [scrubbingState, getClipAtX, getClipLeft, getClipWidth, thumbnailMode, pixelsPerSecond]);
+  }, [scrubbingState, getClipAtX, getClipLeft, getClipWidth, thumbnailMode, pixelsPerSecond, updatePlayheadTime]);
 
   const handleDragBarPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!scrubbingState) return;
@@ -760,7 +778,7 @@ export function TimelineViewport({
       let previewTime = time;
 
       if (clip.kind === "collection") {
-        const activePreview = getCollectionFramePreview(clip.childTimelineId, time);
+        const activePreview = getCollectionClipFramePreview(clip, time);
         if (activePreview) {
           previewClip = {
             id: activePreview.id,
@@ -826,7 +844,7 @@ export function TimelineViewport({
           trimIn + clip.duration / 2;
 
         if (scrubTarget === null && clip.kind === "collection") {
-          const activePreview = getCollectionFramePreview(clip.childTimelineId, previewTime);
+          const activePreview = getCollectionClipFramePreview(clip, previewTime);
           if (activePreview) {
             previewClip = {
               id: activePreview.id,
@@ -1249,7 +1267,7 @@ export function TimelineViewport({
             previewVideoDuration = previewClip.duration;
             previewSrc = previewClip.src;
           } else if (previewClip.kind === "collection") {
-            const activePreview = getCollectionFramePreview(previewClip.childTimelineId, mediaTime);
+            const activePreview = getCollectionClipFramePreview(previewClip, mediaTime);
             if (activePreview) {
               if (activePreview.kind === "video") {
                 previewKind = "video";
