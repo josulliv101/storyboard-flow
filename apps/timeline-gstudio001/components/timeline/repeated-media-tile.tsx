@@ -1,13 +1,14 @@
 import React from "react";
-import { TimelineClip } from "./types";
+import { TimelineClip, VideoTimelineClip } from "./types";
 import { cn } from "@/lib/utils";
-import { VideoTile } from "./video-tile";
+import { getVideoThumbnailUrl } from "./video-source-filmstrip";
 
 type RepeatedMediaTileProps = {
   clip: TimelineClip;
   displayWidth: number;
   previewTime: number;
   itemHeight: number;
+  pixelsPerSecond?: number;
   onDurationLoaded?: (duration: number) => void;
 };
 
@@ -21,8 +22,32 @@ export function RepeatedMediaTile({
   displayWidth,
   previewTime,
   itemHeight,
+  pixelsPerSecond,
   onDurationLoaded,
 }: RepeatedMediaTileProps) {
+  React.useEffect(() => {
+    if (!onDurationLoaded || clip.kind !== "video") return;
+
+    const videoClip = clip as VideoTimelineClip;
+    if (!videoClip.src) return;
+
+    const tempVideo = document.createElement("video");
+    tempVideo.src = videoClip.src;
+    tempVideo.preload = "metadata";
+
+    const handleLoadedMetadata = () => {
+      onDurationLoaded(tempVideo.duration);
+    };
+
+    tempVideo.addEventListener("loadedmetadata", handleLoadedMetadata);
+
+    return () => {
+      tempVideo.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      tempVideo.removeAttribute("src");
+      tempVideo.load();
+    };
+  }, [clip, onDurationLoaded]);
+
   if (clip.kind === "collection") {
     const previewItems = clip.previewItems ?? [];
 
@@ -39,11 +64,11 @@ export function RepeatedMediaTile({
               >
                 {item ? (
                   item.kind === "video" ? (
-                    <VideoTile
-                      src={item.src}
-                      poster={item.poster}
+                    <img
+                      src={getVideoThumbnailUrl(item.src, 0)}
                       alt={item.alt}
-                      previewTime={0}
+                      className="h-full w-full object-cover"
+                      draggable={false}
                     />
                   ) : (
                     /* eslint-disable-next-line @next/next/no-img-element */
@@ -78,6 +103,10 @@ export function RepeatedMediaTile({
   const tileCount = getOddTileCount(displayWidth / naturalFrameWidth);
   const centerIndex = Math.floor(tileCount / 2);
 
+  const pps = pixelsPerSecond ?? 50;
+  const tileDuration = naturalFrameWidth / pps;
+  const sourceDuration = (clip as VideoTimelineClip).sourceDuration || clip.duration || 10;
+
   return (
     <div className="pointer-events-none relative h-full w-full overflow-hidden">
       <div
@@ -88,31 +117,34 @@ export function RepeatedMediaTile({
         }}
       >
         {Array.from({ length: tileCount }, (_, index) => {
-          const diff = Math.abs(index - centerIndex);
-          const opacity = diff === 0 ? 1 : Math.max(0.1, 1 - diff * 0.45);
+          const start = (clip as VideoTimelineClip).trimIn || 0;
+          const duration = clip.duration || 10;
+          const progress = index / Math.max(1, tileCount - 1);
+          const tileTime = Math.min(
+            sourceDuration - 0.05,
+            Math.max(0, start + duration * progress)
+          );
 
           return (
             <div
               key={`${clip.id}-repeat-frame-${index}`}
               className={cn(
-                "h-full shrink-0 overflow-hidden border-r border-black/35 last:border-r-0 transition-opacity relative bg-black",
+                "h-full shrink-0 overflow-hidden border-r border-black/35 last:border-r-0 relative bg-black",
               )}
               style={{ width: `${naturalFrameWidth}px` }}
               aria-hidden={index !== centerIndex}
             >
-              <div className="h-full w-full" style={{ opacity }}>
+              <div className="h-full w-full">
                 {clip.kind === "video" ? (
-                    <VideoTile
-                    src={clip.src}
-                    poster={clip.poster}
+                  <img
+                    src={getVideoThumbnailUrl(clip.src, tileTime)}
                     alt={
                       index === centerIndex
                         ? clip.alt
                         : `${clip.alt} repeated frame ${index + 1}`
                     }
-                    previewTime={previewTime}
-                    sourceDuration={clip.sourceDuration}
-                    onDurationLoaded={index === centerIndex ? onDurationLoaded : undefined}
+                    className="h-full w-full object-cover"
+                    draggable={false}
                   />
                 ) : (
                   /* eslint-disable-next-line @next/next/no-img-element */
@@ -124,13 +156,6 @@ export function RepeatedMediaTile({
                   />
                 )}
               </div>
-              {diff > 0 && (
-                <div className="absolute inset-0 flex items-center justify-center gap-4">
-                  {Array.from({ length: diff }).map((_, i) => (
-                    <div key={i} className="h-8 w-8 rounded-full bg-black/60" />
-                  ))}
-                </div>
-              )}
             </div>
           );
         })}

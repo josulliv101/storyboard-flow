@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { Video, Image as ImageIcon, Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { type SceneLaunchMediaItem, VIDEO_PLACEHOLDER } from './useSceneLaunchBoard';
@@ -58,6 +59,11 @@ export function SceneLaunchMediaTile({
   onGridDragEnd,
   dragPlaceholderContent,
 }: SceneLaunchMediaTileProps) {
+
+  const [isMounted, setIsMounted] = React.useState(false);
+  React.useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const [tempTrimStart, setTempTrimStart] = React.useState(item.trimStartSeconds || 0);
   const [tempDuration, setTempDuration] = React.useState(item.durationSeconds || item.mediaDurationSeconds || 3);
@@ -213,6 +219,7 @@ export function SceneLaunchMediaTile({
   };
 
   return (
+    <>
     <article
       data-scene-grid-item="true"
       id={`grid-item-${dragKey}`}
@@ -224,7 +231,14 @@ export function SceneLaunchMediaTile({
         }
         const ghostEl = document.getElementById(`drag-ghost-${dragKey}`);
         if (ghostEl) {
+          // Temporarily bring the ghost element into the visible viewport so the browser paints it
+          ghostEl.style.left = '0px';
+          ghostEl.style.top = '0px';
           event.dataTransfer.setDragImage(ghostEl, 48, 36);
+          requestAnimationFrame(() => {
+            ghostEl.style.left = '-9999px';
+            ghostEl.style.top = '-9999px';
+          });
         }
         onGridDragStart(event, dragKey);
       }}
@@ -253,33 +267,6 @@ export function SceneLaunchMediaTile({
       }}
       onContextMenu={(event) => handleItemContextMenu(event, dragKey)}
     >
-      {/* Hidden drag image template */}
-      <div
-        id={`drag-ghost-${dragKey}`}
-        className="fixed pointer-events-none bg-zinc-950 border border-zinc-700/60 rounded-md overflow-hidden flex items-center justify-center shadow-2xl z-[9999]"
-        style={{
-          width: '96px',
-          height: '72px',
-          left: '-9999px',
-          top: '-9999px',
-        }}
-      >
-        {item.type === 'video' ? (
-          <img
-            src={item.posterUrl || VIDEO_PLACEHOLDER}
-            className="w-full h-full object-cover"
-            alt=""
-          />
-        ) : (
-          <img
-            src={item.previewUrl}
-            className="w-full h-full object-cover"
-            alt=""
-          />
-        )}
-        <div className="absolute inset-0 bg-black/10" />
-      </div>
-
       {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
         <div className="absolute top-1/2 -translate-y-1/2 -left-[8px] w-1 h-[85%] bg-gradient-to-b from-indigo-400 to-violet-500 rounded-full shadow-[0_0_12px_rgba(99,102,241,0.85)] z-50 pointer-events-none animate-pulse" />
       )}
@@ -539,5 +526,35 @@ export function SceneLaunchMediaTile({
       </div>
     </div>
   </article>
+
+  {isMounted && typeof document !== 'undefined' && createPortal(
+    <div
+      id={`drag-ghost-${dragKey}`}
+      className="fixed pointer-events-none bg-zinc-950 border border-zinc-700/60 rounded-md overflow-hidden flex items-center justify-center shadow-2xl z-[9999]"
+      style={{
+        width: '96px',
+        height: '72px',
+        left: '-9999px',
+        top: '-9999px',
+      }}
+    >
+      {item.type === 'video' ? (
+        <img
+          src={item.posterUrl || VIDEO_PLACEHOLDER}
+          className="w-full h-full object-cover"
+          alt=""
+        />
+      ) : (
+        <img
+          src={item.previewUrl}
+          className="w-full h-full object-cover"
+          alt=""
+        />
+      )}
+      <div className="absolute inset-0 bg-black/10" />
+    </div>,
+    document.body
+  )}
+  </>
   );
 }

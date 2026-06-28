@@ -4,6 +4,7 @@ import type { TimelineDocument } from "@/components/timeline/types";
 import {
   getFirebaseTimelineDocument,
   saveFirebaseTimelineDocument,
+  deleteFirebaseTimelineDocument,
 } from "@/lib/firebase-timeline-store";
 import { getTimelineDocument } from "@/lib/timeline-documents";
 
@@ -86,5 +87,22 @@ export async function PATCH(
     return NextResponse.json({ document: savedDocument });
   } catch (error) {
     return storageErrorResponse(error, "Unable to save the timeline document.");
+  }
+}
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+    if (!isValidTimelineId(id)) {
+      return NextResponse.json({ error: "Invalid timeline id." }, { status: 400 });
+    }
+
+    await deleteFirebaseTimelineDocument(id);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return storageErrorResponse(error, "Unable to delete the timeline document.");
   }
 }

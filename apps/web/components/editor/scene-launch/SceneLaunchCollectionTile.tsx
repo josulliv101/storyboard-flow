@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { Grid2X2, Pause, Play, ChevronLeft, ChevronRight, Folder, FolderOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CollectionFrame } from '../Frame';
@@ -89,6 +90,11 @@ export function SceneLaunchCollectionTile({
   aspectRatio,
 }: SceneLaunchCollectionTileProps) {
 
+  const [isMounted, setIsMounted] = React.useState(false);
+  React.useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const preview = getSceneLaunchCollectionPreview(beat);
   const orderedMediaItems = getRecursiveMediaItems(beat);
   const totalItems = orderedMediaItems.length;
@@ -134,6 +140,7 @@ export function SceneLaunchCollectionTile({
   }, [beat, allCollections, findMediaItemInCollection]);
 
   return (
+    <>
     <article
       data-scene-grid-item="true"
       id={`grid-item-${dragKey}`}
@@ -141,7 +148,14 @@ export function SceneLaunchCollectionTile({
       onDragStart={(event) => {
         const ghostEl = document.getElementById(`drag-ghost-${dragKey}`);
         if (ghostEl) {
+          // Temporarily bring the ghost element into the visible viewport so the browser paints it
+          ghostEl.style.left = '0px';
+          ghostEl.style.top = '0px';
           event.dataTransfer.setDragImage(ghostEl, 48, 36);
+          requestAnimationFrame(() => {
+            ghostEl.style.left = '-9999px';
+            ghostEl.style.top = '-9999px';
+          });
         }
         onGridDragStart(event, dragKey);
       }}
@@ -166,66 +180,6 @@ export function SceneLaunchCollectionTile({
         handleItemContextMenu(event, dragKey);
       }}
     >
-      {/* Hidden drag image template */}
-      <div
-        id={`drag-ghost-${dragKey}`}
-        className="fixed pointer-events-none bg-zinc-950 border border-zinc-700/60 rounded-md overflow-hidden flex flex-col items-center justify-center shadow-2xl z-[9999]"
-        style={{
-          width: '96px',
-          height: '72px',
-          left: '-9999px',
-          top: '-9999px',
-        }}
-      >
-        {firstFourItems.length > 0 ? (
-          <div className="relative w-full h-full overflow-hidden rounded-md">
-            <>
-              <div className="w-full h-full relative z-10">
-                {firstFourItems[0].type === 'video' ? (
-                  <img src={firstFourItems[0].posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <img src={firstFourItems[0].previewUrl} alt="" className="h-full w-full object-cover" />
-                )}
-              </div>
-              {orderedMediaItems.length >= 1 && (
-                <>
-                  <svg 
-                    width="36" 
-                    height="36" 
-                    viewBox="0 0 36 36" 
-                    className="absolute top-0 right-0 z-20 pointer-events-none overflow-visible"
-                    style={{
-                      filter: 'drop-shadow(-1px 1px 1.5px rgba(0,0,0,0.45))'
-                    }}
-                  >
-                    <path 
-                      d="M 0,0 L 36,0 L 36,36 Z" 
-                      fill="#18181b" 
-                      stroke="#27272a" 
-                      strokeWidth="1.2"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <div
-                    className="absolute top-0 right-0 w-[36px] h-[36px] z-30 flex items-start justify-end pt-1 pr-1.5 select-none pointer-events-none"
-                  >
-                    <span className="text-[9px] font-extrabold text-white font-sans tracking-tight">
-                      +{orderedMediaItems.length - 1}
-                    </span>
-                  </div>
-                </>
-              )}
-            </>
-          </div>
-        ) : (
-          <Folder className="h-6 w-6 text-amber-500" />
-        )}
-        <div className="absolute inset-0 bg-black/10" />
-        <span className="absolute bottom-1 left-1 right-1 truncate text-[8px] bg-black/60 px-1 rounded text-center text-zinc-350 font-medium">
-          {beat.name}
-        </span>
-      </div>
-
       {gridDragOverInfo?.targetKey === dragKey && gridDragOverInfo.position === 'before' && (
         <div className="absolute top-1/2 -translate-y-1/2 -left-[8px] w-1 h-[85%] bg-gradient-to-b from-indigo-400 to-violet-500 rounded-full shadow-[0_0_12px_rgba(99,102,241,0.85)] z-50 pointer-events-none animate-pulse" />
       )}
@@ -489,5 +443,68 @@ export function SceneLaunchCollectionTile({
       </div>
     </div>
   </article>
+
+  {isMounted && typeof document !== 'undefined' && createPortal(
+    <div
+      id={`drag-ghost-${dragKey}`}
+      className="fixed pointer-events-none bg-zinc-950 border border-zinc-700/60 rounded-md overflow-hidden flex flex-col items-center justify-center shadow-2xl z-[9999]"
+      style={{
+        width: '96px',
+        height: '72px',
+        left: '-9999px',
+        top: '-9999px',
+      }}
+    >
+      {firstFourItems.length > 0 ? (
+        <div className="relative w-full h-full overflow-hidden rounded-md">
+          <>
+            <div className="w-full h-full relative z-10">
+              {firstFourItems[0].type === 'video' ? (
+                <img src={firstFourItems[0].posterUrl || VIDEO_PLACEHOLDER} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <img src={firstFourItems[0].previewUrl} alt="" className="h-full w-full object-cover" />
+              )}
+            </div>
+            {orderedMediaItems.length >= 1 && (
+              <>
+                <svg 
+                  width="36" 
+                  height="36" 
+                  viewBox="0 0 36 36" 
+                  className="absolute top-0 right-0 z-20 pointer-events-none overflow-visible"
+                  style={{
+                    filter: 'drop-shadow(-1px 1px 1.5px rgba(0,0,0,0.45))'
+                  }}
+                >
+                  <path 
+                    d="M 0,0 L 36,0 L 36,36 Z" 
+                    fill="#18181b" 
+                    stroke="#27272a" 
+                    strokeWidth="1.2"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <div
+                  className="absolute top-0 right-0 w-[36px] h-[36px] z-30 flex items-start justify-end pt-1 pr-1.5 select-none pointer-events-none"
+                >
+                  <span className="text-[9px] font-extrabold text-white font-sans tracking-tight">
+                    +{orderedMediaItems.length - 1}
+                  </span>
+                </div>
+              </>
+            )}
+          </>
+        </div>
+      ) : (
+        <Folder className="h-6 w-6 text-amber-500" />
+      )}
+      <div className="absolute inset-0 bg-black/10" />
+      <span className="absolute bottom-1 left-1 right-1 truncate text-[8px] bg-black/60 px-1 rounded text-center text-zinc-350 font-medium">
+        {beat.name}
+      </span>
+    </div>,
+    document.body
+  )}
+  </>
   );
 }

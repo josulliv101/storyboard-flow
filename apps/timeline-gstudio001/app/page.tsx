@@ -11,6 +11,7 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/core/button";
@@ -73,6 +74,36 @@ export default function Home() {
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
+
+  const handleDeleteProject = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    const project = projects.find((p) => p.id === id);
+    if (!project) return;
+
+    if (
+      !window.confirm(
+        `Are you sure you want to delete the project "${project.title}"? This will also delete all of its nested timeline collections and cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/timelines/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      setProjects((prev) => prev.filter((p) => p.id !== id));
+    } catch (error) {
+      alert("Failed to delete project: " + (error instanceof Error ? error.message : String(error)));
+    }
+  };
 
   const handleCreateProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -198,11 +229,16 @@ export default function Home() {
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
-              <Link
+              <div
                 key={project.id}
-                href={`/timeline/${encodeURIComponent(project.id)}/storyboard`}
-                className="group overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/55 shadow-xl shadow-black/20 transition-colors hover:border-amber-400/55 hover:bg-zinc-900"
+                className="relative group overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/55 shadow-xl shadow-black/20 transition-all duration-200 hover:border-amber-400/55 hover:bg-zinc-900"
               >
+                {/* Link overlay covering the whole card area */}
+                <Link
+                  href={`/timeline/${encodeURIComponent(project.id)}/storyboard`}
+                  className="absolute inset-0 z-10"
+                />
+
                 <div className="relative aspect-video overflow-hidden border-b border-zinc-800 bg-zinc-950">
                   {project.thumbnailUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -216,6 +252,14 @@ export default function Home() {
                       <Clapperboard className="h-8 w-8 text-zinc-700" />
                     </div>
                   )}
+                  {/* Delete button positioned absolute top-right, z-20 so it sits on top of Link overlay */}
+                  <button
+                    onClick={(e) => handleDeleteProject(e, project.id)}
+                    className="absolute top-2.5 right-2.5 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900/90 hover:bg-red-600/90 text-zinc-400 hover:text-white transition-all opacity-0 group-hover:opacity-100"
+                    title="Delete project"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                 </div>
                 <div className="grid gap-3 p-4">
                   <div className="min-w-0">
@@ -236,7 +280,7 @@ export default function Home() {
                     </span>
                   </div>
                 </div>
-              </Link>
+              </div>
             ))}
           </div>
         )}

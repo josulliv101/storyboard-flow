@@ -14,6 +14,25 @@ import {
 } from "./timeline-grid";
 import { getCollectionFramePreview } from "@/lib/timeline-documents";
 
+const CLOUDINARY_CLOUD_NAME = "drrxyckxi";
+
+export function getVideoThumbnailUrl(src: string, second: number): string {
+  const roundedSecond = Math.max(0, Number(second.toFixed(2)));
+  
+  if (src.includes("res.cloudinary.com") && src.includes("/video/upload/")) {
+    // Cloudinary native transformation for uploaded videos
+    const parts = src.split("/video/upload/");
+    if (parts.length === 2) {
+      const baseUrl = parts[0];
+      const videoPath = parts[1].replace(/\.[^/.]+$/, ".webp");
+      return `${baseUrl}/video/upload/so_${roundedSecond},w_120,h_68,c_fill,f_webp,q_auto/${videoPath}`;
+    }
+  }
+  
+  // Cloudinary fetch transformation for remote fallback videos
+  return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/fetch/so_${roundedSecond},w_120,h_68,c_fill,f_webp,q_auto/${encodeURIComponent(src)}`;
+}
+
 type VideoSourceFilmStripProps = {
   clip: TimelineClip;
   pixelsPerSecond: number;
@@ -77,16 +96,9 @@ export function VideoSourceFilmStrip({
 
   const sourceLeft = frozenState.sourceLeft !== null ? frozenState.sourceLeft : computedSourceLeft;
 
-  const frameCount = clamp(
-    Math.ceil(sourceWidth / FILMSTRIP_TARGET_FRAME_WIDTH),
-    2,
-    FILMSTRIP_MAX_FRAMES,
-  );
-  const frameEpsilon = Math.min(1 / 30, sourceDuration / 100);
-  const lastFrameTime = Math.max(0, sourceDuration - frameEpsilon);
+  const frameCount = Math.max(1, Math.ceil(sourceDuration));
   const frameTimes = Array.from({ length: frameCount }, (_, index) => {
-    if (frameCount === 1) return 0;
-    return (index / (frameCount - 1)) * lastFrameTime;
+    return Math.min(sourceDuration - 0.05, index);
   });
 
   return (
@@ -119,12 +131,11 @@ export function VideoSourceFilmStrip({
               >
                 {preview ? (
                   preview.kind === "video" ? (
-                    <VideoTile
-                      src={preview.src}
-                      poster={preview.poster}
+                    <img
+                      src={getVideoThumbnailUrl(preview.src, preview.previewTime)}
                       alt=""
-                      previewTime={preview.previewTime}
-                      sourceDuration={preview.sourceDuration}
+                      className="h-full w-full object-cover"
+                      draggable={false}
                     />
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -188,12 +199,11 @@ export function VideoSourceFilmStrip({
               className="relative h-full min-w-0 overflow-hidden border-r border-black/70 last:border-r-0"
               style={{ flex: `0 0 ${100 / frameTimes.length}%` }}
             >
-              <VideoTile
-                src={(clip as VideoTimelineClip).src}
-                poster={(clip as VideoTimelineClip).poster}
+              <img
+                src={getVideoThumbnailUrl((clip as VideoTimelineClip).src, time)}
                 alt={`${clip.alt} source frame ${index + 1}`}
-                previewTime={time}
-                sourceDuration={(clip as VideoTimelineClip).sourceDuration}
+                className="h-full w-full object-cover"
+                draggable={false}
               />
               {(index === 0 || index === frameTimes.length - 1) && (
                 <span
@@ -286,21 +296,9 @@ export function PassiveVideoFilmStrip({
   const sourceDuration = clip.kind === "collection" ? clip.duration : (clip as VideoTimelineClip).sourceDuration;
   const trimIn = clip.kind === "collection" ? 0 : (clip as VideoTimelineClip).trimIn;
 
-  const frameCount = clamp(
-    Math.ceil(width / FILMSTRIP_TARGET_FRAME_WIDTH),
-    2,
-    FILMSTRIP_MAX_FRAMES,
-  );
-  const frameEpsilon = Math.min(1 / 30, sourceDuration / 100);
-  const visibleStart = trimIn;
-  const visibleEnd = Math.min(
-    sourceDuration - frameEpsilon,
-    trimIn + clip.duration,
-  );
+  const frameCount = Math.max(1, Math.ceil(width / pixelsPerSecond));
   const frameTimes = Array.from({ length: frameCount }, (_, index) => {
-    if (frameCount === 1) return visibleStart;
-    const progress = index / (frameCount - 1);
-    return visibleStart + (visibleEnd - visibleStart) * progress;
+    return Math.min(sourceDuration - 0.05, trimIn + index * (clip.duration / Math.max(1, frameCount - 1)));
   });
 
   return (
@@ -349,12 +347,11 @@ export function PassiveVideoFilmStrip({
                 >
                   {preview ? (
                     preview.kind === "video" ? (
-                      <VideoTile
-                        src={preview.src}
-                        poster={preview.poster}
+                      <img
+                        src={getVideoThumbnailUrl(preview.src, preview.previewTime)}
                         alt=""
-                        previewTime={preview.previewTime}
-                        sourceDuration={preview.sourceDuration}
+                        className="h-full w-full object-cover"
+                        draggable={false}
                       />
                     ) : (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -398,12 +395,11 @@ export function PassiveVideoFilmStrip({
                 className="relative h-full min-w-0 overflow-hidden border-r border-black/70 last:border-r-0"
                 style={{ flex: `0 0 ${100 / frameTimes.length}%` }}
               >
-                <VideoTile
-                  src={(clip as VideoTimelineClip).src}
-                  poster={(clip as VideoTimelineClip).poster}
+                <img
+                  src={getVideoThumbnailUrl((clip as VideoTimelineClip).src, time)}
                   alt=""
-                  previewTime={time}
-                  sourceDuration={(clip as VideoTimelineClip).sourceDuration}
+                  className="h-full w-full object-cover"
+                  draggable={false}
                 />
               </div>
             );

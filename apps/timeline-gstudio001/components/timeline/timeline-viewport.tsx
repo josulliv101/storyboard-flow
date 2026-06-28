@@ -778,106 +778,106 @@ export function TimelineViewport({
           transition: trackTransition,
         }}
       >
-        {!hasClips ? (
-          <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
-            No items
-          </div>
-        ) : (
-          <div
-            ref={contentRef}
-            className="relative"
-            style={{
-              width: "100%",
-              height: "100%",
-              transform: `translateX(${firstOverhang + closingOverhangOffset}px)`,
-              transition: contentTransition,
-            }}
-          >
-            {visibleClips.map((clip) => (
-              <TimelineClipItem
-                key={clip.id}
-                clip={clip}
-                pixelsPerSecond={pixelsPerSecond}
-                itemTop={TIMELINE_ITEM_TOP}
-                itemHeight={itemHeight}
-                thumbnailMode={thumbnailMode}
-                gridMetrics={gridMetrics}
-                thumbnailWidth={thumbnailWidth}
-                thumbnailGap={THUMBNAIL_GAP}
-                isSelected={selectedIndex === clip.index}
-                isGrowingOpposite={
-                  interactions.activeResize?.index === 0 &&
-                  interactions.activeResize.edge === "left" &&
-                  clip.index === 0
-                }
-                scrubPreviewTime={
-                  scrubPreview?.clipIndex === clip.index
-                    ? scrubPreview.time
-                    : null
-                }
-                isReordering={interactions.isReordering}
-                isCollectionHovered={activeCollectionHoverId === clip.id}
-                reorderPreview={
-                  interactions.reorderPreview?.activeClipId === clip.id
-                    ? interactions.reorderPreview
-                    : null
-                }
-                onResizeDown={interactions.handleResizeDown}
-                onResizeMove={interactions.handleResizeMove}
-                onResizeUp={interactions.handleResizeUp}
-                onResizeKeyDown={interactions.handleResizeKeyDown}
-                onDurationLoaded={handleClipDurationLoad}
-                getCollectionHref={getCollectionHref}
-                onOpenCollection={onOpenCollection}
-                timelineId={timelineId}
-              />
-            ))}
-
-            {!interactions.isReordering &&
-              selectedIndex === null &&
-              visibleClips.map((clip) =>
-                clip.kind === "video" || clip.kind === "collection" || clip.kind === "image" ? (
-                  <PassiveVideoFilmStrip
-                    key={`${clip.id}-passive-filmstrip`}
-                    clip={clip}
-                    pixelsPerSecond={pixelsPerSecond}
-                    thumbnailMode={thumbnailMode}
-                    gridMetrics={gridMetrics}
-                    thumbnailWidth={thumbnailWidth}
-                    thumbnailGap={THUMBNAIL_GAP}
-                    onPointerDown={handlePassiveFilmStripPointerDown}
-                    showFilmstrip={showPassiveFilmstrips}
-                  />
-                ) : null,
-              )}
-
-            {selectedVideoClip && !interactions.isReordering && (
-              <VideoSourceFilmStrip
-                key={`filmstrip-${selectedVideoClip.id}`}
-                clip={selectedVideoClip}
-                pixelsPerSecond={pixelsPerSecond}
-                thumbnailMode={thumbnailMode}
-                gridMetrics={gridMetrics}
-                thumbnailWidth={thumbnailWidth}
-                thumbnailGap={THUMBNAIL_GAP}
-                editingMode={
-                  interactions.isFilmStripEditing &&
-                  interactions.activeFilmStripEdit?.index ===
-                    selectedVideoClip.index
-                    ? interactions.activeFilmStripEdit.mode
-                    : interactions.isResizing &&
-                        interactions.activeResize?.index ===
-                          selectedVideoClip.index
-                      ? interactions.activeResize.edge
+        <div
+          ref={contentRef}
+          className="relative w-full h-full"
+          style={{
+            transform: `translateX(${firstOverhang + closingOverhangOffset}px)`,
+            transition: contentTransition,
+          }}
+        >
+          {!hasClips ? (
+            <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
+              No items
+            </div>
+          ) : (
+            <>
+              {visibleClips.map((clip) => (
+                <TimelineClipItem
+                  key={clip.id}
+                  clip={clip}
+                  pixelsPerSecond={pixelsPerSecond}
+                  itemTop={TIMELINE_ITEM_TOP}
+                  itemHeight={itemHeight}
+                  thumbnailMode={thumbnailMode}
+                  gridMetrics={gridMetrics}
+                  thumbnailWidth={thumbnailWidth}
+                  thumbnailGap={THUMBNAIL_GAP}
+                  isSelected={selectedIndex === clip.index}
+                  isGrowingOpposite={
+                    interactions.activeResize?.index === 0 &&
+                    interactions.activeResize.edge === "left" &&
+                    clip.index === 0
+                  }
+                  scrubPreviewTime={
+                    scrubPreview?.clipIndex === clip.index
+                      ? scrubPreview.time
                       : null
-                }
-                onSourceWindowPointerDown={
-                  interactions.handleFilmStripPointerDown
-                }
-              />
-            )}
-          </div>
-        )}
+                  }
+                  isReordering={interactions.isReordering}
+                  isCollectionHovered={activeCollectionHoverId === clip.id}
+                  reorderPreview={
+                    interactions.reorderPreview?.activeClipId === clip.id
+                      ? interactions.reorderPreview
+                      : null
+                  }
+                  onResizeDown={interactions.handleResizeDown}
+                  onResizeMove={interactions.handleResizeMove}
+                  onResizeUp={interactions.handleResizeUp}
+                  onResizeKeyDown={interactions.handleResizeKeyDown}
+                  onDurationLoaded={handleClipDurationLoad}
+                  getCollectionHref={getCollectionHref}
+                  onOpenCollection={onOpenCollection}
+                  timelineId={timelineId}
+                />
+              ))}
+
+              {!interactions.isReordering &&
+                selectedIndex === null &&
+                visibleClips.map((clip) =>
+                  clip.kind === "video" || clip.kind === "collection" || clip.kind === "image" ? (
+                    <PassiveVideoFilmStrip
+                      key={`${clip.id}-passive-filmstrip`}
+                      clip={clip}
+                      pixelsPerSecond={pixelsPerSecond}
+                      thumbnailMode={thumbnailMode}
+                      gridMetrics={gridMetrics}
+                      thumbnailWidth={thumbnailWidth}
+                      thumbnailGap={THUMBNAIL_GAP}
+                      onPointerDown={handlePassiveFilmStripPointerDown}
+                      showFilmstrip={showPassiveFilmstrips}
+                    />
+                  ) : null,
+                )}
+
+              {selectedVideoClip && !interactions.isReordering && (
+                <VideoSourceFilmStrip
+                  key={`filmstrip-${selectedVideoClip.id}`}
+                  clip={selectedVideoClip}
+                  pixelsPerSecond={pixelsPerSecond}
+                  thumbnailMode={thumbnailMode}
+                  gridMetrics={gridMetrics}
+                  thumbnailWidth={thumbnailWidth}
+                  thumbnailGap={THUMBNAIL_GAP}
+                  editingMode={
+                    interactions.isFilmStripEditing &&
+                    interactions.activeFilmStripEdit?.index ===
+                      selectedVideoClip.index
+                      ? interactions.activeFilmStripEdit.mode
+                      : interactions.isResizing &&
+                          interactions.activeResize?.index ===
+                            selectedVideoClip.index
+                        ? interactions.activeResize.edge
+                        : null
+                  }
+                  onSourceWindowPointerDown={
+                    interactions.handleFilmStripPointerDown
+                  }
+                />
+              )}
+            </>
+          )}
+        </div>
       </div>
       {passiveScrubOverlay}
       {isDragOver && (

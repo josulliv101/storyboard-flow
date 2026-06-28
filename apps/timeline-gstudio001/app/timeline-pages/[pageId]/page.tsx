@@ -7,7 +7,7 @@ import { notFound } from "next/navigation";
 
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
 import { parseTimelineViewState } from "@/components/timeline/timeline-view-state";
-import { getTimelinePage } from "@/lib/timeline-documents";
+import { getTimelinePage, getTimelineDocument, registerTimelineDocument } from "@/lib/timeline-documents";
 import type { TimelineDocument } from "@/components/timeline/types";
 
 type TimelinePageProps = {
@@ -97,6 +97,29 @@ export default function TimelinePage({
     activeDraggedTimelineIdRef.current = activeDraggedTimelineId;
   }, [activeDraggedTimelineId]);
 
+  // Subscribe to external store updates to sync clips across timelines and prevent re-render loss
+  useEffect(() => {
+    const handleUpdate = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail && detail.timelineId) {
+        const updatedDoc = getTimelineDocument(detail.timelineId);
+        if (updatedDoc) {
+          setTimelines((prev) =>
+            prev.map((t) =>
+              t.id === detail.timelineId
+                ? { ...t, clips: [...updatedDoc.clips] }
+                : t
+            )
+          );
+        }
+      }
+    };
+    window.addEventListener("gstudio-timeline-update", handleUpdate);
+    return () => {
+      window.removeEventListener("gstudio-timeline-update", handleUpdate);
+    };
+  }, []);
+
   const [hoveredDropZoneIndex, setHoveredDropZoneIndex] = useState<number | null>(null);
   const [activeDragClip, setActiveDragClip] = useState<any | null>(null);
   const [dragCoords, setDragCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -111,7 +134,7 @@ export default function TimelinePage({
   }
 
   const handleDropTimeline = useCallback((insertIndex: number, draggedTimelineId?: string) => {
-    if (draggedTimelineId) {
+    if (draggedTimelineId && timelines.some((t) => t.id === draggedTimelineId)) {
       const sourceIndex = timelines.findIndex((t) => t.id === draggedTimelineId);
       if (sourceIndex === -1) return;
 
@@ -133,6 +156,7 @@ export default function TimelinePage({
         description: "Custom user timeline.",
         clips: [],
       };
+      registerTimelineDocument(newTimeline);
       const next = [...timelines];
       next.splice(insertIndex, 0, newTimeline);
       setTimelines(next);

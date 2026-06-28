@@ -38,6 +38,10 @@ export type ReorderPreview = {
   dragTop: number;
   dragOffsetY: number;
   targetIndex: number;
+  clientX: number;
+  clientY: number;
+  pointerOffsetX: number;
+  pointerOffsetY: number;
 };
 
 export function useTimelinePan({
@@ -334,6 +338,10 @@ export function useTimelinePan({
           dragTop: getPointerContentY(clientY) - currentState.pointerOffsetY,
           dragOffsetY: clientY - currentState.startY,
           targetIndex,
+          clientX,
+          clientY,
+          pointerOffsetX: currentState.pointerOffsetX,
+          pointerOffsetY: currentState.pointerOffsetY,
         });
 
         // Dispatch window event for cross-timeline pointer dragging

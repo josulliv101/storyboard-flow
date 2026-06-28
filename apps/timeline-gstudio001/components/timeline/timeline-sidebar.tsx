@@ -133,91 +133,99 @@ export function TimelineSidebar() {
             </span>
           </div>
         </Link>
-        <Link
-          href={getProjectViewHref("storyboard")}
-          className={cn(
-            "flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer select-none group",
-            activeProjectId ? projectView === "storyboard" : pathname === "/storyboard"
-              ? "border-amber-500 bg-amber-500/10 text-amber-300 shadow-lg shadow-amber-500/5"
-              : "border-zinc-800 bg-zinc-900/40 hover:border-amber-500/50 hover:bg-amber-500/5"
-          )}
-        >
-          <div className={cn(
-            "p-2 rounded transition-colors",
-            (activeProjectId ? projectView === "storyboard" : pathname === "/storyboard") ? "bg-amber-500/20 text-amber-400" : "bg-zinc-800 group-hover:bg-amber-500/20 group-hover:text-amber-400"
-          )}>
-            <Film className={cn(
-              "h-4 w-4 transition-colors",
-              (activeProjectId ? projectView === "storyboard" : pathname === "/storyboard") ? "text-amber-400" : "text-zinc-400 group-hover:text-amber-400"
-            )} />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-xs font-semibold text-zinc-200">
-              Storyboard
-            </span>
-            <span className="text-[9px] text-zinc-500">
-              {activeProjectId ? "Project storyboard" : "Go to storyboard"}
-            </span>
-          </div>
-        </Link>
-        <Link
-          href={getProjectViewHref("workbench")}
-          className={cn(
-            "flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer select-none group",
-            activeProjectId ? projectView === "workbench" : pathname === "/workbench"
-              ? "border-amber-500 bg-amber-500/10 text-amber-300 shadow-lg shadow-amber-500/5"
-              : "border-zinc-800 bg-zinc-900/40 hover:border-amber-500/50 hover:bg-amber-500/5"
-          )}
-        >
-          <div className={cn(
-            "p-2 rounded transition-colors",
-            (activeProjectId ? projectView === "workbench" : pathname === "/workbench") ? "bg-amber-500/20 text-amber-400" : "bg-zinc-800 group-hover:bg-amber-500/20 group-hover:text-amber-400"
-          )}>
-            <Hammer className={cn(
-              "h-4 w-4 transition-colors",
-              (activeProjectId ? projectView === "workbench" : pathname === "/workbench") ? "text-amber-400" : "text-zinc-400 group-hover:text-amber-400"
-            )} />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-xs font-semibold text-zinc-200">
-              Workbench
-            </span>
-            <span className="text-[9px] text-zinc-500">
-              {activeProjectId ? "Project workbench" : "Go to workbench"}
-            </span>
-          </div>
-        </Link>
-      </div>
-
-      <div className="border-t border-zinc-800/80 my-1 shrink-0" />
-
-      <div className="flex flex-col gap-3">
-        {ITEMS.map((item) => {
-          const Icon = item.icon;
-          return (
-            <div
-              key={item.type}
-              draggable
-              onDragStart={(e) => handleDragStart(e, item.type)}
-              onDragEnd={handleDragEnd}
-              onClick={() => setToastMessage(`Drag this "${item.label}" block onto the workspace to add it!`)}
-              className="flex items-center gap-3 p-3 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:border-sky-500 hover:bg-sky-950/20 hover:text-sky-300 transition-all duration-200 cursor-grab active:cursor-grabbing select-none group"
+        {activeProjectId && (
+          <>
+            <Link
+              href={getProjectViewHref("storyboard")}
+              className={cn(
+                "flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer select-none group",
+                projectView === "storyboard"
+                  ? "border-amber-500 bg-amber-500/10 text-amber-300 shadow-lg shadow-amber-500/5"
+                  : "border-zinc-800 bg-zinc-900/40 hover:border-amber-500/50 hover:bg-amber-500/5"
+              )}
             >
-              <div className="p-2 rounded bg-zinc-800 group-hover:bg-sky-950/50 group-hover:text-sky-400 transition-colors">
-                <Icon className="h-4 w-4 text-zinc-400 group-hover:text-sky-400" />
+              <div className={cn(
+                "p-2 rounded transition-colors",
+                projectView === "storyboard" ? "bg-amber-500/20 text-amber-400" : "bg-zinc-800 group-hover:bg-amber-500/20 group-hover:text-amber-400"
+              )}>
+                <Film className={cn(
+                  "h-4 w-4 transition-colors",
+                  projectView === "storyboard" ? "text-amber-400" : "text-zinc-400 group-hover:text-amber-400"
+                )} />
               </div>
               <div className="flex flex-col">
-                <span className="text-xs font-semibold text-zinc-200 group-hover:text-sky-200">
-                  {item.label}
+                <span className="text-xs font-semibold text-zinc-200">
+                  Storyboard
                 </span>
-                <span className="text-[9px] text-zinc-500 group-hover:text-sky-400/60">
-                  {item.description}
+                <span className="text-[9px] text-zinc-500">
+                  Project storyboard
                 </span>
               </div>
-            </div>
-          );
-        })}
+            </Link>
+            <Link
+              href={getProjectViewHref("workbench")}
+              className={cn(
+                "flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 cursor-pointer select-none group",
+                projectView === "workbench"
+                  ? "border-amber-500 bg-amber-500/10 text-amber-300 shadow-lg shadow-amber-500/5"
+                  : "border-zinc-800 bg-zinc-900/40 hover:border-amber-500/50 hover:bg-amber-500/5"
+              )}
+            >
+              <div className={cn(
+                "p-2 rounded transition-colors",
+                projectView === "workbench" ? "bg-amber-500/20 text-amber-400" : "bg-zinc-800 group-hover:bg-amber-500/20 group-hover:text-amber-400"
+              )}>
+                <Hammer className={cn(
+                  "h-4 w-4 transition-colors",
+                  projectView === "workbench" ? "text-amber-400" : "text-zinc-400 group-hover:text-amber-400"
+                )} />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-semibold text-zinc-200">
+                  Workbench
+                </span>
+                <span className="text-[9px] text-zinc-500">
+                  Project workbench
+                </span>
+              </div>
+            </Link>
+          </>
+        )}
       </div>
+
+      {activeProjectId && (
+        <>
+          <div className="border-t border-zinc-800/80 my-1 shrink-0" />
+
+          <div className="flex flex-col gap-3">
+            {ITEMS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <div
+                  key={item.type}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, item.type)}
+                  onDragEnd={handleDragEnd}
+                  onClick={() => setToastMessage(`Drag this "${item.label}" block onto the workspace to add it!`)}
+                  className="flex items-center gap-3 p-3 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:border-sky-500 hover:bg-sky-950/20 hover:text-sky-300 transition-all duration-200 cursor-grab active:cursor-grabbing select-none group"
+                >
+                  <div className="p-2 rounded bg-zinc-800 group-hover:bg-sky-950/50 group-hover:text-sky-400 transition-colors">
+                    <Icon className="h-4 w-4 text-zinc-400 group-hover:text-sky-400" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold text-zinc-200 group-hover:text-sky-200">
+                      {item.label}
+                    </span>
+                    <span className="text-[9px] text-zinc-500 group-hover:text-sky-400/60">
+                      {item.description}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {toastMessage && (
         <>
