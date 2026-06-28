@@ -29,12 +29,10 @@ function InteractiveToolbar({
     <TimelineToolbar
       gridMode={gridMode}
       itemSize={itemSize}
-      manualOverhangScroll={manualOverhangScroll}
       showPlayBarArea={showPlayBarArea}
       showPassiveFilmstrips={showPassiveFilmstrips}
       onGridModeChange={setGridMode}
       onItemSizeChange={setItemSize}
-      onManualOverhangScrollChange={setManualOverhangScroll}
       onPlayBarAreaChange={setShowPlayBarArea}
       onPassiveFilmstripsChange={setShowPassiveFilmstrips}
       onThumbnailModeChange={setThumbnailMode}
@@ -61,12 +59,10 @@ const meta = {
   args: {
     gridMode: false,
     itemSize: "md",
-    manualOverhangScroll: true,
     showPlayBarArea: true,
     showPassiveFilmstrips: false,
     onGridModeChange: () => {},
     onItemSizeChange: () => {},
-    onManualOverhangScrollChange: () => {},
     onPlayBarAreaChange: () => {},
     onPassiveFilmstripsChange: () => {},
     onThumbnailModeChange: () => {},

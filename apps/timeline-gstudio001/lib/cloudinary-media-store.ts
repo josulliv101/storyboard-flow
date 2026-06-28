@@ -24,6 +24,7 @@ export type CloudinaryAsset = {
   height?: number;
   size?: number;
   createdAt?: string;
+  relativePath?: string;
 };
 
 type CloudinaryConfig = {
@@ -117,8 +118,17 @@ function cloudinaryImageThumbnailUrl(config: CloudinaryConfig, publicId: string)
   return `https://res.cloudinary.com/${config.cloudName}/image/upload/w_640,h_360,c_fill,q_auto,f_auto/${publicId}`;
 }
 
-function toAsset(config: CloudinaryConfig, resource: CloudinaryResource): CloudinaryAsset | null {
+function toAsset(
+  config: CloudinaryConfig,
+  resource: CloudinaryResource,
+  userId?: string,
+): CloudinaryAsset | null {
   if (resource.resource_type !== "image" && resource.resource_type !== "video") return null;
+
+  const prefix = userId ? `${config.folder}/${userId}/` : `${config.folder}/`;
+  const relativePath = resource.public_id.startsWith(prefix)
+    ? resource.public_id.slice(prefix.length)
+    : resource.public_id;
 
   return {
     id: resource.public_id,
@@ -134,12 +144,15 @@ function toAsset(config: CloudinaryConfig, resource: CloudinaryResource): Cloudi
     height: resource.height,
     size: resource.bytes,
     createdAt: resource.created_at,
+    relativePath,
   };
 }
 
 async function listCloudinaryResources(
   config: CloudinaryConfig,
   resourceType: "image" | "video",
+  folderPrefix: string,
+  userId: string,
 ) {
   const assets: CloudinaryAsset[] = [];
   let nextCursor: string | undefined;
@@ -147,7 +160,7 @@ async function listCloudinaryResources(
 
   do {
     const params = new URLSearchParams({
-      prefix: `${config.folder}/`,
+      prefix: `${folderPrefix}/`,
       max_results: "100",
       direction: "desc",
     });
@@ -173,7 +186,7 @@ async function listCloudinaryResources(
 
     assets.push(
       ...(body.resources || [])
-        .map((resource) => toAsset(config, resource))
+        .map((resource) => toAsset(config, resource, userId))
         .filter((asset): asset is CloudinaryAsset => !!asset),
     );
     nextCursor = body.next_cursor;
@@ -183,11 +196,12 @@ async function listCloudinaryResources(
   return assets;
 }
 
-export async function listCloudinaryAssets() {
+export async function listCloudinaryAssets(userId: string) {
   const config = getCloudinaryConfig();
+  const userFolder = `${config.folder}/${userId}`;
   const [images, videos] = await Promise.all([
-    listCloudinaryResources(config, "image"),
-    listCloudinaryResources(config, "video"),
+    listCloudinaryResources(config, "image", userFolder, userId),
+    listCloudinaryResources(config, "video", userFolder, userId),
   ]);
 
   return [...images, ...videos].sort((left, right) => {
@@ -201,14 +215,25 @@ export async function uploadCloudinaryMedia(
   filename: string,
   data: Buffer,
   explicitContentType?: string,
+  userId?: string,
+  folderPath?: string,
 ): Promise<CloudinaryMediaUpload> {
   const config = getCloudinaryConfig();
   const contentType = getMediaContentType(filename, explicitContentType);
   const resourceType = isVideoContent(filename, contentType) ? "video" : "image";
   const timestamp = Math.floor(Date.now() / 1000);
   const publicId = `${sanitizePublicId(filename)}-${Date.now()}`;
+
+  let folder = config.folder;
+  if (userId) {
+    folder = `${config.folder}/${userId}`;
+    if (folderPath) {
+      folder = `${folder}/${folderPath}`;
+    }
+  }
+
   const params = {
-    folder: config.folder,
+    folder,
     public_id: publicId,
     timestamp,
   };
@@ -252,4 +277,37 @@ export async function uploadCloudinaryMedia(
     contentType,
     size: body.bytes ?? data.byteLength,
   };
+}
+
+export async function deleteCloudinaryAsset(publicId: string, resourceType: "image" | "video") {
+  const config = getCloudinaryConfig();
+  const timestamp = Math.floor(Date.now() / 1000);
+
+  const params = {
+    public_id: publicId,
+    timestamp,
+  };
+
+  const signature = signCloudinaryParams(params, config.apiSecret);
+
+  const form = new FormData();
+  form.append("public_id", publicId);
+  form.append("api_key", config.apiKey);
+  form.append("timestamp", String(timestamp));
+  form.append("signature", signature);
+
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${config.cloudName}/${resourceType}/destroy`,
+    {
+      method: "POST",
+      body: form,
+    }
+  );
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error?.message || "Failed to delete Cloudinary asset.");
+  }
+
+  return await response.json();
 }

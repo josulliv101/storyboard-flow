@@ -344,7 +344,15 @@ export function getTimelinePath(targetId: string): { id: string; title: string }
   return path;
 }
 
-export function syncParentCollections(collectionTimelineId: string, childClips: any[]) {
+export function syncParentCollections(
+  collectionTimelineId: string,
+  childClips: any[],
+  newTimelineId?: string,
+) {
+  const targetId = newTimelineId || collectionTimelineId;
+  const childDoc = getTimelineDocument(targetId);
+  const title = childDoc?.title || "Collection";
+
   let totalDuration = 3;
   if (childClips.length > 0) {
     const lastClip = childClips[childClips.length - 1];
@@ -358,6 +366,9 @@ export function syncParentCollections(collectionTimelineId: string, childClips: 
         updated = true;
         return {
           ...c,
+          title,
+          alt: `${title} collection`,
+          childTimelineId: targetId,
           itemCount: childClips.length,
           previewItems: previewItemsFrom(childClips),
           duration: totalDuration,
@@ -476,4 +487,49 @@ export function getTimelinePage(id: string) {
       .map((timelineId) => timelineDocuments[timelineId])
       .filter((timeline): timeline is TimelineDocument => Boolean(timeline)),
   };
+}
+
+export function encodeFolderPath(folderPath: string): string {
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(folderPath, "utf-8")
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  }
+  const base64 = btoa(encodeURIComponent(folderPath).replace(/%([0-9A-F]{2})/g, (match, p1) => {
+    return String.fromCharCode(parseInt(p1, 16));
+  }));
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function decodeFolderPath(encoded: string): string {
+  let base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4) {
+    base64 += "=";
+  }
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(base64, "base64").toString("utf-8");
+  }
+  return decodeURIComponent(
+    Array.prototype.map
+      .call(atob(base64), (c: string) => {
+        return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+      })
+      .join("")
+  );
+}
+
+export function getFolderPathFromTimelineId(id: string, userId: string): string {
+  if (id === `asset-library-${userId}`) return "";
+  const prefix = `asset-library-col-${userId}-`;
+  if (id.startsWith(prefix)) {
+    const encoded = id.slice(prefix.length);
+    try {
+      return decodeFolderPath(encoded);
+    } catch {
+      return "";
+    }
+  }
+  return "";
 }

@@ -97,11 +97,15 @@ export async function captureVideoThumbnail(
 export async function uploadTimelineMedia(
   filename: string,
   file: Blob,
+  folderPath?: string,
 ): Promise<TimelineMediaUploadResult> {
   const safeFilename = sanitizeFilename(filename);
   const formData = new FormData();
   formData.append("file", file);
   formData.append("filename", safeFilename);
+  if (folderPath) {
+    formData.append("folderPath", folderPath);
+  }
 
   if (isVideoUpload(safeFilename, file)) {
     const thumbnail = await captureVideoThumbnail(file);

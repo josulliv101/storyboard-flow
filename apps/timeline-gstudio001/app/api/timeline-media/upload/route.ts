@@ -39,8 +39,8 @@ function getUploadPathname(filename: string, contentType: string) {
 
 export async function POST(request: Request) {
   try {
-    const { response } = await requireAuthUser();
-    if (response) return response;
+    const { user, response } = await requireAuthUser();
+    if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const formData = await request.formData();
     const file = formData.get("file") as Blob | null;
@@ -56,7 +56,14 @@ export async function POST(request: Request) {
     const mediaBuffer = Buffer.from(await file.arrayBuffer());
 
     if (hasCloudinaryConfig()) {
-      const storedMedia = await uploadCloudinaryMedia(filename, mediaBuffer, contentType);
+      const folderPath = formData.get("folderPath") as string | null;
+      const storedMedia = await uploadCloudinaryMedia(
+        filename,
+        mediaBuffer,
+        contentType,
+        user.uid,
+        folderPath || undefined,
+      );
 
       return NextResponse.json({
         pathname: storedMedia.pathname,

@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 
 import { ITEM_HEIGHTS, type ItemSize } from "./constants";
@@ -6,13 +7,11 @@ import { GripVertical, ChevronDown, ChevronRight } from "lucide-react";
 type TimelineToolbarProps = {
   gridMode: boolean;
   itemSize: ItemSize;
-  manualOverhangScroll: boolean;
   showPlayBarArea: boolean;
   showPassiveFilmstrips: boolean;
   title?: string;
   onGridModeChange: (enabled: boolean) => void;
   onItemSizeChange: (size: ItemSize) => void;
-  onManualOverhangScrollChange: (enabled: boolean) => void;
   onPlayBarAreaChange: (enabled: boolean) => void;
   onPassiveFilmstripsChange: (enabled: boolean) => void;
   onThumbnailModeChange: (enabled: boolean) => void;
@@ -25,9 +24,10 @@ type TimelineToolbarProps = {
   hasChildCollections?: boolean;
   childCollectionsExpanded?: boolean;
   onToggleChildCollections?: () => void;
+  onTitleChange?: (newTitle: string) => void;
 };
 
-function ToggleSwitch({
+export function ToggleSwitch({
   checked,
   id,
   label,
@@ -79,13 +79,11 @@ function ToggleSwitch({
 export function TimelineToolbar({
   gridMode,
   itemSize,
-  manualOverhangScroll,
   showPlayBarArea,
   showPassiveFilmstrips,
   title = "Timeline",
   onGridModeChange,
   onItemSizeChange,
-  onManualOverhangScrollChange,
   onPlayBarAreaChange,
   onPassiveFilmstripsChange,
   onThumbnailModeChange,
@@ -98,10 +96,16 @@ export function TimelineToolbar({
   hasChildCollections = false,
   childCollectionsExpanded = false,
   onToggleChildCollections,
+  onTitleChange,
 }: TimelineToolbarProps) {
-  const pinScrollTitle = manualOverhangScroll
-    ? "Pin scroll is ON — selecting the first video clip keeps the viewport in place. Scroll left manually to reveal the filmstrip overhang."
-    : "Pin scroll is OFF — selecting the first video clip auto-scrolls to reveal the filmstrip overhang.";
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(title || "");
+
+  useEffect(() => {
+    setEditValue(title || "");
+  }, [title]);
+
+
 
   return (
     <div className="flex w-full min-w-0 items-center justify-between gap-3">
@@ -184,9 +188,48 @@ export function TimelineToolbar({
             <GripVertical className="h-4 w-4 pointer-events-none" />
           </div>
         )}
-        <h3 className="min-w-0 truncate text-sm font-semibold text-zinc-200">
-          {title}
-        </h3>
+        {isEditing ? (
+          <input
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={() => {
+              setIsEditing(false);
+              if (editValue && editValue.trim() && editValue.trim() !== title) {
+                onTitleChange?.(editValue.trim());
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setIsEditing(false);
+                if (editValue && editValue.trim() && editValue.trim() !== title) {
+                  onTitleChange?.(editValue.trim());
+                }
+              } else if (e.key === "Escape") {
+                setIsEditing(false);
+                setEditValue(title || "");
+              }
+            }}
+            autoFocus
+            className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-xs font-semibold text-zinc-100 outline-none focus:border-amber-500 max-w-[200px]"
+          />
+        ) : (
+          <h3
+            onClick={() => {
+              if (onTitleChange) {
+                setIsEditing(true);
+                setEditValue(title || "");
+              }
+            }}
+            className={cn(
+              "min-w-0 truncate text-sm font-semibold text-zinc-200",
+              onTitleChange && "cursor-pointer hover:text-zinc-100 hover:bg-zinc-800/40 px-1 rounded transition-colors"
+            )}
+            title={onTitleChange ? "Click to rename collection" : undefined}
+          >
+            {title}
+          </h3>
+        )}
       </div>
       <div className="flex items-center gap-4">
         <ToggleSwitch
@@ -203,14 +246,7 @@ export function TimelineToolbar({
             onChange={onGridModeChange}
           />
         )}
-        {thumbnailMode && onHierarchyModeChange && (
-          <ToggleSwitch
-            id="hierarchy-mode"
-            label="Hierarchy Mode"
-            checked={hierarchyMode}
-            onChange={onHierarchyModeChange}
-          />
-        )}
+
         <ToggleSwitch
           id="playbar-area"
           label="Play bar"
@@ -247,31 +283,27 @@ export function TimelineToolbar({
             ))}
           </select>
         </div>
-        <div className="flex items-center gap-2">
-          <label
-            htmlFor="zoom-slider"
-            className="text-[10px] font-semibold uppercase text-zinc-400"
-          >
-            Zoom
-          </label>
-          <input
-            id="zoom-slider"
-            type="range"
-            min="20"
-            max="300"
-            step="1"
-            value={zoomLevel}
-            onChange={onZoomChange}
-            className="w-24 accent-amber-400"
-          />
-        </div>
-        <ToggleSwitch
-          id="pin-scroll-toggle"
-          label="Pin scroll"
-          checked={manualOverhangScroll}
-          onChange={onManualOverhangScrollChange}
-          title={pinScrollTitle}
-        />
+        {!thumbnailMode && (
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="zoom-slider"
+              className="text-[10px] font-semibold uppercase text-zinc-400"
+            >
+              Zoom
+            </label>
+            <input
+              id="zoom-slider"
+              type="range"
+              min="20"
+              max="300"
+              step="1"
+              value={zoomLevel}
+              onChange={onZoomChange}
+              className="w-24 accent-amber-400"
+            />
+          </div>
+        )}
+
       </div>
     </div>
   );

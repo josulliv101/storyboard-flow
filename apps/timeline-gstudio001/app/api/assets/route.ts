@@ -8,10 +8,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const { response } = await requireAuthUser();
-    if (response) return response;
+    const { user, response } = await requireAuthUser();
+    if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    return NextResponse.json({ assets: await listCloudinaryAssets() });
+    return NextResponse.json({ assets: await listCloudinaryAssets(user.uid) });
   } catch (error) {
     console.error("[GSTUDIO_ASSETS_LIST_ERROR]", error);
     const message =

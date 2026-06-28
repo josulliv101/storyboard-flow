@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Images,
   Layers,
@@ -11,10 +11,13 @@ import {
   Hammer,
   Settings,
   UserCircle,
+  LogOut,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { AssetLibraryDrawer } from "@/components/assets/asset-library-drawer";
+import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import { cn } from "@/lib/utils";
 import type { ProjectViewMode } from "./timeline-view-state";
@@ -27,7 +30,7 @@ type DraggableItem = {
 };
 
 type UtilityItem = {
-  id: "assets" | "settings";
+  id: "assets" | "trash" | "settings";
   label: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -128,6 +131,12 @@ const UTILITY_ITEMS: UtilityItem[] = [
     icon: Images,
   },
   {
+    id: "trash",
+    label: "Trash",
+    description: "Deleted timeline items",
+    icon: Trash2,
+  },
+  {
     id: "settings",
     label: "Settings",
     description: "App-wide settings",
@@ -140,6 +149,33 @@ export function TimelineSidebar() {
   const searchParams = useSearchParams();
   const { user, logout } = useAuth();
   const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
+  const [isTrashOpen, setIsTrashOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isProfileOpen) return;
+
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (
+        profileMenuRef.current &&
+        !profileMenuRef.current.contains(event.target as Node) &&
+        buttonRef.current &&
+        !buttonRef.current.contains(event.target as Node)
+      ) {
+        setIsProfileOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [isProfileOpen]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const pathSegments = pathname.split("/").filter(Boolean);
   const activeProjectId =
@@ -170,6 +206,16 @@ export function TimelineSidebar() {
     }, 4000);
     return () => clearTimeout(timer);
   }, [toastMessage]);
+
+  useEffect(() => {
+    const handleToastEvent = (e: any) => {
+      if (e.detail?.message) {
+        setToastMessage(e.detail.message);
+      }
+    };
+    window.addEventListener("gstudio-toast" as any, handleToastEvent);
+    return () => window.removeEventListener("gstudio-toast" as any, handleToastEvent);
+  }, []);
 
   const handleDragStart = (e: React.DragEvent, type: string) => {
     e.dataTransfer.setData("application/x-gstudio-type", type);
@@ -276,29 +322,22 @@ export function TimelineSidebar() {
         </>
       )}
 
-      <div className="mt-auto flex flex-col items-center gap-2">
-        <button
-          type="button"
-          aria-label="Account"
-          aria-describedby="sidebar-tooltip-utility-account"
-          onClick={() => void handleLogout()}
-          className="group/sidebar-item relative flex size-11 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900/40 text-zinc-400 transition-all duration-200 hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400"
-        >
-          <UserCircle className="h-4 w-4 transition-colors" />
-          <TooltipLabel
-            id="sidebar-tooltip-utility-account"
-            label="Account"
-            description={user?.email ? `Signed in as ${user.email}` : "Signed in"}
-          />
-        </button>
-
+      <div className="mt-auto flex flex-col items-center gap-2 relative">
         {UTILITY_ITEMS.map((item) => {
           const Icon = item.icon;
           const tooltipId = `sidebar-tooltip-utility-${item.id}`;
           const handleClick =
             item.id === "assets"
-              ? () => setIsAssetLibraryOpen(true)
-              : () => showUtilityToast(item.label);
+              ? () => {
+                  setIsAssetLibraryOpen(!isAssetLibraryOpen);
+                  setIsTrashOpen(false);
+                }
+              : item.id === "trash"
+                ? () => {
+                    setIsTrashOpen(!isTrashOpen);
+                    setIsAssetLibraryOpen(false);
+                  }
+                : () => showUtilityToast(item.label);
 
           return (
             <button
@@ -318,6 +357,79 @@ export function TimelineSidebar() {
             </button>
           );
         })}
+
+        <button
+          ref={buttonRef}
+          type="button"
+          aria-label="Account"
+          aria-describedby="sidebar-tooltip-utility-account"
+          onClick={() => setIsProfileOpen((open) => !open)}
+          className={cn(
+            "group/sidebar-item relative flex size-11 items-center justify-center rounded-lg border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400",
+            isProfileOpen
+              ? "border-amber-500 bg-amber-500/10 text-amber-300 shadow-lg shadow-amber-500/5"
+              : "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-zinc-100"
+          )}
+        >
+          {user?.picture ? (
+            <img
+              src={user.picture}
+              alt={user.name || user.email || "Profile"}
+              className="h-5 w-5 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors"
+            />
+          ) : (
+            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/10 border border-amber-500/30 text-[9px] font-bold text-amber-400 group-hover/sidebar-item:bg-amber-500/20 group-hover/sidebar-item:text-amber-300 transition-colors select-none">
+              {user?.name ? user.name[0].toUpperCase() : (user?.email ? user.email[0].toUpperCase() : "U")}
+            </div>
+          )}
+          <TooltipLabel
+            id="sidebar-tooltip-utility-account"
+            label="Account"
+            description={user?.email ? `Signed in as ${user.email}` : "Signed in"}
+          />
+        </button>
+
+        {isProfileOpen && (
+          <div
+            ref={profileMenuRef}
+            className="absolute bottom-0 left-[52px] z-50 w-64 rounded-xl border border-zinc-800/80 bg-zinc-950/90 p-4 shadow-[0_10px_40px_rgba(0,0,0,0.7)] backdrop-blur-md profile-popover-animate"
+          >
+            <div className="flex items-center gap-3 border-b border-zinc-800/60 pb-3">
+              {user?.picture ? (
+                <img
+                  src={user.picture}
+                  alt={user.name || user.email || "Profile"}
+                  className="h-10 w-10 rounded-full object-cover border border-zinc-800"
+                />
+              ) : (
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10 border border-amber-500/30 text-sm font-bold text-amber-400">
+                  {user?.name ? user.name[0].toUpperCase() : (user?.email ? user.email[0].toUpperCase() : "U")}
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-semibold text-zinc-100">
+                  {user?.name || "User"}
+                </p>
+                <p className="truncate text-[10px] font-medium text-zinc-500">
+                  {user?.email}
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-col gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsProfileOpen(false);
+                  void handleLogout();
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-zinc-400 hover:bg-red-500/10 hover:text-red-400 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500/30 cursor-pointer"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Sign Out
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <AssetLibraryDrawer
@@ -325,39 +437,56 @@ export function TimelineSidebar() {
         onClose={() => setIsAssetLibraryOpen(false)}
       />
 
+      <TrashDrawer
+        isOpen={isTrashOpen}
+        onClose={() => setIsTrashOpen(false)}
+      />
+
+      <style>{`
+        @keyframes slideDown {
+          from {
+            transform: translate(-50%, -20px);
+            opacity: 0;
+          }
+          to {
+            transform: translate(-50%, 0);
+            opacity: 1;
+          }
+        }
+        .timeline-toast-animate {
+          animation: slideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes slideInLeft {
+          from {
+            transform: translateX(-8px);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+        .profile-popover-animate {
+          animation: slideInLeft 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+      `}</style>
+
       {toastMessage && (
-        <>
-          <style>{`
-            @keyframes slideDown {
-              from {
-                transform: translate(-50%, -20px);
-                opacity: 0;
-              }
-              to {
-                transform: translate(-50%, 0);
-                opacity: 1;
-              }
-            }
-            .timeline-toast-animate {
-              animation: slideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-            }
-          `}</style>
-          <div
-            style={{
-              position: "fixed",
-              top: "24px",
-              left: "50%",
-              transform: "translateX(-50%)",
-              zIndex: 10000,
-            }}
-            className="timeline-toast-animate flex h-10 items-center gap-2.5 rounded-full border border-sky-500/30 bg-zinc-900/95 px-5 text-xs font-medium text-zinc-100 shadow-2xl backdrop-blur-md select-none"
-          >
-            <Layers className="h-3.5 w-3.5 text-sky-400 shrink-0" />
-            <span className="text-zinc-200">
-              {toastMessage}
-            </span>
-          </div>
-        </>
+        <div
+          style={{
+            position: "fixed",
+            top: "24px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 10000,
+          }}
+          className="timeline-toast-animate flex h-10 items-center gap-2.5 rounded-full border border-sky-500/30 bg-zinc-900/95 px-5 text-xs font-medium text-zinc-100 shadow-2xl backdrop-blur-md select-none"
+        >
+          <Layers className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+          <span className="text-zinc-200">
+            {toastMessage}
+          </span>
+        </div>
       )}
     </aside>
   );

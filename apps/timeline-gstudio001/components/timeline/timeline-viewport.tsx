@@ -1,12 +1,15 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
+import { Folder, Video, Image, X, Play } from "lucide-react";
 
 import { THUMBNAIL_GAP, TIMELINE_LEADING_PADDING_SECONDS, CLIP_GAP_SECONDS } from "./constants";
 import type { useTimelineInteractions } from "./hooks/use-timeline-interactions";
@@ -16,7 +19,7 @@ import {
   type TimelineGridMetrics,
 } from "./timeline-grid";
 import type { TimelineClip, TrimScrubPreview, VideoTimelineClip } from "./types";
-import { PassiveVideoFilmStrip, VideoSourceFilmStrip } from "./video-source-filmstrip";
+import { PassiveVideoFilmStrip, VideoSourceFilmStrip, getVideoThumbnailUrl } from "./video-source-filmstrip";
 import { VideoTile } from "./video-tile";
 import { formatSeconds } from "./utils";
 import { getCollectionFramePreview } from "@/lib/timeline-documents";
@@ -74,6 +77,7 @@ type TimelineViewportProps = {
   onDropClipIntoCollection?: (clip: TimelineClip, targetCollectionTimelineId: string, sourceTimelineId: string) => void;
   onDropSidebarClipIntoCollection?: (type: "collection" | "image" | "video", targetCollectionTimelineId: string) => void;
   timelineId?: string;
+  dragBarEnabled?: boolean;
 };
 
 export function TimelineViewport({
@@ -114,6 +118,7 @@ export function TimelineViewport({
   onDropClipIntoCollection,
   onDropSidebarClipIntoCollection,
   timelineId,
+  dragBarEnabled = false,
 }: TimelineViewportProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const passiveScrubCleanupRef = useRef<(() => void) | null>(null);
@@ -533,6 +538,192 @@ export function TimelineViewport({
     [getClipLeft, getClipWidth, hasClips, onDropFiles, onDropClip, onDropSidebarClip, onDropClipIntoCollection, onDropSidebarClipIntoCollection, activeCollectionHoverId, visibleClips],
   );
 
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    timelineTime: number;
+    insertIndex: number;
+  } | null>(null);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!contentRef.current) return;
+
+    const rect = contentRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const timelineTime = Math.max(0, clickX / pixelsPerSecond);
+
+    let insertIndex = visibleClips.length;
+    for (let i = 0; i < visibleClips.length; i++) {
+      const clip = visibleClips[i];
+      const left = getClipLeft(clip);
+      const width = getClipWidth(clip);
+      const midpoint = left + width / 2;
+      if (clickX < midpoint) {
+        insertIndex = clip.index;
+        break;
+      }
+    }
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      timelineTime,
+      insertIndex,
+    });
+  }, [visibleClips, getClipLeft, getClipWidth, pixelsPerSecond]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setContextMenu(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [contextMenu]);
+
+  const [playheadTime, setPlayheadTime] = useState<number | null>(null);
+  const [scrubbingState, setScrubbingState] = useState<{
+    startX: number;
+    startContentX: number;
+    currentContentX: number;
+    clientX: number;
+    clientY: number;
+  } | null>(null);
+
+  const getClipAtX = useCallback((contentX: number) => {
+    if (visibleClips.length === 0) return null;
+    let nearestClip = visibleClips[0];
+    let minDistance = Infinity;
+
+    for (const c of visibleClips) {
+      const left = getClipLeft(c);
+      const width = getClipWidth(c);
+      const right = left + width;
+
+      if (contentX >= left && contentX <= right) {
+        return c;
+      }
+
+      const dist = Math.min(Math.abs(contentX - left), Math.abs(contentX - right));
+      if (dist < minDistance) {
+        minDistance = dist;
+        nearestClip = c;
+      }
+    }
+    return nearestClip;
+  }, [visibleClips, getClipLeft, getClipWidth]);
+
+  const getPlayheadLeft = useCallback((time: number | null) => {
+    if (time === null) return null;
+    if (!thumbnailMode) {
+      return time * pixelsPerSecond;
+    }
+    const c = visibleClips.find(clip => time >= clip.startTime && time <= clip.startTime + clip.duration);
+    if (!c) return null;
+    const ratio = Math.max(0, Math.min(1, (time - c.startTime) / Math.max(0.1, c.duration)));
+    return getClipLeft(c) + ratio * getClipWidth(c);
+  }, [thumbnailMode, pixelsPerSecond, visibleClips, getClipLeft, getClipWidth]);
+
+  const dragBars = useMemo(() => {
+    if (!dragBarEnabled || visibleClips.length < 2) return [];
+
+    const bars: { id: string; left: number; insertIndex: number; barLeft: number; barWidth: number }[] = [];
+    for (let i = 0; i < visibleClips.length - 1; i++) {
+      const current = visibleClips[i];
+      const next = visibleClips[i + 1];
+      const leftCurrent = getClipLeft(current);
+      const widthCurrent = getClipWidth(current);
+      const leftNext = getClipLeft(next);
+
+      const rightCurrent = leftCurrent + widthCurrent;
+      const gapWidth = leftNext - rightCurrent;
+
+      const barWidth = 14;
+      const barLeft = rightCurrent + (gapWidth - barWidth) / 2;
+
+      bars.push({
+        id: `dragbar-${current.id}-${next.id}`,
+        left: barLeft,
+        insertIndex: next.index,
+        barLeft,
+        barWidth,
+      });
+    }
+    return bars;
+  }, [dragBarEnabled, visibleClips, getClipLeft, getClipWidth]);
+
+  const handleDragBarPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>, barLeft: number, barWidth: number) => {
+    e.stopPropagation();
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+
+    const content = contentRef.current;
+    if (!content) return;
+
+    const rect = content.getBoundingClientRect();
+    const startContentX = e.clientX - rect.left;
+
+    const initialContentX = barLeft + barWidth / 2;
+    
+    const initialClip = getClipAtX(initialContentX);
+    if (initialClip) {
+      const left = getClipLeft(initialClip);
+      const width = getClipWidth(initialClip);
+      const ratio = Math.max(0, Math.min(1, (initialContentX - left) / Math.max(1, width)));
+      const initialTime = thumbnailMode
+        ? initialClip.startTime + ratio * initialClip.duration
+        : initialContentX / pixelsPerSecond;
+      setPlayheadTime(initialTime);
+    }
+
+    setScrubbingState({
+      startX: e.clientX,
+      startContentX: initialContentX,
+      currentContentX: initialContentX,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    });
+  }, [getClipAtX, getClipLeft, getClipWidth, thumbnailMode, pixelsPerSecond]);
+
+  const handleDragBarPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!scrubbingState) return;
+    e.stopPropagation();
+
+    const deltaX = e.clientX - scrubbingState.startX;
+    const currentContentX = scrubbingState.startContentX + deltaX;
+
+    const clip = getClipAtX(currentContentX);
+    if (clip) {
+      const left = getClipLeft(clip);
+      const width = getClipWidth(clip);
+      const ratio = Math.max(0, Math.min(1, (currentContentX - left) / Math.max(1, width)));
+      const globalTime = thumbnailMode
+        ? clip.startTime + ratio * clip.duration
+        : currentContentX / pixelsPerSecond;
+      setPlayheadTime(globalTime);
+    }
+
+    setScrubbingState({
+      ...scrubbingState,
+      currentContentX,
+      clientX: e.clientX,
+      clientY: e.clientY,
+    });
+  }, [scrubbingState, getClipAtX, getClipLeft, getClipWidth, thumbnailMode, pixelsPerSecond]);
+
+  const handleDragBarPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!scrubbingState) return;
+    e.stopPropagation();
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setScrubbingState(null);
+  }, [scrubbingState]);
 
   const getPassiveScrubTarget = useCallback(
     (clientX: number, clientY: number) => {
@@ -768,6 +959,7 @@ export function TimelineViewport({
           ? "overflow-x-clip overflow-y-visible"
           : "cursor-grab touch-none overflow-x-scroll overflow-y-hidden pb-1.5 active:cursor-grabbing"
       }`}
+      onContextMenu={handleContextMenu}
       style={viewportStyle}
     >
       <div
@@ -834,6 +1026,49 @@ export function TimelineViewport({
                   onOpenCollection={onOpenCollection}
                   timelineId={timelineId}
                 />
+              ))}
+
+              {/* Vertical Playhead line */}
+              {playheadTime !== null && (() => {
+                const pLeft = getPlayheadLeft(playheadTime);
+                if (pLeft === null) return null;
+                return (
+                  <div
+                    className="absolute z-40 top-0 bottom-0 w-[2.5px] bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.9)] pointer-events-none"
+                    style={{
+                      left: `${pLeft}px`,
+                      top: `${itemTop}px`,
+                      height: `${itemHeight}px`,
+                    }}
+                  />
+                );
+              })()}
+
+              {/* Gaps Drag Bars */}
+              {dragBars.map((bar) => (
+                <div
+                  key={bar.id}
+                  onPointerDown={(e) => handleDragBarPointerDown(e, bar.barLeft, bar.barWidth)}
+                  onPointerMove={handleDragBarPointerMove}
+                  onPointerUp={handleDragBarPointerUp}
+                  onPointerCancel={handleDragBarPointerUp}
+                  className="absolute z-30 group cursor-ew-resize flex flex-col items-center justify-center transition-all duration-150"
+                  style={{
+                    left: `${bar.left}px`,
+                    width: "14px",
+                    height: `${itemHeight}px`,
+                    top: `${itemTop}px`,
+                  }}
+                  title="Drag to scrub playhead"
+                >
+                  {/* Visual Bar line */}
+                  <div className="w-[2px] h-full bg-zinc-700/60 group-hover:bg-amber-500/50 transition-colors duration-150 relative flex items-center justify-center">
+                    {/* Play Icon Pill in Center */}
+                    <div className="absolute w-5 h-5 rounded-full border border-zinc-700/80 bg-zinc-950 flex items-center justify-center shadow-md group-hover:border-amber-400 group-hover:bg-amber-950 transition-all duration-150">
+                      <Play className="h-2.5 w-2.5 text-zinc-400 group-hover:text-amber-400 fill-zinc-400 group-hover:fill-amber-400 ml-[1px]" />
+                    </div>
+                  </div>
+                </div>
               ))}
 
               {!interactions.isReordering &&
@@ -921,6 +1156,181 @@ export function TimelineViewport({
           </div>
         </div>
       )}
+      {contextMenu && createPortal(
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.stopPropagation()}
+        >
+          <div
+            className="fixed inset-0 z-[99998]"
+            onClick={() => setContextMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setContextMenu(null);
+            }}
+          />
+          <div
+            className="fixed z-[99999] min-w-56 overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-950/90 p-1.5 shadow-[0_10px_40px_rgba(0,0,0,0.6)] backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 ease-out"
+            style={{
+              left: `${contextMenu.x}px`,
+              top: `${contextMenu.y}px`,
+            }}
+          >
+            <div className="px-3.5 py-2 border-b border-zinc-800/40 text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center justify-between gap-4">
+              <span>
+                {thumbnailMode ? `Position: Card #${contextMenu.insertIndex + 1}` : `Timeline: ${formatSeconds(contextMenu.timelineTime)}`}
+              </span>
+              <button
+                type="button"
+                onClick={() => setContextMenu(null)}
+                className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
+                title="Close menu"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+            <div className="mt-1 flex flex-col gap-0.5">
+              {[
+                { type: "collection" as const, label: "Collection", icon: Folder, color: "text-sky-400" },
+                { type: "video" as const, label: "Video Clip", icon: Video, color: "text-amber-400" },
+                { type: "image" as const, label: "Image Clip", icon: Image, color: "text-emerald-400" },
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.type}
+                    type="button"
+                    onClick={() => {
+                      if (onDropSidebarClip) {
+                        onDropSidebarClip(contextMenu.insertIndex, item.type);
+                      }
+                      setContextMenu(null);
+                    }}
+                    className="flex w-full items-center gap-3.5 rounded-lg px-3 py-2 text-left text-xs font-semibold text-zinc-300 hover:bg-zinc-800/70 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <Icon className={`h-4 w-4 shrink-0 ${item.color}`} />
+                    <span>
+                      Add {item.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+      {scrubbingState && (() => {
+        const previewClip = getClipAtX(scrubbingState.currentContentX);
+        let previewSrc = "";
+        let mediaTime = 0;
+        let displayTime = 0;
+        let previewKind: "video" | "image" | "collection" | null = null;
+        let previewVideoSrc = "";
+        let previewVideoTime = 0;
+        let previewVideoDuration = 0;
+
+        if (previewClip) {
+          const left = getClipLeft(previewClip);
+          const width = getClipWidth(previewClip);
+          const ratio = Math.max(0, Math.min(1, (scrubbingState.currentContentX - left) / Math.max(1, width)));
+          mediaTime = previewClip.trimIn + ratio * previewClip.duration;
+          displayTime = thumbnailMode
+            ? previewClip.startTime + ratio * previewClip.duration
+            : scrubbingState.currentContentX / pixelsPerSecond;
+
+          previewKind = previewClip.kind;
+
+          if (previewClip.kind === "video") {
+            previewVideoSrc = previewClip.src;
+            previewVideoTime = mediaTime;
+            previewVideoDuration = previewClip.duration;
+            previewSrc = previewClip.src;
+          } else if (previewClip.kind === "collection") {
+            const activePreview = getCollectionFramePreview(previewClip.childTimelineId, mediaTime);
+            if (activePreview) {
+              if (activePreview.kind === "video") {
+                previewKind = "video";
+                previewVideoSrc = activePreview.src;
+                previewVideoTime = activePreview.previewTime;
+                previewVideoDuration = activePreview.sourceDuration || 6;
+                previewSrc = activePreview.src;
+              } else {
+                previewKind = "image";
+                previewSrc = activePreview.src;
+              }
+            } else {
+              const firstItem = previewClip.previewItems?.[0];
+              if (firstItem) {
+                if (firstItem.kind === "video") {
+                  previewKind = "video";
+                  previewVideoSrc = firstItem.src;
+                  previewVideoTime = 0;
+                  previewVideoDuration = 6;
+                  previewSrc = firstItem.src;
+                } else {
+                  previewKind = "image";
+                  previewSrc = firstItem.src;
+                }
+              }
+            }
+          } else if (previewClip.kind === "image") {
+            previewSrc = previewClip.src;
+          }
+        }
+
+        return createPortal(
+          <div
+            className="fixed z-[99999] rounded-xl bg-zinc-950/95 border border-zinc-800 p-2 shadow-2xl backdrop-blur-md text-[10px] font-bold text-zinc-100 flex flex-col items-center gap-2 animate-in fade-in zoom-in-95 duration-100 w-44 select-none"
+            style={{
+              left: `${scrubbingState.clientX}px`,
+              top: `${scrubbingState.clientY - 145}px`,
+              transform: "translateX(-50%)",
+              pointerEvents: "none",
+            }}
+          >
+            {/* Visual Frame Thumbnail */}
+            <div className="w-full aspect-video bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800/80 relative flex items-center justify-center">
+              {previewSrc ? (
+                previewKind === "video" ? (
+                  <VideoTile
+                    src={previewVideoSrc}
+                    alt="Video preview"
+                    previewTime={previewVideoTime}
+                    sourceDuration={previewVideoDuration}
+                    preferVideoPreview={true}
+                  />
+                ) : (
+                  <img
+                    src={previewSrc}
+                    alt="Scrub frame preview"
+                    className="w-full h-full object-cover"
+                    draggable={false}
+                  />
+                )
+              ) : (
+                <div className="flex flex-col items-center justify-center text-zinc-600 gap-1">
+                  <Play className="h-4 w-4 opacity-40" />
+                  <span className="text-[8px] uppercase tracking-wider">No Media</span>
+                </div>
+              )}
+            </div>
+
+            {/* Time label info */}
+            <div className="flex w-full items-center justify-between px-1">
+              <span className="text-amber-400 font-extrabold uppercase tracking-wide">
+                {previewClip ? `${previewClip.kind} #${previewClip.index + 1}` : "Playhead"}
+              </span>
+              <span className="text-zinc-300 font-extrabold">
+                {formatSeconds(displayTime)}
+              </span>
+            </div>
+          </div>,
+          document.body
+        );
+      })()}
     </div>
   );
 }

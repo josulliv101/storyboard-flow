@@ -16,7 +16,7 @@ import { getCollectionFramePreview } from "@/lib/timeline-documents";
 
 const CLOUDINARY_CLOUD_NAME = "drrxyckxi";
 
-export function getVideoThumbnailUrl(src: string, second: number): string {
+export function getVideoThumbnailUrl(src: string, second: number, width = 480, height = 270): string {
   const roundedSecond = Math.max(0, Number(second.toFixed(2)));
   
   if (src.includes("res.cloudinary.com") && src.includes("/video/upload/")) {
@@ -25,12 +25,12 @@ export function getVideoThumbnailUrl(src: string, second: number): string {
     if (parts.length === 2) {
       const baseUrl = parts[0];
       const videoPath = parts[1].replace(/\.[^/.]+$/, ".webp");
-      return `${baseUrl}/video/upload/so_${roundedSecond},w_120,h_68,c_fill,f_webp,q_auto/${videoPath}`;
+      return `${baseUrl}/video/upload/so_${roundedSecond},w_${width},h_${height},c_fill,f_webp,q_auto/${videoPath}`;
     }
   }
   
   // Cloudinary fetch transformation for remote fallback videos
-  return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/fetch/so_${roundedSecond},w_120,h_68,c_fill,f_webp,q_auto/${encodeURIComponent(src)}`;
+  return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/fetch/so_${roundedSecond},w_${width},h_${height},c_fill,f_webp,q_auto/${encodeURIComponent(src)}`;
 }
 
 type VideoSourceFilmStripProps = {

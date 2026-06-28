@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, Fragment } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertCircle,
@@ -8,12 +8,15 @@ import {
   Loader2,
   RefreshCw,
   X,
+  ArrowLeft,
 } from "lucide-react";
 
 import { Button } from "@/components/core/button";
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
 import { cn } from "@/lib/utils";
 import type { TimelineClip } from "@/components/timeline/types";
+import { useAuth } from "@/components/auth/auth-provider";
+import { getTimelinePath, getTimelineDocument } from "@/lib/timeline-documents";
 
 type CloudinaryAsset = {
   id: string;
@@ -81,19 +84,19 @@ function createAssetClip(asset: CloudinaryAsset, index: number, startTime: numbe
 }
 
 export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps) {
+  const { user } = useAuth();
   const [assets, setAssets] = useState<CloudinaryAsset[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
-  const assetClips = useMemo(() => {
-    let nextStartTime = 0;
+  const [activeTimelineId, setActiveTimelineId] = useState(`asset-library-${user?.uid || "default"}`);
+  const [assetsVersion, setAssetsVersion] = useState(0);
 
-    return assets.map((asset, index) => {
-      const clip = createAssetClip(asset, index, nextStartTime);
-      nextStartTime += clip.duration;
-      return clip;
-    });
-  }, [assets]);
+  useEffect(() => {
+    if (user?.uid) {
+      setActiveTimelineId(`asset-library-${user.uid}`);
+    }
+  }, [user]);
 
   const loadAssets = useCallback(async () => {
     setIsLoading(true);
@@ -111,12 +114,17 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
       }
 
       setAssets(result.assets || []);
+      setAssetsVersion((v) => v + 1);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load Cloudinary assets.");
     } finally {
       setIsLoading(false);
     }
   }, []);
+
+  const activeDoc = getTimelineDocument(activeTimelineId);
+  const activeClips = activeDoc ? activeDoc.clips : [];
+  const path = getTimelinePath(activeTimelineId);
 
   useEffect(() => {
     setIsMounted(true);
@@ -170,15 +178,56 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
         className="asset-library-panel pointer-events-auto ml-[72px] flex max-h-[48vh] flex-col border-t border-zinc-800 bg-zinc-950 text-white shadow-2xl shadow-black/50"
       >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-5 py-3">
-          <div className="min-w-0">
-            <h2 id="asset-library-title" className="text-sm font-semibold text-zinc-50">
-              Assets Timeline
-            </h2>
-            <p className="mt-1 text-xs text-zinc-500">
-              {isLoading
-                ? "Loading Cloudinary uploads"
-                : `${assets.length} Cloudinary clips in SmoothScrollList`}
-            </p>
+          <div className="flex items-center gap-3 min-w-0">
+            {activeTimelineId !== `asset-library-${user?.uid || "default"}` && (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => {
+                  const parent = path[path.length - 1];
+                  setActiveTimelineId(parent ? parent.id : `asset-library-${user?.uid || "default"}`);
+                }}
+                className="size-8 border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200 shrink-0"
+                aria-label="Go to parent collection"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-xs text-zinc-500 leading-none">
+                <button
+                  type="button"
+                  onClick={() => setActiveTimelineId(`asset-library-${user?.uid || "default"}`)}
+                  className="hover:text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  Assets Timeline
+                </button>
+                {path.map((segment) => (
+                  <Fragment key={segment.id}>
+                    <span>/</span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTimelineId(segment.id)}
+                      className="hover:text-zinc-300 transition-colors truncate max-w-[120px]"
+                    >
+                      {segment.title}
+                    </button>
+                  </Fragment>
+                ))}
+                {activeTimelineId !== `asset-library-${user?.uid || "default"}` && activeDoc && (
+                  <>
+                    <span>/</span>
+                    <span className="font-semibold text-zinc-200 truncate max-w-[150px]">{activeDoc.title}</span>
+                  </>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">
+                {isLoading
+                  ? "Loading Cloudinary uploads"
+                  : `${activeClips.length} items in current folder`}
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -236,9 +285,9 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
           ) : (
             <div className="min-h-0 overflow-hidden">
               <SmoothScrollList
+                key={`${activeTimelineId}-${assetsVersion}`}
                 className="gap-3 rounded-lg p-3 shadow-none"
-                disablePersistence
-                initialClips={assetClips}
+                initialClips={activeClips}
                 initialViewState={{
                   hierarchyMode: false,
                   itemSize: "sm",
@@ -247,12 +296,14 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
                   showPlayBarArea: false,
                   thumbnailMode: true,
                 }}
-                itemCount={assetClips.length}
+                itemCount={activeClips.length}
                 pixelsPerSecond={48}
                 syncMediaDuration={false}
-                timelineId="asset-library"
-                timelineTitle="Cloudinary Assets"
+                timelineId={activeTimelineId}
+                timelineTitle={activeDoc?.title || "Cloudinary Assets"}
                 viewportWidth="100%"
+                onOpenCollection={(nextId) => setActiveTimelineId(nextId)}
+                onTimelineIdChange={(nextId) => setActiveTimelineId(nextId)}
                 style={{
                   maxWidth: "100%",
                 }}

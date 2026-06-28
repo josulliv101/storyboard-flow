@@ -75,6 +75,8 @@ export const TimelineClipItem = memo(function TimelineClipItem({
     setIsMounted(true);
   }, []);
 
+  const effectiveThumbnailMode = thumbnailMode || clip.kind === "collection";
+
   const gridLayout =
     thumbnailMode && gridMetrics?.enabled
       ? getTimelineGridItemLayout(clip.index, gridMetrics)
@@ -87,7 +89,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   const top = itemTop + (gridLayout?.top ?? 0);
   const width = gridLayout
     ? gridLayout.width
-    : thumbnailMode
+    : effectiveThumbnailMode
     ? thumbnailWidth
     : clip.duration * pixelsPerSecond;
   const isLifted = reorderPreview !== null;
@@ -175,7 +177,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
         </div>
       )}
 
-      {isSelected && !thumbnailMode && (
+      {isSelected && !effectiveThumbnailMode && (
         <>
           <div className="pointer-events-none absolute inset-0 rounded-md border-2 border-amber-400" />
           <TrimHandle
@@ -200,7 +202,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
           />
         </>
       )}
-      {isSelected && thumbnailMode && (
+      {isSelected && effectiveThumbnailMode && (
         <div className="pointer-events-none absolute inset-0 rounded-md border-2 border-amber-400" />
       )}
     </div>
