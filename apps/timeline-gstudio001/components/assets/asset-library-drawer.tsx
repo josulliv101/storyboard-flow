@@ -324,7 +324,7 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
                 initialClips={activeClips}
                 initialViewState={{
                   hierarchyMode: false,
-                  itemSize: "sm",
+                  itemSize: "xs",
                   manualOverhangScroll: true,
                   showPassiveFilmstrips: false,
                   showPlayBarArea: false,

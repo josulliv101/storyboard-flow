@@ -337,6 +337,23 @@ export function SmoothScrollList({
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
   }, [clipState.selectedIndex, clipState.clips, moveClipToTrash]);
 
+  const lastSelectedIndexRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (clipState.selectedIndex === null) {
+      lastSelectedIndexRef.current = null;
+      return;
+    }
+
+    if (clipState.selectedIndex !== lastSelectedIndexRef.current) {
+      lastSelectedIndexRef.current = clipState.selectedIndex;
+      const selectedClip = clipState.clips.find((c) => c.index === clipState.selectedIndex);
+      if (selectedClip && onPlayheadTimeChange) {
+        onPlayheadTimeChange(selectedClip.startTime);
+      }
+    }
+  }, [clipState.selectedIndex, clipState.clips, onPlayheadTimeChange]);
+
   useEffect(() => {
     if (disablePersistence) return;
     if (!timelineId) return;
@@ -489,6 +506,24 @@ export function SmoothScrollList({
     pixelsPerSecond: zoom.safePixelsPerSecond,
     setClips: clipState.setClips,
   });
+
+  const handleClipDurationLoadSimple = useCallback(
+    (index: number, duration: number) => {
+      clipState.setClips((previousClips) => {
+        const clip = previousClips.find((candidate) => candidate.index === index);
+        if (!clip || clip.kind !== "video") return previousClips;
+        if (Math.abs(clip.sourceDuration - duration) < 0.1) return previousClips;
+
+        const nextClips = previousClips.map((candidate) => ({ ...candidate }));
+        const clipIdx = previousClips.findIndex((candidate) => candidate.index === index);
+        if (clipIdx !== -1) {
+          nextClips[clipIdx] = { ...clip, sourceDuration: duration };
+        }
+        return nextClips;
+      });
+    },
+    [clipState.setClips],
+  );
 
   const handleDropFiles = useCallback(
     async (insertIndex: number, files: File[]) => {
@@ -683,7 +718,7 @@ export function SmoothScrollList({
       } else {
         // Dragged from another timeline to this timeline
         // 1. Insert clip locally
-        const isAssetLibrarySource = sourceTimelineId === "asset-library";
+        const isAssetLibrarySource = sourceTimelineId.startsWith("asset-library");
         const nextClips = [...clipState.clips];
         const newClip = {
           ...clip,
@@ -822,7 +857,7 @@ export function SmoothScrollList({
 
   const handleDropClipIntoCollection = useCallback(
     (clip: TimelineClip, targetCollectionTimelineId: string, sourceTimelineId: string) => {
-      const isAssetLibrarySource = sourceTimelineId === "asset-library";
+      const isAssetLibrarySource = sourceTimelineId.startsWith("asset-library");
       addClipToCollection(
         targetCollectionTimelineId,
         isAssetLibrarySource
@@ -1193,7 +1228,7 @@ export function SmoothScrollList({
             closingOverhangOffset={overhang.closingOverhangOffset}
             firstOverhang={overhang.firstOverhang}
             handleClipDurationLoad={
-              syncMediaDuration ? handleClipDurationLoad : undefined
+              syncMediaDuration ? handleClipDurationLoad : handleClipDurationLoadSimple
             }
             handleScroll={scrollState.handleScroll}
             hasClips={clipState.clips.length > 0}

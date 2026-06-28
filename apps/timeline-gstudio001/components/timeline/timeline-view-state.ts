@@ -16,7 +16,7 @@ type TimelineSearchParams =
   | URLSearchParams
   | Record<string, string | string[] | undefined>;
 
-const ITEM_SIZES: ItemSize[] = ["sm", "md", "lg", "xl"];
+const ITEM_SIZES: ItemSize[] = ["xs", "sm", "md", "lg", "xl"];
 
 function getParam(searchParams: TimelineSearchParams, key: string) {
   if (searchParams instanceof URLSearchParams) {

@@ -201,6 +201,7 @@ export function WorkbenchDisplaySurface({
   const animationFrameRef = useRef<number | null>(null);
   const playbackLastFrameRef = useRef<number | null>(null);
   const currentTimeRef = useRef(currentTime);
+  const lastTickTimeRef = useRef(currentTime);
   const [isPlaying, setIsPlaying] = useState(false);
 
   const sortedClips = useMemo(
@@ -317,7 +318,8 @@ export function WorkbenchDisplaySurface({
         : media.sourceTime;
       const targetTime = clamp(media.sourceTime, 0, maxTime);
       const drift = Math.abs(video.currentTime - targetTime);
-      if (drift > (shouldPlay ? 0.45 : 0.05)) {
+      const maxDrift = shouldPlay ? 1.5 : 0.05;
+      if (drift > maxDrift) {
         video.currentTime = targetTime;
       }
       if (shouldPlay && video.paused) {
@@ -377,7 +379,10 @@ export function WorkbenchDisplaySurface({
   }, [activeMedia, isPlaying, syncActiveVideo]);
 
   useEffect(() => {
-    currentTimeRef.current = currentTime;
+    if (Math.abs(currentTime - lastTickTimeRef.current) > 0.001) {
+      currentTimeRef.current = currentTime;
+      lastTickTimeRef.current = currentTime;
+    }
   }, [currentTime]);
 
   const seekToClip = useCallback(
@@ -393,6 +398,7 @@ export function WorkbenchDisplaySurface({
       if (!nextClip) return;
 
       currentTimeRef.current = nextClip.startTime;
+      lastTickTimeRef.current = nextClip.startTime;
       onCurrentTimeChange(nextClip.startTime);
     },
     [activeClip, activeClipIndex, currentTime, onCurrentTimeChange, sortedClips],
@@ -420,6 +426,7 @@ export function WorkbenchDisplaySurface({
         duration,
       );
       currentTimeRef.current = nextTime;
+      lastTickTimeRef.current = nextTime;
       onCurrentTimeChange(nextTime);
       drawActiveFrame();
 

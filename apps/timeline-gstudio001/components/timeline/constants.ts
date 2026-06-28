@@ -8,9 +8,10 @@ export const VIDEO_SOURCES = [
   "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/bottle-detection.mp4",
 ];
 
-export type ItemSize = "sm" | "md" | "lg" | "xl";
+export type ItemSize = "xs" | "sm" | "md" | "lg" | "xl";
 
 export const ITEM_HEIGHTS: Record<ItemSize, number> = {
+  xs: 80,
   sm: 120,
   md: 200,
   lg: 280,

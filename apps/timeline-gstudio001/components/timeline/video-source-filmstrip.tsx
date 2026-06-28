@@ -23,7 +23,7 @@ function getCloudinaryVersionedVideoPath(uploadPath: string) {
   const pathWithoutQuery = uploadPath.split(/[?#]/)[0];
   const segments = pathWithoutQuery.split("/");
   const versionIndex = segments.findIndex((segment) => /^v\d+$/.test(segment));
-  const sourceSegments = versionIndex >= 0 ? segments.slice(versionIndex) : segments;
+  const sourceSegments = versionIndex >= 0 ? segments.slice(versionIndex + 1) : segments;
 
   return sourceSegments.join("/").replace(/\.[^/.]+$/, ".jpg");
 }
@@ -39,7 +39,7 @@ function handleImageFallback(
 export function getThumbnailSlotCount(availableWidth: number, frameSize: number) {
   return Math.min(
     FILMSTRIP_MAX_FRAMES,
-    Math.max(1, Math.floor(Math.max(1, availableWidth) / Math.max(1, frameSize))),
+    Math.max(1, Math.ceil(Math.max(1, availableWidth) / Math.max(1, frameSize))),
   );
 }
 

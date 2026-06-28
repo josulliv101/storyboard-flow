@@ -216,6 +216,41 @@ export async function GET(
 
     const firebaseDocument = await getFirebaseTimelineDocument(id);
     if (firebaseDocument) {
+      // Self-healing: Check if any clip has a Cloudinary URL that might have moved/renamed
+      let hasChanges = false;
+      const cloudinaryAssets = await listCloudinaryAssets(user.uid).catch(() => []);
+      if (cloudinaryAssets.length > 0) {
+        const assetMap = new Map<string, typeof cloudinaryAssets[0]>();
+        cloudinaryAssets.forEach((asset) => {
+          const filename = asset.relativePath?.split("/").pop() || asset.pathname?.split("/").pop();
+          if (filename) {
+            assetMap.set(filename, asset);
+          }
+        });
+
+        firebaseDocument.clips = firebaseDocument.clips.map((clip) => {
+          if (clip.kind === "video" || clip.kind === "image") {
+            const filename = clip.src.split("/").pop()?.split("?")[0]?.replace(/\.[^/.]+$/, "");
+            if (filename) {
+              const matchedAsset = assetMap.get(filename);
+              if (matchedAsset && clip.src !== matchedAsset.url) {
+                hasChanges = true;
+                return {
+                  ...clip,
+                  src: matchedAsset.url,
+                  poster: clip.kind === "video" ? matchedAsset.thumbnailUrl : clip.poster,
+                };
+              }
+            }
+          }
+          return clip;
+        });
+
+        if (hasChanges) {
+          await saveFirebaseTimelineDocument(firebaseDocument).catch(() => {});
+        }
+      }
+
       return NextResponse.json({ document: firebaseDocument });
     }
 
