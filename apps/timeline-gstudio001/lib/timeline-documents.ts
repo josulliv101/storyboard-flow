@@ -29,6 +29,7 @@ export type CollectionFramePreview = {
   alt: string;
   previewTime: number;
   sourceDuration: number;
+  playbackRate: number;
 };
 
 function getClipsDuration(clips: TimelineClip[]) {
@@ -465,6 +466,7 @@ export function getCollectionClipFramePreview(
   clip: CollectionTimelineClip,
   clipTime: number,
   visited = new Set<string>(),
+  parentPlaybackRate = 1,
 ): CollectionFramePreview | null {
   const sourceDuration = getCollectionClipSourceDuration(clip);
   const sourceRange = Math.max(0, sourceDuration - clip.trimIn - clip.trimOut);
@@ -474,14 +476,19 @@ export function getCollectionClipFramePreview(
     0,
     Math.max(0, sourceDuration - 0.001),
   );
+  const playbackRate =
+    clip.duration > 0 && sourceRange > 0
+      ? parentPlaybackRate * (sourceRange / clip.duration)
+      : parentPlaybackRate;
 
-  return getCollectionFramePreview(clip.childTimelineId, sourceTime, visited);
+  return getCollectionFramePreview(clip.childTimelineId, sourceTime, visited, playbackRate);
 }
 
 export function getCollectionFramePreview(
   collectionTimelineId: string,
   time: number,
   visited = new Set<string>(),
+  playbackRate = 1,
 ): CollectionFramePreview | null {
   if (visited.has(collectionTimelineId)) return null;
   const nextVisited = new Set(visited);
@@ -518,7 +525,7 @@ export function getCollectionFramePreview(
     const relativeOffset = clamp(time - start, 0, c.duration);
 
     if (c.kind === "collection") {
-      const nestedPreview = getCollectionClipFramePreview(c, relativeOffset, nextVisited);
+      const nestedPreview = getCollectionClipFramePreview(c, relativeOffset, nextVisited, playbackRate);
       if (nestedPreview) return nestedPreview;
 
       const fallbackPreview = c.previewItems?.[0];
@@ -532,6 +539,7 @@ export function getCollectionFramePreview(
         alt: fallbackPreview.alt,
         previewTime: 0,
         sourceDuration: c.sourceDuration || c.duration || 1,
+        playbackRate,
       };
     }
 
@@ -549,6 +557,7 @@ export function getCollectionFramePreview(
       alt: c.alt,
       previewTime,
       sourceDuration,
+      playbackRate,
     };
   }
   

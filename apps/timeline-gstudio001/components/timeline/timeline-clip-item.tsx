@@ -75,7 +75,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
     setIsMounted(true);
   }, []);
 
-  const effectiveThumbnailMode = thumbnailMode || clip.kind === "collection";
+  const effectiveThumbnailMode = thumbnailMode;
 
   const gridLayout =
     thumbnailMode && gridMetrics?.enabled

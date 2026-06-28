@@ -13,10 +13,7 @@ import {
 } from "react";
 
 import { cn } from "@/lib/utils";
-import {
-  getCollectionClipFramePreview,
-  getCollectionClipSourceDuration,
-} from "@/lib/timeline-documents";
+import { getCollectionClipFramePreview } from "@/lib/timeline-documents";
 
 import type { TimelineClip } from "./types";
 import { formatSeconds } from "./utils";
@@ -30,6 +27,7 @@ type DisplayMedia = {
   sourceTime: number;
   timelineTime: number;
   clipTitle: string;
+  playbackRate: number;
 };
 
 type CachedMedia =
@@ -56,15 +54,23 @@ function clipLabel(clip: TimelineClip) {
   return clip.kind === "collection" ? clip.title : clip.alt || "Clip";
 }
 
+function getClipPlaybackRate(clip: TimelineClip) {
+  const sourceRange = Math.max(0.001, clip.sourceDuration - clip.trimIn - clip.trimOut);
+  return clamp(sourceRange / Math.max(0.001, clip.duration), 0.0625, 16);
+}
+
 function resolveClipMedia(clip: TimelineClip, timelineTime: number): DisplayMedia | null {
   const clipTime = Math.max(0, timelineTime - clip.startTime);
-  const sourceTime = clamp(
-    clip.trimIn + clipTime,
-    0,
-    Math.max(0, clip.sourceDuration - 0.001),
-  );
 
   if (clip.kind === "video") {
+    const sourceRange = Math.max(0, clip.sourceDuration - clip.trimIn - clip.trimOut);
+    const progress = clip.duration > 0 ? clamp(clipTime / clip.duration, 0, 1) : 0;
+    const sourceTime = clamp(
+      clip.trimIn + progress * sourceRange,
+      0,
+      Math.max(0, clip.sourceDuration - 0.001),
+    );
+
     return {
       key: `${clip.id}:video:${clip.src}`,
       kind: "video",
@@ -74,6 +80,7 @@ function resolveClipMedia(clip: TimelineClip, timelineTime: number): DisplayMedi
       sourceTime,
       timelineTime,
       clipTitle: clipLabel(clip),
+      playbackRate: getClipPlaybackRate(clip),
     };
   }
 
@@ -87,6 +94,7 @@ function resolveClipMedia(clip: TimelineClip, timelineTime: number): DisplayMedi
       sourceTime: 0,
       timelineTime,
       clipTitle: clipLabel(clip),
+      playbackRate: 1,
     };
   }
 
@@ -101,6 +109,7 @@ function resolveClipMedia(clip: TimelineClip, timelineTime: number): DisplayMedi
       sourceTime: collectionPreview.kind === "video" ? collectionPreview.previewTime : 0,
       timelineTime,
       clipTitle: clip.title,
+      playbackRate: clamp(collectionPreview.playbackRate, 0.0625, 16),
     };
   }
 
@@ -116,77 +125,30 @@ function resolveClipMedia(clip: TimelineClip, timelineTime: number): DisplayMedi
     sourceTime: 0,
     timelineTime,
     clipTitle: clip.title,
+    playbackRate: 1,
   };
 }
 
 function getActiveClip(clips: TimelineClip[], currentTime: number) {
   if (clips.length === 0) return null;
-  const sortedClips = [...clips].sort((a, b) => a.startTime - b.startTime || a.index - b.index);
-  const lastClip = sortedClips[sortedClips.length - 1];
+  const lastClip = clips[clips.length - 1];
   if (lastClip && currentTime >= lastClip.startTime + lastClip.duration) {
     return lastClip;
   }
 
-  return (
-    sortedClips.find((clip) => currentTime >= clip.startTime && currentTime < clip.startTime + clip.duration) ??
-    sortedClips[0]
-  );
+  return clips.find((clip) => currentTime >= clip.startTime && currentTime < clip.startTime + clip.duration) ?? null;
 }
 
 function getTimelineDuration(clips: TimelineClip[]) {
   return clips.reduce((duration, clip) => Math.max(duration, clip.startTime + clip.duration), 0);
 }
 
-function getTimelineAdvanceScale(clip: TimelineClip) {
-  if (clip.kind !== "collection") return 1;
+function normalizePlaybackTime(clips: TimelineClip[], time: number, duration: number) {
+  const boundedTime = clamp(time, 0, duration);
+  if (getActiveClip(clips, boundedTime)) return boundedTime;
 
-  const sourceDuration = getCollectionClipSourceDuration(clip);
-  if (sourceDuration <= clip.duration) return 1;
-
-  return clamp(clip.duration / sourceDuration, 0.001, 1);
-}
-
-function advanceTimelineTime(
-  clips: TimelineClip[],
-  currentTime: number,
-  elapsedSeconds: number,
-  duration: number,
-) {
-  let nextTime = clamp(currentTime, 0, duration);
-  let remainingSeconds = Math.max(0, elapsedSeconds);
-
-  while (remainingSeconds > 0 && nextTime < duration) {
-    const activeClip = clips.find(
-      (clip) => nextTime >= clip.startTime && nextTime < clip.startTime + clip.duration,
-    );
-
-    if (activeClip) {
-      const clipEndTime = activeClip.startTime + activeClip.duration;
-      const scale = getTimelineAdvanceScale(activeClip);
-      const realSecondsToClipEnd = (clipEndTime - nextTime) / scale;
-
-      if (remainingSeconds <= realSecondsToClipEnd) {
-        return clamp(nextTime + remainingSeconds * scale, 0, duration);
-      }
-
-      nextTime = clipEndTime;
-      remainingSeconds -= realSecondsToClipEnd;
-      continue;
-    }
-
-    const nextClip = clips.find((clip) => clip.startTime > nextTime);
-    const segmentEndTime = nextClip ? nextClip.startTime : duration;
-    const realSecondsToSegmentEnd = segmentEndTime - nextTime;
-
-    if (remainingSeconds <= realSecondsToSegmentEnd) {
-      return clamp(nextTime + remainingSeconds, 0, duration);
-    }
-
-    nextTime = segmentEndTime;
-    remainingSeconds -= realSecondsToSegmentEnd;
-  }
-
-  return clamp(nextTime, 0, duration);
+  const nextClip = clips.find((clip) => clip.startTime > boundedTime);
+  return nextClip ? clamp(nextClip.startTime, 0, duration) : duration;
 }
 
 export function WorkbenchDisplaySurface({
@@ -199,9 +161,14 @@ export function WorkbenchDisplaySurface({
   const cacheRef = useRef(new Map<string, CachedMedia>());
   const activeMediaRef = useRef<DisplayMedia | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const playbackLastFrameRef = useRef<number | null>(null);
+  const timeoutFrameRef = useRef<number | null>(null);
+  const playbackAnchorRef = useRef<{ timelineTime: number; startedAtMs: number } | null>(null);
+  const lastPublishedAtRef = useRef(0);
+  const lastRenderedMediaKeyRef = useRef<string | null>(null);
   const currentTimeRef = useRef(currentTime);
-  const lastTickTimeRef = useRef(currentTime);
+  const sortedClipsRef = useRef<TimelineClip[]>([]);
+  const durationRef = useRef(0);
+  const isPlayingRef = useRef(false);
   const [isPlaying, setIsPlaying] = useState(false);
 
   const sortedClips = useMemo(
@@ -209,6 +176,13 @@ export function WorkbenchDisplaySurface({
     [clips],
   );
   const duration = useMemo(() => getTimelineDuration(sortedClips), [sortedClips]);
+  useEffect(() => {
+    sortedClipsRef.current = sortedClips;
+    durationRef.current = duration;
+  }, [duration, sortedClips]);
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
   const activeClip = useMemo(
     () => getActiveClip(sortedClips, currentTime),
     [currentTime, sortedClips],
@@ -288,9 +262,33 @@ export function WorkbenchDisplaySurface({
     context.drawImage(drawable, (cssWidth - width) / 2, (cssHeight - height) / 2, width, height);
   }, []);
 
+  const drawEmptyFrame = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const cssWidth = Math.max(1, canvas.clientWidth);
+    const cssHeight = Math.max(1, canvas.clientHeight);
+    const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+    const renderWidth = Math.round(cssWidth * pixelRatio);
+    const renderHeight = Math.round(cssHeight * pixelRatio);
+    if (canvas.width !== renderWidth || canvas.height !== renderHeight) {
+      canvas.width = renderWidth;
+      canvas.height = renderHeight;
+    }
+
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return;
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.fillStyle = "#050505";
+    context.fillRect(0, 0, cssWidth, cssHeight);
+  }, []);
+
   const drawActiveFrame = useCallback(() => {
     const media = activeMediaRef.current;
-    if (!media) return;
+    if (!media) {
+      drawEmptyFrame();
+      return;
+    }
     const cached = cacheRef.current.get(media.key);
     if (!cached) return;
 
@@ -304,22 +302,33 @@ export function WorkbenchDisplaySurface({
     if (cached.element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
       drawDrawable(cached.element);
     }
-  }, [drawDrawable]);
+  }, [drawDrawable, drawEmptyFrame]);
 
-  const syncActiveVideo = useCallback((media: DisplayMedia, shouldPlay: boolean) => {
+  const pauseInactiveVideos = useCallback((activeKey: string | null) => {
+    cacheRef.current.forEach((cached, key) => {
+      if (cached.kind === "video" && key !== activeKey) {
+        cached.element.pause();
+      }
+    });
+  }, []);
+
+  const syncActiveVideo = useCallback((media: DisplayMedia, shouldPlay: boolean, forceSeek = false) => {
     const cached = ensureCachedMedia(media);
     if (cached.kind !== "video") return;
 
     const video = cached.element;
     const seek = () => {
-      if (video.readyState < HTMLMediaElement.HAVE_METADATA || video.seeking) return;
+      if (video.readyState < HTMLMediaElement.HAVE_METADATA) return;
       const maxTime = Number.isFinite(video.duration)
         ? Math.max(0, video.duration - 0.001)
         : media.sourceTime;
       const targetTime = clamp(media.sourceTime, 0, maxTime);
       const drift = Math.abs(video.currentTime - targetTime);
-      const maxDrift = shouldPlay ? 1.5 : 0.05;
-      if (drift > maxDrift) {
+      const maxDrift = shouldPlay ? 0.18 : 0.05;
+      if (Number.isFinite(media.playbackRate) && media.playbackRate > 0) {
+        video.playbackRate = clamp(media.playbackRate, 0.0625, 16);
+      }
+      if ((forceSeek || drift > maxDrift) && !video.seeking) {
         video.currentTime = targetTime;
       }
       if (shouldPlay && video.paused) {
@@ -339,6 +348,42 @@ export function WorkbenchDisplaySurface({
     video.addEventListener("loadeddata", drawActiveFrame, { once: true });
   }, [drawActiveFrame, ensureCachedMedia]);
 
+  const renderFrameAtTime = useCallback((timelineTime: number, shouldPlay: boolean, forceSeek = false) => {
+    const active = getActiveClip(sortedClipsRef.current, timelineTime);
+    const media = active ? resolveClipMedia(active, timelineTime) : null;
+    const mediaChanged = media?.key !== lastRenderedMediaKeyRef.current;
+
+    activeMediaRef.current = media;
+    lastRenderedMediaKeyRef.current = media?.key ?? null;
+
+    if (!media) {
+      pauseInactiveVideos(null);
+      drawEmptyFrame();
+      return;
+    }
+
+    pauseInactiveVideos(media.key);
+    const cached = ensureCachedMedia(media);
+
+    if (cached.kind === "image") {
+      if (cached.element.complete && cached.element.naturalWidth > 0) {
+        drawDrawable(cached.element);
+      } else {
+        cached.element.addEventListener("load", drawActiveFrame, { once: true });
+      }
+      return;
+    }
+
+    syncActiveVideo(media, shouldPlay, forceSeek || mediaChanged);
+  }, [
+    drawActiveFrame,
+    drawDrawable,
+    drawEmptyFrame,
+    ensureCachedMedia,
+    pauseInactiveVideos,
+    syncActiveVideo,
+  ]);
+
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || typeof ResizeObserver === "undefined") return;
@@ -357,33 +402,10 @@ export function WorkbenchDisplaySurface({
   }, [bufferedMedia, drawActiveFrame, ensureCachedMedia]);
 
   useEffect(() => {
-    activeMediaRef.current = activeMedia;
-    if (!activeMedia) return;
-
-    const cached = ensureCachedMedia(activeMedia);
-    if (cached.kind === "image") {
-      if (cached.element.complete && cached.element.naturalWidth > 0) {
-        drawActiveFrame();
-      } else {
-        cached.element.addEventListener("load", drawActiveFrame, { once: true });
-      }
-      return;
-    }
-
-    syncActiveVideo(activeMedia, isPlaying);
-  }, [activeMedia, drawActiveFrame, ensureCachedMedia, isPlaying, syncActiveVideo]);
-
-  useEffect(() => {
-    if (!activeMedia || activeMedia.kind !== "video") return;
-    syncActiveVideo(activeMedia, isPlaying);
-  }, [activeMedia, isPlaying, syncActiveVideo]);
-
-  useEffect(() => {
-    if (Math.abs(currentTime - lastTickTimeRef.current) > 0.001) {
-      currentTimeRef.current = currentTime;
-      lastTickTimeRef.current = currentTime;
-    }
-  }, [currentTime]);
+    if (isPlayingRef.current) return;
+    currentTimeRef.current = currentTime;
+    renderFrameAtTime(currentTime, false, true);
+  }, [currentTime, renderFrameAtTime]);
 
   const seekToClip = useCallback(
     (direction: -1 | 1) => {
@@ -398,54 +420,103 @@ export function WorkbenchDisplaySurface({
       if (!nextClip) return;
 
       currentTimeRef.current = nextClip.startTime;
-      lastTickTimeRef.current = nextClip.startTime;
+      playbackAnchorRef.current = null;
+      renderFrameAtTime(nextClip.startTime, false, true);
       onCurrentTimeChange(nextClip.startTime);
     },
-    [activeClip, activeClipIndex, currentTime, onCurrentTimeChange, sortedClips],
+    [activeClip, activeClipIndex, currentTime, onCurrentTimeChange, renderFrameAtTime, sortedClips],
   );
 
   useEffect(() => {
-    if (!isPlaying) {
+    const cancelQueuedFrame = () => {
       if (animationFrameRef.current !== null) {
         window.cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = null;
       }
-      playbackLastFrameRef.current = null;
+      if (timeoutFrameRef.current !== null) {
+        window.clearTimeout(timeoutFrameRef.current);
+        timeoutFrameRef.current = null;
+      }
+    };
+
+    if (!isPlaying) {
+      cancelQueuedFrame();
+      playbackAnchorRef.current = null;
+      renderFrameAtTime(currentTimeRef.current, false, true);
       return;
     }
 
-    playbackLastFrameRef.current = performance.now();
-    const tick = (now: number) => {
-      const previousFrameTime = playbackLastFrameRef.current ?? now;
-      playbackLastFrameRef.current = now;
+    const clipsRef = sortedClipsRef;
+    const startTime = normalizePlaybackTime(clipsRef.current, currentTimeRef.current, durationRef.current);
+    currentTimeRef.current = startTime;
+    playbackAnchorRef.current = {
+      timelineTime: startTime,
+      startedAtMs: performance.now(),
+    };
+    lastPublishedAtRef.current = 0;
+    renderFrameAtTime(startTime, true, true);
+    onCurrentTimeChange(startTime);
 
-      const nextTime = advanceTimelineTime(
-        sortedClips,
-        currentTimeRef.current,
-        (now - previousFrameTime) / 1000,
-        duration,
-      );
-      currentTimeRef.current = nextTime;
-      lastTickTimeRef.current = nextTime;
-      onCurrentTimeChange(nextTime);
-      drawActiveFrame();
+    const resetAnchor = (timelineTime: number, now: number) => {
+      playbackAnchorRef.current = {
+        timelineTime,
+        startedAtMs: now,
+      };
+    };
 
-      if (nextTime >= duration) {
-        setIsPlaying(false);
+    const publishTime = (timelineTime: number, now: number, force = false) => {
+      if (!force && now - lastPublishedAtRef.current < 1000 / 30) return;
+      lastPublishedAtRef.current = now;
+      onCurrentTimeChange(timelineTime);
+    };
+
+    const queueNextFrame = () => {
+      if (document.visibilityState === "hidden") {
+        timeoutFrameRef.current = window.setTimeout(() => tick(performance.now()), 100);
         return;
       }
 
       animationFrameRef.current = window.requestAnimationFrame(tick);
     };
 
-    animationFrameRef.current = window.requestAnimationFrame(tick);
-    return () => {
-      if (animationFrameRef.current !== null) {
-        window.cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
+    const tick = (now: number) => {
+      const anchor = playbackAnchorRef.current ?? {
+        timelineTime: currentTimeRef.current,
+        startedAtMs: now,
+      };
+      const rawTime = anchor.timelineTime + (now - anchor.startedAtMs) / 1000;
+      const nextTime = normalizePlaybackTime(clipsRef.current, rawTime, durationRef.current);
+      if (Math.abs(nextTime - rawTime) > 0.001) {
+        resetAnchor(nextTime, now);
       }
+
+      currentTimeRef.current = nextTime;
+      renderFrameAtTime(nextTime, true);
+      publishTime(nextTime, now);
+
+      if (nextTime >= durationRef.current) {
+        publishTime(durationRef.current, now, true);
+        renderFrameAtTime(durationRef.current, false, true);
+        setIsPlaying(false);
+        return;
+      }
+
+      queueNextFrame();
     };
-  }, [drawActiveFrame, duration, isPlaying, onCurrentTimeChange, sortedClips]);
+
+    const handleVisibilityChange = () => {
+      cancelQueuedFrame();
+      tick(performance.now());
+    };
+
+    window.addEventListener("visibilitychange", handleVisibilityChange);
+    queueNextFrame();
+
+    return () => {
+      window.removeEventListener("visibilitychange", handleVisibilityChange);
+      cancelQueuedFrame();
+    };
+  }, [isPlaying, onCurrentTimeChange, renderFrameAtTime]);
 
   useEffect(() => {
     const mediaCache = cacheRef.current;
@@ -461,7 +532,7 @@ export function WorkbenchDisplaySurface({
     };
   }, []);
 
-  const canPlay = duration > 0 && activeMedia !== null;
+  const canPlay = duration > 0 && sortedClips.length > 0;
   const canSeekPrevious = sortedClips.length > 0 && currentTime > 0;
   const canSeekNext = sortedClips.length > 0 && activeClipIndex < sortedClips.length - 1;
 
