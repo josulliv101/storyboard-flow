@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
@@ -24,26 +23,13 @@ import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,
 } from "./timeline-grid";
-import type { CollectionTimelineClip, TimelineClip, TrimScrubPreview, VideoTimelineClip } from "./types";
-import { PassiveVideoFilmStrip, VideoSourceFilmStrip, getVideoThumbnailUrl } from "./video-source-filmstrip";
+import type { CollectionTimelineClip, TimelineClip, TrimScrubPreview } from "./types";
+import { PassiveVideoFilmStrip, VideoSourceFilmStrip } from "./video-source-filmstrip";
 import { VideoTile } from "./video-tile";
 import { formatSeconds } from "./utils";
 import { getCollectionClipFramePreview } from "@/lib/timeline-documents";
 
 type TimelineInteractions = ReturnType<typeof useTimelineInteractions>;
-
-const PASSIVE_SCRUB_OVERLAY_WIDTH = 360;
-const PASSIVE_SCRUB_OVERLAY_HEIGHT = 220;
-const PASSIVE_SCRUB_OVERLAY_GAP = 12;
-
-type PassiveScrubPreview = {
-  anchorClipId: string;
-  anchorClipIndex: number;
-  overlayLeft: number;
-  overlayTop: number;
-  previewClip: VideoTimelineClip;
-  previewTime: number;
-};
 
 type TimelineViewportProps = {
   closingOverhangOffset: number;
@@ -83,10 +69,13 @@ type TimelineViewportProps = {
   onDropClipIntoCollection?: (clip: TimelineClip, targetCollectionTimelineId: string, sourceTimelineId: string) => void;
   onDropSidebarClipIntoCollection?: (type: "collection" | "image" | "video", targetCollectionTimelineId: string) => void;
   timelineId?: string;
-  dragBarEnabled?: boolean;
   previewLargeSurface?: boolean;
   playheadTime?: number | null;
-  onPlayheadTimeChange?: (time: number, clips?: TimelineClip[]) => void;
+  onPlayheadTimeChange?: (
+    time: number,
+    clips?: TimelineClip[],
+    activeClipId?: string,
+  ) => void;
 };
 
 export function TimelineViewport({
@@ -127,15 +116,11 @@ export function TimelineViewport({
   onDropClipIntoCollection,
   onDropSidebarClipIntoCollection,
   timelineId,
-  dragBarEnabled = false,
   previewLargeSurface = false,
   playheadTime: propPlayheadTime,
   onPlayheadTimeChange,
 }: TimelineViewportProps) {
   const contentRef = useRef<HTMLDivElement>(null);
-  const passiveScrubCleanupRef = useRef<(() => void) | null>(null);
-  const [passiveScrubPreview, setPassiveScrubPreview] =
-    useState<PassiveScrubPreview | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounterRef = useRef(0);
   const [activeCollectionHoverId, setActiveCollectionHoverId] = useState<string | null>(null);
@@ -630,41 +615,44 @@ export function TimelineViewport({
 
   const [playheadTimeState, setPlayheadTimeState] = useState<number | null>(null);
   const playheadTime = propPlayheadTime ?? playheadTimeState;
-  const updatePlayheadTime = useCallback((time: number) => {
+  const updatePlayheadTime = useCallback((time: number, activeClipId?: string) => {
     setPlayheadTimeState(time);
-    onPlayheadTimeChange?.(time, visibleClips);
+    onPlayheadTimeChange?.(time, visibleClips, activeClipId);
   }, [onPlayheadTimeChange, visibleClips]);
   const [scrubbingState, setScrubbingState] = useState<{
     startX: number;
     startContentX: number;
     currentContentX: number;
+    resolvedContentX: number;
+    resolvedPlayheadTime: number;
+    activeClipId: string;
     clientX: number;
     clientY: number;
   } | null>(null);
   const showFloatingDragPreview = !previewLargeSurface;
 
-  const getClipAtX = useCallback((contentX: number) => {
-    if (visibleClips.length === 0) return null;
-    let nearestClip = visibleClips[0];
-    let minDistance = Infinity;
+  const getClipContainingX = useCallback((contentX: number) => {
+    return visibleClips.find((clip) => {
+      const left = getClipLeft(clip);
+      const right = left + getClipWidth(clip);
+      return contentX >= left && contentX <= right;
+    }) ?? null;
+  }, [getClipLeft, getClipWidth, visibleClips]);
 
-    for (const c of visibleClips) {
-      const left = getClipLeft(c);
-      const width = getClipWidth(c);
-      const right = left + width;
+  const getPlayBarScrubSample = useCallback((
+    contentX: number,
+  ) => {
+    const clip = getClipContainingX(contentX);
+    if (!clip) return null;
 
-      if (contentX >= left && contentX <= right) {
-        return c;
-      }
-
-      const dist = Math.min(Math.abs(contentX - left), Math.abs(contentX - right));
-      if (dist < minDistance) {
-        minDistance = dist;
-        nearestClip = c;
-      }
-    }
-    return nearestClip;
-  }, [visibleClips, getClipLeft, getClipWidth]);
+    const left = getClipLeft(clip);
+    const right = left + getClipWidth(clip);
+    const resolvedContentX = Math.max(left, Math.min(right, contentX));
+    return {
+      clip,
+      contentX: resolvedContentX,
+    };
+  }, [getClipContainingX, getClipLeft, getClipWidth]);
 
   const getPlayheadLeft = useCallback((time: number | null) => {
     if (time === null) return null;
@@ -692,13 +680,14 @@ export function TimelineViewport({
     return null;
   }, [thumbnailMode, pixelsPerSecond, visibleClips, getClipLeft, getClipPlaybackDuration, getClipPlaybackStart, getClipWidth]);
 
-  const updatePlayheadFromContentX = useCallback((contentX: number) => {
-    const clip = getClipAtX(contentX);
-    if (!clip) return;
-
-    const globalTime = getClipPlaybackTimeAtX(clip, contentX);
-    updatePlayheadTime(globalTime);
-  }, [getClipAtX, getClipPlaybackTimeAtX, updatePlayheadTime]);
+  const updatePlayheadFromScrubSample = useCallback((sample: {
+    clip: TimelineClip;
+    contentX: number;
+  }) => {
+    const playheadTime = getClipPlaybackTimeAtX(sample.clip, sample.contentX);
+    updatePlayheadTime(playheadTime, sample.clip.id);
+    return playheadTime;
+  }, [getClipPlaybackTimeAtX, updatePlayheadTime]);
 
   const handlePlayBarPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
@@ -710,16 +699,22 @@ export function TimelineViewport({
 
     const rect = content.getBoundingClientRect();
     const initialContentX = e.clientX - rect.left;
-    updatePlayheadFromContentX(initialContentX);
+    const sample = getPlayBarScrubSample(initialContentX);
+    if (!sample) return;
+
+    const resolvedPlayheadTime = updatePlayheadFromScrubSample(sample);
 
     setScrubbingState({
       startX: e.clientX,
       startContentX: initialContentX,
       currentContentX: initialContentX,
+      resolvedContentX: sample.contentX,
+      resolvedPlayheadTime,
+      activeClipId: sample.clip.id,
       clientX: e.clientX,
       clientY: e.clientY,
     });
-  }, [updatePlayheadFromContentX]);
+  }, [getPlayBarScrubSample, updatePlayheadFromScrubSample]);
 
   const handleDragBarPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!scrubbingState) return;
@@ -727,8 +722,21 @@ export function TimelineViewport({
 
     const deltaX = e.clientX - scrubbingState.startX;
     const currentContentX = scrubbingState.startContentX + deltaX;
+    const sample = getPlayBarScrubSample(currentContentX);
 
-    updatePlayheadFromContentX(currentContentX);
+    if (sample) {
+      const resolvedPlayheadTime = updatePlayheadFromScrubSample(sample);
+      setScrubbingState({
+        ...scrubbingState,
+        currentContentX,
+        resolvedContentX: sample.contentX,
+        resolvedPlayheadTime,
+        activeClipId: sample.clip.id,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
+      return;
+    }
 
     setScrubbingState({
       ...scrubbingState,
@@ -736,7 +744,7 @@ export function TimelineViewport({
       clientX: e.clientX,
       clientY: e.clientY,
     });
-  }, [scrubbingState, updatePlayheadFromContentX]);
+  }, [getPlayBarScrubSample, scrubbingState, updatePlayheadFromScrubSample]);
 
   const handleDragBarPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!scrubbingState) return;
@@ -744,234 +752,6 @@ export function TimelineViewport({
     e.currentTarget.releasePointerCapture(e.pointerId);
     setScrubbingState(null);
   }, [scrubbingState]);
-
-  const getPassiveScrubTarget = useCallback(
-    (clientX: number, clientY: number) => {
-      const content = contentRef.current;
-      if (!content) return null;
-
-      const rect = content.getBoundingClientRect();
-      const contentX = clientX - rect.left;
-      const contentY = clientY - rect.top;
-      const clip = visibleClips.find(
-        (currentClip) => {
-        if (currentClip.kind !== "video" && currentClip.kind !== "collection" && currentClip.kind !== "image") return false;
-        const left = getClipLeft(currentClip);
-        const top = getClipTop(currentClip);
-        const filmstripTop = Math.max(0, top - itemTop);
-        const width = getClipWidth(currentClip);
-        return (
-          contentX >= left &&
-          contentX <= left + width &&
-          contentY >= filmstripTop &&
-          contentY <= top + itemHeight
-        );
-        },
-      );
-      if (!clip) return null;
-
-      const left = getClipLeft(clip);
-      const width = Math.max(1, getClipWidth(clip));
-      const progress = Math.min(Math.max((contentX - left) / width, 0), 1);
-      const trimIn = (clip.kind === "collection" || clip.kind === "image") ? 0 : (clip as VideoTimelineClip).trimIn || 0;
-      const time = clip.kind === "collection"
-        ? progress * getClipPlaybackDuration(clip)
-        : trimIn + progress * clip.duration;
-
-      let previewClip: any = clip;
-      let previewTime = time;
-
-      if (clip.kind === "collection") {
-        const activePreview = getCollectionClipFramePreview(getCollectionPreviewClip(clip), time);
-        if (activePreview) {
-          previewClip = {
-            id: activePreview.id,
-            index: clip.index,
-            kind: activePreview.kind,
-            src: activePreview.src,
-            poster: activePreview.poster,
-            sourceDuration: activePreview.sourceDuration,
-          };
-          previewTime = activePreview.previewTime;
-        }
-      }
-
-      return {
-        clip: previewClip,
-        previewTime,
-        timelineTime: getClipPlaybackStart(clip) + progress * getClipPlaybackDuration(clip),
-      };
-    },
-    [getClipLeft, getClipPlaybackDuration, getClipPlaybackStart, getClipTop, getClipWidth, getCollectionPreviewClip, itemHeight, itemTop, visibleClips],
-  );
-
-  const cleanupPassiveScrub = useCallback(() => {
-    passiveScrubCleanupRef.current?.();
-    passiveScrubCleanupRef.current = null;
-    setPassiveScrubPreview(null);
-  }, []);
-
-  const handlePassiveFilmStripPointerDown = useCallback(
-    (
-      event: ReactPointerEvent<HTMLDivElement>,
-      clip: TimelineClip,
-    ) => {
-      if (event.pointerType === "mouse" && event.button !== 0) return;
-
-      event.stopPropagation();
-      event.preventDefault();
-      cleanupPassiveScrub();
-
-      const targetElement = event.currentTarget;
-      const anchorRect = targetElement.getBoundingClientRect();
-      const overlayLeft = Math.min(
-        Math.max(
-          anchorRect.left +
-            anchorRect.width / 2 -
-            PASSIVE_SCRUB_OVERLAY_WIDTH / 2,
-          8,
-        ),
-        Math.max(8, window.innerWidth - PASSIVE_SCRUB_OVERLAY_WIDTH - 8),
-      );
-      const overlayTop = Math.max(
-        8,
-        anchorRect.top -
-          PASSIVE_SCRUB_OVERLAY_HEIGHT -
-          PASSIVE_SCRUB_OVERLAY_GAP,
-      );
-
-      const updatePreview = (clientX: number, clientY: number) => {
-        const scrubTarget = getPassiveScrubTarget(clientX, clientY);
-        let previewClip = scrubTarget?.clip ?? clip;
-        const trimIn = clip.kind === "collection" ? 0 : (clip as any).trimIn || 0;
-        let previewTime =
-          scrubTarget?.previewTime ??
-          (clip.kind === "collection"
-            ? getClipPlaybackDuration(clip) / 2
-            : trimIn + clip.duration / 2);
-        const timelineTime =
-          scrubTarget?.timelineTime ??
-          getClipPlaybackStart(clip) + getClipPlaybackDuration(clip) / 2;
-
-        if (previewLargeSurface) {
-          updatePlayheadTime(timelineTime);
-          setPassiveScrubPreview(null);
-          return;
-        }
-
-        if (scrubTarget === null && clip.kind === "collection") {
-          const activePreview = getCollectionClipFramePreview(getCollectionPreviewClip(clip), previewTime);
-          if (activePreview) {
-            previewClip = {
-              id: activePreview.id,
-              index: clip.index,
-              kind: activePreview.kind,
-              src: activePreview.src,
-              poster: activePreview.poster,
-              sourceDuration: activePreview.sourceDuration,
-            };
-            previewTime = activePreview.previewTime;
-          }
-        }
-
-        setPassiveScrubPreview({
-          anchorClipId: clip.id,
-          anchorClipIndex: clip.index,
-          overlayLeft,
-          overlayTop,
-          previewClip,
-          previewTime,
-        });
-      };
-
-      updatePreview(event.clientX, event.clientY);
-
-      try {
-        targetElement.setPointerCapture(event.pointerId);
-      } catch {}
-
-      const onPointerMove = (pointerEvent: PointerEvent) => {
-        if (pointerEvent.pointerId !== event.pointerId) return;
-        pointerEvent.preventDefault();
-        updatePreview(pointerEvent.clientX, pointerEvent.clientY);
-      };
-
-      const finishScrub = (pointerEvent: PointerEvent) => {
-        if (pointerEvent.pointerId !== event.pointerId) return;
-        try {
-          if (targetElement.hasPointerCapture(pointerEvent.pointerId)) {
-            targetElement.releasePointerCapture(pointerEvent.pointerId);
-          }
-        } catch {}
-        cleanupPassiveScrub();
-      };
-
-      window.addEventListener("pointermove", onPointerMove, { passive: false });
-      window.addEventListener("pointerup", finishScrub);
-      window.addEventListener("pointercancel", finishScrub);
-      passiveScrubCleanupRef.current = () => {
-        window.removeEventListener("pointermove", onPointerMove);
-        window.removeEventListener("pointerup", finishScrub);
-        window.removeEventListener("pointercancel", finishScrub);
-      };
-    },
-    [
-      cleanupPassiveScrub,
-      getPassiveScrubTarget,
-      getClipPlaybackDuration,
-      getClipPlaybackStart,
-      getCollectionPreviewClip,
-      previewLargeSurface,
-      updatePlayheadTime,
-    ],
-  );
-
-  useEffect(() => cleanupPassiveScrub, [cleanupPassiveScrub]);
-
-  const passiveScrubOverlay = !previewLargeSurface && passiveScrubPreview ? (
-    <div
-      data-testid="timeline-passive-scrub-overlay"
-      data-anchor-clip-index={passiveScrubPreview.anchorClipIndex}
-      data-anchor-clip-id={passiveScrubPreview.anchorClipId}
-      data-preview-clip-index={passiveScrubPreview.previewClip.index}
-      data-preview-time={passiveScrubPreview.previewTime}
-      className="pointer-events-none fixed overflow-hidden rounded-lg border border-sky-300 bg-zinc-950 shadow-[0_18px_48px_rgba(0,0,0,0.55)]"
-      style={{
-        width: `${PASSIVE_SCRUB_OVERLAY_WIDTH}px`,
-        height: `${PASSIVE_SCRUB_OVERLAY_HEIGHT}px`,
-        left: `${passiveScrubPreview.overlayLeft}px`,
-        top: `${passiveScrubPreview.overlayTop}px`,
-        zIndex: 70,
-      }}
-    >
-      {passiveScrubPreview.previewClip.kind === "video" ? (
-        <VideoTile
-          src={passiveScrubPreview.previewClip.src}
-          poster={passiveScrubPreview.previewClip.poster}
-          alt=""
-          previewTime={passiveScrubPreview.previewTime}
-          sourceDuration={passiveScrubPreview.previewClip.sourceDuration}
-          preferVideoPreview
-        />
-      ) : passiveScrubPreview.previewClip.src ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={passiveScrubPreview.previewClip.src}
-          alt=""
-          className="h-full w-full object-cover"
-          draggable={false}
-        />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center bg-zinc-900/60 text-xs text-zinc-500 font-medium">
-          Empty Collection
-        </div>
-      )}
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-black/75 px-2 py-1 font-mono text-[10px] text-zinc-100">
-        <span>clip {passiveScrubPreview.previewClip.index}</span>
-        <span>{formatSeconds(passiveScrubPreview.previewTime)}</span>
-      </div>
-    </div>
-  ) : null;
 
   const selectedFilmstripOverlay =
     showPlayBarArea && selectedVideoClip && !interactions.isReordering ? (
@@ -1122,6 +902,7 @@ export function TimelineViewport({
                 if (pLeft === null) return null;
                 return (
                   <div
+                    data-testid="timeline-playhead"
                     className="absolute z-40 top-0 bottom-0 w-[2.5px] bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.9)] pointer-events-none"
                     style={{
                       left: `${pLeft}px`,
@@ -1131,48 +912,6 @@ export function TimelineViewport({
                   />
                 );
               })()}
-
-              {dragBarEnabled && visibleClips.map((clip) => {
-                const left = getClipLeft(clip);
-                const top = getClipTop(clip);
-                const width = getClipWidth(clip);
-                const frameSize =
-                  itemHeight === 80
-                    ? itemHeight
-                    : Math.max(56, Math.min(itemHeight, 96));
-                const topInset = Math.max(0, (itemHeight - frameSize) / 2);
-                const playBarHeight = topInset >= 30 ? 24 : 16;
-                const playBarTop = top + Math.max(3, topInset - playBarHeight - 4);
-
-                return (
-                  <div
-                    key={`${clip.id}-play-drag-overlay`}
-                    data-testid="timeline-clip-play-drag-overlay"
-                    data-clip-index={clip.index}
-                    onPointerDown={handlePlayBarPointerDown}
-                    onPointerMove={handleDragBarPointerMove}
-                    onPointerUp={handleDragBarPointerUp}
-                    onPointerCancel={handleDragBarPointerUp}
-                    className="absolute z-[35] group/playbar cursor-ew-resize px-1.5 transition-opacity duration-150"
-                    style={{
-                      left: `${left}px`,
-                      top: `${playBarTop}px`,
-                      width: `${width}px`,
-                      height: `${playBarHeight}px`,
-                      touchAction: "none",
-                    }}
-                    title="Drag to scrub playhead"
-                  >
-                    <div className="relative flex h-full w-full items-center rounded-full border border-zinc-700/70 bg-zinc-950/72 px-2 shadow-md backdrop-blur-sm transition-colors duration-150 group-hover/playbar:border-amber-400/70 group-hover/playbar:bg-amber-950/70">
-                      <div className="h-px flex-1 bg-zinc-600/70 transition-colors duration-150 group-hover/playbar:bg-amber-300/70" />
-                      <div className="mx-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-zinc-600/80 bg-black/80 shadow-sm transition-colors duration-150 group-hover/playbar:border-amber-300">
-                        <Play className="ml-[1px] h-2.5 w-2.5 fill-zinc-300 text-zinc-300 transition-colors duration-150 group-hover/playbar:fill-amber-300 group-hover/playbar:text-amber-300" />
-                      </div>
-                      <div className="h-px flex-1 bg-zinc-600/70 transition-colors duration-150 group-hover/playbar:bg-amber-300/70" />
-                    </div>
-                  </div>
-                );
-              })}
 
               {!interactions.isReordering &&
                 selectedIndex === null &&
@@ -1187,7 +926,10 @@ export function TimelineViewport({
                       gridMetrics={gridMetrics}
                       thumbnailWidth={thumbnailWidth}
                       thumbnailGap={THUMBNAIL_GAP}
-                      onPointerDown={handlePassiveFilmStripPointerDown}
+                      onPointerDown={(event) => handlePlayBarPointerDown(event)}
+                      onPointerMove={(event) => handleDragBarPointerMove(event)}
+                      onPointerUp={(event) => handleDragBarPointerUp(event)}
+                      onPointerCancel={(event) => handleDragBarPointerUp(event)}
                       showFilmstrip={showPassiveFilmstrips}
                     />
                   ) : null,
@@ -1197,7 +939,6 @@ export function TimelineViewport({
           )}
         </div>
       </div>
-      {passiveScrubOverlay}
       {isDragOver && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-sky-400 bg-sky-950/40 backdrop-blur-sm transition-all duration-300">
           <div className="flex flex-col items-center gap-2 p-6 text-center text-sky-200 pointer-events-none">
@@ -1301,7 +1042,8 @@ export function TimelineViewport({
         document.body
       )}
       {scrubbingState && showFloatingDragPreview && (() => {
-        const previewClip = getClipAtX(scrubbingState.currentContentX);
+        const previewClip =
+          visibleClips.find((clip) => clip.id === scrubbingState.activeClipId);
         let previewSrc = "";
         let mediaTime = 0;
         let displayTime = 0;
@@ -1313,11 +1055,11 @@ export function TimelineViewport({
         if (previewClip) {
           const left = getClipLeft(previewClip);
           const width = getClipWidth(previewClip);
-          const ratio = Math.max(0, Math.min(1, (scrubbingState.currentContentX - left) / Math.max(1, width)));
+          const ratio = Math.max(0, Math.min(1, (scrubbingState.resolvedContentX - left) / Math.max(1, width)));
           mediaTime = previewClip.kind === "collection"
             ? ratio * getClipPlaybackDuration(previewClip)
             : previewClip.trimIn + ratio * previewClip.duration;
-          displayTime = getClipPlaybackStart(previewClip) + ratio * getClipPlaybackDuration(previewClip);
+          displayTime = scrubbingState.resolvedPlayheadTime;
 
           previewKind = previewClip.kind;
 

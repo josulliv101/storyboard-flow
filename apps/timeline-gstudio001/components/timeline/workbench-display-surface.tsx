@@ -39,12 +39,13 @@ type WorkbenchDisplaySurfaceProps = {
   currentTime: number;
   onCurrentTimeChange: (time: number) => void;
   className?: string;
+  preferredClipId?: string | null;
 };
 
 const BUFFER_WINDOW_SIZE = 4;
 const DEFAULT_SURFACE_HEIGHT = 380;
-const MIN_SURFACE_HEIGHT = 220;
-const MIN_TIMELINE_SPACE = 300;
+const MIN_SURFACE_HEIGHT = 120;
+const MIN_TIMELINE_SPACE = 260;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -158,16 +159,32 @@ function resolveClipMedia(clip: TimelineClip, timelineTime: number): DisplayMedi
   };
 }
 
-function getActiveClip(clips: TimelineClip[], currentTime: number) {
+function clipContainsPlaybackTime(clip: TimelineClip, currentTime: number) {
+  const playbackStart = getClipPlaybackStart(clip);
+  const playbackDuration = getClipPlaybackDuration(clip);
+  return currentTime >= playbackStart && currentTime <= playbackStart + playbackDuration;
+}
+
+function getActiveClip(
+  clips: TimelineClip[],
+  currentTime: number,
+  preferredClipId?: string | null,
+) {
   if (clips.length === 0) return null;
+  const preferredClip = preferredClipId
+    ? clips.find((clip) => clip.id === preferredClipId)
+    : null;
+  if (preferredClip && clipContainsPlaybackTime(preferredClip, currentTime)) {
+    return preferredClip;
+  }
+
   const lastClip = clips[clips.length - 1];
   if (lastClip && currentTime >= getClipPlaybackStart(lastClip) + getClipPlaybackDuration(lastClip)) {
     return lastClip;
   }
 
   return clips.find((clip) => {
-    const playbackStart = getClipPlaybackStart(clip);
-    return currentTime >= playbackStart && currentTime < playbackStart + getClipPlaybackDuration(clip);
+    return clipContainsPlaybackTime(clip, currentTime);
   }) ?? null;
 }
 
@@ -191,6 +208,7 @@ export function WorkbenchDisplaySurface({
   currentTime,
   onCurrentTimeChange,
   className,
+  preferredClipId,
 }: WorkbenchDisplaySurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cacheRef = useRef(new Map<string, CachedMedia>());
@@ -220,8 +238,8 @@ export function WorkbenchDisplaySurface({
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
   const activeClip = useMemo(
-    () => getActiveClip(sortedClips, currentTime),
-    [currentTime, sortedClips],
+    () => getActiveClip(sortedClips, currentTime, preferredClipId),
+    [currentTime, preferredClipId, sortedClips],
   );
   const activeClipIndex = useMemo(
     () => (activeClip ? sortedClips.findIndex((clip) => clip.id === activeClip.id) : -1),
@@ -400,7 +418,7 @@ export function WorkbenchDisplaySurface({
   }, [drawActiveFrame, ensureCachedMedia]);
 
   const renderFrameAtTime = useCallback((timelineTime: number, shouldPlay: boolean, forceSeek = false) => {
-    const active = getActiveClip(sortedClipsRef.current, timelineTime);
+    const active = getActiveClip(sortedClipsRef.current, timelineTime, preferredClipId);
     const media = active ? resolveClipMedia(active, timelineTime) : null;
     const mediaChanged = media?.key !== lastRenderedMediaKeyRef.current;
 
@@ -432,6 +450,7 @@ export function WorkbenchDisplaySurface({
     drawEmptyFrame,
     ensureCachedMedia,
     pauseInactiveVideos,
+    preferredClipId,
     syncActiveVideo,
   ]);
 
@@ -655,6 +674,7 @@ type WorkbenchSplitPaneProps = {
   currentTime: number;
   onCurrentTimeChange: (time: number) => void;
   children: ReactNode;
+  preferredClipId?: string | null;
 };
 
 export function WorkbenchSplitPane({
@@ -662,35 +682,117 @@ export function WorkbenchSplitPane({
   currentTime,
   onCurrentTimeChange,
   children,
+  preferredClipId,
 }: WorkbenchSplitPaneProps) {
   const [surfaceHeight, setSurfaceHeight] = useState(DEFAULT_SURFACE_HEIGHT);
+  const [isDividerDragging, setIsDividerDragging] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const dividerRef = useRef<HTMLButtonElement | null>(null);
+  const lowerPaneRef = useRef<HTMLDivElement | null>(null);
   const dragStartRef = useRef<{ pointerY: number; height: number } | null>(null);
+  const fitFrameRef = useRef<number | null>(null);
 
-  const clampSurfaceHeight = useCallback((height: number) => {
+  const getViewportBoundaryBottom = useCallback(() => {
+    const root = rootRef.current;
+    const boundary = root?.closest("main") as HTMLElement | null;
+    return boundary?.getBoundingClientRect().bottom ?? window.innerHeight;
+  }, []);
+
+  const getManualMaxSurfaceHeight = useCallback(() => {
+    if (typeof window === "undefined") {
+      return DEFAULT_SURFACE_HEIGHT;
+    }
+
+    const root = rootRef.current;
+    const rootTop = root?.getBoundingClientRect().top ?? 0;
+    return Math.max(
+      MIN_SURFACE_HEIGHT,
+      getViewportBoundaryBottom() - rootTop - MIN_TIMELINE_SPACE,
+    );
+  }, [getViewportBoundaryBottom]);
+
+  const clampSurfaceHeight = useCallback((height: number, maxHeight?: number) => {
     if (typeof window === "undefined") {
       return clamp(height, MIN_SURFACE_HEIGHT, DEFAULT_SURFACE_HEIGHT);
     }
 
-    const maxFromViewport = Math.max(
-      MIN_SURFACE_HEIGHT,
-      window.innerHeight - MIN_TIMELINE_SPACE,
-    );
+    const maxFromViewport =
+      maxHeight ?? getManualMaxSurfaceHeight();
     return clamp(height, MIN_SURFACE_HEIGHT, maxFromViewport);
-  }, []);
+  }, [getManualMaxSurfaceHeight]);
+
+  const fitSurfaceToViewport = useCallback(() => {
+    if (dragStartRef.current) return;
+
+    const root = rootRef.current;
+    const divider = dividerRef.current;
+    const lowerPane = lowerPaneRef.current;
+    if (!root || !divider || !lowerPane || typeof window === "undefined") return;
+
+    const rootTop = root.getBoundingClientRect().top;
+    const availableHeight = getViewportBoundaryBottom() - rootTop;
+    const dividerHeight = divider.getBoundingClientRect().height;
+    const lowerPaneHeight = lowerPane.getBoundingClientRect().height;
+    const maxSurfaceHeight = Math.max(
+      MIN_SURFACE_HEIGHT,
+      availableHeight - dividerHeight,
+    );
+    const nextHeight = clampSurfaceHeight(
+      availableHeight - dividerHeight - lowerPaneHeight,
+      maxSurfaceHeight,
+    );
+
+    setSurfaceHeight((height) =>
+      Math.abs(height - nextHeight) < 0.5 ? height : nextHeight,
+    );
+  }, [clampSurfaceHeight, getViewportBoundaryBottom]);
+
+  const scheduleSurfaceFit = useCallback(() => {
+    if (fitFrameRef.current !== null || typeof window === "undefined") return;
+
+    fitFrameRef.current = window.requestAnimationFrame(() => {
+      fitFrameRef.current = null;
+      fitSurfaceToViewport();
+    });
+  }, [fitSurfaceToViewport]);
 
   useLayoutEffect(() => {
-    const handleResize = () => {
-      setSurfaceHeight((height) => clampSurfaceHeight(height));
-    };
+    fitSurfaceToViewport();
 
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [clampSurfaceHeight]);
+    const root = rootRef.current;
+    const lowerPane = lowerPaneRef.current;
+    const divider = dividerRef.current;
+    const boundary = root?.closest("main") as HTMLElement | null;
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(scheduleSurfaceFit);
+
+    if (observer) {
+      if (boundary) observer.observe(boundary);
+      if (lowerPane) observer.observe(lowerPane);
+      if (divider) observer.observe(divider);
+    }
+
+    window.addEventListener("resize", scheduleSurfaceFit);
+    window.visualViewport?.addEventListener("resize", scheduleSurfaceFit);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", scheduleSurfaceFit);
+      window.visualViewport?.removeEventListener("resize", scheduleSurfaceFit);
+      if (fitFrameRef.current !== null) {
+        window.cancelAnimationFrame(fitFrameRef.current);
+        fitFrameRef.current = null;
+      }
+    };
+  }, [fitSurfaceToViewport, scheduleSurfaceFit]);
 
   const handleDividerPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
+      setIsDividerDragging(true);
       dragStartRef.current = {
         pointerY: event.clientY,
         height: surfaceHeight,
@@ -712,18 +814,26 @@ export function WorkbenchSplitPane({
 
   const handleDividerPointerUp = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     dragStartRef.current = null;
+    setIsDividerDragging(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
   }, []);
 
   return (
-    <div className="grid min-h-0 w-full gap-0">
+    <div
+      ref={rootRef}
+      className="grid min-h-0 w-full gap-0"
+      data-testid="workbench-split-pane"
+    >
       <div
-        className="min-h-0"
+        className={cn(
+          "min-h-0",
+          !isDividerDragging &&
+            "transition-[height] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+        )}
         style={{
           height: `${surfaceHeight}px`,
-          maxHeight: `calc(100dvh - ${MIN_TIMELINE_SPACE}px)`,
           minHeight: `${MIN_SURFACE_HEIGHT}px`,
         }}
       >
@@ -731,10 +841,12 @@ export function WorkbenchSplitPane({
           clips={clips}
           currentTime={currentTime}
           onCurrentTimeChange={onCurrentTimeChange}
+          preferredClipId={preferredClipId}
           className="h-full"
         />
       </div>
       <button
+        ref={dividerRef}
         type="button"
         role="separator"
         aria-orientation="horizontal"
@@ -749,7 +861,7 @@ export function WorkbenchSplitPane({
       >
         <span className="h-px w-full bg-zinc-800 transition-colors group-hover:bg-amber-400/70 group-active:bg-amber-400" />
       </button>
-      <div className="min-h-0 pt-3">
+      <div ref={lowerPaneRef} className="min-h-0 pt-3">
         {children}
       </div>
     </div>

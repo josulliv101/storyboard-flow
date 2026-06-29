@@ -499,9 +499,9 @@ export function getCollectionFramePreview(
   
   if (childClips.length === 0) return null;
 
-  let activeClip: any = null;
-  let minDistance = Infinity;
-  let nearestClip: any = null;
+  let activeClip: TimelineClip | null = null;
+  let previousClip: TimelineClip | null = null;
+  let firstFutureClip: TimelineClip | null = null;
 
   for (const c of childClips) {
     const start = c.startTime;
@@ -510,16 +510,20 @@ export function getCollectionFramePreview(
       activeClip = c;
       break;
     }
-    
-    // Find nearest clip to fill any gap smoothly
-    const dist = Math.min(Math.abs(time - start), Math.abs(time - end));
-    if (dist < minDistance) {
-      minDistance = dist;
-      nearestClip = c;
+
+    if (end < time) {
+      if (!previousClip || end > previousClip.startTime + previousClip.duration) {
+        previousClip = c;
+      }
+      continue;
+    }
+
+    if (start > time && (!firstFutureClip || start < firstFutureClip.startTime)) {
+      firstFutureClip = c;
     }
   }
 
-  const c = activeClip || nearestClip;
+  const c = activeClip || previousClip || firstFutureClip;
   if (c) {
     const start = c.startTime;
     const relativeOffset = clamp(time - start, 0, c.duration);

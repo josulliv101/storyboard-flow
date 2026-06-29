@@ -36,16 +36,21 @@ export default function ProjectTimelinePage({
   const { timelineId: projectId, projectView, activeTimelinePath } = use(params);
   const resolvedSearchParams = use(searchParams);
   const [globalHierarchyMode, setGlobalHierarchyMode] = useState(false);
-  const [globalDragBar, setGlobalDragBar] = useState(false);
   const [globalPreviewLargeSurface, setGlobalPreviewLargeSurface] = useState(false);
   const [workbenchPreviewTime, setWorkbenchPreviewTime] = useState(0);
   const [workbenchPreviewClips, setWorkbenchPreviewClips] = useState<TimelineClip[] | null>(null);
+  const [workbenchPreviewClipId, setWorkbenchPreviewClipId] = useState<string | null>(null);
   const viewState = parseTimelineViewState(resolvedSearchParams);
-  const handleWorkbenchPreviewTimeChange = useCallback((time: number, clips?: TimelineClip[]) => {
+  const handleWorkbenchPreviewTimeChange = useCallback((
+    time: number,
+    clips?: TimelineClip[],
+    activeClipId?: string,
+  ) => {
     setWorkbenchPreviewTime(time);
     if (clips) {
       setWorkbenchPreviewClips(clips);
     }
+    setWorkbenchPreviewClipId(activeClipId ?? null);
   }, []);
 
   if (!projectId.startsWith("project-")) {
@@ -159,12 +164,6 @@ export default function ProjectTimelinePage({
         </div>
         <div className="shrink-0 flex items-center gap-4">
           <ToggleSwitch
-            id="global-dragbar-toggle"
-            label="Drag Bar"
-            checked={globalDragBar}
-            onChange={setGlobalDragBar}
-          />
-          <ToggleSwitch
             id="global-hierarchy-toggle"
             label="Hierarchy Mode"
             checked={globalHierarchyMode}
@@ -193,6 +192,7 @@ export default function ProjectTimelinePage({
           clips={workbenchPreviewClips ?? document.clips}
           currentTime={workbenchPreviewTime}
           onCurrentTimeChange={handleWorkbenchPreviewTimeChange}
+          preferredClipId={workbenchPreviewClipId}
         >
           <div className="grid gap-3">
             {timelineChrome}
@@ -208,7 +208,6 @@ export default function ProjectTimelinePage({
               onPlayheadTimeChange={handleWorkbenchPreviewTimeChange}
               hierarchyMode={globalHierarchyMode}
               onHierarchyModeChange={setGlobalHierarchyMode}
-              dragBarEnabled={globalDragBar}
               previewLargeSurface={globalPreviewLargeSurface}
             />
           </div>
@@ -224,7 +223,6 @@ export default function ProjectTimelinePage({
           thumbnailMode={true}
           hierarchyMode={globalHierarchyMode}
           onHierarchyModeChange={setGlobalHierarchyMode}
-          dragBarEnabled={globalDragBar}
           previewLargeSurface={globalPreviewLargeSurface}
         />
       )}

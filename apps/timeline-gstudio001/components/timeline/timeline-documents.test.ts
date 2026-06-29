@@ -58,4 +58,35 @@ describe("collection timeline playback mapping", () => {
     expect(preview?.previewTime).toBeCloseTo(4);
     expect(preview?.playbackRate).toBeCloseTo(2);
   });
+
+  it("holds the previous child frame while scrubbing collection timeline gaps", () => {
+    registerTimelineDocument({
+      id: "test-collection-source",
+      title: "Test collection source",
+      clips: [
+        mediaClip({
+          id: "first-child",
+          startTime: 0,
+          duration: 1,
+          sourceDuration: 1,
+          alt: "First child",
+        }),
+        mediaClip({
+          id: "second-child",
+          startTime: 3,
+          duration: 1,
+          sourceDuration: 1,
+          alt: "Second child",
+        }),
+      ],
+    });
+
+    const preview = getCollectionClipFramePreview(
+      collectionClip({ duration: 4, sourceDuration: 4 }),
+      2.5,
+    );
+
+    expect(preview?.id).toBe("first-child");
+    expect(preview?.previewTime).toBeCloseTo(0.999);
+  });
 });

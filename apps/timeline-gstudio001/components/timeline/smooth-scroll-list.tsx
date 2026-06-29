@@ -70,11 +70,16 @@ export interface SmoothScrollListProps
   onHierarchyModeChange?: (enabled: boolean) => void;
   thumbnailMode?: boolean;
   playheadTime?: number | null;
-  onPlayheadTimeChange?: (time: number, clips?: TimelineClip[]) => void;
-  dragBarEnabled?: boolean;
+  onPlayheadTimeChange?: (
+    time: number,
+    clips?: TimelineClip[],
+    activeClipId?: string,
+  ) => void;
   previewLargeSurface?: boolean;
   disablePersistence?: boolean;
   onTimelineIdChange?: (newTimelineId: string) => void;
+  titleMeta?: React.ReactNode;
+  toolbarActions?: React.ReactNode;
 }
 
 export function SmoothScrollList({
@@ -95,12 +100,13 @@ export function SmoothScrollList({
   thumbnailMode: propThumbnailMode,
   playheadTime,
   onPlayheadTimeChange,
-  dragBarEnabled = false,
   previewLargeSurface = false,
   disablePersistence = false,
   className,
   style,
   onTimelineIdChange,
+  titleMeta,
+  toolbarActions,
   ...props
 }: SmoothScrollListProps) {
   const { user } = useAuth();
@@ -151,9 +157,11 @@ export function SmoothScrollList({
     }
   }
 
-  useEffect(() => {
+  const [prevTimelineTitle, setPrevTimelineTitle] = useState(timelineTitle);
+  if (timelineTitle !== prevTimelineTitle) {
+    setPrevTimelineTitle(timelineTitle);
     setPersistedTimelineTitle(timelineTitle);
-  }, [timelineTitle]);
+  }
 
   const handleTitleChange = useCallback(
     (newTitle: string) => {
@@ -1198,6 +1206,8 @@ export function SmoothScrollList({
           }
           childCollectionsExpanded={childCollectionsExpanded}
           onToggleChildCollections={() => setChildCollectionsExpanded(!childCollectionsExpanded)}
+          titleMeta={titleMeta}
+          toolbarActions={toolbarActions}
         />
 
         {mediaUploadError && (
@@ -1273,7 +1283,6 @@ export function SmoothScrollList({
             onDropClipIntoCollection={handleDropClipIntoCollection}
             onDropSidebarClipIntoCollection={handleDropSidebarClipIntoCollection}
             timelineId={timelineId}
-            dragBarEnabled={dragBarEnabled}
             previewLargeSurface={previewLargeSurface}
             playheadTime={playheadTime}
             onPlayheadTimeChange={onPlayheadTimeChange}
@@ -1306,7 +1315,6 @@ export function SmoothScrollList({
                 isChildTimeline={true}
                 syncMediaDuration={syncMediaDuration}
                 hierarchyMode={hierarchyMode}
-                dragBarEnabled={dragBarEnabled}
                 previewLargeSurface={previewLargeSurface}
                 playheadTime={playheadTime}
                 onPlayheadTimeChange={onPlayheadTimeChange}
@@ -1338,7 +1346,6 @@ export function SmoothScrollList({
                 isChildTimeline={true}
                 syncMediaDuration={syncMediaDuration}
                 hierarchyMode={hierarchyMode}
-                dragBarEnabled={dragBarEnabled}
                 previewLargeSurface={previewLargeSurface}
                 playheadTime={playheadTime}
                 onPlayheadTimeChange={onPlayheadTimeChange}

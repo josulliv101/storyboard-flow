@@ -23,7 +23,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
                 <TimelineSidebar />
               </Suspense>
               <main
-                className="flex-1 px-8 py-10 overflow-y-auto max-h-screen"
+                className="flex-1 px-8 pt-6 pb-0 overflow-y-auto max-h-screen"
                 style={{
                   height: "calc(100dvh - var(--asset-library-height, 0px))",
                   maxHeight: "calc(100dvh - var(--asset-library-height, 0px))",

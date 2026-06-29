@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 import { ITEM_HEIGHTS, type ItemSize } from "./constants";
@@ -24,6 +24,8 @@ type TimelineToolbarProps = {
   childCollectionsExpanded?: boolean;
   onToggleChildCollections?: () => void;
   onTitleChange?: (newTitle: string) => void;
+  titleMeta?: ReactNode;
+  toolbarActions?: ReactNode;
 };
 
 export function ToggleSwitch({
@@ -95,6 +97,8 @@ export function TimelineToolbar({
   childCollectionsExpanded = false,
   onToggleChildCollections,
   onTitleChange,
+  titleMeta,
+  toolbarActions,
 }: TimelineToolbarProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(title || "");
@@ -228,8 +232,13 @@ export function TimelineToolbar({
             {title}
           </h3>
         )}
+        {titleMeta ? (
+          <div className="min-w-0 shrink text-xs text-zinc-500">
+            {titleMeta}
+          </div>
+        ) : null}
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex shrink-0 items-center gap-4">
         {thumbnailMode && (
           <ToggleSwitch
             id="grid-mode"
@@ -295,6 +304,11 @@ export function TimelineToolbar({
             />
           </div>
         )}
+        {toolbarActions ? (
+          <div className="flex items-center gap-2">
+            {toolbarActions}
+          </div>
+        ) : null}
 
       </div>
     </div>

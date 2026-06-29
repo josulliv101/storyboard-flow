@@ -40,7 +40,6 @@ export default function TimelineDocumentPage({
   const isProjectTimeline = timelineId.startsWith("project-");
   const normalizedProjectSearchParams = new URLSearchParams();
   const [globalHierarchyMode, setGlobalHierarchyMode] = useState(false);
-  const [globalDragBar, setGlobalDragBar] = useState(false);
 
   Object.entries(resolvedSearchParams).forEach(([key, value]) => {
     if (key === "view") return;
@@ -148,12 +147,6 @@ export default function TimelineDocumentPage({
           </div>
           <div className="shrink-0 flex items-center gap-4">
             <ToggleSwitch
-              id="global-dragbar-toggle"
-              label="Drag Bar"
-              checked={globalDragBar}
-              onChange={setGlobalDragBar}
-            />
-            <ToggleSwitch
               id="global-hierarchy-toggle"
               label="Hierarchy Mode"
               checked={globalHierarchyMode}
@@ -171,7 +164,6 @@ export default function TimelineDocumentPage({
         syncMediaDuration={false}
         hierarchyMode={globalHierarchyMode}
         onHierarchyModeChange={setGlobalHierarchyMode}
-        dragBarEnabled={globalDragBar}
       />
     </div>
   );

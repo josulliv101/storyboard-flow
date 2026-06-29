@@ -248,7 +248,7 @@ test("selecting a video hides all passive filmstrips", async ({ page }) => {
   await expect(page.getByTestId("timeline-passive-filmstrip")).toHaveCount(0);
 });
 
-test("dragging a passive filmstrip scrubs without panning the timeline", async ({ page }) => {
+test("dragging a passive filmstrip scrubs with the playhead without panning the timeline", async ({ page }) => {
   const viewport = page.getByTestId("timeline-scroll-viewport");
   await page.getByRole("switch", { name: "Filmstrips" }).click();
 
@@ -268,19 +268,14 @@ test("dragging a passive filmstrip scrubs without panning the timeline", async (
 
   await page.mouse.move(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2);
   await page.mouse.down();
-  const overlay = page.getByTestId("timeline-passive-scrub-overlay");
-  await expect(overlay).toHaveAttribute("data-anchor-clip-index", "0");
-  await expect(overlay).toHaveAttribute("data-preview-clip-index", "0");
-  const overlayBox = await overlay.boundingBox();
-  if (!overlayBox) throw new Error("Passive scrub overlay is not visible");
-  expect(overlayBox.width).toBeGreaterThan(300);
-  expect(overlayBox.height).toBeGreaterThan(180);
-  expect(overlayBox.y).toBeLessThan(firstBox.y);
+  await expect(page.getByTestId("timeline-passive-scrub-overlay")).toHaveCount(0);
+  const playhead = page.getByTestId("timeline-playhead");
+  await expect(playhead).toBeVisible();
+  const initialPlayheadLeft = await playhead.evaluate((element) => element.style.left);
 
   await page.mouse.move(nextBox.x + nextBox.width / 2, nextBox.y + nextBox.height / 2, { steps: 12 });
 
-  await expect(overlay).toHaveAttribute("data-anchor-clip-index", "0");
-  await expect(overlay).toHaveAttribute("data-preview-clip-index", "4");
+  await expect.poll(() => playhead.evaluate((element) => element.style.left)).not.toBe(initialPlayheadLeft);
   await expect.poll(() => numberAttribute(viewport, "data-scroll-left")).toBe(initialScroll);
 
   await page.mouse.up();

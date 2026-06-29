@@ -22,6 +22,7 @@ function WorkbenchPageContent() {
   const [document, setDocument] = useState(() => getTimelineDocument(timelineId));
   const [previewTime, setPreviewTime] = useState(0);
   const [previewClips, setPreviewClips] = useState<TimelineClip[] | null>(null);
+  const [previewClipId, setPreviewClipId] = useState<string | null>(null);
   const [previewLargeSurface, setPreviewLargeSurface] = useState(false);
 
   const [prevTimelineId, setPrevTimelineId] = useState(timelineId);
@@ -29,6 +30,7 @@ function WorkbenchPageContent() {
     setPrevTimelineId(timelineId);
     setDocument(getTimelineDocument(timelineId));
     setPreviewClips(null);
+    setPreviewClipId(null);
   }
 
   // Subscribe to external store updates
@@ -65,11 +67,16 @@ function WorkbenchPageContent() {
     router.push(`${pathname}?timelineId=${nextId}`);
   };
 
-  const handlePreviewTimeChange = useCallback((time: number, clips?: TimelineClip[]) => {
+  const handlePreviewTimeChange = useCallback((
+    time: number,
+    clips?: TimelineClip[],
+    activeClipId?: string,
+  ) => {
     setPreviewTime(time);
     if (clips) {
       setPreviewClips(clips);
     }
+    setPreviewClipId(activeClipId ?? null);
   }, []);
 
   const timelineChrome = (
@@ -133,6 +140,7 @@ function WorkbenchPageContent() {
         clips={previewClips ?? document.clips}
         currentTime={previewTime}
         onCurrentTimeChange={handlePreviewTimeChange}
+        preferredClipId={previewClipId}
       >
         <div className="grid gap-3">
           {timelineChrome}

@@ -337,6 +337,18 @@ type PassiveVideoFilmStripProps = {
     event: React.PointerEvent<HTMLDivElement>,
     clip: TimelineClip,
   ) => void;
+  onPointerMove?: (
+    event: React.PointerEvent<HTMLDivElement>,
+    clip: TimelineClip,
+  ) => void;
+  onPointerUp?: (
+    event: React.PointerEvent<HTMLDivElement>,
+    clip: TimelineClip,
+  ) => void;
+  onPointerCancel?: (
+    event: React.PointerEvent<HTMLDivElement>,
+    clip: TimelineClip,
+  ) => void;
   showFilmstrip?: boolean;
 };
 
@@ -348,6 +360,9 @@ export function PassiveVideoFilmStrip({
   thumbnailWidth = (200 * 16) / 9,
   thumbnailGap = 16,
   onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
   showFilmstrip = true,
 }: PassiveVideoFilmStripProps) {
   const gridLayout =
@@ -390,7 +405,16 @@ export function PassiveVideoFilmStrip({
           : "border-zinc-700/40 bg-zinc-800/90 hover:bg-zinc-800/95 hover:border-zinc-600/70"
       )}
       onPointerDown={(event) => onPointerDown?.(event, clip)}
-      onPointerCancel={(event) => event.stopPropagation()}
+      onPointerMove={(event) => onPointerMove?.(event, clip)}
+      onPointerUp={(event) => onPointerUp?.(event, clip)}
+      onPointerCancel={(event) => {
+        if (onPointerCancel) {
+          onPointerCancel(event, clip);
+          return;
+        }
+
+        event.stopPropagation();
+      }}
       onDragStart={(event) => event.preventDefault()}
       style={{
         width: `${width}px`,
