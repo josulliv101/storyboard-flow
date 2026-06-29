@@ -17,6 +17,10 @@ export type TimelineItemBase = {
   trimIn: number;
   /** Amount trimmed from the source end. */
   trimOut: number;
+  /** Optional unscaled timeline position used when visual width differs from playback time. */
+  playbackStartTime?: number;
+  /** Optional unscaled playback duration used when visual width differs from playback time. */
+  playbackDuration?: number;
 };
 
 export type ImageTimelineClip = TimelineItemBase & {

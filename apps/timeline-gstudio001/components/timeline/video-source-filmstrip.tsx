@@ -1,5 +1,6 @@
 import React from "react";
 import type {
+  CollectionTimelineClip,
   VideoSourceWindowEditMode,
   VideoTimelineClip,
   TimelineClip,
@@ -63,6 +64,22 @@ export function getEndpointFrameTimes({
     const progress = index / (frameCount - 1);
     return start + (end - start) * progress;
   });
+}
+
+function getCollectionPlaybackDuration(clip: CollectionTimelineClip) {
+  return Math.max(
+    0.001,
+    clip.playbackDuration ?? getCollectionClipSourceDuration(clip),
+  );
+}
+
+function getCollectionPreviewClip(clip: CollectionTimelineClip): CollectionTimelineClip {
+  const playbackDuration = getCollectionPlaybackDuration(clip);
+  return {
+    ...clip,
+    duration: playbackDuration,
+    sourceDuration: Math.max(clip.sourceDuration, playbackDuration),
+  };
 }
 
 export function getVideoThumbnailUrl(src: string, second: number, width = 480, height = 270): string {
@@ -358,7 +375,7 @@ export function PassiveVideoFilmStrip({
     startTime: clip.kind === "collection" ? 0 : trimIn,
     endTime:
       clip.kind === "collection"
-        ? Math.max(0, clip.duration - 0.001)
+        ? Math.max(0, getCollectionPlaybackDuration(clip) - 0.001)
         : Math.min(Math.max(0, sourceDuration - 0.05), trimIn + clip.duration),
   });
 
@@ -399,7 +416,7 @@ export function PassiveVideoFilmStrip({
         <div className="flex h-full w-full select-none overflow-hidden rounded-md">
           {frameTimes.map((time, index) => {
             if (clip.kind === "collection") {
-              const preview = getCollectionClipFramePreview(clip, time);
+              const preview = getCollectionClipFramePreview(getCollectionPreviewClip(clip), time);
               return (
                 <div
                   key={`${clip.id}-passive-film-frame-${index}`}

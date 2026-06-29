@@ -24,7 +24,7 @@ import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,
 } from "./timeline-grid";
-import type { TimelineClip, TrimScrubPreview, VideoTimelineClip } from "./types";
+import type { CollectionTimelineClip, TimelineClip, TrimScrubPreview, VideoTimelineClip } from "./types";
 import { PassiveVideoFilmStrip, VideoSourceFilmStrip, getVideoThumbnailUrl } from "./video-source-filmstrip";
 import { VideoTile } from "./video-tile";
 import { formatSeconds } from "./utils";
@@ -84,8 +84,9 @@ type TimelineViewportProps = {
   onDropSidebarClipIntoCollection?: (type: "collection" | "image" | "video", targetCollectionTimelineId: string) => void;
   timelineId?: string;
   dragBarEnabled?: boolean;
+  previewLargeSurface?: boolean;
   playheadTime?: number | null;
-  onPlayheadTimeChange?: (time: number) => void;
+  onPlayheadTimeChange?: (time: number, clips?: TimelineClip[]) => void;
 };
 
 export function TimelineViewport({
@@ -127,6 +128,7 @@ export function TimelineViewport({
   onDropSidebarClipIntoCollection,
   timelineId,
   dragBarEnabled = false,
+  previewLargeSurface = false,
   playheadTime: propPlayheadTime,
   onPlayheadTimeChange,
 }: TimelineViewportProps) {
@@ -247,6 +249,34 @@ export function TimelineViewport({
         ? thumbnailWidth
         : clip.duration * pixelsPerSecond,
     [gridMetrics, pixelsPerSecond, thumbnailMode, thumbnailWidth],
+  );
+  const getClipPlaybackStart = useCallback(
+    (clip: TimelineClip) => clip.playbackStartTime ?? clip.startTime,
+    [],
+  );
+  const getClipPlaybackDuration = useCallback(
+    (clip: TimelineClip) => Math.max(0.001, clip.playbackDuration ?? clip.duration),
+    [],
+  );
+  const getClipPlaybackTimeAtX = useCallback(
+    (clip: TimelineClip, contentX: number) => {
+      const left = getClipLeft(clip);
+      const width = getClipWidth(clip);
+      const ratio = Math.max(0, Math.min(1, (contentX - left) / Math.max(1, width)));
+      return getClipPlaybackStart(clip) + ratio * getClipPlaybackDuration(clip);
+    },
+    [getClipLeft, getClipPlaybackDuration, getClipPlaybackStart, getClipWidth],
+  );
+  const getCollectionPreviewClip = useCallback(
+    (clip: CollectionTimelineClip): CollectionTimelineClip => {
+      const playbackDuration = getClipPlaybackDuration(clip);
+      return {
+        ...clip,
+        duration: playbackDuration,
+        sourceDuration: Math.max(clip.sourceDuration, playbackDuration),
+      };
+    },
+    [getClipPlaybackDuration],
   );
   const getDropIndicatorLeft = useCallback(
     (index: number) => {
@@ -602,8 +632,8 @@ export function TimelineViewport({
   const playheadTime = propPlayheadTime ?? playheadTimeState;
   const updatePlayheadTime = useCallback((time: number) => {
     setPlayheadTimeState(time);
-    onPlayheadTimeChange?.(time);
-  }, [onPlayheadTimeChange]);
+    onPlayheadTimeChange?.(time, visibleClips);
+  }, [onPlayheadTimeChange, visibleClips]);
   const [scrubbingState, setScrubbingState] = useState<{
     startX: number;
     startContentX: number;
@@ -611,6 +641,7 @@ export function TimelineViewport({
     clientX: number;
     clientY: number;
   } | null>(null);
+  const showFloatingDragPreview = !previewLargeSurface;
 
   const getClipAtX = useCallback((contentX: number) => {
     if (visibleClips.length === 0) return null;
@@ -638,12 +669,18 @@ export function TimelineViewport({
   const getPlayheadLeft = useCallback((time: number | null) => {
     if (time === null) return null;
     const activeClip = visibleClips.find(
-      (clip) => time >= clip.startTime && time <= clip.startTime + clip.duration,
+      (clip) => {
+        const playbackStart = getClipPlaybackStart(clip);
+        const playbackDuration = getClipPlaybackDuration(clip);
+        return time >= playbackStart && time <= playbackStart + playbackDuration;
+      },
     );
     if (activeClip) {
+      const playbackStart = getClipPlaybackStart(activeClip);
+      const playbackDuration = getClipPlaybackDuration(activeClip);
       const ratio = Math.max(
         0,
-        Math.min(1, (time - activeClip.startTime) / Math.max(0.1, activeClip.duration)),
+        Math.min(1, (time - playbackStart) / playbackDuration),
       );
       return getClipLeft(activeClip) + ratio * getClipWidth(activeClip);
     }
@@ -653,20 +690,15 @@ export function TimelineViewport({
     }
 
     return null;
-  }, [thumbnailMode, pixelsPerSecond, visibleClips, getClipLeft, getClipWidth]);
+  }, [thumbnailMode, pixelsPerSecond, visibleClips, getClipLeft, getClipPlaybackDuration, getClipPlaybackStart, getClipWidth]);
 
   const updatePlayheadFromContentX = useCallback((contentX: number) => {
     const clip = getClipAtX(contentX);
     if (!clip) return;
 
-    const left = getClipLeft(clip);
-    const width = getClipWidth(clip);
-    const ratio = Math.max(0, Math.min(1, (contentX - left) / Math.max(1, width)));
-    const globalTime = thumbnailMode
-      ? clip.startTime + ratio * clip.duration
-      : contentX / pixelsPerSecond;
+    const globalTime = getClipPlaybackTimeAtX(clip, contentX);
     updatePlayheadTime(globalTime);
-  }, [getClipAtX, getClipLeft, getClipWidth, thumbnailMode, pixelsPerSecond, updatePlayheadTime]);
+  }, [getClipAtX, getClipPlaybackTimeAtX, updatePlayheadTime]);
 
   const handlePlayBarPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
@@ -742,13 +774,15 @@ export function TimelineViewport({
       const width = Math.max(1, getClipWidth(clip));
       const progress = Math.min(Math.max((contentX - left) / width, 0), 1);
       const trimIn = (clip.kind === "collection" || clip.kind === "image") ? 0 : (clip as VideoTimelineClip).trimIn || 0;
-      const time = trimIn + progress * clip.duration;
+      const time = clip.kind === "collection"
+        ? progress * getClipPlaybackDuration(clip)
+        : trimIn + progress * clip.duration;
 
       let previewClip: any = clip;
       let previewTime = time;
 
       if (clip.kind === "collection") {
-        const activePreview = getCollectionClipFramePreview(clip, time);
+        const activePreview = getCollectionClipFramePreview(getCollectionPreviewClip(clip), time);
         if (activePreview) {
           previewClip = {
             id: activePreview.id,
@@ -765,9 +799,10 @@ export function TimelineViewport({
       return {
         clip: previewClip,
         previewTime,
+        timelineTime: getClipPlaybackStart(clip) + progress * getClipPlaybackDuration(clip),
       };
     },
-    [getClipLeft, getClipTop, getClipWidth, itemHeight, itemTop, visibleClips],
+    [getClipLeft, getClipPlaybackDuration, getClipPlaybackStart, getClipTop, getClipWidth, getCollectionPreviewClip, itemHeight, itemTop, visibleClips],
   );
 
   const cleanupPassiveScrub = useCallback(() => {
@@ -811,10 +846,21 @@ export function TimelineViewport({
         const trimIn = clip.kind === "collection" ? 0 : (clip as any).trimIn || 0;
         let previewTime =
           scrubTarget?.previewTime ??
-          trimIn + clip.duration / 2;
+          (clip.kind === "collection"
+            ? getClipPlaybackDuration(clip) / 2
+            : trimIn + clip.duration / 2);
+        const timelineTime =
+          scrubTarget?.timelineTime ??
+          getClipPlaybackStart(clip) + getClipPlaybackDuration(clip) / 2;
+
+        if (previewLargeSurface) {
+          updatePlayheadTime(timelineTime);
+          setPassiveScrubPreview(null);
+          return;
+        }
 
         if (scrubTarget === null && clip.kind === "collection") {
-          const activePreview = getCollectionClipFramePreview(clip, previewTime);
+          const activePreview = getCollectionClipFramePreview(getCollectionPreviewClip(clip), previewTime);
           if (activePreview) {
             previewClip = {
               id: activePreview.id,
@@ -872,12 +918,17 @@ export function TimelineViewport({
     [
       cleanupPassiveScrub,
       getPassiveScrubTarget,
+      getClipPlaybackDuration,
+      getClipPlaybackStart,
+      getCollectionPreviewClip,
+      previewLargeSurface,
+      updatePlayheadTime,
     ],
   );
 
   useEffect(() => cleanupPassiveScrub, [cleanupPassiveScrub]);
 
-  const passiveScrubOverlay = passiveScrubPreview ? (
+  const passiveScrubOverlay = !previewLargeSurface && passiveScrubPreview ? (
     <div
       data-testid="timeline-passive-scrub-overlay"
       data-anchor-clip-index={passiveScrubPreview.anchorClipIndex}
@@ -1249,7 +1300,7 @@ export function TimelineViewport({
         </div>,
         document.body
       )}
-      {scrubbingState && (() => {
+      {scrubbingState && showFloatingDragPreview && (() => {
         const previewClip = getClipAtX(scrubbingState.currentContentX);
         let previewSrc = "";
         let mediaTime = 0;
@@ -1263,10 +1314,10 @@ export function TimelineViewport({
           const left = getClipLeft(previewClip);
           const width = getClipWidth(previewClip);
           const ratio = Math.max(0, Math.min(1, (scrubbingState.currentContentX - left) / Math.max(1, width)));
-          mediaTime = previewClip.trimIn + ratio * previewClip.duration;
-          displayTime = thumbnailMode
-            ? previewClip.startTime + ratio * previewClip.duration
-            : scrubbingState.currentContentX / pixelsPerSecond;
+          mediaTime = previewClip.kind === "collection"
+            ? ratio * getClipPlaybackDuration(previewClip)
+            : previewClip.trimIn + ratio * previewClip.duration;
+          displayTime = getClipPlaybackStart(previewClip) + ratio * getClipPlaybackDuration(previewClip);
 
           previewKind = previewClip.kind;
 
@@ -1276,7 +1327,7 @@ export function TimelineViewport({
             previewVideoDuration = previewClip.duration;
             previewSrc = previewClip.src;
           } else if (previewClip.kind === "collection") {
-            const activePreview = getCollectionClipFramePreview(previewClip, mediaTime);
+            const activePreview = getCollectionClipFramePreview(getCollectionPreviewClip(previewClip), mediaTime);
             if (activePreview) {
               if (activePreview.kind === "video") {
                 previewKind = "video";

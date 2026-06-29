@@ -47,6 +47,7 @@ import {
   getFolderPathFromTimelineId,
   decodeFolderPath,
   encodeFolderPath,
+  getCollectionClipSourceDuration,
 } from "@/lib/timeline-documents";
 import { useAuth } from "@/components/auth/auth-provider";
 import { uploadTimelineMedia } from "@/lib/timeline-media-client";
@@ -69,8 +70,9 @@ export interface SmoothScrollListProps
   onHierarchyModeChange?: (enabled: boolean) => void;
   thumbnailMode?: boolean;
   playheadTime?: number | null;
-  onPlayheadTimeChange?: (time: number) => void;
+  onPlayheadTimeChange?: (time: number, clips?: TimelineClip[]) => void;
   dragBarEnabled?: boolean;
+  previewLargeSurface?: boolean;
   disablePersistence?: boolean;
   onTimelineIdChange?: (newTimelineId: string) => void;
 }
@@ -94,6 +96,7 @@ export function SmoothScrollList({
   playheadTime,
   onPlayheadTimeChange,
   dragBarEnabled = false,
+  previewLargeSurface = false,
   disablePersistence = false,
   className,
   style,
@@ -348,7 +351,7 @@ export function SmoothScrollList({
       lastSelectedIndexRef.current = clipState.selectedIndex;
       const selectedClip = clipState.clips.find((c) => c.index === clipState.selectedIndex);
       if (selectedClip && onPlayheadTimeChange) {
-        onPlayheadTimeChange(selectedClip.startTime);
+        onPlayheadTimeChange(selectedClip.startTime, clipState.clips);
       }
     }
   }, [clipState.selectedIndex, clipState.clips, onPlayheadTimeChange]);
@@ -460,11 +463,16 @@ export function SmoothScrollList({
       const duration = clip.kind === "collection"
         ? (effectiveThumbnailWidth / zoom.safePixelsPerSecond)
         : clip.duration;
+      const playbackDuration = clip.kind === "collection"
+        ? getCollectionClipSourceDuration(clip)
+        : clip.duration;
       
       const adjClip = {
         ...clip,
         startTime: currentStartTime,
         duration,
+        playbackStartTime: clip.startTime,
+        playbackDuration,
       };
       
       currentStartTime += duration + gapInSeconds;
@@ -1266,6 +1274,7 @@ export function SmoothScrollList({
             onDropSidebarClipIntoCollection={handleDropSidebarClipIntoCollection}
             timelineId={timelineId}
             dragBarEnabled={dragBarEnabled}
+            previewLargeSurface={previewLargeSurface}
             playheadTime={playheadTime}
             onPlayheadTimeChange={onPlayheadTimeChange}
           />
@@ -1298,6 +1307,9 @@ export function SmoothScrollList({
                 syncMediaDuration={syncMediaDuration}
                 hierarchyMode={hierarchyMode}
                 dragBarEnabled={dragBarEnabled}
+                previewLargeSurface={previewLargeSurface}
+                playheadTime={playheadTime}
+                onPlayheadTimeChange={onPlayheadTimeChange}
               />
             );
           })}
@@ -1327,6 +1339,9 @@ export function SmoothScrollList({
                 syncMediaDuration={syncMediaDuration}
                 hierarchyMode={hierarchyMode}
                 dragBarEnabled={dragBarEnabled}
+                previewLargeSurface={previewLargeSurface}
+                playheadTime={playheadTime}
+                onPlayheadTimeChange={onPlayheadTimeChange}
               />
             );
           })()}

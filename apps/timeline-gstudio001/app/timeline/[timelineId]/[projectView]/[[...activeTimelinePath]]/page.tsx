@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Fragment, use, useState } from "react";
+import { Fragment, use, useCallback, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { ToggleSwitch } from "@/components/timeline/timeline-toolbar";
 
@@ -12,7 +12,7 @@ import {
   parseTimelineViewState,
   type ProjectViewMode,
 } from "@/components/timeline/timeline-view-state";
-import type { TimelineDocument } from "@/components/timeline/types";
+import type { TimelineClip, TimelineDocument } from "@/components/timeline/types";
 import {
   createCollectionTimelineDocument,
   getTimelineDocument,
@@ -37,8 +37,16 @@ export default function ProjectTimelinePage({
   const resolvedSearchParams = use(searchParams);
   const [globalHierarchyMode, setGlobalHierarchyMode] = useState(false);
   const [globalDragBar, setGlobalDragBar] = useState(false);
+  const [globalPreviewLargeSurface, setGlobalPreviewLargeSurface] = useState(false);
   const [workbenchPreviewTime, setWorkbenchPreviewTime] = useState(0);
+  const [workbenchPreviewClips, setWorkbenchPreviewClips] = useState<TimelineClip[] | null>(null);
   const viewState = parseTimelineViewState(resolvedSearchParams);
+  const handleWorkbenchPreviewTimeChange = useCallback((time: number, clips?: TimelineClip[]) => {
+    setWorkbenchPreviewTime(time);
+    if (clips) {
+      setWorkbenchPreviewClips(clips);
+    }
+  }, []);
 
   if (!projectId.startsWith("project-")) {
     notFound();
@@ -162,6 +170,15 @@ export default function ProjectTimelinePage({
             checked={globalHierarchyMode}
             onChange={setGlobalHierarchyMode}
           />
+          {normalizedProjectView === "workbench" && (
+            <ToggleSwitch
+              id="global-preview-lg-toggle"
+              label="Preview LG"
+              checked={globalPreviewLargeSurface}
+              onChange={setGlobalPreviewLargeSurface}
+              title="Preview play drag bar scrubbing on the large workbench display"
+            />
+          )}
         </div>
       </div>
     </div>
@@ -173,9 +190,9 @@ export default function ProjectTimelinePage({
 
       {normalizedProjectView === "workbench" ? (
         <WorkbenchSplitPane
-          clips={document.clips}
+          clips={workbenchPreviewClips ?? document.clips}
           currentTime={workbenchPreviewTime}
-          onCurrentTimeChange={setWorkbenchPreviewTime}
+          onCurrentTimeChange={handleWorkbenchPreviewTimeChange}
         >
           <div className="grid gap-3">
             {timelineChrome}
@@ -188,10 +205,11 @@ export default function ProjectTimelinePage({
               syncMediaDuration={false}
               thumbnailMode={false}
               playheadTime={workbenchPreviewTime}
-              onPlayheadTimeChange={setWorkbenchPreviewTime}
+              onPlayheadTimeChange={handleWorkbenchPreviewTimeChange}
               hierarchyMode={globalHierarchyMode}
               onHierarchyModeChange={setGlobalHierarchyMode}
               dragBarEnabled={globalDragBar}
+              previewLargeSurface={globalPreviewLargeSurface}
             />
           </div>
         </WorkbenchSplitPane>
@@ -207,6 +225,7 @@ export default function ProjectTimelinePage({
           hierarchyMode={globalHierarchyMode}
           onHierarchyModeChange={setGlobalHierarchyMode}
           dragBarEnabled={globalDragBar}
+          previewLargeSurface={globalPreviewLargeSurface}
         />
       )}
     </div>
