@@ -7,24 +7,16 @@ import { TimelineToolbar } from "./timeline-toolbar";
 
 function InteractiveToolbar({
   initialItemSize = "md",
-  initialPinScroll = true,
   initialThumbnailMode = false,
   initialZoom = 100,
-  renderedCount = 12,
-  totalCount = 1000,
 }: {
   initialItemSize?: ItemSize;
-  initialPinScroll?: boolean;
   initialThumbnailMode?: boolean;
   initialZoom?: number;
-  renderedCount?: number;
-  totalCount?: number;
 }) {
   const [itemSize, setItemSize] = useState<ItemSize>(initialItemSize);
-  const [manualOverhangScroll, setManualOverhangScroll] =
-    useState(initialPinScroll);
+  const [showPlayBarArea, setShowPlayBarArea] = useState(true);
   const [showPassiveFilmstrips, setShowPassiveFilmstrips] = useState(false);
-  const [thumbnailMode, setThumbnailMode] = useState(initialThumbnailMode);
   const [gridMode, setGridMode] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(initialZoom);
 
@@ -32,17 +24,14 @@ function InteractiveToolbar({
     <TimelineToolbar
       gridMode={gridMode}
       itemSize={itemSize}
-      manualOverhangScroll={manualOverhangScroll}
+      showPlayBarArea={showPlayBarArea}
       showPassiveFilmstrips={showPassiveFilmstrips}
       onGridModeChange={setGridMode}
       onItemSizeChange={setItemSize}
-      onManualOverhangScrollChange={setManualOverhangScroll}
+      onPlayBarAreaChange={setShowPlayBarArea}
       onPassiveFilmstripsChange={setShowPassiveFilmstrips}
-      onThumbnailModeChange={setThumbnailMode}
       onZoomChange={(event) => setZoomLevel(Number(event.target.value))}
-      renderedCount={renderedCount}
-      thumbnailMode={thumbnailMode}
-      totalCount={totalCount}
+      thumbnailMode={initialThumbnailMode}
       zoomLevel={zoomLevel}
     />
   );
@@ -64,17 +53,14 @@ const meta = {
   args: {
     gridMode: false,
     itemSize: "md",
-    manualOverhangScroll: true,
+    showPlayBarArea: true,
     showPassiveFilmstrips: false,
     onGridModeChange: () => {},
     onItemSizeChange: () => {},
-    onManualOverhangScrollChange: () => {},
+    onPlayBarAreaChange: () => {},
     onPassiveFilmstripsChange: () => {},
-    onThumbnailModeChange: () => {},
     onZoomChange: () => {},
-    renderedCount: 12,
     thumbnailMode: false,
-    totalCount: 1000,
     zoomLevel: 100,
   },
 } satisfies Meta<typeof TimelineToolbar>;
@@ -90,11 +76,8 @@ export const ThumbnailModeAndPinOff: Story = {
   render: () => (
     <InteractiveToolbar
       initialItemSize="lg"
-      initialPinScroll={false}
       initialThumbnailMode
       initialZoom={180}
-      renderedCount={8}
-      totalCount={12}
     />
   ),
 };
@@ -103,23 +86,16 @@ export const InteractiveControls: Story = {
   render: () => <InteractiveToolbar />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const thumbnailSwitch = canvas.getByRole("switch", {
-      name: "Thumbnail Mode",
-    });
-    const pinSwitch = canvas.getByRole("switch", { name: "Pin scroll" });
-    const filmstripSwitch = canvas.getByRole("switch", { name: "Filmstrips" });
+    const playBarSwitch = canvas.getByRole("switch", { name: "Play bar" });
 
-    await userEvent.click(thumbnailSwitch);
-    await userEvent.click(pinSwitch);
+    await userEvent.click(playBarSwitch);
+    await userEvent.click(playBarSwitch);
+    const filmstripSwitch = canvas.getByRole("switch", { name: "Filmstrips" });
     await userEvent.click(filmstripSwitch);
     await userEvent.selectOptions(canvas.getByLabelText("Size"), "xl");
 
-    await expect(thumbnailSwitch).toHaveAttribute("aria-checked", "true");
-    await expect(pinSwitch).toHaveAttribute("aria-checked", "false");
+    await expect(playBarSwitch).toHaveAttribute("aria-checked", "true");
     await expect(filmstripSwitch).toHaveAttribute("aria-checked", "true");
     await expect(canvas.getByLabelText("Size")).toHaveValue("xl");
-    await expect(canvas.getByTestId("timeline-rendered-count")).toHaveTextContent(
-      "12/1000 rendered",
-    );
   },
 };

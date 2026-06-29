@@ -2,7 +2,7 @@ import "server-only";
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
-import type { TimelineDocument } from "@/components/timeline/types";
+import type { TimelineDocument, TimelineClip } from "@/components/timeline/types";
 import { getFirebaseDb } from "./firebase-admin";
 
 type TimelineDocumentRecord = {
@@ -161,7 +161,33 @@ export async function createFirebaseTimelineProject(title?: string) {
     description: "Custom timeline project.",
     clips: [],
   };
-
   await saveFirebaseTimelineDocument(document, { isProject: true });
   return document;
+}
+
+export async function deleteFirebaseTimelineDocument(id: string) {
+  const ref = collection().doc(id);
+  const docSnap = await withFirebaseTimeout(ref.get(), "Loading timeline document for deletion");
+  
+  if (docSnap.exists) {
+    const data = docSnap.data() as TimelineDocumentRecord;
+    const document = data.document;
+    if (document && document.clips) {
+      const deleteQueue: string[] = [];
+      const extractChildTimelineIds = (clips: TimelineClip[]) => {
+        for (const clip of clips) {
+          if (clip.kind === "collection" && clip.childTimelineId) {
+            deleteQueue.push(clip.childTimelineId);
+          }
+        }
+      };
+      extractChildTimelineIds(document.clips);
+      
+      for (const childId of deleteQueue) {
+        await deleteFirebaseTimelineDocument(childId);
+      }
+    }
+  }
+
+  await withFirebaseTimeout(ref.delete(), "Deleting timeline document");
 }

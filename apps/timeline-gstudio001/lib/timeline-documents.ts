@@ -5,6 +5,7 @@ import {
 import { createInitialClips } from "@/components/timeline/hooks/use-timeline-clips";
 import type {
   CollectionTimelineClip,
+  MediaKind,
   TimelineClip,
   TimelineDocument,
 } from "@/components/timeline/types";
@@ -19,6 +20,24 @@ type TimelinePageDocument = {
   description?: string;
   timelineIds: string[];
 };
+
+export type CollectionFramePreview = {
+  id: string;
+  kind: MediaKind;
+  src: string;
+  poster?: string;
+  alt: string;
+  previewTime: number;
+  sourceDuration: number;
+  playbackRate: number;
+};
+
+function getClipsDuration(clips: TimelineClip[]) {
+  return clips.reduce(
+    (duration, clip) => Math.max(duration, clip.startTime + clip.duration),
+    0,
+  );
+}
 
 function cloneClipForDocument(documentId: string, clip: TimelineClip) {
   return {
@@ -344,7 +363,15 @@ export function getTimelinePath(targetId: string): { id: string; title: string }
   return path;
 }
 
-export function syncParentCollections(collectionTimelineId: string, childClips: any[]) {
+export function syncParentCollections(
+  collectionTimelineId: string,
+  childClips: any[],
+  newTimelineId?: string,
+) {
+  const targetId = newTimelineId || collectionTimelineId;
+  const childDoc = getTimelineDocument(targetId);
+  const title = childDoc?.title || "Collection";
+
   let totalDuration = 3;
   if (childClips.length > 0) {
     const lastClip = childClips[childClips.length - 1];
@@ -358,6 +385,9 @@ export function syncParentCollections(collectionTimelineId: string, childClips: 
         updated = true;
         return {
           ...c,
+          title,
+          alt: `${title} collection`,
+          childTimelineId: targetId,
           itemCount: childClips.length,
           previewItems: previewItemsFrom(childClips),
           duration: totalDuration,
@@ -419,7 +449,51 @@ export function createCollectionTimelineDocument(id: string, title: string) {
   }, { persist: true });
 }
 
-export function getCollectionFramePreview(collectionTimelineId: string, time: number) {
+export function getTimelineContentDuration(timelineId: string) {
+  const doc = timelineDocuments[timelineId];
+  return doc ? getClipsDuration(doc.clips) : null;
+}
+
+export function getCollectionClipSourceDuration(clip: CollectionTimelineClip) {
+  return Math.max(
+    clip.duration,
+    clip.sourceDuration,
+    getTimelineContentDuration(clip.childTimelineId) ?? 0,
+  );
+}
+
+export function getCollectionClipFramePreview(
+  clip: CollectionTimelineClip,
+  clipTime: number,
+  visited = new Set<string>(),
+  parentPlaybackRate = 1,
+): CollectionFramePreview | null {
+  const sourceDuration = getCollectionClipSourceDuration(clip);
+  const sourceRange = Math.max(0, sourceDuration - clip.trimIn - clip.trimOut);
+  const progress = clip.duration > 0 ? clamp(clipTime / clip.duration, 0, 1) : 0;
+  const sourceTime = clamp(
+    clip.trimIn + progress * sourceRange,
+    0,
+    Math.max(0, sourceDuration - 0.001),
+  );
+  const playbackRate =
+    clip.duration > 0 && sourceRange > 0
+      ? parentPlaybackRate * (sourceRange / clip.duration)
+      : parentPlaybackRate;
+
+  return getCollectionFramePreview(clip.childTimelineId, sourceTime, visited, playbackRate);
+}
+
+export function getCollectionFramePreview(
+  collectionTimelineId: string,
+  time: number,
+  visited = new Set<string>(),
+  playbackRate = 1,
+): CollectionFramePreview | null {
+  if (visited.has(collectionTimelineId)) return null;
+  const nextVisited = new Set(visited);
+  nextVisited.add(collectionTimelineId);
+
   const doc = timelineDocuments[collectionTimelineId];
   const childClips = doc ? doc.clips : [];
   
@@ -449,7 +523,32 @@ export function getCollectionFramePreview(collectionTimelineId: string, time: nu
   if (c) {
     const start = c.startTime;
     const relativeOffset = clamp(time - start, 0, c.duration);
-    const previewTime = c.kind === "video" ? (c as any).trimIn + relativeOffset : relativeOffset;
+
+    if (c.kind === "collection") {
+      const nestedPreview = getCollectionClipFramePreview(c, relativeOffset, nextVisited, playbackRate);
+      if (nestedPreview) return nestedPreview;
+
+      const fallbackPreview = c.previewItems?.[0];
+      if (!fallbackPreview) return null;
+
+      return {
+        id: fallbackPreview.id,
+        kind: fallbackPreview.kind,
+        src: fallbackPreview.src,
+        poster: fallbackPreview.poster,
+        alt: fallbackPreview.alt,
+        previewTime: 0,
+        sourceDuration: c.sourceDuration || c.duration || 1,
+        playbackRate,
+      };
+    }
+
+    const sourceDuration = (c as any).sourceDuration || c.duration || 1;
+    const previewTime =
+      c.kind === "video"
+        ? clamp((c as any).trimIn + relativeOffset, 0, Math.max(0, sourceDuration - 0.001))
+        : 0;
+
     return {
       id: c.id,
       kind: c.kind,
@@ -457,7 +556,8 @@ export function getCollectionFramePreview(collectionTimelineId: string, time: nu
       poster: (c as any).poster,
       alt: c.alt,
       previewTime,
-      sourceDuration: (c as any).sourceDuration,
+      sourceDuration,
+      playbackRate,
     };
   }
   
@@ -476,4 +576,49 @@ export function getTimelinePage(id: string) {
       .map((timelineId) => timelineDocuments[timelineId])
       .filter((timeline): timeline is TimelineDocument => Boolean(timeline)),
   };
+}
+
+export function encodeFolderPath(folderPath: string): string {
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(folderPath, "utf-8")
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  }
+  const base64 = btoa(encodeURIComponent(folderPath).replace(/%([0-9A-F]{2})/g, (match, p1) => {
+    return String.fromCharCode(parseInt(p1, 16));
+  }));
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function decodeFolderPath(encoded: string): string {
+  let base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4) {
+    base64 += "=";
+  }
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(base64, "base64").toString("utf-8");
+  }
+  return decodeURIComponent(
+    Array.prototype.map
+      .call(atob(base64), (c: string) => {
+        return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+      })
+      .join("")
+  );
+}
+
+export function getFolderPathFromTimelineId(id: string, userId: string): string {
+  if (id === `asset-library-${userId}`) return "";
+  const prefix = `asset-library-col-${userId}-`;
+  if (id.startsWith(prefix)) {
+    const encoded = id.slice(prefix.length);
+    try {
+      return decodeFolderPath(encoded);
+    } catch {
+      return "";
+    }
+  }
+  return "";
 }

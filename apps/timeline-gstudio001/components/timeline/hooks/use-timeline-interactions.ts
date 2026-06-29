@@ -17,6 +17,7 @@ type UseTimelineInteractionsProps = {
   safePixelsPerSecond: number;
   minDuration: number;
   gridMetrics: TimelineGridMetrics;
+  itemTop: number;
   thumbnailMode?: boolean;
   thumbnailWidth?: number;
   setScrollLeft: SetScrollLeft;
@@ -34,6 +35,7 @@ export function useTimelineInteractions({
   safePixelsPerSecond,
   minDuration,
   gridMetrics,
+  itemTop,
   thumbnailMode = false,
   thumbnailWidth = 0,
   setScrollLeft,
@@ -68,6 +70,7 @@ export function useTimelineInteractions({
     setScrollLeft,
     setSelectedIndex,
     gridMetrics,
+    itemTop,
     thumbnailMode,
     thumbnailWidth: thumbnailWidth ?? 0,
     windowDrag,

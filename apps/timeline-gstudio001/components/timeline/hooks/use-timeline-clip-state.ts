@@ -46,7 +46,12 @@ export function useTimelineClipState({
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [scrubPreview, setScrubPreview] = useState<TrimScrubPreview | null>(null);
 
+  const lastResetKeyRef = useRef(resetKey);
+
   useEffect(() => {
+    const isKeyChange = lastResetKeyRef.current !== resetKey;
+    lastResetKeyRef.current = resetKey;
+
     if (isInitialMount.current) {
       isInitialMount.current = false;
       return;
@@ -55,14 +60,18 @@ export function useTimelineClipState({
     const nextClips = initialClips
       ? cloneTimelineClips(initialClips)
       : createInitialClips(itemCount, 100);
-    const nextScrollLeft = TIMELINE_LEADING_PADDING_SECONDS * 100;
-    setClips(nextClips);
-    setSelectedIndex(null);
-    setScrubPreview(null);
-    setScrollLeft(nextScrollLeft);
 
-    if (parentRef.current) {
-      parentRef.current.scrollLeft = nextScrollLeft;
+    setClips(nextClips);
+
+    if (isKeyChange) {
+      const nextScrollLeft = TIMELINE_LEADING_PADDING_SECONDS * 100;
+      setSelectedIndex(null);
+      setScrubPreview(null);
+      setScrollLeft(nextScrollLeft);
+
+      if (parentRef.current) {
+        parentRef.current.scrollLeft = nextScrollLeft;
+      }
     }
   }, [initialClips, itemCount, parentRef, resetKey, setScrollLeft]);
 

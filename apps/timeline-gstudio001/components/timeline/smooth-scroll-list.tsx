@@ -10,8 +10,8 @@ import {
   DEFAULT_PIXELS_PER_SECOND,
   ITEM_HEIGHTS,
   MIN_WIDTH,
-  TIMELINE_ITEM_TOP,
   TIMELINE_LEADING_PADDING_SECONDS,
+  CLIP_GAP_SECONDS,
   type ItemSize,
   VIDEO_SOURCES,
 } from "./constants";
@@ -43,7 +43,13 @@ import {
   createCollectionTimelineDocument,
   registerTimelineDocument,
   syncParentCollections,
+  getTimelinePath,
+  getFolderPathFromTimelineId,
+  decodeFolderPath,
+  encodeFolderPath,
+  getCollectionClipSourceDuration,
 } from "@/lib/timeline-documents";
+import { useAuth } from "@/components/auth/auth-provider";
 import { uploadTimelineMedia } from "@/lib/timeline-media-client";
 
 export interface SmoothScrollListProps
@@ -61,6 +67,14 @@ export interface SmoothScrollListProps
   syncMediaDuration?: boolean;
   isChildTimeline?: boolean;
   hierarchyMode?: boolean;
+  onHierarchyModeChange?: (enabled: boolean) => void;
+  thumbnailMode?: boolean;
+  playheadTime?: number | null;
+  onPlayheadTimeChange?: (time: number, clips?: TimelineClip[]) => void;
+  dragBarEnabled?: boolean;
+  previewLargeSurface?: boolean;
+  disablePersistence?: boolean;
+  onTimelineIdChange?: (newTimelineId: string) => void;
 }
 
 export function SmoothScrollList({
@@ -77,10 +91,19 @@ export function SmoothScrollList({
   syncMediaDuration = true,
   isChildTimeline = false,
   hierarchyMode: propHierarchyMode,
+  onHierarchyModeChange,
+  thumbnailMode: propThumbnailMode,
+  playheadTime,
+  onPlayheadTimeChange,
+  dragBarEnabled = false,
+  previewLargeSurface = false,
+  disablePersistence = false,
   className,
   style,
+  onTimelineIdChange,
   ...props
 }: SmoothScrollListProps) {
+  const { user } = useAuth();
   const router = useRouter();
   const parentRef = useRef<HTMLDivElement>(null);
   const safeItemCount = initialClips
@@ -96,15 +119,25 @@ export function SmoothScrollList({
     [initialClips, safeItemCount, timelineId],
   );
 
-  const [thumbnailMode, setThumbnailMode] = useState(
+  const [thumbnailModeState] = useState(
     initialViewState?.thumbnailMode ?? false,
   );
-  const [hierarchyMode, setHierarchyMode] = useState(
+  const thumbnailMode = propThumbnailMode ?? thumbnailModeState;
+  const [hierarchyModeState, setHierarchyModeState] = useState(
     initialViewState?.hierarchyMode ?? propHierarchyMode ?? false,
   );
+  const setHierarchyMode = useCallback((value: boolean) => {
+    setHierarchyModeState(value);
+    if (onHierarchyModeChange) {
+      onHierarchyModeChange(value);
+    }
+  }, [onHierarchyModeChange]);
+  const hierarchyMode = hierarchyModeState;
   const [childCollectionsExpanded, setChildCollectionsExpanded] = useState(false);
   const [persistedTimelineTitle, setPersistedTimelineTitle] = useState(timelineTitle);
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const saveBaselineRef = useRef<string | null>(null);
   const hydratedTimelineIdRef = useRef<string | null>(null);
   const latestClipsRef = useRef<TimelineClip[]>([]);
@@ -114,13 +147,27 @@ export function SmoothScrollList({
   if (propHierarchyMode !== prevPropHierarchyMode) {
     setPrevPropHierarchyMode(propHierarchyMode);
     if (propHierarchyMode !== undefined) {
-      setHierarchyMode(propHierarchyMode);
+      setHierarchyModeState(propHierarchyMode);
     }
   }
 
   useEffect(() => {
     setPersistedTimelineTitle(timelineTitle);
   }, [timelineTitle]);
+
+  const handleTitleChange = useCallback(
+    (newTitle: string) => {
+      setPersistedTimelineTitle(newTitle);
+      const thisTimelineId = timelineId || "";
+      const doc = getTimelineDocument(thisTimelineId);
+      if (doc) {
+        doc.title = newTitle;
+        registerTimelineDocument(doc, { persist: !disablePersistence });
+        syncParentCollections(thisTimelineId, doc.clips);
+      }
+    },
+    [timelineId, disablePersistence],
+  );
 
   const [gridMode, setGridMode] = useState(
     initialViewState?.gridMode ?? false,
@@ -131,10 +178,14 @@ export function SmoothScrollList({
   const [manualOverhangScroll, setManualOverhangScroll] = useState(
     initialViewState?.manualOverhangScroll ?? true,
   );
+  const [showPlayBarArea, setShowPlayBarArea] = useState(
+    initialViewState?.showPlayBarArea ?? false,
+  );
   const [showPassiveFilmstrips, setShowPassiveFilmstrips] = useState(
     initialViewState?.showPassiveFilmstrips ?? false,
   );
 
+  const itemTop = 0;
   const itemHeight = ITEM_HEIGHTS[itemSize];
   const thumbnailWidth = (itemHeight * 16) / 9;
 
@@ -150,12 +201,14 @@ export function SmoothScrollList({
         enabled: gridModeEnabled,
         fallbackItemWidth: thumbnailWidth,
         itemHeight,
+        itemTop,
         itemCount: safeItemCount,
         viewportWidth: scrollState.viewportClientWidth,
       }),
     [
       gridModeEnabled,
       itemHeight,
+      itemTop,
       safeItemCount,
       scrollState.viewportClientWidth,
       thumbnailWidth,
@@ -165,8 +218,8 @@ export function SmoothScrollList({
     ? gridMetrics.itemWidth
     : thumbnailWidth;
   const timelineHeight = gridModeEnabled
-    ? getTimelineGridContentHeight(gridMetrics)
-    : itemHeight + TIMELINE_ITEM_TOP;
+    ? getTimelineGridContentHeight(gridMetrics, itemTop)
+    : itemHeight + itemTop;
 
   const clipState = useTimelineClipState({
     initialClips,
@@ -194,7 +247,117 @@ export function SmoothScrollList({
     [clipState.applyClipsNow, markLocalEdit],
   );
 
+  const moveClipToTrash = useCallback(async (clipToTrash: TimelineClip) => {
+    if (!user) return;
+
+    // 1. Remove the clip from the current timeline
+    const nextClips = clipState.clips.filter((c) => c.id !== clipToTrash.id);
+    const packedClips = reindexAndPackClips(nextClips);
+    clipState.applyClipsNow(packedClips);
+    clipState.setSelectedIndex(null);
+
+    // Save current timeline to DB
+    const thisTimelineId = timelineId || "";
+    const doc = getTimelineDocument(thisTimelineId);
+    if (doc) {
+      doc.clips = packedClips;
+      registerTimelineDocument(doc, { persist: !disablePersistence });
+      syncParentCollections(thisTimelineId, doc.clips);
+    }
+
+    // 2. Fetch the trash timeline, append the clip, and save it!
+    const trashId = `trash-${user.uid}`;
+    try {
+      const response = await fetch(`/api/timelines/${encodeURIComponent(trashId)}`);
+      let trashDoc: TimelineDocument;
+      if (response.ok) {
+        const res = await response.json();
+        trashDoc = res.document || { id: trashId, title: "Trash Bin", clips: [] };
+      } else {
+        trashDoc = { id: trashId, title: "Trash Bin", clips: [] };
+      }
+
+      // Add the clip to trash document clips
+      const nextIndex = trashDoc.clips.length;
+      let nextStartTime = 1;
+      if (trashDoc.clips.length > 0) {
+        const lastClip = trashDoc.clips[trashDoc.clips.length - 1];
+        nextStartTime = lastClip.startTime + lastClip.duration + 1;
+      }
+
+      const trashedClip = {
+        ...clipToTrash,
+        index: nextIndex,
+        startTime: nextStartTime,
+      };
+
+      trashDoc.clips.push(trashedClip);
+
+      // Save trash document to Firestore
+      await fetch(`/api/timelines/${encodeURIComponent(trashId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: {
+            id: trashId,
+            title: trashDoc.title,
+            description: trashDoc.description || "",
+            clips: trashDoc.clips,
+          },
+        }),
+      });
+
+      // Show a toast message!
+      window.dispatchEvent(
+        new CustomEvent("gstudio-toast", {
+          detail: { message: `Moved "${(clipToTrash as any).title || clipToTrash.alt || "Clip"}" to Trash` }
+        })
+      );
+    } catch (err) {
+      console.error("Failed to move clip to trash:", err);
+    }
+  }, [clipState, timelineId, disablePersistence, user]);
+
   useEffect(() => {
+    const handleGlobalKeyDown = async (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return; // Ignore if user is typing in an input
+      }
+
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (clipState.selectedIndex !== null) {
+          const selectedClip = clipState.clips.find(c => c.index === clipState.selectedIndex);
+          if (selectedClip) {
+            e.preventDefault();
+            await moveClipToTrash(selectedClip);
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [clipState.selectedIndex, clipState.clips, moveClipToTrash]);
+
+  const lastSelectedIndexRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (clipState.selectedIndex === null) {
+      lastSelectedIndexRef.current = null;
+      return;
+    }
+
+    if (clipState.selectedIndex !== lastSelectedIndexRef.current) {
+      lastSelectedIndexRef.current = clipState.selectedIndex;
+      const selectedClip = clipState.clips.find((c) => c.index === clipState.selectedIndex);
+      if (selectedClip && onPlayheadTimeChange) {
+        onPlayheadTimeChange(selectedClip.startTime, clipState.clips);
+      }
+    }
+  }, [clipState.selectedIndex, clipState.clips, onPlayheadTimeChange]);
+
+  useEffect(() => {
+    if (disablePersistence) return;
     if (!timelineId) return;
 
     let isCurrent = true;
@@ -248,7 +411,7 @@ export function SmoothScrollList({
     return () => {
       isCurrent = false;
     };
-  }, [clipState.applyClipsNow, timelineId]);
+  }, [clipState.applyClipsNow, disablePersistence, timelineId]);
 
   const selectedClip = useMemo(() => {
     if (clipState.selectedIndex === null) return null;
@@ -262,9 +425,9 @@ export function SmoothScrollList({
     selectedClip?.kind === "video" || selectedClip?.kind === "collection" || selectedClip?.kind === "image" ? selectedClip : null;
 
   const childCollections = useMemo(() => {
-    if (!hierarchyMode || !thumbnailMode) return [];
+    if (!hierarchyMode) return [];
     return clipState.clips.filter((c) => c.kind === "collection");
-  }, [clipState.clips, hierarchyMode, thumbnailMode]);
+  }, [clipState.clips, hierarchyMode]);
 
   const handleOpenCollection = useCallback(
     (nextTimelineId: string, href: string) => {
@@ -280,13 +443,6 @@ export function SmoothScrollList({
     [onOpenCollection, router],
   );
 
-  const handleThumbnailModeChange = useCallback((enabled: boolean) => {
-    setThumbnailMode(enabled);
-    if (!enabled) {
-      setGridMode(false);
-    }
-  }, []);
-
   const zoom = useTimelineZoom({
     clips: clipState.clips,
     initialZoom: initialViewState?.zoom ?? pixelsPerSecond,
@@ -298,6 +454,32 @@ export function SmoothScrollList({
     thumbnailWidth: effectiveThumbnailWidth,
   });
 
+  const adjustedClips = useMemo(() => {
+    if (thumbnailMode) return clipState.clips;
+
+    const gapInSeconds = 6 / zoom.safePixelsPerSecond;
+    let currentStartTime = TIMELINE_LEADING_PADDING_SECONDS;
+    return clipState.clips.map((clip) => {
+      const duration = clip.kind === "collection"
+        ? (effectiveThumbnailWidth / zoom.safePixelsPerSecond)
+        : clip.duration;
+      const playbackDuration = clip.kind === "collection"
+        ? getCollectionClipSourceDuration(clip)
+        : clip.duration;
+      
+      const adjClip = {
+        ...clip,
+        startTime: currentStartTime,
+        duration,
+        playbackStartTime: clip.startTime,
+        playbackDuration,
+      };
+      
+      currentStartTime += duration + gapInSeconds;
+      return adjClip;
+    });
+  }, [clipState.clips, thumbnailMode, effectiveThumbnailWidth, zoom.safePixelsPerSecond]);
+
   const getCollectionHref = useCallback(
     (nextTimelineId: string) => {
       const basePath = collectionHrefPrefix.replace(/\/$/, "");
@@ -308,6 +490,7 @@ export function SmoothScrollList({
         gridMode,
         itemSize,
         manualOverhangScroll,
+        showPlayBarArea,
         showPassiveFilmstrips,
         zoom: zoom.zoomLevel,
       });
@@ -317,6 +500,7 @@ export function SmoothScrollList({
       gridMode,
       itemSize,
       manualOverhangScroll,
+      showPlayBarArea,
       showPassiveFilmstrips,
       thumbnailMode,
       zoom.zoomLevel,
@@ -330,122 +514,174 @@ export function SmoothScrollList({
     setClips: clipState.setClips,
   });
 
+  const handleClipDurationLoadSimple = useCallback(
+    (index: number, duration: number) => {
+      clipState.setClips((previousClips) => {
+        const clip = previousClips.find((candidate) => candidate.index === index);
+        if (!clip || clip.kind !== "video") return previousClips;
+        if (Math.abs(clip.sourceDuration - duration) < 0.1) return previousClips;
+
+        const nextClips = previousClips.map((candidate) => ({ ...candidate }));
+        const clipIdx = previousClips.findIndex((candidate) => candidate.index === index);
+        if (clipIdx !== -1) {
+          nextClips[clipIdx] = { ...clip, sourceDuration: duration };
+        }
+        return nextClips;
+      });
+    },
+    [clipState.setClips],
+  );
+
   const handleDropFiles = useCallback(
     async (insertIndex: number, files: File[]) => {
       setMediaUploadError(null);
+      setIsUploadingMedia(true);
+      setUploadProgress(10);
 
-      const getMediaDuration = (file: File): Promise<number> => {
-        return new Promise((resolve) => {
-          if (file.type.startsWith("video/")) {
-            const video = document.createElement("video");
-            video.preload = "metadata";
-            const sourceUrl = URL.createObjectURL(file);
-            const cleanup = () => {
-              URL.revokeObjectURL(sourceUrl);
-              video.removeAttribute("src");
-              video.load();
-            };
-            video.onloadedmetadata = () => {
-              const duration =
-                Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 5;
-              cleanup();
-              resolve(duration);
-            };
-            video.onerror = () => {
-              cleanup();
-              resolve(5); // fallback
-            };
-            video.src = sourceUrl;
-          } else {
-            resolve(4); // default duration for images
-          }
+      // Start a smooth fake progress incrementer
+      const progressInterval = setInterval(() => {
+        setUploadProgress((prev) => {
+          if (prev >= 90) return prev;
+          return prev + Math.random() * 5;
         });
-      };
+      }, 300);
 
-      const newClipResults: Array<{ clip: TimelineClip | null; error?: string }> =
-        await Promise.all(files.map(async (file, idx) => {
-        const isVideo = file.type.startsWith("video/");
-        const isImage = file.type.startsWith("image/");
-        if (!isVideo && !isImage) return { clip: null };
+      try {
+        const getMediaDuration = (file: File): Promise<number> => {
+          return new Promise((resolve) => {
+            if (file.type.startsWith("video/")) {
+              const video = document.createElement("video");
+              video.preload = "metadata";
+              const sourceUrl = URL.createObjectURL(file);
+              const cleanup = () => {
+                URL.revokeObjectURL(sourceUrl);
+                video.removeAttribute("src");
+                video.load();
+              };
+              video.onloadedmetadata = () => {
+                const duration =
+                  Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 5;
+                cleanup();
+                resolve(duration);
+              };
+              video.onerror = () => {
+                cleanup();
+                resolve(5); // fallback
+              };
+              video.src = sourceUrl;
+            } else {
+              resolve(4); // default duration for images
+            }
+          });
+        };
 
-        const duration = await getMediaDuration(file);
-        const uniqueId = `clip-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        let hostedMedia: Awaited<ReturnType<typeof uploadTimelineMedia>>;
+        const newClipResults: Array<{ clip: TimelineClip | null; error?: string }> =
+          await Promise.all(files.map(async (file, idx) => {
+          const isVideo = file.type.startsWith("video/");
+          const isImage = file.type.startsWith("image/");
+          if (!isVideo && !isImage) return { clip: null };
 
-        try {
-          hostedMedia = await uploadTimelineMedia(file.name, file);
-        } catch (error) {
-          console.warn(`Failed to upload "${file.name}" to hosted media storage`, error);
-          return {
-            clip: null,
-            error: `"${file.name}" was not added because it could not be uploaded to hosted media storage.`,
-          };
+          const duration = await getMediaDuration(file);
+          const uniqueId = `clip-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          let hostedMedia: Awaited<ReturnType<typeof uploadTimelineMedia>>;
+
+          // Compute folderPath for this timeline if it's the assets timeline or a nested collection
+          let folderPath: string | undefined;
+          const userId = user?.uid || "default";
+          const thisTimelineId = timelineId || "";
+          if (thisTimelineId.startsWith("asset-library")) {
+            folderPath = getFolderPathFromTimelineId(thisTimelineId, userId) || undefined;
+          } else if (thisTimelineId && thisTimelineId !== "root" && !thisTimelineId.startsWith("project-")) {
+            const pathSegments = getTimelinePath(thisTimelineId).map((s) => s.title);
+            const doc = getTimelineDocument(thisTimelineId);
+            if (doc) {
+              pathSegments.push(doc.title);
+            }
+            folderPath = pathSegments.join("/");
+          }
+
+          try {
+            hostedMedia = await uploadTimelineMedia(file.name, file, folderPath);
+          } catch (error) {
+            console.warn(`Failed to upload "${file.name}" to hosted media storage`, error);
+            return {
+              clip: null,
+              error: `"${file.name}" was not added because it could not be uploaded to hosted media storage.`,
+            };
+          }
+
+          if (isVideo && !hostedMedia.thumbnailUrl) {
+            return {
+              clip: null,
+              error: `"${file.name}" was not added because a video thumbnail could not be saved.`,
+            };
+          }
+
+          if (isVideo) {
+            const clipDuration = Math.min(12, duration);
+            return {
+              clip: {
+                id: uniqueId,
+                index: insertIndex + idx,
+                kind: "video",
+                src: hostedMedia.url,
+                poster: hostedMedia.thumbnailUrl,
+                alt: file.name,
+                aspect: 16 / 9,
+                trackIndex: 0,
+                startTime: 0,
+                duration: clipDuration,
+                sourceDuration: duration,
+                trimIn: 0,
+                trimOut: Math.max(0, duration - clipDuration),
+              } as TimelineClip,
+            };
+          } else {
+            return {
+              clip: {
+                id: uniqueId,
+                index: insertIndex + idx,
+                kind: "image",
+                src: hostedMedia.url,
+                alt: file.name,
+                aspect: 16 / 9,
+                trackIndex: 0,
+                startTime: 0,
+                duration: 4,
+                sourceDuration: 4,
+                trimIn: 0,
+                trimOut: 0,
+              } as TimelineClip,
+            };
+          }
+        }));
+
+        const firstUploadError = newClipResults.find((result) => result.error)?.error;
+        if (firstUploadError) {
+          setMediaUploadError(firstUploadError);
         }
 
-        if (isVideo && !hostedMedia.thumbnailUrl) {
-          return {
-            clip: null,
-            error: `"${file.name}" was not added because a video thumbnail could not be saved.`,
-          };
-        }
+        const newClips = newClipResults
+          .map((result) => result.clip)
+          .filter(
+            (clip): clip is TimelineClip => clip !== null
+          );
 
-        if (isVideo) {
-          const clipDuration = Math.min(12, duration);
-          return {
-            clip: {
-              id: uniqueId,
-              index: insertIndex + idx,
-              kind: "video",
-              src: hostedMedia.url,
-              poster: hostedMedia.thumbnailUrl,
-              alt: file.name,
-              aspect: 16 / 9,
-              trackIndex: 0,
-              startTime: 0,
-              duration: clipDuration,
-              sourceDuration: duration,
-              trimIn: 0,
-              trimOut: Math.max(0, duration - clipDuration),
-            } as TimelineClip,
-          };
-        } else {
-          return {
-            clip: {
-              id: uniqueId,
-              index: insertIndex + idx,
-              kind: "image",
-              src: hostedMedia.url,
-              alt: file.name,
-              aspect: 16 / 9,
-              trackIndex: 0,
-              startTime: 0,
-              duration: 4,
-              sourceDuration: 4,
-              trimIn: 0,
-              trimOut: 0,
-            } as TimelineClip,
-          };
-        }
-      }));
+        if (newClips.length === 0) return;
 
-      const firstUploadError = newClipResults.find((result) => result.error)?.error;
-      if (firstUploadError) {
-        setMediaUploadError(firstUploadError);
+        const nextClips = [...clipState.clips];
+        nextClips.splice(insertIndex, 0, ...newClips);
+
+        const packedClips = reindexAndPackClips(nextClips);
+        applyLocalClipsNow(packedClips);
+      } finally {
+        clearInterval(progressInterval);
+        setUploadProgress(100);
+        setTimeout(() => {
+          setIsUploadingMedia(false);
+          setUploadProgress(0);
+        }, 500);
       }
-
-      const newClips = newClipResults
-        .map((result) => result.clip)
-        .filter(
-          (clip): clip is TimelineClip => clip !== null
-        );
-
-      if (newClips.length === 0) return;
-
-      const nextClips = [...clipState.clips];
-      nextClips.splice(insertIndex, 0, ...newClips);
-
-      const packedClips = reindexAndPackClips(nextClips);
-      applyLocalClipsNow(packedClips);
     },
     [applyLocalClipsNow, clipState],
   );
@@ -470,30 +706,66 @@ export function SmoothScrollList({
 
         nextClips.splice(targetIndex, 0, removed);
         const packed = reindexAndPackClips(nextClips);
+
+        // Update document registry synchronously to avoid race conditions
+        const doc = getTimelineDocument(thisTimelineId);
+        if (doc) {
+          doc.clips = packed;
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("gstudio-timeline-update", {
+                detail: { timelineId: thisTimelineId },
+              })
+            );
+          }
+          syncParentCollections(thisTimelineId, packed);
+        }
+
         applyLocalClipsNow(packed);
       } else {
         // Dragged from another timeline to this timeline
         // 1. Insert clip locally
+        const isAssetLibrarySource = sourceTimelineId.startsWith("asset-library");
         const nextClips = [...clipState.clips];
         const newClip = {
           ...clip,
+          id: isAssetLibrarySource
+            ? `${clip.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+            : clip.id,
           index: insertIndex,
         };
 
         nextClips.splice(insertIndex, 0, newClip);
         const packed = reindexAndPackClips(nextClips);
+
+        // Update document registry synchronously to avoid race conditions
+        const doc = getTimelineDocument(thisTimelineId);
+        if (doc) {
+          doc.clips = packed;
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("gstudio-timeline-update", {
+                detail: { timelineId: thisTimelineId },
+              })
+            );
+          }
+          syncParentCollections(thisTimelineId, packed);
+        }
+
         applyLocalClipsNow(packed);
 
-        // 2. Notify the source timeline to remove it
-        window.dispatchEvent(
-          new CustomEvent("timeline-clip-moved", {
-            detail: {
-              clipId: clip.id,
-              sourceTimelineId,
-              targetTimelineId: thisTimelineId,
-            },
-          })
-        );
+        // 2. Notify the source timeline to remove it. Assets are copied, not moved.
+        if (!isAssetLibrarySource) {
+          window.dispatchEvent(
+            new CustomEvent("timeline-clip-moved", {
+              detail: {
+                clipId: clip.id,
+                sourceTimelineId,
+                targetTimelineId: thisTimelineId,
+              },
+            })
+          );
+        }
       }
     },
     [applyLocalClipsNow, clipState, timelineId],
@@ -501,11 +773,24 @@ export function SmoothScrollList({
 
   const handleDropSidebarClip = useCallback(
     (insertIndex: number, type: "collection" | "image" | "video") => {
+      const thisTimelineId = timelineId || "";
       const uniqueId = `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       let newClip: TimelineClip;
 
       if (type === "collection") {
-        const childId = `timeline-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+        let childId = `timeline-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+        
+        if (thisTimelineId.startsWith("asset-library")) {
+          const userId = user?.uid || "default";
+          const currentFolderPath = getFolderPathFromTimelineId(thisTimelineId, userId);
+          const newCollectionId = `col-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+          const newFolderPath = currentFolderPath 
+            ? `${currentFolderPath}/${newCollectionId}` 
+            : newCollectionId;
+          const encoded = encodeFolderPath(newFolderPath);
+          childId = `asset-library-col-${userId}-${encoded}`;
+        }
+
         createCollectionTimelineDocument(childId, "New Collection");
         newClip = {
           id: uniqueId,
@@ -560,21 +845,44 @@ export function SmoothScrollList({
       nextClips.splice(insertIndex, 0, newClip);
 
       const packedClips = reindexAndPackClips(nextClips);
+      const doc = getTimelineDocument(thisTimelineId);
+      if (doc) {
+        doc.clips = packedClips;
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("gstudio-timeline-update", {
+              detail: { timelineId: thisTimelineId },
+            })
+          );
+        }
+        syncParentCollections(thisTimelineId, packedClips);
+      }
       applyLocalClipsNow(packedClips);
     },
-    [applyLocalClipsNow, clipState],
+    [applyLocalClipsNow, clipState, timelineId],
   );
 
   const handleDropClipIntoCollection = useCallback(
     (clip: TimelineClip, targetCollectionTimelineId: string, sourceTimelineId: string) => {
-      addClipToCollection(targetCollectionTimelineId, clip);
-
-      // Notify source timeline to remove it
-      window.dispatchEvent(
-        new CustomEvent("gstudio-clip-remove", {
-          detail: { clipId: clip.id, timelineId: sourceTimelineId },
-        })
+      const isAssetLibrarySource = sourceTimelineId.startsWith("asset-library");
+      addClipToCollection(
+        targetCollectionTimelineId,
+        isAssetLibrarySource
+          ? {
+              ...clip,
+              id: `${clip.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            }
+          : clip,
       );
+
+      // Notify source timeline to remove it. Assets are copied, not moved.
+      if (!isAssetLibrarySource) {
+        window.dispatchEvent(
+          new CustomEvent("gstudio-clip-remove", {
+            detail: { clipId: clip.id, timelineId: sourceTimelineId },
+          })
+        );
+      }
     },
     []
   );
@@ -621,6 +929,7 @@ export function SmoothScrollList({
   );
 
   useEffect(() => {
+    if (disablePersistence) return;
     const thisTimelineId = timelineId || "";
     if (thisTimelineId) {
       const doc = getTimelineDocument(thisTimelineId);
@@ -668,7 +977,7 @@ export function SmoothScrollList({
       window.clearTimeout(timeoutId);
       controller.abort();
     };
-  }, [clipState.clips, persistedTimelineTitle, timelineId, timelineTitle]);
+  }, [clipState.clips, disablePersistence, persistedTimelineTitle, timelineId, timelineTitle]);
 
   useEffect(() => {
     const handleTimelineUpdate = (e: Event) => {
@@ -691,8 +1000,15 @@ export function SmoothScrollList({
           const packed = reindexAndPackClips(nextClips);
           
           doc.clips = packed;
-          applyLocalClipsNow(packed);
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("gstudio-timeline-update", {
+                detail: { timelineId: thisTimelineId },
+              })
+            );
+          }
           syncParentCollections(thisTimelineId, packed);
+          applyLocalClipsNow(packed);
         }
       }
     };
@@ -713,8 +1029,15 @@ export function SmoothScrollList({
           const packed = reindexAndPackClips(nextClips);
           
           doc.clips = packed;
-          applyLocalClipsNow(packed);
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("gstudio-timeline-update", {
+                detail: { timelineId: thisTimelineId },
+              })
+            );
+          }
           syncParentCollections(thisTimelineId, packed);
+          applyLocalClipsNow(packed);
         }
       }
     };
@@ -738,6 +1061,7 @@ export function SmoothScrollList({
     thumbnailMode,
     thumbnailWidth: effectiveThumbnailWidth,
     gridMetrics,
+    itemTop,
     setScrollLeft: scrollState.setScrollLeft,
     setSelectedIndex: clipState.setSelectedIndex,
     setScrubPreview: clipState.setScrubPreview,
@@ -759,14 +1083,14 @@ export function SmoothScrollList({
     pixelsPerSecond: zoom.safePixelsPerSecond,
     prevScrollLeftRef: scrollState.prevScrollLeftRef,
     scrollLeft: scrollState.scrollLeft,
-    selectedVideoClip,
+    selectedVideoClip: showPlayBarArea ? selectedVideoClip : null,
     setScrollLeft: scrollState.setScrollLeft,
     thumbnailMode,
     thumbnailWidth: effectiveThumbnailWidth,
   });
 
   const layout = useTimelineLayout({
-    clips: clipState.clips,
+    clips: adjustedClips,
     closingOverhangOffset: overhang.closingOverhangOffset,
     firstOverhang: overhang.firstOverhang,
     isResizing: interactions.isResizing,
@@ -775,6 +1099,7 @@ export function SmoothScrollList({
     scrollLeft: scrollState.scrollLeft,
     scrollTop: gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop,
     gridMetrics,
+    itemTop,
     thumbnailMode,
     thumbnailWidth: effectiveThumbnailWidth,
     viewportClientHeight: gridModeEnabled
@@ -808,6 +1133,7 @@ export function SmoothScrollList({
         data-grid-mode={gridModeEnabled}
         data-grid-columns={gridMetrics.columnsPerPage}
         data-grid-rows={gridMetrics.rowsPerPage}
+        data-playbar-area={showPlayBarArea}
         data-passive-filmstrips={showPassiveFilmstrips}
         data-item-count={clipState.clips.length}
         data-first-overhang={overhang.firstOverhang}
@@ -850,24 +1176,26 @@ export function SmoothScrollList({
       >
         <TimelineToolbar
           itemSize={itemSize}
-          manualOverhangScroll={manualOverhangScroll}
+          showPlayBarArea={showPlayBarArea}
           showPassiveFilmstrips={showPassiveFilmstrips}
           title={persistedTimelineTitle}
           gridMode={gridModeEnabled}
           onItemSizeChange={setItemSize}
           onGridModeChange={setGridMode}
-          onManualOverhangScrollChange={setManualOverhangScroll}
+          onPlayBarAreaChange={setShowPlayBarArea}
           onPassiveFilmstripsChange={setShowPassiveFilmstrips}
-          onThumbnailModeChange={handleThumbnailModeChange}
           onZoomChange={zoom.handleZoomChange}
-          renderedCount={layout.visibleClips.length}
           thumbnailMode={thumbnailMode}
-          totalCount={clipState.clips.length}
           zoomLevel={zoom.zoomLevel}
           timelineId={timelineId}
           hierarchyMode={hierarchyMode}
           onHierarchyModeChange={setHierarchyMode}
           hasChildCollections={childCollections.length > 0}
+          onTitleChange={
+            timelineId && (timelineId.startsWith("timeline-") || timelineId.startsWith("asset-library-col-"))
+              ? handleTitleChange
+              : undefined
+          }
           childCollectionsExpanded={childCollectionsExpanded}
           onToggleChildCollections={() => setChildCollectionsExpanded(!childCollectionsExpanded)}
         />
@@ -881,12 +1209,33 @@ export function SmoothScrollList({
           </div>
         )}
 
+        {isUploadingMedia && (
+          <div className="flex flex-col gap-2 rounded-lg border border-sky-500/35 bg-sky-950/20 px-4 py-3 shadow-lg select-none">
+            <div className="flex items-center justify-between text-xs font-medium text-sky-200">
+              <div className="flex items-center gap-2">
+                <svg className="animate-spin h-3.5 w-3.5 text-sky-400" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                <span>Uploading media to timeline...</span>
+              </div>
+              <span className="font-semibold">{Math.round(uploadProgress)}%</span>
+            </div>
+            <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+              <div
+                className="h-full bg-sky-500 transition-all duration-300 ease-out shadow-[0_0_8px_rgba(56,189,248,0.6)]"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="relative w-full max-w-full min-w-0">
           <TimelineViewport
             closingOverhangOffset={overhang.closingOverhangOffset}
             firstOverhang={overhang.firstOverhang}
             handleClipDurationLoad={
-              syncMediaDuration ? handleClipDurationLoad : undefined
+              syncMediaDuration ? handleClipDurationLoad : handleClipDurationLoadSimple
             }
             handleScroll={scrollState.handleScroll}
             hasClips={clipState.clips.length > 0}
@@ -895,6 +1244,7 @@ export function SmoothScrollList({
             isResizingFirstClipLeft={overhang.isResizingFirstClipLeft}
             isZooming={zoom.isZooming}
             itemHeight={itemHeight}
+            itemTop={itemTop}
             manualOverhangScroll={manualOverhangScroll}
             getCollectionHref={getCollectionHref}
             onOpenCollection={handleOpenCollection}
@@ -908,7 +1258,8 @@ export function SmoothScrollList({
               gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop
             }
             selectedIndex={clipState.selectedIndex}
-            selectedVideoClip={selectedVideoClip}
+            selectedVideoClip={showPlayBarArea ? selectedVideoClip : null}
+            showPlayBarArea={showPlayBarArea}
             showPassiveFilmstrips={showPassiveFilmstrips}
             gridMetrics={gridMetrics}
             thumbnailMode={thumbnailMode}
@@ -922,6 +1273,10 @@ export function SmoothScrollList({
             onDropClipIntoCollection={handleDropClipIntoCollection}
             onDropSidebarClipIntoCollection={handleDropSidebarClipIntoCollection}
             timelineId={timelineId}
+            dragBarEnabled={dragBarEnabled}
+            previewLargeSurface={previewLargeSurface}
+            playheadTime={playheadTime}
+            onPlayheadTimeChange={onPlayheadTimeChange}
           />
 
           {overhang.hasOffscreenOverhang && (
@@ -941,17 +1296,55 @@ export function SmoothScrollList({
                 timelineTitle={col.title}
                 initialClips={doc ? doc.clips : []}
                 initialViewState={{
-                  thumbnailMode: true,
+                  thumbnailMode,
                   itemSize: "sm",
                   gridMode: false,
+                  showPlayBarArea: showPlayBarArea,
                   showPassiveFilmstrips: showPassiveFilmstrips,
                 }}
+                thumbnailMode={thumbnailMode}
                 isChildTimeline={true}
                 syncMediaDuration={syncMediaDuration}
                 hierarchyMode={hierarchyMode}
+                dragBarEnabled={dragBarEnabled}
+                previewLargeSurface={previewLargeSurface}
+                playheadTime={playheadTime}
+                onPlayheadTimeChange={onPlayheadTimeChange}
               />
             );
           })}
+        </div>
+      )}
+
+      {!hierarchyMode && selectedClip && selectedClip.kind === "collection" && (
+        <div className="flex flex-col gap-5 pl-20 border-l border-zinc-800/80 mt-4 w-full max-w-full min-w-0">
+          {(() => {
+            const col = selectedClip;
+            const doc = getTimelineDocument(col.childTimelineId);
+            return (
+              <SmoothScrollList
+                key={`selected-nested-${col.childTimelineId}`}
+                timelineId={col.childTimelineId}
+                timelineTitle={col.title}
+                initialClips={doc ? doc.clips : []}
+                initialViewState={{
+                  thumbnailMode: thumbnailMode,
+                  itemSize: itemSize,
+                  gridMode: false,
+                  showPlayBarArea: showPlayBarArea,
+                  showPassiveFilmstrips: showPassiveFilmstrips,
+                }}
+                thumbnailMode={thumbnailMode}
+                isChildTimeline={true}
+                syncMediaDuration={syncMediaDuration}
+                hierarchyMode={hierarchyMode}
+                dragBarEnabled={dragBarEnabled}
+                previewLargeSurface={previewLargeSurface}
+                playheadTime={playheadTime}
+                onPlayheadTimeChange={onPlayheadTimeChange}
+              />
+            );
+          })()}
         </div>
       )}
     </>

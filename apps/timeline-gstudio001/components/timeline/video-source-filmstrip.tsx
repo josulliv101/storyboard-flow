@@ -1,26 +1,113 @@
-import React, { useRef } from "react";
+import React from "react";
 import type {
+  CollectionTimelineClip,
   VideoSourceWindowEditMode,
   VideoTimelineClip,
   TimelineClip,
 } from "./types";
-import { clamp, formatSeconds } from "./utils";
-import { FILMSTRIP_HEIGHT, FILMSTRIP_MAX_FRAMES, FILMSTRIP_TARGET_FRAME_WIDTH } from "./constants";
+import { formatSeconds } from "./utils";
+import { FILMSTRIP_HEIGHT, FILMSTRIP_MAX_FRAMES } from "./constants";
 import { cn } from "@/lib/utils";
-import { VideoTile } from "./video-tile";
 import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,
 } from "./timeline-grid";
-import { getCollectionFramePreview } from "@/lib/timeline-documents";
+import {
+  getCollectionClipFramePreview,
+  getCollectionClipSourceDuration,
+  getCollectionFramePreview,
+} from "@/lib/timeline-documents";
+
+const CLOUDINARY_CLOUD_NAME = "drrxyckxi";
+
+function getCloudinaryVersionedVideoPath(uploadPath: string) {
+  const pathWithoutQuery = uploadPath.split(/[?#]/)[0];
+  const segments = pathWithoutQuery.split("/");
+  const versionIndex = segments.findIndex((segment) => /^v\d+$/.test(segment));
+  const sourceSegments = versionIndex >= 0 ? segments.slice(versionIndex + 1) : segments;
+
+  return sourceSegments.join("/").replace(/\.[^/.]+$/, ".jpg");
+}
+
+function handleImageFallback(
+  event: React.SyntheticEvent<HTMLImageElement>,
+  fallbackSrc?: string,
+) {
+  if (!fallbackSrc || event.currentTarget.src === fallbackSrc) return;
+  event.currentTarget.src = fallbackSrc;
+}
+
+export function getThumbnailSlotCount(availableWidth: number, frameSize: number) {
+  return Math.min(
+    FILMSTRIP_MAX_FRAMES,
+    Math.max(1, Math.ceil(Math.max(1, availableWidth) / Math.max(1, frameSize))),
+  );
+}
+
+export function getEndpointFrameTimes({
+  count,
+  endTime,
+  startTime = 0,
+}: {
+  count: number;
+  endTime: number;
+  startTime?: number;
+}) {
+  const frameCount = Math.max(1, Math.floor(count));
+  const start = Math.max(0, startTime);
+  const end = Math.max(start, endTime);
+
+  if (frameCount === 1) return [start];
+  if (frameCount === 2) return [start, end];
+
+  return Array.from({ length: frameCount }, (_, index) => {
+    const progress = index / (frameCount - 1);
+    return start + (end - start) * progress;
+  });
+}
+
+function getCollectionPlaybackDuration(clip: CollectionTimelineClip) {
+  return Math.max(
+    0.001,
+    clip.playbackDuration ?? getCollectionClipSourceDuration(clip),
+  );
+}
+
+function getCollectionPreviewClip(clip: CollectionTimelineClip): CollectionTimelineClip {
+  const playbackDuration = getCollectionPlaybackDuration(clip);
+  return {
+    ...clip,
+    duration: playbackDuration,
+    sourceDuration: Math.max(clip.sourceDuration, playbackDuration),
+  };
+}
+
+export function getVideoThumbnailUrl(src: string, second: number, width = 480, height = 270): string {
+  const roundedSecond = Math.max(0, Number(second.toFixed(2)));
+  
+  if (src.includes("res.cloudinary.com") && src.includes("/video/upload/")) {
+    // Cloudinary native transformation for uploaded videos
+    const parts = src.split("/video/upload/");
+    if (parts.length === 2) {
+      const baseUrl = parts[0];
+      const videoPath = getCloudinaryVersionedVideoPath(parts[1]);
+      return `${baseUrl}/video/upload/so_${roundedSecond},w_${width},h_${height},c_fill,q_auto,f_jpg/${videoPath}`;
+    }
+  }
+  
+  // Cloudinary fetch transformation for remote fallback videos
+  return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/fetch/so_${roundedSecond},w_${width},h_${height},c_fill,q_auto,f_jpg/${encodeURIComponent(src)}`;
+}
 
 type VideoSourceFilmStripProps = {
   clip: TimelineClip;
   pixelsPerSecond: number;
   gridMetrics?: TimelineGridMetrics;
+  leftOffset?: number;
   thumbnailMode?: boolean;
   thumbnailWidth?: number;
   thumbnailGap?: number;
+  topOffset?: number;
   editingMode?: VideoSourceWindowEditMode | null;
   onSourceWindowPointerDown: (
     e: React.PointerEvent<HTMLDivElement>,
@@ -33,9 +120,11 @@ export function VideoSourceFilmStrip({
   clip,
   pixelsPerSecond,
   gridMetrics,
+  leftOffset = 0,
   thumbnailMode = false,
   thumbnailWidth = (200 * 16) / 9,
   thumbnailGap = 16,
+  topOffset,
   editingMode = null,
   onSourceWindowPointerDown,
 }: VideoSourceFilmStripProps) {
@@ -48,9 +137,9 @@ export function VideoSourceFilmStrip({
     : thumbnailMode
     ? clip.index * (thumbnailWidth + thumbnailGap)
     : clip.startTime * pixelsPerSecond;
-  const top = gridLayout?.top ?? 0;
+  const top = topOffset ?? (gridLayout?.top ?? 0);
   
-  const sourceDuration = clip.kind === "collection" ? clip.duration : (clip as VideoTimelineClip).sourceDuration;
+  const sourceDuration = clip.kind === "collection" ? getCollectionClipSourceDuration(clip) : (clip as VideoTimelineClip).sourceDuration;
   const trimIn = clip.kind === "collection" ? 0 : (clip as VideoTimelineClip).trimIn;
 
   const selectedWidth = clip.duration * pixelsPerSecond;
@@ -77,16 +166,10 @@ export function VideoSourceFilmStrip({
 
   const sourceLeft = frozenState.sourceLeft !== null ? frozenState.sourceLeft : computedSourceLeft;
 
-  const frameCount = clamp(
-    Math.ceil(sourceWidth / FILMSTRIP_TARGET_FRAME_WIDTH),
-    2,
-    FILMSTRIP_MAX_FRAMES,
-  );
-  const frameEpsilon = Math.min(1 / 30, sourceDuration / 100);
-  const lastFrameTime = Math.max(0, sourceDuration - frameEpsilon);
-  const frameTimes = Array.from({ length: frameCount }, (_, index) => {
-    if (frameCount === 1) return 0;
-    return (index / (frameCount - 1)) * lastFrameTime;
+  const frameSize = FILMSTRIP_HEIGHT;
+  const frameTimes = getEndpointFrameTimes({
+    count: getThumbnailSlotCount(sourceWidth, frameSize),
+    endTime: Math.max(0, sourceDuration - 0.05),
   });
 
   return (
@@ -94,14 +177,14 @@ export function VideoSourceFilmStrip({
       data-video-filmstrip="true"
       data-testid="timeline-source-filmstrip"
       data-clip-index={clip.index}
-      className="absolute left-0 top-0 touch-none rounded-md border border-zinc-600 bg-zinc-950 shadow-[0_10px_24px_rgba(0,0,0,0.35)]"
+      className="pointer-events-auto absolute left-0 top-0 touch-none rounded-md border border-zinc-600 bg-zinc-950 shadow-[0_10px_24px_rgba(0,0,0,0.35)]"
       onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "move")}
       onPointerCancel={(e) => e.stopPropagation()}
       onDragStart={(e) => e.preventDefault()}
       style={{
         width: `${sourceWidth}px`,
         height: `${FILMSTRIP_HEIGHT}px`,
-        transform: `translate(${sourceLeft}px, ${top}px)`,
+        transform: `translate(${sourceLeft + leftOffset}px, ${top}px)`,
         transition: editingMode ? "none" : "transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
         zIndex: 35,
       }}
@@ -114,17 +197,17 @@ export function VideoSourceFilmStrip({
             return (
               <div
                 key={`${clip.id}-film-frame-${index}`}
-                className="relative h-full min-w-0 overflow-hidden border-r border-black/70 last:border-r-0"
-                style={{ flex: `0 0 ${100 / frameTimes.length}%` }}
+                className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
+                style={{ width: `${frameSize}px` }}
               >
                 {preview ? (
                   preview.kind === "video" ? (
-                    <VideoTile
-                      src={preview.src}
-                      poster={preview.poster}
+                    <img
+                      src={getVideoThumbnailUrl(preview.src, preview.previewTime)}
                       alt=""
-                      previewTime={preview.previewTime}
-                      sourceDuration={preview.sourceDuration}
+                      className="h-full w-full object-cover"
+                      draggable={false}
+                      onError={(event) => handleImageFallback(event, preview.poster)}
                     />
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -158,8 +241,8 @@ export function VideoSourceFilmStrip({
             return (
               <div
                 key={`${clip.id}-film-frame-${index}`}
-                className="relative h-full min-w-0 overflow-hidden border-r border-black/70 last:border-r-0"
-                style={{ flex: `0 0 ${100 / frameTimes.length}%` }}
+                className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
+                style={{ width: `${frameSize}px` }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -185,15 +268,15 @@ export function VideoSourceFilmStrip({
           return (
             <div
               key={`${clip.id}-film-frame-${index}`}
-              className="relative h-full min-w-0 overflow-hidden border-r border-black/70 last:border-r-0"
-              style={{ flex: `0 0 ${100 / frameTimes.length}%` }}
+              className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
+              style={{ width: `${frameSize}px` }}
             >
-              <VideoTile
-                src={(clip as VideoTimelineClip).src}
-                poster={(clip as VideoTimelineClip).poster}
+              <img
+                src={getVideoThumbnailUrl((clip as VideoTimelineClip).src, time)}
                 alt={`${clip.alt} source frame ${index + 1}`}
-                previewTime={time}
-                sourceDuration={(clip as VideoTimelineClip).sourceDuration}
+                className="h-full w-full object-cover"
+                draggable={false}
+                onError={(event) => handleImageFallback(event, (clip as VideoTimelineClip).poster)}
               />
               {(index === 0 || index === frameTimes.length - 1) && (
                 <span
@@ -283,24 +366,17 @@ export function PassiveVideoFilmStrip({
     ? thumbnailWidth
     : clip.duration * pixelsPerSecond;
   
-  const sourceDuration = clip.kind === "collection" ? clip.duration : (clip as VideoTimelineClip).sourceDuration;
+  const sourceDuration = clip.kind === "collection" ? getCollectionClipSourceDuration(clip) : (clip as VideoTimelineClip).sourceDuration;
   const trimIn = clip.kind === "collection" ? 0 : (clip as VideoTimelineClip).trimIn;
 
-  const frameCount = clamp(
-    Math.ceil(width / FILMSTRIP_TARGET_FRAME_WIDTH),
-    2,
-    FILMSTRIP_MAX_FRAMES,
-  );
-  const frameEpsilon = Math.min(1 / 30, sourceDuration / 100);
-  const visibleStart = trimIn;
-  const visibleEnd = Math.min(
-    sourceDuration - frameEpsilon,
-    trimIn + clip.duration,
-  );
-  const frameTimes = Array.from({ length: frameCount }, (_, index) => {
-    if (frameCount === 1) return visibleStart;
-    const progress = index / (frameCount - 1);
-    return visibleStart + (visibleEnd - visibleStart) * progress;
+  const frameSize = FILMSTRIP_HEIGHT;
+  const frameTimes = getEndpointFrameTimes({
+    count: getThumbnailSlotCount(width, frameSize),
+    startTime: clip.kind === "collection" ? 0 : trimIn,
+    endTime:
+      clip.kind === "collection"
+        ? Math.max(0, getCollectionPlaybackDuration(clip) - 0.001)
+        : Math.min(Math.max(0, sourceDuration - 0.05), trimIn + clip.duration),
   });
 
   return (
@@ -340,21 +416,21 @@ export function PassiveVideoFilmStrip({
         <div className="flex h-full w-full select-none overflow-hidden rounded-md">
           {frameTimes.map((time, index) => {
             if (clip.kind === "collection") {
-              const preview = getCollectionFramePreview(clip.childTimelineId, time);
+              const preview = getCollectionClipFramePreview(getCollectionPreviewClip(clip), time);
               return (
                 <div
                   key={`${clip.id}-passive-film-frame-${index}`}
-                  className="relative h-full min-w-0 overflow-hidden border-r border-black/70 last:border-r-0"
-                  style={{ flex: `0 0 ${100 / frameTimes.length}%` }}
+                  className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
+                  style={{ width: `${frameSize}px` }}
                 >
                   {preview ? (
                     preview.kind === "video" ? (
-                      <VideoTile
-                        src={preview.src}
-                        poster={preview.poster}
+                      <img
+                        src={getVideoThumbnailUrl(preview.src, preview.previewTime)}
                         alt=""
-                        previewTime={preview.previewTime}
-                        sourceDuration={preview.sourceDuration}
+                        className="h-full w-full object-cover"
+                        draggable={false}
+                        onError={(event) => handleImageFallback(event, preview.poster)}
                       />
                     ) : (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -378,8 +454,8 @@ export function PassiveVideoFilmStrip({
               return (
                 <div
                   key={`${clip.id}-passive-film-frame-${index}`}
-                  className="relative h-full min-w-0 overflow-hidden border-r border-black/70 last:border-r-0"
-                  style={{ flex: `0 0 ${100 / frameTimes.length}%` }}
+                  className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
+                  style={{ width: `${frameSize}px` }}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
@@ -395,15 +471,15 @@ export function PassiveVideoFilmStrip({
             return (
               <div
                 key={`${clip.id}-passive-film-frame-${index}`}
-                className="relative h-full min-w-0 overflow-hidden border-r border-black/70 last:border-r-0"
-                style={{ flex: `0 0 ${100 / frameTimes.length}%` }}
+                className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
+                style={{ width: `${frameSize}px` }}
               >
-                <VideoTile
-                  src={(clip as VideoTimelineClip).src}
-                  poster={(clip as VideoTimelineClip).poster}
+                <img
+                  src={getVideoThumbnailUrl((clip as VideoTimelineClip).src, time)}
                   alt=""
-                  previewTime={time}
-                  sourceDuration={(clip as VideoTimelineClip).sourceDuration}
+                  className="h-full w-full object-cover"
+                  draggable={false}
+                  onError={(event) => handleImageFallback(event, (clip as VideoTimelineClip).poster)}
                 />
               </div>
             );

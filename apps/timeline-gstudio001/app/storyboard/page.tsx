@@ -109,9 +109,10 @@ function StoryboardPageContent() {
         initialViewState={{
           ...viewState,
           thumbnailMode: true,
-          hierarchyMode: true,
+          hierarchyMode: false,
           itemSize: "sm",
         }}
+        thumbnailMode={true}
         syncMediaDuration={false}
       />
     </div>

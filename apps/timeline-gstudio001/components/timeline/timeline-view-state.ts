@@ -5,6 +5,7 @@ export type TimelineViewState = {
   gridMode: boolean;
   itemSize: ItemSize;
   manualOverhangScroll: boolean;
+  showPlayBarArea: boolean;
   showPassiveFilmstrips: boolean;
   zoom: number;
 };
@@ -15,7 +16,7 @@ type TimelineSearchParams =
   | URLSearchParams
   | Record<string, string | string[] | undefined>;
 
-const ITEM_SIZES: ItemSize[] = ["sm", "md", "lg", "xl"];
+const ITEM_SIZES: ItemSize[] = ["xs", "sm", "md", "lg", "xl"];
 
 function getParam(searchParams: TimelineSearchParams, key: string) {
   if (searchParams instanceof URLSearchParams) {
@@ -55,6 +56,7 @@ export function parseTimelineViewState(
       : false,
     itemSize: parseItemSize(getParam(searchParams, "size")),
     manualOverhangScroll: parseBoolean(getParam(searchParams, "pin")),
+    showPlayBarArea: parseBoolean(getParam(searchParams, "playbar")),
     showPassiveFilmstrips: parseBoolean(getParam(searchParams, "filmstrips")),
     zoom: parseZoom(getParam(searchParams, "zoom")),
   };
@@ -100,6 +102,7 @@ export function serializeTimelineViewState(state: TimelineViewState) {
   searchParams.set("grid", state.thumbnailMode && state.gridMode ? "1" : "0");
   searchParams.set("size", state.itemSize);
   searchParams.set("pin", state.manualOverhangScroll ? "1" : "0");
+  searchParams.set("playbar", state.showPlayBarArea ? "1" : "0");
   searchParams.set("filmstrips", state.showPassiveFilmstrips ? "1" : "0");
   searchParams.set("zoom", String(Math.round(state.zoom)));
 

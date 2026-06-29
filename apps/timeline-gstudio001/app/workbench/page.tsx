@@ -1,12 +1,15 @@
 "use client";
 
-import React, { Suspense, useState, useEffect } from "react";
+import React, { Suspense, useCallback, useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
+import { ToggleSwitch } from "@/components/timeline/timeline-toolbar";
+import { WorkbenchSplitPane } from "@/components/timeline/workbench-display-surface";
 import { getTimelineDocument, getTimelinePath } from "@/lib/timeline-documents";
 import { parseTimelineViewState } from "@/components/timeline/timeline-view-state";
+import type { TimelineClip } from "@/components/timeline/types";
 
 function WorkbenchPageContent() {
   const router = useRouter();
@@ -17,11 +20,15 @@ function WorkbenchPageContent() {
   const viewState = parseTimelineViewState(Object.fromEntries(searchParams.entries()));
 
   const [document, setDocument] = useState(() => getTimelineDocument(timelineId));
+  const [previewTime, setPreviewTime] = useState(0);
+  const [previewClips, setPreviewClips] = useState<TimelineClip[] | null>(null);
+  const [previewLargeSurface, setPreviewLargeSurface] = useState(false);
 
   const [prevTimelineId, setPrevTimelineId] = useState(timelineId);
   if (timelineId !== prevTimelineId) {
     setPrevTimelineId(timelineId);
     setDocument(getTimelineDocument(timelineId));
+    setPreviewClips(null);
   }
 
   // Subscribe to external store updates
@@ -58,9 +65,16 @@ function WorkbenchPageContent() {
     router.push(`${pathname}?timelineId=${nextId}`);
   };
 
-  return (
-    <div className="mx-auto grid w-full max-w-[1400px] gap-5 animate-fade-in">
-      <div className="flex items-center gap-3">
+  const handlePreviewTimeChange = useCallback((time: number, clips?: TimelineClip[]) => {
+    setPreviewTime(time);
+    if (clips) {
+      setPreviewClips(clips);
+    }
+  }, []);
+
+  const timelineChrome = (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         {timelineId !== "workbench" && (
           <Link
             href={getParentHref()}
@@ -71,7 +85,7 @@ function WorkbenchPageContent() {
           </Link>
         )}
 
-        <nav className="flex items-center gap-2 text-xs text-zinc-400 select-none">
+        <nav className="flex min-w-0 items-center gap-2 text-xs text-zinc-400 select-none">
           <Link href={pathname} className="text-zinc-400 hover:text-white transition-colors">
             Workbench Workspace
           </Link>
@@ -101,17 +115,46 @@ function WorkbenchPageContent() {
         </nav>
       </div>
 
-      <SmoothScrollList
-        timelineId={document.id}
-        timelineTitle={document.title}
-        initialClips={document.clips}
-        onOpenCollection={handleOpenCollection}
-        initialViewState={{
-          ...viewState,
-          itemSize: "md",
-        }}
-        syncMediaDuration={false}
-      />
+      <div className="shrink-0">
+        <ToggleSwitch
+          id="workbench-preview-lg-toggle"
+          label="Preview LG"
+          checked={previewLargeSurface}
+          onChange={setPreviewLargeSurface}
+          title="Preview play bar scrubbing on the large workbench display"
+        />
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="mx-auto grid w-full max-w-[1400px] gap-5 animate-fade-in">
+      <WorkbenchSplitPane
+        clips={previewClips ?? document.clips}
+        currentTime={previewTime}
+        onCurrentTimeChange={handlePreviewTimeChange}
+      >
+        <div className="grid gap-3">
+          {timelineChrome}
+          <SmoothScrollList
+            timelineId={document.id}
+            timelineTitle={document.title}
+            initialClips={document.clips}
+            onOpenCollection={handleOpenCollection}
+            initialViewState={{
+              ...viewState,
+              thumbnailMode: false,
+              gridMode: false,
+              itemSize: "md",
+            }}
+            thumbnailMode={false}
+            playheadTime={previewTime}
+            onPlayheadTimeChange={handlePreviewTimeChange}
+            previewLargeSurface={previewLargeSurface}
+            syncMediaDuration={false}
+          />
+        </div>
+      </WorkbenchSplitPane>
     </div>
   );
 }
