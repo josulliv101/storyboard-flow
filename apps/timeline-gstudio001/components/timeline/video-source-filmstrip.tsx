@@ -86,9 +86,11 @@ type VideoSourceFilmStripProps = {
   clip: TimelineClip;
   pixelsPerSecond: number;
   gridMetrics?: TimelineGridMetrics;
+  leftOffset?: number;
   thumbnailMode?: boolean;
   thumbnailWidth?: number;
   thumbnailGap?: number;
+  topOffset?: number;
   editingMode?: VideoSourceWindowEditMode | null;
   onSourceWindowPointerDown: (
     e: React.PointerEvent<HTMLDivElement>,
@@ -101,9 +103,11 @@ export function VideoSourceFilmStrip({
   clip,
   pixelsPerSecond,
   gridMetrics,
+  leftOffset = 0,
   thumbnailMode = false,
   thumbnailWidth = (200 * 16) / 9,
   thumbnailGap = 16,
+  topOffset,
   editingMode = null,
   onSourceWindowPointerDown,
 }: VideoSourceFilmStripProps) {
@@ -116,7 +120,7 @@ export function VideoSourceFilmStrip({
     : thumbnailMode
     ? clip.index * (thumbnailWidth + thumbnailGap)
     : clip.startTime * pixelsPerSecond;
-  const top = gridLayout?.top ?? 0;
+  const top = topOffset ?? (gridLayout?.top ?? 0);
   
   const sourceDuration = clip.kind === "collection" ? getCollectionClipSourceDuration(clip) : (clip as VideoTimelineClip).sourceDuration;
   const trimIn = clip.kind === "collection" ? 0 : (clip as VideoTimelineClip).trimIn;
@@ -156,14 +160,14 @@ export function VideoSourceFilmStrip({
       data-video-filmstrip="true"
       data-testid="timeline-source-filmstrip"
       data-clip-index={clip.index}
-      className="absolute left-0 top-0 touch-none rounded-md border border-zinc-600 bg-zinc-950 shadow-[0_10px_24px_rgba(0,0,0,0.35)]"
+      className="pointer-events-auto absolute left-0 top-0 touch-none rounded-md border border-zinc-600 bg-zinc-950 shadow-[0_10px_24px_rgba(0,0,0,0.35)]"
       onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "move")}
       onPointerCancel={(e) => e.stopPropagation()}
       onDragStart={(e) => e.preventDefault()}
       style={{
         width: `${sourceWidth}px`,
         height: `${FILMSTRIP_HEIGHT}px`,
-        transform: `translate(${sourceLeft}px, ${top}px)`,
+        transform: `translate(${sourceLeft + leftOffset}px, ${top}px)`,
         transition: editingMode ? "none" : "transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
         zIndex: 35,
       }}

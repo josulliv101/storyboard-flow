@@ -10,7 +10,6 @@ import {
   DEFAULT_PIXELS_PER_SECOND,
   ITEM_HEIGHTS,
   MIN_WIDTH,
-  TIMELINE_ITEM_TOP,
   TIMELINE_LEADING_PADDING_SECONDS,
   CLIP_GAP_SECONDS,
   type ItemSize,
@@ -183,7 +182,7 @@ export function SmoothScrollList({
     initialViewState?.showPassiveFilmstrips ?? false,
   );
 
-  const itemTop = showPlayBarArea ? TIMELINE_ITEM_TOP : 0;
+  const itemTop = 0;
   const itemHeight = ITEM_HEIGHTS[itemSize];
   const thumbnailWidth = (itemHeight * 16) / 9;
 

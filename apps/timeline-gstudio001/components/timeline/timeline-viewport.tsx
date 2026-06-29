@@ -11,7 +11,13 @@ import {
 import { createPortal } from "react-dom";
 import { Folder, Video, Image, X, Play } from "lucide-react";
 
-import { THUMBNAIL_GAP, TIMELINE_LEADING_PADDING_SECONDS, CLIP_GAP_SECONDS } from "./constants";
+import {
+  CLIP_GAP_SECONDS,
+  FILMSTRIP_GAP,
+  FILMSTRIP_HEIGHT,
+  THUMBNAIL_GAP,
+  TIMELINE_LEADING_PADDING_SECONDS,
+} from "./constants";
 import type { useTimelineInteractions } from "./hooks/use-timeline-interactions";
 import { TimelineClipItem } from "./timeline-clip-item";
 import {
@@ -649,35 +655,20 @@ export function TimelineViewport({
     return null;
   }, [thumbnailMode, pixelsPerSecond, visibleClips, getClipLeft, getClipWidth]);
 
-  const dragBars = useMemo(() => {
-    if (!dragBarEnabled || visibleClips.length < 2) return [];
+  const updatePlayheadFromContentX = useCallback((contentX: number) => {
+    const clip = getClipAtX(contentX);
+    if (!clip) return;
 
-    const bars: { id: string; left: number; insertIndex: number; barLeft: number; barWidth: number }[] = [];
-    for (let i = 0; i < visibleClips.length - 1; i++) {
-      const current = visibleClips[i];
-      const next = visibleClips[i + 1];
-      const leftCurrent = getClipLeft(current);
-      const widthCurrent = getClipWidth(current);
-      const leftNext = getClipLeft(next);
+    const left = getClipLeft(clip);
+    const width = getClipWidth(clip);
+    const ratio = Math.max(0, Math.min(1, (contentX - left) / Math.max(1, width)));
+    const globalTime = thumbnailMode
+      ? clip.startTime + ratio * clip.duration
+      : contentX / pixelsPerSecond;
+    updatePlayheadTime(globalTime);
+  }, [getClipAtX, getClipLeft, getClipWidth, thumbnailMode, pixelsPerSecond, updatePlayheadTime]);
 
-      const rightCurrent = leftCurrent + widthCurrent;
-      const gapWidth = leftNext - rightCurrent;
-
-      const barWidth = 14;
-      const barLeft = rightCurrent + (gapWidth - barWidth) / 2;
-
-      bars.push({
-        id: `dragbar-${current.id}-${next.id}`,
-        left: barLeft,
-        insertIndex: next.index,
-        barLeft,
-        barWidth,
-      });
-    }
-    return bars;
-  }, [dragBarEnabled, visibleClips, getClipLeft, getClipWidth]);
-
-  const handleDragBarPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>, barLeft: number, barWidth: number) => {
+  const handlePlayBarPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -686,20 +677,8 @@ export function TimelineViewport({
     if (!content) return;
 
     const rect = content.getBoundingClientRect();
-    const startContentX = e.clientX - rect.left;
-
-    const initialContentX = barLeft + barWidth / 2;
-    
-    const initialClip = getClipAtX(initialContentX);
-    if (initialClip) {
-      const left = getClipLeft(initialClip);
-      const width = getClipWidth(initialClip);
-      const ratio = Math.max(0, Math.min(1, (initialContentX - left) / Math.max(1, width)));
-      const initialTime = thumbnailMode
-        ? initialClip.startTime + ratio * initialClip.duration
-        : initialContentX / pixelsPerSecond;
-      updatePlayheadTime(initialTime);
-    }
+    const initialContentX = e.clientX - rect.left;
+    updatePlayheadFromContentX(initialContentX);
 
     setScrubbingState({
       startX: e.clientX,
@@ -708,7 +687,7 @@ export function TimelineViewport({
       clientX: e.clientX,
       clientY: e.clientY,
     });
-  }, [getClipAtX, getClipLeft, getClipWidth, thumbnailMode, pixelsPerSecond, updatePlayheadTime]);
+  }, [updatePlayheadFromContentX]);
 
   const handleDragBarPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!scrubbingState) return;
@@ -717,16 +696,7 @@ export function TimelineViewport({
     const deltaX = e.clientX - scrubbingState.startX;
     const currentContentX = scrubbingState.startContentX + deltaX;
 
-    const clip = getClipAtX(currentContentX);
-    if (clip) {
-      const left = getClipLeft(clip);
-      const width = getClipWidth(clip);
-      const ratio = Math.max(0, Math.min(1, (currentContentX - left) / Math.max(1, width)));
-      const globalTime = thumbnailMode
-        ? clip.startTime + ratio * clip.duration
-        : currentContentX / pixelsPerSecond;
-      updatePlayheadTime(globalTime);
-    }
+    updatePlayheadFromContentX(currentContentX);
 
     setScrubbingState({
       ...scrubbingState,
@@ -734,7 +704,7 @@ export function TimelineViewport({
       clientX: e.clientX,
       clientY: e.clientY,
     });
-  }, [scrubbingState, getClipAtX, getClipLeft, getClipWidth, thumbnailMode, pixelsPerSecond, updatePlayheadTime]);
+  }, [scrubbingState, updatePlayheadFromContentX]);
 
   const handleDragBarPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!scrubbingState) return;
@@ -952,7 +922,56 @@ export function TimelineViewport({
     </div>
   ) : null;
 
+  const selectedFilmstripOverlay =
+    showPlayBarArea && selectedVideoClip && !interactions.isReordering ? (
+      <div
+        className="pointer-events-none absolute inset-0 z-[45]"
+        style={{
+          clipPath: `inset(-${FILMSTRIP_HEIGHT + FILMSTRIP_GAP + 12}px 0 -12px 0)`,
+        }}
+      >
+        <VideoSourceFilmStrip
+          key={`filmstrip-${selectedVideoClip.id}`}
+          clip={selectedVideoClip}
+          pixelsPerSecond={pixelsPerSecond}
+          leftOffset={firstOverhang + closingOverhangOffset + interactions.trackTranslateX - scrollLeft}
+          thumbnailMode={thumbnailMode}
+          gridMetrics={gridMetrics}
+          thumbnailWidth={thumbnailWidth}
+          thumbnailGap={THUMBNAIL_GAP}
+          topOffset={
+            (thumbnailMode && gridMetrics.enabled
+              ? getTimelineGridItemLayout(selectedVideoClip.index, gridMetrics).top
+              : 0) -
+            FILMSTRIP_HEIGHT -
+            FILMSTRIP_GAP
+          }
+          editingMode={
+            interactions.isFilmStripEditing &&
+            interactions.activeFilmStripEdit?.index === selectedVideoClip.index
+              ? interactions.activeFilmStripEdit.mode
+              : interactions.isResizing &&
+                  interactions.activeResize?.index === selectedVideoClip.index
+                ? interactions.activeResize.edge
+                : null
+          }
+          onSourceWindowPointerDown={interactions.handleFilmStripPointerDown}
+        />
+      </div>
+    ) : null;
+
+  const viewportWrapperStyle: CSSProperties = {
+    width: resolvedViewportWidth,
+    maxWidth: "100%",
+    minWidth: 0,
+    boxSizing: "border-box",
+  };
+
   return (
+    <div
+      className="relative block w-full max-w-full min-w-0"
+      style={viewportWrapperStyle}
+    >
     <div
       ref={parentRef}
       data-testid="timeline-scroll-viewport"
@@ -1062,32 +1081,47 @@ export function TimelineViewport({
                 );
               })()}
 
-              {/* Gaps Drag Bars */}
-              {dragBars.map((bar) => (
-                <div
-                  key={bar.id}
-                  onPointerDown={(e) => handleDragBarPointerDown(e, bar.barLeft, bar.barWidth)}
-                  onPointerMove={handleDragBarPointerMove}
-                  onPointerUp={handleDragBarPointerUp}
-                  onPointerCancel={handleDragBarPointerUp}
-                  className="absolute z-30 group cursor-ew-resize flex flex-col items-center justify-center transition-all duration-150"
-                  style={{
-                    left: `${bar.left}px`,
-                    width: "14px",
-                    height: `${itemHeight}px`,
-                    top: `${itemTop}px`,
-                  }}
-                  title="Drag to scrub playhead"
-                >
-                  {/* Visual Bar line */}
-                  <div className="w-[2px] h-full bg-zinc-700/60 group-hover:bg-amber-500/50 transition-colors duration-150 relative flex items-center justify-center">
-                    {/* Play Icon Pill in Center */}
-                    <div className="absolute w-5 h-5 rounded-full border border-zinc-700/80 bg-zinc-950 flex items-center justify-center shadow-md group-hover:border-amber-400 group-hover:bg-amber-950 transition-all duration-150">
-                      <Play className="h-2.5 w-2.5 text-zinc-400 group-hover:text-amber-400 fill-zinc-400 group-hover:fill-amber-400 ml-[1px]" />
+              {dragBarEnabled && visibleClips.map((clip) => {
+                const left = getClipLeft(clip);
+                const top = getClipTop(clip);
+                const width = getClipWidth(clip);
+                const frameSize =
+                  itemHeight === 80
+                    ? itemHeight
+                    : Math.max(56, Math.min(itemHeight, 96));
+                const topInset = Math.max(0, (itemHeight - frameSize) / 2);
+                const playBarHeight = topInset >= 30 ? 24 : 16;
+                const playBarTop = top + Math.max(3, topInset - playBarHeight - 4);
+
+                return (
+                  <div
+                    key={`${clip.id}-play-drag-overlay`}
+                    data-testid="timeline-clip-play-drag-overlay"
+                    data-clip-index={clip.index}
+                    onPointerDown={handlePlayBarPointerDown}
+                    onPointerMove={handleDragBarPointerMove}
+                    onPointerUp={handleDragBarPointerUp}
+                    onPointerCancel={handleDragBarPointerUp}
+                    className="absolute z-[35] group/playbar cursor-ew-resize px-1.5 transition-opacity duration-150"
+                    style={{
+                      left: `${left}px`,
+                      top: `${playBarTop}px`,
+                      width: `${width}px`,
+                      height: `${playBarHeight}px`,
+                      touchAction: "none",
+                    }}
+                    title="Drag to scrub playhead"
+                  >
+                    <div className="relative flex h-full w-full items-center rounded-full border border-zinc-700/70 bg-zinc-950/72 px-2 shadow-md backdrop-blur-sm transition-colors duration-150 group-hover/playbar:border-amber-400/70 group-hover/playbar:bg-amber-950/70">
+                      <div className="h-px flex-1 bg-zinc-600/70 transition-colors duration-150 group-hover/playbar:bg-amber-300/70" />
+                      <div className="mx-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-zinc-600/80 bg-black/80 shadow-sm transition-colors duration-150 group-hover/playbar:border-amber-300">
+                        <Play className="ml-[1px] h-2.5 w-2.5 fill-zinc-300 text-zinc-300 transition-colors duration-150 group-hover/playbar:fill-amber-300 group-hover/playbar:text-amber-300" />
+                      </div>
+                      <div className="h-px flex-1 bg-zinc-600/70 transition-colors duration-150 group-hover/playbar:bg-amber-300/70" />
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               {!interactions.isReordering &&
                 selectedIndex === null &&
@@ -1108,31 +1142,6 @@ export function TimelineViewport({
                   ) : null,
                 )}
 
-              {showPlayBarArea && selectedVideoClip && !interactions.isReordering && (
-                <VideoSourceFilmStrip
-                  key={`filmstrip-${selectedVideoClip.id}`}
-                  clip={selectedVideoClip}
-                  pixelsPerSecond={pixelsPerSecond}
-                  thumbnailMode={thumbnailMode}
-                  gridMetrics={gridMetrics}
-                  thumbnailWidth={thumbnailWidth}
-                  thumbnailGap={THUMBNAIL_GAP}
-                  editingMode={
-                    interactions.isFilmStripEditing &&
-                    interactions.activeFilmStripEdit?.index ===
-                      selectedVideoClip.index
-                      ? interactions.activeFilmStripEdit.mode
-                      : interactions.isResizing &&
-                          interactions.activeResize?.index ===
-                            selectedVideoClip.index
-                        ? interactions.activeResize.edge
-                        : null
-                  }
-                  onSourceWindowPointerDown={
-                    interactions.handleFilmStripPointerDown
-                  }
-                />
-              )}
             </>
           )}
         </div>
@@ -1349,6 +1358,8 @@ export function TimelineViewport({
           document.body
         );
       })()}
+    </div>
+    {selectedFilmstripOverlay}
     </div>
   );
 }
