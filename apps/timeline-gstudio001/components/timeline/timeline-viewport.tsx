@@ -23,7 +23,12 @@ import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,
 } from "./timeline-grid";
-import type { CollectionTimelineClip, TimelineClip, TrimScrubPreview } from "./types";
+import type {
+  CollectionEndpoint,
+  CollectionTimelineClip,
+  TimelineClip,
+  TrimScrubPreview,
+} from "./types";
 import { PassiveVideoFilmStrip, VideoSourceFilmStrip } from "./video-source-filmstrip";
 import { VideoTile } from "./video-tile";
 import { formatSeconds } from "./utils";
@@ -63,6 +68,13 @@ type TimelineViewportProps = {
   timelineHeight: number;
   timelineWidth: number;
   visibleClips: TimelineClip[];
+  expandedCollectionIds?: ReadonlySet<string>;
+  onToggleCollectionExpanded?: (clip: CollectionTimelineClip) => void;
+  exposedCollectionEndpointIds?: ReadonlySet<string>;
+  onToggleCollectionEndpoint?: (
+    clip: CollectionTimelineClip,
+    endpoint: CollectionEndpoint,
+  ) => void;
   onDropFiles?: (insertIndex: number, files: File[]) => void;
   onDropClip?: (insertIndex: number, clip: TimelineClip, sourceTimelineId: string) => void;
   onDropSidebarClip?: (insertIndex: number, type: "collection" | "image" | "video") => void;
@@ -110,6 +122,10 @@ export function TimelineViewport({
   timelineHeight,
   timelineWidth,
   visibleClips,
+  expandedCollectionIds,
+  onToggleCollectionExpanded,
+  exposedCollectionEndpointIds,
+  onToggleCollectionEndpoint,
   onDropFiles,
   onDropClip,
   onDropSidebarClip,
@@ -771,6 +787,7 @@ export function TimelineViewport({
           thumbnailWidth={thumbnailWidth}
           thumbnailGap={THUMBNAIL_GAP}
           topOffset={
+            itemTop +
             (thumbnailMode && gridMetrics.enabled
               ? getTimelineGridItemLayout(selectedVideoClip.index, gridMetrics).top
               : 0) -
@@ -797,7 +814,6 @@ export function TimelineViewport({
     minWidth: 0,
     boxSizing: "border-box",
   };
-
   return (
     <div
       className="relative block w-full max-w-full min-w-0"
@@ -889,9 +905,37 @@ export function TimelineViewport({
                   onResizeMove={interactions.handleResizeMove}
                   onResizeUp={interactions.handleResizeUp}
                   onResizeKeyDown={interactions.handleResizeKeyDown}
-                  onDurationLoaded={handleClipDurationLoad}
+                  onDurationLoaded={
+                    clip.viewRole ? undefined : handleClipDurationLoad
+                  }
                   getCollectionHref={getCollectionHref}
                   onOpenCollection={onOpenCollection}
+                  isCollectionExpanded={
+                    clip.kind === "collection" &&
+                    Boolean(expandedCollectionIds?.has(clip.viewExpansionKey ?? clip.id))
+                  }
+                  onToggleCollectionExpanded={
+                    clip.kind === "collection" ? onToggleCollectionExpanded : undefined
+                  }
+                  collectionEndpointSelection={
+                    clip.kind === "collection"
+                      ? {
+                          first: Boolean(
+                            exposedCollectionEndpointIds?.has(
+                              `${clip.viewExpansionKey ?? clip.id}::first`,
+                            ),
+                          ),
+                          last: Boolean(
+                            exposedCollectionEndpointIds?.has(
+                              `${clip.viewExpansionKey ?? clip.id}::last`,
+                            ),
+                          ),
+                        }
+                      : undefined
+                  }
+                  onToggleCollectionEndpoint={
+                    clip.kind === "collection" ? onToggleCollectionEndpoint : undefined
+                  }
                   timelineId={timelineId}
                 />
               ))}
@@ -917,7 +961,7 @@ export function TimelineViewport({
                 selectedIndex === null &&
                 showPlayBarArea &&
                 visibleClips.map((clip) =>
-                  clip.kind === "video" || clip.kind === "collection" || clip.kind === "image" ? (
+                  clip.kind === "video" || clip.kind === "image" ? (
                     <PassiveVideoFilmStrip
                       key={`${clip.id}-passive-filmstrip`}
                       clip={clip}

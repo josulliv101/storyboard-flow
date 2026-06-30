@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--default&viewMode=story";
+const COLLECTION_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--collection-timeline&viewMode=story";
 const THUMBNAIL_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--thumbnail-mode&viewMode=story";
 const FIRST_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--first-clip-selected-at-timeline-start&viewMode=story";
 const LAST_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--last-clip-selected-at-timeline-end&viewMode=story";
@@ -64,6 +65,40 @@ async function revealTimelineEnd(page: Page) {
   });
 }
 
+async function scrollTimelineUntilVisible(
+  page: Page,
+  locator: Locator,
+  direction: "left" | "right" = "right",
+) {
+  const viewport = page.getByTestId("timeline-scroll-viewport");
+
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    if ((await locator.count()) > 0) {
+      const target = locator.first();
+      await target.scrollIntoViewIfNeeded();
+      if (await target.isVisible()) return;
+    }
+
+    const moved = await viewport.evaluate((element, scrollDirection) => {
+      element.style.scrollBehavior = "auto";
+      const previous = element.scrollLeft;
+      const step = Math.max(160, element.clientWidth * 0.7);
+      const next =
+        scrollDirection === "left"
+          ? Math.max(0, previous - step)
+          : Math.min(element.scrollWidth - element.clientWidth, previous + step);
+      element.scrollLeft = next;
+      element.dispatchEvent(new Event("scroll"));
+      return element.scrollLeft !== previous;
+    }, direction);
+
+    if (!moved) break;
+    await page.waitForTimeout(50);
+  }
+
+  await expect(locator.first()).toBeVisible();
+}
+
 async function openLastStory(page: Page) {
   await openStory(page, LAST_STORY_URL);
   await expect(page.getByTestId("timeline-clip-11")).toHaveAttribute("data-selected", "true");
@@ -82,32 +117,185 @@ test("selects a clip and exposes its source filmstrip", async ({ page }) => {
   await expect(page.getByTestId("timeline-source-filmstrip")).toBeVisible();
 });
 
-test("selected collection source filmstrip shows only endpoint items at collection width", async ({ page }) => {
+test("collection cards expand inline and collapse back to a collection card", async ({ page }) => {
+  await openStory(page, COLLECTION_STORY_URL);
+  const editor = page.getByTestId("timeline-editor");
+  if ((await editor.getAttribute("data-playbar-area")) !== "true") {
+    await page.getByRole("switch", { name: "Play bar" }).click();
+  }
+  const initialItemCount = await numberAttribute(editor, "data-item-count");
+
+  const collection = page.getByTestId("timeline-clip-4").first();
+  await collection.scrollIntoViewIfNeeded();
+  await collection.click();
+  await expect(collection).toHaveAttribute("data-selected", "true");
+  await expect(
+    page.locator('[data-testid="timeline-source-filmstrip"][data-clip-index="4"]'),
+  ).toHaveCount(0);
+
+  const toggle = collection.getByTestId("timeline-collection-expand-toggle");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  await expect.poll(() => numberAttribute(editor, "data-item-count")).toBeGreaterThan(initialItemCount);
+  await expect(page.locator('[data-testid="timeline-editor"][data-timeline-id="scene-a"]')).toHaveCount(0);
+
+  const collapseCard = page.locator(
+    '[data-testid^="timeline-clip-"][data-view-role="collection-collapse"][data-expansion-key="root-scene-a"]',
+  );
+  await expect(collapseCard).toBeVisible();
+  await expect(page.getByTestId("timeline-expanded-collection-bar-lane")).toHaveCount(0);
+  await expect(
+    collapseCard.getByTestId("timeline-expanded-collection-breadcrumb"),
+  ).toHaveAttribute("data-depth", "1");
+  await expect(
+    collapseCard.locator('[data-testid="timeline-expanded-collection-breadcrumb-shape"][data-depth-level="0"]').first(),
+  ).toBeVisible();
+  await expect(collapseCard.getByTestId("timeline-collection-expand-toggle")).toHaveAttribute("aria-expanded", "true");
+  const sceneAChild = page.locator(
+    '[data-testid^="timeline-clip-"][data-view-role="expanded-child"][data-source-timeline-id="scene-a"]',
+  ).first();
+  await expect(sceneAChild).toBeVisible();
+  await expect(sceneAChild.getByTestId("timeline-expanded-collection-breadcrumb")).toHaveAttribute("data-depth", "1");
+
+  const nestedCollection = page.locator(
+    '[data-testid^="timeline-clip-"][data-source-clip-id="scene-a-nested-collection"]',
+  );
+  await scrollTimelineUntilVisible(page, nestedCollection);
+  await expect(nestedCollection.getByTestId("timeline-expanded-collection-breadcrumb")).toHaveAttribute("data-depth", "1");
+  const nestedToggle = nestedCollection.getByTestId("timeline-collection-expand-toggle");
+  await expect(nestedToggle).toHaveAttribute("aria-expanded", "false");
+  await nestedToggle.click();
+  await expect(nestedToggle).toHaveAttribute("aria-expanded", "true");
+
+  const nestedCollapseCard = page.locator(
+    '[data-testid^="timeline-clip-"][data-view-role="collection-collapse"][data-expansion-key="root-scene-a/scene-a-nested-collection"]',
+  );
+  await expect(nestedCollapseCard).toBeVisible();
+  await expect(nestedCollapseCard.getByTestId("timeline-expanded-collection-breadcrumb")).toHaveAttribute("data-depth", "2");
+  await expect(
+    nestedCollapseCard.locator('[data-testid="timeline-expanded-collection-breadcrumb-shape"][data-depth-level="0"]').first(),
+  ).toBeVisible();
+  await expect(
+    nestedCollapseCard.locator('[data-testid="timeline-expanded-collection-breadcrumb-shape"][data-depth-level="1"]').first(),
+  ).toBeVisible();
+  const sceneADetailsChild = page.locator(
+    '[data-testid^="timeline-clip-"][data-view-role="expanded-child"][data-source-timeline-id="scene-a-details"]',
+  ).first();
+  await expect(sceneADetailsChild).toBeVisible();
+  await expect(sceneADetailsChild.getByTestId("timeline-expanded-collection-breadcrumb")).toHaveAttribute("data-depth", "2");
+  await expect(page.locator('[data-testid="timeline-editor"][data-timeline-id="scene-a-details"]')).toHaveCount(0);
+
+  await nestedCollapseCard.getByTestId("timeline-collection-expand-toggle").click();
+  await expect(
+    page.locator('[data-testid^="timeline-clip-"][data-view-role="expanded-child"][data-source-timeline-id="scene-a-details"]'),
+  ).toHaveCount(0);
+
+  await scrollTimelineUntilVisible(page, collapseCard, "left");
+  await collapseCard.getByTestId("timeline-collection-expand-toggle").click();
+  await expect.poll(() => numberAttribute(editor, "data-item-count")).toBe(initialItemCount);
+  await expect(
+    page.locator('[data-testid^="timeline-clip-"][data-view-role="expanded-child"][data-source-timeline-id="scene-a"]'),
+  ).toHaveCount(0);
+});
+
+test("collection edge thumbnails expose editable first and last child clips inline", async ({ page }) => {
+  await openStory(page, COLLECTION_STORY_URL);
+  const editor = page.getByTestId("timeline-editor");
+  const initialItemCount = await numberAttribute(editor, "data-item-count");
+  const rootCollection = () =>
+    page
+      .locator(
+        '[data-testid^="timeline-clip-"][data-source-clip-id="root-scene-a"][data-view-role=""]',
+      )
+      .first();
+
+  const collection = rootCollection();
+  await collection.scrollIntoViewIfNeeded();
+
+  const firstButton = collection.locator(
+    '[data-testid="timeline-collection-preview-endpoint"][data-endpoint="first"]',
+  );
+  await expect(firstButton).toHaveAttribute("aria-pressed", "false");
+  await firstButton.click();
+  await expect.poll(() => numberAttribute(editor, "data-item-count")).toBe(initialItemCount + 1);
+
+  const firstEndpointClips = page.locator(
+    '[data-testid^="timeline-clip-"][data-view-role="collection-endpoint"][data-view-endpoint="first"][data-source-timeline-id="scene-a"][data-source-clip-id="scene-a-clip-0"]',
+  );
+  await expect(firstEndpointClips).toHaveCount(1);
+  const firstEndpoint = firstEndpointClips.first();
+  await expect(firstEndpoint).toBeVisible();
+  expect(await numberAttribute(firstEndpoint, "data-clip-index")).toBeLessThan(
+    await numberAttribute(rootCollection(), "data-clip-index"),
+  );
+
+  await firstEndpoint.click();
+  await expect(firstEndpoint).toHaveAttribute("data-selected", "true");
+  await expect(page.getByTestId("timeline-trim-left")).toBeVisible();
+  await expect(page.getByTestId("timeline-trim-right")).toBeVisible();
+
+  const collectionAfterFirst = rootCollection();
+  await collectionAfterFirst.scrollIntoViewIfNeeded();
+  await expect(
+    collectionAfterFirst.locator(
+      '[data-testid="timeline-collection-preview-endpoint"][data-endpoint="first"]',
+    ),
+  ).toHaveAttribute("aria-pressed", "true");
+  await collectionAfterFirst
+    .locator('[data-testid="timeline-collection-preview-endpoint"][data-endpoint="first"]')
+    .click();
+  await expect.poll(() => numberAttribute(editor, "data-item-count")).toBe(initialItemCount);
+  await expect(firstEndpointClips).toHaveCount(0);
+
+  const collectionBeforeLast = rootCollection();
+  await collectionBeforeLast.scrollIntoViewIfNeeded();
+  const lastButton = collectionBeforeLast.locator(
+    '[data-testid="timeline-collection-preview-endpoint"][data-endpoint="last"]',
+  );
+  await expect(lastButton).toHaveAttribute("aria-pressed", "false");
+  await lastButton.click();
+  await expect.poll(() => numberAttribute(editor, "data-item-count")).toBe(initialItemCount + 1);
+
+  const lastEndpointClips = page.locator(
+    '[data-testid^="timeline-clip-"][data-view-role="collection-endpoint"][data-view-endpoint="last"][data-source-timeline-id="scene-a"][data-source-clip-id="scene-a-clip-8"]',
+  );
+  await expect(lastEndpointClips).toHaveCount(1);
+  const lastEndpoint = lastEndpointClips.first();
+  await lastEndpoint.scrollIntoViewIfNeeded();
+  expect(await numberAttribute(lastEndpoint, "data-clip-index")).toBeGreaterThan(
+    await numberAttribute(rootCollection(), "data-clip-index"),
+  );
+
+  await lastEndpoint.click();
+  await expect(lastEndpoint).toHaveAttribute("data-selected", "true");
+  await expect(page.getByTestId("timeline-trim-left")).toBeVisible();
+  await expect(page.getByTestId("timeline-trim-right")).toBeVisible();
+
+  const collectionAfterLast = rootCollection();
+  await collectionAfterLast.scrollIntoViewIfNeeded();
+  await collectionAfterLast
+    .locator('[data-testid="timeline-collection-preview-endpoint"][data-endpoint="last"]')
+    .click();
+  await expect.poll(() => numberAttribute(editor, "data-item-count")).toBe(initialItemCount);
+  await expect(lastEndpointClips).toHaveCount(0);
+});
+
+test("selected image source filmstrip handles resize the image duration", async ({ page }) => {
+  await openStory(page, COLLECTION_STORY_URL);
   const editor = page.getByTestId("timeline-editor");
   if ((await editor.getAttribute("data-playbar-area")) !== "true") {
     await page.getByRole("switch", { name: "Play bar" }).click();
   }
 
-  const collection = page.getByTestId("timeline-clip-4");
-  await collection.click();
+  const imageClip = page.getByTestId("timeline-clip-5").first();
+  await imageClip.scrollIntoViewIfNeeded();
+  await imageClip.click();
+  const initialDuration = await numberAttribute(imageClip, "data-duration");
 
-  const filmstrip = page.locator(
-    '[data-testid="timeline-source-filmstrip"][data-clip-index="4"]',
-  );
-  await expect(collection).toHaveAttribute("data-selected", "true");
-  await expect(filmstrip).toBeVisible();
-  await expect(page.getByTestId("timeline-collection-omitted-marker")).toBeVisible();
-  await expect(page.getByTestId("timeline-collection-endpoint-frame")).toHaveCount(2);
-  await expect(page.getByTestId("timeline-source-trim-left")).toBeVisible();
-  await expect(page.getByTestId("timeline-source-trim-right")).toBeVisible();
+  await expect(page.getByTestId("timeline-source-filmstrip")).toHaveAttribute("data-clip-index", "5");
+  await dragBy(page, page.getByTestId("timeline-source-trim-right"), 80);
 
-  const collectionBox = await collection.boundingBox();
-  const filmstripBox = await filmstrip.boundingBox();
-  if (!collectionBox || !filmstripBox) {
-    throw new Error("Collection and filmstrip must be visible");
-  }
-
-  expect(Math.abs(collectionBox.width - filmstripBox.width)).toBeLessThanOrEqual(1);
+  await expect.poll(() => numberAttribute(imageClip, "data-duration")).toBeGreaterThan(initialDuration);
 });
 
 test("filmstrip setting shows passive read-only filmstrips for inactive video clips", async ({ page }) => {

@@ -1,4 +1,5 @@
 export type MediaKind = "image" | "video";
+export type CollectionEndpoint = "first" | "last";
 
 export type TimelineItemBase = {
   id: string;
@@ -21,6 +22,18 @@ export type TimelineItemBase = {
   playbackStartTime?: number;
   /** Optional unscaled playback duration used when visual width differs from playback time. */
   playbackDuration?: number;
+  /** Transient view key used when a collection is expanded inline. */
+  viewExpansionKey?: string;
+  /** Transient source timeline for inline-expanded child clips. */
+  viewSourceTimelineId?: string;
+  /** Transient source clip id for inline-expanded child clips. */
+  viewSourceClipId?: string;
+  /** Transient nesting depth for inline-expanded collection views. */
+  viewDepth?: number;
+  /** Transient endpoint exposed from a collection preview. */
+  viewEndpoint?: CollectionEndpoint;
+  /** Transient role for synthetic inline-expanded collection cards. */
+  viewRole?: "collection-collapse" | "expanded-child" | "collection-endpoint";
 };
 
 export type ImageTimelineClip = TimelineItemBase & {

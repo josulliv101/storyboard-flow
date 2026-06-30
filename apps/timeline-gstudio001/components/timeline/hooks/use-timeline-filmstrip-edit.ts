@@ -5,7 +5,7 @@ import type { TimelineClip, VideoSourceWindowEditMode } from "../types";
 import { getSourceTimeFromClientX } from "../utils";
 import type { TimelineInteractionSharedOptions } from "./timeline-interaction-types";
 import { editVideoSourceWindowFromBaseline } from "./use-timeline-clips";
-import { getCollectionClipSourceDuration } from "@/lib/timeline-documents";
+import { getCollectionEndpointSummary } from "@/lib/timeline-documents";
 
 type UseTimelineFilmstripEditOptions = TimelineInteractionSharedOptions & {
   thumbnailMode: boolean;
@@ -76,8 +76,9 @@ export function useTimelineFilmstripEdit({
       clip: TimelineClip,
       mode: VideoSourceWindowEditMode,
     ) => {
-      if (clip.kind !== "video" && clip.kind !== "collection") return;
+      if (clip.kind !== "video" && clip.kind !== "collection" && clip.kind !== "image") return;
       if (clip.kind === "collection" && mode !== "left" && mode !== "right") return;
+      if (clip.kind === "image" && mode !== "left" && mode !== "right") return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
 
       const filmStripElement = (event.target as HTMLElement).closest(
@@ -94,7 +95,7 @@ export function useTimelineFilmstripEdit({
       const rect = filmStripElement.getBoundingClientRect();
       const sourceDuration =
         clip.kind === "collection"
-          ? getCollectionClipSourceDuration(clip)
+          ? getCollectionEndpointSummary(clip).sourceDuration
           : clip.sourceDuration;
       const startSourceTime = getSourceTimeFromClientX({
         clientX: event.clientX,
@@ -122,10 +123,7 @@ export function useTimelineFilmstripEdit({
         startSourceTime,
         lastSourceTime: startSourceTime,
         pointerId: event.pointerId,
-        sourceSecondsPerPixel:
-          clip.kind === "collection"
-            ? sourceDuration / Math.max(1, rect.width)
-            : 1 / safePixelsPerSecond,
+        sourceSecondsPerPixel: 1 / safePixelsPerSecond,
         startScrollLeft: parentRef.current?.scrollLeft ?? 0,
         moved: mode === "center",
         baselineClips,

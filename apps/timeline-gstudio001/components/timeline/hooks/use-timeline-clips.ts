@@ -133,6 +133,22 @@ export function resizeClipsFromBaseline({
   const clip = baselineClips[anchorIndex];
   if (!clip) return baselineClips;
 
+  if (clip.kind === "image") {
+    const nextDuration = Math.max(
+      minDuration,
+      edge === "left" ? clip.duration - deltaTime : clip.duration + deltaTime,
+    );
+    const resizedClip: TimelineClip = {
+      ...clip,
+      duration: nextDuration,
+      sourceDuration: Math.max(clip.sourceDuration, nextDuration),
+      trimIn: 0,
+      trimOut: 0,
+    };
+
+    return packClipsLeftToRight(baselineClips, anchorIndex, resizedClip);
+  }
+
   if (edge === "left") {
     const maxDurationFromSource = clip.sourceDuration - clip.trimOut;
     // We are dragging the left edge, so decreasing trimIn and increasing duration.
@@ -247,31 +263,61 @@ export function editVideoSourceWindowFromBaseline({
   minDuration: number;
 }) {
   const clip = baselineClips[anchorIndex];
-  if (!clip || (clip.kind !== "video" && clip.kind !== "collection")) return baselineClips;
+  if (!clip || (clip.kind !== "video" && clip.kind !== "collection" && clip.kind !== "image")) return baselineClips;
+
+  if (clip.kind === "image") {
+    if (mode !== "left" && mode !== "right") return baselineClips;
+
+    if (mode === "left") {
+      const nextDuration = Math.max(minDuration, clip.duration - deltaTime);
+      const resizedClip: TimelineClip = {
+        ...clip,
+        duration: nextDuration,
+        sourceDuration: Math.max(clip.sourceDuration, nextDuration),
+        trimIn: 0,
+        trimOut: 0,
+      };
+      return packClipsLeftToRight(baselineClips, anchorIndex, resizedClip);
+    }
+
+    const nextDuration = Math.max(minDuration, clip.duration + deltaTime);
+    const resizedClip: TimelineClip = {
+      ...clip,
+      duration: nextDuration,
+      sourceDuration: Math.max(clip.sourceDuration, nextDuration),
+      trimIn: 0,
+      trimOut: 0,
+    };
+    return packClipsLeftToRight(baselineClips, anchorIndex, resizedClip);
+  }
 
   if (clip.kind === "collection") {
     if (mode !== "left" && mode !== "right") return baselineClips;
 
     const sourceDuration = Math.max(clip.sourceDuration, clip.duration);
-    const nextClips = baselineClips.map((currentClip) => ({ ...currentClip }));
 
     if (mode === "left") {
       const maxTrimIn = Math.max(0, sourceDuration - clip.trimOut - minDuration);
-      nextClips[anchorIndex] = {
+      const nextTrimIn = clamp(clip.trimIn + deltaTime, 0, maxTrimIn);
+      const trimDiff = nextTrimIn - clip.trimIn;
+      const resizedClip: TimelineClip = {
         ...clip,
         sourceDuration,
-        trimIn: clamp(clip.trimIn + deltaTime, 0, maxTrimIn),
+        trimIn: nextTrimIn,
+        duration: clip.duration - trimDiff,
       };
-      return nextClips;
+      return packClipsLeftToRight(baselineClips, anchorIndex, resizedClip);
     }
 
-    const maxTrimOut = Math.max(0, sourceDuration - clip.trimIn - minDuration);
-    nextClips[anchorIndex] = {
+    const maxDuration = sourceDuration - clip.trimIn;
+    const nextDuration = clamp(clip.duration + deltaTime, minDuration, maxDuration);
+    const resizedClip: TimelineClip = {
       ...clip,
       sourceDuration,
-      trimOut: clamp(clip.trimOut - deltaTime, 0, maxTrimOut),
+      duration: nextDuration,
+      trimOut: Math.max(0, sourceDuration - clip.trimIn - nextDuration),
     };
-    return nextClips;
+    return packClipsLeftToRight(baselineClips, anchorIndex, resizedClip);
   }
 
   if (mode === "move" || mode === "center") {

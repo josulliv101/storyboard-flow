@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
+import { getTimelineDocument } from "@/lib/timeline-documents";
 import { SmoothScrollList } from "./smooth-scroll-list";
 
 const meta = {
@@ -28,6 +29,19 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
+
+export const CollectionTimeline: Story = {
+  args: {
+    initialClips: getTimelineDocument("root")?.clips,
+    itemCount: getTimelineDocument("root")?.clips.length ?? 0,
+    initialViewState: {
+      showPlayBarArea: true,
+      thumbnailMode: true,
+    },
+    syncMediaDuration: false,
+    timelineId: "root",
+  },
+};
 
 export const ThumbnailMode: Story = {
   args: {
