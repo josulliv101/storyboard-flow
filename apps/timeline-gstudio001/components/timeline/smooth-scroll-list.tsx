@@ -429,8 +429,6 @@ export function SmoothScrollList({
       ) ?? null
     );
   }, [clipState.clips, clipState.selectedIndex]);
-  const selectedVideoClip =
-    selectedClip?.kind === "video" || selectedClip?.kind === "collection" || selectedClip?.kind === "image" ? selectedClip : null;
 
   const childCollections = useMemo(() => {
     if (!hierarchyMode) return [];
@@ -487,6 +485,16 @@ export function SmoothScrollList({
       return adjClip;
     });
   }, [clipState.clips, thumbnailMode, effectiveThumbnailWidth, zoom.safePixelsPerSecond]);
+  const selectedDisplayClip = useMemo(() => {
+    if (clipState.selectedIndex === null) return null;
+    return (
+      adjustedClips.find(
+        (clip) => clip.index === clipState.selectedIndex,
+      ) ?? null
+    );
+  }, [adjustedClips, clipState.selectedIndex]);
+  const selectedVideoClip =
+    selectedDisplayClip?.kind === "video" || selectedDisplayClip?.kind === "collection" || selectedDisplayClip?.kind === "image" ? selectedDisplayClip : null;
 
   const getCollectionHref = useCallback(
     (nextTimelineId: string) => {

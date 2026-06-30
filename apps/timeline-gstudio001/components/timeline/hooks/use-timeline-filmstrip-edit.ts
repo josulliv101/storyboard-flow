@@ -5,6 +5,7 @@ import type { TimelineClip, VideoSourceWindowEditMode } from "../types";
 import { getSourceTimeFromClientX } from "../utils";
 import type { TimelineInteractionSharedOptions } from "./timeline-interaction-types";
 import { editVideoSourceWindowFromBaseline } from "./use-timeline-clips";
+import { getCollectionClipSourceDuration } from "@/lib/timeline-documents";
 
 type UseTimelineFilmstripEditOptions = TimelineInteractionSharedOptions & {
   thumbnailMode: boolean;
@@ -40,6 +41,7 @@ export function useTimelineFilmstripEdit({
     startSourceTime: 0,
     lastSourceTime: 0,
     pointerId: -1,
+    sourceSecondsPerPixel: 0,
     startScrollLeft: 0,
     moved: false,
     baselineClips: null as TimelineClip[] | null,
@@ -74,7 +76,8 @@ export function useTimelineFilmstripEdit({
       clip: TimelineClip,
       mode: VideoSourceWindowEditMode,
     ) => {
-      if (clip.kind !== "video") return;
+      if (clip.kind !== "video" && clip.kind !== "collection") return;
+      if (clip.kind === "collection" && mode !== "left" && mode !== "right") return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
 
       const filmStripElement = (event.target as HTMLElement).closest(
@@ -89,12 +92,26 @@ export function useTimelineFilmstripEdit({
       setSelectedIndex(clip.index);
 
       const rect = filmStripElement.getBoundingClientRect();
+      const sourceDuration =
+        clip.kind === "collection"
+          ? getCollectionClipSourceDuration(clip)
+          : clip.sourceDuration;
       const startSourceTime = getSourceTimeFromClientX({
         clientX: event.clientX,
         rectLeft: rect.left,
         rectWidth: Math.max(1, rect.width),
-        sourceDuration: clip.sourceDuration,
+        sourceDuration,
       });
+      const baselineClips = clips.map((currentClip) => ({ ...currentClip }));
+      if (clip.kind === "collection") {
+        const baselineClip = baselineClips[clip.index];
+        if (baselineClip?.kind === "collection") {
+          baselineClips[clip.index] = {
+            ...baselineClip,
+            sourceDuration,
+          };
+        }
+      }
       const state = editState.current;
       Object.assign(state, {
         active: true,
@@ -105,9 +122,13 @@ export function useTimelineFilmstripEdit({
         startSourceTime,
         lastSourceTime: startSourceTime,
         pointerId: event.pointerId,
+        sourceSecondsPerPixel:
+          clip.kind === "collection"
+            ? sourceDuration / Math.max(1, rect.width)
+            : 1 / safePixelsPerSecond,
         startScrollLeft: parentRef.current?.scrollLeft ?? 0,
         moved: mode === "center",
-        baselineClips: clips.map((currentClip) => ({ ...currentClip })),
+        baselineClips,
       });
       setIsFilmStripEditing(true);
       setActiveFilmStripEdit({ index: clip.index, mode });
@@ -118,7 +139,8 @@ export function useTimelineFilmstripEdit({
 
         const sourceTime =
           currentState.startSourceTime +
-          (clientX - currentState.startX) / safePixelsPerSecond;
+          (clientX - currentState.startX) *
+            currentState.sourceSecondsPerPixel;
         currentState.lastX = clientX;
         currentState.lastSourceTime = sourceTime;
         return editVideoSourceWindowFromBaseline({
@@ -158,7 +180,7 @@ export function useTimelineFilmstripEdit({
           setTrackTranslateX(0);
         }
 
-        if (previewClip?.kind === "video") {
+        if (previewClip?.kind === "video" || previewClip?.kind === "collection") {
           setScrubPreview({
             clipIndex: previewClip.index,
             time: previewClip.trimIn,

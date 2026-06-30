@@ -247,7 +247,32 @@ export function editVideoSourceWindowFromBaseline({
   minDuration: number;
 }) {
   const clip = baselineClips[anchorIndex];
-  if (!clip || clip.kind !== "video") return baselineClips;
+  if (!clip || (clip.kind !== "video" && clip.kind !== "collection")) return baselineClips;
+
+  if (clip.kind === "collection") {
+    if (mode !== "left" && mode !== "right") return baselineClips;
+
+    const sourceDuration = Math.max(clip.sourceDuration, clip.duration);
+    const nextClips = baselineClips.map((currentClip) => ({ ...currentClip }));
+
+    if (mode === "left") {
+      const maxTrimIn = Math.max(0, sourceDuration - clip.trimOut - minDuration);
+      nextClips[anchorIndex] = {
+        ...clip,
+        sourceDuration,
+        trimIn: clamp(clip.trimIn + deltaTime, 0, maxTrimIn),
+      };
+      return nextClips;
+    }
+
+    const maxTrimOut = Math.max(0, sourceDuration - clip.trimIn - minDuration);
+    nextClips[anchorIndex] = {
+      ...clip,
+      sourceDuration,
+      trimOut: clamp(clip.trimOut - deltaTime, 0, maxTrimOut),
+    };
+    return nextClips;
+  }
 
   if (mode === "move" || mode === "center") {
     const maxTrimIn = Math.max(0, clip.sourceDuration - clip.duration);

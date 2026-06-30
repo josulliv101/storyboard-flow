@@ -1,4 +1,5 @@
 import React from "react";
+import { Ellipsis } from "lucide-react";
 import type {
   CollectionTimelineClip,
   VideoSourceWindowEditMode,
@@ -138,19 +139,29 @@ export function VideoSourceFilmStrip({
     ? clip.index * (thumbnailWidth + thumbnailGap)
     : clip.startTime * pixelsPerSecond;
   const top = topOffset ?? (gridLayout?.top ?? 0);
+  const isCollection = clip.kind === "collection";
   
-  const sourceDuration = clip.kind === "collection" ? getCollectionClipSourceDuration(clip) : (clip as VideoTimelineClip).sourceDuration;
-  const trimIn = clip.kind === "collection" ? 0 : (clip as VideoTimelineClip).trimIn;
+  const sourceDuration = isCollection ? getCollectionClipSourceDuration(clip) : (clip as VideoTimelineClip).sourceDuration;
+  const trimIn = clip.trimIn;
+  const trimOut = clip.trimOut;
+  const collectionStartTime = Math.min(trimIn, Math.max(0, sourceDuration - 0.001));
+  const collectionEndTime = Math.max(
+    collectionStartTime,
+    sourceDuration - trimOut - 0.001,
+  );
 
-  const selectedWidth = clip.duration * pixelsPerSecond;
-  const sourceWidth = sourceDuration * pixelsPerSecond;
+  const timelineSelectedWidth = clip.duration * pixelsPerSecond;
   const trimInWidth = trimIn * pixelsPerSecond;
   const clipDisplayWidth = gridLayout
     ? gridLayout.width
     : thumbnailMode
     ? thumbnailWidth
-    : selectedWidth;
-  const computedSourceLeft = selectedLeft + clipDisplayWidth / 2 - (trimInWidth + selectedWidth / 2);
+    : timelineSelectedWidth;
+  const selectedWidth = isCollection ? clipDisplayWidth : timelineSelectedWidth;
+  const sourceWidth = isCollection ? clipDisplayWidth : sourceDuration * pixelsPerSecond;
+  const computedSourceLeft = isCollection
+    ? selectedLeft
+    : selectedLeft + clipDisplayWidth / 2 - (trimInWidth + selectedWidth / 2);
 
   const [frozenState, setFrozenState] = React.useState<{ editingMode: VideoSourceWindowEditMode | null, sourceLeft: number | null }>({
     editingMode,
@@ -167,10 +178,12 @@ export function VideoSourceFilmStrip({
   const sourceLeft = frozenState.sourceLeft !== null ? frozenState.sourceLeft : computedSourceLeft;
 
   const frameSize = FILMSTRIP_HEIGHT;
-  const frameTimes = getEndpointFrameTimes({
-    count: getThumbnailSlotCount(sourceWidth, frameSize),
-    endTime: Math.max(0, sourceDuration - 0.05),
-  });
+  const frameTimes = isCollection
+    ? [collectionStartTime, collectionEndTime]
+    : getEndpointFrameTimes({
+        count: getThumbnailSlotCount(sourceWidth, frameSize),
+        endTime: Math.max(0, sourceDuration - 0.05),
+      });
 
   return (
     <div
@@ -178,7 +191,9 @@ export function VideoSourceFilmStrip({
       data-testid="timeline-source-filmstrip"
       data-clip-index={clip.index}
       className="pointer-events-auto absolute left-0 top-0 touch-none rounded-md border border-zinc-600 bg-zinc-950 shadow-[0_10px_24px_rgba(0,0,0,0.35)]"
-      onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "move")}
+      onPointerDown={(e) => {
+        if (!isCollection) onSourceWindowPointerDown(e, clip, "move");
+      }}
       onPointerCancel={(e) => e.stopPropagation()}
       onDragStart={(e) => e.preventDefault()}
       style={{
@@ -188,17 +203,19 @@ export function VideoSourceFilmStrip({
         transition: editingMode ? "none" : "transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
         zIndex: 35,
       }}
-      aria-label={`${clip.alt} full source filmstrip`}
+      aria-label={isCollection ? `${clip.alt} collection endpoints` : `${clip.alt} full source filmstrip`}
     >
       <div className="absolute inset-0 flex overflow-hidden rounded-md touch-none select-none">
         {frameTimes.map((time, index) => {
-          if (clip.kind === "collection") {
+          if (isCollection) {
             const preview = getCollectionFramePreview(clip.childTimelineId, time);
             return (
               <div
                 key={`${clip.id}-film-frame-${index}`}
+                data-testid="timeline-collection-endpoint-frame"
+                data-endpoint={index === 0 ? "first" : "last"}
                 className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
-                style={{ width: `${frameSize}px` }}
+                style={{ width: "50%" }}
               >
                 {preview ? (
                   preview.kind === "video" ? (
@@ -293,31 +310,60 @@ export function VideoSourceFilmStrip({
         })}
       </div>
 
-      <div
-        data-testid="timeline-source-window"
-        className="absolute inset-y-0 cursor-grab touch-none select-none rounded-sm border-2 border-amber-300 bg-amber-300/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)] active:cursor-grabbing"
-        style={{
-          width: `${selectedWidth}px`,
-          transform: `translateX(${trimInWidth}px)`,
-        }}
-        onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "move")}
-        onPointerCancel={(e) => e.stopPropagation()}
-        onDragStart={(e) => e.preventDefault()}
-        title="Drag to move the source window"
-      >
+      {isCollection ? (
+        <>
+          <div
+            data-testid="timeline-source-window"
+            className="absolute inset-y-0 touch-none select-none rounded-sm border-2 border-amber-300 bg-amber-300/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
+          >
+            <div
+              data-testid="timeline-source-trim-left"
+              className="absolute inset-y-0 left-0 z-20 w-3 cursor-ew-resize touch-none rounded-l-sm bg-amber-200/90"
+              onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "left")}
+              title="Trim collection start"
+            />
+            <div
+              data-testid="timeline-source-trim-right"
+              className="absolute inset-y-0 right-0 z-20 w-3 cursor-ew-resize touch-none rounded-r-sm bg-amber-200/90"
+              onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "right")}
+              title="Trim collection end"
+            />
+          </div>
+          <div
+            data-testid="timeline-collection-omitted-marker"
+            className="pointer-events-none absolute left-1/2 top-1/2 z-10 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-sky-200/50 bg-zinc-950/85 text-sky-100 shadow-[0_0_0_1px_rgba(0,0,0,0.45),0_8px_18px_rgba(0,0,0,0.35)]"
+            aria-label="Only first and last collection items shown"
+          >
+            <Ellipsis className="h-4 w-4" aria-hidden="true" />
+          </div>
+        </>
+      ) : (
         <div
-          data-testid="timeline-source-trim-left"
-          className="absolute inset-y-0 left-0 w-2 cursor-ew-resize touch-none rounded-l-sm bg-amber-200/90"
-          onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "left")}
-          title="Adjust source start"
-        />
-        <div
-          data-testid="timeline-source-trim-right"
-          className="absolute inset-y-0 right-0 w-2 cursor-ew-resize touch-none rounded-r-sm bg-amber-200/90"
-          onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "right")}
-          title="Adjust source end"
-        />
-      </div>
+          data-testid="timeline-source-window"
+          className="absolute inset-y-0 cursor-grab touch-none select-none rounded-sm border-2 border-amber-300 bg-amber-300/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)] active:cursor-grabbing"
+          style={{
+            width: `${selectedWidth}px`,
+            transform: `translateX(${trimInWidth}px)`,
+          }}
+          onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "move")}
+          onPointerCancel={(e) => e.stopPropagation()}
+          onDragStart={(e) => e.preventDefault()}
+          title="Drag to move the source window"
+        >
+          <div
+            data-testid="timeline-source-trim-left"
+            className="absolute inset-y-0 left-0 w-2 cursor-ew-resize touch-none rounded-l-sm bg-amber-200/90"
+            onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "left")}
+            title="Adjust source start"
+          />
+          <div
+            data-testid="timeline-source-trim-right"
+            className="absolute inset-y-0 right-0 w-2 cursor-ew-resize touch-none rounded-r-sm bg-amber-200/90"
+            onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "right")}
+            title="Adjust source end"
+          />
+        </div>
+      )}
 
       <div className="pointer-events-none absolute left-1/2 top-0.5 -translate-x-1/2 rounded-full bg-black/75 px-2 py-0.5 font-mono text-[9px] text-zinc-100">
         {clip.kind === "collection" ? "collection" : "full clip"} {formatSeconds(sourceDuration)}

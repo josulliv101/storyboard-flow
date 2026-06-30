@@ -82,6 +82,34 @@ test("selects a clip and exposes its source filmstrip", async ({ page }) => {
   await expect(page.getByTestId("timeline-source-filmstrip")).toBeVisible();
 });
 
+test("selected collection source filmstrip shows only endpoint items at collection width", async ({ page }) => {
+  const editor = page.getByTestId("timeline-editor");
+  if ((await editor.getAttribute("data-playbar-area")) !== "true") {
+    await page.getByRole("switch", { name: "Play bar" }).click();
+  }
+
+  const collection = page.getByTestId("timeline-clip-4");
+  await collection.click();
+
+  const filmstrip = page.locator(
+    '[data-testid="timeline-source-filmstrip"][data-clip-index="4"]',
+  );
+  await expect(collection).toHaveAttribute("data-selected", "true");
+  await expect(filmstrip).toBeVisible();
+  await expect(page.getByTestId("timeline-collection-omitted-marker")).toBeVisible();
+  await expect(page.getByTestId("timeline-collection-endpoint-frame")).toHaveCount(2);
+  await expect(page.getByTestId("timeline-source-trim-left")).toBeVisible();
+  await expect(page.getByTestId("timeline-source-trim-right")).toBeVisible();
+
+  const collectionBox = await collection.boundingBox();
+  const filmstripBox = await filmstrip.boundingBox();
+  if (!collectionBox || !filmstripBox) {
+    throw new Error("Collection and filmstrip must be visible");
+  }
+
+  expect(Math.abs(collectionBox.width - filmstripBox.width)).toBeLessThanOrEqual(1);
+});
+
 test("filmstrip setting shows passive read-only filmstrips for inactive video clips", async ({ page }) => {
   const editor = page.getByTestId("timeline-editor");
 
