@@ -1,11 +1,13 @@
-import React from "react";
 import type {
   CollectionEndpoint,
   TimelineClip,
-  VideoTimelineClip,
 } from "../types";
+import { getVideoThumbnailUrl } from "../media-thumbnails";
 import { CollectionRepeatedMediaTile } from "./CollectionRepeatedMediaTile";
+import { RepeatedMediaFrame } from "./RepeatedMediaFrame";
 import { RepeatedMediaFrames } from "./RepeatedMediaFrames";
+import { useMediaFrameTimes } from "./useMediaFrameTimes";
+import { useVideoDuration } from "./useVideoDuration";
 
 export type RepeatedMediaTileProps = {
   clip: TimelineClip;
@@ -26,28 +28,7 @@ export function RepeatedMediaTile({
   collectionEndpointSelection,
   onCollectionEndpointClick,
 }: RepeatedMediaTileProps) {
-  React.useEffect(() => {
-    if (!onDurationLoaded || clip.kind !== "video") return;
-
-    const videoClip = clip as VideoTimelineClip;
-    if (!videoClip.src) return;
-
-    const tempVideo = document.createElement("video");
-    tempVideo.src = videoClip.src;
-    tempVideo.preload = "metadata";
-
-    const handleLoadedMetadata = () => {
-      onDurationLoaded(tempVideo.duration);
-    };
-
-    tempVideo.addEventListener("loadedmetadata", handleLoadedMetadata);
-
-    return () => {
-      tempVideo.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      tempVideo.removeAttribute("src");
-      tempVideo.load();
-    };
-  }, [clip, onDurationLoaded]);
+  useVideoDuration(clip, onDurationLoaded);
 
   const isXS = itemHeight === 80;
 
@@ -62,12 +43,31 @@ export function RepeatedMediaTile({
     );
   }
 
+  const { frameTimes, frameWidth, frameHeight, isVideo, mediaClip } =
+    useMediaFrameTimes(clip, displayWidth, itemHeight, isXS);
+
   return (
-    <RepeatedMediaFrames
-      clip={clip}
-      displayWidth={displayWidth}
-      itemHeight={itemHeight}
-      isXS={isXS}
-    />
+    <RepeatedMediaFrames>
+      {frameTimes.map((tileTime, position) => {
+        const frameMedia = {
+          src: mediaClip.src,
+          alt: mediaClip.alt,
+          fallbackSrc: mediaClip.poster,
+        }
+        if (isVideo) {
+          frameMedia.src = getVideoThumbnailUrl(mediaClip.src, tileTime);
+          frameMedia.alt = `${mediaClip.alt} frame ${position + 1}`;
+        }
+
+        return (
+          <RepeatedMediaFrame
+            key={`${clip.id}-repeat-frame-${tileTime}`}
+            frameWidth={frameWidth}
+            frameHeight={frameHeight}
+            {...frameMedia}
+          />
+        );
+      })}
+    </RepeatedMediaFrames>
   );
 }

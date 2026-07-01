@@ -1,16 +1,16 @@
 import React, { memo } from "react";
 import { createPortal } from "react-dom";
-import { Folder, FolderOpen } from "lucide-react";
 
 import type {
   CollectionEndpoint,
   CollectionTimelineClip,
   TimelineClip,
 } from "./types";
-import { formatSeconds } from "./utils";
 import { cn } from "../lib/utils";
-import { RepeatedMediaTile } from "./RepeatedMediaTile";
-import { TrimHandle } from "./TrimHandle";
+import {
+  TimelineClipItemContent,
+  getClipItemContentRing,
+} from "./TimelineClipItemContent";
 import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,
@@ -43,6 +43,7 @@ export type TimelineClipItemProps = {
   isReordering?: boolean;
   isCollectionHovered?: boolean;
   reorderPreview?: TimelineReorderPreview | null;
+  children?: React.ReactNode;
   onResizeDown: (
     e: React.PointerEvent<HTMLDivElement>,
     clip: TimelineClip,
@@ -68,25 +69,6 @@ export type TimelineClipItemProps = {
   timelineId?: string;
 };
 
-const collectionBreadcrumbShapes = [
-  {
-    fill: "bg-amber-400",
-    shape: "rounded-full",
-  },
-  {
-    fill: "bg-sky-400",
-    shape: "rounded-[2px]",
-  },
-  {
-    fill: "bg-emerald-400",
-    shape: "rotate-45 rounded-[2px]",
-  },
-  {
-    fill: "bg-violet-400",
-    shape: "rounded-sm",
-  },
-];
-
 export const TimelineClipItem = memo(function TimelineClipItem({
   clip,
   pixelsPerSecond,
@@ -102,6 +84,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   isReordering = false,
   isCollectionHovered = false,
   reorderPreview = null,
+  children,
   onResizeDown,
   onResizeMove,
   onResizeUp,
@@ -113,14 +96,11 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   onToggleCollectionExpanded,
   collectionEndpointSelection,
   onToggleCollectionEndpoint,
-  timelineId,
 }: TimelineClipItemProps) {
   const [isMounted, setIsMounted] = React.useState(false);
   React.useEffect(() => {
     setIsMounted(true);
   }, []);
-
-  const effectiveThumbnailMode = thumbnailMode;
 
   const gridLayout =
     thumbnailMode && gridMetrics?.enabled
@@ -134,7 +114,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   const top = itemTop + (gridLayout?.top ?? 0);
   const width = gridLayout
     ? gridLayout.width
-    : effectiveThumbnailMode
+    : thumbnailMode
     ? thumbnailWidth
     : clip.duration * pixelsPerSecond;
   const isLifted = reorderPreview !== null;
@@ -150,210 +130,52 @@ export const TimelineClipItem = memo(function TimelineClipItem({
       )
     : 0;
   const breadcrumbLevels = Array.from(
-    {
-      length: Math.min(
-        breadcrumbLevelCount,
-        collectionBreadcrumbShapes.length,
-      ),
-    },
+    { length: Math.min(breadcrumbLevelCount, 4) },
     (_, level) => level,
   );
   const collectionHref =
     clip.kind === "collection" ? getCollectionHref?.(clip.childTimelineId) : null;
 
-  const innerContent = (
-    <div
-      className={cn(
-        "relative h-full w-full overflow-hidden rounded-md bg-zinc-800 transition-all duration-200",
-        isCollectionCollapseCard
-          ? "ring-2 ring-sky-400/70 border border-dashed border-sky-300/40 bg-sky-950/20 shadow-lg shadow-sky-400/15"
-          : isLifted
-          ? "ring-2 ring-sky-300 shadow-2xl shadow-sky-400/30"
-          : isCollectionHovered
-          ? "ring-2 ring-sky-400 bg-sky-950/20 shadow-lg shadow-sky-400/40"
-          : isSelected
-          ? "ring-2 ring-amber-400 shadow-lg shadow-amber-400/20"
-          : "ring-1 ring-zinc-900",
-      )}
-    >
-      <RepeatedMediaTile
-        clip={clip}
-        displayWidth={width}
-        previewTime={scrubPreviewTime ?? clip.trimIn}
-        itemHeight={itemHeight}
-        pixelsPerSecond={pixelsPerSecond}
-        onDurationLoaded={onDurationLoaded ? (duration) => onDurationLoaded(clip.index, duration) : undefined}
-        collectionEndpointSelection={
-          clip.kind === "collection" ? collectionEndpointSelection : undefined
-        }
-        onCollectionEndpointClick={
-          clip.kind === "collection" && onToggleCollectionEndpoint
-            ? (endpoint) => onToggleCollectionEndpoint(clip, endpoint)
-            : undefined
-        }
-      />
+  const ring = getClipItemContentRing({
+    isCollectionCollapseCard,
+    isLifted,
+    isCollectionHovered,
+    isSelected,
+  });
 
-      {clip.kind === "video" && (
-        <span className="absolute left-1 top-1 z-20 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
-          VIDEO
-        </span>
-      )}
-
-      {clip.kind === "collection" && (
-        <>
-          <span className="absolute left-1 top-1 z-20 rounded bg-sky-950/80 px-1.5 py-0.5 text-[10px] font-medium text-sky-200">
-            COLLECTION
-          </span>
-          {onToggleCollectionExpanded ? (
-            <button
-              type="button"
-              data-testid="timeline-collection-expand-toggle"
-              aria-expanded={isCollectionExpanded}
-              aria-label={`${clip.title} children`}
-              title={isCollectionExpanded ? "Collapse collection" : "Expand collection"}
-              className={cn(
-                "absolute right-1 top-1 z-30 flex h-7 w-7 items-center justify-center rounded border text-sky-100 shadow transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 focus-visible:outline-offset-2",
-                isCollectionExpanded
-                  ? "border-sky-300/50 bg-sky-500/35 hover:bg-sky-500/45"
-                  : "border-sky-300/35 bg-black/75 hover:bg-sky-950/85",
-              )}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onToggleCollectionExpanded(clip);
-              }}
-            >
-              {isCollectionExpanded ? (
-                <Folder className="h-4 w-4" aria-hidden="true" />
-              ) : (
-                <FolderOpen className="h-4 w-4" aria-hidden="true" />
-              )}
-            </button>
-          ) : null}
-          {collectionHref ? (
-            <a
-              href={collectionHref}
-              className={cn(
-                "absolute left-1 z-20 rounded border border-sky-300/40 bg-black/75 px-2 py-1 text-[10px] font-semibold text-sky-100 shadow",
-                hasCollectionBreadcrumb ? "bottom-6" : "bottom-1",
-              )}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (
-                  !onOpenCollection ||
-                  event.defaultPrevented ||
-                  event.button !== 0 ||
-                  event.metaKey ||
-                  event.ctrlKey ||
-                  event.shiftKey ||
-                  event.altKey
-                ) {
-                  return;
-                }
-
-                event.preventDefault();
-                onOpenCollection(clip.childTimelineId, collectionHref);
-              }}
-            >
-              Open timeline
-            </a>
-          ) : null}
-        </>
-      )}
-
-      {hasCollectionBreadcrumb ? (
-        <div
-          data-testid="timeline-expanded-collection-breadcrumb"
-          data-depth={breadcrumbLevelCount}
-          className="pointer-events-none absolute bottom-1 left-1 z-30 flex items-center gap-1 rounded border border-zinc-600 bg-zinc-950 px-1.5 py-0.5 shadow-[0_4px_12px_rgba(0,0,0,0.35)]"
-          aria-label={`Expanded collection depth ${breadcrumbLevelCount}`}
-        >
-          {breadcrumbLevels.map((level, index) => {
-            const levelShape = collectionBreadcrumbShapes[level];
-
-            return (
-              <React.Fragment key={`${clip.id}-breadcrumb-${level}`}>
-                {index > 0 ? (
-                  <span
-                    className="font-mono text-[9px] leading-none text-zinc-400"
-                    aria-hidden="true"
-                  >
-                    &gt;
-                  </span>
-                ) : null}
-                <span
-                  data-testid="timeline-expanded-collection-breadcrumb-shape"
-                  data-depth-level={level}
-                  className={cn(
-                    "h-2 w-2 shrink-0",
-                    levelShape.fill,
-                    levelShape.shape,
-                  )}
-                  aria-hidden="true"
-                />
-              </React.Fragment>
-            );
-          })}
-        </div>
-      ) : null}
-
-      <span className="absolute bottom-1 right-1 z-20 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100">
-        {clip.kind === "video"
-          ? `${formatSeconds(clip.duration)} / ${formatSeconds(clip.sourceDuration)}`
-          : clip.kind === "collection"
-          ? `${clip.itemCount} items`
-          : formatSeconds(clip.duration)}
-      </span>
-
-      {isGrowingOpposite && (
-        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/30 backdrop-blur-[1px] transition-all">
-          <div className="flex items-center gap-2 rounded-full border border-amber-500/30 bg-black/80 px-3 py-1.5 text-xs font-medium text-amber-300 shadow-xl">
-            <span>Growing Opposite</span>
-            <svg className="h-4 w-4 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-            </svg>
-          </div>
-        </div>
-      )}
-
-      {isSelected && !effectiveThumbnailMode && (
-        <>
-          <div className="pointer-events-none absolute inset-0 rounded-md border-2 border-amber-400" />
-          {!isCollectionCollapseCard ? (
-            <>
-              <TrimHandle
-                edge="left"
-                currentWidth={width}
-                currentDuration={clip.duration}
-                onPointerDown={(e) => onResizeDown(e, clip, "left")}
-                onPointerMove={onResizeMove}
-                onPointerUp={onResizeUp}
-                onPointerCancel={onResizeUp}
-                onKeyDown={(e) => onResizeKeyDown(e, clip, "left")}
-              />
-              <TrimHandle
-                edge="right"
-                currentWidth={width}
-                currentDuration={clip.duration}
-                onPointerDown={(e) => onResizeDown(e, clip, "right")}
-                onPointerMove={onResizeMove}
-                onPointerUp={onResizeUp}
-                onPointerCancel={onResizeUp}
-                onKeyDown={(e) => onResizeKeyDown(e, clip, "right")}
-              />
-            </>
-          ) : null}
-        </>
-      )}
-      {isSelected && effectiveThumbnailMode && (
-        <div className="pointer-events-none absolute inset-0 rounded-md border-2 border-amber-400" />
-      )}
-    </div>
+  const innerContent = children ?? (
+    <TimelineClipItemContent
+      clip={clip}
+      width={width}
+      itemHeight={itemHeight}
+      pixelsPerSecond={pixelsPerSecond}
+      scrubPreviewTime={scrubPreviewTime}
+      isSelected={isSelected}
+      isCollectionHovered={isCollectionHovered}
+      isGrowingOpposite={isGrowingOpposite}
+      thumbnailMode={thumbnailMode}
+      isCollectionCollapseCard={isCollectionCollapseCard}
+      hasCollectionBreadcrumb={hasCollectionBreadcrumb}
+      breadcrumbLevels={breadcrumbLevels}
+      collectionHref={collectionHref}
+      onDurationLoaded={
+        onDurationLoaded ? (duration) => onDurationLoaded(clip.index, duration) : undefined
+      }
+      collectionEndpointSelection={collectionEndpointSelection}
+      onCollectionEndpointClick={
+        clip.kind === "collection" && onToggleCollectionEndpoint
+          ? (endpoint) => onToggleCollectionEndpoint(clip as CollectionTimelineClip, endpoint)
+          : undefined
+      }
+      isCollectionExpanded={isCollectionExpanded}
+      onToggleCollectionExpanded={onToggleCollectionExpanded}
+      onOpenCollection={onOpenCollection}
+      onResizeDown={onResizeDown}
+      onResizeMove={onResizeMove}
+      onResizeUp={onResizeUp}
+      onResizeKeyDown={onResizeKeyDown}
+      ring={ring}
+    />
   );
 
   return (
@@ -394,21 +216,22 @@ export const TimelineClipItem = memo(function TimelineClipItem({
         {innerContent}
       </div>
 
-      {isLifted && isMounted && typeof document !== 'undefined' && createPortal(
-        <div
-          className="fixed pointer-events-none z-[9999]"
-          style={{
-            left: `${reorderPreview.clientX - reorderPreview.pointerOffsetX}px`,
-            top: `${reorderPreview.clientY - reorderPreview.pointerOffsetY}px`,
-            width: `${width}px`,
-            height: `${itemHeight}px`,
-            transform: 'scale(1.03)',
-          }}
-        >
-          {innerContent}
-        </div>,
-        document.body
-      )}
+      {isLifted && isMounted && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed pointer-events-none z-[9999]"
+            style={{
+              left: `${reorderPreview.clientX - reorderPreview.pointerOffsetX}px`,
+              top: `${reorderPreview.clientY - reorderPreview.pointerOffsetY}px`,
+              width: `${width}px`,
+              height: `${itemHeight}px`,
+              transform: "scale(1.03)",
+            }}
+          >
+            {innerContent}
+          </div>,
+          document.body,
+        )}
     </>
   );
 });

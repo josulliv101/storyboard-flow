@@ -1,43 +1,78 @@
+import React from 'react';
 import type { Meta, StoryObj } from '@storybook/react';
+import { expect, within } from '@storybook/react';
 
 import { TimelineClipItem } from './TimelineClipItem';
-import type { TimelineClip } from './types';
+import type { CollectionTimelineClip, ImageTimelineClip, TimelineClip } from './types';
 
 /* ---------------------------------------------------------------------------
- * Helper fixtures
+ * Static placeholder assets — no live network calls
  * --------------------------------------------------------------------------- */
 
-const storyVideoSrc = 'https://res.cloudinary.com/demo/video/upload/dog.mp4';
+const PLACEHOLDER_IMG =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='225'%3E%3Crect width='400' height='225' fill='%23334155'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-family='sans-serif' font-size='14'%3EImage%3C%2Ftext%3E%3C/svg%3E";
 
-const imageClip: TimelineClip = {
-  id: 'img-story-1',
-  index: 0,
-  kind: 'image',
-  src: 'https://picsum.photos/seed/clip-1/400/200',
-  alt: 'Mountain landscape',
-  aspect: 16 / 9,
-  trackIndex: 0,
-  startTime: 0,
-  duration: 3,
-  sourceDuration: 3,
-  trimIn: 0,
-  trimOut: 0,
-};
+const PLACEHOLDER_POSTER =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='225'%3E%3Crect width='400' height='225' fill='%231e293b'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-family='sans-serif' font-size='14'%3EPoster%3C%2Ftext%3E%3C/svg%3E";
+
+/* ---------------------------------------------------------------------------
+ * Fixture helpers
+ * --------------------------------------------------------------------------- */
+
+const THUMB_W = 160;
+const THUMB_GAP = 12;
+
+function makeImageClip(index: number, overrides?: Partial<ImageTimelineClip>): ImageTimelineClip {
+  return {
+    id: `img-story-${index}`,
+    index,
+    kind: 'image',
+    src: PLACEHOLDER_IMG,
+    alt: `Image clip ${index}`,
+    aspect: 16 / 9,
+    trackIndex: 0,
+    startTime: index * 3,
+    duration: 3,
+    sourceDuration: 3,
+    trimIn: 0,
+    trimOut: 0,
+    ...overrides,
+  };
+}
+
+const imageClip = makeImageClip(0);
 
 const videoClip: TimelineClip = {
   id: 'vid-story-1',
-  index: 1,
+  index: 0,
   kind: 'video',
-  src: storyVideoSrc,
-  poster: 'https://res.cloudinary.com/demo/video/upload/so_0,w_480,h_270,c_fill,q_auto,f_jpg/dog.jpg',
-  alt: 'Big Buck Bunny',
+  src: '',
+  poster: PLACEHOLDER_POSTER,
+  alt: 'Sample video',
   aspect: 16 / 9,
   trackIndex: 0,
-  startTime: 3.12,
+  startTime: 0,
   duration: 5,
   sourceDuration: 10,
   trimIn: 2,
   trimOut: 3,
+};
+
+const collectionClip: CollectionTimelineClip = {
+  id: 'collection-story-1',
+  index: 0,
+  kind: 'collection',
+  title: 'Scene Selects',
+  childTimelineId: 'scene-selects',
+  itemCount: 12,
+  alt: 'Scene Selects collection',
+  aspect: 16 / 9,
+  trackIndex: 0,
+  startTime: 0,
+  duration: 4,
+  sourceDuration: 4,
+  trimIn: 0,
+  trimOut: 0,
 };
 
 /* ---------------------------------------------------------------------------
@@ -81,40 +116,69 @@ export default meta;
 type Story = StoryObj<typeof TimelineClipItem>;
 
 /* ---------------------------------------------------------------------------
- * Stories
+ * Default / unselected
  * --------------------------------------------------------------------------- */
 
-/** An image clip in its default, unselected state. */
+/** Image clip in its default, unselected state. */
 export const ImageDefault: Story = {
-  args: {
-    clip: imageClip,
-  },
+  args: { clip: imageClip },
 };
 
-/** An image clip when selected — trim handles should appear. */
+/** Video clip in its default, unselected state — shows the VIDEO badge. */
+export const VideoDefault: Story = {
+  args: { clip: videoClip },
+};
+
+/* ---------------------------------------------------------------------------
+ * Selected state — trim handles
+ * --------------------------------------------------------------------------- */
+
+/** Image clip when selected. Trim handles must appear on left and right edges. */
 export const ImageSelected: Story = {
   args: {
     clip: imageClip,
     isSelected: true,
   },
-};
-
-/** A video clip in its default, unselected state — shows the VIDEO label. */
-export const VideoDefault: Story = {
-  args: {
-    clip: videoClip,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const leftHandle = await canvas.findByTestId('timeline-trim-left');
+    const rightHandle = await canvas.findByTestId('timeline-trim-right');
+    expect(leftHandle).toBeInTheDocument();
+    expect(rightHandle).toBeInTheDocument();
   },
 };
 
-/** A video clip when selected — trim handles and VIDEO label visible. */
+/** Video clip when selected — trim handles and VIDEO badge both visible. */
 export const VideoSelected: Story = {
   args: {
     clip: videoClip,
     isSelected: true,
   },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const leftHandle = await canvas.findByTestId('timeline-trim-left');
+    const rightHandle = await canvas.findByTestId('timeline-trim-right');
+    expect(leftHandle).toBeInTheDocument();
+    expect(rightHandle).toBeInTheDocument();
+  },
 };
 
-/** A selected video clip with a scrub preview time indicator. */
+/* ---------------------------------------------------------------------------
+ * Missing poster fallback
+ * --------------------------------------------------------------------------- */
+
+/** Video clip with no poster — tile renders without an image fallback. */
+export const MissingPoster: Story = {
+  args: {
+    clip: { ...videoClip, poster: undefined },
+  },
+};
+
+/* ---------------------------------------------------------------------------
+ * Scrub preview
+ * --------------------------------------------------------------------------- */
+
+/** Selected video clip with an active scrub preview time. */
 export const VideoWithScrubPreview: Story = {
   args: {
     clip: videoClip,
@@ -123,7 +187,11 @@ export const VideoWithScrubPreview: Story = {
   },
 };
 
-/** An image clip in the "growing opposite" resize state. */
+/* ---------------------------------------------------------------------------
+ * Growing-opposite resize
+ * --------------------------------------------------------------------------- */
+
+/** Image clip in the "growing opposite" resize state. */
 export const GrowingOpposite: Story = {
   args: {
     clip: imageClip,
@@ -132,12 +200,132 @@ export const GrowingOpposite: Story = {
   },
 };
 
-/** An image clip rendered in thumbnail mode with explicit width and gap. */
+/* ---------------------------------------------------------------------------
+ * Short and long clips
+ * --------------------------------------------------------------------------- */
+
+/** Very short clip (0.5 s) — verifies the clip renders even at minimal width. */
+export const ShortClip: Story = {
+  args: {
+    clip: makeImageClip(0, { duration: 0.5, sourceDuration: 0.5 }),
+  },
+};
+
+/** Long clip (60 s) at a reduced pixels-per-second so it fits the viewport. */
+export const LongClip: Story = {
+  args: {
+    clip: makeImageClip(0, { duration: 60, sourceDuration: 60 }),
+    pixelsPerSecond: 10,
+  },
+};
+
+/* ---------------------------------------------------------------------------
+ * Repeated thumbnails
+ * --------------------------------------------------------------------------- */
+
+/**
+ * Wide image clip — enough room to tile the thumbnail multiple times.
+ * Verifies the RepeatedMediaTile renders repeated frames without overflow.
+ */
+export const RepeatedThumbnails: Story = {
+  args: {
+    clip: makeImageClip(0, { duration: 20, sourceDuration: 20 }),
+    itemTop: 0,
+  },
+};
+
+/* ---------------------------------------------------------------------------
+ * Thumbnail mode
+ * --------------------------------------------------------------------------- */
+
+/** Single image clip in thumbnail-grid mode. */
 export const ThumbnailMode: Story = {
   args: {
-    clip: imageClip,
+    clip: makeImageClip(0),
     thumbnailMode: true,
-    thumbnailWidth: 355,
-    thumbnailGap: 16,
+    thumbnailWidth: THUMB_W,
+    thumbnailGap: THUMB_GAP,
+    itemTop: 0,
+    itemHeight: 120,
+  },
+};
+
+/** Thumbnail mode with selection ring (no trim handles in this mode). */
+export const ThumbnailModeSelected: Story = {
+  args: {
+    clip: makeImageClip(0),
+    thumbnailMode: true,
+    thumbnailWidth: THUMB_W,
+    thumbnailGap: THUMB_GAP,
+    itemTop: 0,
+    itemHeight: 120,
+    isSelected: true,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // Trim handles must NOT appear in thumbnail mode.
+    expect(canvas.queryByTestId('timeline-trim-left')).not.toBeInTheDocument();
+    expect(canvas.queryByTestId('timeline-trim-right')).not.toBeInTheDocument();
+  },
+};
+
+/* ---------------------------------------------------------------------------
+ * Many items — thumbnail grid with 12 clips side-by-side
+ * --------------------------------------------------------------------------- */
+
+/** Twelve clips in thumbnail mode — verifies layout at high item counts. */
+export const ManyItems: Story = {
+  args: {
+    clip: makeImageClip(0),
+    thumbnailMode: true,
+    thumbnailWidth: THUMB_W,
+    thumbnailGap: THUMB_GAP,
+    itemTop: 0,
+    itemHeight: 120,
+  },
+  decorators: [
+    (_Story, ctx) => (
+      <div
+        className="font-sans text-white"
+        style={{
+          position: 'relative',
+          width: '100%',
+          height: 120,
+          background: '#09090b',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+        }}
+      >
+        <div style={{ position: 'relative', width: 12 * (THUMB_W + THUMB_GAP), height: 120 }}>
+          {Array.from({ length: 12 }, (_, i) => (
+            <TimelineClipItem
+              key={i}
+              {...ctx.args}
+              clip={makeImageClip(i)}
+            />
+          ))}
+        </div>
+      </div>
+    ),
+  ],
+};
+
+/* ---------------------------------------------------------------------------
+ * Collection
+ * --------------------------------------------------------------------------- */
+
+/** Collection clip in default state — shows COLLECTION badge and item count. */
+export const CollectionDefault: Story = {
+  args: {
+    clip: collectionClip,
+  },
+};
+
+/** Collection clip with the expand toggle button. */
+export const CollectionWithExpandToggle: Story = {
+  args: {
+    clip: collectionClip,
+    onToggleCollectionExpanded: () => {},
+    isCollectionExpanded: false,
   },
 };
