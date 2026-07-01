@@ -291,6 +291,8 @@ export function SmoothScrollList({
     useState<Set<string>>(() => new Set());
   const [inlineViewVersion, setInlineViewVersion] = useState(0);
   const [persistedTimelineTitle, setPersistedTimelineTitle] = useState(timelineTitle);
+  const [timelineLoadError, setTimelineLoadError] = useState<string | null>(null);
+  const [isLoadingTimeline, setIsLoadingTimeline] = useState(false);
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -540,16 +542,40 @@ export function SmoothScrollList({
     const loadStartedAtLocalEditVersion = localEditVersionRef.current;
 
     const loadTimelineDocument = async () => {
+      setIsLoadingTimeline(true);
+      setTimelineLoadError(null);
+
       try {
         const response = await fetch(`/api/timelines/${encodeURIComponent(timelineId)}`, {
           cache: "no-store",
         });
-        if (!response.ok) return;
+        if (!response.ok) {
+          const result = (await response.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          if (isCurrent) {
+            setTimelineLoadError(
+              result.error ||
+                `Timeline request failed with status ${response.status}.`,
+            );
+          }
+          return;
+        }
 
         const result = (await response.json().catch(() => ({}))) as {
           document?: TimelineDocument;
         };
-        if (!isCurrent || !result.document || result.document.id !== timelineId) return;
+        if (!isCurrent) return;
+        if (!result.document) {
+          setTimelineLoadError("Timeline response did not include a saved document.");
+          return;
+        }
+        if (result.document.id !== timelineId) {
+          setTimelineLoadError(
+            `Timeline response returned "${result.document.id}" instead of "${timelineId}".`,
+          );
+          return;
+        }
 
         setPersistedTimelineTitle(result.document.title);
         saveBaselineRef.current = JSON.stringify({
@@ -577,8 +603,18 @@ export function SmoothScrollList({
           clips: result.document.clips,
         });
         hydratedTimelineIdRef.current = timelineId;
+        setTimelineLoadError(null);
       } catch (error) {
         console.warn(`Failed to load timeline "${timelineId}" from Firebase`, error);
+        if (isCurrent) {
+          setTimelineLoadError(
+            error instanceof Error ? error.message : "Unable to load the saved timeline.",
+          );
+        }
+      } finally {
+        if (isCurrent) {
+          setIsLoadingTimeline(false);
+        }
       }
     };
 
@@ -1556,6 +1592,24 @@ export function SmoothScrollList({
             className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-amber-100"
           >
             {mediaUploadError}
+          </div>
+        )}
+
+        {isLoadingTimeline && (
+          <div
+            role="status"
+            className="rounded-md border border-sky-500/35 bg-sky-500/10 px-3 py-2 text-sm text-sky-100"
+          >
+            Loading saved timeline...
+          </div>
+        )}
+
+        {timelineLoadError && (
+          <div
+            role="alert"
+            className="rounded-md border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-sm text-rose-100"
+          >
+            Failed to load saved timeline: {timelineLoadError}
           </div>
         )}
 

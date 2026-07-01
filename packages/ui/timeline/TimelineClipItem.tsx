@@ -1,6 +1,5 @@
 import React, { memo } from "react";
 import { createPortal } from "react-dom";
-import Link from "next/link";
 import { Folder, FolderOpen } from "lucide-react";
 
 import type {
@@ -9,17 +8,27 @@ import type {
   TimelineClip,
 } from "./types";
 import { formatSeconds } from "./utils";
-import { ITEM_HEIGHT } from "./constants";
-import { cn } from "@/lib/utils";
-import { RepeatedMediaTile } from "./repeated-media-tile";
-import { TrimHandle } from "./trim-handle";
-import type { ReorderPreview } from "./hooks/use-timeline-pan";
+import { cn } from "../lib/utils";
+import { RepeatedMediaTile } from "./RepeatedMediaTile";
+import { TrimHandle } from "./TrimHandle";
 import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,
 } from "./timeline-grid";
 
-type TimelineClipItemProps = {
+export type TimelineReorderPreview = {
+  activeClipId: string;
+  dragLeft: number;
+  dragTop: number;
+  dragOffsetY: number;
+  targetIndex: number;
+  clientX: number;
+  clientY: number;
+  pointerOffsetX: number;
+  pointerOffsetY: number;
+};
+
+export type TimelineClipItemProps = {
   clip: TimelineClip;
   pixelsPerSecond: number;
   itemTop: number;
@@ -33,7 +42,7 @@ type TimelineClipItemProps = {
   isGrowingOpposite?: boolean;
   isReordering?: boolean;
   isCollectionHovered?: boolean;
-  reorderPreview?: ReorderPreview | null;
+  reorderPreview?: TimelineReorderPreview | null;
   onResizeDown: (
     e: React.PointerEvent<HTMLDivElement>,
     clip: TimelineClip,
@@ -226,7 +235,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
             </button>
           ) : null}
           {collectionHref ? (
-            <Link
+            <a
               href={collectionHref}
               className={cn(
                 "absolute left-1 z-20 rounded border border-sky-300/40 bg-black/75 px-2 py-1 text-[10px] font-semibold text-sky-100 shadow",
@@ -252,7 +261,7 @@ export const TimelineClipItem = memo(function TimelineClipItem({
               }}
             >
               Open timeline
-            </Link>
+            </a>
           ) : null}
         </>
       )}

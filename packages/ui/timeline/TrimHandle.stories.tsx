@@ -1,13 +1,14 @@
 import type { Meta, StoryObj } from "@storybook/react";
 
-import { TrimHandle } from "./trim-handle";
+import { TrimHandle } from "./TrimHandle";
 
 const meta = {
-  title: "GStudio/Timeline/TrimHandle",
+  title: "UI/Timeline/TrimHandle",
   component: TrimHandle,
   decorators: [
     (Story) => (
       <div
+        className="font-sans text-white"
         style={{
           position: "relative",
           width: 300,
@@ -68,6 +69,7 @@ export const NarrowContainer: Story = {
   decorators: [
     (Story) => (
       <div
+        className="font-sans text-white"
         style={{
           position: "relative",
           width: 60,

@@ -1,11 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/react';
 
-import { TimelineClipItem } from './timeline-clip-item';
+import { TimelineClipItem } from './TimelineClipItem';
 import type { TimelineClip } from './types';
 
 /* ---------------------------------------------------------------------------
  * Helper fixtures
  * --------------------------------------------------------------------------- */
+
+const storyVideoSrc = 'https://res.cloudinary.com/demo/video/upload/dog.mp4';
 
 const imageClip: TimelineClip = {
   id: 'img-story-1',
@@ -26,7 +28,8 @@ const videoClip: TimelineClip = {
   id: 'vid-story-1',
   index: 1,
   kind: 'video',
-  src: 'https://www.w3schools.com/html/mov_bbb.mp4',
+  src: storyVideoSrc,
+  poster: 'https://res.cloudinary.com/demo/video/upload/so_0,w_480,h_270,c_fill,q_auto,f_jpg/dog.jpg',
   alt: 'Big Buck Bunny',
   aspect: 16 / 9,
   trackIndex: 0,
@@ -42,11 +45,12 @@ const videoClip: TimelineClip = {
  * --------------------------------------------------------------------------- */
 
 const meta: Meta<typeof TimelineClipItem> = {
-  title: 'GStudio/Timeline/TimelineClipItem',
+  title: 'UI/Timeline/TimelineClipItem',
   component: TimelineClipItem,
   decorators: [
     (Story) => (
       <div
+        className="font-sans text-white"
         style={{
           position: 'relative',
           width: '100%',

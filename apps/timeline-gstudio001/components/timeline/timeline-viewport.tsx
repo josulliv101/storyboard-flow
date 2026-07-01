@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
+import { TimelineClipItem } from "@storyboard/ui";
 import { Folder, Video, Image, X, Play } from "lucide-react";
 
 import {
@@ -18,7 +19,6 @@ import {
   TIMELINE_LEADING_PADDING_SECONDS,
 } from "./constants";
 import type { useTimelineInteractions } from "./hooks/use-timeline-interactions";
-import { TimelineClipItem } from "./timeline-clip-item";
 import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,

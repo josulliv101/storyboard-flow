@@ -5,3 +5,8 @@
 @source "../../web/components";
 @source "../../timeline-gstudio001/components";
 @source "../../../packages/ui";
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-coiny: "Coiny", ui-sans-serif, system-ui, sans-serif;
+}

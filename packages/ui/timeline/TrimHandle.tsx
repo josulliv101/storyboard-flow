@@ -1,8 +1,7 @@
 import React from "react";
-import { cn } from "@/lib/utils";
-import { MAX_WIDTH, MIN_WIDTH } from "./constants";
+import { cn } from "../lib/utils";
 
-type TrimHandleProps = {
+export type TrimHandleProps = {
   edge: "left" | "right";
   currentWidth: number;
   currentDuration?: number;
