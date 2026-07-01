@@ -1,6 +1,6 @@
 import React from 'react';
-import type { Meta, StoryObj } from '@storybook/react';
-import { expect, within } from '@storybook/react';
+import type { Meta, StoryObj } from '@storybook/nextjs-vite';
+import { expect, within } from 'storybook/test';
 
 import { TimelineClipItem } from './TimelineClipItem';
 import type { CollectionTimelineClip, ImageTimelineClip, TimelineClip } from './types';
@@ -197,6 +197,33 @@ export const GrowingOpposite: Story = {
     clip: imageClip,
     isSelected: true,
     isGrowingOpposite: true,
+  },
+};
+
+/** Image clip during pointer reorder. The source tile dims while a floating preview renders in a portal. */
+export const ReorderPreview: Story = {
+  args: {
+    clip: imageClip,
+    isReordering: true,
+    reorderPreview: {
+      activeClipId: imageClip.id,
+      dragLeft: 0,
+      dragTop: 0,
+      dragOffsetY: 0,
+      targetIndex: 1,
+      clientX: 180,
+      clientY: 150,
+      pointerOffsetX: 48,
+      pointerOffsetY: 36,
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const sourceClip = await canvas.findByTestId('timeline-clip-0');
+    expect(sourceClip).toHaveAttribute('data-reordering', 'true');
+
+    const body = within(document.body);
+    expect(await body.findByTestId('timeline-reorder-preview')).toBeInTheDocument();
   },
 };
 

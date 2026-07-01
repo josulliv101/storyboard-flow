@@ -1,5 +1,6 @@
+"use client";
+
 import React, { memo } from "react";
-import { createPortal } from "react-dom";
 
 import type {
   CollectionEndpoint,
@@ -7,6 +8,7 @@ import type {
   TimelineClip,
 } from "./types";
 import { cn } from "../lib/utils";
+import { DragPreviewPortal, type DragPreviewCoordinates } from "../drag-drop";
 import {
   TimelineClipItemContent,
   getClipItemContentRing,
@@ -16,16 +18,12 @@ import {
   type TimelineGridMetrics,
 } from "./timeline-grid";
 
-export type TimelineReorderPreview = {
+export type TimelineReorderPreview = DragPreviewCoordinates & {
   activeClipId: string;
   dragLeft: number;
   dragTop: number;
   dragOffsetY: number;
   targetIndex: number;
-  clientX: number;
-  clientY: number;
-  pointerOffsetX: number;
-  pointerOffsetY: number;
 };
 
 export type TimelineClipItemProps = {
@@ -97,11 +95,6 @@ export const TimelineClipItem = memo(function TimelineClipItem({
   collectionEndpointSelection,
   onToggleCollectionEndpoint,
 }: TimelineClipItemProps) {
-  const [isMounted, setIsMounted] = React.useState(false);
-  React.useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
   const gridLayout =
     thumbnailMode && gridMetrics?.enabled
       ? getTimelineGridItemLayout(clip.index, gridMetrics)
@@ -216,22 +209,14 @@ export const TimelineClipItem = memo(function TimelineClipItem({
         {innerContent}
       </div>
 
-      {isLifted && isMounted && typeof document !== "undefined" &&
-        createPortal(
-          <div
-            className="fixed pointer-events-none z-[9999]"
-            style={{
-              left: `${reorderPreview.clientX - reorderPreview.pointerOffsetX}px`,
-              top: `${reorderPreview.clientY - reorderPreview.pointerOffsetY}px`,
-              width: `${width}px`,
-              height: `${itemHeight}px`,
-              transform: "scale(1.03)",
-            }}
-          >
-            {innerContent}
-          </div>,
-          document.body,
-        )}
+      <DragPreviewPortal
+        preview={reorderPreview}
+        width={width}
+        height={itemHeight}
+        testId="timeline-reorder-preview"
+      >
+        {innerContent}
+      </DragPreviewPortal>
     </>
   );
 });
