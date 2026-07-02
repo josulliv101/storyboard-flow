@@ -16,7 +16,6 @@ export type RepeatedMediaTileProps = {
   displayWidth: number;
   previewTime: number;
   itemHeight: number;
-  pixelsPerSecond?: number;
   onDurationLoaded?: (duration: number) => void;
   collectionEndpointSelection?: Partial<Record<CollectionEndpoint, boolean>>;
   onCollectionEndpointClick?: (endpoint: CollectionEndpoint) => void;
@@ -25,6 +24,7 @@ export type RepeatedMediaTileProps = {
 export function RepeatedMediaTile({
   clip,
   displayWidth,
+  previewTime,
   itemHeight,
   onDurationLoaded,
   collectionEndpointSelection,
@@ -46,7 +46,7 @@ export function RepeatedMediaTile({
   }
 
   const { frameTimes, frameWidth, frameHeight, isVideo, mediaClip } =
-    useMediaFrameTimes(clip, displayWidth, itemHeight, isXS);
+    useMediaFrameTimes(clip, displayWidth, itemHeight, isXS, previewTime);
 
   return (
     <RepeatedMediaFrames>

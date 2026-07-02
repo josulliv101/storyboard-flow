@@ -2,38 +2,33 @@ import React from "react";
 
 import type { CollectionEndpoint, TimelineClip } from "./types";
 import { RepeatedMediaTile } from "./RepeatedMediaTile";
+import { useTimelineClipItemContext } from "./TimelineClipItemContext";
+import type { TimelineClipMediaView } from "./TimelineClipItemModel";
 
 export type ClipMediaBodyProps = {
   clip: TimelineClip;
-  displayWidth: number;
-  itemHeight: number;
-  pixelsPerSecond: number;
-  previewTime?: number | null;
+  view: TimelineClipMediaView;
   onDurationLoaded?: (duration: number) => void;
-  collectionEndpointSelection?: Partial<Record<CollectionEndpoint, boolean>>;
   onCollectionEndpointClick?: (endpoint: CollectionEndpoint) => void;
 };
 
 export function ClipMediaBody({
   clip,
-  displayWidth,
-  itemHeight,
-  pixelsPerSecond,
-  previewTime = null,
+  view,
   onDurationLoaded,
-  collectionEndpointSelection,
   onCollectionEndpointClick,
 }: ClipMediaBodyProps) {
+  const { metrics } = useTimelineClipItemContext();
+
   return (
     <RepeatedMediaTile
       clip={clip}
-      displayWidth={displayWidth}
-      previewTime={previewTime ?? clip.trimIn}
-      itemHeight={itemHeight}
-      pixelsPerSecond={pixelsPerSecond}
+      displayWidth={view.displayWidth}
+      previewTime={view.previewTime ?? clip.trimIn}
+      itemHeight={metrics.itemHeight}
       onDurationLoaded={onDurationLoaded}
       collectionEndpointSelection={
-        clip.kind === "collection" ? collectionEndpointSelection : undefined
+        clip.kind === "collection" ? view.collectionEndpointSelection : undefined
       }
       onCollectionEndpointClick={
         clip.kind === "collection" && onCollectionEndpointClick

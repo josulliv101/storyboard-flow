@@ -1,4 +1,5 @@
 import React from "react";
+import { cva } from "class-variance-authority";
 import { Folder, FolderOpen } from "lucide-react";
 
 import type { CollectionTimelineClip } from "./types";
@@ -14,6 +15,36 @@ const collectionBreadcrumbShapes = [
   { fill: "bg-emerald-400", shape: "rotate-45 rounded-[2px]" },
   { fill: "bg-violet-400", shape: "rounded-sm" },
 ] as const;
+
+const collectionExpandToggle = cva(
+  "absolute right-1 top-1 z-30 flex h-7 w-7 items-center justify-center rounded border text-sky-100 shadow transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 focus-visible:outline-offset-2",
+  {
+    variants: {
+      expanded: {
+        true: "border-sky-300/50 bg-sky-500/35 hover:bg-sky-500/45",
+        false: "border-sky-300/35 bg-black/75 hover:bg-sky-950/85",
+      },
+    },
+    defaultVariants: {
+      expanded: false,
+    },
+  },
+);
+
+const collectionOpenTimelineLink = cva(
+  "absolute left-1 z-20 rounded border border-sky-300/40 bg-black/75 px-2 py-1 text-[10px] font-semibold text-sky-100 shadow",
+  {
+    variants: {
+      withBreadcrumb: {
+        true: "bottom-6",
+        false: "bottom-1",
+      },
+    },
+    defaultVariants: {
+      withBreadcrumb: false,
+    },
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Component
@@ -47,12 +78,7 @@ export function ClipCollectionControls({
           aria-expanded={isCollectionExpanded}
           aria-label={`${clip.title} children`}
           title={isCollectionExpanded ? "Collapse collection" : "Expand collection"}
-          className={cn(
-            "absolute right-1 top-1 z-30 flex h-7 w-7 items-center justify-center rounded border text-sky-100 shadow transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 focus-visible:outline-offset-2",
-            isCollectionExpanded
-              ? "border-sky-300/50 bg-sky-500/35 hover:bg-sky-500/45"
-              : "border-sky-300/35 bg-black/75 hover:bg-sky-950/85",
-          )}
+          className={collectionExpandToggle({ expanded: isCollectionExpanded })}
           onPointerDown={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -74,10 +100,7 @@ export function ClipCollectionControls({
       {collectionHref ? (
         <a
           href={collectionHref}
-          className={cn(
-            "absolute left-1 z-20 rounded border border-sky-300/40 bg-black/75 px-2 py-1 text-[10px] font-semibold text-sky-100 shadow",
-            hasCollectionBreadcrumb ? "bottom-6" : "bottom-1",
-          )}
+          className={collectionOpenTimelineLink({ withBreadcrumb: hasCollectionBreadcrumb })}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();

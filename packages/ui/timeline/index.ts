@@ -7,6 +7,8 @@ export * from "./ClipTrimOverlay";
 export * from "./constants";
 export * from "./media-thumbnails";
 export * from "./RepeatedMediaTile";
+export * from "./TimelineClipItemContext";
+export * from "./TimelineClipItemModel";
 export * from "./TimelineClipItem";
 export * from "./TimelineClipItemContent";
 export * from "./timeline-grid";

@@ -2,42 +2,21 @@ import React from "react";
 
 import type { TimelineClip } from "./types";
 import { TrimHandle } from "./TrimHandle";
+import { useTimelineClipItemContext } from "./TimelineClipItemContext";
+import type { TimelineClipTrimView } from "./TimelineClipItemModel";
 
 export type ClipTrimOverlayProps = {
-  isSelected: boolean;
-  thumbnailMode?: boolean;
-  isCollectionCollapseCard?: boolean;
-  width: number;
   clip: TimelineClip;
-  onResizeDown: (
-    e: React.PointerEvent<HTMLDivElement>,
-    clip: TimelineClip,
-    edge: "left" | "right",
-  ) => void;
-  onResizeMove: (e: React.PointerEvent<HTMLDivElement>) => void;
-  onResizeUp: (e: React.PointerEvent<HTMLDivElement>) => void;
-  onResizeKeyDown: (
-    e: React.KeyboardEvent<HTMLDivElement>,
-    clip: TimelineClip,
-    edge: "left" | "right",
-  ) => void;
+  view: TimelineClipTrimView;
 };
 
-export function ClipTrimOverlay({
-  isSelected,
-  thumbnailMode = false,
-  isCollectionCollapseCard = false,
-  width,
-  clip,
-  onResizeDown,
-  onResizeMove,
-  onResizeUp,
-  onResizeKeyDown,
-}: ClipTrimOverlayProps) {
-  if (!isSelected) return null;
+export function ClipTrimOverlay({ clip, view }: ClipTrimOverlayProps) {
+  const { resizeHandlers } = useTimelineClipItemContext();
 
-  // In thumbnail mode only render the selection ring — no trim handles.
-  if (thumbnailMode) {
+  if (!view.isSelected) return null;
+
+  // In thumbnail mode only render the selection ring, no trim handles.
+  if (view.thumbnailMode) {
     return (
       <div className="pointer-events-none absolute inset-0 rounded-md border-2 border-amber-400" />
     );
@@ -46,27 +25,27 @@ export function ClipTrimOverlay({
   return (
     <>
       <div className="pointer-events-none absolute inset-0 rounded-md border-2 border-amber-400" />
-      {!isCollectionCollapseCard ? (
+      {!view.isCollectionCollapseCard ? (
         <>
           <TrimHandle
             edge="left"
-            currentWidth={width}
+            currentWidth={view.width}
             currentDuration={clip.duration}
-            onPointerDown={(e) => onResizeDown(e, clip, "left")}
-            onPointerMove={onResizeMove}
-            onPointerUp={onResizeUp}
-            onPointerCancel={onResizeUp}
-            onKeyDown={(e) => onResizeKeyDown(e, clip, "left")}
+            onPointerDown={(event) => resizeHandlers.onResizeDown(event, clip, "left")}
+            onPointerMove={resizeHandlers.onResizeMove}
+            onPointerUp={resizeHandlers.onResizeUp}
+            onPointerCancel={resizeHandlers.onResizeUp}
+            onKeyDown={(event) => resizeHandlers.onResizeKeyDown(event, clip, "left")}
           />
           <TrimHandle
             edge="right"
-            currentWidth={width}
+            currentWidth={view.width}
             currentDuration={clip.duration}
-            onPointerDown={(e) => onResizeDown(e, clip, "right")}
-            onPointerMove={onResizeMove}
-            onPointerUp={onResizeUp}
-            onPointerCancel={onResizeUp}
-            onKeyDown={(e) => onResizeKeyDown(e, clip, "right")}
+            onPointerDown={(event) => resizeHandlers.onResizeDown(event, clip, "right")}
+            onPointerMove={resizeHandlers.onResizeMove}
+            onPointerUp={resizeHandlers.onResizeUp}
+            onPointerCancel={resizeHandlers.onResizeUp}
+            onKeyDown={(event) => resizeHandlers.onResizeKeyDown(event, clip, "right")}
           />
         </>
       ) : null}

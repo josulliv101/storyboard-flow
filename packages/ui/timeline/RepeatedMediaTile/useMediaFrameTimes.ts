@@ -1,5 +1,6 @@
 import type { MediaTimelineClip, TimelineClip, VideoTimelineClip } from "../types";
 import { getEndpointFrameTimes, getThumbnailSlotCount } from "../media-thumbnails";
+import { clamp } from "../utils";
 
 export type MediaFrameTimesResult = {
   frameTimes: number[];
@@ -14,6 +15,7 @@ export function useMediaFrameTimes(
   displayWidth: number,
   itemHeight: number,
   isXS: boolean,
+  previewTime: number,
 ): MediaFrameTimesResult {
   const isVideo = clip.kind === "video";
   const mediaClip = clip as MediaTimelineClip;
@@ -23,11 +25,14 @@ export function useMediaFrameTimes(
   const sourceDuration =
     (clip as VideoTimelineClip).sourceDuration || clip.duration || 10;
   const end = Math.max(0, sourceDuration - 0.05);
-  const frameTimes = getEndpointFrameTimes({
-    count: tileCount,
-    startTime: 0,
-    endTime: end,
-  });
+  const frameTimes =
+    isXS && isVideo
+      ? [clamp(previewTime, 0, end)]
+      : getEndpointFrameTimes({
+          count: tileCount,
+          startTime: 0,
+          endTime: end,
+        });
 
   return { frameTimes, frameWidth, frameHeight, isVideo, mediaClip };
 }

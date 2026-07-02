@@ -1,6 +1,6 @@
+import { cva } from "class-variance-authority";
 import { Folder, Plus } from "lucide-react";
 
-import { cn } from "../../lib/utils";
 import { getVideoThumbnailUrl } from "../media-thumbnails";
 import type {
   CollectionEndpoint,
@@ -25,6 +25,53 @@ function getCollectionEndpointForSlot(
   return null;
 }
 
+const collectionRepeatedMediaTile = cva(
+  "group relative flex h-full w-full select-none flex-col justify-between overflow-hidden rounded-lg border border-sky-500/20 bg-gradient-to-b from-zinc-900/90 to-zinc-950/95 shadow-xl transition-all duration-300 hover:border-sky-500/40 hover:shadow-sky-950/20",
+  {
+    variants: {
+      density: {
+        compact: "p-2.5",
+        default: "p-3.5",
+      },
+    },
+    defaultVariants: {
+      density: "default",
+    },
+  },
+);
+
+const collectionPreviewSlot = cva(
+  "relative h-full w-full overflow-hidden rounded-[4px] border border-zinc-800/40 bg-zinc-900/60 p-0 text-left transition-all duration-200",
+  {
+    variants: {
+      interactive: {
+        true: "cursor-pointer appearance-none hover:border-amber-300/80 hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 focus-visible:outline-offset-2",
+        false: "",
+      },
+      selected: {
+        true: "border-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.35)] ring-2 ring-amber-300/80",
+        false: "",
+      },
+    },
+    defaultVariants: {
+      interactive: false,
+      selected: false,
+    },
+  },
+);
+
+const collectionTileFooter = cva("flex min-w-0 flex-col justify-end", {
+  variants: {
+    density: {
+      compact: "h-full pt-0",
+      default: "pt-2",
+    },
+  },
+  defaultVariants: {
+    density: "default",
+  },
+});
+
 export function CollectionRepeatedMediaTile({
   clip,
   isXS,
@@ -32,14 +79,10 @@ export function CollectionRepeatedMediaTile({
   onCollectionEndpointClick,
 }: CollectionRepeatedMediaTileProps) {
   const previewItems = clip.previewItems ?? [];
+  const density = isXS ? "compact" : "default";
 
   return (
-    <div
-      className={cn(
-        "group relative flex h-full w-full select-none flex-col justify-between overflow-hidden rounded-lg border border-sky-500/20 bg-gradient-to-b from-zinc-900/90 to-zinc-950/95 shadow-xl transition-all duration-300 hover:border-sky-500/40 hover:shadow-sky-950/20",
-        isXS ? "p-2.5" : "p-3.5",
-      )}
-    >
+    <div className={collectionRepeatedMediaTile({ density })}>
       <div className="absolute left-0 right-0 top-0 h-[2.5px] bg-gradient-to-r from-sky-400 via-indigo-500 to-transparent opacity-80" />
 
       {!isXS && (
@@ -75,36 +118,37 @@ export function CollectionRepeatedMediaTile({
                 <Plus className="h-3 w-3 opacity-30" />
               </div>
             );
-            const previewSlotClassName = cn(
-              "relative h-full w-full overflow-hidden rounded-[4px] border border-zinc-800/40 bg-zinc-900/60 p-0 text-left transition-all duration-200",
-              endpoint &&
-                onCollectionEndpointClick &&
-                "cursor-pointer appearance-none hover:border-amber-300/80 hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300 focus-visible:outline-offset-2",
-              endpointSelected &&
-                "border-amber-300 ring-2 ring-amber-300/80 shadow-[0_0_12px_rgba(251,191,36,0.35)]",
-            );
+            const isInteractiveEndpoint = Boolean(endpoint && onCollectionEndpointClick);
+            const previewSlotClassName = collectionPreviewSlot({
+              interactive: isInteractiveEndpoint,
+              selected: endpointSelected,
+            });
 
-            return endpoint && onCollectionEndpointClick ? (
-              <button
-                key={item.id}
-                type="button"
-                data-testid="timeline-collection-preview-endpoint"
-                data-endpoint={endpoint}
-                aria-pressed={endpointSelected}
-                aria-label={`${clip.title} ${endpoint} item`}
-                className={previewSlotClassName}
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                }}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onCollectionEndpointClick(endpoint);
-                }}
-              >
-                {previewContent}
-              </button>
-            ) : (
+            if (endpoint && onCollectionEndpointClick && item) {
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  data-testid="timeline-collection-preview-endpoint"
+                  data-endpoint={endpoint}
+                  aria-pressed={endpointSelected}
+                  aria-label={`${clip.title} ${endpoint} item`}
+                  className={previewSlotClassName}
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onCollectionEndpointClick(endpoint);
+                  }}
+                >
+                  {previewContent}
+                </button>
+              );
+            }
+
+            return (
               <div
                 key={item?.id ?? `${clip.id}-empty-preview-${index}`}
                 className={previewSlotClassName}
@@ -116,7 +160,7 @@ export function CollectionRepeatedMediaTile({
         </div>
       )}
 
-      <div className={cn("flex min-w-0 flex-col justify-end", isXS ? "h-full pt-0" : "pt-2")}>
+      <div className={collectionTileFooter({ density })}>
         <h4 className="truncate text-xs font-bold tracking-wide text-zinc-100 transition-colors group-hover:text-sky-300">
           {clip.title}
         </h4>

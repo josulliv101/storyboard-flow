@@ -1636,54 +1636,68 @@ export function SmoothScrollList({
 
         <div className="relative w-full max-w-full min-w-0">
           <TimelineViewport
-            closingOverhangOffset={overhang.closingOverhangOffset}
-            firstOverhang={overhang.firstOverhang}
-            handleClipDurationLoad={
-              syncMediaDuration ? handleClipDurationLoad : handleClipDurationLoadSimple
-            }
-            handleScroll={scrollState.handleScroll}
-            hasClips={displayClips.length > 0}
+            collections={{
+              expandedCollectionIds: visibleExpandedCollectionKeys,
+              exposedCollectionEndpointIds: visibleExposedCollectionEndpointKeys,
+              getCollectionHref,
+              onOpenCollection: handleOpenCollection,
+              onToggleCollectionEndpoint: handleToggleCollectionEndpoint,
+              onToggleCollectionExpanded: handleToggleCollectionExpanded,
+            }}
+            dropHandlers={{
+              onDropClip: handleDropClip,
+              onDropClipIntoCollection: handleDropClipIntoCollection,
+              onDropFiles: handleDropFiles,
+              onDropSidebarClip: handleDropSidebarClip,
+              onDropSidebarClipIntoCollection: handleDropSidebarClipIntoCollection,
+            }}
+            frame={{
+              handleScroll: scrollState.handleScroll,
+              parentRef,
+              resolvedViewportWidth,
+              scrollLeft: scrollState.scrollLeft,
+              scrollTop: gridModeEnabled
+                ? scrollState.pageScrollTop
+                : scrollState.scrollTop,
+              timelineHeight,
+              timelineWidth: layout.timelineWidth,
+            }}
             interactions={interactions}
-            isClosingOverhang={overhang.isClosingOverhang}
-            isResizingFirstClipLeft={overhang.isResizingFirstClipLeft}
             isZooming={zoom.isZooming}
-            itemHeight={itemHeight}
-            itemTop={itemTop}
-            manualOverhangScroll={manualOverhangScroll}
-            getCollectionHref={getCollectionHref}
-            onOpenCollection={handleOpenCollection}
-            parentRef={parentRef}
-            pixelsPerSecond={zoom.safePixelsPerSecond}
-            prevFirstOverhang={overhang.prevFirstOverhangRef.current}
-            resolvedViewportWidth={resolvedViewportWidth}
-            scrubPreview={clipState.scrubPreview}
-            scrollLeft={scrollState.scrollLeft}
-            scrollTop={
-              gridModeEnabled ? scrollState.pageScrollTop : scrollState.scrollTop
-            }
-            selectedIndex={clipState.selectedIndex}
-            selectedVideoClip={showPlayBarArea ? selectedVideoClip : null}
-            showPlayBarArea={showPlayBarArea}
-            showPassiveFilmstrips={showPassiveFilmstrips}
-            gridMetrics={gridMetrics}
-            thumbnailMode={thumbnailMode}
-            thumbnailWidth={effectiveThumbnailWidth}
-            timelineHeight={timelineHeight}
-            timelineWidth={layout.timelineWidth}
-            visibleClips={layout.visibleClips}
-            expandedCollectionIds={visibleExpandedCollectionKeys}
-            onToggleCollectionExpanded={handleToggleCollectionExpanded}
-            exposedCollectionEndpointIds={visibleExposedCollectionEndpointKeys}
-            onToggleCollectionEndpoint={handleToggleCollectionEndpoint}
-            onDropFiles={handleDropFiles}
-            onDropClip={handleDropClip}
-            onDropSidebarClip={handleDropSidebarClip}
-            onDropClipIntoCollection={handleDropClipIntoCollection}
-            onDropSidebarClipIntoCollection={handleDropSidebarClipIntoCollection}
+            layout={{
+              gridMetrics,
+              hasClips: displayClips.length > 0,
+              itemHeight,
+              itemTop,
+              pixelsPerSecond: zoom.safePixelsPerSecond,
+              thumbnailMode,
+              thumbnailWidth: effectiveThumbnailWidth,
+              visibleClips: layout.visibleClips,
+            }}
+            overhang={{
+              closingOverhangOffset: overhang.closingOverhangOffset,
+              firstOverhang: overhang.firstOverhang,
+              isClosingOverhang: overhang.isClosingOverhang,
+              isResizingFirstClipLeft: overhang.isResizingFirstClipLeft,
+              manualOverhangScroll,
+              prevFirstOverhang: overhang.prevFirstOverhangRef.current,
+            }}
+            playback={{
+              onPlayheadTimeChange,
+              playheadTime,
+              previewLargeSurface,
+              selectedVideoClip: showPlayBarArea ? selectedVideoClip : null,
+              showPassiveFilmstrips,
+              showPlayBarArea,
+            }}
+            selection={{
+              handleClipDurationLoad: syncMediaDuration
+                ? handleClipDurationLoad
+                : handleClipDurationLoadSimple,
+              scrubPreview: clipState.scrubPreview,
+              selectedIndex: clipState.selectedIndex,
+            }}
             timelineId={timelineId}
-            previewLargeSurface={previewLargeSurface}
-            playheadTime={playheadTime}
-            onPlayheadTimeChange={onPlayheadTimeChange}
           />
 
           {overhang.hasOffscreenOverhang && (

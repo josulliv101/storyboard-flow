@@ -1,12 +1,16 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+
 import { TimelineClipItemContent } from "./TimelineClipItemContent";
+import {
+  TimelineClipItemProvider,
+  type TimelineClipItemContextValue,
+} from "./TimelineClipItemContext";
+import type {
+  ClipItemContentRing,
+  TimelineClipItemContentView,
+} from "./TimelineClipItemModel";
 import type { TimelineClip } from "./types";
 
-/* ---------------------------------------------------------------------------
- * Fixtures
- * --------------------------------------------------------------------------- */
-
-// Static placeholder assets — no live network calls
 const PLACEHOLDER_IMG =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='225'%3E%3Crect width='400' height='225' fill='%23334155'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-family='sans-serif' font-size='14'%3EImage%3C%2Ftext%3E%3C/svg%3E";
 
@@ -44,105 +48,131 @@ const videoClip: TimelineClip = {
   trimOut: 3,
 };
 
-const sharedArgs = {
-  width: 400,
-  itemHeight: 160,
-  pixelsPerSecond: 100,
-  onResizeDown: () => {},
-  onResizeMove: () => {},
-  onResizeUp: () => {},
-  onResizeKeyDown: () => {},
-} as const;
+const providerValue: TimelineClipItemContextValue = {
+  metrics: {
+    pixelsPerSecond: 100,
+    itemTop: 0,
+    itemHeight: 160,
+  },
+  resizeHandlers: {
+    onResizeDown: () => {},
+    onResizeMove: () => {},
+    onResizeUp: () => {},
+    onResizeKeyDown: () => {},
+  },
+};
 
-/* ---------------------------------------------------------------------------
- * Meta
- * --------------------------------------------------------------------------- */
+function makeView({
+  ring = "default",
+  isSelected = false,
+  isCollectionHovered = false,
+  isGrowingOpposite = false,
+  isCollectionCollapseCard = false,
+}: {
+  ring?: ClipItemContentRing;
+  isSelected?: boolean;
+  isCollectionHovered?: boolean;
+  isGrowingOpposite?: boolean;
+  isCollectionCollapseCard?: boolean;
+} = {}): TimelineClipItemContentView {
+  return {
+    ring,
+    media: {
+      displayWidth: 400,
+      previewTime: null,
+    },
+    collection: {
+      isCollapseCard: isCollectionCollapseCard,
+      hasBreadcrumb: false,
+      breadcrumbLevels: [],
+      href: null,
+      isExpanded: false,
+    },
+    trim: {
+      isSelected,
+      thumbnailMode: false,
+      isCollectionCollapseCard,
+      width: 400,
+    },
+    isGrowingOpposite,
+    isCollectionHovered,
+  };
+}
 
-const meta: Meta<typeof TimelineClipItemContent> = {
+const meta = {
   title: "UI/Timeline/TimelineClipItemContent",
   component: TimelineClipItemContent,
   decorators: [
     (Story) => (
-      <div
-        className="font-sans text-white"
-        style={{
-          width: 400,
-          height: 160,
-          background: "#09090b",
-          borderRadius: 8,
-          overflow: "hidden",
-        }}
-      >
-        <Story />
-      </div>
+      <TimelineClipItemProvider value={providerValue}>
+        <div
+          className="font-sans text-white"
+          style={{
+            width: 400,
+            height: 160,
+            background: "#09090b",
+            borderRadius: 8,
+            overflow: "hidden",
+          }}
+        >
+          <Story />
+        </div>
+      </TimelineClipItemProvider>
     ),
   ],
   args: {
-    ...sharedArgs,
     clip: imageClip,
+    view: makeView(),
   },
-  argTypes: {
-    ring: {
-      control: { type: "radio" },
-      options: ["default", "selected", "lifted", "collectionHovered", "collectionCollapse"],
-    },
-  },
-};
+} satisfies Meta<typeof TimelineClipItemContent>;
 
 export default meta;
 
-type Story = StoryObj<typeof TimelineClipItemContent>;
-
-/* ---------------------------------------------------------------------------
- * Ring variants
- * --------------------------------------------------------------------------- */
+type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
-  args: { ring: "default" },
+  args: { view: makeView({ ring: "default" }) },
 };
 
 export const Selected: Story = {
   args: {
-    ring: "selected",
-    isSelected: true,
     clip: videoClip,
+    view: makeView({ ring: "selected", isSelected: true }),
   },
 };
 
 export const Lifted: Story = {
-  args: { ring: "lifted" },
+  args: { view: makeView({ ring: "lifted" }) },
 };
 
 export const CollectionHovered: Story = {
   args: {
-    ring: "collectionHovered",
-    isCollectionHovered: true,
+    view: makeView({ ring: "collectionHovered", isCollectionHovered: true }),
   },
 };
 
 export const CollectionCollapse: Story = {
   args: {
-    ring: "collectionCollapse",
-    isCollectionCollapseCard: true,
+    view: makeView({
+      ring: "collectionCollapse",
+      isCollectionCollapseCard: true,
+    }),
   },
 };
 
-/* ---------------------------------------------------------------------------
- * State variants
- * --------------------------------------------------------------------------- */
-
 export const GrowingOpposite: Story = {
   args: {
-    ring: "selected",
-    isSelected: true,
-    isGrowingOpposite: true,
+    view: makeView({
+      ring: "selected",
+      isSelected: true,
+      isGrowingOpposite: true,
+    }),
   },
 };
 
 export const VideoSelected: Story = {
   args: {
     clip: videoClip,
-    ring: "selected",
-    isSelected: true,
+    view: makeView({ ring: "selected", isSelected: true }),
   },
 };
