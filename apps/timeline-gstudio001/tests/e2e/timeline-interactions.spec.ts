@@ -1,13 +1,13 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-const STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--default&viewMode=story";
-const COLLECTION_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--collection-timeline&viewMode=story";
-const THUMBNAIL_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--thumbnail-mode&viewMode=story";
-const FIRST_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--first-clip-selected-at-timeline-start&viewMode=story";
-const LAST_STORY_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--last-clip-selected-at-timeline-end&viewMode=story";
-const MULTIPLE_TIMELINES_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--multiple-timelines&viewMode=story";
-const MULTIPLE_THUMBNAIL_TIMELINES_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--multiple-timelines-thumbnail&viewMode=story";
-const THUMBNAIL_VIRTUALIZED_URL = "/iframe.html?id=gstudio-timeline-smoothscrolllist--virtualized-thousand-clips-thumbnail&viewMode=story";
+const STORY_URL = "/iframe.html?id=ui-timeline-viewport-smoothscrolllist--default&viewMode=story";
+const COLLECTION_STORY_URL = "/iframe.html?id=ui-timeline-viewport-smoothscrolllist--collection-timeline&viewMode=story";
+const THUMBNAIL_STORY_URL = "/iframe.html?id=ui-timeline-viewport-smoothscrolllist--thumbnail-mode&viewMode=story";
+const FIRST_STORY_URL = "/iframe.html?id=ui-timeline-viewport-smoothscrolllist--first-clip-selected-at-timeline-start&viewMode=story";
+const LAST_STORY_URL = "/iframe.html?id=ui-timeline-viewport-smoothscrolllist--last-clip-selected-at-timeline-end&viewMode=story";
+const MULTIPLE_TIMELINES_URL = "/iframe.html?id=ui-timeline-viewport-smoothscrolllist--multiple-timelines&viewMode=story";
+const MULTIPLE_THUMBNAIL_TIMELINES_URL = "/iframe.html?id=ui-timeline-viewport-smoothscrolllist--multiple-timelines-thumbnail&viewMode=story";
+const THUMBNAIL_VIRTUALIZED_URL = "/iframe.html?id=ui-timeline-viewport-smoothscrolllist--virtualized-thousand-clips-thumbnail&viewMode=story";
 
 async function dragBy(page: Page, locator: Locator, dx: number, dy = 0) {
   const box = await locator.boundingBox();
@@ -65,40 +65,6 @@ async function revealTimelineEnd(page: Page) {
   });
 }
 
-async function scrollTimelineUntilVisible(
-  page: Page,
-  locator: Locator,
-  direction: "left" | "right" = "right",
-) {
-  const viewport = page.getByTestId("timeline-scroll-viewport");
-
-  for (let attempt = 0; attempt < 24; attempt += 1) {
-    if ((await locator.count()) > 0) {
-      const target = locator.first();
-      await target.scrollIntoViewIfNeeded();
-      if (await target.isVisible()) return;
-    }
-
-    const moved = await viewport.evaluate((element, scrollDirection) => {
-      element.style.scrollBehavior = "auto";
-      const previous = element.scrollLeft;
-      const step = Math.max(160, element.clientWidth * 0.7);
-      const next =
-        scrollDirection === "left"
-          ? Math.max(0, previous - step)
-          : Math.min(element.scrollWidth - element.clientWidth, previous + step);
-      element.scrollLeft = next;
-      element.dispatchEvent(new Event("scroll"));
-      return element.scrollLeft !== previous;
-    }, direction);
-
-    if (!moved) break;
-    await page.waitForTimeout(50);
-  }
-
-  await expect(locator.first()).toBeVisible();
-}
-
 async function openLastStory(page: Page) {
   await openStory(page, LAST_STORY_URL);
   await expect(page.getByTestId("timeline-clip-11")).toHaveAttribute("data-selected", "true");
@@ -115,87 +81,6 @@ test("selects a clip and exposes its source filmstrip", async ({ page }) => {
 
   await expect(clip).toHaveAttribute("data-selected", "true");
   await expect(page.getByTestId("timeline-source-filmstrip")).toBeVisible();
-});
-
-test("collection cards expand inline and collapse back to a collection card", async ({ page }) => {
-  await openStory(page, COLLECTION_STORY_URL);
-  const editor = page.getByTestId("timeline-editor");
-  if ((await editor.getAttribute("data-playbar-area")) !== "true") {
-    await page.getByRole("switch", { name: "Play bar" }).click();
-  }
-  const initialItemCount = await numberAttribute(editor, "data-item-count");
-
-  const collection = page.getByTestId("timeline-clip-4").first();
-  await collection.scrollIntoViewIfNeeded();
-  await collection.click();
-  await expect(collection).toHaveAttribute("data-selected", "true");
-  await expect(
-    page.locator('[data-testid="timeline-source-filmstrip"][data-clip-index="4"]'),
-  ).toHaveCount(0);
-
-  const toggle = collection.getByTestId("timeline-collection-expand-toggle");
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await toggle.click();
-  await expect.poll(() => numberAttribute(editor, "data-item-count")).toBeGreaterThan(initialItemCount);
-  await expect(page.locator('[data-testid="timeline-editor"][data-timeline-id="scene-a"]')).toHaveCount(0);
-
-  const collapseCard = page.locator(
-    '[data-testid^="timeline-clip-"][data-view-role="collection-collapse"][data-expansion-key="root-scene-a"]',
-  );
-  await expect(collapseCard).toBeVisible();
-  await expect(page.getByTestId("timeline-expanded-collection-bar-lane")).toHaveCount(0);
-  await expect(
-    collapseCard.getByTestId("timeline-expanded-collection-breadcrumb"),
-  ).toHaveAttribute("data-depth", "1");
-  await expect(
-    collapseCard.locator('[data-testid="timeline-expanded-collection-breadcrumb-shape"][data-depth-level="0"]').first(),
-  ).toBeVisible();
-  await expect(collapseCard.getByTestId("timeline-collection-expand-toggle")).toHaveAttribute("aria-expanded", "true");
-  const sceneAChild = page.locator(
-    '[data-testid^="timeline-clip-"][data-view-role="expanded-child"][data-source-timeline-id="scene-a"]',
-  ).first();
-  await expect(sceneAChild).toBeVisible();
-  await expect(sceneAChild.getByTestId("timeline-expanded-collection-breadcrumb")).toHaveAttribute("data-depth", "1");
-
-  const nestedCollection = page.locator(
-    '[data-testid^="timeline-clip-"][data-source-clip-id="scene-a-nested-collection"]',
-  );
-  await scrollTimelineUntilVisible(page, nestedCollection);
-  await expect(nestedCollection.getByTestId("timeline-expanded-collection-breadcrumb")).toHaveAttribute("data-depth", "1");
-  const nestedToggle = nestedCollection.getByTestId("timeline-collection-expand-toggle");
-  await expect(nestedToggle).toHaveAttribute("aria-expanded", "false");
-  await nestedToggle.click();
-  await expect(nestedToggle).toHaveAttribute("aria-expanded", "true");
-
-  const nestedCollapseCard = page.locator(
-    '[data-testid^="timeline-clip-"][data-view-role="collection-collapse"][data-expansion-key="root-scene-a/scene-a-nested-collection"]',
-  );
-  await expect(nestedCollapseCard).toBeVisible();
-  await expect(nestedCollapseCard.getByTestId("timeline-expanded-collection-breadcrumb")).toHaveAttribute("data-depth", "2");
-  await expect(
-    nestedCollapseCard.locator('[data-testid="timeline-expanded-collection-breadcrumb-shape"][data-depth-level="0"]').first(),
-  ).toBeVisible();
-  await expect(
-    nestedCollapseCard.locator('[data-testid="timeline-expanded-collection-breadcrumb-shape"][data-depth-level="1"]').first(),
-  ).toBeVisible();
-  const sceneADetailsChild = page.locator(
-    '[data-testid^="timeline-clip-"][data-view-role="expanded-child"][data-source-timeline-id="scene-a-details"]',
-  ).first();
-  await expect(sceneADetailsChild).toBeVisible();
-  await expect(sceneADetailsChild.getByTestId("timeline-expanded-collection-breadcrumb")).toHaveAttribute("data-depth", "2");
-  await expect(page.locator('[data-testid="timeline-editor"][data-timeline-id="scene-a-details"]')).toHaveCount(0);
-
-  await nestedCollapseCard.getByTestId("timeline-collection-expand-toggle").click();
-  await expect(
-    page.locator('[data-testid^="timeline-clip-"][data-view-role="expanded-child"][data-source-timeline-id="scene-a-details"]'),
-  ).toHaveCount(0);
-
-  await scrollTimelineUntilVisible(page, collapseCard, "left");
-  await collapseCard.getByTestId("timeline-collection-expand-toggle").click();
-  await expect.poll(() => numberAttribute(editor, "data-item-count")).toBe(initialItemCount);
-  await expect(
-    page.locator('[data-testid^="timeline-clip-"][data-view-role="expanded-child"][data-source-timeline-id="scene-a"]'),
-  ).toHaveCount(0);
 });
 
 test("collection edge thumbnails expose editable first and last child clips inline", async ({ page }) => {
@@ -538,7 +423,7 @@ test("keyboard nudge trims by the configured pixel step", async ({ page }) => {
 });
 
 test("pans with a real pointer drag and virtualizes a large list", async ({ page }) => {
-  await page.goto("/iframe.html?id=gstudio-timeline-smoothscrolllist--virtualized-thousand-clips&viewMode=story");
+  await page.goto("/iframe.html?id=ui-timeline-viewport-smoothscrolllist--virtualized-thousand-clips&viewMode=story");
   const viewport = page.getByTestId("timeline-scroll-viewport");
   const initialScroll = await numberAttribute(viewport, "data-scroll-left");
 

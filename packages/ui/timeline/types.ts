@@ -22,18 +22,20 @@ export type TimelineItemBase = {
   playbackStartTime?: number;
   /** Optional unscaled playback duration used when visual width differs from playback time. */
   playbackDuration?: number;
-  /** Transient view key used when a collection is expanded inline. */
+  /** Transient view key used when a collection endpoint is exposed inline. */
   viewExpansionKey?: string;
-  /** Transient source timeline for inline-expanded child clips. */
+  /** Transient source timeline for inline collection endpoint clips. */
   viewSourceTimelineId?: string;
-  /** Transient source clip id for inline-expanded child clips. */
+  /** Transient source clip id for inline collection endpoint clips. */
   viewSourceClipId?: string;
-  /** Transient nesting depth for inline-expanded collection views. */
+  /** Transient nesting depth for inline collection endpoint views. */
   viewDepth?: number;
   /** Transient endpoint exposed from a collection preview. */
   viewEndpoint?: CollectionEndpoint;
-  /** Transient role for synthetic inline-expanded collection cards. */
-  viewRole?: "collection-collapse" | "expanded-child" | "collection-endpoint";
+  /** Transient parent collection key for exposed endpoint clips. */
+  viewParentCollectionKey?: string;
+  /** Transient role for synthetic inline collection endpoint cards. */
+  viewRole?: "collection-endpoint";
   /** Transient accent index for sibling collection styling. */
   viewCollectionAccentIndex?: number;
 };

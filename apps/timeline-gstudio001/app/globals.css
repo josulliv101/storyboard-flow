@@ -61,6 +61,31 @@ html[data-timeline-route-fade="in"] body {
   animation: timeline-route-fade-in 180ms ease-out both;
 }
 
+html[data-timeline-endpoint-transition="active"] {
+  view-transition-name: none;
+}
+
+html[data-timeline-endpoint-transition="active"]::view-transition {
+  pointer-events: none;
+}
+
+html[data-timeline-endpoint-transition="active"]::view-transition-group(.timeline-clip-item) {
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+html[data-timeline-endpoint-transition="active"]::view-transition-new(.timeline-clip-item):only-child {
+  animation-name: timeline-endpoint-enter;
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+html[data-timeline-endpoint-transition="active"]::view-transition-old(.timeline-clip-item):only-child {
+  animation-name: timeline-endpoint-exit;
+  animation-duration: 220ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+}
+
 @keyframes timeline-route-fade-in {
   from {
     opacity: 0.18;
@@ -70,10 +95,32 @@ html[data-timeline-route-fade="in"] body {
   }
 }
 
+@keyframes timeline-endpoint-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+    filter: blur(4px);
+  }
+}
+
+@keyframes timeline-endpoint-exit {
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+    filter: blur(4px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html[data-timeline-route-fade] body {
     animation: none !important;
     opacity: 1;
     transition: none !important;
+  }
+
+  html[data-timeline-endpoint-transition="active"]::view-transition-group(*),
+  html[data-timeline-endpoint-transition="active"]::view-transition-old(*),
+  html[data-timeline-endpoint-transition="active"]::view-transition-new(*) {
+    animation: none !important;
   }
 }

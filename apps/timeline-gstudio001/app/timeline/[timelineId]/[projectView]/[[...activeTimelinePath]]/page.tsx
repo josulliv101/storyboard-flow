@@ -4,10 +4,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, use, useCallback, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { ToggleSwitch } from "@storyboard/ui/timeline/timeline-toolbar";
+import { ToggleSwitch } from "@storyboard/ui/timeline/controls/timeline-toolbar";
 
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
-import { WorkbenchSplitPane } from "@storyboard/ui/timeline/workbench-display-surface";
+import { WorkbenchSplitPane } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
 import {
   parseTimelineViewState,
   type ProjectViewMode,
