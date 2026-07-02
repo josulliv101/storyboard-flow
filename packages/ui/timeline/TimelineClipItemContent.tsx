@@ -17,6 +17,7 @@ import type {
   ClipItemContentRing,
   TimelineClipItemContentView,
 } from "./TimelineClipItemModel";
+import { getCollectionAccentGradientByIndex } from "./collection-accent";
 
 export type { ClipItemContentRing };
 
@@ -73,6 +74,18 @@ export function TimelineClipItemContent({
 
   return (
     <div className={clipItemContent({ ring: view.ring })}>
+      {clip.viewRole === "collection-endpoint" &&
+        clip.viewCollectionAccentIndex !== undefined && (
+          <div
+            className="absolute left-0 right-0 top-0 z-10 h-[2.5px] opacity-90"
+            data-testid="collection-endpoint-accent-bar"
+            style={{
+              background: getCollectionAccentGradientByIndex(
+                clip.viewCollectionAccentIndex,
+              ),
+            }}
+          />
+        )}
       <ClipMediaBody
         clip={clip}
         view={view.media}

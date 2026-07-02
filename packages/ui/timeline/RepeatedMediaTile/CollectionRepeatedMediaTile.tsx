@@ -3,6 +3,7 @@ import { cva } from "class-variance-authority";
 import { Folder, Plus } from "lucide-react";
 
 import { getVideoThumbnailUrl } from "../media-thumbnails";
+import { getCollectionAccentGradientByIndex } from "../collection-accent";
 import type {
   CollectionEndpoint,
   CollectionTimelineClip,
@@ -74,23 +75,6 @@ const collectionTileFooter = cva("flex min-w-0 flex-col justify-end", {
   },
 });
 
-const collectionAccentGradients = [
-  "linear-gradient(90deg, #38bdf8 0%, #6366f1 52%, rgba(56, 189, 248, 0) 100%)",
-  "linear-gradient(90deg, #f59e0b 0%, #f97316 52%, rgba(249, 115, 22, 0) 100%)",
-  "linear-gradient(90deg, #22c55e 0%, #14b8a6 52%, rgba(20, 184, 166, 0) 100%)",
-  "linear-gradient(90deg, #ec4899 0%, #a855f7 52%, rgba(168, 85, 247, 0) 100%)",
-  "linear-gradient(90deg, #f43f5e 0%, #fb7185 52%, rgba(244, 63, 94, 0) 100%)",
-  "linear-gradient(90deg, #84cc16 0%, #eab308 52%, rgba(234, 179, 8, 0) 100%)",
-  "linear-gradient(90deg, #06b6d4 0%, #0ea5e9 52%, rgba(14, 165, 233, 0) 100%)",
-  "linear-gradient(90deg, #8b5cf6 0%, #d946ef 52%, rgba(217, 70, 239, 0) 100%)",
-];
-
-function getCollectionAccentGradient(clip: CollectionTimelineClip) {
-  const index = clip.viewCollectionAccentIndex ?? clip.index;
-  return collectionAccentGradients[
-    Math.abs(index) % collectionAccentGradients.length
-  ];
-}
 
 export function CollectionRepeatedMediaTile({
   clip,
@@ -101,7 +85,9 @@ export function CollectionRepeatedMediaTile({
 }: CollectionRepeatedMediaTileProps) {
   const previewItems = clip.previewItems ?? [];
   const density = isXS ? "compact" : "default";
-  const accentGradient = getCollectionAccentGradient(clip);
+  const accentGradient = getCollectionAccentGradientByIndex(
+    clip.viewCollectionAccentIndex ?? clip.index,
+  );
   const titleInputId = useId();
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);

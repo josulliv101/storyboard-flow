@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { expect, fireEvent, fn, userEvent, waitFor, within } from "storybook/test";
 
-import { getTimelineDocument } from "./timeline-documents";
+import { getTimelineDocument, registerTimelineDocument } from "./timeline-documents";
 import { createInitialClips } from "./hooks/use-timeline-clips";
 import { SmoothScrollList } from "./smooth-scroll-list";
 import type { TimelineClip } from "./types";
@@ -112,6 +112,113 @@ export const CollectionTimeline: Story = {
     },
     syncMediaDuration: false,
     timelineId: "root",
+  },
+};
+
+/**
+ * Clicking the first thumbnail of a collection tile exposes the first child
+ * clip as a separate adjacent item to the LEFT of the collection in the
+ * timeline row.
+ */
+export const CollectionFirstEndpointExposed: Story = {
+  args: {
+    initialClips: withDeterministicStoryMedia(getTimelineDocument("root")?.clips ?? []),
+    itemCount: getTimelineDocument("root")?.clips.length ?? 0,
+    initialViewState: {
+      showPlayBarArea: true,
+      thumbnailMode: true,
+    },
+    syncMediaDuration: false,
+    timelineId: "root",
+  },
+  loaders: [
+    async () => {
+      // Patch child timeline documents with deterministic SVG media so the
+      // exposed endpoint clip's thumbnails render without external network calls.
+      for (const childId of ["scene-a", "scene-b", "collection-board", "scene-a-details"]) {
+        const doc = getTimelineDocument(childId);
+        if (doc) {
+          registerTimelineDocument(
+            { ...doc, clips: withDeterministicStoryMedia(doc.clips) },
+            { persist: false },
+          );
+        }
+      }
+    },
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Click the "first item" endpoint button on the collection tile.
+    const firstEndpointBtn = await canvas.findByRole("button", {
+      name: "Scene A Selects first item",
+    });
+    await userEvent.click(firstEndpointBtn);
+
+    // The first child clip from the child timeline now appears as a separate
+    // adjacent item to the LEFT of the collection (data-view-endpoint="first").
+    await waitFor(() => {
+      const endpointClip = canvasElement.querySelector(
+        '[data-view-endpoint="first"]',
+      );
+      expect(endpointClip).toBeTruthy();
+      expect(
+        endpointClip?.querySelector('[data-testid="collection-endpoint-accent-bar"]'),
+      ).toBeTruthy();
+    });
+  },
+};
+
+/**
+ * Clicking the last thumbnail of a collection tile exposes the last child
+ * clip as a separate adjacent item to the RIGHT of the collection in the
+ * timeline row.
+ */
+export const CollectionLastEndpointExposed: Story = {
+  args: {
+    initialClips: withDeterministicStoryMedia(getTimelineDocument("root")?.clips ?? []),
+    itemCount: getTimelineDocument("root")?.clips.length ?? 0,
+    initialViewState: {
+      showPlayBarArea: true,
+      thumbnailMode: true,
+    },
+    syncMediaDuration: false,
+    timelineId: "root",
+  },
+  loaders: [
+    async () => {
+      // Patch child timeline documents with deterministic SVG media so the
+      // exposed endpoint clip's thumbnails render without external network calls.
+      for (const childId of ["scene-a", "scene-b", "collection-board", "scene-a-details"]) {
+        const doc = getTimelineDocument(childId);
+        if (doc) {
+          registerTimelineDocument(
+            { ...doc, clips: withDeterministicStoryMedia(doc.clips) },
+            { persist: false },
+          );
+        }
+      }
+    },
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Click the "last item" endpoint button on the collection tile.
+    const lastEndpointBtn = await canvas.findByRole("button", {
+      name: "Scene A Selects last item",
+    });
+    await userEvent.click(lastEndpointBtn);
+
+    // The last child clip appears to the RIGHT with the matching accent bar.
+    await waitFor(() => {
+      const endpointClip = canvasElement.querySelector(
+        '[data-view-endpoint="last"]',
+      );
+      expect(endpointClip).toBeTruthy();
+      expect(
+        endpointClip?.querySelector('[data-testid="collection-endpoint-accent-bar"]'),
+      ).toBeTruthy();
+    });
   },
 };
 

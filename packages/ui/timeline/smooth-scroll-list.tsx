@@ -181,6 +181,7 @@ function buildInlineCollectionView({
           endpoint,
           idPrefix: `inline-endpoint:${endpointKey}`,
           role: "collection-endpoint",
+          collectionAccentIndex: viewOptions?.collectionAccentIndex,
         },
       );
     };

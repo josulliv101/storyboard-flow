@@ -71,6 +71,50 @@ export const EndpointSelection: Story = {
   },
 };
 
+export const FirstThumbnailSelected: Story = {
+  args: {
+    collectionEndpointSelection: {
+      first: true,
+    },
+    onCollectionEndpointClick: fn(),
+  },
+  play: async ({ args, canvas }) => {
+    const firstEndpoint = canvas.getByRole("button", {
+      name: "Scene Selects first item",
+    });
+    const lastEndpoint = canvas.getByRole("button", {
+      name: "Scene Selects last item",
+    });
+
+    await expect(firstEndpoint).toHaveAttribute("aria-pressed", "true");
+    await expect(lastEndpoint).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(firstEndpoint);
+    await expect(args.onCollectionEndpointClick).toHaveBeenCalledWith("first");
+  },
+};
+
+export const LastThumbnailSelected: Story = {
+  args: {
+    collectionEndpointSelection: {
+      last: true,
+    },
+    onCollectionEndpointClick: fn(),
+  },
+  play: async ({ args, canvas }) => {
+    const firstEndpoint = canvas.getByRole("button", {
+      name: "Scene Selects first item",
+    });
+    const lastEndpoint = canvas.getByRole("button", {
+      name: "Scene Selects last item",
+    });
+
+    await expect(lastEndpoint).toHaveAttribute("aria-pressed", "true");
+    await expect(firstEndpoint).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(lastEndpoint);
+    await expect(args.onCollectionEndpointClick).toHaveBeenCalledWith("last");
+  },
+};
+
 export const EditableName: Story = {
   args: {
     onTitleChange: fn(),
