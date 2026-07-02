@@ -81,6 +81,21 @@ describe("timeline clip math", () => {
     expect(resized.trimOut).toBeCloseTo(6.4);
   });
 
+  it("resizes images without source-duration clamping", () => {
+    const [resized] = resizeClipsFromBaseline({
+      baselineClips: [clip({ kind: "image", duration: 4, sourceDuration: 4, trimIn: 0, trimOut: 0 })],
+      anchorIndex: 0,
+      edge: "right",
+      deltaTime: 2,
+      minDuration: 0.6,
+    });
+
+    expect(resized.duration).toBe(6);
+    expect(resized.sourceDuration).toBe(6);
+    expect(resized.trimIn).toBe(0);
+    expect(resized.trimOut).toBe(0);
+  });
+
   it("moves a video source window without changing visible duration", () => {
     const [edited] = editVideoSourceWindowFromBaseline({
       baselineClips: [clip()],
@@ -93,6 +108,21 @@ describe("timeline clip math", () => {
     expect(edited.duration).toBe(4);
     expect(edited.trimIn).toBe(1);
     expect(edited.trimOut).toBe(5);
+  });
+
+  it("uses image source handles to resize duration", () => {
+    const [edited] = editVideoSourceWindowFromBaseline({
+      baselineClips: [clip({ kind: "image", duration: 4, sourceDuration: 4, trimIn: 0, trimOut: 0 })],
+      anchorIndex: 0,
+      mode: "right",
+      deltaTime: 2,
+      minDuration: 0.6,
+    });
+
+    expect(edited.duration).toBe(6);
+    expect(edited.sourceDuration).toBe(6);
+    expect(edited.trimIn).toBe(0);
+    expect(edited.trimOut).toBe(0);
   });
 
   it("ignores source-window editing for images", () => {

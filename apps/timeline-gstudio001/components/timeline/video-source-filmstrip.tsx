@@ -1,4 +1,5 @@
 import React from "react";
+import { Ellipsis } from "lucide-react";
 import type {
   CollectionTimelineClip,
   VideoSourceWindowEditMode,
@@ -6,28 +7,22 @@ import type {
   TimelineClip,
 } from "./types";
 import { formatSeconds } from "./utils";
-import { FILMSTRIP_HEIGHT, FILMSTRIP_MAX_FRAMES } from "./constants";
+import { FILMSTRIP_HEIGHT } from "./constants";
 import { cn } from "@/lib/utils";
 import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,
 } from "./timeline-grid";
 import {
+  getEndpointFrameTimes,
+  getThumbnailSlotCount,
+  getVideoThumbnailUrl,
+} from "@storyboard/ui";
+import {
   getCollectionClipFramePreview,
   getCollectionClipSourceDuration,
-  getCollectionFramePreview,
+  getCollectionEndpointSummary,
 } from "@/lib/timeline-documents";
-
-const CLOUDINARY_CLOUD_NAME = "drrxyckxi";
-
-function getCloudinaryVersionedVideoPath(uploadPath: string) {
-  const pathWithoutQuery = uploadPath.split(/[?#]/)[0];
-  const segments = pathWithoutQuery.split("/");
-  const versionIndex = segments.findIndex((segment) => /^v\d+$/.test(segment));
-  const sourceSegments = versionIndex >= 0 ? segments.slice(versionIndex + 1) : segments;
-
-  return sourceSegments.join("/").replace(/\.[^/.]+$/, ".jpg");
-}
 
 function handleImageFallback(
   event: React.SyntheticEvent<HTMLImageElement>,
@@ -37,34 +32,7 @@ function handleImageFallback(
   event.currentTarget.src = fallbackSrc;
 }
 
-export function getThumbnailSlotCount(availableWidth: number, frameSize: number) {
-  return Math.min(
-    FILMSTRIP_MAX_FRAMES,
-    Math.max(1, Math.ceil(Math.max(1, availableWidth) / Math.max(1, frameSize))),
-  );
-}
-
-export function getEndpointFrameTimes({
-  count,
-  endTime,
-  startTime = 0,
-}: {
-  count: number;
-  endTime: number;
-  startTime?: number;
-}) {
-  const frameCount = Math.max(1, Math.floor(count));
-  const start = Math.max(0, startTime);
-  const end = Math.max(start, endTime);
-
-  if (frameCount === 1) return [start];
-  if (frameCount === 2) return [start, end];
-
-  return Array.from({ length: frameCount }, (_, index) => {
-    const progress = index / (frameCount - 1);
-    return start + (end - start) * progress;
-  });
-}
+export { getEndpointFrameTimes, getThumbnailSlotCount, getVideoThumbnailUrl };
 
 function getCollectionPlaybackDuration(clip: CollectionTimelineClip) {
   return Math.max(
@@ -80,23 +48,6 @@ function getCollectionPreviewClip(clip: CollectionTimelineClip): CollectionTimel
     duration: playbackDuration,
     sourceDuration: Math.max(clip.sourceDuration, playbackDuration),
   };
-}
-
-export function getVideoThumbnailUrl(src: string, second: number, width = 480, height = 270): string {
-  const roundedSecond = Math.max(0, Number(second.toFixed(2)));
-  
-  if (src.includes("res.cloudinary.com") && src.includes("/video/upload/")) {
-    // Cloudinary native transformation for uploaded videos
-    const parts = src.split("/video/upload/");
-    if (parts.length === 2) {
-      const baseUrl = parts[0];
-      const videoPath = getCloudinaryVersionedVideoPath(parts[1]);
-      return `${baseUrl}/video/upload/so_${roundedSecond},w_${width},h_${height},c_fill,q_auto,f_jpg/${videoPath}`;
-    }
-  }
-  
-  // Cloudinary fetch transformation for remote fallback videos
-  return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/video/fetch/so_${roundedSecond},w_${width},h_${height},c_fill,q_auto,f_jpg/${encodeURIComponent(src)}`;
 }
 
 type VideoSourceFilmStripProps = {
@@ -138,18 +89,24 @@ export function VideoSourceFilmStrip({
     ? clip.index * (thumbnailWidth + thumbnailGap)
     : clip.startTime * pixelsPerSecond;
   const top = topOffset ?? (gridLayout?.top ?? 0);
+  const isCollection = clip.kind === "collection";
+  const collectionEndpointSummary =
+    clip.kind === "collection" ? getCollectionEndpointSummary(clip) : null;
   
-  const sourceDuration = clip.kind === "collection" ? getCollectionClipSourceDuration(clip) : (clip as VideoTimelineClip).sourceDuration;
-  const trimIn = clip.kind === "collection" ? 0 : (clip as VideoTimelineClip).trimIn;
+  const sourceDuration = isCollection ? collectionEndpointSummary?.sourceDuration ?? clip.sourceDuration : (clip as VideoTimelineClip).sourceDuration;
+  const trimIn = clip.trimIn;
 
-  const selectedWidth = clip.duration * pixelsPerSecond;
-  const sourceWidth = sourceDuration * pixelsPerSecond;
+  const timelineSelectedWidth = clip.duration * pixelsPerSecond;
   const trimInWidth = trimIn * pixelsPerSecond;
   const clipDisplayWidth = gridLayout
     ? gridLayout.width
     : thumbnailMode
     ? thumbnailWidth
-    : selectedWidth;
+    : timelineSelectedWidth;
+  const selectedWidth = timelineSelectedWidth;
+  const sourceWidth = isCollection
+    ? Math.max(clipDisplayWidth, sourceDuration * pixelsPerSecond)
+    : sourceDuration * pixelsPerSecond;
   const computedSourceLeft = selectedLeft + clipDisplayWidth / 2 - (trimInWidth + selectedWidth / 2);
 
   const [frozenState, setFrozenState] = React.useState<{ editingMode: VideoSourceWindowEditMode | null, sourceLeft: number | null }>({
@@ -171,6 +128,13 @@ export function VideoSourceFilmStrip({
     count: getThumbnailSlotCount(sourceWidth, frameSize),
     endTime: Math.max(0, sourceDuration - 0.05),
   });
+  const collectionEndpointFrames = collectionEndpointSummary
+    ? [
+        { key: "first", preview: collectionEndpointSummary.first },
+        { key: "last", preview: collectionEndpointSummary.last },
+      ]
+    : [];
+  const collectionEndpointWidth = sourceWidth / 2;
 
   return (
     <div
@@ -178,7 +142,9 @@ export function VideoSourceFilmStrip({
       data-testid="timeline-source-filmstrip"
       data-clip-index={clip.index}
       className="pointer-events-auto absolute left-0 top-0 touch-none rounded-md border border-zinc-600 bg-zinc-950 shadow-[0_10px_24px_rgba(0,0,0,0.35)]"
-      onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "move")}
+      onPointerDown={(e) => {
+        if (!isCollection) onSourceWindowPointerDown(e, clip, "move");
+      }}
       onPointerCancel={(e) => e.stopPropagation()}
       onDragStart={(e) => e.preventDefault()}
       style={{
@@ -188,140 +154,192 @@ export function VideoSourceFilmStrip({
         transition: editingMode ? "none" : "transform 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
         zIndex: 35,
       }}
-      aria-label={`${clip.alt} full source filmstrip`}
+      aria-label={isCollection ? `${clip.alt} collection endpoints` : `${clip.alt} full source filmstrip`}
     >
       <div className="absolute inset-0 flex overflow-hidden rounded-md touch-none select-none">
-        {frameTimes.map((time, index) => {
-          if (clip.kind === "collection") {
-            const preview = getCollectionFramePreview(clip.childTimelineId, time);
-            return (
-              <div
-                key={`${clip.id}-film-frame-${index}`}
-                className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
-                style={{ width: `${frameSize}px` }}
-              >
-                {preview ? (
-                  preview.kind === "video" ? (
-                    <img
-                      src={getVideoThumbnailUrl(preview.src, preview.previewTime)}
-                      alt=""
-                      className="h-full w-full object-cover"
-                      draggable={false}
-                      onError={(event) => handleImageFallback(event, preview.poster)}
-                    />
-                  ) : (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={preview.src}
-                      alt=""
-                      className="h-full w-full object-cover"
-                      draggable={false}
-                    />
-                  )
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-zinc-900/60 text-[10px] text-zinc-500 font-medium">
-                    Empty
-                  </div>
-                )}
-                {(index === 0 || index === frameTimes.length - 1) && (
-                  <span
-                    className={cn(
-                      "absolute bottom-0.5 rounded bg-black/70 px-1 py-0.5 font-mono text-[9px] text-zinc-100",
-                      index === 0 ? "left-0.5" : "right-0.5",
-                    )}
-                  >
-                    {index === 0 ? "start" : "end"}
-                  </span>
-                )}
-              </div>
-            );
-          }
-
-          if (clip.kind === "image") {
-            return (
-              <div
-                key={`${clip.id}-film-frame-${index}`}
-                className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
-                style={{ width: `${frameSize}px` }}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={(clip as any).src}
-                  alt={`${clip.alt} frame ${index + 1}`}
-                  className="h-full w-full object-cover"
-                  draggable={false}
-                />
-                {(index === 0 || index === frameTimes.length - 1) && (
-                  <span
-                    className={cn(
-                      "absolute bottom-0.5 rounded bg-black/70 px-1 py-0.5 font-mono text-[9px] text-zinc-100",
-                      index === 0 ? "left-0.5" : "right-0.5",
-                    )}
-                  >
-                    {index === 0 ? "start" : "end"}
-                  </span>
-                )}
-              </div>
-            );
-          }
-
-          return (
-            <div
-              key={`${clip.id}-film-frame-${index}`}
-              className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
-              style={{ width: `${frameSize}px` }}
-            >
-              <img
-                src={getVideoThumbnailUrl((clip as VideoTimelineClip).src, time)}
-                alt={`${clip.alt} source frame ${index + 1}`}
-                className="h-full w-full object-cover"
-                draggable={false}
-                onError={(event) => handleImageFallback(event, (clip as VideoTimelineClip).poster)}
-              />
-              {(index === 0 || index === frameTimes.length - 1) && (
-                <span
-                  className={cn(
-                    "absolute bottom-0.5 rounded bg-black/70 px-1 py-0.5 font-mono text-[9px] text-zinc-100",
-                    index === 0 ? "left-0.5" : "right-0.5",
-                  )}
+        {isCollection
+          ? collectionEndpointFrames.map((endpoint, index) => {
+              const preview = endpoint.preview;
+              const endpointFrameTimes = getEndpointFrameTimes({
+                count: getThumbnailSlotCount(collectionEndpointWidth, frameSize),
+                endTime: Math.max(0, (preview?.sourceDuration ?? 0) - 0.05),
+              });
+              return (
+                <div
+                  key={`${clip.id}-film-frame-${endpoint.key}`}
+                  data-testid="timeline-collection-endpoint-frame"
+                  data-endpoint={endpoint.key}
+                  className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
+                  style={{ width: `${collectionEndpointWidth}px` }}
                 >
-                  {index === 0 ? "start" : "end"}
-                </span>
-              )}
-            </div>
-          );
-        })}
+                  {preview ? (
+                    <div className="flex h-full w-full select-none overflow-hidden">
+                      {endpointFrameTimes.map((time, frameIndex) => (
+                        <div
+                          key={`${clip.id}-film-frame-${endpoint.key}-${frameIndex}`}
+                          data-testid="timeline-collection-endpoint-thumbnail"
+                          className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
+                          style={{ width: `${frameSize}px` }}
+                        >
+                          {preview.kind === "video" ? (
+                            <img
+                              src={getVideoThumbnailUrl(preview.src, time)}
+                              alt=""
+                              className="h-full w-full object-cover"
+                              draggable={false}
+                              onError={(event) => handleImageFallback(event, preview.poster)}
+                            />
+                          ) : (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={preview.src}
+                              alt=""
+                              className="h-full w-full object-cover"
+                              draggable={false}
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-zinc-900/60 text-[10px] text-zinc-500 font-medium">
+                      Empty
+                    </div>
+                  )}
+                  <span
+                    className={cn(
+                      "absolute bottom-0.5 rounded bg-black/70 px-1 py-0.5 font-mono text-[9px] text-zinc-100",
+                      index === 0 ? "left-0.5" : "right-0.5",
+                    )}
+                  >
+                    {endpoint.key === "first" ? "start" : "end"}
+                  </span>
+                </div>
+              );
+            })
+          : frameTimes.map((time, index) => {
+              if (clip.kind === "image") {
+                return (
+                  <div
+                    key={`${clip.id}-film-frame-${index}`}
+                    className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
+                    style={{ width: `${frameSize}px` }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={(clip as any).src}
+                      alt={`${clip.alt} frame ${index + 1}`}
+                      className="h-full w-full object-cover"
+                      draggable={false}
+                    />
+                    {(index === 0 || index === frameTimes.length - 1) && (
+                      <span
+                        className={cn(
+                          "absolute bottom-0.5 rounded bg-black/70 px-1 py-0.5 font-mono text-[9px] text-zinc-100",
+                          index === 0 ? "left-0.5" : "right-0.5",
+                        )}
+                      >
+                        {index === 0 ? "start" : "end"}
+                      </span>
+                    )}
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={`${clip.id}-film-frame-${index}`}
+                  className="relative h-full shrink-0 overflow-hidden border-r border-black/70 last:border-r-0"
+                  style={{ width: `${frameSize}px` }}
+                >
+                  <img
+                    src={getVideoThumbnailUrl((clip as VideoTimelineClip).src, time)}
+                    alt={`${clip.alt} source frame ${index + 1}`}
+                    className="h-full w-full object-cover"
+                    draggable={false}
+                    onError={(event) => handleImageFallback(event, (clip as VideoTimelineClip).poster)}
+                  />
+                  {(index === 0 || index === frameTimes.length - 1) && (
+                    <span
+                      className={cn(
+                        "absolute bottom-0.5 rounded bg-black/70 px-1 py-0.5 font-mono text-[9px] text-zinc-100",
+                        index === 0 ? "left-0.5" : "right-0.5",
+                      )}
+                    >
+                      {index === 0 ? "start" : "end"}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
       </div>
 
-      <div
-        data-testid="timeline-source-window"
-        className="absolute inset-y-0 cursor-grab touch-none select-none rounded-sm border-2 border-amber-300 bg-amber-300/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)] active:cursor-grabbing"
-        style={{
-          width: `${selectedWidth}px`,
-          transform: `translateX(${trimInWidth}px)`,
-        }}
-        onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "move")}
-        onPointerCancel={(e) => e.stopPropagation()}
-        onDragStart={(e) => e.preventDefault()}
-        title="Drag to move the source window"
-      >
+      {isCollection ? (
+        <>
+          <div
+            data-testid="timeline-source-window"
+            className="absolute inset-y-0 touch-none select-none rounded-sm border-2 border-amber-300 bg-amber-300/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
+            style={{
+              width: `${selectedWidth}px`,
+              transform: `translateX(${trimInWidth}px)`,
+            }}
+          >
+            <div
+              data-testid="timeline-source-trim-left"
+              className="absolute inset-y-0 left-0 z-20 w-2 cursor-ew-resize touch-none rounded-l-sm bg-amber-200/90"
+              onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "left")}
+              title="Trim collection start"
+            />
+            <div
+              data-testid="timeline-source-trim-right"
+              className="absolute inset-y-0 right-0 z-20 w-2 cursor-ew-resize touch-none rounded-r-sm bg-amber-200/90"
+              onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "right")}
+              title="Trim collection end"
+            />
+          </div>
+        </>
+      ) : (
         <div
-          data-testid="timeline-source-trim-left"
-          className="absolute inset-y-0 left-0 w-2 cursor-ew-resize touch-none rounded-l-sm bg-amber-200/90"
-          onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "left")}
-          title="Adjust source start"
-        />
-        <div
-          data-testid="timeline-source-trim-right"
-          className="absolute inset-y-0 right-0 w-2 cursor-ew-resize touch-none rounded-r-sm bg-amber-200/90"
-          onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "right")}
-          title="Adjust source end"
-        />
-      </div>
+          data-testid="timeline-source-window"
+          className="absolute inset-y-0 cursor-grab touch-none select-none rounded-sm border-2 border-amber-300 bg-amber-300/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)] active:cursor-grabbing"
+          style={{
+            width: `${selectedWidth}px`,
+            transform: `translateX(${trimInWidth}px)`,
+          }}
+          onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "move")}
+          onPointerCancel={(e) => e.stopPropagation()}
+          onDragStart={(e) => e.preventDefault()}
+          title="Drag to move the source window"
+        >
+          <div
+            data-testid="timeline-source-trim-left"
+            className="absolute inset-y-0 left-0 w-2 cursor-ew-resize touch-none rounded-l-sm bg-amber-200/90"
+            onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "left")}
+            title="Adjust source start"
+          />
+          <div
+            data-testid="timeline-source-trim-right"
+            className="absolute inset-y-0 right-0 w-2 cursor-ew-resize touch-none rounded-r-sm bg-amber-200/90"
+            onPointerDown={(e) => onSourceWindowPointerDown(e, clip, "right")}
+            title="Adjust source end"
+          />
+        </div>
+      )}
 
-      <div className="pointer-events-none absolute left-1/2 top-0.5 -translate-x-1/2 rounded-full bg-black/75 px-2 py-0.5 font-mono text-[9px] text-zinc-100">
-        {clip.kind === "collection" ? "collection" : "full clip"} {formatSeconds(sourceDuration)}
-      </div>
+      {isCollection ? (
+        <div
+          data-testid="timeline-collection-omitted-marker"
+          className="pointer-events-none absolute left-1/2 top-1/2 z-10 flex h-7 -translate-x-1/2 -translate-y-1/2 items-center gap-1 rounded-full border border-sky-200/50 bg-zinc-950/85 px-2 font-mono text-[9px] text-sky-100 shadow-[0_0_0_1px_rgba(0,0,0,0.45),0_8px_18px_rgba(0,0,0,0.35)]"
+          aria-label="Only first and last collection items shown"
+        >
+          <Ellipsis className="h-4 w-4" aria-hidden="true" />
+          <span>{formatSeconds(clip.duration)}</span>
+        </div>
+      ) : (
+        <div className="pointer-events-none absolute left-1/2 top-0.5 -translate-x-1/2 rounded-full bg-black/75 px-2 py-0.5 font-mono text-[9px] text-zinc-100">
+          full clip {formatSeconds(sourceDuration)}
+        </div>
+      )}
     </div>
   );
 }

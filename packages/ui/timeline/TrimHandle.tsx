@@ -1,8 +1,7 @@
 import React from "react";
-import { cn } from "@/lib/utils";
-import { MAX_WIDTH, MIN_WIDTH } from "./constants";
+import { cva } from "class-variance-authority";
 
-type TrimHandleProps = {
+export type TrimHandleProps = {
   edge: "left" | "right";
   currentWidth: number;
   currentDuration?: number;
@@ -14,6 +13,18 @@ type TrimHandleProps = {
   | "onPointerCancel"
   | "onKeyDown"
 >;
+
+const trimHandle = cva(
+  "absolute top-0 z-10 flex h-full w-4 cursor-ew-resize touch-none items-center justify-center bg-amber-400 outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
+  {
+    variants: {
+      edge: {
+        left: "left-0 rounded-l-md",
+        right: "right-0 rounded-r-md",
+      },
+    },
+  },
+);
 
 export function TrimHandle({ edge, currentWidth, currentDuration, ...handlers }: TrimHandleProps) {
   return (
@@ -27,10 +38,7 @@ export function TrimHandle({ edge, currentWidth, currentDuration, ...handlers }:
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={currentDuration !== undefined ? Math.round(currentDuration) : Math.round(currentWidth)}
-      className={cn(
-        "absolute top-0 z-10 flex h-full w-4 cursor-ew-resize touch-none items-center justify-center bg-amber-400 outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
-        edge === "left" ? "left-0 rounded-l-md" : "right-0 rounded-r-md",
-      )}
+      className={trimHandle({ edge })}
       onClick={(e) => e.stopPropagation()}
       {...handlers}
     >

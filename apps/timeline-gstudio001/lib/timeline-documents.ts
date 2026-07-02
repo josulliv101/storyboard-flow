@@ -88,16 +88,25 @@ function createCollectionClip({
 }
 
 function previewItemsFrom(clips: TimelineClip[]) {
-  return clips
-    .filter((clip) => clip.kind === "image" || clip.kind === "video")
-    .slice(0, 3)
-    .map((clip) => ({
-      id: clip.id,
-      kind: clip.kind,
-      src: clip.src,
-      poster: clip.poster,
-      alt: clip.alt,
-    }));
+  const mediaClips = clips.filter(
+    (clip) => clip.kind === "image" || clip.kind === "video",
+  );
+  const previewClips =
+    mediaClips.length <= 3
+      ? mediaClips
+      : [
+          mediaClips[0],
+          mediaClips[Math.floor(mediaClips.length / 2)],
+          mediaClips[mediaClips.length - 1],
+        ];
+
+  return previewClips.map((clip) => ({
+    id: clip.id,
+    kind: clip.kind,
+    src: clip.src,
+    poster: clip.poster,
+    alt: clip.alt,
+  }));
 }
 
 function packClips(clips: TimelineClip[]) {
@@ -460,6 +469,85 @@ export function getCollectionClipSourceDuration(clip: CollectionTimelineClip) {
     clip.sourceDuration,
     getTimelineContentDuration(clip.childTimelineId) ?? 0,
   );
+}
+
+function getClipSourceDuration(clip: TimelineClip) {
+  return clip.kind === "collection"
+    ? getCollectionClipSourceDuration(clip)
+    : Math.max(clip.duration, clip.sourceDuration);
+}
+
+function getClipEndpointFramePreview(
+  clip: TimelineClip,
+  endpoint: "first" | "last",
+  visited = new Set<string>(),
+): CollectionFramePreview | null {
+  const sourceDuration = getClipSourceDuration(clip);
+
+  if (clip.kind === "collection") {
+    return getCollectionFramePreview(
+      clip.childTimelineId,
+      endpoint === "first" ? 0 : Math.max(0, sourceDuration - 0.001),
+      visited,
+    );
+  }
+
+  return {
+    id: clip.id,
+    kind: clip.kind,
+    src: clip.src,
+    poster: clip.poster,
+    alt: clip.alt,
+    previewTime:
+      clip.kind === "video" && endpoint === "last"
+        ? Math.max(0, sourceDuration - 0.05)
+        : 0,
+    sourceDuration,
+    playbackRate: 1,
+  };
+}
+
+export function getCollectionEndpointSummary(clip: CollectionTimelineClip) {
+  const doc = timelineDocuments[clip.childTimelineId];
+  const childClips = doc?.clips ?? [];
+  const firstClip = childClips[0] ?? null;
+  const lastClip = childClips[childClips.length - 1] ?? firstClip;
+
+  if (!firstClip || !lastClip) {
+    const fallbackFirst = clip.previewItems?.[0] ?? null;
+    const fallbackLast =
+      clip.previewItems?.[clip.previewItems.length - 1] ?? fallbackFirst;
+
+    return {
+      first: fallbackFirst
+        ? {
+            ...fallbackFirst,
+            previewTime: 0,
+            sourceDuration: Math.max(clip.duration, clip.sourceDuration, 0.001),
+            playbackRate: 1,
+          }
+        : null,
+      last: fallbackLast
+        ? {
+            ...fallbackLast,
+            previewTime: 0,
+            sourceDuration: Math.max(clip.duration, clip.sourceDuration, 0.001),
+            playbackRate: 1,
+          }
+        : null,
+      sourceDuration: Math.max(clip.duration, clip.sourceDuration, 0.001),
+    };
+  }
+
+  const firstDuration = getClipSourceDuration(firstClip);
+  const lastDuration = getClipSourceDuration(lastClip);
+  const equalSegmentDuration = Math.max(firstDuration, lastDuration, 0.001);
+
+  return {
+    first: getClipEndpointFramePreview(firstClip, "first"),
+    last: getClipEndpointFramePreview(lastClip, "last"),
+    sourceDuration: equalSegmentDuration * 2,
+  };
 }
 
 export function getCollectionClipFramePreview(

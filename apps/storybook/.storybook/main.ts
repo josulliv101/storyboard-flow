@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const storybookDir = dirname(fileURLToPath(import.meta.url));
 const compatShim = (name: string) => resolve(storybookDir, 'shims', `es-toolkit-compat-${name}.ts`);
+const timelineAppDir = resolve(storybookDir, '../../timeline-gstudio001');
 
 const config: StorybookConfig = {
   stories: [
@@ -11,7 +12,7 @@ const config: StorybookConfig = {
     '../../../packages/ui/**/*.stories.@(ts|tsx)',
     '../../timeline-gstudio001/components/**/*.stories.@(ts|tsx)',
   ],
-  addons: ['@storybook/addon-vitest'],
+  addons: ['@storybook/addon-vitest', '@storybook/addon-mcp'],
   framework: {
     name: '@storybook/nextjs-vite',
     options: {
@@ -24,6 +25,14 @@ const config: StorybookConfig = {
       ...config.resolve,
       alias: [
         ...(Array.isArray(config.resolve?.alias) ? config.resolve.alias : []),
+        {
+          find: /^@\/components\/(assets|auth|core|timeline)\/(.*)$/,
+          replacement: `${timelineAppDir}/components/$1/$2`,
+        },
+        {
+          find: /^@\/lib\/(timeline-documents|timeline-media-client)$/,
+          replacement: `${timelineAppDir}/lib/$1`,
+        },
         { find: '@', replacement: resolve(storybookDir, '../../web') },
         { find: '@gstudio', replacement: resolve(storybookDir, '../../timeline-gstudio001') },
         { find: 'es-toolkit/compat/get', replacement: compatShim('get') },

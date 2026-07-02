@@ -8,7 +8,8 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { Folder, Video, Image, X, Play } from "lucide-react";
+import { TimelineClipItem, TimelineClipItemProvider } from "@storyboard/ui";
+import { Play } from "lucide-react";
 
 import {
   CLIP_GAP_SECONDS,
@@ -17,156 +18,172 @@ import {
   THUMBNAIL_GAP,
   TIMELINE_LEADING_PADDING_SECONDS,
 } from "./constants";
+import {
+  useTimelineDropTargets,
+  type TimelineDropHandlers,
+} from "./hooks/use-timeline-drop-targets";
 import type { useTimelineInteractions } from "./hooks/use-timeline-interactions";
-import { TimelineClipItem } from "./timeline-clip-item";
 import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,
 } from "./timeline-grid";
-import type { CollectionTimelineClip, TimelineClip, TrimScrubPreview } from "./types";
+import { TimelineContextMenu } from "./timeline-context-menu";
+import {
+  TimelineDropIndicator,
+  TimelineDropOverlay,
+} from "./timeline-drop-overlays";
+import { TimelinePlayhead } from "./timeline-playhead";
+import type {
+  CollectionEndpoint,
+  CollectionTimelineClip,
+  TimelineClip,
+  TrimScrubPreview,
+} from "./types";
 import { PassiveVideoFilmStrip, VideoSourceFilmStrip } from "./video-source-filmstrip";
-import { VideoTile } from "./video-tile";
 import { formatSeconds } from "./utils";
+import { VideoTile } from "./video-tile";
 import { getCollectionClipFramePreview } from "@/lib/timeline-documents";
 
 type TimelineInteractions = ReturnType<typeof useTimelineInteractions>;
 
-type TimelineViewportProps = {
-  closingOverhangOffset: number;
-  firstOverhang: number;
-  handleClipDurationLoad?: (index: number, duration: number) => void;
+type TimelineViewportFrame = {
   handleScroll: () => void;
-  interactions: TimelineInteractions;
-  isClosingOverhang: boolean;
-  isResizingFirstClipLeft: boolean;
-  isZooming: boolean;
-  itemHeight: number;
-  itemTop: number;
-  hasClips: boolean;
-  manualOverhangScroll: boolean;
   parentRef: RefObject<HTMLDivElement | null>;
-  pixelsPerSecond: number;
-  prevFirstOverhang: number;
   resolvedViewportWidth: number | string;
-  scrubPreview: TrimScrubPreview | null;
   scrollLeft: number;
   scrollTop: number;
-  selectedIndex: number | null;
-  selectedVideoClip: TimelineClip | null;
-  showPlayBarArea: boolean;
-  showPassiveFilmstrips: boolean;
-  gridMetrics: TimelineGridMetrics;
-  getCollectionHref?: (timelineId: string) => string;
-  onOpenCollection?: (timelineId: string, href: string) => void;
-  thumbnailMode: boolean;
-  thumbnailWidth: number;
   timelineHeight: number;
   timelineWidth: number;
+};
+
+type TimelineViewportLayout = {
+  gridMetrics: TimelineGridMetrics;
+  hasClips: boolean;
+  itemHeight: number;
+  itemTop: number;
+  pixelsPerSecond: number;
+  thumbnailMode: boolean;
+  thumbnailWidth: number;
   visibleClips: TimelineClip[];
-  onDropFiles?: (insertIndex: number, files: File[]) => void;
-  onDropClip?: (insertIndex: number, clip: TimelineClip, sourceTimelineId: string) => void;
-  onDropSidebarClip?: (insertIndex: number, type: "collection" | "image" | "video") => void;
-  onDropClipIntoCollection?: (clip: TimelineClip, targetCollectionTimelineId: string, sourceTimelineId: string) => void;
-  onDropSidebarClipIntoCollection?: (type: "collection" | "image" | "video", targetCollectionTimelineId: string) => void;
-  timelineId?: string;
-  previewLargeSurface?: boolean;
-  playheadTime?: number | null;
+};
+
+type TimelineViewportOverhang = {
+  closingOverhangOffset: number;
+  firstOverhang: number;
+  isClosingOverhang: boolean;
+  isResizingFirstClipLeft: boolean;
+  manualOverhangScroll: boolean;
+  prevFirstOverhang: number;
+};
+
+type TimelineViewportSelection = {
+  handleClipDurationLoad?: (index: number, duration: number) => void;
+  scrubPreview: TrimScrubPreview | null;
+  selectedIndex: number | null;
+};
+
+type TimelineViewportCollections = {
+  expandedCollectionIds?: ReadonlySet<string>;
+  exposedCollectionEndpointIds?: ReadonlySet<string>;
+  getCollectionHref?: (timelineId: string) => string;
+  onOpenCollection?: (timelineId: string, href: string) => void;
+  onToggleCollectionEndpoint?: (
+    clip: CollectionTimelineClip,
+    endpoint: CollectionEndpoint,
+  ) => void;
+  onToggleCollectionExpanded?: (clip: CollectionTimelineClip) => void;
+};
+
+type TimelineViewportPlayback = {
   onPlayheadTimeChange?: (
     time: number,
     clips?: TimelineClip[],
     activeClipId?: string,
   ) => void;
+  playheadTime?: number | null;
+  previewLargeSurface?: boolean;
+  selectedVideoClip: TimelineClip | null;
+  showPassiveFilmstrips: boolean;
+  showPlayBarArea: boolean;
+};
+
+type TimelineViewportProps = {
+  collections?: TimelineViewportCollections;
+  dropHandlers?: TimelineDropHandlers;
+  frame: TimelineViewportFrame;
+  interactions: TimelineInteractions;
+  isZooming: boolean;
+  layout: TimelineViewportLayout;
+  overhang: TimelineViewportOverhang;
+  playback: TimelineViewportPlayback;
+  selection: TimelineViewportSelection;
+  timelineId?: string;
 };
 
 export function TimelineViewport({
-  closingOverhangOffset,
-  firstOverhang,
-  handleClipDurationLoad,
-  handleScroll,
+  collections,
+  dropHandlers,
+  frame,
   interactions,
-  isClosingOverhang,
-  isResizingFirstClipLeft,
   isZooming,
-  itemHeight,
-  itemTop,
-  hasClips,
-  manualOverhangScroll,
-  parentRef,
-  pixelsPerSecond,
-  prevFirstOverhang,
-  resolvedViewportWidth,
-  scrubPreview,
-  scrollLeft,
-  scrollTop,
-  selectedIndex,
-  selectedVideoClip,
-  showPlayBarArea,
-  showPassiveFilmstrips,
-  gridMetrics,
-  getCollectionHref,
-  onOpenCollection,
-  thumbnailMode,
-  thumbnailWidth,
-  timelineHeight,
-  timelineWidth,
-  visibleClips,
-  onDropFiles,
-  onDropClip,
-  onDropSidebarClip,
-  onDropClipIntoCollection,
-  onDropSidebarClipIntoCollection,
+  layout,
+  overhang,
+  playback,
+  selection,
   timelineId,
-  previewLargeSurface = false,
-  playheadTime: propPlayheadTime,
-  onPlayheadTimeChange,
 }: TimelineViewportProps) {
+  const {
+    handleScroll,
+    parentRef,
+    resolvedViewportWidth,
+    scrollLeft,
+    scrollTop,
+    timelineHeight,
+    timelineWidth,
+  } = frame;
+  const {
+    gridMetrics,
+    hasClips,
+    itemHeight,
+    itemTop,
+    pixelsPerSecond,
+    thumbnailMode,
+    thumbnailWidth,
+    visibleClips,
+  } = layout;
+  const {
+    closingOverhangOffset,
+    firstOverhang,
+    isClosingOverhang,
+    isResizingFirstClipLeft,
+    manualOverhangScroll,
+    prevFirstOverhang,
+  } = overhang;
+  const { handleClipDurationLoad, scrubPreview, selectedIndex } = selection;
+  const {
+    expandedCollectionIds,
+    exposedCollectionEndpointIds,
+    getCollectionHref,
+    onOpenCollection,
+    onToggleCollectionEndpoint,
+    onToggleCollectionExpanded,
+  } = collections ?? {};
+  const {
+    onDropClip,
+    onDropClipIntoCollection,
+    onDropFiles,
+    onDropSidebarClip,
+    onDropSidebarClipIntoCollection,
+  } = dropHandlers ?? {};
+  const {
+    onPlayheadTimeChange,
+    playheadTime: propPlayheadTime,
+    previewLargeSurface = false,
+    selectedVideoClip,
+    showPassiveFilmstrips,
+    showPlayBarArea,
+  } = playback;
   const contentRef = useRef<HTMLDivElement>(null);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const dragCounterRef = useRef(0);
-  const [activeCollectionHoverId, setActiveCollectionHoverId] = useState<string | null>(null);
-  const [activeDropIndex, setActiveDropIndex] = useState<number | null>(null);
-  const [isAnyDragActive, setIsAnyDragActive] = useState(false);
-
-  useEffect(() => {
-    const handleDragStartGlobal = (e: Event) => {
-      const customEvent = e as CustomEvent<{ type: string }>;
-      const type = customEvent.detail.type;
-      if (type !== "timeline") {
-        setIsAnyDragActive(true);
-      }
-    };
-
-    const handleDragEndGlobal = () => {
-      setIsAnyDragActive(false);
-    };
-
-    window.addEventListener("gstudio-drag-start", handleDragStartGlobal);
-    window.addEventListener("gstudio-drag-end", handleDragEndGlobal);
-    return () => {
-      window.removeEventListener("gstudio-drag-start", handleDragStartGlobal);
-      window.removeEventListener("gstudio-drag-end", handleDragEndGlobal);
-    };
-  }, []);
-
-  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    dragCounterRef.current++;
-    if (e.dataTransfer.types.includes("Files")) {
-      setIsDragOver(true);
-    }
-  }, []);
-
-  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    dragCounterRef.current--;
-    if (dragCounterRef.current === 0) {
-      setIsDragOver(false);
-      setActiveDropIndex(null);
-      setActiveCollectionHoverId(null);
-    }
-  }, []);
-
-
 
   const trackTransition =
     interactions.isResizing ||
@@ -284,284 +301,28 @@ export function TimelineViewport({
     [getClipLeft, getClipWidth, pixelsPerSecond, visibleClips],
   );
 
-  useEffect(() => {
-    const handleClipDragGlobal = (e: Event) => {
-      const customEvent = e as CustomEvent<{
-        clip: TimelineClip;
-        sourceTimelineId: string;
-        clientX: number;
-        clientY: number;
-        isDropping: boolean;
-        handled?: boolean;
-      }>;
-      const { clip, sourceTimelineId, clientX, clientY, isDropping } = customEvent.detail;
-      const thisTimelineId = timelineId || "";
-      const isSameTimeline = sourceTimelineId === thisTimelineId;
-
-      const rect = contentRef.current?.getBoundingClientRect();
-      const isInside = rect && 
-                        clientX >= rect.left && 
-                        clientX <= rect.right && 
-                        clientY >= rect.top && 
-                        clientY <= rect.bottom;
-
-      if (isInside) {
-        let hoveredCollection: TimelineClip | null = null;
-        let insertIndex = visibleClips.length;
-
-        if (hasClips && contentRef.current) {
-          const dropX = clientX - rect.left;
-
-          // Check if hovering middle 60% of another collection clip
-          for (let i = 0; i < visibleClips.length; i++) {
-            const c = visibleClips[i];
-            if (c.kind === "collection" && c.id !== clip.id) {
-              const left = getClipLeft(c);
-              const width = getClipWidth(c);
-              const paddingX = width * 0.2;
-              if (dropX >= left + paddingX && dropX <= left + width - paddingX) {
-                hoveredCollection = c;
-                break;
-              }
-            }
-          }
-
-          if (!hoveredCollection) {
-            if (!isSameTimeline) {
-              insertIndex = visibleClips.length;
-              for (let i = 0; i < visibleClips.length; i++) {
-                const c = visibleClips[i];
-                const left = getClipLeft(c);
-                const width = getClipWidth(c);
-                const midpoint = left + width / 2;
-                if (dropX < midpoint) {
-                  insertIndex = c.index;
-                  break;
-                }
-              }
-            }
-          }
-        }
-
-        if (isDropping) {
-          setActiveDropIndex(null);
-          setActiveCollectionHoverId(null);
-
-          if (hoveredCollection) {
-            if (hoveredCollection.kind === "collection" && onDropClipIntoCollection) {
-              onDropClipIntoCollection(clip, hoveredCollection.childTimelineId, sourceTimelineId);
-              customEvent.detail.handled = true;
-            }
-          } else {
-            if (!isSameTimeline && onDropClip) {
-              onDropClip(insertIndex, clip, sourceTimelineId);
-              customEvent.detail.handled = true;
-            }
-          }
-        } else {
-          if (hoveredCollection) {
-            setActiveCollectionHoverId(hoveredCollection.id);
-            setActiveDropIndex(null);
-          } else {
-            setActiveCollectionHoverId(null);
-            if (!isSameTimeline) {
-              setActiveDropIndex(insertIndex);
-            } else {
-              setActiveDropIndex(null);
-            }
-          }
-        }
-      } else {
-        setActiveDropIndex(null);
-        setActiveCollectionHoverId(null);
-      }
-    };
-
-    window.addEventListener("gstudio-clip-drag", handleClipDragGlobal);
-    return () => {
-      window.removeEventListener("gstudio-clip-drag", handleClipDragGlobal);
-    };
-  }, [timelineId, getClipLeft, getClipWidth, hasClips, visibleClips, onDropClip, onDropClipIntoCollection]);
-
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-
-    const isFiles = e.dataTransfer.types.includes("Files");
-    const isClip = e.dataTransfer.types.includes("application/json") || 
-                   e.dataTransfer.types.includes("application/x-gstudio-type");
-
-    if (!isFiles && !isClip) return;
-
-    let hoveredCollection: TimelineClip | null = null;
-    let insertIndex = 0;
-
-    if (hasClips && contentRef.current) {
-      const rect = contentRef.current.getBoundingClientRect();
-      const dropX = e.clientX - rect.left;
-
-      // Check if hovering middle 60% of any collection clip
-      for (let i = 0; i < visibleClips.length; i++) {
-        const c = visibleClips[i];
-        if (c.kind === "collection") {
-          const left = getClipLeft(c);
-          const width = getClipWidth(c);
-          const paddingX = width * 0.2;
-          if (dropX >= left + paddingX && dropX <= left + width - paddingX) {
-            hoveredCollection = c;
-            break;
-          }
-        }
-      }
-
-      if (!hoveredCollection) {
-        insertIndex = visibleClips.length;
-        for (let i = 0; i < visibleClips.length; i++) {
-          const clip = visibleClips[i];
-          const left = getClipLeft(clip);
-          const width = getClipWidth(clip);
-          const midpoint = left + width / 2;
-          if (dropX < midpoint) {
-            insertIndex = clip.index;
-            break;
-          }
-        }
-      }
-    }
-
-    if (hoveredCollection) {
-      setActiveCollectionHoverId(hoveredCollection.id);
-      setActiveDropIndex(null);
-    } else {
-      setActiveCollectionHoverId(null);
-      setActiveDropIndex(insertIndex);
-    }
-  }, [getClipLeft, getClipWidth, hasClips, visibleClips]);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      setIsDragOver(false);
-      setActiveDropIndex(null);
-      dragCounterRef.current = 0;
-
-      // 1. Try parsing sidebar block drop data
-      const sidebarType = e.dataTransfer.getData("application/x-gstudio-type") as "collection" | "image" | "video" | "";
-      if (sidebarType && (sidebarType === "collection" || sidebarType === "image" || sidebarType === "video")) {
-        if (activeCollectionHoverId) {
-          const targetCol = visibleClips.find(c => c.id === activeCollectionHoverId);
-          if (targetCol && targetCol.kind === "collection" && onDropSidebarClipIntoCollection) {
-            onDropSidebarClipIntoCollection(sidebarType, targetCol.childTimelineId);
-          }
-          setActiveCollectionHoverId(null);
-          return;
-        }
-
-        let insertIndex = 0;
-        if (hasClips && contentRef.current) {
-          const rect = contentRef.current.getBoundingClientRect();
-          const dropX = e.clientX - rect.left;
-
-          insertIndex = visibleClips.length;
-          for (let i = 0; i < visibleClips.length; i++) {
-            const clip = visibleClips[i];
-            const left = getClipLeft(clip);
-            const width = getClipWidth(clip);
-            const midpoint = left + width / 2;
-            if (dropX < midpoint) {
-              insertIndex = clip.index;
-              break;
-            }
-          }
-        }
-        if (onDropSidebarClip) {
-          onDropSidebarClip(insertIndex, sidebarType);
-        }
-        setActiveCollectionHoverId(null);
-        return;
-      }
-
-      // 2. Try parsing drag-and-drop clip data (dragging clips between timelines)
-      const rawData = e.dataTransfer.getData("application/json");
-      if (rawData) {
-        try {
-          const data = JSON.parse(rawData);
-          if (data && data.clip && data.sourceTimelineId !== undefined) {
-            if (activeCollectionHoverId) {
-              const targetCol = visibleClips.find(c => c.id === activeCollectionHoverId);
-              if (targetCol && targetCol.kind === "collection" && onDropClipIntoCollection) {
-                onDropClipIntoCollection(data.clip, targetCol.childTimelineId, data.sourceTimelineId);
-              }
-              setActiveCollectionHoverId(null);
-              return;
-            }
-
-            let insertIndex = 0;
-            if (hasClips && contentRef.current) {
-              const rect = contentRef.current.getBoundingClientRect();
-              const dropX = e.clientX - rect.left;
-
-              insertIndex = visibleClips.length;
-              for (let i = 0; i < visibleClips.length; i++) {
-                const clip = visibleClips[i];
-                const left = getClipLeft(clip);
-                const width = getClipWidth(clip);
-                const midpoint = left + width / 2;
-                if (dropX < midpoint) {
-                  insertIndex = clip.index;
-                  break;
-                }
-              }
-            }
-
-            if (onDropClip) {
-              onDropClip(insertIndex, data.clip, data.sourceTimelineId);
-            }
-            setActiveCollectionHoverId(null);
-            return;
-          }
-        } catch (err) {
-          // not JSON, fallback to files
-        }
-      }
-
-      // 3. Fallback to files drop
-      if (!onDropFiles || !e.dataTransfer.files || e.dataTransfer.files.length === 0) {
-        setActiveCollectionHoverId(null);
-        return;
-      }
-
-      const files = Array.from(e.dataTransfer.files);
-      const mediaFiles = files.filter(
-        (file) => file.type.startsWith("image/") || file.type.startsWith("video/")
-      );
-      if (mediaFiles.length === 0) {
-        setActiveCollectionHoverId(null);
-        return;
-      }
-
-      let insertIndex = 0;
-      if (hasClips && contentRef.current) {
-        const rect = contentRef.current.getBoundingClientRect();
-        const dropX = e.clientX - rect.left;
-
-        insertIndex = visibleClips.length;
-        for (let i = 0; i < visibleClips.length; i++) {
-          const clip = visibleClips[i];
-          const left = getClipLeft(clip);
-          const width = getClipWidth(clip);
-          const midpoint = left + width / 2;
-          if (dropX < midpoint) {
-            insertIndex = clip.index;
-            break;
-          }
-        }
-      }
-
-      onDropFiles(insertIndex, mediaFiles);
-      setActiveCollectionHoverId(null);
-    },
-    [getClipLeft, getClipWidth, hasClips, onDropFiles, onDropClip, onDropSidebarClip, onDropClipIntoCollection, onDropSidebarClipIntoCollection, activeCollectionHoverId, visibleClips],
-  );
+  const {
+    activeCollectionHoverId,
+    activeDropIndex,
+    handleDragEnter,
+    handleDragLeave,
+    handleDragOver,
+    handleDrop,
+    isAnyDragActive,
+    isDragOver,
+  } = useTimelineDropTargets({
+    contentRef,
+    getClipLeft,
+    getClipWidth,
+    hasClips,
+    onDropClip,
+    onDropClipIntoCollection,
+    onDropFiles,
+    onDropSidebarClip,
+    onDropSidebarClipIntoCollection,
+    timelineId,
+    visibleClips,
+  });
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -753,6 +514,49 @@ export function TimelineViewport({
     setScrubbingState(null);
   }, [scrubbingState]);
 
+  const clipItemProviderValue = useMemo(() => ({
+    metrics: {
+      pixelsPerSecond,
+      itemTop,
+      itemHeight,
+      thumbnailMode,
+      gridMetrics,
+      thumbnailWidth,
+      thumbnailGap: THUMBNAIL_GAP,
+    },
+    resizeHandlers: {
+      onResizeDown: interactions.handleResizeDown,
+      onResizeMove: interactions.handleResizeMove,
+      onResizeUp: interactions.handleResizeUp,
+      onResizeKeyDown: interactions.handleResizeKeyDown,
+    },
+    mediaActions: {
+      onDurationLoaded: handleClipDurationLoad,
+    },
+    collectionActions: {
+      getCollectionHref,
+      onOpenCollection,
+      onToggleCollectionExpanded,
+      onToggleCollectionEndpoint,
+    },
+  }), [
+    getCollectionHref,
+    gridMetrics,
+    handleClipDurationLoad,
+    interactions.handleResizeDown,
+    interactions.handleResizeKeyDown,
+    interactions.handleResizeMove,
+    interactions.handleResizeUp,
+    itemHeight,
+    itemTop,
+    onOpenCollection,
+    onToggleCollectionEndpoint,
+    onToggleCollectionExpanded,
+    pixelsPerSecond,
+    thumbnailMode,
+    thumbnailWidth,
+  ]);
+
   const selectedFilmstripOverlay =
     showPlayBarArea && selectedVideoClip && !interactions.isReordering ? (
       <div
@@ -771,6 +575,7 @@ export function TimelineViewport({
           thumbnailWidth={thumbnailWidth}
           thumbnailGap={THUMBNAIL_GAP}
           topOffset={
+            itemTop +
             (thumbnailMode && gridMetrics.enabled
               ? getTimelineGridItemLayout(selectedVideoClip.index, gridMetrics).top
               : 0) -
@@ -797,7 +602,6 @@ export function TimelineViewport({
     minWidth: 0,
     boxSizing: "border-box",
   };
-
   return (
     <div
       className="relative block w-full max-w-full min-w-0"
@@ -856,59 +660,59 @@ export function TimelineViewport({
             </div>
           ) : (
             <>
-              {visibleClips.map((clip) => (
-                <TimelineClipItem
-                  key={clip.id}
-                  clip={clip}
-                  pixelsPerSecond={pixelsPerSecond}
-                  itemTop={itemTop}
-                  itemHeight={itemHeight}
-                  thumbnailMode={thumbnailMode}
-                  gridMetrics={gridMetrics}
-                  thumbnailWidth={thumbnailWidth}
-                  thumbnailGap={THUMBNAIL_GAP}
-                  isSelected={selectedIndex === clip.index}
-                  isGrowingOpposite={
-                    interactions.activeResize?.index === 0 &&
-                    interactions.activeResize.edge === "left" &&
-                    clip.index === 0
-                  }
-                  scrubPreviewTime={
-                    scrubPreview?.clipIndex === clip.index
-                      ? scrubPreview.time
-                      : null
-                  }
-                  isReordering={interactions.isReordering}
-                  isCollectionHovered={activeCollectionHoverId === clip.id}
-                  reorderPreview={
-                    interactions.reorderPreview?.activeClipId === clip.id
-                      ? interactions.reorderPreview
-                      : null
-                  }
-                  onResizeDown={interactions.handleResizeDown}
-                  onResizeMove={interactions.handleResizeMove}
-                  onResizeUp={interactions.handleResizeUp}
-                  onResizeKeyDown={interactions.handleResizeKeyDown}
-                  onDurationLoaded={handleClipDurationLoad}
-                  getCollectionHref={getCollectionHref}
-                  onOpenCollection={onOpenCollection}
-                  timelineId={timelineId}
-                />
-              ))}
+              <TimelineClipItemProvider value={clipItemProviderValue}>
+                {visibleClips.map((clip) => (
+                  <TimelineClipItem
+                    key={clip.id}
+                    clip={clip}
+                    state={{
+                      isSelected: selectedIndex === clip.index,
+                      isGrowingOpposite:
+                        interactions.activeResize?.index === 0 &&
+                        interactions.activeResize.edge === "left" &&
+                        clip.index === 0,
+                      scrubPreviewTime:
+                        scrubPreview?.clipIndex === clip.index
+                          ? scrubPreview.time
+                          : null,
+                      isReordering: interactions.isReordering,
+                      isCollectionHovered: activeCollectionHoverId === clip.id,
+                      reorderPreview:
+                        interactions.reorderPreview?.activeClipId === clip.id
+                          ? interactions.reorderPreview
+                          : null,
+                      isCollectionExpanded:
+                        clip.kind === "collection" &&
+                        Boolean(expandedCollectionIds?.has(clip.viewExpansionKey ?? clip.id)),
+                      collectionEndpointSelection:
+                        clip.kind === "collection"
+                          ? {
+                              first: Boolean(
+                                exposedCollectionEndpointIds?.has(
+                                  `${clip.viewExpansionKey ?? clip.id}::first`,
+                                ),
+                              ),
+                              last: Boolean(
+                                exposedCollectionEndpointIds?.has(
+                                  `${clip.viewExpansionKey ?? clip.id}::last`,
+                                ),
+                              ),
+                            }
+                          : undefined,
+                    }}
+                  />
+                ))}
+              </TimelineClipItemProvider>
 
               {/* Vertical Playhead line */}
               {playheadTime !== null && (() => {
                 const pLeft = getPlayheadLeft(playheadTime);
                 if (pLeft === null) return null;
                 return (
-                  <div
-                    data-testid="timeline-playhead"
-                    className="absolute z-40 top-0 bottom-0 w-[2.5px] bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.9)] pointer-events-none"
-                    style={{
-                      left: `${pLeft}px`,
-                      top: `${itemTop}px`,
-                      height: `${itemHeight}px`,
-                    }}
+                  <TimelinePlayhead
+                    itemHeight={itemHeight}
+                    itemTop={itemTop}
+                    left={pLeft}
                   />
                 );
               })()}
@@ -917,7 +721,7 @@ export function TimelineViewport({
                 selectedIndex === null &&
                 showPlayBarArea &&
                 visibleClips.map((clip) =>
-                  clip.kind === "video" || clip.kind === "collection" || clip.kind === "image" ? (
+                  clip.kind === "video" || clip.kind === "image" ? (
                     <PassiveVideoFilmStrip
                       key={`${clip.id}-passive-filmstrip`}
                       clip={clip}
@@ -939,106 +743,24 @@ export function TimelineViewport({
           )}
         </div>
       </div>
-      {isDragOver && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-sky-400 bg-sky-950/40 backdrop-blur-sm transition-all duration-300">
-          <div className="flex flex-col items-center gap-2 p-6 text-center text-sky-200 pointer-events-none">
-            <svg
-              className="h-10 w-10 animate-bounce text-sky-400"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
-              />
-            </svg>
-            <p className="font-semibold text-sm">Drop to insert media</p>
-            <p className="text-xs text-sky-300/80">Images or Video clips (clamped to max 12s)</p>
-          </div>
-        </div>
-      )}
+      <TimelineDropOverlay isVisible={isDragOver} />
       {activeDropIndex !== null && (
-        <div
-          className="absolute z-40 w-[4px] -ml-[2px] bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.8)] pointer-events-none transition-all duration-100"
-          style={{
-            left: `${getDropIndicatorLeft(activeDropIndex)}px`,
-            height: `${itemHeight}px`,
-            top: `${itemTop}px`,
-          }}
-        >
-          <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-full bg-sky-400 w-3.5 h-3.5 flex items-center justify-center text-[9px] font-extrabold text-zinc-950 shadow-md">
-            +
-          </div>
-        </div>
+        <TimelineDropIndicator
+          itemHeight={itemHeight}
+          itemTop={itemTop}
+          left={getDropIndicatorLeft(activeDropIndex)}
+        />
       )}
       {contextMenu && createPortal(
-        <div
-          onPointerDown={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-          onContextMenu={(e) => e.stopPropagation()}
-        >
-          <div
-            className="fixed inset-0 z-[99998]"
-            onClick={() => setContextMenu(null)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setContextMenu(null);
-            }}
-          />
-          <div
-            className="fixed z-[99999] min-w-56 overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-950/90 p-1.5 shadow-[0_10px_40px_rgba(0,0,0,0.6)] backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 ease-out"
-            style={{
-              left: `${contextMenu.x}px`,
-              top: `${contextMenu.y}px`,
-            }}
-          >
-            <div className="px-3.5 py-2 border-b border-zinc-800/40 text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center justify-between gap-4">
-              <span>
-                {thumbnailMode ? `Position: Card #${contextMenu.insertIndex + 1}` : `Timeline: ${formatSeconds(contextMenu.timelineTime)}`}
-              </span>
-              <button
-                type="button"
-                onClick={() => setContextMenu(null)}
-                className="p-0.5 hover:bg-zinc-800 rounded text-zinc-500 hover:text-zinc-200 transition-colors cursor-pointer"
-                title="Close menu"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-            <div className="mt-1 flex flex-col gap-0.5">
-              {[
-                { type: "collection" as const, label: "Collection", icon: Folder, color: "text-sky-400" },
-                { type: "video" as const, label: "Video Clip", icon: Video, color: "text-amber-400" },
-                { type: "image" as const, label: "Image Clip", icon: Image, color: "text-emerald-400" },
-              ].map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.type}
-                    type="button"
-                    onClick={() => {
-                      if (onDropSidebarClip) {
-                        onDropSidebarClip(contextMenu.insertIndex, item.type);
-                      }
-                      setContextMenu(null);
-                    }}
-                    className="flex w-full items-center gap-3.5 rounded-lg px-3 py-2 text-left text-xs font-semibold text-zinc-300 hover:bg-zinc-800/70 hover:text-white transition-colors cursor-pointer"
-                  >
-                    <Icon className={`h-4 w-4 shrink-0 ${item.color}`} />
-                    <span>
-                      Add {item.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>,
+        <TimelineContextMenu
+          insertIndex={contextMenu.insertIndex}
+          onAddClip={onDropSidebarClip}
+          onClose={() => setContextMenu(null)}
+          thumbnailMode={thumbnailMode}
+          timelineTime={contextMenu.timelineTime}
+          x={contextMenu.x}
+          y={contextMenu.y}
+        />,
         document.body
       )}
       {scrubbingState && showFloatingDragPreview && (() => {

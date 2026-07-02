@@ -63,7 +63,11 @@ export function useTimelineOverhang({
 
   const firstOverhang = useMemo(() => {
     let nextOverhang = 0;
-    if (selectedVideoClip?.index === 0 && selectedVideoClip.trimIn > 0) {
+    if (
+      selectedVideoClip?.kind !== "collection" &&
+      selectedVideoClip?.index === 0 &&
+      selectedVideoClip.trimIn > 0
+    ) {
       if (thumbnailMode) {
         const clipCenter = thumbnailWidth / 2;
         const sourceLeft =
@@ -95,7 +99,10 @@ export function useTimelineOverhang({
 
   const lastOverhang = useMemo(() => {
     let nextOverhang = 0;
-    if (selectedVideoClip?.index === clipsLength - 1) {
+    if (
+      selectedVideoClip?.kind !== "collection" &&
+      selectedVideoClip?.index === clipsLength - 1
+    ) {
       const trimOut =
         selectedVideoClip.sourceDuration -
         selectedVideoClip.trimIn -

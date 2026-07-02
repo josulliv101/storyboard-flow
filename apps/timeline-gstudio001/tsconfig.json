@@ -26,6 +26,12 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@storyboard/ui": [
+        "../../packages/ui"
+      ],
+      "@storyboard/ui/*": [
+        "../../packages/ui/*"
       ]
     }
   },

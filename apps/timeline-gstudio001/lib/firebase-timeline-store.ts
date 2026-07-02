@@ -9,7 +9,8 @@ type TimelineDocumentRecord = {
   id: string;
   title: string;
   description?: string;
-  document: TimelineDocument;
+  document?: TimelineDocument;
+  clips?: TimelineClip[];
   isProject?: boolean;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
@@ -57,15 +58,46 @@ function normalizeDocument(document: TimelineDocument): TimelineDocument {
   return JSON.parse(JSON.stringify(document)) as TimelineDocument;
 }
 
+function normalizeClips(clips: TimelineClip[]): TimelineClip[] {
+  return JSON.parse(JSON.stringify(clips)) as TimelineClip[];
+}
+
+function isTimelineDocument(value: unknown): value is TimelineDocument {
+  if (!value || typeof value !== "object") return false;
+  const document = value as Partial<TimelineDocument>;
+
+  return (
+    typeof document.id === "string" &&
+    typeof document.title === "string" &&
+    Array.isArray(document.clips)
+  );
+}
+
 function toTimelineDocument(id: string, data: Partial<TimelineDocumentRecord>) {
-  return data.document
+  const nestedDocument = isTimelineDocument(data.document)
     ? normalizeDocument(data.document)
-    : ({
-        id,
-        title: data.title || id,
-        description: data.description,
-        clips: [],
-      } satisfies TimelineDocument);
+    : null;
+  const topLevelClips = Array.isArray(data.clips)
+    ? normalizeClips(data.clips)
+    : null;
+
+  if (nestedDocument) {
+    if (nestedDocument.clips.length > 0 || !topLevelClips || topLevelClips.length === 0) {
+      return nestedDocument;
+    }
+
+    return {
+      ...nestedDocument,
+      clips: topLevelClips,
+    };
+  }
+
+  return {
+    id: typeof data.id === "string" ? data.id : id,
+    title: data.title || id,
+    description: data.description,
+    clips: topLevelClips ?? [],
+  } satisfies TimelineDocument;
 }
 
 function toIsoDate(value: unknown) {
