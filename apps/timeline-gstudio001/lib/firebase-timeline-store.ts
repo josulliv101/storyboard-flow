@@ -2,7 +2,7 @@ import "server-only";
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
-import type { TimelineDocument, TimelineClip } from "@/components/timeline/types";
+import type { TimelineDocument, TimelineClip } from "@storyboard/ui/timeline/types";
 import { getFirebaseDb } from "./firebase-admin";
 
 type TimelineDocumentRecord = {
@@ -70,6 +70,14 @@ function isTimelineDocument(value: unknown): value is TimelineDocument {
     typeof document.id === "string" &&
     typeof document.title === "string" &&
     Array.isArray(document.clips)
+  );
+}
+
+function isUnsavedProjectPlaceholder(document: TimelineDocument) {
+  return (
+    document.id.startsWith("project-") &&
+    document.title === "Loading Project" &&
+    document.clips.length === 0
   );
 }
 
@@ -159,6 +167,10 @@ export async function saveFirebaseTimelineDocument(
   document: TimelineDocument,
   options?: { isProject?: boolean },
 ) {
+  if (isUnsavedProjectPlaceholder(document)) {
+    throw new Error("Refusing to save an unloaded project placeholder.");
+  }
+
   const normalizedDocument = normalizeDocument(document);
   const ref = collection().doc(normalizedDocument.id);
   const existing = await withFirebaseTimeout(ref.get(), "Loading timeline document");

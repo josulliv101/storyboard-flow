@@ -6,9 +6,9 @@ import { Layers, FolderPlus, Image, Video } from "lucide-react";
 import { notFound } from "next/navigation";
 
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
-import { parseTimelineViewState } from "@/components/timeline/timeline-view-state";
-import { getTimelinePage, getTimelineDocument, registerTimelineDocument } from "@/lib/timeline-documents";
-import type { TimelineDocument } from "@/components/timeline/types";
+import { parseTimelineViewState } from "@storyboard/ui/timeline/timeline-view-state";
+import { getTimelinePage, getTimelineDocument, registerTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
+import type { TimelineDocument } from "@storyboard/ui/timeline/types";
 
 type TimelinePageProps = {
   params: Promise<{
@@ -482,3 +482,4 @@ export default function TimelinePage({
     </div>
   );
 }
+

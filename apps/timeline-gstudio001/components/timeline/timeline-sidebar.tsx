@@ -20,7 +20,7 @@ import { AssetLibraryDrawer } from "@/components/assets/asset-library-drawer";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import { cn } from "@/lib/utils";
-import type { ProjectViewMode } from "./timeline-view-state";
+import type { ProjectViewMode } from "@storyboard/ui/timeline/timeline-view-state";
 
 type DraggableItem = {
   type: "timeline" | "collection" | "image" | "video";

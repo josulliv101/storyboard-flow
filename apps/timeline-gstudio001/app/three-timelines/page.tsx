@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Layers, FolderPlus, Image, Video } from "lucide-react";
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
-import { getTimelinePage, getTimelineDocument, registerTimelineDocument } from "@/lib/timeline-documents";
-import type { TimelineDocument } from "@/components/timeline/types";
+import { getTimelinePage, getTimelineDocument, registerTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
+import type { TimelineDocument } from "@storyboard/ui/timeline/types";
 
 function TimelineDropZone({
   onDropTimeline,

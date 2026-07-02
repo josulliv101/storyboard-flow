@@ -116,6 +116,7 @@ function getProviderValue(args: TimelineClipItemStoryArgs): TimelineClipItemCont
     collectionActions: {
       getCollectionHref: args.getCollectionHref,
       onOpenCollection: args.onOpenCollection,
+      onRenameCollection: args.onRenameCollection,
       onToggleCollectionExpanded: args.onToggleCollectionExpanded,
       onToggleCollectionEndpoint: args.onToggleCollectionEndpoint,
     },

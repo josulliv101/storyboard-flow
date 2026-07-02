@@ -10,6 +10,7 @@ export type ClipMediaBodyProps = {
   view: TimelineClipMediaView;
   onDurationLoaded?: (duration: number) => void;
   onCollectionEndpointClick?: (endpoint: CollectionEndpoint) => void;
+  onCollectionTitleChange?: (title: string) => void;
 };
 
 export function ClipMediaBody({
@@ -17,6 +18,7 @@ export function ClipMediaBody({
   view,
   onDurationLoaded,
   onCollectionEndpointClick,
+  onCollectionTitleChange,
 }: ClipMediaBodyProps) {
   const { metrics } = useTimelineClipItemContext();
 
@@ -33,6 +35,11 @@ export function ClipMediaBody({
       onCollectionEndpointClick={
         clip.kind === "collection" && onCollectionEndpointClick
           ? onCollectionEndpointClick
+          : undefined
+      }
+      onCollectionTitleChange={
+        clip.kind === "collection" && onCollectionTitleChange
+          ? onCollectionTitleChange
           : undefined
       }
     />

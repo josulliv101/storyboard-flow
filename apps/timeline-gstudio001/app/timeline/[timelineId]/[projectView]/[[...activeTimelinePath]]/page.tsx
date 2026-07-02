@@ -4,21 +4,21 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, use, useCallback, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { ToggleSwitch } from "@/components/timeline/timeline-toolbar";
+import { ToggleSwitch } from "@storyboard/ui/timeline/timeline-toolbar";
 
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
-import { WorkbenchSplitPane } from "@/components/timeline/workbench-display-surface";
+import { WorkbenchSplitPane } from "@storyboard/ui/timeline/workbench-display-surface";
 import {
   parseTimelineViewState,
   type ProjectViewMode,
-} from "@/components/timeline/timeline-view-state";
-import type { TimelineClip, TimelineDocument } from "@/components/timeline/types";
+} from "@storyboard/ui/timeline/timeline-view-state";
+import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
 import {
   createCollectionTimelineDocument,
   getTimelineDocument,
   getTimelinePath,
   registerTimelineDocument,
-} from "@/lib/timeline-documents";
+} from "@storyboard/ui/timeline/timeline-documents";
 
 type ProjectTimelinePageProps = {
   params: Promise<{
@@ -229,3 +229,4 @@ export default function ProjectTimelinePage({
     </div>
   );
 }
+

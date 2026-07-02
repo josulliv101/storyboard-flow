@@ -11,7 +11,7 @@ import {
 
 import { Button } from "@/components/core/button";
 import { useAuth } from "@/components/auth/auth-provider";
-import type { TimelineClip } from "@/components/timeline/types";
+import type { TimelineClip } from "@storyboard/ui/timeline/types";
 
 type TrashDrawerProps = {
   isOpen: boolean;

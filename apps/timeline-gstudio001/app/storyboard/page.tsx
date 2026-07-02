@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
-import { getTimelineDocument, getTimelinePath } from "@/lib/timeline-documents";
-import { parseTimelineViewState } from "@/components/timeline/timeline-view-state";
+import { getTimelineDocument, getTimelinePath } from "@storyboard/ui/timeline/timeline-documents";
+import { parseTimelineViewState } from "@storyboard/ui/timeline/timeline-view-state";
 
 function StoryboardPageContent() {
   const router = useRouter();

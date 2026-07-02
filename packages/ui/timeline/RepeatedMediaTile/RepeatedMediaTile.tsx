@@ -19,6 +19,7 @@ export type RepeatedMediaTileProps = {
   onDurationLoaded?: (duration: number) => void;
   collectionEndpointSelection?: Partial<Record<CollectionEndpoint, boolean>>;
   onCollectionEndpointClick?: (endpoint: CollectionEndpoint) => void;
+  onCollectionTitleChange?: (title: string) => void;
 };
 
 export function RepeatedMediaTile({
@@ -29,6 +30,7 @@ export function RepeatedMediaTile({
   onDurationLoaded,
   collectionEndpointSelection,
   onCollectionEndpointClick,
+  onCollectionTitleChange,
 }: RepeatedMediaTileProps) {
   useVideoDuration(clip, onDurationLoaded);
 
@@ -41,6 +43,7 @@ export function RepeatedMediaTile({
         isXS={isXS}
         collectionEndpointSelection={collectionEndpointSelection}
         onCollectionEndpointClick={onCollectionEndpointClick}
+        onTitleChange={onCollectionTitleChange}
       />
     );
   }

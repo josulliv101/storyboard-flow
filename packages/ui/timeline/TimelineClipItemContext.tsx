@@ -46,6 +46,7 @@ export type TimelineClipCollectionActions = {
     clip: CollectionTimelineClip,
     endpoint: CollectionEndpoint,
   ) => void;
+  onRenameCollection?: (clip: CollectionTimelineClip, title: string) => void;
 };
 
 export type TimelineClipItemContextValue = {

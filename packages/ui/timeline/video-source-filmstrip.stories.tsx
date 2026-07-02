@@ -1,12 +1,34 @@
 import type { Meta, StoryObj } from '@storybook/react';
+import { storyVideoSrc } from "./RepeatedMediaTile/story-fixtures";
 import { VideoSourceFilmStrip } from './video-source-filmstrip';
 import type { TimelineClip } from './types';
+
+function createFilmstripPoster(label: string, hue: number) {
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 270">`,
+    `<defs>`,
+    `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">`,
+    `<stop offset="0" stop-color="hsl(${hue},68%,34%)"/>`,
+    `<stop offset="1" stop-color="hsl(${(hue + 42) % 360},72%,16%)"/>`,
+    `</linearGradient>`,
+    `</defs>`,
+    `<rect width="480" height="270" fill="url(#bg)"/>`,
+    `<rect x="28" y="168" width="300" height="22" rx="11" fill="rgba(255,255,255,0.18)"/>`,
+    `<rect x="28" y="204" width="190" height="16" rx="8" fill="rgba(255,255,255,0.12)"/>`,
+    `<circle cx="390" cy="70" r="44" fill="rgba(255,255,255,0.16)"/>`,
+    `<text x="28" y="76" fill="white" font-family="Arial, sans-serif" font-size="34" font-weight="700">${label}</text>`,
+    `</svg>`,
+  ].join("");
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
 
 const videoClip: TimelineClip = {
   id: 'filmstrip-vid-1',
   index: 0,
   kind: 'video',
-  src: 'https://www.w3schools.com/html/mov_bbb.mp4',
+  src: storyVideoSrc,
+  poster: createFilmstripPoster("Source", 215),
   alt: 'Big Buck Bunny',
   aspect: 16 / 9,
   trackIndex: 0,
@@ -27,7 +49,7 @@ const untrimmedClip: TimelineClip = {
 };
 
 const meta: Meta<typeof VideoSourceFilmStrip> = {
-  title: 'GStudio/Timeline/VideoSourceFilmStrip',
+  title: "UI/Timeline/VideoSourceFilmStrip",
   component: VideoSourceFilmStrip,
   decorators: [
     (Story) => (

@@ -4,17 +4,37 @@ import type {
   TimelineClip,
 } from "../types";
 
+export function createStoryMediaDataUri(label: string, hue: number) {
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 270">`,
+    `<defs>`,
+    `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">`,
+    `<stop offset="0" stop-color="hsl(${hue},68%,34%)"/>`,
+    `<stop offset="1" stop-color="hsl(${(hue + 44) % 360},72%,16%)"/>`,
+    `</linearGradient>`,
+    `</defs>`,
+    `<rect width="480" height="270" fill="url(#bg)"/>`,
+    `<circle cx="390" cy="68" r="44" fill="rgba(255,255,255,0.16)"/>`,
+    `<rect x="28" y="170" width="304" height="22" rx="11" fill="rgba(255,255,255,0.18)"/>`,
+    `<rect x="28" y="206" width="196" height="16" rx="8" fill="rgba(255,255,255,0.12)"/>`,
+    `<text x="28" y="78" fill="white" font-family="Arial, sans-serif" font-size="34" font-weight="700">${label}</text>`,
+    `</svg>`,
+  ].join("");
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 export const storyVideoSrc =
   "https://res.cloudinary.com/demo/video/upload/dog.mp4";
 
-export const storyVideoPoster =
-  "https://res.cloudinary.com/demo/video/upload/so_0,w_480,h_270,c_fill,q_auto,f_jpg/dog.jpg";
+export const storyVideoPoster = createStoryMediaDataUri("Video", 215);
+export const storyImageSrc = createStoryMediaDataUri("Image", 145);
 
 export const imageClip: MediaTimelineClip = {
   id: "img-1",
   index: 0,
   kind: "image",
-  src: "https://picsum.photos/seed/timeline-1/400/200",
+  src: storyImageSrc,
   alt: "Sample image",
   aspect: 16 / 9,
   trackIndex: 0,
@@ -59,13 +79,13 @@ export const collectionClip: CollectionTimelineClip = {
     {
       id: "preview-image",
       kind: "image",
-      src: "https://picsum.photos/seed/timeline-collection-middle/320/180",
+      src: createStoryMediaDataUri("Middle", 165),
       alt: "Middle insert",
     },
     {
       id: "preview-last",
       kind: "image",
-      src: "https://picsum.photos/seed/timeline-collection-last/320/180",
+      src: createStoryMediaDataUri("Last", 185),
       alt: "Closing frame",
     },
   ],

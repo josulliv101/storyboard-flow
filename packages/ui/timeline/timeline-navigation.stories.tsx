@@ -4,7 +4,7 @@ import { expect, fn, userEvent, within } from "storybook/test";
 import { TimelineNavigation } from "./timeline-navigation";
 
 const meta = {
-  title: "GStudio/Timeline/TimelineNavigation",
+  title: "UI/Timeline/TimelineNavigation",
   component: TimelineNavigation,
   parameters: {
     layout: "padded",

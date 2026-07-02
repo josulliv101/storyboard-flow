@@ -38,7 +38,7 @@ function InteractiveToolbar({
 }
 
 const meta = {
-  title: "GStudio/Timeline/TimelineToolbar",
+  title: "UI/Timeline/TimelineToolbar",
   component: TimelineToolbar,
   parameters: {
     layout: "padded",

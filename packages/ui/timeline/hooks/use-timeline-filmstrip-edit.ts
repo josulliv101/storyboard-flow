@@ -5,7 +5,7 @@ import type { TimelineClip, VideoSourceWindowEditMode } from "../types";
 import { getSourceTimeFromClientX } from "../utils";
 import type { TimelineInteractionSharedOptions } from "./timeline-interaction-types";
 import { editVideoSourceWindowFromBaseline } from "./use-timeline-clips";
-import { getCollectionEndpointSummary } from "@/lib/timeline-documents";
+import { getCollectionEndpointSummary } from "../timeline-documents";
 
 type UseTimelineFilmstripEditOptions = TimelineInteractionSharedOptions & {
   thumbnailMode: boolean;

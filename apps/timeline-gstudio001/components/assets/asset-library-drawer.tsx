@@ -12,9 +12,9 @@ import {
 import { Button } from "@/components/core/button";
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
 import { cn } from "@/lib/utils";
-import type { TimelineClip } from "@/components/timeline/types";
+import type { TimelineClip } from "@storyboard/ui/timeline/types";
 import { useAuth } from "@/components/auth/auth-provider";
-import { getTimelinePath, getTimelineDocument } from "@/lib/timeline-documents";
+import { getTimelinePath, getTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
 
 type CloudinaryAsset = {
   id: string;

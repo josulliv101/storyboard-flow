@@ -5,11 +5,11 @@ import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
-import { ToggleSwitch } from "@/components/timeline/timeline-toolbar";
-import { WorkbenchSplitPane } from "@/components/timeline/workbench-display-surface";
-import { getTimelineDocument, getTimelinePath } from "@/lib/timeline-documents";
-import { parseTimelineViewState } from "@/components/timeline/timeline-view-state";
-import type { TimelineClip } from "@/components/timeline/types";
+import { ToggleSwitch } from "@storyboard/ui/timeline/timeline-toolbar";
+import { WorkbenchSplitPane } from "@storyboard/ui/timeline/workbench-display-surface";
+import { getTimelineDocument, getTimelinePath } from "@storyboard/ui/timeline/timeline-documents";
+import { parseTimelineViewState } from "@storyboard/ui/timeline/timeline-view-state";
+import type { TimelineClip } from "@storyboard/ui/timeline/types";
 
 function WorkbenchPageContent() {
   const router = useRouter();

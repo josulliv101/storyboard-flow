@@ -8,7 +8,7 @@ import type {
 } from "./types";
 import { formatSeconds } from "./utils";
 import { FILMSTRIP_HEIGHT } from "./constants";
-import { cn } from "@/lib/utils";
+import { cn } from "../lib/utils";
 import {
   getTimelineGridItemLayout,
   type TimelineGridMetrics,
@@ -22,7 +22,7 @@ import {
   getCollectionClipFramePreview,
   getCollectionClipSourceDuration,
   getCollectionEndpointSummary,
-} from "@/lib/timeline-documents";
+} from "./timeline-documents";
 
 function handleImageFallback(
   event: React.SyntheticEvent<HTMLImageElement>,

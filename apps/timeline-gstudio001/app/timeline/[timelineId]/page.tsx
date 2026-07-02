@@ -10,15 +10,15 @@ import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
 import {
   parseProjectViewMode,
   parseTimelineViewState,
-} from "@/components/timeline/timeline-view-state";
+} from "@storyboard/ui/timeline/timeline-view-state";
 import {
   createCollectionTimelineDocument,
   getTimelineDocument,
   getTimelinePath,
   registerTimelineDocument,
-} from "@/lib/timeline-documents";
-import type { TimelineDocument } from "@/components/timeline/types";
-import { ToggleSwitch } from "@/components/timeline/timeline-toolbar";
+} from "@storyboard/ui/timeline/timeline-documents";
+import type { TimelineDocument } from "@storyboard/ui/timeline/types";
+import { ToggleSwitch } from "@storyboard/ui/timeline/timeline-toolbar";
 import { useState } from "react";
 
 type TimelineDocumentPageProps = {
@@ -168,3 +168,4 @@ export default function TimelineDocumentPage({
     </div>
   );
 }
+

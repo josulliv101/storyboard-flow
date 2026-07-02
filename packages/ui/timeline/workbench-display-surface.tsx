@@ -12,8 +12,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { cn } from "@/lib/utils";
-import { getCollectionClipFramePreview } from "@/lib/timeline-documents";
+import { cn } from "../lib/utils";
+import { getCollectionClipFramePreview } from "./timeline-documents";
 
 import type { CollectionTimelineClip, TimelineClip } from "./types";
 import { formatSeconds } from "./utils";

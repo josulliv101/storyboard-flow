@@ -9,6 +9,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["components/timeline/**/*.test.ts"],
+    include: [
+      "components/timeline/**/*.test.ts",
+      "../../packages/ui/timeline/**/*.test.ts",
+    ],
   },
 });

@@ -1,9 +1,7 @@
-import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { useRouter } from "next/navigation";
-import { expect, fireEvent, fn, mocked, userEvent, waitFor, within } from "storybook/test";
+import type { Meta, StoryObj } from "@storybook/react";
+import { expect, fireEvent, fn, userEvent, waitFor, within } from "storybook/test";
 
-import { AuthProvider } from "@/components/auth/auth-provider";
-import { getTimelineDocument } from "@/lib/timeline-documents";
+import { getTimelineDocument } from "./timeline-documents";
 import { createInitialClips } from "./hooks/use-timeline-clips";
 import { SmoothScrollList } from "./smooth-scroll-list";
 import type { TimelineClip } from "./types";
@@ -75,28 +73,16 @@ function createSmoothScrollStoryClips(itemCount: number): TimelineClip[] {
 }
 
 const meta = {
-  title: "GStudio/Timeline/SmoothScrollList",
+  title: "UI/Timeline/SmoothScrollList",
   component: SmoothScrollList,
   parameters: {
     layout: "fullscreen",
   },
-  beforeEach: () => {
-    mocked(useRouter).mockReturnValue({
-      back: fn(),
-      forward: fn(),
-      prefetch: fn(),
-      push: fn(),
-      refresh: fn(),
-      replace: fn(),
-    });
-  },
   decorators: [
     (Story) => (
-      <AuthProvider>
-        <main className="min-h-screen bg-zinc-950 p-8 text-white">
-          <Story />
-        </main>
-      </AuthProvider>
+      <main className="min-h-screen bg-zinc-950 p-8 text-white">
+        <Story />
+      </main>
     ),
   ],
   args: {
@@ -106,6 +92,8 @@ const meta = {
     pixelsPerSecond: 100,
     viewportWidth: "100%",
     syncMediaDuration: false,
+    disablePersistence: true,
+    navigate: fn(),
   },
 } satisfies Meta<typeof SmoothScrollList>;
 

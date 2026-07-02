@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   getCollectionClipFramePreview,
+  isUnsavedProjectPlaceholder,
   registerTimelineDocument,
-} from "../../lib/timeline-documents";
+} from "./timeline-documents";
 import type { CollectionTimelineClip, TimelineClip } from "./types";
 
 function mediaClip(overrides: Partial<TimelineClip> = {}): TimelineClip {
@@ -88,5 +89,27 @@ describe("collection timeline playback mapping", () => {
 
     expect(preview?.id).toBe("first-child");
     expect(preview?.previewTime).toBeCloseTo(0.999);
+  });
+});
+
+describe("project placeholder detection", () => {
+  it("identifies the unloaded project placeholder that must not be saved", () => {
+    expect(
+      isUnsavedProjectPlaceholder({
+        id: "project-1782921712559-tozg9j",
+        title: "Loading Project",
+        clips: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("allows intentionally empty projects once they have a real title", () => {
+    expect(
+      isUnsavedProjectPlaceholder({
+        id: "project-1782921712559-tozg9j",
+        title: "Untitled Project",
+        clips: [],
+      }),
+    ).toBe(false);
   });
 });

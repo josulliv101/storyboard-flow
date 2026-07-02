@@ -4,7 +4,7 @@ import { expect, fn, userEvent, within } from "storybook/test";
 import { TimelineOverhangHint } from "./timeline-overhang-hint";
 
 const meta = {
-  title: "GStudio/Timeline/TimelineOverhangHint",
+  title: "UI/Timeline/TimelineOverhangHint",
   component: TimelineOverhangHint,
   parameters: {
     layout: "centered",

@@ -8,7 +8,8 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { TimelineClipItem, TimelineClipItemProvider } from "@storyboard/ui";
+import { TimelineClipItem } from "./TimelineClipItem";
+import { TimelineClipItemProvider } from "./TimelineClipItemContext";
 import { Play } from "lucide-react";
 
 import {
@@ -42,7 +43,7 @@ import type {
 import { PassiveVideoFilmStrip, VideoSourceFilmStrip } from "./video-source-filmstrip";
 import { formatSeconds } from "./utils";
 import { VideoTile } from "./video-tile";
-import { getCollectionClipFramePreview } from "@/lib/timeline-documents";
+import { getCollectionClipFramePreview } from "./timeline-documents";
 
 type TimelineInteractions = ReturnType<typeof useTimelineInteractions>;
 
@@ -92,6 +93,7 @@ type TimelineViewportCollections = {
     endpoint: CollectionEndpoint,
   ) => void;
   onToggleCollectionExpanded?: (clip: CollectionTimelineClip) => void;
+  onRenameCollection?: (clip: CollectionTimelineClip, title: string) => void;
 };
 
 type TimelineViewportPlayback = {
@@ -165,6 +167,7 @@ export function TimelineViewport({
     exposedCollectionEndpointIds,
     getCollectionHref,
     onOpenCollection,
+    onRenameCollection,
     onToggleCollectionEndpoint,
     onToggleCollectionExpanded,
   } = collections ?? {};
@@ -536,6 +539,7 @@ export function TimelineViewport({
     collectionActions: {
       getCollectionHref,
       onOpenCollection,
+      onRenameCollection,
       onToggleCollectionExpanded,
       onToggleCollectionEndpoint,
     },
@@ -550,6 +554,7 @@ export function TimelineViewport({
     itemHeight,
     itemTop,
     onOpenCollection,
+    onRenameCollection,
     onToggleCollectionEndpoint,
     onToggleCollectionExpanded,
     pixelsPerSecond,

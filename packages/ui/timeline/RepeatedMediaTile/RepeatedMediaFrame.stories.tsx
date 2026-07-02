@@ -1,6 +1,11 @@
 import type { Decorator, Meta, StoryObj } from "@storybook/nextjs-vite";
 import { RepeatedMediaFrame } from "./RepeatedMediaFrame";
-import { storyVideoPoster, storyVideoSrc } from "./story-fixtures";
+import {
+  createStoryMediaDataUri,
+  storyImageSrc,
+  storyVideoPoster,
+  storyVideoSrc,
+} from "./story-fixtures";
 import { getVideoThumbnailUrl } from "../media-thumbnails";
 
 const withFrameWrapper: Decorator = (Story) => (
@@ -40,7 +45,7 @@ type Story = StoryObj<typeof RepeatedMediaFrame>;
 
 export const ImageFrame: Story = {
   args: {
-    src: "https://picsum.photos/seed/timeline-frame/400/200",
+    src: storyImageSrc,
     alt: "Sample image frame",
   },
 };
@@ -55,7 +60,7 @@ export const VideoFrame: Story = {
 
 export const NarrowFrame: Story = {
   args: {
-    src: "https://picsum.photos/seed/timeline-frame/400/200",
+    src: createStoryMediaDataUri("Narrow", 155),
     alt: "Narrow image frame",
     frameWidth: 56,
     frameHeight: 56,
@@ -79,7 +84,7 @@ export const UnstyledImage: Story = {
   name: "Unstyled / Image",
   args: {
     variant: "unstyled",
-    src: "https://picsum.photos/seed/timeline-frame/400/200",
+    src: storyImageSrc,
     alt: "Unstyled image frame",
   },
 };

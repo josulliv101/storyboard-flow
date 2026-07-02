@@ -4,7 +4,7 @@ import { expect, fn, userEvent } from "storybook/test";
 import { TimelineContextMenu } from "./timeline-context-menu";
 
 const meta = {
-  title: "GStudio/Timeline/TimelineContextMenu",
+  title: "UI/Timeline/TimelineContextMenu",
   component: TimelineContextMenu,
   parameters: {
     layout: "fullscreen",

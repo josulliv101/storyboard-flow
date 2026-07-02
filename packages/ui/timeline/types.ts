@@ -34,6 +34,8 @@ export type TimelineItemBase = {
   viewEndpoint?: CollectionEndpoint;
   /** Transient role for synthetic inline-expanded collection cards. */
   viewRole?: "collection-collapse" | "expanded-child" | "collection-endpoint";
+  /** Transient accent index for sibling collection styling. */
+  viewCollectionAccentIndex?: number;
 };
 
 export type ImageTimelineClip = TimelineItemBase & {

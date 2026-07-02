@@ -1,4 +1,4 @@
-import { Button } from "@/components/core/button";
+import { Button } from "../core/button";
 
 type TimelineNavigationProps = {
   disabled: boolean;

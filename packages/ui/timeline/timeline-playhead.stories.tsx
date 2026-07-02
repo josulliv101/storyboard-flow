@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { TimelinePlayhead } from "./timeline-playhead";
 
 const meta = {
-  title: "GStudio/Timeline/TimelinePlayhead",
+  title: "UI/Timeline/TimelinePlayhead",
   component: TimelinePlayhead,
   parameters: {
     layout: "padded",

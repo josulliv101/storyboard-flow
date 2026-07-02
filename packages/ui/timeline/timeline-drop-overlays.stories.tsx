@@ -6,7 +6,7 @@ import {
 } from "./timeline-drop-overlays";
 
 const overlayMeta = {
-  title: "GStudio/Timeline/TimelineDropOverlay",
+  title: "UI/Timeline/TimelineDropOverlay",
   component: TimelineDropOverlay,
   parameters: {
     layout: "padded",

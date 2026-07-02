@@ -62,6 +62,14 @@ export function TimelineClipItemContent({
             endpoint,
           )
       : undefined;
+  const onCollectionTitleChange =
+    clip.kind === "collection" && collectionActions?.onRenameCollection
+      ? (title: string) =>
+          collectionActions.onRenameCollection?.(
+            clip as CollectionTimelineClip,
+            title,
+          )
+      : undefined;
 
   return (
     <div className={clipItemContent({ ring: view.ring })}>
@@ -70,6 +78,7 @@ export function TimelineClipItemContent({
         view={view.media}
         onDurationLoaded={onDurationLoaded}
         onCollectionEndpointClick={onCollectionEndpointClick}
+        onCollectionTitleChange={onCollectionTitleChange}
       />
 
       {(clip.kind === "video" || clip.kind === "collection") && (

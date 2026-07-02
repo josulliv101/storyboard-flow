@@ -1,13 +1,19 @@
 import { NextResponse } from "next/server";
 
-import type { TimelineDocument, TimelineClip } from "@/components/timeline/types";
+import type { TimelineDocument, TimelineClip } from "@storyboard/ui/timeline/types";
 import {
   getFirebaseTimelineDocument,
   saveFirebaseTimelineDocument,
   deleteFirebaseTimelineDocument,
 } from "@/lib/firebase-timeline-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
-import { getTimelineDocument, decodeFolderPath, getFolderPathFromTimelineId, encodeFolderPath } from "@/lib/timeline-documents";
+import {
+  getTimelineDocument,
+  decodeFolderPath,
+  getFolderPathFromTimelineId,
+  encodeFolderPath,
+  isUnsavedProjectPlaceholder,
+} from "@storyboard/ui/timeline/timeline-documents";
 import { listCloudinaryAssets } from "@/lib/cloudinary-media-store";
 
 export const runtime = "nodejs";
@@ -287,6 +293,13 @@ export async function PATCH(
       return NextResponse.json({ error: "A valid timeline document is required." }, { status: 400 });
     }
 
+    if (isUnsavedProjectPlaceholder(body.document)) {
+      return NextResponse.json(
+        { error: "Refusing to save an unloaded project placeholder." },
+        { status: 409 },
+      );
+    }
+
     const savedDocument = await saveFirebaseTimelineDocument(body.document);
     return NextResponse.json({ document: savedDocument });
   } catch (error) {
@@ -313,3 +326,4 @@ export async function DELETE(
     return storageErrorResponse(error, "Unable to delete the timeline document.");
   }
 }
+
