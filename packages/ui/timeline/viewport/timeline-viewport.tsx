@@ -43,7 +43,7 @@ import type {
 import { PassiveVideoFilmStrip, VideoSourceFilmStrip } from "../media/video-source-filmstrip";
 import { formatSeconds } from "../utils";
 import { VideoTile } from "../media/video-tile";
-import { getCollectionClipFramePreview } from "../timeline-documents";
+import { useTimelineDocuments } from "../timeline-document-store";
 
 type TimelineInteractions = ReturnType<typeof useTimelineInteractions>;
 
@@ -140,6 +140,7 @@ export function TimelineViewport({
   selection,
   timelineId,
 }: TimelineViewportProps) {
+  const { getCollectionClipFramePreview } = useTimelineDocuments();
   const {
     handleScroll,
     parentRef,

@@ -10,6 +10,7 @@ type TimelineDocumentRecord = {
   title: string;
   description?: string;
   document?: TimelineDocument;
+  lastNonEmptyDocument?: TimelineDocument;
   clips?: TimelineClip[];
   isProject?: boolean;
   createdAt?: Timestamp;
@@ -85,19 +86,39 @@ function toTimelineDocument(id: string, data: Partial<TimelineDocumentRecord>) {
   const nestedDocument = isTimelineDocument(data.document)
     ? normalizeDocument(data.document)
     : null;
+  const lastNonEmptyDocument = isTimelineDocument(data.lastNonEmptyDocument)
+    ? normalizeDocument(data.lastNonEmptyDocument)
+    : null;
   const topLevelClips = Array.isArray(data.clips)
     ? normalizeClips(data.clips)
     : null;
 
   if (nestedDocument) {
-    if (nestedDocument.clips.length > 0 || !topLevelClips || topLevelClips.length === 0) {
+    if (nestedDocument.clips.length > 0) {
       return nestedDocument;
     }
 
-    return {
-      ...nestedDocument,
-      clips: topLevelClips,
-    };
+    if (topLevelClips && topLevelClips.length > 0) {
+      return {
+        ...nestedDocument,
+        clips: topLevelClips,
+      };
+    }
+
+    if (lastNonEmptyDocument) {
+      return {
+        ...lastNonEmptyDocument,
+        id: nestedDocument.id,
+        title: nestedDocument.title,
+        description: nestedDocument.description,
+      };
+    }
+
+    return nestedDocument;
+  }
+
+  if (lastNonEmptyDocument) {
+    return lastNonEmptyDocument;
   }
 
   return {
@@ -175,6 +196,19 @@ export async function saveFirebaseTimelineDocument(
   const ref = collection().doc(normalizedDocument.id);
   const existing = await withFirebaseTimeout(ref.get(), "Loading timeline document");
   const existingIsProject = existing.exists ? existing.get("isProject") === true : false;
+  const existingDocument = existing.exists
+    ? toTimelineDocument(existing.id, existing.data() as TimelineDocumentRecord)
+    : null;
+
+  if (
+    existingDocument &&
+    existingDocument.clips.length > 0 &&
+    normalizedDocument.clips.length === 0
+  ) {
+    throw new Error(
+      "Refusing to save an empty timeline over an existing non-empty document.",
+    );
+  }
 
   await withFirebaseTimeout(
     ref.set(
@@ -183,6 +217,10 @@ export async function saveFirebaseTimelineDocument(
         title: normalizedDocument.title,
         description: normalizedDocument.description || null,
         document: normalizedDocument,
+        clips: normalizedDocument.clips,
+        ...(normalizedDocument.clips.length > 0
+          ? { lastNonEmptyDocument: normalizedDocument }
+          : {}),
         isProject: options?.isProject ?? existingIsProject,
         createdAt: existing.exists ? existing.get("createdAt") || FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),

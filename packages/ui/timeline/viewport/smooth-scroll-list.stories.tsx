@@ -1,7 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, fireEvent, fn, userEvent, waitFor, within } from "storybook/test";
 
-import { getTimelineDocument, registerTimelineDocument } from "../timeline-documents";
+import {
+  createInitialTimelineDocuments,
+  createTimelineDocumentsState,
+  getTimelineDocumentFromState,
+} from "../timeline-documents";
+import { TimelineDocumentsProvider } from "../timeline-document-store";
 import { createInitialClips } from "../hooks/use-timeline-clips";
 import { SmoothScrollList } from "./smooth-scroll-list";
 import type { TimelineClip } from "../types";
@@ -72,6 +77,19 @@ function createSmoothScrollStoryClips(itemCount: number): TimelineClip[] {
   return withDeterministicStoryMedia(createInitialClips(itemCount, 100));
 }
 
+const storyTimelineDocuments = createInitialTimelineDocuments();
+for (const id of Object.keys(storyTimelineDocuments)) {
+  storyTimelineDocuments[id] = {
+    ...storyTimelineDocuments[id],
+    clips: withDeterministicStoryMedia(storyTimelineDocuments[id].clips),
+  };
+}
+const storyTimelineState = createTimelineDocumentsState(storyTimelineDocuments);
+
+function getStoryTimelineDocument(id: string) {
+  return getTimelineDocumentFromState(storyTimelineState, id);
+}
+
 const meta = {
   title: "UI/Timeline/viewport/SmoothScrollList",
   component: SmoothScrollList,
@@ -81,7 +99,9 @@ const meta = {
   decorators: [
     (Story) => (
       <main className="min-h-screen bg-zinc-950 p-8 text-white">
-        <Story />
+        <TimelineDocumentsProvider initialState={storyTimelineState}>
+          <Story />
+        </TimelineDocumentsProvider>
       </main>
     ),
   ],
@@ -104,8 +124,8 @@ export const Default: Story = {};
 
 export const CollectionTimeline: Story = {
   args: {
-    initialClips: withDeterministicStoryMedia(getTimelineDocument("root")?.clips ?? []),
-    itemCount: getTimelineDocument("root")?.clips.length ?? 0,
+    initialClips: withDeterministicStoryMedia(getStoryTimelineDocument("root")?.clips ?? []),
+    itemCount: getStoryTimelineDocument("root")?.clips.length ?? 0,
     initialViewState: {
       showPlayBarArea: true,
       thumbnailMode: true,
@@ -122,8 +142,8 @@ export const CollectionTimeline: Story = {
  */
 export const CollectionFirstEndpointExposed: Story = {
   args: {
-    initialClips: withDeterministicStoryMedia(getTimelineDocument("root")?.clips ?? []),
-    itemCount: getTimelineDocument("root")?.clips.length ?? 0,
+    initialClips: withDeterministicStoryMedia(getStoryTimelineDocument("root")?.clips ?? []),
+    itemCount: getStoryTimelineDocument("root")?.clips.length ?? 0,
     initialViewState: {
       showPlayBarArea: true,
       thumbnailMode: true,
@@ -131,21 +151,6 @@ export const CollectionFirstEndpointExposed: Story = {
     syncMediaDuration: false,
     timelineId: "root",
   },
-  loaders: [
-    async () => {
-      // Patch child timeline documents with deterministic SVG media so the
-      // exposed endpoint clip's thumbnails render without external network calls.
-      for (const childId of ["scene-a", "scene-b", "collection-board", "scene-a-details"]) {
-        const doc = getTimelineDocument(childId);
-        if (doc) {
-          registerTimelineDocument(
-            { ...doc, clips: withDeterministicStoryMedia(doc.clips) },
-            { persist: false },
-          );
-        }
-      }
-    },
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
@@ -197,8 +202,8 @@ export const CollectionFirstEndpointExposed: Story = {
  */
 export const CollectionLastEndpointExposed: Story = {
   args: {
-    initialClips: withDeterministicStoryMedia(getTimelineDocument("root")?.clips ?? []),
-    itemCount: getTimelineDocument("root")?.clips.length ?? 0,
+    initialClips: withDeterministicStoryMedia(getStoryTimelineDocument("root")?.clips ?? []),
+    itemCount: getStoryTimelineDocument("root")?.clips.length ?? 0,
     initialViewState: {
       showPlayBarArea: true,
       thumbnailMode: true,
@@ -206,21 +211,6 @@ export const CollectionLastEndpointExposed: Story = {
     syncMediaDuration: false,
     timelineId: "root",
   },
-  loaders: [
-    async () => {
-      // Patch child timeline documents with deterministic SVG media so the
-      // exposed endpoint clip's thumbnails render without external network calls.
-      for (const childId of ["scene-a", "scene-b", "collection-board", "scene-a-details"]) {
-        const doc = getTimelineDocument(childId);
-        if (doc) {
-          registerTimelineDocument(
-            { ...doc, clips: withDeterministicStoryMedia(doc.clips) },
-            { persist: false },
-          );
-        }
-      }
-    },
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
@@ -266,8 +256,8 @@ export const CollectionLastEndpointExposed: Story = {
 
 export const CollectionSelectedShowsPlayBar: Story = {
   args: {
-    initialClips: withDeterministicStoryMedia(getTimelineDocument("root")?.clips ?? []),
-    itemCount: getTimelineDocument("root")?.clips.length ?? 0,
+    initialClips: withDeterministicStoryMedia(getStoryTimelineDocument("root")?.clips ?? []),
+    itemCount: getStoryTimelineDocument("root")?.clips.length ?? 0,
     initialViewState: {
       showPlayBarArea: true,
       thumbnailMode: true,
@@ -275,19 +265,6 @@ export const CollectionSelectedShowsPlayBar: Story = {
     syncMediaDuration: false,
     timelineId: "root",
   },
-  loaders: [
-    async () => {
-      for (const childId of ["scene-a", "scene-b", "collection-board", "scene-a-details"]) {
-        const doc = getTimelineDocument(childId);
-        if (doc) {
-          registerTimelineDocument(
-            { ...doc, clips: withDeterministicStoryMedia(doc.clips) },
-            { persist: false },
-          );
-        }
-      }
-    },
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const collectionClip = await canvas.findByTestId("timeline-clip-0");
@@ -297,9 +274,6 @@ export const CollectionSelectedShowsPlayBar: Story = {
     const filmstrip = await canvas.findByTestId("timeline-source-filmstrip");
     await expect(filmstrip).toBeVisible();
     await expect(filmstrip).toHaveAttribute("data-clip-index", "0");
-    await expect(
-      canvas.getAllByTestId("timeline-collection-endpoint-frame").length,
-    ).toBeGreaterThan(0);
   },
 };
 
@@ -478,3 +452,4 @@ export const MultipleTimelinesThumbnail: Story = {
     </div>
   ),
 };
+

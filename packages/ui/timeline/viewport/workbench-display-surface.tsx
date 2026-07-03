@@ -13,7 +13,8 @@ import {
 } from "react";
 
 import { cn } from "../../lib/utils";
-import { getCollectionClipFramePreview } from "../timeline-documents";
+import type { CollectionFramePreview } from "../timeline-documents";
+import { useTimelineDocuments } from "../timeline-document-store";
 
 import type { CollectionTimelineClip, TimelineClip } from "../types";
 import { formatSeconds } from "../utils";
@@ -86,7 +87,18 @@ function getCollectionPreviewClip(clip: CollectionTimelineClip): CollectionTimel
   };
 }
 
-function resolveClipMedia(clip: TimelineClip, timelineTime: number): DisplayMedia | null {
+type GetCollectionClipFramePreview = (
+  clip: CollectionTimelineClip,
+  clipTime: number,
+  visited?: Set<string>,
+  parentPlaybackRate?: number,
+) => CollectionFramePreview | null;
+
+function resolveClipMedia(
+  clip: TimelineClip,
+  timelineTime: number,
+  getCollectionClipFramePreview: GetCollectionClipFramePreview,
+): DisplayMedia | null {
   const progress = getClipPlaybackProgress(clip, timelineTime);
   const playbackLocalTime = progress * getClipPlaybackDuration(clip);
 
@@ -210,6 +222,7 @@ export function WorkbenchDisplaySurface({
   className,
   preferredClipId,
 }: WorkbenchDisplaySurfaceProps) {
+  const { getCollectionClipFramePreview } = useTimelineDocuments();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cacheRef = useRef(new Map<string, CachedMedia>());
   const activeMediaRef = useRef<DisplayMedia | null>(null);
@@ -246,8 +259,15 @@ export function WorkbenchDisplaySurface({
     [activeClip, sortedClips],
   );
   const activeMedia = useMemo(
-    () => (activeClip ? resolveClipMedia(activeClip, currentTime) : null),
-    [activeClip, currentTime],
+    () =>
+      activeClip
+        ? resolveClipMedia(
+            activeClip,
+            currentTime,
+            getCollectionClipFramePreview,
+          )
+        : null,
+    [activeClip, currentTime, getCollectionClipFramePreview],
   );
   const bufferedMedia = useMemo(() => {
     if (!activeClip) return [];
@@ -256,9 +276,21 @@ export function WorkbenchDisplaySurface({
 
     return sortedClips
       .slice(activeIndex, activeIndex + BUFFER_WINDOW_SIZE)
-      .map((clip) => resolveClipMedia(clip, Math.max(currentTime, getClipPlaybackStart(clip))))
+      .map((clip) =>
+        resolveClipMedia(
+          clip,
+          Math.max(currentTime, getClipPlaybackStart(clip)),
+          getCollectionClipFramePreview,
+        ),
+      )
       .filter((media): media is DisplayMedia => media !== null);
-  }, [activeClip, activeMedia, currentTime, sortedClips]);
+  }, [
+    activeClip,
+    activeMedia,
+    currentTime,
+    getCollectionClipFramePreview,
+    sortedClips,
+  ]);
 
   const ensureCachedMedia = useCallback((media: DisplayMedia) => {
     const cached = cacheRef.current.get(media.key);
@@ -419,7 +451,9 @@ export function WorkbenchDisplaySurface({
 
   const renderFrameAtTime = useCallback((timelineTime: number, shouldPlay: boolean, forceSeek = false) => {
     const active = getActiveClip(sortedClipsRef.current, timelineTime, preferredClipId);
-    const media = active ? resolveClipMedia(active, timelineTime) : null;
+    const media = active
+      ? resolveClipMedia(active, timelineTime, getCollectionClipFramePreview)
+      : null;
     const mediaChanged = media?.key !== lastRenderedMediaKeyRef.current;
 
     activeMediaRef.current = media;

@@ -18,11 +18,7 @@ import {
   getThumbnailSlotCount,
   getVideoThumbnailUrl,
 } from "./media-thumbnails";
-import {
-  getCollectionClipFramePreview,
-  getCollectionClipSourceDuration,
-  getCollectionEndpointSummary,
-} from "../timeline-documents";
+import { useTimelineDocuments } from "../timeline-document-store";
 
 function handleImageFallback(
   event: React.SyntheticEvent<HTMLImageElement>,
@@ -32,15 +28,24 @@ function handleImageFallback(
   event.currentTarget.src = fallbackSrc;
 }
 
-function getCollectionPlaybackDuration(clip: CollectionTimelineClip) {
+function getCollectionPlaybackDuration(
+  clip: CollectionTimelineClip,
+  getCollectionClipSourceDuration: (clip: CollectionTimelineClip) => number,
+) {
   return Math.max(
     0.001,
     clip.playbackDuration ?? getCollectionClipSourceDuration(clip),
   );
 }
 
-function getCollectionPreviewClip(clip: CollectionTimelineClip): CollectionTimelineClip {
-  const playbackDuration = getCollectionPlaybackDuration(clip);
+function getCollectionPreviewClip(
+  clip: CollectionTimelineClip,
+  getCollectionClipSourceDuration: (clip: CollectionTimelineClip) => number,
+): CollectionTimelineClip {
+  const playbackDuration = getCollectionPlaybackDuration(
+    clip,
+    getCollectionClipSourceDuration,
+  );
   return {
     ...clip,
     duration: playbackDuration,
@@ -77,6 +82,11 @@ export function VideoSourceFilmStrip({
   editingMode = null,
   onSourceWindowPointerDown,
 }: VideoSourceFilmStripProps) {
+  const {
+    getCollectionClipFramePreview,
+    getCollectionClipSourceDuration,
+    getCollectionEndpointSummary,
+  } = useTimelineDocuments();
   const gridLayout =
     thumbnailMode && gridMetrics?.enabled
       ? getTimelineGridItemLayout(clip.index, gridMetrics)
@@ -381,6 +391,10 @@ export function PassiveVideoFilmStrip({
   onPointerCancel,
   showFilmstrip = true,
 }: PassiveVideoFilmStripProps) {
+  const {
+    getCollectionClipFramePreview,
+    getCollectionClipSourceDuration,
+  } = useTimelineDocuments();
   const gridLayout =
     thumbnailMode && gridMetrics?.enabled
       ? getTimelineGridItemLayout(clip.index, gridMetrics)
@@ -406,7 +420,13 @@ export function PassiveVideoFilmStrip({
     startTime: clip.kind === "collection" ? 0 : trimIn,
     endTime:
       clip.kind === "collection"
-        ? Math.max(0, getCollectionPlaybackDuration(clip) - 0.001)
+        ? Math.max(
+            0,
+            getCollectionPlaybackDuration(
+              clip,
+              getCollectionClipSourceDuration,
+            ) - 0.001,
+          )
         : Math.min(Math.max(0, sourceDuration - 0.05), trimIn + clip.duration),
   });
 
@@ -456,7 +476,10 @@ export function PassiveVideoFilmStrip({
         <div className="flex h-full w-full select-none overflow-hidden rounded-md">
           {frameTimes.map((time, index) => {
             if (clip.kind === "collection") {
-              const preview = getCollectionClipFramePreview(getCollectionPreviewClip(clip), time);
+              const preview = getCollectionClipFramePreview(
+                getCollectionPreviewClip(clip, getCollectionClipSourceDuration),
+                time,
+              );
               return (
                 <div
                   key={`${clip.id}-passive-film-frame-${index}`}

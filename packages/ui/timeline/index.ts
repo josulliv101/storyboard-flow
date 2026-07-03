@@ -4,6 +4,8 @@ export * from "./controls";
 export * from "./media";
 export * from "./overlays";
 export * from "./timeline-grid";
+export * from "./timeline-document-store";
+export * from "./timeline-documents";
 export * from "./types";
 export * from "./utils";
 export * from "./viewport";

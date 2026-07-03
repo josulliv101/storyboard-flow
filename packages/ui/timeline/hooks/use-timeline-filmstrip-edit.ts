@@ -5,7 +5,7 @@ import type { TimelineClip, VideoSourceWindowEditMode } from "../types";
 import { getSourceTimeFromClientX } from "../utils";
 import type { TimelineInteractionSharedOptions } from "./timeline-interaction-types";
 import { editVideoSourceWindowFromBaseline } from "./use-timeline-clips";
-import { getCollectionEndpointSummary } from "../timeline-documents";
+import { useTimelineDocuments } from "../timeline-document-store";
 
 type UseTimelineFilmstripEditOptions = TimelineInteractionSharedOptions & {
   thumbnailMode: boolean;
@@ -26,6 +26,7 @@ export function useTimelineFilmstripEdit({
   thumbnailMode,
   windowDrag,
 }: UseTimelineFilmstripEditOptions) {
+  const { getCollectionEndpointSummary } = useTimelineDocuments();
   const [isFilmStripEditing, setIsFilmStripEditing] = useState(false);
   const [activeFilmStripEdit, setActiveFilmStripEdit] = useState<{
     index: number;

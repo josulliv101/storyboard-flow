@@ -36,9 +36,15 @@ function WorkbenchPageContent() {
   // Subscribe to external store updates
   useEffect(() => {
     const handleUpdate = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
+      const detail = (e as CustomEvent).detail as {
+        timelineId?: string;
+        document?: NonNullable<typeof document>;
+      };
       if (detail && detail.timelineId === timelineId) {
-        setDocument({ ...getTimelineDocument(timelineId)! });
+        const updatedDocument = detail.document ?? getTimelineDocument(timelineId);
+        if (updatedDocument) {
+          setDocument({ ...updatedDocument });
+        }
       }
     };
     window.addEventListener("gstudio-timeline-update", handleUpdate);

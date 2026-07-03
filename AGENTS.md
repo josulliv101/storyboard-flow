@@ -31,3 +31,8 @@ When work crosses both `packages/ui` and `apps/storybook`, follow both package i
 ## Validation
 
 Use the closest relevant package scripts for typecheck, lint, tests, and Storybook validation.
+
+## Typescript
+
+- never opt out of typing by using any
+

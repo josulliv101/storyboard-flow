@@ -42,18 +42,21 @@ import type {
 } from "../types";
 import { reindexAndPackClips } from "../hooks/use-timeline-clips";
 import {
-  getTimelineDocument,
-  addClipToCollection,
-  createCollectionTimelineDocument,
-  registerTimelineDocument,
-  syncParentCollections,
-  getTimelinePath,
+  createInitialTimelineDocuments,
+  createTimelineDocumentsState,
   getFolderPathFromTimelineId,
   decodeFolderPath,
   encodeFolderPath,
-  getCollectionClipSourceDuration,
-  isUnsavedProjectPlaceholder,
 } from "../timeline-documents";
+import {
+  TimelineDocumentsProvider,
+  useOptionalTimelineDocuments,
+  useTimelineDocuments,
+} from "../timeline-document-store";
+import { TimelineKeyboardShortcuts } from "./timeline-keyboard-shortcuts";
+import { useTimelineUploadHandler } from "./use-timeline-upload-handler";
+import { useTimelinePersistenceProvider } from "./use-timeline-persistence-provider";
+import { TimelineHierarchyView } from "./timeline-hierarchy-view";
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => { finished: Promise<void> };
@@ -140,6 +143,7 @@ function getCollectionEndpointKey(
 }
 
 function getCollectionEndpointClip(
+  getTimelineDocument: (id: string) => TimelineDocument | null,
   collectionClip: CollectionTimelineClip,
   endpoint: CollectionEndpoint,
 ) {
@@ -152,10 +156,12 @@ function getCollectionEndpointClip(
 function buildInlineCollectionView({
   clips,
   endpointKeys,
+  getTimelineDocument,
   timelineId,
 }: {
   clips: TimelineClip[];
   endpointKeys: ReadonlySet<string>;
+  getTimelineDocument: (id: string) => TimelineDocument | null;
   timelineId: string;
 }) {
   const displayClips: TimelineClip[] = [];
@@ -196,7 +202,11 @@ function buildInlineCollectionView({
       const endpointKey = getCollectionEndpointKey(expansionKey, endpoint);
       if (!endpointKeys.has(endpointKey)) return;
 
-      const endpointClip = getCollectionEndpointClip(clip, endpoint);
+      const endpointClip = getCollectionEndpointClip(
+        getTimelineDocument,
+        clip,
+        endpoint,
+      );
       if (!endpointClip) return;
 
       appendClip(
@@ -251,7 +261,33 @@ function buildInlineCollectionView({
   return displayClips;
 }
 
-export function SmoothScrollList({
+export function SmoothScrollList(props: SmoothScrollListProps) {
+  const existingStore = useOptionalTimelineDocuments();
+  const fallbackInitialState = useMemo(() => {
+    if (!props.timelineId || !props.initialClips) return undefined;
+
+    const documents = createInitialTimelineDocuments();
+    documents[props.timelineId] = {
+      id: props.timelineId,
+      title: props.timelineTitle ?? props.timelineId,
+      clips: props.initialClips,
+    };
+
+    return createTimelineDocumentsState(documents);
+  }, [props.initialClips, props.timelineId, props.timelineTitle]);
+
+  if (existingStore) {
+    return <SmoothScrollListContent {...props} />;
+  }
+
+  return (
+    <TimelineDocumentsProvider initialState={fallbackInitialState}>
+      <SmoothScrollListContent {...props} />
+    </TimelineDocumentsProvider>
+  );
+}
+
+function SmoothScrollListContent({
   collectionHrefPrefix = "/timeline",
   initialClips,
   initialViewState,
@@ -282,6 +318,16 @@ export function SmoothScrollList({
   uploadTimelineMedia,
   ...props
 }: SmoothScrollListProps) {
+  const {
+    addClipToCollection,
+    createCollectionTimelineDocument,
+    emitTimelineUpdate,
+    getCollectionClipSourceDuration,
+    getTimelineDocument,
+    getTimelinePath,
+    registerTimelineDocument,
+    syncParentCollections,
+  } = useTimelineDocuments();
   const parentRef = useRef<HTMLDivElement>(null);
   const safeItemCount = initialClips
     ? initialClips.length
@@ -315,14 +361,7 @@ export function SmoothScrollList({
     useState<Set<string>>(() => new Set());
   const [inlineViewVersion, setInlineViewVersion] = useState(0);
   const [persistedTimelineTitle, setPersistedTimelineTitle] = useState(timelineTitle);
-  const [timelineLoadError, setTimelineLoadError] = useState<string | null>(null);
-  const [isLoadingTimeline, setIsLoadingTimeline] = useState(false);
-  const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
-  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const canPersistTimeline = !disablePersistence && persistenceReady;
-  const saveBaselineRef = useRef<string | null>(null);
-  const hydratedTimelineIdRef = useRef<string | null>(null);
   const latestClipsRef = useRef<TimelineClip[]>([]);
   const latestDisplayClipsRef = useRef<TimelineClip[]>([]);
   const localEditVersionRef = useRef(0);
@@ -434,6 +473,22 @@ export function SmoothScrollList({
     [clipState.applyClipsNow, markLocalEdit],
   );
 
+  const { isLoadingTimeline, timelineLoadError } =
+    useTimelinePersistenceProvider({
+      applyClipsNow: clipState.applyClipsNow,
+      canPersistTimeline,
+      emitTimelineUpdate,
+      clips: clipState.clips,
+      getTimelineDocument,
+      latestClipsRef,
+      localEditVersionRef,
+      persistedTimelineTitle,
+      registerTimelineDocument,
+      setPersistedTimelineTitle,
+      timelineId,
+      timelineTitle,
+    });
+
   const moveClipToTrash = useCallback(async (clipToTrash: TimelineClip) => {
     if (!userId) return;
 
@@ -447,9 +502,11 @@ export function SmoothScrollList({
     const thisTimelineId = timelineId || "";
     const doc = getTimelineDocument(thisTimelineId);
     if (doc) {
-      doc.clips = packedClips;
-      registerTimelineDocument(doc, { persist: !disablePersistence });
-      syncParentCollections(thisTimelineId, doc.clips);
+      registerTimelineDocument(
+        { ...doc, clips: packedClips },
+        { persist: !disablePersistence },
+      );
+      syncParentCollections(thisTimelineId, packedClips);
     }
 
     // 2. Fetch the trash timeline, append the clip, and save it!
@@ -477,8 +534,7 @@ export function SmoothScrollList({
         index: nextIndex,
         startTime: nextStartTime,
       };
-
-      trashDoc.clips.push(trashedClip);
+      const nextTrashClips = [...trashDoc.clips, trashedClip];
 
       // Save trash document to Firestore
       await fetch(`/api/timelines/${encodeURIComponent(trashId)}`, {
@@ -489,7 +545,7 @@ export function SmoothScrollList({
             id: trashId,
             title: trashDoc.title,
             description: trashDoc.description || "",
-            clips: trashDoc.clips,
+            clips: nextTrashClips,
           },
         }),
       });
@@ -503,40 +559,15 @@ export function SmoothScrollList({
     } catch (err) {
       console.error("Failed to move clip to trash:", err);
     }
-  }, [clipState, timelineId, disablePersistence, userId]);
-
-  useEffect(() => {
-    const handleGlobalKeyDown = async (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return; // Ignore if user is typing in an input
-      }
-
-      if (e.key === "Delete" || e.key === "Backspace") {
-        if (clipState.selectedIndex !== null) {
-          const selectedViewClip = latestDisplayClipsRef.current.find(
-            (c) => c.index === clipState.selectedIndex,
-          );
-          if (
-            selectedViewClip?.viewRole ||
-            selectedViewClip?.viewSourceTimelineId !== (timelineId || "")
-          ) {
-            e.preventDefault();
-            return;
-          }
-
-          const sourceClipId = selectedViewClip?.viewSourceClipId ?? selectedViewClip?.id;
-          const selectedClip = clipState.clips.find(c => c.id === sourceClipId);
-          if (selectedClip) {
-            e.preventDefault();
-            await moveClipToTrash(selectedClip);
-          }
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleGlobalKeyDown);
-    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [clipState.selectedIndex, moveClipToTrash, timelineId]);
+  }, [
+    clipState,
+    disablePersistence,
+    getTimelineDocument,
+    registerTimelineDocument,
+    syncParentCollections,
+    timelineId,
+    userId,
+  ]);
 
   const lastSelectedIndexRef = useRef<number | null>(null);
 
@@ -559,116 +590,6 @@ export function SmoothScrollList({
       }
     }
   }, [clipState.selectedIndex, onPlayheadTimeChange]);
-
-  useEffect(() => {
-    if (!canPersistTimeline) {
-      setIsLoadingTimeline(false);
-      return;
-    }
-    if (!timelineId) return;
-
-    let isCurrent = true;
-    const loadStartedAtLocalEditVersion = localEditVersionRef.current;
-
-    const loadTimelineDocument = async () => {
-      setIsLoadingTimeline(true);
-      setTimelineLoadError(null);
-
-      try {
-        const response = await fetch(`/api/timelines/${encodeURIComponent(timelineId)}`, {
-          cache: "no-store",
-        });
-        if (!response.ok) {
-          const result = (await response.json().catch(() => ({}))) as {
-            error?: string;
-          };
-          if (isCurrent) {
-            setTimelineLoadError(
-              result.error ||
-                `Timeline request failed with status ${response.status}.`,
-            );
-          }
-          return;
-        }
-
-        const result = (await response.json().catch(() => ({}))) as {
-          document?: TimelineDocument;
-        };
-        if (!isCurrent) return;
-        if (!result.document) {
-          setTimelineLoadError("Timeline response did not include a saved document.");
-          return;
-        }
-        if (result.document.id !== timelineId) {
-          setTimelineLoadError(
-            `Timeline response returned "${result.document.id}" instead of "${timelineId}".`,
-          );
-          return;
-        }
-
-        setPersistedTimelineTitle(result.document.title);
-        saveBaselineRef.current = JSON.stringify({
-          id: result.document.id,
-          title: result.document.title,
-          description: result.document.description,
-          clips: result.document.clips,
-        });
-        hydratedTimelineIdRef.current = timelineId;
-
-        if (localEditVersionRef.current !== loadStartedAtLocalEditVersion) {
-          const latestClips = latestClipsRef.current;
-          const shouldKeepLocalClips =
-            latestClips.length > 0 || result.document.clips.length === 0;
-          const resolvedDocument = shouldKeepLocalClips
-            ? {
-                ...result.document,
-                clips: latestClips,
-              }
-            : result.document;
-
-          registerTimelineDocument(resolvedDocument);
-          if (!shouldKeepLocalClips) {
-            clipState.applyClipsNow(result.document.clips);
-          }
-          saveBaselineRef.current = JSON.stringify({
-            id: resolvedDocument.id,
-            title: resolvedDocument.title,
-            description: resolvedDocument.description,
-            clips: resolvedDocument.clips,
-          });
-          return;
-        }
-
-        registerTimelineDocument(result.document);
-        clipState.applyClipsNow(result.document.clips);
-        saveBaselineRef.current = JSON.stringify({
-          id: result.document.id,
-          title: result.document.title,
-          description: result.document.description,
-          clips: result.document.clips,
-        });
-        hydratedTimelineIdRef.current = timelineId;
-        setTimelineLoadError(null);
-      } catch (error) {
-        console.warn(`Failed to load timeline "${timelineId}" from Firebase`, error);
-        if (isCurrent) {
-          setTimelineLoadError(
-            error instanceof Error ? error.message : "Unable to load the saved timeline.",
-          );
-        }
-      } finally {
-        if (isCurrent) {
-          setIsLoadingTimeline(false);
-        }
-      }
-    };
-
-    void loadTimelineDocument();
-
-    return () => {
-      isCurrent = false;
-    };
-  }, [canPersistTimeline, clipState.applyClipsNow, timelineId]);
 
   const childCollections = useMemo(() => {
     if (!hierarchyMode) return [];
@@ -769,11 +690,13 @@ export function SmoothScrollList({
       return buildInlineCollectionView({
         clips: clipState.clips,
         endpointKeys: visibleExposedCollectionEndpointKeys,
+        getTimelineDocument,
         timelineId: timelineId || "",
       });
     },
     [
       clipState.clips,
+      getTimelineDocument,
       inlineViewVersion,
       timelineId,
       visibleExposedCollectionEndpointKeys,
@@ -902,166 +825,20 @@ export function SmoothScrollList({
     [clipState.setClips],
   );
 
-  const handleDropFiles = useCallback(
-    async (insertIndex: number, files: File[]) => {
-      setMediaUploadError(null);
-      setIsUploadingMedia(true);
-      setUploadProgress(10);
-
-      // Start a smooth fake progress incrementer
-      const progressInterval = setInterval(() => {
-        setUploadProgress((prev) => {
-          if (prev >= 90) return prev;
-          return prev + Math.random() * 5;
-        });
-      }, 300);
-
-      try {
-        const getMediaDuration = (file: File): Promise<number> => {
-          return new Promise((resolve) => {
-            if (file.type.startsWith("video/")) {
-              const video = document.createElement("video");
-              video.preload = "metadata";
-              const sourceUrl = URL.createObjectURL(file);
-              const cleanup = () => {
-                URL.revokeObjectURL(sourceUrl);
-                video.removeAttribute("src");
-                video.load();
-              };
-              video.onloadedmetadata = () => {
-                const duration =
-                  Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 5;
-                cleanup();
-                resolve(duration);
-              };
-              video.onerror = () => {
-                cleanup();
-                resolve(5); // fallback
-              };
-              video.src = sourceUrl;
-            } else {
-              resolve(4); // default duration for images
-            }
-          });
-        };
-
-        const newClipResults: Array<{ clip: TimelineClip | null; error?: string }> =
-          await Promise.all(files.map(async (file, idx) => {
-          const isVideo = file.type.startsWith("video/");
-          const isImage = file.type.startsWith("image/");
-          if (!isVideo && !isImage) return { clip: null };
-
-          const duration = await getMediaDuration(file);
-          const uniqueId = `clip-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          if (!uploadTimelineMedia) {
-            return {
-              clip: null,
-              error: `"${file.name}" was not added because media uploads are not configured.`,
-            };
-          }
-
-          let hostedMedia: Awaited<ReturnType<UploadTimelineMedia>>;
-
-          // Compute folderPath for this timeline if it's the assets timeline or a nested collection
-          let folderPath: string | undefined;
-          const uploadUserId = userId || "default";
-          const thisTimelineId = timelineId || "";
-          if (thisTimelineId.startsWith("asset-library")) {
-            folderPath = getFolderPathFromTimelineId(thisTimelineId, uploadUserId) || undefined;
-          } else if (thisTimelineId && thisTimelineId !== "root" && !thisTimelineId.startsWith("project-")) {
-            const pathSegments = getTimelinePath(thisTimelineId).map((s) => s.title);
-            const doc = getTimelineDocument(thisTimelineId);
-            if (doc) {
-              pathSegments.push(doc.title);
-            }
-            folderPath = pathSegments.join("/");
-          }
-
-          try {
-            hostedMedia = await uploadTimelineMedia(file.name, file, folderPath);
-          } catch (error) {
-            console.warn(`Failed to upload "${file.name}" to hosted media storage`, error);
-            return {
-              clip: null,
-              error: `"${file.name}" was not added because it could not be uploaded to hosted media storage.`,
-            };
-          }
-
-          if (isVideo && !hostedMedia.thumbnailUrl) {
-            return {
-              clip: null,
-              error: `"${file.name}" was not added because a video thumbnail could not be saved.`,
-            };
-          }
-
-          if (isVideo) {
-            const clipDuration = Math.min(12, duration);
-            return {
-              clip: {
-                id: uniqueId,
-                index: insertIndex + idx,
-                kind: "video",
-                src: hostedMedia.url,
-                poster: hostedMedia.thumbnailUrl,
-                alt: file.name,
-                aspect: 16 / 9,
-                trackIndex: 0,
-                startTime: 0,
-                duration: clipDuration,
-                sourceDuration: duration,
-                trimIn: 0,
-                trimOut: Math.max(0, duration - clipDuration),
-              } as TimelineClip,
-            };
-          } else {
-            return {
-              clip: {
-                id: uniqueId,
-                index: insertIndex + idx,
-                kind: "image",
-                src: hostedMedia.url,
-                alt: file.name,
-                aspect: 16 / 9,
-                trackIndex: 0,
-                startTime: 0,
-                duration: 4,
-                sourceDuration: 4,
-                trimIn: 0,
-                trimOut: 0,
-              } as TimelineClip,
-            };
-          }
-        }));
-
-        const firstUploadError = newClipResults.find((result) => result.error)?.error;
-        if (firstUploadError) {
-          setMediaUploadError(firstUploadError);
-        }
-
-        const newClips = newClipResults
-          .map((result) => result.clip)
-          .filter(
-            (clip): clip is TimelineClip => clip !== null
-          );
-
-        if (newClips.length === 0) return;
-
-        const nextClips = [...clipState.clips];
-        nextClips.splice(insertIndex, 0, ...newClips);
-
-        const packedClips = reindexAndPackClips(nextClips);
-        applyLocalClipsNow(packedClips);
-      } finally {
-        clearInterval(progressInterval);
-        setUploadProgress(100);
-        setTimeout(() => {
-          setIsUploadingMedia(false);
-          setUploadProgress(0);
-        }, 500);
-      }
-    },
-    [applyLocalClipsNow, clipState, timelineId, uploadTimelineMedia, userId],
-  );
+  const {
+    handleDropFiles,
+    isUploadingMedia,
+    mediaUploadError,
+    uploadProgress,
+  } = useTimelineUploadHandler({
+    applyLocalClipsNow,
+    clips: clipState.clips,
+    getTimelineDocument,
+    getTimelinePath,
+    timelineId,
+    uploadTimelineMedia,
+    userId,
+  });
 
   const handleDropClip = useCallback(
     (insertIndex: number, clip: TimelineClip, sourceTimelineId: string) => {
@@ -1087,14 +864,11 @@ export function SmoothScrollList({
         // Update document registry synchronously to avoid race conditions
         const doc = getTimelineDocument(thisTimelineId);
         if (doc) {
-          doc.clips = packed;
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(
-              new CustomEvent("gstudio-timeline-update", {
-                detail: { timelineId: thisTimelineId },
-              })
-            );
-          }
+          registerTimelineDocument(
+            { ...doc, clips: packed },
+            { persist: !disablePersistence },
+          );
+          emitTimelineUpdate(thisTimelineId, { ...doc, clips: packed });
           syncParentCollections(thisTimelineId, packed);
         }
 
@@ -1118,14 +892,11 @@ export function SmoothScrollList({
         // Update document registry synchronously to avoid race conditions
         const doc = getTimelineDocument(thisTimelineId);
         if (doc) {
-          doc.clips = packed;
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(
-              new CustomEvent("gstudio-timeline-update", {
-                detail: { timelineId: thisTimelineId },
-              })
-            );
-          }
+          registerTimelineDocument(
+            { ...doc, clips: packed },
+            { persist: !disablePersistence },
+          );
+          emitTimelineUpdate(thisTimelineId, { ...doc, clips: packed });
           syncParentCollections(thisTimelineId, packed);
         }
 
@@ -1145,7 +916,16 @@ export function SmoothScrollList({
         }
       }
     },
-    [applyLocalClipsNow, clipState, timelineId],
+    [
+      applyLocalClipsNow,
+      clipState,
+      disablePersistence,
+      emitTimelineUpdate,
+      getTimelineDocument,
+      registerTimelineDocument,
+      syncParentCollections,
+      timelineId,
+    ],
   );
 
   const handleDropSidebarClip = useCallback(
@@ -1224,19 +1004,26 @@ export function SmoothScrollList({
       const packedClips = reindexAndPackClips(nextClips);
       const doc = getTimelineDocument(thisTimelineId);
       if (doc) {
-        doc.clips = packedClips;
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(
-            new CustomEvent("gstudio-timeline-update", {
-              detail: { timelineId: thisTimelineId },
-            })
-          );
-        }
+        registerTimelineDocument(
+          { ...doc, clips: packedClips },
+          { persist: !disablePersistence },
+        );
+        emitTimelineUpdate(thisTimelineId, { ...doc, clips: packedClips });
         syncParentCollections(thisTimelineId, packedClips);
       }
       applyLocalClipsNow(packedClips);
     },
-    [applyLocalClipsNow, clipState, timelineId],
+    [
+      applyLocalClipsNow,
+      clipState,
+      disablePersistence,
+      emitTimelineUpdate,
+      getTimelineDocument,
+      registerTimelineDocument,
+      syncParentCollections,
+      timelineId,
+      userId,
+    ],
   );
 
   const handleDropClipIntoCollection = useCallback(
@@ -1306,64 +1093,14 @@ export function SmoothScrollList({
   );
 
   useEffect(() => {
-    if (!canPersistTimeline) return;
-    const thisTimelineId = timelineId || "";
-    if (thisTimelineId) {
-      const doc = getTimelineDocument(thisTimelineId);
-      if (doc) {
-        doc.clips = clipState.clips;
-      }
-    }
-  }, [canPersistTimeline, clipState.clips, timelineId]);
-
-  useEffect(() => {
-    if (!canPersistTimeline) return;
-    const thisTimelineId = timelineId || "";
-    if (!thisTimelineId || hydratedTimelineIdRef.current !== thisTimelineId) return;
-
-    const doc = getTimelineDocument(thisTimelineId);
-    const documentSnapshot: TimelineDocument = {
-      id: thisTimelineId,
-      title: persistedTimelineTitle || timelineTitle || thisTimelineId,
-      description: doc?.description,
-      clips: clipState.clips,
-    };
-    if (isUnsavedProjectPlaceholder(documentSnapshot)) return;
-
-    const serialized = JSON.stringify(documentSnapshot);
-    if (serialized === saveBaselineRef.current) return;
-
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(async () => {
-      try {
-        const response = await fetch(`/api/timelines/${encodeURIComponent(thisTimelineId)}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ document: documentSnapshot }),
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          throw new Error(await response.text());
-        }
-        saveBaselineRef.current = serialized;
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          console.warn(`Failed to autosave timeline "${thisTimelineId}" to Firebase`, error);
-        }
-      }
-    }, 900);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, [canPersistTimeline, clipState.clips, persistedTimelineTitle, timelineId, timelineTitle]);
-
-  useEffect(() => {
     const handleTimelineUpdate = (e: Event) => {
-      const customEvent = e as CustomEvent<{ timelineId: string }>;
+      const customEvent = e as CustomEvent<{
+        timelineId: string;
+        document?: TimelineDocument;
+      }>;
       if (customEvent.detail.timelineId === timelineId) {
-        const doc = getTimelineDocument(timelineId);
+        const doc =
+          customEvent.detail.document ?? getTimelineDocument(timelineId);
         if (doc) {
           clipState.applyClipsNow(doc.clips);
         }
@@ -1378,15 +1115,12 @@ export function SmoothScrollList({
         if (doc) {
           const nextClips = doc.clips.filter((c) => c.id !== customEvent.detail.clipId);
           const packed = reindexAndPackClips(nextClips);
-          
-          doc.clips = packed;
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(
-              new CustomEvent("gstudio-timeline-update", {
-                detail: { timelineId: thisTimelineId },
-              })
-            );
-          }
+
+          registerTimelineDocument(
+            { ...doc, clips: packed },
+            { persist: !disablePersistence },
+          );
+          emitTimelineUpdate(thisTimelineId, { ...doc, clips: packed });
           syncParentCollections(thisTimelineId, packed);
           applyLocalClipsNow(packed);
         }
@@ -1407,15 +1141,12 @@ export function SmoothScrollList({
         if (doc) {
           const nextClips = doc.clips.filter((c) => c.id !== clipId);
           const packed = reindexAndPackClips(nextClips);
-          
-          doc.clips = packed;
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(
-              new CustomEvent("gstudio-timeline-update", {
-                detail: { timelineId: thisTimelineId },
-              })
-            );
-          }
+
+          registerTimelineDocument(
+            { ...doc, clips: packed },
+            { persist: !disablePersistence },
+          );
+          emitTimelineUpdate(thisTimelineId, { ...doc, clips: packed });
           syncParentCollections(thisTimelineId, packed);
           applyLocalClipsNow(packed);
         }
@@ -1430,7 +1161,16 @@ export function SmoothScrollList({
       window.removeEventListener("gstudio-clip-remove", handleClipRemove);
       window.removeEventListener("timeline-clip-moved", handleClipMoved);
     };
-  }, [applyLocalClipsNow, clipState, timelineId]);
+  }, [
+    applyLocalClipsNow,
+    clipState,
+    disablePersistence,
+    emitTimelineUpdate,
+    getTimelineDocument,
+    registerTimelineDocument,
+    syncParentCollections,
+    timelineId,
+  ]);
 
   const applyTimelineViewClipsNow = useCallback(
     (nextViewClips: TimelineClip[]) => {
@@ -1591,6 +1331,14 @@ export function SmoothScrollList({
 
   return (
     <>
+      <TimelineKeyboardShortcuts
+        displayClipsRef={latestDisplayClipsRef}
+        onMoveClipToTrash={moveClipToTrash}
+        selectedIndex={clipState.selectedIndex}
+        sourceClips={clipState.clips}
+        timelineId={timelineId}
+      />
+
       <div
         {...props}
         data-testid="timeline-editor"
@@ -1790,35 +1538,33 @@ export function SmoothScrollList({
         </div>
       </div>
 
-      {childCollections.length > 0 && childCollectionsExpanded && (
-        <div className="flex flex-col gap-5 pl-20 border-l border-zinc-800/80 mt-0 w-full max-w-full min-w-0">
-          {childCollections.map((col) => {
-            const doc = getTimelineDocument(col.childTimelineId);
-            return (
-              <SmoothScrollList
-                key={`hierarchy-${col.childTimelineId}`}
-                timelineId={col.childTimelineId}
-                timelineTitle={col.title}
-                initialClips={doc ? doc.clips : []}
-                initialViewState={{
-                  thumbnailMode,
-                  itemSize: "sm",
-                  gridMode: false,
-                  showPlayBarArea: showPlayBarArea,
-                  showPassiveFilmstrips: showPassiveFilmstrips,
-                }}
-                thumbnailMode={thumbnailMode}
-                isChildTimeline={true}
-                syncMediaDuration={syncMediaDuration}
-                hierarchyMode={hierarchyMode}
-                previewLargeSurface={previewLargeSurface}
-                playheadTime={playheadTime}
-                onPlayheadTimeChange={onPlayheadTimeChange}
-              />
-            );
-          })}
-        </div>
-      )}
+      <TimelineHierarchyView
+        childCollections={childCollections}
+        getTimelineDocument={getTimelineDocument}
+        visible={childCollectionsExpanded}
+        renderTimeline={(collection, document) => (
+          <SmoothScrollList
+            key={`hierarchy-${collection.childTimelineId}`}
+            timelineId={collection.childTimelineId}
+            timelineTitle={collection.title}
+            initialClips={document ? document.clips : []}
+            initialViewState={{
+              thumbnailMode,
+              itemSize: "sm",
+              gridMode: false,
+              showPlayBarArea,
+              showPassiveFilmstrips,
+            }}
+            thumbnailMode={thumbnailMode}
+            isChildTimeline={true}
+            syncMediaDuration={syncMediaDuration}
+            hierarchyMode={hierarchyMode}
+            previewLargeSurface={previewLargeSurface}
+            playheadTime={playheadTime}
+            onPlayheadTimeChange={onPlayheadTimeChange}
+          />
+        )}
+      />
 
     </>
   );

@@ -1795,8 +1795,7 @@ function EditorInner() {
                       min={0.5}
                       max={4}
                       step={0.25}
-                      getAriaLabel={() => 'Vertical timeline time scale'}
-                      getAriaValueText={(_, value) => `${value.toFixed(2)} times vertical time scale`}
+                      aria-label="Vertical timeline time scale"
                       onValueChange={(val) => {
                         const newValue = Array.isArray(val) ? val[0] : val;
                         setVerticalTimeScale(newValue);
@@ -1852,7 +1851,7 @@ function EditorInner() {
                       min={2}
                       max={18}
                       step={1}
-                      getAriaLabel={() => 'Timeline horizontal zoom'}
+                      aria-label="Timeline horizontal zoom"
                       onValueChange={(val) => {
                         const newValue = Array.isArray(val) ? val[0] : val;
                         setZoom(newValue);
