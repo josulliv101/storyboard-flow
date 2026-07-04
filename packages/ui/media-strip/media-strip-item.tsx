@@ -7,6 +7,7 @@ import { MediaStripThumbnail } from "./media-strip-thumbnail";
 type MediaStripItemButtonProps = {
   item: TimelineItem;
   pxPerSecond?: number;
+  /** Custom styles forwarded for absolute virtualization positioning coordinates. */
   style?: CSSProperties;
 };
 
