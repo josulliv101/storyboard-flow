@@ -2,22 +2,20 @@
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Fragment, use, useCallback, useState } from "react";
+import { Fragment, use, useCallback, useMemo, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { ToggleSwitch } from "@storyboard/ui/timeline/timeline-toolbar";
+import { ToggleSwitch } from "@storyboard/ui/timeline/controls/timeline-toolbar";
 
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
-import { WorkbenchSplitPane } from "@storyboard/ui/timeline/workbench-display-surface";
+import { WorkbenchSplitPane } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
 import {
   parseTimelineViewState,
   type ProjectViewMode,
 } from "@storyboard/ui/timeline/timeline-view-state";
 import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
 import {
-  createCollectionTimelineDocument,
   getTimelineDocument,
   getTimelinePath,
-  registerTimelineDocument,
 } from "@storyboard/ui/timeline/timeline-documents";
 
 type ProjectTimelinePageProps = {
@@ -65,33 +63,28 @@ export default function ProjectTimelinePage({
   }
 
   const activeTimelineId = activeTimelinePath?.[0] || projectId;
-  let document: TimelineDocument | null = getTimelineDocument(activeTimelineId);
+  const fallbackDocument = useMemo<TimelineDocument | null>(() => {
+    if (activeTimelineId.startsWith("timeline-")) {
+      return {
+        id: activeTimelineId,
+        title: "Loading...",
+        clips: [],
+      };
+    }
 
-  if (!getTimelineDocument(projectId)) {
-    registerTimelineDocument({
-      id: projectId,
-      title: "Loading Project",
-      description: "Loading saved timeline project.",
-      clips: [],
-    });
-  }
+    if (activeTimelineId === projectId) {
+      return {
+        id: projectId,
+        title: "Loading Project",
+        description: "Loading saved timeline project.",
+        clips: [],
+      };
+    }
 
-  if (!document && activeTimelineId.startsWith("timeline-")) {
-    document = {
-      id: activeTimelineId,
-      title: "Loading...",
-      clips: [],
-    };
-  }
-
-  if (!document && activeTimelineId === projectId) {
-    document = registerTimelineDocument({
-      id: projectId,
-      title: "Loading Project",
-      description: "Loading saved timeline project.",
-      clips: [],
-    });
-  }
+    return null;
+  }, [activeTimelineId, projectId]);
+  const document: TimelineDocument | null =
+    getTimelineDocument(activeTimelineId) ?? fallbackDocument;
 
   if (!document) {
     notFound();

@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
-import { ToggleSwitch } from "@storyboard/ui/timeline/timeline-toolbar";
-import { WorkbenchSplitPane } from "@storyboard/ui/timeline/workbench-display-surface";
+import { ToggleSwitch } from "@storyboard/ui/timeline/controls/timeline-toolbar";
+import { WorkbenchSplitPane } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
 import { getTimelineDocument, getTimelinePath } from "@storyboard/ui/timeline/timeline-documents";
 import { parseTimelineViewState } from "@storyboard/ui/timeline/timeline-view-state";
 import type { TimelineClip } from "@storyboard/ui/timeline/types";
@@ -36,9 +36,15 @@ function WorkbenchPageContent() {
   // Subscribe to external store updates
   useEffect(() => {
     const handleUpdate = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
+      const detail = (e as CustomEvent).detail as {
+        timelineId?: string;
+        document?: NonNullable<typeof document>;
+      };
       if (detail && detail.timelineId === timelineId) {
-        setDocument({ ...getTimelineDocument(timelineId)! });
+        const updatedDocument = detail.document ?? getTimelineDocument(timelineId);
+        if (updatedDocument) {
+          setDocument({ ...updatedDocument });
+        }
       }
     };
     window.addEventListener("gstudio-timeline-update", handleUpdate);

@@ -18,7 +18,7 @@ import {
   registerTimelineDocument,
 } from "@storyboard/ui/timeline/timeline-documents";
 import type { TimelineDocument } from "@storyboard/ui/timeline/types";
-import { ToggleSwitch } from "@storyboard/ui/timeline/timeline-toolbar";
+import { ToggleSwitch } from "@storyboard/ui/timeline/controls/timeline-toolbar";
 import { useState } from "react";
 
 type TimelineDocumentPageProps = {

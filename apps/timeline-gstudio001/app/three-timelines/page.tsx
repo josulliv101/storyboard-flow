@@ -82,9 +82,13 @@ export default function ThreeTimelinesPage() {
   // Subscribe to external store updates to sync clips across timelines and prevent re-render loss
   useEffect(() => {
     const handleUpdate = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
+      const detail = (e as CustomEvent).detail as {
+        timelineId?: string;
+        document?: TimelineDocument;
+      };
       if (detail && detail.timelineId) {
-        const updatedDoc = getTimelineDocument(detail.timelineId);
+        const updatedDoc =
+          detail.document ?? getTimelineDocument(detail.timelineId);
         if (updatedDoc) {
           setTimelines((prev) =>
             prev.map((t) =>

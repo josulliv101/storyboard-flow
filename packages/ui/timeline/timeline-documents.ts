@@ -14,11 +14,16 @@ function clamp(val: number, min: number, max: number) {
   return Math.min(Math.max(val, min), max);
 }
 
-type TimelinePageDocument = {
+export type TimelinePageDocument = {
   id: string;
   title: string;
   description?: string;
   timelineIds: string[];
+};
+
+export type TimelineDocumentsState = {
+  documents: Record<string, TimelineDocument>;
+  pages: Record<string, TimelinePageDocument>;
 };
 
 export type CollectionFramePreview = {
@@ -109,7 +114,7 @@ function previewItemsFrom(clips: TimelineClip[]) {
   }));
 }
 
-function packClips(clips: TimelineClip[]) {
+export function packTimelineClips(clips: TimelineClip[]) {
   let nextStartTime = TIMELINE_LEADING_PADDING_SECONDS;
 
   return clips.map((clip, index) => {
@@ -123,8 +128,12 @@ function packClips(clips: TimelineClip[]) {
   });
 }
 
-function cloneTimelineDocument(document: TimelineDocument): TimelineDocument {
+export function cloneTimelineDocument(document: TimelineDocument): TimelineDocument {
   return JSON.parse(JSON.stringify(document)) as TimelineDocument;
+}
+
+export function cloneTimelineClip(clip: TimelineClip): TimelineClip {
+  return JSON.parse(JSON.stringify(clip)) as TimelineClip;
 }
 
 export function isUnsavedProjectPlaceholder(document: TimelineDocument) {
@@ -150,7 +159,7 @@ const collectionBoardActThreeClips = createMediaClips(
   14,
 );
 
-const sceneAClips = packClips([
+const sceneAClips = packTimelineClips([
   ...createMediaClips("scene-a", 5),
   createCollectionClip({
     id: "scene-a-nested-collection",
@@ -163,7 +172,7 @@ const sceneAClips = packClips([
   ...createMediaClips("scene-a", 9).slice(5),
 ]);
 
-const collectionBoardClips = packClips([
+const collectionBoardClips = packTimelineClips([
   createCollectionClip({
     id: "collection-board-act-one",
     title: "Act One Collections",
@@ -190,7 +199,7 @@ const collectionBoardClips = packClips([
   }),
 ]);
 
-const rootClips = packClips([
+const rootClips = packTimelineClips([
   ...createMediaClips("root", 4),
   createCollectionClip({
     id: "root-scene-a",
@@ -228,7 +237,7 @@ const rootClips = packClips([
 const promoClips = createMediaClips("promo", 36);
 const archiveClips = createMediaClips("archive", 72);
 
-const timelineDocuments: Record<string, TimelineDocument> = {
+const initialTimelineDocuments: Record<string, TimelineDocument> = {
   root: {
     id: "root",
     title: "Root Timeline",
@@ -304,7 +313,7 @@ const timelineDocuments: Record<string, TimelineDocument> = {
   },
 };
 
-const timelinePages: Record<string, TimelinePageDocument> = {
+const initialTimelinePages: Record<string, TimelinePageDocument> = {
   single: {
     id: "single",
     title: "Single Timeline Page",
@@ -318,6 +327,51 @@ const timelinePages: Record<string, TimelinePageDocument> = {
     timelineIds: ["root", "promo", "archive"],
   },
 };
+
+function cloneTimelineDocuments(
+  documents: Record<string, TimelineDocument>,
+): Record<string, TimelineDocument> {
+  return Object.fromEntries(
+    Object.entries(documents).map(([id, document]) => [
+      id,
+      cloneTimelineDocument(document),
+    ]),
+  );
+}
+
+function cloneTimelinePages(
+  pages: Record<string, TimelinePageDocument>,
+): Record<string, TimelinePageDocument> {
+  return Object.fromEntries(
+    Object.entries(pages).map(([id, page]) => [
+      id,
+      {
+        ...page,
+        timelineIds: [...page.timelineIds],
+      },
+    ]),
+  );
+}
+
+export function createInitialTimelineDocuments() {
+  return cloneTimelineDocuments(initialTimelineDocuments);
+}
+
+export function createInitialTimelinePages() {
+  return cloneTimelinePages(initialTimelinePages);
+}
+
+export function createTimelineDocumentsState(
+  documents: Record<string, TimelineDocument> = createInitialTimelineDocuments(),
+  pages: Record<string, TimelinePageDocument> = createInitialTimelinePages(),
+): TimelineDocumentsState {
+  return {
+    documents: cloneTimelineDocuments(documents),
+    pages: cloneTimelinePages(pages),
+  };
+}
+
+const defaultTimelineDocumentsState = createTimelineDocumentsState();
 
 function persistTimelineDocument(document: TimelineDocument) {
   if (typeof window === "undefined") return;
@@ -334,23 +388,51 @@ function persistTimelineDocument(document: TimelineDocument) {
 }
 
 export function getTimelineDocument(id: string) {
-  return timelineDocuments[id] ?? null;
+  return getTimelineDocumentFromState(defaultTimelineDocumentsState, id);
+}
+
+export function getTimelineDocumentFromState(
+  state: TimelineDocumentsState,
+  id: string,
+) {
+  const document = state.documents[id];
+  return document ? cloneTimelineDocument(document) : null;
+}
+
+export function registerTimelineDocumentInState(
+  state: TimelineDocumentsState,
+  document: TimelineDocument,
+) {
+  return {
+    ...state,
+    documents: {
+      ...state.documents,
+      [document.id]: cloneTimelineDocument(document),
+    },
+  };
 }
 
 export function registerTimelineDocument(
   document: TimelineDocument,
   options: { persist?: boolean } = {},
 ) {
-  timelineDocuments[document.id] = cloneTimelineDocument(document);
+  const nextDocument = cloneTimelineDocument(document);
 
   if (options.persist) {
-    persistTimelineDocument(timelineDocuments[document.id]);
+    persistTimelineDocument(nextDocument);
   }
 
-  return timelineDocuments[document.id];
+  return nextDocument;
 }
 
 export function getTimelinePath(targetId: string): { id: string; title: string }[] {
+  return getTimelinePathFromState(defaultTimelineDocumentsState, targetId);
+}
+
+export function getTimelinePathFromState(
+  state: TimelineDocumentsState,
+  targetId: string,
+): { id: string; title: string }[] {
   const path: { id: string; title: string }[] = [];
   
   let currentId = targetId;
@@ -358,7 +440,7 @@ export function getTimelinePath(targetId: string): { id: string; title: string }
     let parentId: string | null = null;
     let parentTitle = "";
     
-    for (const doc of Object.values(timelineDocuments)) {
+    for (const doc of Object.values(state.documents)) {
       const hasChild = doc.clips.some(
         (clip) => clip.kind === "collection" && clip.childTimelineId === currentId
       );
@@ -385,9 +467,24 @@ export function syncParentCollections(
   childClips: any[],
   newTimelineId?: string,
 ) {
+  return syncParentCollectionsInState(
+    defaultTimelineDocumentsState,
+    collectionTimelineId,
+    childClips,
+    newTimelineId,
+  );
+}
+
+export function syncParentCollectionsInState(
+  state: TimelineDocumentsState,
+  collectionTimelineId: string,
+  childClips: TimelineClip[],
+  newTimelineId?: string,
+) {
   const targetId = newTimelineId || collectionTimelineId;
-  const childDoc = getTimelineDocument(targetId);
+  const childDoc = getTimelineDocumentFromState(state, targetId);
   const title = childDoc?.title || "Collection";
+  let nextDocuments = state.documents;
 
   let totalDuration = 3;
   if (childClips.length > 0) {
@@ -395,9 +492,9 @@ export function syncParentCollections(
     totalDuration = lastClip.startTime + lastClip.duration + TIMELINE_LEADING_PADDING_SECONDS;
   }
 
-  for (const parentDoc of Object.values(timelineDocuments)) {
+  for (const parentDoc of Object.values(state.documents)) {
     let updated = false;
-    parentDoc.clips = parentDoc.clips.map((c) => {
+    const nextClips = parentDoc.clips.map((c) => {
       if (c.kind === "collection" && c.childTimelineId === collectionTimelineId) {
         updated = true;
         return {
@@ -415,47 +512,50 @@ export function syncParentCollections(
     });
 
     if (updated) {
-      parentDoc.clips = packClips(parentDoc.clips);
-      persistTimelineDocument(parentDoc);
-      
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent("gstudio-timeline-update", {
-            detail: { timelineId: parentDoc.id },
-          })
-        );
-      }
+      nextDocuments = {
+        ...nextDocuments,
+        [parentDoc.id]: {
+          ...parentDoc,
+          clips: packTimelineClips(nextClips),
+        },
+      };
     }
   }
+
+  return {
+    ...state,
+    documents: nextDocuments,
+  };
 }
 
 export function addClipToCollection(collectionTimelineId: string, clip: any) {
-  const doc = timelineDocuments[collectionTimelineId];
-  if (!doc) return null;
-
-  // Create clean copy of the clip with a new unique ID
   const newClip = {
     ...clip,
     id: `${collectionTimelineId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
   };
+  return newClip;
+}
 
-  // Add and pack
-  const nextClips = [...doc.clips, newClip];
-  doc.clips = packClips(nextClips);
-  persistTimelineDocument(doc);
-
-  // Sync parent collections
-  syncParentCollections(collectionTimelineId, doc.clips);
-
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(
-      new CustomEvent("gstudio-timeline-update", {
-        detail: { timelineId: collectionTimelineId }
-      })
-    );
+export function addClipToCollectionInState(
+  state: TimelineDocumentsState,
+  collectionTimelineId: string,
+  clip: TimelineClip,
+) {
+  const doc = state.documents[collectionTimelineId];
+  if (!doc) {
+    return { state, clip: null };
   }
 
-  return newClip;
+  const nextClips = packTimelineClips([...doc.clips, cloneTimelineClip(clip)]);
+  const nextState = registerTimelineDocumentInState(state, {
+    ...doc,
+    clips: nextClips,
+  });
+
+  return {
+    state: syncParentCollectionsInState(nextState, collectionTimelineId, nextClips),
+    clip,
+  };
 }
 
 export function createCollectionTimelineDocument(id: string, title: string) {
@@ -467,33 +567,49 @@ export function createCollectionTimelineDocument(id: string, title: string) {
 }
 
 export function getTimelineContentDuration(timelineId: string) {
-  const doc = timelineDocuments[timelineId];
+  return getTimelineContentDurationFromState(defaultTimelineDocumentsState, timelineId);
+}
+
+export function getTimelineContentDurationFromState(
+  state: TimelineDocumentsState,
+  timelineId: string,
+) {
+  const doc = state.documents[timelineId];
   return doc ? getClipsDuration(doc.clips) : null;
 }
 
 export function getCollectionClipSourceDuration(clip: CollectionTimelineClip) {
+  return getCollectionClipSourceDurationFromState(defaultTimelineDocumentsState, clip);
+}
+
+export function getCollectionClipSourceDurationFromState(
+  state: TimelineDocumentsState,
+  clip: CollectionTimelineClip,
+) {
   return Math.max(
     clip.duration,
     clip.sourceDuration,
-    getTimelineContentDuration(clip.childTimelineId) ?? 0,
+    getTimelineContentDurationFromState(state, clip.childTimelineId) ?? 0,
   );
 }
 
-function getClipSourceDuration(clip: TimelineClip) {
+function getClipSourceDuration(state: TimelineDocumentsState, clip: TimelineClip) {
   return clip.kind === "collection"
-    ? getCollectionClipSourceDuration(clip)
+    ? getCollectionClipSourceDurationFromState(state, clip)
     : Math.max(clip.duration, clip.sourceDuration);
 }
 
 function getClipEndpointFramePreview(
+  state: TimelineDocumentsState,
   clip: TimelineClip,
   endpoint: "first" | "last",
   visited = new Set<string>(),
 ): CollectionFramePreview | null {
-  const sourceDuration = getClipSourceDuration(clip);
+  const sourceDuration = getClipSourceDuration(state, clip);
 
   if (clip.kind === "collection") {
-    return getCollectionFramePreview(
+    return getCollectionFramePreviewFromState(
+      state,
       clip.childTimelineId,
       endpoint === "first" ? 0 : Math.max(0, sourceDuration - 0.001),
       visited,
@@ -516,7 +632,14 @@ function getClipEndpointFramePreview(
 }
 
 export function getCollectionEndpointSummary(clip: CollectionTimelineClip) {
-  const doc = timelineDocuments[clip.childTimelineId];
+  return getCollectionEndpointSummaryFromState(defaultTimelineDocumentsState, clip);
+}
+
+export function getCollectionEndpointSummaryFromState(
+  state: TimelineDocumentsState,
+  clip: CollectionTimelineClip,
+) {
+  const doc = state.documents[clip.childTimelineId];
   const childClips = doc?.clips ?? [];
   const firstClip = childClips[0] ?? null;
   const lastClip = childClips[childClips.length - 1] ?? firstClip;
@@ -547,13 +670,13 @@ export function getCollectionEndpointSummary(clip: CollectionTimelineClip) {
     };
   }
 
-  const firstDuration = getClipSourceDuration(firstClip);
-  const lastDuration = getClipSourceDuration(lastClip);
+  const firstDuration = getClipSourceDuration(state, firstClip);
+  const lastDuration = getClipSourceDuration(state, lastClip);
   const equalSegmentDuration = Math.max(firstDuration, lastDuration, 0.001);
 
   return {
-    first: getClipEndpointFramePreview(firstClip, "first"),
-    last: getClipEndpointFramePreview(lastClip, "last"),
+    first: getClipEndpointFramePreview(state, firstClip, "first"),
+    last: getClipEndpointFramePreview(state, lastClip, "last"),
     sourceDuration: equalSegmentDuration * 2,
   };
 }
@@ -564,7 +687,23 @@ export function getCollectionClipFramePreview(
   visited = new Set<string>(),
   parentPlaybackRate = 1,
 ): CollectionFramePreview | null {
-  const sourceDuration = getCollectionClipSourceDuration(clip);
+  return getCollectionClipFramePreviewFromState(
+    defaultTimelineDocumentsState,
+    clip,
+    clipTime,
+    visited,
+    parentPlaybackRate,
+  );
+}
+
+export function getCollectionClipFramePreviewFromState(
+  state: TimelineDocumentsState,
+  clip: CollectionTimelineClip,
+  clipTime: number,
+  visited = new Set<string>(),
+  parentPlaybackRate = 1,
+): CollectionFramePreview | null {
+  const sourceDuration = getCollectionClipSourceDurationFromState(state, clip);
   const sourceRange = Math.max(0, sourceDuration - clip.trimIn - clip.trimOut);
   const progress = clip.duration > 0 ? clamp(clipTime / clip.duration, 0, 1) : 0;
   const sourceTime = clamp(
@@ -577,10 +716,32 @@ export function getCollectionClipFramePreview(
       ? parentPlaybackRate * (sourceRange / clip.duration)
       : parentPlaybackRate;
 
-  return getCollectionFramePreview(clip.childTimelineId, sourceTime, visited, playbackRate);
+  return getCollectionFramePreviewFromState(
+    state,
+    clip.childTimelineId,
+    sourceTime,
+    visited,
+    playbackRate,
+  );
 }
 
 export function getCollectionFramePreview(
+  collectionTimelineId: string,
+  time: number,
+  visited = new Set<string>(),
+  playbackRate = 1,
+): CollectionFramePreview | null {
+  return getCollectionFramePreviewFromState(
+    defaultTimelineDocumentsState,
+    collectionTimelineId,
+    time,
+    visited,
+    playbackRate,
+  );
+}
+
+export function getCollectionFramePreviewFromState(
+  state: TimelineDocumentsState,
   collectionTimelineId: string,
   time: number,
   visited = new Set<string>(),
@@ -590,7 +751,7 @@ export function getCollectionFramePreview(
   const nextVisited = new Set(visited);
   nextVisited.add(collectionTimelineId);
 
-  const doc = timelineDocuments[collectionTimelineId];
+  const doc = state.documents[collectionTimelineId];
   const childClips = doc ? doc.clips : [];
   
   if (childClips.length === 0) return null;
@@ -625,7 +786,13 @@ export function getCollectionFramePreview(
     const relativeOffset = clamp(time - start, 0, c.duration);
 
     if (c.kind === "collection") {
-      const nestedPreview = getCollectionClipFramePreview(c, relativeOffset, nextVisited, playbackRate);
+      const nestedPreview = getCollectionClipFramePreviewFromState(
+        state,
+        c,
+        relativeOffset,
+        nextVisited,
+        playbackRate,
+      );
       if (nestedPreview) return nestedPreview;
 
       const fallbackPreview = c.previewItems?.[0];
@@ -665,7 +832,11 @@ export function getCollectionFramePreview(
 }
 
 export function getTimelinePage(id: string) {
-  const page = timelinePages[id];
+  return getTimelinePageFromState(defaultTimelineDocumentsState, id);
+}
+
+export function getTimelinePageFromState(state: TimelineDocumentsState, id: string) {
+  const page = state.pages[id];
   if (!page) return null;
 
   return {
@@ -673,10 +844,26 @@ export function getTimelinePage(id: string) {
     title: page.title,
     description: page.description,
     timelines: page.timelineIds
-      .map((timelineId) => timelineDocuments[timelineId])
+      .map((timelineId) => getTimelineDocumentFromState(state, timelineId))
       .filter((timeline): timeline is TimelineDocument => Boolean(timeline)),
   };
 }
+
+export function getChangedTimelineDocumentIds(
+  previous: TimelineDocumentsState,
+  next: TimelineDocumentsState,
+) {
+  const ids = new Set([
+    ...Object.keys(previous.documents),
+    ...Object.keys(next.documents),
+  ]);
+
+  return Array.from(ids).filter(
+    (id) => previous.documents[id] !== next.documents[id],
+  );
+}
+
+export { persistTimelineDocument };
 
 export function encodeFolderPath(folderPath: string): string {
   if (typeof Buffer !== "undefined") {

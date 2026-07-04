@@ -207,7 +207,7 @@ export async function GET(
 
       // 5. Reindex and pack clips
       let nextStartTime = 1;
-      doc.clips = merged.map((clip, index) => {
+      const packedClips = merged.map((clip, index) => {
         const packed = {
           ...clip,
           index,
@@ -217,7 +217,12 @@ export async function GET(
         return packed;
       });
 
-      return NextResponse.json({ document: doc });
+      return NextResponse.json({
+        document: {
+          ...doc,
+          clips: packedClips,
+        },
+      });
     }
 
     const firebaseDocument = await getFirebaseTimelineDocument(id);
@@ -225,6 +230,7 @@ export async function GET(
       // Self-healing: Check if any clip has a Cloudinary URL that might have moved/renamed
       let hasChanges = false;
       const cloudinaryAssets = await listCloudinaryAssets(user.uid).catch(() => []);
+      let healedDocument = firebaseDocument;
       if (cloudinaryAssets.length > 0) {
         const assetMap = new Map<string, typeof cloudinaryAssets[0]>();
         cloudinaryAssets.forEach((asset) => {
@@ -234,7 +240,7 @@ export async function GET(
           }
         });
 
-        firebaseDocument.clips = firebaseDocument.clips.map((clip) => {
+        const healedClips = firebaseDocument.clips.map((clip) => {
           if (clip.kind === "video" || clip.kind === "image") {
             const filename = clip.src.split("/").pop()?.split("?")[0]?.replace(/\.[^/.]+$/, "");
             if (filename) {
@@ -251,13 +257,17 @@ export async function GET(
           }
           return clip;
         });
+        healedDocument = {
+          ...firebaseDocument,
+          clips: healedClips,
+        };
 
         if (hasChanges) {
-          await saveFirebaseTimelineDocument(firebaseDocument).catch(() => {});
+          await saveFirebaseTimelineDocument(healedDocument).catch(() => {});
         }
       }
 
-      return NextResponse.json({ document: firebaseDocument });
+      return NextResponse.json({ document: healedDocument });
     }
 
     const fallbackDocument = getTimelineDocument(id);
@@ -303,6 +313,13 @@ export async function PATCH(
     const savedDocument = await saveFirebaseTimelineDocument(body.document);
     return NextResponse.json({ document: savedDocument });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Refusing to save an empty timeline")
+    ) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+
     return storageErrorResponse(error, "Unable to save the timeline document.");
   }
 }

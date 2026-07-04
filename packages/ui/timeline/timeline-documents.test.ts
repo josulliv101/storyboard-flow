@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  getCollectionClipFramePreview,
+  createTimelineDocumentsState,
+  getCollectionClipFramePreviewFromState,
   isUnsavedProjectPlaceholder,
-  registerTimelineDocument,
+  registerTimelineDocumentInState,
 } from "./timeline-documents";
 import type { CollectionTimelineClip, TimelineClip } from "./types";
 
@@ -47,13 +48,17 @@ function collectionClip(overrides: Partial<CollectionTimelineClip> = {}): Collec
 
 describe("collection timeline playback mapping", () => {
   it("maps collection clip time onto source timeline time and playback rate", () => {
-    registerTimelineDocument({
+    const state = registerTimelineDocumentInState(createTimelineDocumentsState({}), {
       id: "test-collection-source",
       title: "Test collection source",
       clips: [mediaClip()],
     });
 
-    const preview = getCollectionClipFramePreview(collectionClip(), 2);
+    const preview = getCollectionClipFramePreviewFromState(
+      state,
+      collectionClip(),
+      2,
+    );
 
     expect(preview?.id).toBe("media-clip");
     expect(preview?.previewTime).toBeCloseTo(4);
@@ -61,7 +66,7 @@ describe("collection timeline playback mapping", () => {
   });
 
   it("holds the previous child frame while scrubbing collection timeline gaps", () => {
-    registerTimelineDocument({
+    const state = registerTimelineDocumentInState(createTimelineDocumentsState({}), {
       id: "test-collection-source",
       title: "Test collection source",
       clips: [
@@ -82,7 +87,8 @@ describe("collection timeline playback mapping", () => {
       ],
     });
 
-    const preview = getCollectionClipFramePreview(
+    const preview = getCollectionClipFramePreviewFromState(
+      state,
       collectionClip({ duration: 4, sourceDuration: 4 }),
       2.5,
     );
