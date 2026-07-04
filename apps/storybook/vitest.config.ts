@@ -41,6 +41,16 @@ export default defineConfig({
           name: "storybook",
         },
       },
+      {
+        test: {
+          name: "unit",
+          environment: "node",
+          include: [
+            "../../packages/ui/**/*.test.ts",
+            "../../packages/ui/**/*.test.tsx",
+          ],
+        },
+      },
     ],
   },
 });

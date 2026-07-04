@@ -2,24 +2,37 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, fn, userEvent } from "storybook/test";
 
 import { MediaStrip } from "./media-strip";
-import { MediaStripItem } from "./media-strip.types";
+import {
+  asTimelineItemId,
+  createImageTimelineItem,
+  createVideoTimelineItem,
+  type TimelineItem,
+  type TimelineItemResult,
+} from "./media-strip.types";
+
+function unwrapResult<T, E>(result: TimelineItemResult<T, E>): T {
+  if (!result.ok) {
+    throw new Error(`Failed to construct timeline item: ${JSON.stringify(result.error)}`);
+  }
+  return result.value;
+}
 
 type StoryMediaItem = {
   id: string;
   title: string;
   duration: string;
 } & (
-    | {
+  | {
       kind: "image";
       thumbnailUrl: string;
     }
-    | {
+  | {
       kind: "video";
       videoSrc: string;
       thumbnailTime: "00:02" | "00:04";
       thumbnailUrl: string;
     }
-  );
+);
 
 const storyVideoSrc = new URL("./fixtures/dog.mp4", import.meta.url).href;
 const dogVideoThumbnails = {
@@ -47,24 +60,35 @@ function durationToSeconds(duration: string) {
   return Number(minutes) * 60 + Number(seconds);
 }
 
-function getItemWidth(duration: string) {
-  const seconds = durationToSeconds(duration);
-  return Math.max(96, Math.min(seconds * 32, 320));
-}
+function toTimelineItem(item: StoryMediaItem): TimelineItem {
+  const id = asTimelineItemId(item.id);
+  const seconds = durationToSeconds(item.duration);
 
-function toMediaStripItem(item: StoryMediaItem): MediaStripItem {
-  return {
-    id: item.id,
-    title: item.title,
-    subtitle: item.duration,
-    thumbnailUrl: item.thumbnailUrl,
-    videoSrc: item.kind === "video" ? item.videoSrc : undefined,
-    width: getItemWidth(item.duration),
-    alt:
-      item.kind === "video"
-        ? `${item.title} video thumbnail at ${item.thumbnailTime}`
-        : `${item.title} ${item.kind}`,
-  };
+  if (item.kind === "video") {
+    const result = createVideoTimelineItem({
+      id,
+      name: item.title,
+      src: item.videoSrc,
+      posterSrc: item.thumbnailUrl,
+      startTimeSeconds: 0,
+      sourceDurationSeconds: seconds + 10,
+      trimInSeconds: 5,
+      trimOutSeconds: 5,
+    });
+    if (result.ok) return result.value;
+    throw new Error(`Failed to create video timeline item: ${result.error.reason}`);
+  } else {
+    const result = createImageTimelineItem({
+      id,
+      name: item.title,
+      src: item.thumbnailUrl,
+      posterSrc: item.thumbnailUrl,
+      startTimeSeconds: 0,
+      durationSeconds: seconds,
+    });
+    if (result.ok) return result.value;
+    throw new Error(`Failed to create image timeline item: ${result.error.reason}`);
+  }
 }
 
 const items: StoryMediaItem[] = [
@@ -144,37 +168,33 @@ const items: StoryMediaItem[] = [
   },
 ];
 
-const mediaItems = items.map(toMediaStripItem);
+const mediaItems = items.map(toTimelineItem);
 const repeatedThumbnail = createThumbnail("#475569", "Repeat");
 
-const shortAndLongItems: MediaStripItem[] = [
-  {
-    id: "clip-short",
-    title: "Flash Insert",
-    subtitle: "00:01",
-    thumbnailUrl: createThumbnail("#0891b2", "Short"),
-    width: getItemWidth("00:01"),
-  },
-  {
-    id: "clip-long",
-    title: "Extended Walkthrough",
-    subtitle: "02:15",
-    thumbnailUrl: createThumbnail("#9333ea", "Long"),
-    width: getItemWidth("02:15"),
-  },
-  {
-    id: "clip-trimmed",
-    title: "Trimmed Dialogue",
-    subtitle: "Trim 00:03-00:12",
-    thumbnailUrl: createThumbnail("#ea580c", "Trim"),
-    width: getItemWidth("00:09"),
-  },
+const createImg = (id: string, name: string, color: string, duration: number) => {
+  const thumb = createThumbnail(color, name);
+  const result = createImageTimelineItem({
+    id: asTimelineItemId(id),
+    name,
+    src: thumb,
+    posterSrc: thumb,
+    startTimeSeconds: 0,
+    durationSeconds: duration,
+  });
+  if (!result.ok) throw new Error("Constructor error");
+  return result.value;
+};
+
+const shortAndLongItems: TimelineItem[] = [
+  createImg("clip-short", "Flash Insert", "#0891b2", 1),
+  createImg("clip-long", "Extended Walkthrough", "#9333ea", 135),
+  createImg("clip-trimmed", "Trimmed Dialogue", "#ea580c", 9),
 ];
 
 const manyItems = Array.from({ length: 3 }, () => items)
   .flat()
   .map((item, index) =>
-    toMediaStripItem({
+    toTimelineItem({
       ...item,
       id: `${item.id}-${index + 1}`,
       title: `${item.title} ${index + 1}`,
@@ -186,10 +206,10 @@ const meta = {
   component: MediaStrip,
   args: {
     onAction: fn(),
-    onSelectItem: fn(),
+    onSelectionChange: fn(),
     items: mediaItems,
-    selectedId: "close",
-    title: "Scene media",
+    selectedIds: [asTimelineItemId("close")],
+    heading: "Scene media",
   },
   decorators: [
     (Story) => (
@@ -212,8 +232,10 @@ export const Starter: Story = {
       canvas.getByRole("button", { name: /insert detail/i }),
     );
 
-    await expect(args.onSelectItem).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "insert" }),
+    await expect(args.onSelectionChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedIds: expect.arrayContaining([asTimelineItemId("insert")]),
+      }),
     );
   },
 };
@@ -228,7 +250,7 @@ export const SelectedState: Story = {
 
 export const KeyboardSelection: Story = {
   args: {
-    selectedId: "wide",
+    selectedIds: [asTimelineItemId("wide")],
   },
   play: async ({ args, canvas, canvasElement }) => {
     const firstClip = canvas.getByRole("button", { name: /opening wide/i });
@@ -239,8 +261,10 @@ export const KeyboardSelection: Story = {
     await expect(canvasElement.ownerDocument.activeElement).toBe(
       canvas.getByRole("button", { name: /character closeup/i }),
     );
-    await expect(args.onSelectItem).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "close" }),
+    await expect(args.onSelectionChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedIds: expect.arrayContaining([asTimelineItemId("close")]),
+      }),
     );
   },
 };
@@ -248,7 +272,7 @@ export const KeyboardSelection: Story = {
 export const Empty: Story = {
   args: {
     items: [],
-    selectedId: undefined,
+    selectedIds: [],
   },
   play: async ({ args, canvas }) => {
     await userEvent.click(canvas.getByRole("button", { name: /add media/i }));
@@ -260,60 +284,72 @@ export const Empty: Story = {
 export const MissingPosterFallback: Story = {
   args: {
     items: [
-      {
-        id: "clip-missing",
-        title: "Offline Poster",
-        subtitle: "00:08",
-        width: getItemWidth("00:08"),
-      },
+      unwrapResult(
+        createImageTimelineItem({
+          id: asTimelineItemId("clip-missing"),
+          name: "Offline Poster",
+          src: "",
+          startTimeSeconds: 0,
+          durationSeconds: 8,
+        })
+      ),
       mediaItems[0],
       mediaItems[1],
     ],
-    selectedId: "clip-missing",
+    selectedIds: [asTimelineItemId("clip-missing")],
   },
 };
 
 export const RepeatedThumbnails: Story = {
   args: {
     items: [
-      {
-        id: "repeat-1",
-        title: "Take One",
-        subtitle: "00:05",
-        thumbnailUrl: repeatedThumbnail,
-        width: getItemWidth("00:05"),
-      },
-      {
-        id: "repeat-2",
-        title: "Take Two",
-        subtitle: "00:05",
-        thumbnailUrl: repeatedThumbnail,
-        width: getItemWidth("00:05"),
-      },
-      {
-        id: "repeat-3",
-        title: "Take Three",
-        subtitle: "00:05",
-        thumbnailUrl: repeatedThumbnail,
-        width: getItemWidth("00:05"),
-      },
+      unwrapResult(
+        createImageTimelineItem({
+          id: asTimelineItemId("repeat-1"),
+          name: "Take One",
+          src: repeatedThumbnail,
+          posterSrc: repeatedThumbnail,
+          startTimeSeconds: 0,
+          durationSeconds: 5,
+        })
+      ),
+      unwrapResult(
+        createImageTimelineItem({
+          id: asTimelineItemId("repeat-2"),
+          name: "Take Two",
+          src: repeatedThumbnail,
+          posterSrc: repeatedThumbnail,
+          startTimeSeconds: 0,
+          durationSeconds: 5,
+        })
+      ),
+      unwrapResult(
+        createImageTimelineItem({
+          id: asTimelineItemId("repeat-3"),
+          name: "Take Three",
+          src: repeatedThumbnail,
+          posterSrc: repeatedThumbnail,
+          startTimeSeconds: 0,
+          durationSeconds: 5,
+        })
+      ),
     ],
-    selectedId: "repeat-2",
+    selectedIds: [asTimelineItemId("repeat-2")],
   },
 };
 
 export const ShortLongAndTrimmedClips: Story = {
   args: {
     items: shortAndLongItems,
-    selectedId: "clip-trimmed",
+    selectedIds: [asTimelineItemId("clip-trimmed")],
   },
 };
 
 export const ManyItemTimeline: Story = {
   args: {
     items: manyItems,
-    selectedId: "cutaway-10",
-    title: "Timeline media",
+    selectedIds: [asTimelineItemId("cutaway-10")],
+    heading: "Timeline media",
   },
   play: async ({ canvasElement }) => {
     const viewport = canvasElement.querySelector<HTMLElement>(
@@ -353,3 +389,38 @@ export const ManyItemTimeline: Story = {
     await expect(dragSurface).toHaveClass(/cursor-grab/);
   },
 };
+
+export const MultipleSelectionInitial: Story = {
+  args: {
+    selectedIds: [asTimelineItemId("wide"), asTimelineItemId("close")],
+  },
+  play: async ({ canvas }) => {
+    await expect(
+      canvas.getByRole("button", { name: /opening wide/i }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      canvas.getByRole("button", { name: /character closeup/i }),
+    ).toHaveAttribute("aria-pressed", "true");
+  },
+};
+
+export const MultipleSelectionToggle: Story = {
+  args: {
+    selectedIds: [asTimelineItemId("wide")],
+  },
+  play: async ({ args, canvas }) => {
+    await userEvent.click(
+      canvas.getByRole("button", { name: /character closeup/i }),
+    );
+
+    await expect(args.onSelectionChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedIds: expect.arrayContaining([
+          asTimelineItemId("wide"),
+          asTimelineItemId("close"),
+        ]),
+      }),
+    );
+  },
+};
+

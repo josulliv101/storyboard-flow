@@ -15,8 +15,7 @@ import {
 const SCROLL_CLICK_SUPPRESSION_MS = 180;
 const DRAG_CLICK_THRESHOLD_PX = 4;
 
-export function useHorizontalDragScroll() {
-  const rootRef = useRef<HTMLDivElement>(null);
+export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElement | null>) {
   const didDragRef = useRef(false);
   const maxScrollLeftRef = useRef(0);
   const suppressClickUntilRef = useRef(0);
@@ -29,11 +28,9 @@ export function useHorizontalDragScroll() {
 
   const getViewport = useCallback(() => {
     return (
-      rootRef.current?.querySelector<HTMLElement>(
-        '[data-slot="scroll-area-viewport"]',
-      ) ?? null
+      viewportRef.current
     );
-  }, []);
+  }, [viewportRef]);
 
   const updateScrollBounds = useCallback(() => {
     const viewport = getViewport();
@@ -145,7 +142,6 @@ export function useHorizontalDragScroll() {
   }, []);
 
   return {
-    rootRef,
     dragControls,
     dragX,
     maxScrollLeft,

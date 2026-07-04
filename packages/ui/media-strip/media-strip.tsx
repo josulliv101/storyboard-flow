@@ -1,6 +1,14 @@
 "use client";
 
-import { type ComponentPropsWithoutRef } from "react";
+import {
+  useCallback,
+  useId,
+  useMemo,
+  useRef,
+  type ComponentPropsWithoutRef,
+} from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+
 import { Button } from "../core/button";
 import {
   Card,
@@ -17,80 +25,158 @@ import {
 } from "../core/empty";
 import { ToggleGroup } from "../core/toggle-group";
 import { cn } from "../lib/utils";
-import { DraggableScrollArea } from "./draggable-scroll-area";
-import { MediaStripItem } from "./media-strip.types";
-import { MediaStripItemButton } from "./media-strip-item";
 
-export type MediaStripProps = ComponentPropsWithoutRef<"div"> & {
+import { DraggableScrollArea } from "./draggable-scroll-area";
+import { MediaStripItemButton } from "./media-strip-item";
+import type { TimelineItem, TimelineItemId } from "./media-strip.types";
+
+export type MediaStripSelection = {
+  selectedIds: TimelineItemId[];
+  selectedItems: TimelineItem[];
+};
+
+export type MediaStripProps = Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   actionLabel?: string;
   emptyLabel?: string;
-  items: MediaStripItem[];
+  heading?: string;
+  items: TimelineItem[];
   onAction?: () => void;
-  onSelectItem?: (item: MediaStripItem) => void;
-  selectedId?: string;
-  title?: string;
+  onSelectionChange: (selection: MediaStripSelection) => void;
+  pxPerSecond?: number;
+  selectedIds: TimelineItemId[];
 };
 
 export function MediaStrip({
   actionLabel = "Add media",
   className,
   emptyLabel = "No media items yet.",
+  heading = "Media strip",
   items,
   onAction,
-  onSelectItem,
-  selectedId,
-  title = "Media strip",
+  onSelectionChange,
+  pxPerSecond = 32,
+  selectedIds,
   ...props
 }: MediaStripProps) {
+  const headingId = useId();
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  const itemById = useMemo(() => {
+    return new Map<string, TimelineItem>(
+      items.map((item) => [String(item.id), item]),
+    );
+  }, [items]);
+
+  const visibleSelectedIds = useMemo(() => {
+    return selectedIds.filter((id) => itemById.has(String(id)));
+  }, [itemById, selectedIds]);
+
+  const handleSelectionChange = useCallback(
+    (values: string[]) => {
+      const selectedItems = values
+        .map((value) => itemById.get(value))
+        .filter((item): item is TimelineItem => item !== undefined);
+
+      const nextSelectedIds = selectedItems.map((item) => item.id);
+
+      onSelectionChange({
+        selectedIds: nextSelectedIds,
+        selectedItems,
+      });
+    },
+    [itemById, onSelectionChange],
+  );
+
+  const rowVirtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: useCallback(
+      (index: number) => {
+        const item = items[index];
+        const baseWidth = Math.max(96, Math.min(item.durationSeconds * pxPerSecond, 320));
+        // Add 12px spacing/gap between items
+        return baseWidth + 12;
+      },
+      [items, pxPerSecond]
+    ),
+    horizontal: true,
+    overscan: 5,
+  });
+
   return (
     <Card
-      aria-label={title}
+      aria-labelledby={headingId}
       role="region"
       size="sm"
-      className={cn(
-        "min-w-0 w-full",
-        className,
-      )}
+      className={cn("min-w-0 w-full", className)}
       {...props}
     >
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardAction>
-          <Button size="sm" variant="outline" onClick={onAction}>
-            {actionLabel}
-          </Button>
-        </CardAction>
+        <CardTitle id={headingId}>{heading}</CardTitle>
+        {onAction && (
+          <CardAction>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onAction}
+            >
+              {actionLabel}
+            </Button>
+          </CardAction>
+        )}
       </CardHeader>
 
       <CardContent className="min-w-0">
         {items.length === 0 ? (
-          <Empty className="border">
-            <EmptyHeader>
-              <EmptyTitle>{title}</EmptyTitle>
-              <EmptyDescription>{emptyLabel}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          <MediaStripEmptyState emptyLabel={emptyLabel} />
         ) : (
-          <DraggableScrollArea label={`${title} items`}>
+          <DraggableScrollArea label={`${heading} items`} viewportRef={viewportRef}>
             <ToggleGroup
-              aria-label={`${title} selection`}
-              className="w-max max-w-none items-stretch p-1"
-              value={selectedId ? [selectedId] : []}
-              onValueChange={(value) => {
-                const item = items.find(({ id }) => id === value[0]);
-
-                if (item) {
-                  onSelectItem?.(item);
-                }
+              multiple
+              aria-label={`${heading} selection`}
+              className="relative max-w-none items-stretch p-1 h-[9.5rem]"
+              style={{
+                width: `${rowVirtualizer.getTotalSize()}px`,
               }}
-              spacing={3}
+              value={visibleSelectedIds as string[]}
+              onValueChange={handleSelectionChange}
               variant="outline"
             >
-              {items.map((item) => <MediaStripItemButton key={item.id} item={item} />)}
+              {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+                const item = items[virtualItem.index];
+                const baseWidth = Math.max(96, Math.min(item.durationSeconds * pxPerSecond, 320));
+                return (
+                  <MediaStripItemButton
+                    key={String(item.id)}
+                    item={item}
+                    pxPerSecond={pxPerSecond}
+                    style={{
+                      position: "absolute",
+                      top: 4,
+                      left: 0,
+                      width: `${baseWidth}px`,
+                      transform: `translateX(${virtualItem.start}px)`,
+                      height: "calc(100% - 8px)",
+                    }}
+                  />
+                );
+              })}
             </ToggleGroup>
           </DraggableScrollArea>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function MediaStripEmptyState({ emptyLabel }: { emptyLabel: string }) {
+  return (
+    <Empty className="border">
+      <EmptyHeader>
+        <EmptyTitle>No media items</EmptyTitle>
+        <EmptyDescription>{emptyLabel}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 }

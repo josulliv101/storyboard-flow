@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import type { ReactNode } from "react";
+import { type RefObject, type ReactNode } from "react";
 
 import { ScrollArea, ScrollBar } from "../core/scroll-area";
 import { useHorizontalDragScroll } from "./use-horizontal-drag-scroll";
@@ -7,14 +7,15 @@ import { useHorizontalDragScroll } from "./use-horizontal-drag-scroll";
 type DraggableScrollAreaProps = {
   children: ReactNode;
   label: string;
+  viewportRef: RefObject<HTMLDivElement | null>;
 };
 
 export function DraggableScrollArea({
   children,
   label,
+  viewportRef,
 }: DraggableScrollAreaProps) {
   const {
-    rootRef,
     dragControls,
     dragX,
     maxScrollLeft,
@@ -23,11 +24,10 @@ export function DraggableScrollArea({
     handleClickCapture,
     handleDrag,
     handleDragEnd,
-  } = useHorizontalDragScroll();
+  } = useHorizontalDragScroll(viewportRef);
 
   return (
     <div
-      ref={rootRef}
       className="relative min-w-0 cursor-grab touch-pan-y select-none active:cursor-grabbing"
       data-testid="media-strip-drag-scroll"
       onClickCapture={handleClickCapture}
@@ -58,6 +58,7 @@ export function DraggableScrollArea({
       <ScrollArea
         aria-label={label}
         className="h-[11rem] w-full max-w-full overflow-hidden"
+        viewportRef={viewportRef}
       >
         {children}
         <ScrollBar orientation="horizontal" />
