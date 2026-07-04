@@ -43,6 +43,7 @@ export type MediaStripProps = Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   onAction?: () => void;
   onSelectionChange: (selection: MediaStripSelection) => void;
   pxPerSecond?: number;
+  itemGap?: number;
   selectedIds: TimelineItemId[];
 };
 
@@ -55,6 +56,7 @@ export function MediaStrip({
   onAction,
   onSelectionChange,
   pxPerSecond = 32,
+  itemGap = 12,
   selectedIds,
   ...props
 }: MediaStripProps) {
@@ -94,10 +96,10 @@ export function MediaStrip({
       (index: number) => {
         const item = items[index];
         const baseWidth = Math.max(96, Math.min(item.durationSeconds * pxPerSecond, 320));
-        // Add 12px spacing/gap between items
-        return baseWidth + 12;
+        // Add spacing/gap between items
+        return baseWidth + itemGap;
       },
-      [items, pxPerSecond]
+      [items, pxPerSecond, itemGap]
     ),
     horizontal: true,
     overscan: 5,
