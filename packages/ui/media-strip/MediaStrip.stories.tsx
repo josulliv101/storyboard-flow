@@ -1,24 +1,25 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, fn, userEvent } from "storybook/test";
 
-import { MediaStrip, type MediaStripItem } from "./MediaStrip";
+import { MediaStrip } from "./media-strip";
+import { MediaStripItem } from "./media-strip.types";
 
 type StoryMediaItem = {
   id: string;
   title: string;
   duration: string;
 } & (
-  | {
+    | {
       kind: "image";
       thumbnailUrl: string;
     }
-  | {
+    | {
       kind: "video";
       videoSrc: string;
       thumbnailTime: "00:02" | "00:04";
       thumbnailUrl: string;
     }
-);
+  );
 
 const storyVideoSrc = new URL("./fixtures/dog.mp4", import.meta.url).href;
 const dogVideoThumbnails = {
