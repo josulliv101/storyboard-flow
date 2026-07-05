@@ -1,12 +1,15 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { expect, fn, userEvent } from "storybook/test";
 
-import { MediaStrip } from "./media-strip";
+import { MediaStrip, type MediaStripProps, type MediaStripSelection } from "./media-strip";
+import { MediaStripBoard } from "./media-strip-board";
 import {
   asTimelineItemId,
   type TimelineItem,
   type TimelineItemId,
   type TimelineItemResult,
+  type MediaStripMove,
 } from "./media-strip.types";
 import {
   createImageTimelineItem,
@@ -76,7 +79,7 @@ function toTimelineItem(item: StoryMediaItem): TimelineItem {
       id,
       name: item.title,
       src: item.videoSrc,
-      posterSrc: item.thumbnailUrl,
+      posterSrcs: [item.thumbnailUrl],
       startTimeSeconds: 0,
       sourceDurationSeconds: seconds + 10,
       trimInSeconds: 5,
@@ -89,7 +92,7 @@ function toTimelineItem(item: StoryMediaItem): TimelineItem {
       id,
       name: item.title,
       src: item.thumbnailUrl,
-      posterSrc: item.thumbnailUrl,
+      posterSrcs: [item.thumbnailUrl],
       startTimeSeconds: 0,
       durationSeconds: seconds,
     });
@@ -168,7 +171,7 @@ const createImg = (id: string, name: string, color: string, duration: number) =>
     id: idResult.value,
     name,
     src: thumb,
-    posterSrc: thumb,
+    posterSrcs: [thumb],
     startTimeSeconds: 0,
     durationSeconds: duration,
   });
@@ -193,9 +196,60 @@ const manyItems = Array.from({ length: 3 }, () => items)
     });
   });
 
+function StatefulMediaStrip(props: MediaStripProps) {
+  const [items, setItems] = useState<TimelineItem[]>(() => props.items || []);
+  const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>(() => props.selectedIds || []);
+
+  useEffect(() => {
+    setItems(props.items || []);
+  }, [props.items]);
+
+  useEffect(() => {
+    setSelectedIds(props.selectedIds || []);
+  }, [props.selectedIds]);
+
+  const handleMoveItem = useCallback(
+    ({ itemId, fromIndex, toIndex }: MediaStripMove) => {
+      setItems((prev) => {
+        const next = [...prev];
+        const index = next.findIndex((i) => i.id === itemId);
+        if (index === -1) return prev;
+        const [moved] = next.splice(index, 1);
+        const clampedIndex = Math.max(0, Math.min(toIndex, next.length));
+        next.splice(clampedIndex, 0, moved);
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleSelectionChange = useCallback(
+    (selection: MediaStripSelection) => {
+      setSelectedIds(selection.selectedIds);
+      props.onSelectionChange?.(selection);
+    },
+    [props.onSelectionChange]
+  );
+
+  const stripId = props.stripId || "default-strip";
+  const itemsByStripId = useMemo(() => ({ [stripId]: items }), [stripId, items]);
+
+  return (
+    <MediaStripBoard itemsByStripId={itemsByStripId} onMoveItem={handleMoveItem}>
+      <MediaStrip
+        {...props}
+        items={items}
+        selectedIds={selectedIds}
+        onMoveItem={handleMoveItem}
+        onSelectionChange={handleSelectionChange}
+      />
+    </MediaStripBoard>
+  );
+}
+
 const meta = {
   title: "UI/MediaStrip/MediaStrip",
-  component: MediaStrip,
+  component: StatefulMediaStrip,
   args: {
     onAction: fn(),
     onSelectionChange: fn(),
@@ -212,7 +266,7 @@ const meta = {
       </div>
     ),
   ],
-} satisfies Meta<typeof MediaStrip>;
+} satisfies Meta<typeof StatefulMediaStrip>;
 
 export default meta;
 
@@ -280,7 +334,7 @@ export const MissingPosterFallback: Story = {
         createImageTimelineItem({
           id: "clip-missing" as TimelineItemId,
           name: "Offline Poster",
-          src: "",
+          src: "https://example.com/offline-media.jpg",
           startTimeSeconds: 0,
           durationSeconds: 8,
         })
@@ -300,7 +354,7 @@ export const RepeatedThumbnails: Story = {
           id: "repeat-1" as TimelineItemId,
           name: "Take One",
           src: repeatedThumbnail,
-          posterSrc: repeatedThumbnail,
+          posterSrcs: [repeatedThumbnail],
           startTimeSeconds: 0,
           durationSeconds: 5,
         })
@@ -310,7 +364,7 @@ export const RepeatedThumbnails: Story = {
           id: "repeat-2" as TimelineItemId,
           name: "Take Two",
           src: repeatedThumbnail,
-          posterSrc: repeatedThumbnail,
+          posterSrcs: [repeatedThumbnail],
           startTimeSeconds: 0,
           durationSeconds: 5,
         })
@@ -320,7 +374,7 @@ export const RepeatedThumbnails: Story = {
           id: "repeat-3" as TimelineItemId,
           name: "Take Three",
           src: repeatedThumbnail,
-          posterSrc: repeatedThumbnail,
+          posterSrcs: [repeatedThumbnail],
           startTimeSeconds: 0,
           durationSeconds: 5,
         })
@@ -340,7 +394,7 @@ export const SingleImageThumbnails: Story = {
           id: "single-1" as TimelineItemId,
           name: "Take One (Single Image)",
           src: repeatedThumbnail,
-          posterSrc: repeatedThumbnail,
+          posterSrcs: [repeatedThumbnail],
           startTimeSeconds: 0,
           durationSeconds: 5,
         })
@@ -350,7 +404,7 @@ export const SingleImageThumbnails: Story = {
           id: "single-2" as TimelineItemId,
           name: "Take Two (Single Image)",
           src: repeatedThumbnail,
-          posterSrc: repeatedThumbnail,
+          posterSrcs: [repeatedThumbnail],
           startTimeSeconds: 0,
           durationSeconds: 5,
         })
@@ -368,7 +422,6 @@ export const SequenceOfDifferentImages: Story = {
           id: "seq-diff-1" as TimelineItemId,
           name: "Short Clip (3s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
-          posterSrc: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
             createThumbnail("#b91c1c", "Frame 1"),
             createThumbnail("#d97706", "Frame 2"),
@@ -384,7 +437,6 @@ export const SequenceOfDifferentImages: Story = {
           id: "seq-diff-2" as TimelineItemId,
           name: "Medium Clip (6s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
-          posterSrc: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
             createThumbnail("#b91c1c", "Frame 1"),
             createThumbnail("#d97706", "Frame 2"),
@@ -400,7 +452,6 @@ export const SequenceOfDifferentImages: Story = {
           id: "seq-diff-3" as TimelineItemId,
           name: "Long Clip (9s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
-          posterSrc: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
             createThumbnail("#b91c1c", "Frame 1"),
             createThumbnail("#d97706", "Frame 2"),
@@ -416,7 +467,6 @@ export const SequenceOfDifferentImages: Story = {
           id: "seq-diff-4" as TimelineItemId,
           name: "Max Width Clip (12s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
-          posterSrc: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
             createThumbnail("#b91c1c", "Frame 1"),
             createThumbnail("#d97706", "Frame 2"),
@@ -450,7 +500,7 @@ export const ManyItemTimeline: Story = {
       '[data-slot="scroll-area-viewport"]',
     );
     const dragSurface = canvasElement.querySelector<HTMLElement>(
-      '[data-testid="media-strip-drag-scroll"]',
+      '[data-testid^="media-strip-drag-scroll"]',
     );
     const thumbnails = Array.from(
       canvasElement.querySelectorAll<HTMLElement>(
@@ -526,7 +576,7 @@ export const BrokenPosterFallback: Story = {
           id: "clip-broken" as TimelineItemId,
           name: "Broken Link Poster",
           src: "https://example.com/broken-image.jpg",
-          posterSrc: "https://example.com/broken-image.jpg",
+          posterSrcs: ["https://example.com/broken-image.jpg"],
           startTimeSeconds: 0,
           durationSeconds: 6,
         })
@@ -564,4 +614,242 @@ export const KeyboardVirtualNavigation: Story = {
       }),
     );
   },
+};
+
+const ReorderDemo = () => {
+  const [stripA, setStripA] = useState<TimelineItem[]>(() => [
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-a1" as TimelineItemId,
+        name: "Item A1",
+        src: createThumbnail("#f43f5e", "A1"),
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })
+    ),
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-a2" as TimelineItemId,
+        name: "Item A2",
+        src: createThumbnail("#ec4899", "A2"),
+        startTimeSeconds: 0,
+        durationSeconds: 6,
+      })
+    ),
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-a3" as TimelineItemId,
+        name: "Item A3",
+        src: createThumbnail("#d946ef", "A3"),
+        startTimeSeconds: 0,
+        durationSeconds: 4,
+      })
+    ),
+  ]);
+
+  const [stripB, setStripB] = useState<TimelineItem[]>(() => [
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-b1" as TimelineItemId,
+        name: "Item B1",
+        src: createThumbnail("#3b82f6", "B1"),
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })
+    ),
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-b2" as TimelineItemId,
+        name: "Item B2",
+        src: createThumbnail("#06b6d4", "B2"),
+        startTimeSeconds: 0,
+        durationSeconds: 7,
+      })
+    ),
+  ]);
+
+  const [stripC, setStripC] = useState<TimelineItem[]>(() => [
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-c1" as TimelineItemId,
+        name: "Item C1",
+        src: createThumbnail("#10b981", "C1"),
+        startTimeSeconds: 0,
+        durationSeconds: 4,
+      })
+    ),
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-c2" as TimelineItemId,
+        name: "Item C2",
+        src: createThumbnail("#059669", "C2"),
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })
+    ),
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-c3" as TimelineItemId,
+        name: "Item C3",
+        src: createThumbnail("#047857", "C3"),
+        startTimeSeconds: 0,
+        durationSeconds: 3,
+      })
+    ),
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-c4" as TimelineItemId,
+        name: "Item C4",
+        src: createThumbnail("#14b8a6", "C4"),
+        startTimeSeconds: 0,
+        durationSeconds: 6,
+      })
+    ),
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-c5" as TimelineItemId,
+        name: "Item C5",
+        src: createThumbnail("#0db9e8", "C5"),
+        startTimeSeconds: 0,
+        durationSeconds: 8,
+      })
+    ),
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-c6" as TimelineItemId,
+        name: "Item C6",
+        src: createThumbnail("#f59e0b", "C6"),
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })
+    ),
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-c7" as TimelineItemId,
+        name: "Item C7",
+        src: createThumbnail("#d97706", "C7"),
+        startTimeSeconds: 0,
+        durationSeconds: 7,
+      })
+    ),
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-c8" as TimelineItemId,
+        name: "Item C8",
+        src: createThumbnail("#b45309", "C8"),
+        startTimeSeconds: 0,
+        durationSeconds: 4,
+      })
+    ),
+  ]);
+
+  const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>([]);
+
+  const handleMoveItem = useCallback(
+    ({
+      itemId,
+      fromStripId,
+      toStripId,
+      fromIndex,
+      toIndex,
+    }: MediaStripMove) => {
+      let itemToMove: TimelineItem | undefined;
+      let nextStripA = [...stripA];
+      let nextStripB = [...stripB];
+      let nextStripC = [...stripC];
+
+      if (fromStripId === "strip-a") {
+        const index = nextStripA.findIndex((i) => i.id === itemId);
+        if (index !== -1) {
+          [itemToMove] = nextStripA.splice(index, 1);
+        }
+      } else if (fromStripId === "strip-b") {
+        const index = nextStripB.findIndex((i) => i.id === itemId);
+        if (index !== -1) {
+          [itemToMove] = nextStripB.splice(index, 1);
+        }
+      } else {
+        const index = nextStripC.findIndex((i) => i.id === itemId);
+        if (index !== -1) {
+          [itemToMove] = nextStripC.splice(index, 1);
+        }
+      }
+
+      if (!itemToMove) return;
+
+      if (toStripId === "strip-a") {
+        const clampedIndex = Math.max(0, Math.min(toIndex, nextStripA.length));
+        nextStripA.splice(clampedIndex, 0, itemToMove);
+      } else if (toStripId === "strip-b") {
+        const clampedIndex = Math.max(0, Math.min(toIndex, nextStripB.length));
+        nextStripB.splice(clampedIndex, 0, itemToMove);
+      } else {
+        const clampedIndex = Math.max(0, Math.min(toIndex, nextStripC.length));
+        nextStripC.splice(clampedIndex, 0, itemToMove);
+      }
+
+      setStripA(nextStripA);
+      setStripB(nextStripB);
+      setStripC(nextStripC);
+    },
+    [stripA, stripB, stripC]
+  );
+
+  const itemsByStripId = {
+    "strip-a": stripA,
+    "strip-b": stripB,
+    "strip-c": stripC,
+  };
+
+  return (
+    <MediaStripBoard itemsByStripId={itemsByStripId} onMoveItem={handleMoveItem}>
+      <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
+        <div>
+          <p className="text-sm text-zinc-400 mb-2">
+            Pointer instructions: Drag item from its grab handle (six dots) in the top-right and hover over target areas or empty strips.
+            <br />
+            Keyboard instructions: Focus the grab handle, press Enter or Space to activate Reorder Mode.
+            Use ArrowLeft/Right to reorder, ArrowUp/Down to move between strips, Escape to cancel.
+          </p>
+        </div>
+        <MediaStrip
+          stripId="strip-a"
+          heading="Media Strip A (Red/Pink)"
+          items={stripA}
+          selectedIds={selectedIds}
+          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+          onMoveItem={handleMoveItem}
+        />
+        <MediaStrip
+          stripId="strip-b"
+          heading="Media Strip B (Blue/Cyan)"
+          items={stripB}
+          selectedIds={selectedIds}
+          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+          onMoveItem={handleMoveItem}
+        />
+        <MediaStrip
+          stripId="strip-c"
+          heading="Media Strip C (Green/Emerald with Lots of Items)"
+          items={stripC}
+          selectedIds={selectedIds}
+          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+          onMoveItem={handleMoveItem}
+        />
+      </div>
+    </MediaStripBoard>
+  );
+};
+
+export const ReorderableMediaStrips: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
 };

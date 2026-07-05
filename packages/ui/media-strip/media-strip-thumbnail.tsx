@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 
-import type { TimelineItem } from "./media-strip.types";
+import type { TimelineItem, MediaTimelineItem } from "./media-strip.types";
 import { isMediaItem } from "./media-strip.types";
 
 type MediaStripThumbnailProps = {
@@ -23,42 +23,39 @@ export function MediaStripThumbnail({
     );
   }
 
-  const posterUrl =
-    item.posterSrc ??
-    (item.posterSrcs && item.posterSrcs.length > 0 ? item.posterSrcs[0] : undefined) ??
-    (item.kind === "image" ? item.src : undefined);
-
-  const posterUrlsKey = item.posterSrcs ? item.posterSrcs.join(",") : "";
-
+  // Render poster thumbnail layout without forcing a component remount via keys
   return (
     <MediaStripPosterThumbnail
-      key={`${item.id}:${posterUrl ?? "no-poster"}:${posterUrlsKey}`}
-      posterUrl={posterUrl}
-      posterUrls={item.posterSrcs}
+      item={item}
       variant={variant}
     />
   );
 }
 
-type MediaStripPosterThumbnailProps = {
-  posterUrl?: string;
-  posterUrls?: readonly string[];
-  variant: "single" | "sequence";
-};
-
 function MediaStripPosterThumbnail({
-  posterUrl,
-  posterUrls,
+  item,
   variant,
-}: MediaStripPosterThumbnailProps) {
-  const [hasError, setHasError] = useState(false);
+}: {
+  item: MediaTimelineItem;
+  variant: "single" | "sequence";
+}) {
+  // Track failed URLs individually so one bad link does not break the entire sequence
+  const [failedUrls, setFailedUrls] = useState<Set<string>>(new Set());
+
   const containerRef = useRef<HTMLSpanElement>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({
     width: 0,
     height: 0,
   });
 
+  const posterUrlsKey = item.posterSrcs ? item.posterSrcs.join(",") : "";
+
+  // Reset errors when the timeline item changes, its list of poster URLs changes, or its src changes
   useEffect(() => {
+    setFailedUrls(new Set());
+  }, [item.id, posterUrlsKey, item.src]);
+
+  useLayoutEffect(() => {
     if (variant !== "sequence") return;
 
     const element = containerRef.current;
@@ -67,23 +64,41 @@ function MediaStripPosterThumbnail({
     if (typeof ResizeObserver === "undefined") return;
 
     const rect = element.getBoundingClientRect();
-    setContainerSize({ width: rect.width, height: rect.height });
+    setContainerSize({ width: Math.round(rect.width), height: Math.round(rect.height) });
 
     const observer = new ResizeObserver((entries) => {
       if (!entries || entries.length === 0) return;
       const { width, height } = entries[0].contentRect;
-      setContainerSize({ width, height });
+      const roundedWidth = Math.round(width);
+      const roundedHeight = Math.round(height);
+
+      // Prevent redundant state updates on micro-pixel variations
+      setContainerSize((prev) => {
+        if (prev.width === roundedWidth && prev.height === roundedHeight) {
+          return prev;
+        }
+        return { width: roundedWidth, height: roundedHeight };
+      });
     });
 
     observer.observe(element);
     return () => {
       observer.disconnect();
     };
-  }, [variant]);
+  }, [variant, item.id]);
 
-  const hasImages = (posterUrls && posterUrls.length > 0) || posterUrl;
-  const showImages = hasImages && !hasError;
+  const posterUrls = item.posterSrcs;
   const isSequence = variant === "sequence";
+
+  // Restrict fallback URL to image items only. A video item's source (.mp4 or other video files)
+  // must never be rendered inside a fallback <img> element, avoiding browser image loading errors.
+  const fallbackUrl = item.kind === "image" ? item.src : undefined;
+
+  // Helper to filter out broken URLs
+  const getImageUrl = (url?: string): string | null => {
+    if (!url || failedUrls.has(url)) return null;
+    return url;
+  };
 
   const thumbnailWidth = containerSize.height || 96;
   const count =
@@ -91,21 +106,22 @@ function MediaStripPosterThumbnail({
       ? Math.max(1, Math.floor(containerSize.width / thumbnailWidth))
       : 1;
 
-  return (
-    <span
-      ref={containerRef}
-      className={`overflow-hidden rounded-md bg-muted h-24 w-full ${
-        isSequence ? "flex flex-row" : "block"
-      }`}
-      data-slot="media-strip-thumbnail"
-    >
-      {showImages ? (
-        isSequence ? (
-          Array.from({ length: count }).map((_, index) => {
-            const src =
-              posterUrls && posterUrls.length > 0
-                ? posterUrls[index % posterUrls.length]
-                : posterUrl;
+  if (isSequence) {
+    return (
+      <span
+        ref={containerRef}
+        className="overflow-hidden rounded-md bg-muted h-24 w-full flex flex-row"
+        data-slot="media-strip-thumbnail"
+      >
+        {Array.from({ length: count }).map((_, index) => {
+          const originalSrc =
+            posterUrls && posterUrls.length > 0
+              ? posterUrls[index % posterUrls.length]
+              : fallbackUrl;
+
+          const src = getImageUrl(originalSrc);
+
+          if (src) {
             return (
               <img
                 key={index}
@@ -114,22 +130,59 @@ function MediaStripPosterThumbnail({
                 className="h-full flex-1 min-w-0 object-cover"
                 draggable={false}
                 loading="lazy"
-                onError={() => setHasError(true)}
+                onError={() => {
+                  setFailedUrls((prev) => {
+                    const next = new Set(prev);
+                    next.add(src);
+                    return next;
+                  });
+                }}
               />
             );
-          })
-        ) : (
-          <img
-            src={posterUrl}
-            alt=""
-            className="size-full object-cover"
-            draggable={false}
-            loading="lazy"
-            onError={() => setHasError(true)}
-          />
-        )
+          }
+
+          return (
+            <span
+              key={index}
+              className="flex h-full flex-1 min-w-0 items-center justify-center bg-muted text-[10px] text-muted-foreground border-r last:border-r-0 border-background select-none font-medium"
+            >
+              No poster
+            </span>
+          );
+        })}
+      </span>
+    );
+  }
+
+  // Single poster layout
+  const originalSrc =
+    (posterUrls && posterUrls.length > 0 ? posterUrls[0] : undefined) ?? fallbackUrl;
+
+  const src = getImageUrl(originalSrc);
+
+  return (
+    <span
+      ref={containerRef}
+      className="overflow-hidden rounded-md bg-muted h-24 w-full block"
+      data-slot="media-strip-thumbnail"
+    >
+      {src ? (
+        <img
+          src={src}
+          alt=""
+          className="size-full object-cover"
+          draggable={false}
+          loading="lazy"
+          onError={() => {
+            setFailedUrls((prev) => {
+              const next = new Set(prev);
+              next.add(src);
+              return next;
+            });
+          }}
+        />
       ) : (
-        <span className="flex size-full items-center justify-center text-xs text-muted-foreground">
+        <span className="flex size-full items-center justify-center text-xs text-muted-foreground select-none font-medium">
           No poster
         </span>
       )}
