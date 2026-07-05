@@ -13,11 +13,11 @@ import {
   type CollectionId,
 } from "./media-strip.types";
 
-import {
   validateTimelineItemTiming,
   validateCollectionTimelineItem,
   validateVideoTimelineItem,
   validateTimelineItem,
+  validateMediaItemStrings,
   createImageTimelineItem,
   createCollectionTimelineItem,
   createVideoTimelineItem,
@@ -33,7 +33,6 @@ import {
   formatDuration,
   areEqual,
   MIN_ITEM_WIDTH_PX,
-  MAX_ITEM_WIDTH_PX,
 } from "./media-strip.utils";
 
 describe("Timeline Items Branding", () => {
@@ -189,6 +188,30 @@ describe("Timeline Items Timing Validation", () => {
     });
   });
 
+  test("fails timing validation for empty or invalid name", () => {
+    const itemEmptyName = {
+      id: "item-1" as TimelineItemId,
+      name: "",
+      startTimeSeconds: 0,
+      durationSeconds: 10,
+    };
+    expect(validateTimelineItemTiming(itemEmptyName as any)).toEqual({
+      valid: false,
+      reason: "empty-name",
+    });
+
+    const itemWhitespaceName = {
+      id: "item-1" as TimelineItemId,
+      name: "   ",
+      startTimeSeconds: 0,
+      durationSeconds: 10,
+    };
+    expect(validateTimelineItemTiming(itemWhitespaceName as any)).toEqual({
+      valid: false,
+      reason: "empty-name",
+    });
+  });
+
   test("tolerates tiny negative times within epsilon", () => {
     const itemTinyNegativeStart = {
       id: "item-1" as TimelineItemId,
@@ -198,6 +221,58 @@ describe("Timeline Items Timing Validation", () => {
     };
     expect(validateTimelineItemTiming(itemTinyNegativeStart as any)).toEqual({
       valid: true,
+    });
+  });
+});
+
+describe("Media Items String Validation", () => {
+  test("validates correct string values", () => {
+    const item = {
+      src: "https://example.com/video.mp4",
+      posterSrc: "https://example.com/poster.jpg",
+      posterSrcs: ["https://example.com/frame1.jpg", "https://example.com/frame2.jpg"],
+    };
+    expect(validateMediaItemStrings(item as any)).toEqual({ valid: true });
+  });
+
+  test("fails for invalid src type", () => {
+    const item = {
+      src: 123,
+    };
+    expect(validateMediaItemStrings(item as any)).toEqual({
+      valid: false,
+      reason: "invalid-src",
+    });
+  });
+
+  test("fails for invalid posterSrc type", () => {
+    const item = {
+      src: "https://example.com/video.mp4",
+      posterSrc: 123,
+    };
+    expect(validateMediaItemStrings(item as any)).toEqual({
+      valid: false,
+      reason: "invalid-poster-src",
+    });
+  });
+
+  test("fails for invalid posterSrcs array or elements", () => {
+    const itemNotArray = {
+      src: "https://example.com/video.mp4",
+      posterSrcs: "not-an-array",
+    };
+    expect(validateMediaItemStrings(itemNotArray as any)).toEqual({
+      valid: false,
+      reason: "invalid-poster-srcs",
+    });
+
+    const itemInvalidElements = {
+      src: "https://example.com/video.mp4",
+      posterSrcs: ["https://example.com/frame1.jpg", 123],
+    };
+    expect(validateMediaItemStrings(itemInvalidElements as any)).toEqual({
+      valid: false,
+      reason: "invalid-poster-srcs",
     });
   });
 });
@@ -458,10 +533,10 @@ describe("MediaStrip getItemWidth helper", () => {
     expect(getItemWidth(item, 32)).toBe(MIN_ITEM_WIDTH_PX);
   });
 
-  test("clamps width to maximum size", () => {
+  test("does not clamp width to a maximum size", () => {
     const item = { durationSeconds: 20 } as any;
-    // 20s * 32px/s = 640px, clamped to MAX_ITEM_WIDTH_PX (320px)
-    expect(getItemWidth(item, 32)).toBe(MAX_ITEM_WIDTH_PX);
+    // 20s * 32px/s = 640px
+    expect(getItemWidth(item, 32)).toBe(640);
   });
 
   test("returns linearly scaled width within boundaries", () => {

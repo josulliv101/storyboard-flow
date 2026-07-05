@@ -10,12 +10,14 @@ type MediaStripItemButtonProps = {
   item: TimelineItem;
   /** Custom styles forwarded for absolute virtualization positioning coordinates. */
   style?: CSSProperties;
+  thumbnailVariant?: "single" | "sequence";
 };
 
 export const MediaStripItemButton = memo(
   function MediaStripItemButton({
     item,
     style,
+    thumbnailVariant,
   }: MediaStripItemButtonProps) {
     const durationLabel = formatDuration(item.durationSeconds);
     const ariaLabel = `${item.name}, ${durationLabel}`;
@@ -38,7 +40,7 @@ export const MediaStripItemButton = memo(
         data-value={item.id}
         onFocus={handleFocus}
       >
-        <MediaStripThumbnail item={item} />
+        <MediaStripThumbnail item={item} variant={thumbnailVariant} />
 
         <span className="min-w-0 truncate text-xs font-medium text-foreground">
           {item.name}

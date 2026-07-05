@@ -52,6 +52,7 @@ export type MediaStripProps = Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   pxPerSecond?: number;
   itemGap?: number;
   selectedIds: TimelineItemId[];
+  thumbnailVariant?: "single" | "sequence";
 };
 
 export function MediaStrip({
@@ -65,6 +66,7 @@ export function MediaStrip({
   pxPerSecond = 32,
   itemGap = 12,
   selectedIds,
+  thumbnailVariant = "sequence",
   ...props
 }: MediaStripProps) {
   const headingId = useId();
@@ -223,6 +225,7 @@ export function MediaStrip({
                   <MediaStripItemButton
                     key={String(item.id)}
                     item={item}
+                    thumbnailVariant={thumbnailVariant}
                     style={{
                       position: "absolute",
                       top: TOGGLE_GROUP_PADDING_PX,

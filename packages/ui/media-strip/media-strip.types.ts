@@ -57,6 +57,8 @@ type MediaTimelineItemBase = TimelineItemBase &
     src: string;
     /** Optional thumbnail/poster override. */
     posterSrc?: string;
+    /** Optional sequence of thumbnail/poster overrides. */
+    posterSrcs?: readonly string[];
   }>;
 
 export type ImageTimelineItem = MediaTimelineItemBase &

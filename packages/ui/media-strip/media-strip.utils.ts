@@ -2,7 +2,6 @@ import { type CSSProperties } from "react";
 import type { TimelineItem, VideoTimelineItem } from "./media-strip.types";
 
 export const MIN_ITEM_WIDTH_PX = 96;
-export const MAX_ITEM_WIDTH_PX = 320;
 
 export const getTimelineItemEndTimeSeconds = (item: TimelineItem): number =>
   item.startTimeSeconds + item.durationSeconds;
@@ -14,16 +13,13 @@ export const getVideoVisibleDurationSeconds = (
   item.sourceDurationSeconds - item.trimInSeconds - item.trimOutSeconds;
 
 /**
- * Calculates clamped item width in pixels based on its duration and scale.
+ * Calculates item width in pixels based on its duration and scale, clamped to a minimum.
  */
 export function getItemWidth(
   item: Pick<TimelineItem, "durationSeconds">,
   pxPerSecond: number
 ): number {
-  return Math.max(
-    MIN_ITEM_WIDTH_PX,
-    Math.min(item.durationSeconds * pxPerSecond, MAX_ITEM_WIDTH_PX)
-  );
+  return Math.max(MIN_ITEM_WIDTH_PX, item.durationSeconds * pxPerSecond);
 }
 
 /**
@@ -52,14 +48,15 @@ export function formatDuration(seconds: number): string {
  * fields must be added here to avoid stale renders.
  */
 export function areEqual(
-  prevProps: { item: TimelineItem; style?: CSSProperties },
-  nextProps: { item: TimelineItem; style?: CSSProperties }
+  prevProps: { item: TimelineItem; style?: CSSProperties; thumbnailVariant?: "single" | "sequence" },
+  nextProps: { item: TimelineItem; style?: CSSProperties; thumbnailVariant?: "single" | "sequence" }
 ): boolean {
   return (
     prevProps.item === nextProps.item &&
     prevProps.style?.width === nextProps.style?.width &&
     prevProps.style?.transform === nextProps.style?.transform &&
     prevProps.style?.top === nextProps.style?.top &&
-    prevProps.style?.height === nextProps.style?.height
+    prevProps.style?.height === nextProps.style?.height &&
+    prevProps.thumbnailVariant === nextProps.thumbnailVariant
   );
 }

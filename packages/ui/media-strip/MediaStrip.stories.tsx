@@ -25,17 +25,17 @@ type StoryMediaItem = {
   title: string;
   duration: string;
 } & (
-  | {
+    | {
       kind: "image";
       thumbnailUrl: string;
     }
-  | {
+    | {
       kind: "video";
       videoSrc: string;
       thumbnailTime: "00:02" | "00:04";
       thumbnailUrl: string;
     }
-);
+  );
 
 const storyVideoSrc = new URL("./fixtures/dog.mp4", import.meta.url).href;
 const dogVideoThumbnails = {
@@ -136,7 +136,7 @@ const items: StoryMediaItem[] = [
     videoSrc: storyVideoSrc,
     thumbnailTime: "00:04",
     thumbnailUrl: dogVideoThumbnails["00:04"],
-    duration: "00:05",
+    duration: "00:06",
   },
   {
     id: "cutaway-10",
@@ -144,6 +144,15 @@ const items: StoryMediaItem[] = [
     title: "Reaction Cutaway",
     duration: "00:10",
     thumbnailUrl: createPhotoThumbnail("reaction-cutaway"),
+  },
+  {
+    id: "dog-exit-2",
+    kind: "video",
+    title: "Dog Again",
+    videoSrc: storyVideoSrc,
+    thumbnailTime: "00:04",
+    thumbnailUrl: dogVideoThumbnails["00:04"],
+    duration: "00:16",
   },
 ];
 
@@ -154,7 +163,7 @@ const createImg = (id: string, name: string, color: string, duration: number) =>
   const thumb = createThumbnail(color, name);
   const idResult = asTimelineItemId(id);
   if (!idResult.ok) throw new Error("Constructor error: invalid ID");
-  
+
   const result = createImageTimelineItem({
     id: idResult.value,
     name,
@@ -318,6 +327,108 @@ export const RepeatedThumbnails: Story = {
       ),
     ],
     selectedIds: ["repeat-2" as TimelineItemId],
+    pxPerSecond: 80,
+  },
+};
+
+export const SingleImageThumbnails: Story = {
+  args: {
+    thumbnailVariant: "single",
+    items: [
+      unwrapResult(
+        createImageTimelineItem({
+          id: "single-1" as TimelineItemId,
+          name: "Take One (Single Image)",
+          src: repeatedThumbnail,
+          posterSrc: repeatedThumbnail,
+          startTimeSeconds: 0,
+          durationSeconds: 5,
+        })
+      ),
+      unwrapResult(
+        createImageTimelineItem({
+          id: "single-2" as TimelineItemId,
+          name: "Take Two (Single Image)",
+          src: repeatedThumbnail,
+          posterSrc: repeatedThumbnail,
+          startTimeSeconds: 0,
+          durationSeconds: 5,
+        })
+      ),
+    ],
+    selectedIds: ["single-1" as TimelineItemId],
+  },
+};
+
+export const SequenceOfDifferentImages: Story = {
+  args: {
+    items: [
+      unwrapResult(
+        createImageTimelineItem({
+          id: "seq-diff-1" as TimelineItemId,
+          name: "Short Clip (3s)",
+          src: createThumbnail("#b91c1c", "Frame 1"),
+          posterSrc: createThumbnail("#b91c1c", "Frame 1"),
+          posterSrcs: [
+            createThumbnail("#b91c1c", "Frame 1"),
+            createThumbnail("#d97706", "Frame 2"),
+            createThumbnail("#059669", "Frame 3"),
+            createThumbnail("#2563eb", "Frame 4"),
+          ],
+          startTimeSeconds: 0,
+          durationSeconds: 3,
+        })
+      ),
+      unwrapResult(
+        createImageTimelineItem({
+          id: "seq-diff-2" as TimelineItemId,
+          name: "Medium Clip (6s)",
+          src: createThumbnail("#b91c1c", "Frame 1"),
+          posterSrc: createThumbnail("#b91c1c", "Frame 1"),
+          posterSrcs: [
+            createThumbnail("#b91c1c", "Frame 1"),
+            createThumbnail("#d97706", "Frame 2"),
+            createThumbnail("#059669", "Frame 3"),
+            createThumbnail("#2563eb", "Frame 4"),
+          ],
+          startTimeSeconds: 3,
+          durationSeconds: 6,
+        })
+      ),
+      unwrapResult(
+        createImageTimelineItem({
+          id: "seq-diff-3" as TimelineItemId,
+          name: "Long Clip (9s)",
+          src: createThumbnail("#b91c1c", "Frame 1"),
+          posterSrc: createThumbnail("#b91c1c", "Frame 1"),
+          posterSrcs: [
+            createThumbnail("#b91c1c", "Frame 1"),
+            createThumbnail("#d97706", "Frame 2"),
+            createThumbnail("#059669", "Frame 3"),
+            createThumbnail("#2563eb", "Frame 4"),
+          ],
+          startTimeSeconds: 9,
+          durationSeconds: 9,
+        })
+      ),
+      unwrapResult(
+        createImageTimelineItem({
+          id: "seq-diff-4" as TimelineItemId,
+          name: "Max Width Clip (12s)",
+          src: createThumbnail("#b91c1c", "Frame 1"),
+          posterSrc: createThumbnail("#b91c1c", "Frame 1"),
+          posterSrcs: [
+            createThumbnail("#b91c1c", "Frame 1"),
+            createThumbnail("#d97706", "Frame 2"),
+            createThumbnail("#059669", "Frame 3"),
+            createThumbnail("#2563eb", "Frame 4"),
+          ],
+          startTimeSeconds: 18,
+          durationSeconds: 12,
+        })
+      ),
+    ],
+    selectedIds: ["seq-diff-2" as TimelineItemId],
   },
 };
 

@@ -37,6 +37,7 @@ const isApproximatelyLessThanOrEqual = (a: number, b: number): boolean =>
  */
 export type TimelineItemTimingValidationResult =
   | Readonly<{ valid: true }>
+  | Readonly<{ valid: false; reason: "empty-name" }>
   | Readonly<{ valid: false; reason: "non-finite-start-time" }>
   | Readonly<{ valid: false; reason: "non-finite-duration" }>
   | Readonly<{ valid: false; reason: "negative-start-time" }>
@@ -51,6 +52,10 @@ export type TimelineItemTimingValidationFailure = Extract<
 export const validateTimelineItemTiming = (
   item: TimelineItemBase
 ): TimelineItemTimingValidationResult => {
+  if (typeof item.name !== "string" || item.name.trim() === "") {
+    return { valid: false, reason: "empty-name" };
+  }
+
   if (!Number.isFinite(item.startTimeSeconds)) {
     return { valid: false, reason: "non-finite-start-time" };
   }
@@ -70,12 +75,49 @@ export const validateTimelineItemTiming = (
   return { valid: true };
 };
 
+export type MediaTimelineItemValidationResult =
+  | TimelineItemTimingValidationResult
+  | Readonly<{ valid: false; reason: "invalid-src" }>
+  | Readonly<{ valid: false; reason: "invalid-poster-src" }>
+  | Readonly<{ valid: false; reason: "invalid-poster-srcs" }>;
+
+export type MediaTimelineItemValidationFailure = Extract<
+  MediaTimelineItemValidationResult,
+  { valid: false }
+>;
+
+export const validateMediaItemStrings = (
+  item: { src: string; posterSrc?: string; posterSrcs?: readonly string[] }
+): MediaTimelineItemValidationResult => {
+  if (typeof item.src !== "string") {
+    return { valid: false, reason: "invalid-src" };
+  }
+
+  if (item.posterSrc !== undefined && typeof item.posterSrc !== "string") {
+    return { valid: false, reason: "invalid-poster-src" };
+  }
+
+  if (item.posterSrcs !== undefined) {
+    if (!Array.isArray(item.posterSrcs) || item.posterSrcs.some(url => typeof url !== "string")) {
+      return { valid: false, reason: "invalid-poster-srcs" };
+    }
+  }
+
+  return { valid: true };
+};
+
+export const validateImageTimelineItem = (
+  item: ImageTimelineItem
+): MediaTimelineItemValidationResult => {
+  const timingResult = validateTimelineItemTiming(item);
+  if (!timingResult.valid) {
+    return timingResult;
+  }
+  return validateMediaItemStrings(item);
+};
+
 export type CollectionTimelineItemValidationResult =
-  | Readonly<{ valid: true }>
-  | Readonly<{ valid: false; reason: "non-finite-start-time" }>
-  | Readonly<{ valid: false; reason: "non-finite-duration" }>
-  | Readonly<{ valid: false; reason: "negative-start-time" }>
-  | Readonly<{ valid: false; reason: "negative-duration" }>
+  | TimelineItemTimingValidationResult
   | Readonly<{ valid: false; reason: "non-finite-item-count" }>
   | Readonly<{ valid: false; reason: "non-integer-item-count" }>
   | Readonly<{ valid: false; reason: "negative-item-count" }>;
@@ -115,11 +157,7 @@ export const validateCollectionTimelineItem = (
 // flat `reason: A | B | C` string) so that checking `reason === "..."` also
 // narrows any reason-specific fields, like `expectedDurationSeconds` below.
 export type VideoTimelineItemValidationResult =
-  | Readonly<{ valid: true }>
-  | Readonly<{ valid: false; reason: "non-finite-start-time" }>
-  | Readonly<{ valid: false; reason: "non-finite-duration" }>
-  | Readonly<{ valid: false; reason: "negative-start-time" }>
-  | Readonly<{ valid: false; reason: "negative-duration" }>
+  | MediaTimelineItemValidationResult
   | Readonly<{ valid: false; reason: "non-finite-source-duration" }>
   | Readonly<{ valid: false; reason: "non-finite-trim-in" }>
   | Readonly<{ valid: false; reason: "non-finite-trim-out" }>
@@ -156,6 +194,11 @@ export const validateVideoTimelineItem = (
   const timingResult = validateTimelineItemTiming(item);
   if (!timingResult.valid) {
     return timingResult;
+  }
+
+  const mediaStringsResult = validateMediaItemStrings(item);
+  if (!mediaStringsResult.valid) {
+    return mediaStringsResult;
   }
 
   if (!Number.isFinite(item.sourceDurationSeconds)) {
@@ -203,14 +246,20 @@ export const validateVideoTimelineItem = (
   return { valid: true };
 };
 
+export type TimelineItemValidationResult =
+  | TimelineItemTimingValidationResult
+  | MediaTimelineItemValidationResult
+  | CollectionTimelineItemValidationResult
+  | VideoTimelineItemValidationResult;
+
 /**
  * Validates any TimelineItem variant dynamically by dispatching to its
  * corresponding kind-specific validation logic.
  */
-export function validateTimelineItem(item: TimelineItem) {
+export function validateTimelineItem(item: TimelineItem): TimelineItemValidationResult {
   switch (item.kind) {
     case "image":
-      return validateTimelineItemTiming(item);
+      return validateImageTimelineItem(item);
 
     case "video":
       return validateVideoTimelineItem(item);
@@ -249,7 +298,7 @@ export type CreateVideoTimelineItemInput = Omit<
 
 export const createImageTimelineItem = (
   input: CreateImageTimelineItemInput
-): TimelineItemResult<ImageTimelineItem, TimelineItemTimingValidationFailure> => {
+): TimelineItemResult<ImageTimelineItem, MediaTimelineItemValidationFailure> => {
   const candidate: ImageTimelineItem = {
     ...input,
     startTimeSeconds: normalizeTinyNegativeSeconds(input.startTimeSeconds),
@@ -257,7 +306,7 @@ export const createImageTimelineItem = (
     kind: "image",
   };
 
-  const result = validateTimelineItemTiming(candidate);
+  const result = validateImageTimelineItem(candidate);
 
   return result.valid
     ? { ok: true, value: candidate }
@@ -347,7 +396,7 @@ export type VideoTimelineItemPatch = Partial<
 export const updateImageTimelineItem = (
   item: ImageTimelineItem,
   patch: ImageTimelineItemPatch
-): TimelineItemResult<ImageTimelineItem, TimelineItemTimingValidationFailure> =>
+): TimelineItemResult<ImageTimelineItem, MediaTimelineItemValidationFailure> =>
   createImageTimelineItem({ ...item, ...patch });
 
 export const updateCollectionTimelineItem = (
