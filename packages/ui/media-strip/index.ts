@@ -1,4 +1,7 @@
 export * from "./media-strip";
+export * from "./media-strip.validation";
+export * from "./media-strip.utils";
+
 export {
   asTimelineItemId,
   asCollectionId,
@@ -7,17 +10,6 @@ export {
   isMediaItem,
   isCollectionItem,
   assertNever,
-  getTimelineItemEndTimeSeconds,
-  getVideoVisibleDurationSeconds,
-  validateTimelineItemTiming,
-  validateCollectionTimelineItem,
-  validateVideoTimelineItem,
-  createImageTimelineItem,
-  createCollectionTimelineItem,
-  createVideoTimelineItem,
-  updateImageTimelineItem,
-  updateCollectionTimelineItem,
-  updateVideoTimelineItem,
   type TimelineItemId,
   type CollectionId,
   type ImageTimelineItem,
@@ -27,16 +19,4 @@ export {
   type TimelineItem,
   type TimelineItemKind,
   type TimelineItemResult,
-  type TimelineItemTimingValidationResult,
-  type TimelineItemTimingValidationFailure,
-  type CollectionTimelineItemValidationResult,
-  type CollectionTimelineItemValidationFailure,
-  type VideoTimelineItemValidationResult,
-  type VideoTimelineItemValidationFailure,
-  type CreateImageTimelineItemInput,
-  type CreateCollectionTimelineItemInput,
-  type CreateVideoTimelineItemInput,
-  type ImageTimelineItemPatch,
-  type CollectionTimelineItemPatch,
-  type VideoTimelineItemPatch,
 } from "./media-strip.types";
