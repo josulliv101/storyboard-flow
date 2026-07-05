@@ -15,8 +15,10 @@ import {
 const SCROLL_CLICK_SUPPRESSION_MS = 180;
 const DRAG_CLICK_THRESHOLD_PX = 4;
 
-export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElement | null>) {
+export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElement | null>, viewportContentRef: React.RefObject<HTMLDivElement | null>) {
   const didDragRef = useRef(false);
+  // Ref is used for synchronous reads inside high-frequency drag event handlers
+  // to avoid triggering component re-renders.
   const maxScrollLeftRef = useRef(0);
   const suppressClickUntilRef = useRef(0);
 
@@ -24,6 +26,8 @@ export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElem
   const dragX = useMotionValue(0);
   const shouldReduceMotion = useReducedMotion();
 
+  // State is used to feed Framer Motion's dragConstraints so the gesture engine
+  // clamps internal pointer offsets and avoids drag dead zones on reversal.
   const [maxScrollLeft, setMaxScrollLeft] = useState(0);
 
   const getViewport = useCallback(() => {
@@ -66,7 +70,7 @@ export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElem
 
     resizeObserver.observe(viewport);
 
-    const content = viewport.firstElementChild;
+    const content = viewportContentRef.current;
     if (content) {
       resizeObserver.observe(content);
     }
