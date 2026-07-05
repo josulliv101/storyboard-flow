@@ -1,10 +1,4 @@
 import {
-  useDragControls,
-  useMotionValue,
-  useMotionValueEvent,
-  useReducedMotion,
-} from "motion/react";
-import {
   useCallback,
   useEffect,
   useRef,
@@ -15,25 +9,33 @@ import {
 const SCROLL_CLICK_SUPPRESSION_MS = 180;
 const DRAG_CLICK_THRESHOLD_PX = 4;
 
-export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElement | null>, viewportContentRef: React.RefObject<HTMLDivElement | null>) {
+export function useHorizontalDragScroll(
+  viewportRef: React.RefObject<HTMLDivElement | null>,
+  viewportContentRef: React.RefObject<HTMLDivElement | null>
+) {
   const didDragRef = useRef(false);
-  // Ref is used for synchronous reads inside high-frequency drag event handlers
-  // to avoid triggering component re-renders.
   const maxScrollLeftRef = useRef(0);
   const suppressClickUntilRef = useRef(0);
 
-  const dragControls = useDragControls();
-  const dragX = useMotionValue(0);
-  const shouldReduceMotion = useReducedMotion();
+  // Inertia animation frame ref
+  const inertiaFrameRef = useRef<number | null>(null);
 
-  // State is used to feed Framer Motion's dragConstraints so the gesture engine
-  // clamps internal pointer offsets and avoids drag dead zones on reversal.
+  // State is used to feed any scroll layouts if needed
   const [maxScrollLeft, setMaxScrollLeft] = useState(0);
 
+  // Drag coordinates/velocity state ref to avoid component re-renders
+  const dragStateRef = useRef({
+    isDragging: false,
+    startX: 0,
+    startScrollLeft: 0,
+    lastX: 0,
+    lastTime: 0,
+    velocity: 0,
+    pointerId: -1,
+  });
+
   const getViewport = useCallback(() => {
-    return (
-      viewportRef.current
-    );
+    return viewportRef.current;
   }, [viewportRef]);
 
   const updateScrollBounds = useCallback(() => {
@@ -47,13 +49,13 @@ export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElem
 
     const nextMaxScrollLeft = Math.max(
       0,
-      viewport.scrollWidth - viewport.clientWidth,
+      viewport.scrollWidth - viewport.clientWidth
     );
 
     maxScrollLeftRef.current = nextMaxScrollLeft;
 
     setMaxScrollLeft((current) =>
-      current === nextMaxScrollLeft ? current : nextMaxScrollLeft,
+      current === nextMaxScrollLeft ? current : nextMaxScrollLeft
     );
 
     return nextMaxScrollLeft;
@@ -61,13 +63,11 @@ export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElem
 
   useEffect(() => {
     const viewport = getViewport();
-
     if (!viewport) return;
 
     updateScrollBounds();
 
     const resizeObserver = new ResizeObserver(updateScrollBounds);
-
     resizeObserver.observe(viewport);
 
     const content = viewportContentRef.current;
@@ -80,23 +80,45 @@ export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElem
     };
   }, [getViewport, updateScrollBounds]);
 
-  useMotionValueEvent(dragX, "change", (latestX) => {
-    const viewport = getViewport();
-
-    if (!viewport) return;
-
-    const clampedX = Math.min(
-      0,
-      Math.max(-maxScrollLeftRef.current, latestX),
-    );
-
-    if (clampedX !== latestX) {
-      dragX.set(clampedX);
-      return;
+  const stopInertia = useCallback(() => {
+    if (inertiaFrameRef.current !== null) {
+      cancelAnimationFrame(inertiaFrameRef.current);
+      inertiaFrameRef.current = null;
     }
+  }, []);
 
-    viewport.scrollLeft = -clampedX;
-  });
+  const runInertia = useCallback(() => {
+    const element = getViewport();
+    if (!element) return;
+
+    const step = () => {
+      const state = dragStateRef.current;
+      state.velocity *= 0.95; // Decay factor
+
+      if (Math.abs(state.velocity) < 0.1) {
+        inertiaFrameRef.current = null;
+        return;
+      }
+
+      const maxScroll = maxScrollLeftRef.current;
+      const nextScrollLeft = Math.max(
+        0,
+        Math.min(element.scrollLeft + state.velocity, maxScroll)
+      );
+
+      element.scrollLeft = nextScrollLeft;
+
+      if (nextScrollLeft === 0 || nextScrollLeft === maxScroll) {
+        state.velocity = 0;
+        inertiaFrameRef.current = null;
+        return;
+      }
+
+      inertiaFrameRef.current = requestAnimationFrame(step);
+    };
+
+    inertiaFrameRef.current = requestAnimationFrame(step);
+  }, [getViewport]);
 
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -118,25 +140,102 @@ export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElem
         return;
       }
 
+      // Stop any ongoing inertia scroll
+      stopInertia();
+
       didDragRef.current = false;
-      dragX.set(-viewport.scrollLeft);
-      dragControls.start(event, { snapToCursor: false });
+      const state = dragStateRef.current;
+      Object.assign(state, {
+        isDragging: true,
+        startX: event.clientX,
+        startScrollLeft: viewport.scrollLeft,
+        lastX: event.clientX,
+        lastTime: event.timeStamp,
+        velocity: 0,
+        pointerId: event.pointerId,
+      });
+
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {}
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== state.pointerId) return;
+
+        const deltaX = moveEvent.clientX - state.startX;
+        if (!didDragRef.current && Math.abs(deltaX) > DRAG_CLICK_THRESHOLD_PX) {
+          didDragRef.current = true;
+        }
+
+        const maxScroll = maxScrollLeftRef.current;
+        viewport.scrollLeft = Math.max(
+          0,
+          Math.min(state.startScrollLeft - deltaX, maxScroll)
+        );
+
+        const elapsed = moveEvent.timeStamp - state.lastTime;
+        if (elapsed > 0) {
+          const instantaneous =
+            (-(moveEvent.clientX - state.lastX) / elapsed) * 16.67;
+          state.velocity = 0.7 * instantaneous + 0.3 * state.velocity;
+        }
+
+        state.lastX = moveEvent.clientX;
+        state.lastTime = moveEvent.timeStamp;
+      };
+
+      const onPointerUp = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== state.pointerId) return;
+
+        state.isDragging = false;
+        try {
+          if (event.currentTarget.hasPointerCapture(upEvent.pointerId)) {
+            event.currentTarget.releasePointerCapture(upEvent.pointerId);
+          }
+        } catch {}
+
+        // Remove listeners
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerCancel);
+
+        // Click suppression if we dragged
+        if (didDragRef.current) {
+          suppressClickUntilRef.current =
+            performance.now() + SCROLL_CLICK_SUPPRESSION_MS;
+        }
+
+        // Run inertia
+        if (didDragRef.current && Math.abs(state.velocity) > 1) {
+          runInertia();
+        }
+
+        state.pointerId = -1;
+      };
+
+      const onPointerCancel = (cancelEvent: PointerEvent) => {
+        if (cancelEvent.pointerId !== state.pointerId) return;
+
+        state.isDragging = false;
+        try {
+          if (event.currentTarget.hasPointerCapture(cancelEvent.pointerId)) {
+            event.currentTarget.releasePointerCapture(cancelEvent.pointerId);
+          }
+        } catch {}
+
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerCancel);
+
+        state.pointerId = -1;
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerCancel);
     },
-    [dragControls, dragX, getViewport, updateScrollBounds],
+    [getViewport, updateScrollBounds, stopInertia, runInertia]
   );
-
-  const handleDrag = useCallback((offsetX: number) => {
-    if (Math.abs(offsetX) > DRAG_CLICK_THRESHOLD_PX) {
-      didDragRef.current = true;
-    }
-  }, []);
-
-  const handleDragEnd = useCallback(() => {
-    if (didDragRef.current) {
-      suppressClickUntilRef.current =
-        performance.now() + SCROLL_CLICK_SUPPRESSION_MS;
-    }
-  }, []);
 
   const handleClickCapture = useCallback((event: React.MouseEvent) => {
     if (performance.now() < suppressClickUntilRef.current) {
@@ -145,14 +244,18 @@ export function useHorizontalDragScroll(viewportRef: React.RefObject<HTMLDivElem
     }
   }, []);
 
+  // Clean up any pending animation frames on unmount
+  useEffect(() => {
+    return () => {
+      if (inertiaFrameRef.current !== null) {
+        cancelAnimationFrame(inertiaFrameRef.current);
+      }
+    };
+  }, []);
+
   return {
-    dragControls,
-    dragX,
     maxScrollLeft,
-    shouldReduceMotion,
     handlePointerDown,
     handleClickCapture,
-    handleDrag,
-    handleDragEnd,
   };
 }

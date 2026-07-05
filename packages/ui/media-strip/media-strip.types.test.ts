@@ -13,6 +13,7 @@ import {
   type CollectionId,
 } from "./media-strip.types";
 
+import {
   validateTimelineItemTiming,
   validateCollectionTimelineItem,
   validateVideoTimelineItem,
