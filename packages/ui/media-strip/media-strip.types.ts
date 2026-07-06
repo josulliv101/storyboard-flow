@@ -152,26 +152,54 @@ export type TimelineItemResult<T, E> =
   | Readonly<{ ok: true; value: T; readonly __itemResult?: never }>
   | Readonly<{ ok: false; error: E; readonly __itemResult?: never }>;
 
-/**
- * Represents a drag-and-drop or keyboard-triggered movement of a timeline item
- * from one media strip to another (or within the same strip).
- */
-export type MediaStripMove = {
-  /** The unique identifier of the timeline item being moved. */
+
+
+export type TimelineCollection = Readonly<{
+  id: CollectionId;
+  name: string;
+  items: readonly TimelineItem[];
+}>;
+
+export type TimelineCollectionsById = Readonly<Record<CollectionId, TimelineCollection>>;
+
+export type MediaStripView = Readonly<{
+  collectionId: CollectionId;
+  heading?: string;
+  emptyLabel?: string;
+}>;
+
+export type TimelineBoardView = Readonly<{
+  stripViews: readonly MediaStripView[];
+}>;
+
+export type TimelineItemMove = Readonly<{
   itemId: TimelineItemId;
-  /**
-   * The identifier of the source strip. This is a plain string because strip IDs
-   * are caller-supplied container keys (e.g., dictionary keys in the host application)
-   * rather than domain data managed/validated directly by this package.
-   */
-  fromStripId: string;
-  /**
-   * The identifier of the destination strip. Like `fromStripId`, this is a plain
-   * string representing a caller-supplied container key.
-   */
-  toStripId: string;
-  /** The 0-based index of the item within the source strip before the move. */
+  fromCollectionId: CollectionId;
+  toCollectionId: CollectionId;
   fromIndex: number;
-  /** The 0-based index of the item within the destination strip after the move. */
   toIndex: number;
-};
+}>;
+
+export type TimelineDropIntent =
+  | Readonly<{
+      type: "insert";
+      toCollectionId: CollectionId;
+      toIndex: number;
+    }>
+  | Readonly<{
+      type: "nest";
+      toCollectionId: CollectionId;
+      toIndex?: number;
+    }>;
+
+export type TimelineItemDrop = Readonly<{
+  itemId: TimelineItemId;
+  fromCollectionId: CollectionId;
+  fromIndex: number;
+  intent: TimelineDropIntent;
+}>;
+
+export type DndTarget =
+  | Readonly<{ type: "item"; itemId: TimelineItemId }>
+  | Readonly<{ type: "collection-container"; collectionId: CollectionId }>
+  | Readonly<{ type: "collection-nest-target"; collectionId: CollectionId }>;

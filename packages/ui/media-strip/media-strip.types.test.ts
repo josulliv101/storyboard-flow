@@ -11,6 +11,8 @@ import {
   type CollectionTimelineItem,
   type TimelineItemId,
   type CollectionId,
+  type TimelineCollection,
+  type TimelineItem,
 } from "./media-strip.types";
 
 import {
@@ -25,6 +27,9 @@ import {
   updateImageTimelineItem,
   updateCollectionTimelineItem,
   updateVideoTimelineItem,
+  validateTimelineCollection,
+  validateProjectTimeline,
+  wouldCreateCollectionCycle,
 } from "./media-strip.validation";
 
 import {
@@ -35,6 +40,11 @@ import {
   areEqual,
   MIN_ITEM_WIDTH_PX,
   DRAG_ACTIVATION_THRESHOLDS_PX,
+  encodeDndTarget,
+  decodeDndTarget,
+  syncCollectionItemCounts,
+  moveTimelineItem,
+  applyTimelineItemMoveOrDrop,
 } from "./media-strip.utils";
 
 describe("Timeline Items Branding", () => {
@@ -1004,7 +1014,7 @@ describe("areEqual additional comparator tests", () => {
     items,
     isKeyboardReordering: false,
     thumbnailVariant: "sequence" as const,
-    stripId: "strip-1",
+    collectionId: "strip-1" as CollectionId,
     onMoveItem: () => {},
     style: {
       width: "100px",
@@ -1020,9 +1030,9 @@ describe("areEqual additional comparator tests", () => {
     expect(areEqual(prev, next)).toBe(false);
   });
 
-  test("returns false when stripId changes", () => {
-    const prev = { ...baseProps, stripId: "strip-1" };
-    const next = { ...baseProps, stripId: "strip-2" };
+  test("returns false when collectionId changes", () => {
+    const prev = { ...baseProps, collectionId: "strip-1" as CollectionId };
+    const next = { ...baseProps, collectionId: "strip-2" as CollectionId };
     expect(areEqual(prev, next)).toBe(false);
   });
 
@@ -1036,5 +1046,192 @@ describe("areEqual additional comparator tests", () => {
     const prev = { ...baseProps, items: [itemA] };
     const next = { ...baseProps, items: [itemA] };
     expect(areEqual(prev, next)).toBe(false);
+  });
+});
+
+describe("Deeply Nested Collections Dnd Target encoding/decoding", () => {
+  test("correctly encodes and decodes DndTargets", () => {
+    const itemTarget = { type: "item" as const, itemId: "item-1" as TimelineItemId };
+    const containerTarget = { type: "collection-container" as const, collectionId: "col-1" as CollectionId };
+    const nestTarget = { type: "collection-nest-target" as const, collectionId: "col-2" as CollectionId };
+
+    const encodedItem = encodeDndTarget(itemTarget);
+    const encodedContainer = encodeDndTarget(containerTarget);
+    const encodedNest = encodeDndTarget(nestTarget);
+
+    expect(encodedItem).toBe("item:item-1");
+    expect(encodedContainer).toBe("container:col-1");
+    expect(encodedNest).toBe("nest:col-2");
+
+    expect(decodeDndTarget(encodedItem)).toEqual(itemTarget);
+    expect(decodeDndTarget(encodedContainer)).toEqual(containerTarget);
+    expect(decodeDndTarget(encodedNest)).toEqual(nestTarget);
+    expect(decodeDndTarget("invalid-prefix:something")).toBeNull();
+  });
+});
+
+describe("Cycle Detection for Nested Collections", () => {
+  const colA: TimelineCollection = {
+    id: "col-a" as CollectionId,
+    name: "Collection A",
+    items: [
+      {
+        id: "item-a" as TimelineItemId,
+        name: "Pointer to B",
+        kind: "collection",
+        collectionId: "col-b" as CollectionId,
+        itemCount: 0,
+        startTimeSeconds: 0,
+        durationSeconds: 10,
+      },
+    ],
+  };
+
+  const colB: TimelineCollection = {
+    id: "col-b" as CollectionId,
+    name: "Collection B",
+    items: [],
+  };
+
+  const collections: Record<CollectionId, TimelineCollection> = {
+    ["col-a" as CollectionId]: colA,
+    ["col-b" as CollectionId]: colB,
+  };
+
+  test("detects when nesting creates a cycle", () => {
+    expect(
+      wouldCreateCollectionCycle({
+        movingCollectionId: "col-a" as CollectionId,
+        targetCollectionId: "col-b" as CollectionId,
+        collectionsById: collections,
+      })
+    ).toBe(true);
+
+    expect(
+      wouldCreateCollectionCycle({
+        movingCollectionId: "col-b" as CollectionId,
+        targetCollectionId: "col-a" as CollectionId,
+        collectionsById: collections,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("Collection and Project Validation", () => {
+  test("validates a collection correctly", () => {
+    const validCol: TimelineCollection = {
+      id: "col-1" as CollectionId,
+      name: "Valid Collection",
+      items: [
+        {
+          id: "item-1" as TimelineItemId,
+          name: "Image Item",
+          kind: "image",
+          src: "image.jpg",
+          startTimeSeconds: 0,
+          durationSeconds: 10,
+        },
+      ],
+    };
+    expect(validateTimelineCollection(validCol).valid).toBe(true);
+
+    const invalidCol: TimelineCollection = {
+      id: "" as CollectionId,
+      name: "",
+      items: [],
+    };
+    expect(validateTimelineCollection(invalidCol).valid).toBe(false);
+  });
+
+  test("validates a project timeline correctly", () => {
+    const colA: TimelineCollection = {
+      id: "col-a" as CollectionId,
+      name: "A",
+      items: [
+        {
+          id: "item-b" as TimelineItemId,
+          name: "B Card",
+          kind: "collection",
+          collectionId: "col-b" as CollectionId,
+          itemCount: 0,
+          startTimeSeconds: 0,
+          durationSeconds: 5,
+        },
+      ],
+    };
+
+    const colB: TimelineCollection = {
+      id: "col-b" as CollectionId,
+      name: "B",
+      items: [
+        {
+          id: "item-a" as TimelineItemId,
+          name: "A Card (Cycle)",
+          kind: "collection",
+          collectionId: "col-a" as CollectionId,
+          itemCount: 0,
+          startTimeSeconds: 0,
+          durationSeconds: 5,
+        },
+      ],
+    };
+
+    const collections = {
+      ["col-a" as CollectionId]: colA,
+      ["col-b" as CollectionId]: colB,
+    };
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: ["col-a" as CollectionId],
+    });
+
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.reason).toBe("collection-cycle");
+    }
+  });
+});
+
+describe("Collection Move and Count synchronization", () => {
+  test("moves item and synchronizes counts correctly", () => {
+    const item1 = {
+      id: "item-1" as TimelineItemId,
+      name: "Image 1",
+      kind: "image" as const,
+      src: "image1.jpg",
+      startTimeSeconds: 0,
+      durationSeconds: 10,
+    };
+    const colA: TimelineCollection = {
+      id: "col-a" as CollectionId,
+      name: "Col A",
+      items: [item1],
+    };
+    const colB: TimelineCollection = {
+      id: "col-b" as CollectionId,
+      name: "Col B",
+      items: [],
+    };
+
+    const collections = {
+      ["col-a" as CollectionId]: colA,
+      ["col-b" as CollectionId]: colB,
+    };
+
+    const result = moveTimelineItem({
+      collectionsById: collections,
+      move: {
+        itemId: "item-1" as TimelineItemId,
+        fromCollectionId: "col-a" as CollectionId,
+        toCollectionId: "col-b" as CollectionId,
+        fromIndex: 0,
+        toIndex: 0,
+      },
+    });
+
+    expect(result["col-a" as CollectionId].items.length).toBe(0);
+    expect(result["col-b" as CollectionId].items.length).toBe(1);
+    expect(result["col-b" as CollectionId].items[0].id).toBe("item-1");
   });
 });

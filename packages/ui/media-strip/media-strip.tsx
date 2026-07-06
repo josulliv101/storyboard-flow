@@ -33,11 +33,17 @@ import { cn } from "../lib/utils";
 
 import { DraggableScrollArea } from "./draggable-scroll-area";
 import { MediaStripItemButton } from "./media-strip-item";
-import { getItemWidth, TOGGLE_GROUP_PADDING_PX } from "./media-strip.utils";
+import { getItemWidth, TOGGLE_GROUP_PADDING_PX, encodeDndTarget } from "./media-strip.utils";
 import { useMediaStripBoard } from "./media-strip-board";
 import { useScrollToAndFocus } from "./use-scroll-to-and-focus";
 import { useMediaStripKeyboardNav } from "./use-media-strip-keyboard-nav";
-import { MediaStripMove, TimelineItem, TimelineItemId } from "./media-strip.types";
+import {
+  type TimelineItem,
+  type TimelineItemId,
+  type CollectionId,
+  type TimelineItemMove,
+  type TimelineItemDrop,
+} from "./media-strip.types";
 
 export type MediaStripSelection = {
   selectedIds: TimelineItemId[];
@@ -48,15 +54,15 @@ export type MediaStripProps = Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   actionLabel?: string;
   emptyLabel?: string;
   heading?: string;
-  items: TimelineItem[];
+  collectionId?: CollectionId;
+  items: readonly TimelineItem[];
   onAction?: () => void;
   onSelectionChange: (selection: MediaStripSelection) => void;
   pxPerSecond?: number;
   itemGap?: number;
-  selectedIds: TimelineItemId[];
+  selectedIds: readonly TimelineItemId[];
   thumbnailVariant?: "single" | "sequence";
-  stripId?: string;
-  onMoveItem?: (details: MediaStripMove) => void;
+  onMoveItem?: (details: TimelineItemMove | TimelineItemDrop) => void;
 };
 
 export const MediaStrip = memo(
@@ -65,6 +71,7 @@ export const MediaStrip = memo(
     className,
     emptyLabel = "No media items yet.",
     heading = "Media strip",
+    collectionId,
     items,
     onAction,
     onSelectionChange,
@@ -72,7 +79,6 @@ export const MediaStrip = memo(
     itemGap = 12,
     selectedIds,
     thumbnailVariant = "sequence",
-    stripId,
     onMoveItem,
     ...props
   }: MediaStripProps) {
@@ -80,27 +86,23 @@ export const MediaStrip = memo(
     const viewportRef = useRef<HTMLDivElement>(null);
     const viewportContentRef = useRef<HTMLDivElement>(null);
 
-    const defaultStripId = useId();
-    const activeStripId = stripId ?? defaultStripId;
+    const defaultCollectionId = useId() as CollectionId;
+    const activeCollectionId = collectionId ?? defaultCollectionId;
 
     // Integrate with the shared board Dnd Context
-    const { activeKeyboardReorderId, registerStrip, unregisterStrip } = useMediaStripBoard();
+    const { activeKeyboardReorderId, registerCollection, unregisterCollection } = useMediaStripBoard();
 
-    // Register this strip's ID within the board-scoped registry
+    // Register this collection ID within the board-scoped registry
     useEffect(() => {
-      registerStrip(activeStripId);
+      registerCollection(activeCollectionId);
       return () => {
-        unregisterStrip(activeStripId);
+        unregisterCollection(activeCollectionId);
       };
-    }, [activeStripId, registerStrip, unregisterStrip]);
+    }, [activeCollectionId, registerCollection, unregisterCollection]);
 
     // Register this strip as a droppable zone.
-    // Note: If the list transitions between empty and populated during an active drag-and-drop
-    // gesture, the droppable ref swaps from the empty state placeholder div to the ToggleGroup container.
-    // dnd-kit's registry handles this node ref swap dynamically and safely during gestures,
-    // maintaining coordinate tracking without requiring manual gesture restarts.
     const { setNodeRef: setDroppableRef, isOver } = useDroppable({
-      id: activeStripId,
+      id: `container:${activeCollectionId}`,
     });
 
     // Combine local scroll content ref with Dnd Kit droppable ref
@@ -163,7 +165,6 @@ export const MediaStrip = memo(
     const scrollToAndFocus = useScrollToAndFocus(viewportRef, rowVirtualizer);
 
     // Monitor the index of the active keyboard reorder item within this strip's items.
-    // If it moves (either locally or entering from another strip), ensure it is scrolled into view and focused.
     const keyboardReorderIndex = useMemo(() => {
       if (!activeKeyboardReorderId) return -1;
       return items.findIndex((item) => item.id === activeKeyboardReorderId);
@@ -181,8 +182,10 @@ export const MediaStrip = memo(
       scrollToAndFocus
     );
 
-    // Memoize sortable items list to prevent unnecessary garbage collection and areEqual loops
-    const sortableItemIds = useMemo(() => items.map((item) => item.id), [items]);
+    // Memoize sortable items list using the encoded DnD targets format
+    const sortableItemIds = useMemo(() => {
+      return items.map((item) => encodeDndTarget({ type: "item", itemId: item.id }));
+    }, [items]);
 
     return (
       <Card
@@ -190,10 +193,9 @@ export const MediaStrip = memo(
         role="region"
         size="sm"
         className={cn("min-w-0 w-full", className)}
-        data-testid={`media-strip-${activeStripId}`}
-        data-strip-id={activeStripId}
-        // {...props} is safe to spread here because packages/ui/core/card.tsx's Card component
-        // explicitly forwards all unknown props to its root <div> element.
+        data-testid={`media-strip-${activeCollectionId}`}
+        data-strip-id={activeCollectionId}
+        data-collection-id={activeCollectionId}
         {...props}
       >
         <CardHeader>
@@ -228,7 +230,7 @@ export const MediaStrip = memo(
               label={`${heading} items`}
               viewportRef={viewportRef}
               viewportContentRef={viewportContentRef}
-              testId={`media-strip-drag-scroll-${activeStripId}`}
+              testId={`media-strip-drag-scroll-${activeCollectionId}`}
             >
               <ToggleGroup
                 multiple
@@ -247,7 +249,7 @@ export const MediaStrip = memo(
                   items={sortableItemIds}
                   strategy={horizontalListSortingStrategy}
                 >
-                  <LayoutGroup id={activeStripId}>
+                  <LayoutGroup id={activeCollectionId}>
                     {rowVirtualizer.getVirtualItems().map((virtualItem) => {
                       const item = items[virtualItem.index];
                       const baseWidth = itemWidths[virtualItem.index];
@@ -257,7 +259,7 @@ export const MediaStrip = memo(
                           key={String(item.id)}
                           item={item}
                           thumbnailVariant={thumbnailVariant}
-                          stripId={activeStripId}
+                          collectionId={activeCollectionId}
                           onMoveItem={onMoveItem}
                           items={items}
                           isKeyboardReordering={isKeyboardReordering}

@@ -14,23 +14,42 @@ import {
   type DragOverEvent,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { type TimelineItem, type TimelineItemId, asTimelineItemId, type MediaStripMove } from "./media-strip.types";
-import { formatDuration, TOGGLE_GROUP_PADDING_PX, DRAG_ACTIVATION_THRESHOLDS_PX } from "./media-strip.utils";
+import {
+  type TimelineItem,
+  type TimelineItemId,
+  type CollectionId,
+  type TimelineCollection,
+  type TimelineItemMove,
+  type TimelineItemDrop,
+  type TimelineDropIntent,
+  isCollectionItem,
+} from "./media-strip.types";
+import {
+  formatDuration,
+  TOGGLE_GROUP_PADDING_PX,
+  DRAG_ACTIVATION_THRESHOLDS_PX,
+  decodeDndTarget,
+  DATA_VALUE_ATTR,
+  VALUE_ATTR,
+} from "./media-strip.utils";
+import { wouldCreateCollectionCycle } from "./media-strip.validation";
 import { MediaStripThumbnail } from "./media-strip-thumbnail";
 
 type MediaStripBoardContextType = {
   activeDragId: TimelineItemId | null;
-  activeDragSourceStripId: string | null;
+  activeDragSourceCollectionId: CollectionId | null;
   activeKeyboardReorderId: TimelineItemId | null;
-  startKeyboardReorder: (itemId: TimelineItemId, stripId: string, index: number) => void;
+  activeNestTargetId: CollectionId | null;
+  startKeyboardReorder: (itemId: TimelineItemId, collectionId: CollectionId, index: number) => void;
   cancelKeyboardReorder: () => void;
   confirmKeyboardReorder: () => void;
   announce: (message: string) => void;
-  itemsByStripId: Record<string, TimelineItem[]>;
-  registerStrip: (stripId: string) => void;
-  unregisterStrip: (stripId: string) => void;
-  getAdjacentStripId: (currentStripId: string, direction: "up" | "down") => string | null;
-  moveItem: (itemId: TimelineItemId, toStripId: string, toIndex: number) => void;
+  collectionsById: Readonly<Record<CollectionId, TimelineCollection>>;
+  registerCollection: (collectionId: CollectionId) => void;
+  unregisterCollection: (collectionId: CollectionId) => void;
+  getAdjacentCollectionId: (currentCollectionId: CollectionId, direction: "up" | "down") => CollectionId | null;
+  moveItem: (itemId: TimelineItemId, toCollectionId: CollectionId, toIndex: number) => void;
+  nestItem: (itemId: TimelineItemId, targetCollectionId: CollectionId) => void;
 };
 
 export const MediaStripBoardContext = createContext<MediaStripBoardContextType | null>(null);
@@ -43,143 +62,96 @@ export function useMediaStripBoard() {
   return context;
 }
 
-export function MediaStripBoard({
-  children,
-  itemsByStripId,
-  onMoveItem,
-}: {
-  children: React.ReactNode;
-  itemsByStripId: Record<string, TimelineItem[]>;
-  onMoveItem?: (move: MediaStripMove) => void;
-}) {
+function useBoardRegistry() {
+  const [registeredCollections, setRegisteredCollections] = useState<CollectionId[]>([]);
+
+  const registerCollection = useCallback((collectionId: CollectionId) => {
+    setRegisteredCollections((prev) => (prev.includes(collectionId) ? prev : [...prev, collectionId]));
+  }, []);
+
+  const unregisterCollection = useCallback((collectionId: CollectionId) => {
+    setRegisteredCollections((prev) => prev.filter((id) => id !== collectionId));
+  }, []);
+
+  return {
+    registeredCollections,
+    registerCollection,
+    unregisterCollection,
+  };
+}
+
+function useBoardDragState() {
   const [activeDragId, setActiveDragId] = useState<TimelineItemId | null>(null);
-  const [activeDragSourceStripId, setActiveDragSourceStripId] = useState<string | null>(null);
-  const [activeKeyboardReorderId, setActiveKeyboardReorderId] = useState<TimelineItemId | null>(null);
+  const [activeDragSourceCollectionId, setActiveDragSourceCollectionId] = useState<CollectionId | null>(null);
+  const [activeNestTargetId, setActiveNestTargetId] = useState<CollectionId | null>(null);
   const [activeDragWidth, setActiveDragWidth] = useState<number>(160);
-  const [announcement, setAnnouncement] = useState<string>("");
 
-  // Registry for child media strips (maintained for backwards compatibility, but not relied on for visual ordering)
-  const [registeredStrips, setRegisteredStrips] = useState<string[]>([]);
+  return {
+    activeDragId,
+    setActiveDragId,
+    activeDragSourceCollectionId,
+    setActiveDragSourceCollectionId,
+    activeNestTargetId,
+    setActiveNestTargetId,
+    activeDragWidth,
+    setActiveDragWidth,
+  };
+}
 
-  // Container ref to scope DOM queries and support multiple boards on the same page
-  const containerRef = useRef<HTMLDivElement>(null);
+function useDropIntent({
+  collectionsByIdResolved,
+  itemLookup,
+}: {
+  collectionsByIdResolved: Readonly<Record<CollectionId, TimelineCollection>>;
+  itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
+}) {
+  const resolveDropIntent = useCallback(
+    (overId: UniqueIdentifier, activeId: UniqueIdentifier): TimelineDropIntent | null => {
+      const decoded = decodeDndTarget(String(overId));
+      if (!decoded) return null;
 
-  // Keyboard reorder initial position session state
-  const initialPositionRef = useRef<{ stripId: string; index: number } | null>(null);
-
-  // Ref to track last processed move to prevent redundant state update calls during fast drag
-  const lastMoveRef = useRef<{ itemId: TimelineItemId; toStripId: string; toIndex: number } | null>(null);
-
-  // Suppress collision re-detection immediately after a cross-container move commits.
-  const recentlyMovedToNewContainer = useRef(false);
-  const lastOverIdRef = useRef<UniqueIdentifier | null>(null);
-
-  useEffect(() => {
-    // True for one render cycle right after a cross-container move commits.
-    // Prevents collisionDetection from re-resolving against DOM that hasn't
-    // finished reflowing yet, which otherwise oscillates the target index
-    // forever and blows React's update-depth guard.
-    requestAnimationFrame(() => {
-      recentlyMovedToNewContainer.current = false;
-    });
-  }, [itemsByStripId]);
-
-  const collisionDetectionStrategy = useCallback<CollisionDetection>((args) => {
-    if (recentlyMovedToNewContainer.current && lastOverIdRef.current != null) {
-      return [{ id: lastOverIdRef.current }];
-    }
-    return closestCenter(args);
-  }, []);
-
-  // O(1) Lookup index map to prevent performance-killing linear scans during fast drags
-  const itemLookup = useMemo(() => {
-    const lookup = new Map<TimelineItemId, { stripId: string; index: number; item: TimelineItem }>();
-    for (const [stripId, list] of Object.entries(itemsByStripId)) {
-      list.forEach((item, index) => {
-        lookup.set(item.id, { stripId, index, item });
-      });
-    }
-    return lookup;
-  }, [itemsByStripId]);
-
-  const activeDragItem = useMemo(() => {
-    if (!activeDragId) return null;
-    return itemLookup.get(activeDragId)?.item ?? null;
-  }, [activeDragId, itemLookup]);
-
-  const registerStrip = useCallback((stripId: string) => {
-    setRegisteredStrips((prev) => (prev.includes(stripId) ? prev : [...prev, stripId]));
-  }, []);
-
-  const unregisterStrip = useCallback((stripId: string) => {
-    setRegisteredStrips((prev) => prev.filter((id) => id !== stripId));
-  }, []);
-
-  // Shared moveItem function is the single source of truth for both pointer and keyboard reorders
-  const moveItem = useCallback((itemId: TimelineItemId, toStripId: string, toIndex: number) => {
-    const foundSource = itemLookup.get(itemId);
-    if (!foundSource) return;
-
-    if (onMoveItem) {
-      onMoveItem({
-        itemId,
-        fromStripId: foundSource.stripId,
-        toStripId,
-        fromIndex: foundSource.index,
-        toIndex,
-      });
-    }
-  }, [itemLookup, onMoveItem]);
-
-  const getAdjacentStripId = useCallback(
-    (currentStripId: string, direction: "up" | "down"): string | null => {
-      const container = containerRef.current;
-      if (!container) return null;
-      // Query all rendered strip elements in the DOM scoped to this board container to establish visual order.
-      // This avoids relying on React effect-mount registration order, which may not match DOM order.
-      const stripEls = Array.from(container.querySelectorAll("[data-strip-id]"));
-      if (stripEls.length === 0) return null;
-
-      stripEls.sort((a, b) => {
-        const compare = a.compareDocumentPosition(b);
-        if (compare & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-        if (compare & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-        return 0;
-      });
-
-      const stripIds = stripEls
-        .map((el) => el.getAttribute("data-strip-id"))
-        .filter((id): id is string => !!id);
-
-      const idx = stripIds.indexOf(currentStripId);
-      if (idx === -1) return null;
-
-      const targetIdx = direction === "down" ? idx + 1 : idx - 1;
-      if (targetIdx >= 0 && targetIdx < stripIds.length) {
-        return stripIds[targetIdx];
+      if (decoded.type === "collection-container") {
+        return {
+          type: "insert",
+          toCollectionId: decoded.collectionId,
+          toIndex: collectionsByIdResolved[decoded.collectionId]?.items.length ?? 0,
+        };
       }
+
+      if (decoded.type === "item") {
+        const foundTarget = itemLookup.get(decoded.itemId);
+        if (foundTarget) {
+          return {
+            type: "insert",
+            toCollectionId: foundTarget.collectionId,
+            toIndex: foundTarget.index,
+          };
+        }
+      }
+
       return null;
     },
-    []
+    [collectionsByIdResolved, itemLookup]
   );
 
-  const announce = useCallback((message: string) => {
-    setAnnouncement((prev) => {
-      // Append a zero-width space if the message is identical to force a DOM diff
-      // that screen readers will notice and announce.
-      if (prev === message) {
-        return message + "\u200B";
-      }
-      if (prev === message + "\u200B") {
-        return message;
-      }
-      return message;
-    });
-  }, []);
+  return { resolveDropIntent };
+}
 
-  const startKeyboardReorder = useCallback((itemId: TimelineItemId, stripId: string, index: number) => {
+function useKeyboardReorderSession({
+  itemLookup,
+  moveItem,
+  announce,
+}: {
+  itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
+  moveItem: (itemId: TimelineItemId, toCollectionId: CollectionId, toIndex: number) => void;
+  announce: (message: string) => void;
+}) {
+  const [activeKeyboardReorderId, setActiveKeyboardReorderId] = useState<TimelineItemId | null>(null);
+  const initialPositionRef = useRef<{ collectionId: CollectionId; index: number } | null>(null);
+
+  const startKeyboardReorder = useCallback((itemId: TimelineItemId, collectionId: CollectionId, index: number) => {
     setActiveKeyboardReorderId(itemId);
-    initialPositionRef.current = { stripId, index };
+    initialPositionRef.current = { collectionId, index };
   }, []);
 
   const cancelKeyboardReorder = useCallback(() => {
@@ -187,13 +159,12 @@ export function MediaStripBoard({
     const orig = initialPositionRef.current;
 
     if (itemId && orig) {
-      // O(1) Current position lookup
       const current = itemLookup.get(itemId);
       if (current) {
-        if (current.stripId !== orig.stripId || current.index !== orig.index) {
-          moveItem(itemId, orig.stripId, orig.index);
+        if (current.collectionId !== orig.collectionId || current.index !== orig.index) {
+          moveItem(itemId, orig.collectionId, orig.index);
         }
-        announce(`Dropped "${current.item.name}" at position ${orig.index + 1}.`);
+        announce(`Reorder cancelled. Reverted "${current.item.name}" to position ${orig.index + 1}.`);
       }
     }
 
@@ -206,173 +177,459 @@ export function MediaStripBoard({
     initialPositionRef.current = null;
   }, []);
 
+  return {
+    activeKeyboardReorderId,
+    startKeyboardReorder,
+    cancelKeyboardReorder,
+    confirmKeyboardReorder,
+  };
+}
+
+export function MediaStripBoard({
+  children,
+  collectionsById,
+  visibleCollectionIds,
+  onMoveItem,
+}: {
+  children: React.ReactNode;
+  collectionsById?: Readonly<Record<CollectionId, TimelineCollection>>;
+  visibleCollectionIds?: readonly CollectionId[];
+  onMoveItem?: (move: TimelineItemMove | TimelineItemDrop) => void;
+}) {
+  const [announcement, setAnnouncement] = useState<string>("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Refs for tracking drag move & collision suppression
+  const lastMoveRef = useRef<{ itemId: TimelineItemId; toCollectionId: CollectionId; toIndex: number } | null>(null);
+  const activeNestTargetRef = useRef<CollectionId | null>(null);
+  const recentlyMovedToNewContainer = useRef(false);
+  const lastOverIdRef = useRef<UniqueIdentifier | null>(null);
+
+  // 1. Board Registry
+  const { registeredCollections, registerCollection, unregisterCollection } = useBoardRegistry();
+
+  // 2. Drag State Management
+  const {
+    activeDragId,
+    setActiveDragId,
+    activeDragSourceCollectionId,
+    setActiveDragSourceCollectionId,
+    activeNestTargetId,
+    setActiveNestTargetId,
+    activeDragWidth,
+    setActiveDragWidth,
+  } = useBoardDragState();
+
+  const collectionsByIdResolved = useMemo(
+    () => collectionsById ?? {},
+    [collectionsById]
+  );
+
+  const visibleCollectionIdsResolved = useMemo(
+    () => visibleCollectionIds ?? [],
+    [visibleCollectionIds]
+  );
+
+  const activeCollectionIds = useMemo(() => {
+    const ids = new Set<CollectionId>();
+    if (visibleCollectionIdsResolved) {
+      visibleCollectionIdsResolved.forEach((id) => ids.add(id));
+    }
+    registeredCollections.forEach((id) => ids.add(id));
+    return ids;
+  }, [visibleCollectionIdsResolved, registeredCollections]);
+
+  // Lookup map to support O(1) index searches
+  const itemLookup = useMemo(() => {
+    const lookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>();
+    for (const collectionId of activeCollectionIds) {
+      const col = collectionsByIdResolved[collectionId];
+      if (col && Array.isArray(col.items)) {
+        col.items.forEach((item, index) => {
+          lookup.set(item.id, { collectionId, index, item });
+        });
+      }
+    }
+    return lookup;
+  }, [collectionsByIdResolved, activeCollectionIds]);
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      recentlyMovedToNewContainer.current = false;
+    });
+  }, [collectionsByIdResolved]);
+
+  const announce = useCallback((message: string) => {
+    setAnnouncement((prev) => {
+      if (prev === message) {
+        return message + "\u200B";
+      }
+      if (prev === message + "\u200B") {
+        return message;
+      }
+      return message;
+    });
+  }, []);
+
+  // 3. Move and Nest Callbacks
+  const moveItem = useCallback((itemId: TimelineItemId, toCollectionId: CollectionId, toIndex: number) => {
+    const foundSource = itemLookup.get(itemId);
+    if (!foundSource) return;
+
+    if (isCollectionItem(foundSource.item)) {
+      if (wouldCreateCollectionCycle({
+        movingCollectionId: foundSource.item.collectionId,
+        targetCollectionId: toCollectionId,
+        collectionsById: collectionsByIdResolved,
+      })) {
+        announce("Cannot move a collection into itself or one of its nested collections.");
+        return;
+      }
+    }
+
+    if (onMoveItem) {
+      onMoveItem({
+        itemId,
+        fromCollectionId: foundSource.collectionId,
+        toCollectionId,
+        fromIndex: foundSource.index,
+        toIndex,
+      });
+    }
+  }, [itemLookup, onMoveItem, collectionsByIdResolved, announce]);
+
+  const nestItem = useCallback((itemId: TimelineItemId, targetCollectionId: CollectionId) => {
+    const foundSource = itemLookup.get(itemId);
+    if (!foundSource) return;
+
+    if (isCollectionItem(foundSource.item)) {
+      if (wouldCreateCollectionCycle({
+        movingCollectionId: foundSource.item.collectionId,
+        targetCollectionId,
+        collectionsById: collectionsByIdResolved,
+      })) {
+        announce("Cannot move a collection into itself or one of its nested collections.");
+        return;
+      }
+    }
+
+    if (onMoveItem) {
+      onMoveItem({
+        itemId,
+        fromCollectionId: foundSource.collectionId,
+        fromIndex: foundSource.index,
+        intent: {
+          type: "nest",
+          toCollectionId: targetCollectionId,
+        },
+      });
+    }
+  }, [itemLookup, onMoveItem, collectionsByIdResolved, announce]);
+
+  // 4. Keyboard Reorder Session Management
+  const {
+    activeKeyboardReorderId,
+    startKeyboardReorder,
+    cancelKeyboardReorder,
+    confirmKeyboardReorder,
+  } = useKeyboardReorderSession({ itemLookup, moveItem, announce });
+
+  // 5. Drop Intent Resolution
+  const { resolveDropIntent } = useDropIntent({ collectionsByIdResolved, itemLookup });
+
+  const collisionDetectionStrategy = useCallback<CollisionDetection>((args) => {
+    if (recentlyMovedToNewContainer.current && lastOverIdRef.current != null) {
+      return [{ id: lastOverIdRef.current }];
+    }
+
+    const itemContainers = args.droppableContainers.filter(
+      (c) => decodeDndTarget(String(c.id))?.type === "item" && c.id !== args.active.id
+    );
+    const containerBackgrounds = args.droppableContainers.filter(
+      (c) => decodeDndTarget(String(c.id))?.type === "collection-container"
+    );
+
+    let intersections = closestCenter({
+      ...args,
+      droppableContainers: itemContainers,
+    });
+
+    if (intersections.length === 0) {
+      intersections = closestCenter({
+        ...args,
+        droppableContainers: containerBackgrounds,
+      });
+    }
+
+    activeNestTargetRef.current = null;
+    if (intersections.length > 0 && args.pointerCoordinates) {
+      const primaryCollision = intersections[0];
+      const decoded = decodeDndTarget(String(primaryCollision.id));
+      if (decoded && decoded.type === "item") {
+        const found = itemLookup.get(decoded.itemId);
+        if (found && found.item.kind === "collection") {
+          const container = args.droppableContainers.find(c => c.id === primaryCollision.id);
+          const rect = container?.rect.current;
+          if (rect) {
+            const width = rect.width;
+            const height = rect.height;
+            const hotspotLeft = rect.left + width * 0.2;
+            const hotspotRight = rect.left + width * 0.8;
+            const hotspotTop = rect.top + height * 0.2;
+            const hotspotBottom = rect.top + height * 0.8;
+
+            const px = args.pointerCoordinates.x;
+            const py = args.pointerCoordinates.y;
+
+            if (px >= hotspotLeft && px <= hotspotRight && py >= hotspotTop && py <= hotspotBottom) {
+              const activeDecoded = decodeDndTarget(String(args.active.id));
+              const activeItemId = activeDecoded?.type === "item" ? activeDecoded.itemId : args.active.id;
+              if (activeItemId !== found.item.id) {
+                activeNestTargetRef.current = found.item.collectionId;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return intersections;
+  }, [itemLookup]);
+
+  const activeDragItem = useMemo(() => {
+    if (!activeDragId) return null;
+    return itemLookup.get(activeDragId)?.item ?? null;
+  }, [activeDragId, itemLookup]);
+
+  const getAdjacentCollectionId = useCallback(
+    (currentCollectionId: CollectionId, direction: "up" | "down"): CollectionId | null => {
+      const container = containerRef.current;
+      if (!container) return null;
+
+      const colEls = Array.from(container.querySelectorAll("[data-collection-id]"));
+      if (colEls.length === 0) return null;
+
+      colEls.sort((a, b) => {
+        const compare = a.compareDocumentPosition(b);
+        if (compare & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+        if (compare & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+        return 0;
+      });
+
+      const colIds = colEls
+        .map((el) => el.getAttribute("data-collection-id"))
+        .filter((id): id is string => !!id) as CollectionId[];
+
+      const idx = colIds.indexOf(currentCollectionId);
+      if (idx === -1) return null;
+
+      const targetIdx = direction === "down" ? idx + 1 : idx - 1;
+      if (targetIdx >= 0 && targetIdx < colIds.length) {
+        return colIds[targetIdx];
+      }
+      return null;
+    },
+    []
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        // Drag distance threshold in pixels before initiating item drag.
-        // Cross-referenced with DRAG_ACTIVATION_THRESHOLDS_PX.scroll in use-horizontal-drag-scroll.ts.
-        // Slightly higher to give priority to click selections and prevent accidental reorders.
         distance: DRAG_ACTIVATION_THRESHOLDS_PX.board,
       },
     })
   );
 
-  // Helper to resolve drop target strip ID and index from dnd-kit `over.id`
-  const resolveDropTarget = useCallback(
-    (overId: string | number): { stripId: string; index: number } | null => {
-      if (overId in itemsByStripId) {
-        const stripId = String(overId);
-        return { stripId, index: itemsByStripId[stripId].length };
-      }
-      const parsedOver = asTimelineItemId(String(overId));
-      if (parsedOver.ok) {
-        const foundTarget = itemLookup.get(parsedOver.value);
-        if (foundTarget) {
-          return { stripId: foundTarget.stripId, index: foundTarget.index };
-        }
-      }
-      return null;
-    },
-    [itemsByStripId, itemLookup]
-  );
-
   const handleDragStart = useCallback((event: DragStartEvent) => {
-    const parsed = asTimelineItemId(String(event.active.id));
-    if (!parsed.ok) return;
-    const itemId = parsed.value;
+    const decoded = decodeDndTarget(String(event.active.id));
+    if (!decoded || decoded.type !== "item") return;
+    const itemId = decoded.itemId;
+
     setActiveDragId(itemId);
     lastMoveRef.current = null;
     lastOverIdRef.current = null;
     recentlyMovedToNewContainer.current = false;
 
-    // Measure exact width of the active item DOM node to size the drag overlay perfectly
     const escapedId = CSS.escape(String(itemId));
-    const activeEl = document.querySelector(`[data-value="${escapedId}"], [value="${escapedId}"]`);
+    const activeEl = containerRef.current?.querySelector(
+      `[${DATA_VALUE_ATTR}="${escapedId}"], [${VALUE_ATTR}="${escapedId}"]`
+    );
     if (activeEl) {
       setActiveDragWidth(activeEl.getBoundingClientRect().width);
     } else {
-      setActiveDragWidth(160); // Fallback
+      setActiveDragWidth(160);
     }
 
     const found = itemLookup.get(itemId);
     if (found) {
-      setActiveDragSourceStripId(found.stripId);
+      setActiveDragSourceCollectionId(found.collectionId);
       announce(`Picked up item "${found.item.name}".`);
     }
-  }, [itemLookup, announce]);
+  }, [itemLookup, announce, setActiveDragId, setActiveDragSourceCollectionId, setActiveDragWidth]);
+
+  const handleDragMove = useCallback(() => {
+    setActiveNestTargetId(activeNestTargetRef.current);
+  }, [setActiveNestTargetId]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     const { active, over } = event;
+    setActiveNestTargetId(activeNestTargetRef.current);
+
     if (!over) return;
     lastOverIdRef.current = over.id;
 
-    const parsedActive = asTimelineItemId(String(active.id));
-    if (!parsedActive.ok) return;
-    const itemId = parsedActive.value;
-
-    const target = resolveDropTarget(over.id);
-    if (!target) return;
-    const { stripId: targetStripId, index: targetIndex } = target;
+    const decodedActive = decodeDndTarget(String(active.id));
+    if (!decodedActive || decodedActive.type !== "item") return;
+    const itemId = decodedActive.itemId;
 
     const foundSource = itemLookup.get(itemId);
     if (!foundSource) return;
 
-    // ONLY perform real-time cross-container moves inside onDragOver.
-    // Within-strip reordering is animated visually via CSS transforms and committed in onDragEnd.
-    if (foundSource.stripId !== targetStripId) {
+    const intent = resolveDropIntent(over.id, active.id);
+    if (!intent) return;
+
+    const isNestIntent = activeNestTargetRef.current != null;
+
+    if (!isNestIntent && intent.type === "insert" && foundSource.collectionId !== intent.toCollectionId) {
+      const targetCollectionId = intent.toCollectionId;
+      const targetIndex = intent.toIndex;
+
       const lastMove = lastMoveRef.current;
       if (
         lastMove &&
         lastMove.itemId === itemId &&
-        lastMove.toStripId === targetStripId &&
+        lastMove.toCollectionId === targetCollectionId &&
         lastMove.toIndex === targetIndex
       ) {
         return;
       }
-      lastMoveRef.current = { itemId, toStripId: targetStripId, toIndex: targetIndex };
+      lastMoveRef.current = { itemId, toCollectionId: targetCollectionId, toIndex: targetIndex };
       recentlyMovedToNewContainer.current = true;
 
-      moveItem(itemId, targetStripId, targetIndex);
+      moveItem(itemId, targetCollectionId, targetIndex);
     }
-  }, [itemLookup, resolveDropTarget, moveItem]);
+  }, [itemLookup, resolveDropIntent, moveItem, setActiveNestTargetId]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
-    const { over } = event;
+    const { over, active } = event;
     const itemId = activeDragId;
-    if (!itemId) return;
+    const nestTargetId = activeNestTargetRef.current;
 
+    setActiveNestTargetId(null);
+    activeNestTargetRef.current = null;
     lastMoveRef.current = null;
     lastOverIdRef.current = null;
     recentlyMovedToNewContainer.current = false;
 
+    if (!itemId) return;
+
     const foundSource = itemLookup.get(itemId);
     if (!foundSource) {
       setActiveDragId(null);
-      setActiveDragSourceStripId(null);
-      announce(`Cancelled drag.`);
+      setActiveDragSourceCollectionId(null);
+      announce("Cancelled drag.");
       return;
     }
 
-    let targetStripId = foundSource.stripId;
-    let targetIndex = foundSource.index;
-
     if (over) {
-      const target = resolveDropTarget(over.id);
-      if (target) {
-        targetStripId = target.stripId;
-        targetIndex = target.index;
-      }
+      const intent = resolveDropIntent(over.id, active.id);
 
-      // If dragged within the same strip, commit reorder now
-      if (
-        targetIndex !== -1 &&
-        foundSource.stripId === targetStripId &&
-        foundSource.index !== targetIndex
-      ) {
-        moveItem(itemId, targetStripId, targetIndex);
+      if (intent) {
+        if (isCollectionItem(foundSource.item)) {
+          const targetCollectionId = nestTargetId || intent.toCollectionId;
+          if (wouldCreateCollectionCycle({
+            movingCollectionId: foundSource.item.collectionId,
+            targetCollectionId,
+            collectionsById: collectionsByIdResolved,
+          })) {
+            announce("Cannot move a collection into itself or one of its nested collections.");
+            setActiveDragId(null);
+            setActiveDragSourceCollectionId(null);
+            return;
+          }
+        }
+
+        if (nestTargetId) {
+          if (onMoveItem) {
+            onMoveItem({
+              itemId,
+              fromCollectionId: foundSource.collectionId,
+              fromIndex: foundSource.index,
+              intent: {
+                type: "nest",
+                toCollectionId: nestTargetId,
+              },
+            });
+            announce(`Moved "${foundSource.item.name}" into collection.`);
+          }
+        } else if (intent.type === "insert") {
+          const targetCollectionId = intent.toCollectionId;
+          const targetIndex = intent.toIndex;
+
+          if (
+            foundSource.collectionId !== targetCollectionId ||
+            foundSource.index !== targetIndex
+          ) {
+            moveItem(itemId, targetCollectionId, targetIndex);
+            announce(`Dropped "${foundSource.item.name}" at position ${targetIndex + 1}.`);
+          } else {
+            announce(`Dropped "${foundSource.item.name}" at position ${foundSource.index + 1}.`);
+          }
+        }
+      } else {
+        announce("Cancelled drag.");
       }
+    } else {
+      announce("Cancelled drag.");
     }
 
     setActiveDragId(null);
-    setActiveDragSourceStripId(null);
+    setActiveDragSourceCollectionId(null);
+  }, [
+    activeDragId,
+    itemLookup,
+    resolveDropIntent,
+    moveItem,
+    onMoveItem,
+    collectionsByIdResolved,
+    announce,
+    setActiveDragId,
+    setActiveDragSourceCollectionId,
+    setActiveNestTargetId,
+  ]);
 
-    // Compute the drop position announcement synchronously using targetIndex/targetStripId
-    if (over && targetIndex !== -1) {
-      announce(`Dropped "${foundSource.item.name}" at position ${targetIndex + 1}.`);
-    } else {
-      announce(`Cancelled drag.`);
-    }
-  }, [activeDragId, itemLookup, resolveDropTarget, moveItem, announce]);
-
-  // Memoize the context value object to prevent unnecessary re-rendering of all consumers
   const contextValue = useMemo(
     () => ({
       activeDragId,
-      activeDragSourceStripId,
+      activeDragSourceCollectionId,
       activeKeyboardReorderId,
+      activeNestTargetId,
       startKeyboardReorder,
       cancelKeyboardReorder,
       confirmKeyboardReorder,
       announce,
-      itemsByStripId,
-      registerStrip,
-      unregisterStrip,
-      getAdjacentStripId,
+      collectionsById: collectionsByIdResolved,
+      registerCollection,
+      unregisterCollection,
+      getAdjacentCollectionId,
       moveItem,
+      nestItem,
     }),
     [
       activeDragId,
-      activeDragSourceStripId,
+      activeDragSourceCollectionId,
       activeKeyboardReorderId,
+      activeNestTargetId,
       startKeyboardReorder,
       cancelKeyboardReorder,
       confirmKeyboardReorder,
       announce,
-      itemsByStripId,
-      registerStrip,
-      unregisterStrip,
-      getAdjacentStripId,
+      collectionsByIdResolved,
+      registerCollection,
+      unregisterCollection,
+      getAdjacentCollectionId,
       moveItem,
+      nestItem,
     ]
   );
 
@@ -383,35 +640,44 @@ export function MediaStripBoard({
           sensors={sensors}
           collisionDetection={collisionDetectionStrategy}
           onDragStart={handleDragStart}
+          onDragMove={handleDragMove}
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
+          autoScroll={{
+            canScroll: (element) => {
+              if (!activeDragSourceCollectionId) return true;
+              const colEl = element.closest("[data-collection-id]");
+              if (!colEl) return true;
+              const colId = colEl.getAttribute("data-collection-id");
+              return colId === activeDragSourceCollectionId;
+            }
+          }}
         >
           {children}
 
-        <DragOverlay>
-          {activeDragItem ? (
-            <DragOverlayItem item={activeDragItem} width={activeDragWidth} />
-          ) : null}
-        </DragOverlay>
+          <DragOverlay>
+            {activeDragItem ? (
+              <DragOverlayItem item={activeDragItem} width={activeDragWidth} />
+            ) : null}
+          </DragOverlay>
 
-        {/* hidden aria-live status announcer */}
-        <div
-          aria-live="polite"
-          role="status"
-          style={{
-            position: "absolute",
-            width: "1px",
-            height: "1px",
-            padding: "0",
-            margin: "-1px",
-            overflow: "hidden",
-            clip: "rect(0, 0, 0, 0)",
-            whiteSpace: "nowrap",
-            border: "0",
-          }}
-        >
-          {announcement}
-        </div>
+          <div
+            aria-live="polite"
+            role="status"
+            style={{
+              position: "absolute",
+              width: "1px",
+              height: "1px",
+              padding: "0",
+              margin: "-1px",
+              overflow: "hidden",
+              clip: "rect(0, 0, 0, 0)",
+              whiteSpace: "nowrap",
+              border: "0",
+            }}
+          >
+            {announcement}
+          </div>
         </DndContext>
       </div>
     </MediaStripBoardContext.Provider>

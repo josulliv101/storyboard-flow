@@ -8,6 +8,10 @@ import {
   type TimelineItemKind,
   asTimelineItemId,
   asCollectionId,
+  isCollectionItem,
+  type CollectionId,
+  type TimelineItemId,
+  type TimelineCollection,
 } from "./media-strip.types";
 import { getVideoVisibleDurationSeconds } from "./media-strip.utils";
 
@@ -484,3 +488,164 @@ export const updateVideoTimelineItem = (
   patch: VideoTimelineItemPatch
 ): TimelineItemResult<VideoTimelineItem, VideoTimelineItemValidationFailure> =>
   createVideoTimelineItem({ ...item, ...patch });
+
+export type TimelineCollectionValidationResult =
+  | Readonly<{ valid: true }>
+  | Readonly<{ valid: false; reason: "empty-id" }>
+  | Readonly<{ valid: false; reason: "empty-name" }>
+  | Readonly<{ valid: false; reason: "items-not-array" }>
+  | Readonly<{ valid: false; reason: "invalid-item"; item: TimelineItem; error: TimelineItemValidationResult }>
+  | Readonly<{ valid: false; reason: "duplicate-item-ids" }>;
+
+export function validateTimelineCollection(
+  collection: TimelineCollection
+): TimelineCollectionValidationResult {
+  const collectionIdResult = asCollectionId(collection.id);
+  if (!collectionIdResult.ok) {
+    return { valid: false, reason: "empty-id" };
+  }
+  if (typeof collection.name !== "string" || collection.name.trim() === "") {
+    return { valid: false, reason: "empty-name" };
+  }
+  if (!Array.isArray(collection.items)) {
+    return { valid: false, reason: "items-not-array" };
+  }
+
+  const seenIds = new Set<TimelineItemId>();
+  for (const item of collection.items) {
+    const itemValidation = validateTimelineItem(item);
+    if (!itemValidation.valid) {
+      return { valid: false, reason: "invalid-item", item, error: itemValidation };
+    }
+    if (seenIds.has(item.id)) {
+      return { valid: false, reason: "duplicate-item-ids" };
+    }
+    seenIds.add(item.id);
+  }
+
+  return { valid: true };
+}
+
+export type ProjectValidationResult =
+  | Readonly<{ valid: true }>
+  | Readonly<{ valid: false; reason: "missing-collection"; collectionId: CollectionId; itemId: TimelineItemId }>
+  | Readonly<{ valid: false; reason: "collection-cycle"; cycle: CollectionId[] }>
+  | Readonly<{ valid: false; reason: "duplicate-global-item-ids"; itemId: TimelineItemId }>;
+
+export function validateProjectTimeline({
+  collectionsById,
+  rootCollectionIds,
+  assumeGlobalItemIds = true,
+}: {
+  collectionsById: Readonly<Record<CollectionId, TimelineCollection>>;
+  rootCollectionIds: readonly CollectionId[];
+  assumeGlobalItemIds?: boolean;
+}): ProjectValidationResult {
+  const visited = new Set<CollectionId>();
+  const path = new Set<CollectionId>();
+  const allItemIds = new Set<TimelineItemId>();
+
+  function dfs(colId: CollectionId): ProjectValidationResult {
+    if (path.has(colId)) {
+      return { valid: false, reason: "collection-cycle", cycle: Array.from(path) };
+    }
+    if (visited.has(colId)) {
+      return { valid: true };
+    }
+
+    const col = collectionsById[colId];
+    if (!col) {
+      return { valid: true };
+    }
+
+    path.add(colId);
+    visited.add(colId);
+
+    for (const item of col.items) {
+      if (assumeGlobalItemIds) {
+        if (allItemIds.has(item.id)) {
+          return { valid: false, reason: "duplicate-global-item-ids", itemId: item.id };
+        }
+        allItemIds.add(item.id);
+      }
+
+      if (isCollectionItem(item)) {
+        const referencedCol = collectionsById[item.collectionId];
+        if (!referencedCol) {
+          return {
+            valid: false,
+            reason: "missing-collection",
+            collectionId: item.collectionId,
+            itemId: item.id,
+          };
+        }
+        const res = dfs(item.collectionId);
+        if (!res.valid) return res;
+      }
+    }
+
+    path.delete(colId);
+    return { valid: true };
+  }
+
+  for (const colId of Object.keys(collectionsById) as CollectionId[]) {
+    const col = collectionsById[colId];
+    for (const item of col.items) {
+      if (isCollectionItem(item)) {
+        if (!collectionsById[item.collectionId]) {
+          return {
+            valid: false,
+            reason: "missing-collection",
+            collectionId: item.collectionId,
+            itemId: item.id,
+          };
+        }
+      }
+    }
+    const res = dfs(colId);
+    if (!res.valid) return res;
+  }
+
+  return { valid: true };
+}
+
+export function wouldCreateCollectionCycle({
+  movingCollectionId,
+  targetCollectionId,
+  collectionsById,
+}: {
+  movingCollectionId: CollectionId;
+  targetCollectionId: CollectionId;
+  collectionsById: Readonly<Record<CollectionId, TimelineCollection>>;
+}): boolean {
+  if (movingCollectionId === targetCollectionId) {
+    return true;
+  }
+
+  const visited = new Set<CollectionId>();
+
+  function hasDescendant(currentId: CollectionId): boolean {
+    if (currentId === targetCollectionId) {
+      return true;
+    }
+    if (visited.has(currentId)) {
+      return false;
+    }
+    visited.add(currentId);
+
+    const col = collectionsById[currentId];
+    if (!col) return false;
+
+    for (const item of col.items) {
+      if (isCollectionItem(item)) {
+        if (hasDescendant(item.collectionId)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  return hasDescendant(movingCollectionId);
+}
+

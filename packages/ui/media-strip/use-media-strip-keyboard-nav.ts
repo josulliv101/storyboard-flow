@@ -8,7 +8,7 @@ import { DATA_VALUE_ATTR, VALUE_ATTR } from "./media-strip.utils";
  * when target items are virtualized out of the DOM.
  */
 export function useMediaStripKeyboardNav(
-  items: TimelineItem[],
+  items: readonly TimelineItem[],
   viewportRef: React.RefObject<HTMLDivElement | null>,
   scrollToAndFocus: (index: number, valueId: string, preferHandle?: boolean) => void
 ) {

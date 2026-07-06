@@ -1,8 +1,9 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo, useContext } from "react";
 
 import type { TimelineItem, MediaTimelineItem } from "./media-strip.types";
 import { isMediaItem } from "./media-strip.types";
 import { THUMBNAIL_HEIGHT_PX } from "./media-strip.utils";
+import { MediaStripBoardContext } from "./media-strip-board";
 
 type MediaStripThumbnailProps = {
   item: TimelineItem;
@@ -14,14 +15,18 @@ export const MediaStripThumbnail = memo(
     item,
     variant = "sequence",
   }: MediaStripThumbnailProps) {
+    const board = useContext(MediaStripBoardContext);
+
     if (!isMediaItem(item)) {
+      const derivedCount = board?.collectionsById?.[item.collectionId]?.items.length ?? item.itemCount;
+
       return (
         <span
           style={{ height: THUMBNAIL_HEIGHT_PX }}
           className="flex size-full w-full items-center justify-center overflow-hidden rounded-md bg-muted text-xs text-muted-foreground"
           data-slot="media-strip-thumbnail"
         >
-          Collection ({item.itemCount} items)
+          Collection ({derivedCount} items)
         </span>
       );
     }

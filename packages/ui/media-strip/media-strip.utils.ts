@@ -1,5 +1,17 @@
 import { type CSSProperties } from "react";
-import type { TimelineItem, VideoTimelineItem, MediaStripMove } from "./media-strip.types";
+import {
+  type TimelineItem,
+  type VideoTimelineItem,
+  type DndTarget,
+  type TimelineItemId,
+  type CollectionId,
+  type TimelineCollection,
+  type TimelineItemMove,
+  type TimelineItemDrop,
+  asTimelineItemId,
+  asCollectionId,
+  isCollectionItem,
+} from "./media-strip.types";
 
 export const MIN_ITEM_WIDTH_PX = 96;
 
@@ -94,10 +106,10 @@ export type MediaStripItemAreEqualProps = {
   item: TimelineItem;
   style?: CSSProperties;
   thumbnailVariant?: "single" | "sequence";
-  items: TimelineItem[];
+  items: readonly TimelineItem[];
   isKeyboardReordering?: boolean;
-  stripId?: string;
-  onMoveItem?: (details: MediaStripMove) => void;
+  collectionId?: CollectionId;
+  onMoveItem?: (details: TimelineItemMove | TimelineItemDrop) => void;
 };
 
 /**
@@ -131,9 +143,158 @@ export function areEqual(
     "thumbnailVariant",
     "items",
     "isKeyboardReordering",
-    "stripId",
+    "collectionId",
     "onMoveItem",
   ];
 
   return keys.every((key) => prevProps[key] === nextProps[key]);
 }
+
+export function encodeDndTarget(target: DndTarget): string {
+  if (target.type === "item") return `item:${target.itemId}`;
+  if (target.type === "collection-container") return `container:${target.collectionId}`;
+  if (target.type === "collection-nest-target") return `nest:${target.collectionId}`;
+  throw new Error("Invalid target type");
+}
+
+export function decodeDndTarget(id: string): DndTarget | null {
+  if (id.startsWith("item:")) {
+    const rawId = id.slice(5);
+    const parsed = asTimelineItemId(rawId);
+    if (parsed.ok) {
+      return { type: "item", itemId: parsed.value };
+    }
+  }
+  if (id.startsWith("container:")) {
+    const rawId = id.slice(10);
+    const parsed = asCollectionId(rawId);
+    if (parsed.ok) {
+      return { type: "collection-container", collectionId: parsed.value };
+    }
+  }
+  if (id.startsWith("nest:")) {
+    const rawId = id.slice(5);
+    const parsed = asCollectionId(rawId);
+    if (parsed.ok) {
+      return { type: "collection-nest-target", collectionId: parsed.value };
+    }
+  }
+  return null;
+}
+
+export function syncCollectionItemCounts(
+  collectionsById: Readonly<Record<CollectionId, TimelineCollection>>
+): Readonly<Record<CollectionId, TimelineCollection>> {
+  const result: Record<CollectionId, TimelineCollection> = {};
+  let changed = false;
+
+  for (const [id, col] of Object.entries(collectionsById)) {
+    const colId = id as CollectionId;
+    const nextItems = col.items.map((item) => {
+      if (isCollectionItem(item)) {
+        const backingCol = collectionsById[item.collectionId];
+        const derivedCount = backingCol ? backingCol.items.length : 0;
+        if (item.itemCount !== derivedCount) {
+          changed = true;
+          return { ...item, itemCount: derivedCount };
+        }
+      }
+      return item;
+    });
+
+    result[colId] = {
+      ...col,
+      items: nextItems,
+    };
+  }
+
+  return changed ? result : (collectionsById as Record<CollectionId, TimelineCollection>);
+}
+
+export function moveTimelineItem({
+  collectionsById,
+  move,
+}: {
+  collectionsById: Readonly<Record<CollectionId, TimelineCollection>>;
+  move: TimelineItemMove;
+}): Record<CollectionId, TimelineCollection> {
+  const { itemId, fromCollectionId, toCollectionId, fromIndex, toIndex } = move;
+
+  const fromCol = collectionsById[fromCollectionId];
+  const toCol = collectionsById[toCollectionId];
+
+  if (!fromCol || !toCol) {
+    return collectionsById as Record<CollectionId, TimelineCollection>;
+  }
+
+  const nextCollections = { ...collectionsById };
+
+  if (fromCollectionId === toCollectionId) {
+    const items = [...fromCol.items];
+    const actualFromIndex = items.findIndex((i) => i.id === itemId);
+    if (actualFromIndex === -1) return collectionsById as Record<CollectionId, TimelineCollection>;
+    const [removed] = items.splice(actualFromIndex, 1);
+    const targetIdx = Math.max(0, Math.min(toIndex, items.length));
+    items.splice(targetIdx, 0, removed);
+
+    nextCollections[fromCollectionId] = {
+      ...fromCol,
+      items,
+    };
+  } else {
+    const fromItems = [...fromCol.items];
+    const actualFromIndex = fromItems.findIndex((i) => i.id === itemId);
+    if (actualFromIndex === -1) return collectionsById as Record<CollectionId, TimelineCollection>;
+    const [removed] = fromItems.splice(actualFromIndex, 1);
+
+    const toItems = [...toCol.items];
+    const targetIdx = Math.max(0, Math.min(toIndex, toItems.length));
+    toItems.splice(targetIdx, 0, removed);
+
+    nextCollections[fromCollectionId] = {
+      ...fromCol,
+      items: fromItems,
+    };
+    nextCollections[toCollectionId] = {
+      ...toCol,
+      items: toItems,
+    };
+  }
+
+  return syncCollectionItemCounts(nextCollections);
+}
+
+export function applyTimelineItemMoveOrDrop({
+  collectionsById,
+  moveOrDrop,
+}: {
+  collectionsById: Readonly<Record<CollectionId, TimelineCollection>>;
+  moveOrDrop: TimelineItemMove | TimelineItemDrop;
+}): Readonly<Record<CollectionId, TimelineCollection>> {
+  if ("intent" in moveOrDrop) {
+    const drop = moveOrDrop;
+    const { itemId, fromCollectionId, fromIndex, intent } = drop;
+    const toCollectionId = intent.toCollectionId;
+    const toCol = collectionsById[toCollectionId];
+    const toIndex = intent.type === "nest"
+      ? (intent.toIndex ?? (toCol ? toCol.items.length : 0))
+      : intent.toIndex;
+
+    return moveTimelineItem({
+      collectionsById,
+      move: {
+        itemId,
+        fromCollectionId,
+        toCollectionId,
+        fromIndex,
+        toIndex,
+      },
+    });
+  } else {
+    return moveTimelineItem({
+      collectionsById,
+      move: moveOrDrop,
+    });
+  }
+}
+

@@ -9,13 +9,17 @@ import {
   type TimelineItem,
   type TimelineItemId,
   type TimelineItemResult,
-  type MediaStripMove,
+  type CollectionId,
+  type TimelineCollection,
+  type TimelineItemMove,
+  type TimelineItemDrop,
 } from "./media-strip.types";
 import {
   createImageTimelineItem,
   createVideoTimelineItem,
   createCollectionTimelineItem,
 } from "./media-strip.validation";
+import { applyTimelineItemMoveOrDrop } from "./media-strip.utils";
 
 function unwrapResult<T, E>(result: TimelineItemResult<T, E>): T {
   if (!result.ok) {
@@ -198,8 +202,8 @@ const manyItems = Array.from({ length: 3 }, () => items)
   });
 
 function StatefulMediaStrip(props: MediaStripProps) {
-  const [items, setItems] = useState<TimelineItem[]>(() => props.items || []);
-  const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>(() => props.selectedIds || []);
+  const [items, setItems] = useState<readonly TimelineItem[]>(() => props.items || []);
+  const [selectedIds, setSelectedIds] = useState<readonly TimelineItemId[]>(() => props.selectedIds || []);
 
   useEffect(() => {
     setItems(props.items || []);
@@ -210,7 +214,9 @@ function StatefulMediaStrip(props: MediaStripProps) {
   }, [props.selectedIds]);
 
   const handleMoveItem = useCallback(
-    ({ itemId, fromIndex, toIndex }: MediaStripMove) => {
+    (move: TimelineItemMove | TimelineItemDrop) => {
+      const { itemId, fromIndex } = move;
+      const toIndex = "intent" in move ? (move.intent.type === "insert" ? move.intent.toIndex : fromIndex) : move.toIndex;
       setItems((prev) => {
         const next = [...prev];
         const index = next.findIndex((i) => i.id === itemId);
@@ -232,13 +238,25 @@ function StatefulMediaStrip(props: MediaStripProps) {
     [props.onSelectionChange]
   );
 
-  const stripId = props.stripId || "default-strip";
-  const itemsByStripId = useMemo(() => ({ [stripId]: items }), [stripId, items]);
+  const collectionId = props.collectionId || ("default-strip" as CollectionId);
+  const collectionsById = useMemo(() => ({
+    [collectionId]: {
+      id: collectionId,
+      name: collectionId,
+      items,
+    }
+  }), [collectionId, items]);
+  const visibleCollectionIds = useMemo(() => [collectionId], [collectionId]);
 
   return (
-    <MediaStripBoard itemsByStripId={itemsByStripId} onMoveItem={handleMoveItem}>
+    <MediaStripBoard
+      collectionsById={collectionsById}
+      visibleCollectionIds={visibleCollectionIds}
+      onMoveItem={handleMoveItem}
+    >
       <MediaStrip
         {...props}
+        collectionId={collectionId}
         items={items}
         selectedIds={selectedIds}
         onMoveItem={handleMoveItem}
@@ -747,13 +765,11 @@ const ReorderDemo = () => {
   const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>([]);
 
   const handleMoveItem = useCallback(
-    ({
-      itemId,
-      fromStripId,
-      toStripId,
-      fromIndex,
-      toIndex,
-    }: MediaStripMove) => {
+    (move: TimelineItemMove | TimelineItemDrop) => {
+      const itemId = move.itemId;
+      const fromStripId = "fromCollectionId" in move ? move.fromCollectionId : (move as any).fromStripId;
+      const toStripId = "intent" in move ? move.intent.toCollectionId : move.toCollectionId;
+      const toIndex = "intent" in move ? (move.intent.type === "insert" ? move.intent.toIndex : 0) : move.toIndex;
       let itemToMove: TimelineItem | undefined;
       let nextStripA = [...stripA];
       let nextStripB = [...stripB];
@@ -796,14 +812,20 @@ const ReorderDemo = () => {
     [stripA, stripB, stripC]
   );
 
-  const itemsByStripId = {
-    "strip-a": stripA,
-    "strip-b": stripB,
-    "strip-c": stripC,
-  };
+  const collectionsById = useMemo(() => ({
+    "strip-a": { id: "strip-a" as CollectionId, name: "Media Strip A", items: stripA },
+    "strip-b": { id: "strip-b" as CollectionId, name: "Media Strip B", items: stripB },
+    "strip-c": { id: "strip-c" as CollectionId, name: "Media Strip C", items: stripC },
+  }), [stripA, stripB, stripC]);
+
+  const visibleCollectionIds = useMemo(() => ["strip-a" as CollectionId, "strip-b" as CollectionId, "strip-c" as CollectionId], []);
 
   return (
-    <MediaStripBoard itemsByStripId={itemsByStripId} onMoveItem={handleMoveItem}>
+    <MediaStripBoard
+      collectionsById={collectionsById}
+      visibleCollectionIds={visibleCollectionIds}
+      onMoveItem={handleMoveItem}
+    >
       <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
         <div>
           <p className="text-sm text-zinc-400 mb-2">
@@ -814,7 +836,7 @@ const ReorderDemo = () => {
           </p>
         </div>
         <MediaStrip
-          stripId="strip-a"
+          collectionId={"strip-a" as CollectionId}
           heading="Media Strip A (Red/Pink)"
           items={stripA}
           selectedIds={selectedIds}
@@ -822,7 +844,7 @@ const ReorderDemo = () => {
           onMoveItem={handleMoveItem}
         />
         <MediaStrip
-          stripId="strip-b"
+          collectionId={"strip-b" as CollectionId}
           heading="Media Strip B (Blue/Cyan)"
           items={stripB}
           selectedIds={selectedIds}
@@ -830,7 +852,7 @@ const ReorderDemo = () => {
           onMoveItem={handleMoveItem}
         />
         <MediaStrip
-          stripId="strip-c"
+          collectionId={"strip-c" as CollectionId}
           heading="Media Strip C (Green/Emerald with Lots of Items)"
           items={stripC}
           selectedIds={selectedIds}
@@ -1234,7 +1256,9 @@ export const PointerDragIntoEmptyStrip: Story = {
     const [stripB, setStripB] = useState<TimelineItem[]>([]);
 
     const handleMoveItem = useCallback(
-      ({ itemId, toStripId }: MediaStripMove) => {
+      (move: TimelineItemMove | TimelineItemDrop) => {
+        const itemId = move.itemId;
+        const toStripId = "intent" in move ? move.intent.toCollectionId : move.toCollectionId;
         const item = stripA.find((i) => i.id === itemId);
         if (item && toStripId === "strip-b") {
           setStripB([item]);
@@ -1244,11 +1268,21 @@ export const PointerDragIntoEmptyStrip: Story = {
       [stripA]
     );
 
+    const collectionsById = useMemo(() => ({
+      "strip-a": { id: "strip-a" as CollectionId, name: "Strip A", items: stripA },
+      "strip-b": { id: "strip-b" as CollectionId, name: "Strip B", items: stripB },
+    }), [stripA, stripB]);
+    const visibleCollectionIds = useMemo(() => ["strip-a" as CollectionId, "strip-b" as CollectionId], []);
+
     return (
-      <MediaStripBoard itemsByStripId={{ "strip-a": stripA, "strip-b": stripB }} onMoveItem={handleMoveItem}>
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        visibleCollectionIds={visibleCollectionIds}
+        onMoveItem={handleMoveItem}
+      >
         <div className="flex flex-col gap-8 p-4">
-          <MediaStrip stripId="strip-a" heading="Strip A" items={stripA} selectedIds={[]} onSelectionChange={() => {}} />
-          <MediaStrip stripId="strip-b" heading="Strip B" items={stripB} selectedIds={[]} onSelectionChange={() => {}} />
+          <MediaStrip collectionId={"strip-a" as CollectionId} heading="Strip A" items={stripA} selectedIds={[]} onSelectionChange={() => {}} />
+          <MediaStrip collectionId={"strip-b" as CollectionId} heading="Strip B" items={stripB} selectedIds={[]} onSelectionChange={() => {}} />
         </div>
       </MediaStripBoard>
     );
@@ -1377,7 +1411,9 @@ export const CollectionItems: Story = {
     const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>([]);
 
     const handleMoveItem = useCallback(
-      ({ itemId, toIndex }: MediaStripMove) => {
+      (move: TimelineItemMove | TimelineItemDrop) => {
+        const itemId = move.itemId;
+        const toIndex = "intent" in move ? (move.intent.type === "insert" ? move.intent.toIndex : 0) : move.toIndex;
         const next = [...items];
         const idx = next.findIndex((i) => i.id === itemId);
         if (idx !== -1) {
@@ -1389,10 +1425,19 @@ export const CollectionItems: Story = {
       [items]
     );
 
+    const collectionsById = useMemo(() => ({
+      "strip-1": { id: "strip-1" as CollectionId, name: "Strips containing Collections", items },
+    }), [items]);
+    const visibleCollectionIds = useMemo(() => ["strip-1" as CollectionId], []);
+
     return (
-      <MediaStripBoard itemsByStripId={{ "strip-1": items }} onMoveItem={handleMoveItem}>
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        visibleCollectionIds={visibleCollectionIds}
+        onMoveItem={handleMoveItem}
+      >
         <MediaStrip
-          stripId="strip-1"
+          collectionId={"strip-1" as CollectionId}
           heading="Strips containing Collections"
           items={items}
           selectedIds={selectedIds}
@@ -1438,9 +1483,14 @@ export const VideoWithoutPoster: Story = {
         startTimeSeconds: 0,
       })),
     ];
+    const collectionsById = {
+      "strip-1": { id: "strip-1" as CollectionId, name: "Video without Poster", items },
+    };
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
     return (
-      <MediaStripBoard itemsByStripId={{ "strip-1": items }}>
-        <MediaStrip stripId="strip-1" heading="Video without Poster" items={items} selectedIds={[]} onSelectionChange={() => {}} />
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Video without Poster" items={items} selectedIds={[]} onSelectionChange={() => {}} />
       </MediaStripBoard>
     );
   },
@@ -1480,9 +1530,14 @@ export const MixedBrokenPosterSequence: Story = {
         ],
       })),
     ];
+    const collectionsById = {
+      "strip-1": { id: "strip-1" as CollectionId, name: "Mixed Poster Sequence", items },
+    };
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
     return (
-      <MediaStripBoard itemsByStripId={{ "strip-1": items }}>
-        <MediaStrip stripId="strip-1" heading="Mixed Poster Sequence" items={items} selectedIds={[]} onSelectionChange={() => {}} />
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Mixed Poster Sequence" items={items} selectedIds={[]} onSelectionChange={() => {}} />
       </MediaStripBoard>
     );
   },
@@ -1513,9 +1568,14 @@ export const VeryNarrowContainer: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-1", name: "Short name", src: "img.png", startTimeSeconds: 0, durationSeconds: 4 })),
       unwrapResult(createImageTimelineItem({ id: "item-2", name: "Another short name", src: "img.png", startTimeSeconds: 4, durationSeconds: 4 })),
     ];
+    const collectionsById = {
+      "strip-1": { id: "strip-1" as CollectionId, name: "Very Narrow", items },
+    };
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
     return (
-      <MediaStripBoard itemsByStripId={{ "strip-1": items }}>
-        <MediaStrip stripId="strip-1" heading="Very Narrow" items={items} selectedIds={[]} onSelectionChange={() => {}} />
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Very Narrow" items={items} selectedIds={[]} onSelectionChange={() => {}} />
       </MediaStripBoard>
     );
   },
@@ -1540,9 +1600,14 @@ export const VeryWideContainer: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-1", name: "Item 1", src: "img.png", startTimeSeconds: 0, durationSeconds: 40 })),
       unwrapResult(createImageTimelineItem({ id: "item-2", name: "Item 2", src: "img.png", startTimeSeconds: 40, durationSeconds: 40 })),
     ];
+    const collectionsById = {
+      "strip-1": { id: "strip-1" as CollectionId, name: "Very Wide", items },
+    };
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
     return (
-      <MediaStripBoard itemsByStripId={{ "strip-1": items }}>
-        <MediaStrip stripId="strip-1" heading="Very Wide" items={items} selectedIds={[]} onSelectionChange={() => {}} />
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Very Wide" items={items} selectedIds={[]} onSelectionChange={() => {}} />
       </MediaStripBoard>
     );
   },
@@ -1568,9 +1633,14 @@ export const LongNamesAndWeirdCharacters: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-2", name: "Clip / Shot #004 — Café 🚗", src: "img.png", startTimeSeconds: 10, durationSeconds: 10 })),
       unwrapResult(createImageTimelineItem({ id: "item-3", name: "日本語 title", src: "img.png", startTimeSeconds: 20, durationSeconds: 10 })),
     ];
+    const collectionsById = {
+      "strip-1": { id: "strip-1" as CollectionId, name: "Long Names & Characters", items },
+    };
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
     return (
-      <MediaStripBoard itemsByStripId={{ "strip-1": items }}>
-        <MediaStrip stripId="strip-1" heading="Long Names & Characters" items={items} selectedIds={[]} onSelectionChange={() => {}} />
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Long Names & Characters" items={items} selectedIds={[]} onSelectionChange={() => {}} />
       </MediaStripBoard>
     );
   },
@@ -1601,9 +1671,14 @@ export const FractionalDurations: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-4", name: "Clip 4 (59.999s)", src: "img.png", startTimeSeconds: 1.783, durationSeconds: 59.999 })),
       unwrapResult(createImageTimelineItem({ id: "item-5", name: "Clip 5 (3600.4s)", src: "img.png", startTimeSeconds: 61.782, durationSeconds: 3600.4 })),
     ];
+    const collectionsById = {
+      "strip-1": { id: "strip-1" as CollectionId, name: "Fractional Durations", items },
+    };
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
     return (
-      <MediaStripBoard itemsByStripId={{ "strip-1": items }}>
-        <MediaStrip stripId="strip-1" heading="Fractional Durations" items={items} selectedIds={[]} onSelectionChange={() => {}} />
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Fractional Durations" items={items} selectedIds={[]} onSelectionChange={() => {}} />
       </MediaStripBoard>
     );
   },
@@ -1637,9 +1712,14 @@ export const ThousandsOfItemsVirtualized: Story = {
         )
       );
     }, []);
+    const collectionsById = {
+      "strip-1": { id: "strip-1" as CollectionId, name: "1,000 Virtualized Items", items },
+    };
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
     return (
-      <MediaStripBoard itemsByStripId={{ "strip-1": items }}>
-        <MediaStrip stripId="strip-1" heading="1,000 Virtualized Items" items={items} selectedIds={[]} onSelectionChange={() => {}} />
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="1,000 Virtualized Items" items={items} selectedIds={[]} onSelectionChange={() => {}} />
       </MediaStripBoard>
     );
   },
@@ -1679,7 +1759,10 @@ export const MultipleBoardsOnPage: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-2b", name: "Item 2B", src: "img.png", startTimeSeconds: 0, durationSeconds: 4 })),
     ]);
 
-    const handleMove1 = useCallback(({ itemId, toStripId, toIndex }: MediaStripMove) => {
+    const handleMove1 = useCallback((move: TimelineItemMove | TimelineItemDrop) => {
+      const itemId = move.itemId;
+      const toStripId = "intent" in move ? move.intent.toCollectionId : move.toCollectionId;
+      const toIndex = "intent" in move ? (move.intent.type === "insert" ? move.intent.toIndex : 0) : move.toIndex;
       const all = { "strip-1a": board1A, "strip-1b": board1B };
       const fromStripId = board1A.some(i => i.id === itemId) ? "strip-1a" : "strip-1b";
       const item = all[fromStripId].find(i => i.id === itemId)!;
@@ -1701,7 +1784,10 @@ export const MultipleBoardsOnPage: Story = {
       }
     }, [board1A, board1B]);
 
-    const handleMove2 = useCallback(({ itemId, toStripId, toIndex }: MediaStripMove) => {
+    const handleMove2 = useCallback((move: TimelineItemMove | TimelineItemDrop) => {
+      const itemId = move.itemId;
+      const toStripId = "intent" in move ? move.intent.toCollectionId : move.toCollectionId;
+      const toIndex = "intent" in move ? (move.intent.type === "insert" ? move.intent.toIndex : 0) : move.toIndex;
       const fromStripId = board2A.some(i => i.id === itemId) ? "strip-2a" : "strip-2b";
       const item = (fromStripId === "strip-2a" ? board2A : board2B).find(i => i.id === itemId)!;
 
@@ -1722,23 +1808,35 @@ export const MultipleBoardsOnPage: Story = {
       }
     }, [board2A, board2B]);
 
+    const collections1 = useMemo(() => ({
+      "strip-1a": { id: "strip-1a" as CollectionId, name: "Strip 1A", items: board1A },
+      "strip-1b": { id: "strip-1b" as CollectionId, name: "Strip 1B", items: board1B },
+    }), [board1A, board1B]);
+    const visible1 = useMemo(() => ["strip-1a" as CollectionId, "strip-1b" as CollectionId], []);
+
+    const collections2 = useMemo(() => ({
+      "strip-2a": { id: "strip-2a" as CollectionId, name: "Strip 2A", items: board2A },
+      "strip-2b": { id: "strip-2b" as CollectionId, name: "Strip 2B", items: board2B },
+    }), [board2A, board2B]);
+    const visible2 = useMemo(() => ["strip-2a" as CollectionId, "strip-2b" as CollectionId], []);
+
     return (
       <div className="flex flex-col gap-12">
         <div className="border p-4 rounded-lg bg-card">
           <h3 className="text-sm font-bold mb-2">Board 1</h3>
-          <MediaStripBoard itemsByStripId={{ "strip-1a": board1A, "strip-1b": board1B }} onMoveItem={handleMove1}>
+          <MediaStripBoard collectionsById={collections1} visibleCollectionIds={visible1} onMoveItem={handleMove1}>
             <div className="flex flex-col gap-4">
-              <MediaStrip stripId="strip-1a" heading="Strip 1A" items={board1A} selectedIds={[]} onSelectionChange={() => {}} />
-              <MediaStrip stripId="strip-1b" heading="Strip 1B" items={board1B} selectedIds={[]} onSelectionChange={() => {}} />
+              <MediaStrip collectionId={"strip-1a" as CollectionId} heading="Strip 1A" items={board1A} selectedIds={[]} onSelectionChange={() => {}} />
+              <MediaStrip collectionId={"strip-1b" as CollectionId} heading="Strip 1B" items={board1B} selectedIds={[]} onSelectionChange={() => {}} />
             </div>
           </MediaStripBoard>
         </div>
         <div className="border p-4 rounded-lg bg-card">
           <h3 className="text-sm font-bold mb-2">Board 2</h3>
-          <MediaStripBoard itemsByStripId={{ "strip-2a": board2A, "strip-2b": board2B }} onMoveItem={handleMove2}>
+          <MediaStripBoard collectionsById={collections2} visibleCollectionIds={visible2} onMoveItem={handleMove2}>
             <div className="flex flex-col gap-4">
-              <MediaStrip stripId="strip-2a" heading="Strip 2A" items={board2A} selectedIds={[]} onSelectionChange={() => {}} />
-              <MediaStrip stripId="strip-2b" heading="Strip 2B" items={board2B} selectedIds={[]} onSelectionChange={() => {}} />
+              <MediaStrip collectionId={"strip-2a" as CollectionId} heading="Strip 2A" items={board2A} selectedIds={[]} onSelectionChange={() => {}} />
+              <MediaStrip collectionId={"strip-2b" as CollectionId} heading="Strip 2B" items={board2B} selectedIds={[]} onSelectionChange={() => {}} />
             </div>
           </MediaStripBoard>
         </div>
@@ -1863,7 +1961,9 @@ export const ReorderWhileScrolled: Story = {
     );
 
     const handleMoveItem = useCallback(
-      ({ itemId, toIndex }: MediaStripMove) => {
+      (move: TimelineItemMove | TimelineItemDrop) => {
+        const itemId = move.itemId;
+        const toIndex = "intent" in move ? (move.intent.type === "insert" ? move.intent.toIndex : 0) : move.toIndex;
         const next = [...items];
         const idx = next.findIndex((i) => i.id === itemId);
         if (idx !== -1) {
@@ -1875,9 +1975,18 @@ export const ReorderWhileScrolled: Story = {
       [items]
     );
 
+    const collectionsById = useMemo(() => ({
+      "strip-1": { id: "strip-1" as CollectionId, name: "Long Strip for Scrolling", items },
+    }), [items]);
+    const visibleCollectionIds = useMemo(() => ["strip-1" as CollectionId], []);
+
     return (
-      <MediaStripBoard itemsByStripId={{ "strip-1": items }} onMoveItem={handleMoveItem}>
-        <MediaStrip stripId="strip-1" heading="Long Strip for Scrolling" items={items} selectedIds={[]} onSelectionChange={() => {}} />
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        visibleCollectionIds={visibleCollectionIds}
+        onMoveItem={handleMoveItem}
+      >
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Long Strip for Scrolling" items={items} selectedIds={[]} onSelectionChange={() => {}} />
       </MediaStripBoard>
     );
   },
@@ -1920,3 +2029,130 @@ export const ReorderWhileScrolled: Story = {
     expect(scrollArea.scrollLeft).toBeGreaterThan(500);
   },
 };
+
+function StatefulNestedCollectionsBoard() {
+  const [collections, setCollections] = useState<Record<CollectionId, TimelineCollection>>(() => {
+    const rootItems: TimelineItem[] = [
+      unwrapResult(createImageTimelineItem({
+        id: "img-1",
+        name: "Beautiful Sunset",
+        src: createPhotoThumbnail("beautiful-sunset"),
+        posterSrcs: [createPhotoThumbnail("beautiful-sunset")],
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })),
+      unwrapResult(createCollectionTimelineItem({
+        id: "card-col-b",
+        name: "Holiday Folder",
+        collectionId: "col-b" as CollectionId,
+        itemCount: 2,
+        startTimeSeconds: 0,
+        durationSeconds: 10,
+      })),
+      unwrapResult(createCollectionTimelineItem({
+        id: "card-col-c",
+        name: "Empty Folder",
+        collectionId: "col-c" as CollectionId,
+        itemCount: 0,
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })),
+    ];
+
+    const colBItems: TimelineItem[] = [
+      unwrapResult(createImageTimelineItem({
+        id: "img-2",
+        name: "Beach Day",
+        src: createPhotoThumbnail("beach-day"),
+        posterSrcs: [createPhotoThumbnail("beach-day")],
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })),
+      unwrapResult(createImageTimelineItem({
+        id: "img-3",
+        name: "Mountain Hike",
+        src: createPhotoThumbnail("mountain-hike"),
+        posterSrcs: [createPhotoThumbnail("mountain-hike")],
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })),
+    ];
+
+    return {
+      ["col-a" as CollectionId]: {
+        id: "col-a" as CollectionId,
+        name: "Root Collection A",
+        items: rootItems,
+      },
+      ["col-b" as CollectionId]: {
+        id: "col-b" as CollectionId,
+        name: "Holiday Folder",
+        items: colBItems,
+      },
+      ["col-c" as CollectionId]: {
+        id: "col-c" as CollectionId,
+        name: "Empty Folder",
+        items: [],
+      },
+    };
+  });
+
+  const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>([]);
+
+  const handleMoveOrDrop = useCallback((moveOrDrop: any) => {
+    setCollections((prev) => applyTimelineItemMoveOrDrop({ collectionsById: prev, moveOrDrop }));
+  }, []);
+
+  return (
+    <MediaStripBoard collectionsById={collections} visibleCollectionIds={["col-a" as CollectionId]} onMoveItem={handleMoveOrDrop}>
+      <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
+        <div>
+          <h3 className="text-md font-bold mb-1">Nested Collections Demo</h3>
+          <p className="text-xs text-zinc-400 mb-4">
+            - Drag and drop "Beautiful Sunset" onto the center of "Holiday Folder" or "Empty Folder" cards to nest them.
+            <br />
+            - Try keyboard reordering: focus the reorder handle of "Beautiful Sunset", press Space, move next to "Holiday Folder", and press N to nest it!
+          </p>
+        </div>
+        <MediaStrip
+          collectionId={"col-a" as CollectionId}
+          heading="Root Collection (Strip)"
+          items={collections["col-a" as CollectionId]?.items ?? []}
+          selectedIds={selectedIds}
+          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+          onMoveItem={handleMoveOrDrop}
+        />
+        <MediaStrip
+          collectionId={"col-b" as CollectionId}
+          heading="Holiday Folder Contents"
+          items={collections["col-b" as CollectionId]?.items ?? []}
+          selectedIds={selectedIds}
+          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+          onMoveItem={handleMoveOrDrop}
+        />
+        <MediaStrip
+          collectionId={"col-c" as CollectionId}
+          heading="Empty Folder Contents"
+          items={collections["col-c" as CollectionId]?.items ?? []}
+          selectedIds={selectedIds}
+          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+          onMoveItem={handleMoveOrDrop}
+        />
+      </div>
+    </MediaStripBoard>
+  );
+}
+
+export const DeeplyNestedCollections: StoryObj = {
+  render: () => <StatefulNestedCollectionsBoard />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+};
+

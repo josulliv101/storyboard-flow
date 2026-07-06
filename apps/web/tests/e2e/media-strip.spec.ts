@@ -214,4 +214,186 @@ test.describe('MediaStrip E2E Reordering & Scroll Gestures', () => {
     expect(scrollLeftAfter).toBeGreaterThan(500);
   });
 
+  test('nested collection drag-and-drop nesting hotspot', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--deeply-nested-collections'));
+
+    const handleImg1 = page.locator('[data-reorder-handle="img-1"]');
+    const cardColB = page.locator('[data-value="card-col-b"]');
+
+    await handleImg1.waitFor({ state: 'visible' });
+    await cardColB.waitFor({ state: 'visible' });
+
+    const handleBox = await handleImg1.boundingBox();
+    const cardColBBox = await cardColB.boundingBox();
+
+    expect(handleBox).not.toBeNull();
+    expect(cardColBBox).not.toBeNull();
+
+    const startX = handleBox!.x + handleBox!.width / 2;
+    const startY = handleBox!.y + handleBox!.height / 2;
+    const centerX = cardColBBox!.x + cardColBBox!.width / 2;
+    const centerY = cardColBBox!.y + cardColBBox!.height / 2;
+
+    // 1. Move to center to trigger nesting
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(centerX, centerY, { steps: 10 });
+
+    // Assert that the visual nest highlight overlay appears
+    await expect(page.locator('text=Drop to Nest')).toBeVisible();
+
+    await page.mouse.up();
+
+    // Verify it was nested (removed from root strip, added to Holiday Folder contents strip)
+    const rootStrip = page.locator('[data-testid="media-strip-col-a"]');
+    const folderStrip = page.locator('[data-testid="media-strip-col-b"]');
+    await expect(rootStrip.locator('[data-value="img-1"]')).not.toBeVisible();
+    await expect(folderStrip.locator('[data-value="img-1"]')).toBeVisible();
+  });
+
+  test('nested collection drag-and-drop insert beside edge', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--deeply-nested-collections'));
+
+    const handleImg1 = page.locator('[data-reorder-handle="img-1"]');
+    const cardColB = page.locator('[data-value="card-col-b"]');
+
+    await handleImg1.waitFor({ state: 'visible' });
+    await cardColB.waitFor({ state: 'visible' });
+
+    const handleBox = await handleImg1.boundingBox();
+    const cardColBBox = await cardColB.boundingBox();
+
+    const startX = handleBox!.x + handleBox!.width / 2;
+    const startY = handleBox!.y + handleBox!.height / 2;
+    const edgeX = cardColBBox!.x + cardColBBox!.width * 0.95;
+    const edgeY = cardColBBox!.y + cardColBBox!.height / 2;
+
+    // 2. Move near the right edge to trigger insert beside (reorder)
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(edgeX, edgeY, { steps: 10 });
+
+    // Assert that the visual nest highlight overlay does NOT appear near the edges
+    await expect(page.locator('text=Drop to Nest')).not.toBeVisible();
+
+    await page.mouse.up();
+
+    // Verify it was reordered beside (still in root strip, but moved after card-col-b)
+    const rootStrip = page.locator('[data-testid="media-strip-col-a"]');
+    await expect(rootStrip.locator('[data-value="img-1"]')).toBeVisible();
+    
+    await expect(async () => {
+      const boxColB = await page.locator('[data-value="card-col-b"]').boundingBox();
+      const boxImg1 = await page.locator('[data-value="img-1"]').boundingBox();
+      expect(boxColB!.x).toBeLessThan(boxImg1!.x);
+    }).toPass();
+  });
+
+  test('nested collection drag-and-drop between cards', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--deeply-nested-collections'));
+
+    const handleImg1 = page.locator('[data-reorder-handle="img-1"]');
+    const cardColB = page.locator('[data-value="card-col-b"]');
+    const cardColC = page.locator('[data-value="card-col-c"]');
+
+    await handleImg1.waitFor({ state: 'visible' });
+    await cardColB.waitFor({ state: 'visible' });
+    await cardColC.waitFor({ state: 'visible' });
+
+    const handleBox = await handleImg1.boundingBox();
+    const boxColB = await cardColB.boundingBox();
+    const boxColC = await cardColC.boundingBox();
+
+    const startX = handleBox!.x + handleBox!.width / 2;
+    const startY = handleBox!.y + handleBox!.height / 2;
+    
+    // Drag to the gap between card-col-b and card-col-c
+    const gapX = handleBox!.x + (boxColC!.x - handleBox!.x) / 2;
+    const gapY = boxColB!.y + boxColB!.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(gapX, gapY, { steps: 10 });
+    await page.mouse.up();
+
+    // Verify img-1 is now positioned between card-col-b and card-col-c
+    await expect(async () => {
+      const bPos = await cardColB.boundingBox();
+      const imgPos = await page.locator('[data-value="img-1"]').boundingBox();
+      const cPos = await cardColC.boundingBox();
+      expect(bPos!.x).toBeLessThan(imgPos!.x);
+      expect(imgPos!.x).toBeLessThan(cPos!.x);
+    }).toPass();
+  });
+
+  test('nested collection drag-and-drop hotspot stabilization', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--deeply-nested-collections'));
+
+    const handleImg1 = page.locator('[data-reorder-handle="img-1"]');
+    const cardColB = page.locator('[data-value="card-col-b"]');
+
+    await handleImg1.waitFor({ state: 'visible' });
+    await cardColB.waitFor({ state: 'visible' });
+
+    const handleBox = await handleImg1.boundingBox();
+    const originalColBBox = await cardColB.boundingBox();
+
+    const startX = handleBox!.x + handleBox!.width / 2;
+    const startY = handleBox!.y + handleBox!.height / 2;
+    const centerX = originalColBBox!.x + originalColBBox!.width / 2;
+    const centerY = originalColBBox!.y + originalColBBox!.height / 2;
+
+    // Move to center to trigger nesting
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(centerX, centerY, { steps: 10 });
+
+    // Assert that the visual nest highlight overlay appears
+    await expect(page.locator('text=Drop to Nest')).toBeVisible();
+
+    // Verify card-col-b did NOT shift away (remains close to its original X coordinate after settling)
+    await expect(async () => {
+      const currentColBBox = await cardColB.boundingBox();
+      expect(Math.abs(currentColBBox!.x - originalColBBox!.x)).toBeLessThan(10);
+    }).toPass();
+
+  });
+
+  test('nested collection drag-scroll only active container', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--deeply-nested-collections'));
+
+    const viewportRoot = page.locator('[data-strip-id="col-a"] [data-slot="scroll-area-viewport"]');
+    const handleImg2 = page.locator('[data-reorder-handle="img-2"]');
+
+    await viewportRoot.waitFor({ state: 'visible' });
+    await handleImg2.waitFor({ state: 'visible' });
+
+    // Scroll root viewport to a starting scrollLeft value (e.g. 50)
+    await viewportRoot.evaluate((el) => { el.scrollLeft = 50; });
+    const initialScroll = await viewportRoot.evaluate((el) => el.scrollLeft);
+
+    const handleBox = await handleImg2.boundingBox();
+    const startX = handleBox!.x + handleBox!.width / 2;
+    const startY = handleBox!.y + handleBox!.height / 2;
+
+    const rootBox = await viewportRoot.boundingBox();
+    // Drag deep to the right edge of the root viewport to try to trigger autoscroll on it
+    const dragX = rootBox!.x + rootBox!.width - 5;
+    const dragY = rootBox!.y + rootBox!.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(dragX, dragY, { steps: 15 });
+
+    // Wait a brief moment to allow any potential autoscroll to occur
+    await page.waitForTimeout(300);
+
+    // Verify root viewport scrollLeft did NOT change (it was not autoscrolled because drag was initiated in col-b)
+    const finalScroll = await viewportRoot.evaluate((el) => el.scrollLeft);
+    expect(finalScroll).toBe(initialScroll);
+
+    await page.mouse.up();
+  });
+
 });
+

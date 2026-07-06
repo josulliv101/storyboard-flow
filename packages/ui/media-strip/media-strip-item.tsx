@@ -1,10 +1,16 @@
-import { type FocusEvent, type CSSProperties, memo, useRef, useEffect } from "react";
-import { GripVertical } from "lucide-react";
+import { type FocusEvent, type CSSProperties, memo, useRef, useEffect, useMemo } from "react";
+import { GripHorizontal } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Badge } from "../core/badge";
 import { ToggleGroupItem } from "../core/toggle-group";
-import { type TimelineItem, type MediaStripMove } from "./media-strip.types";
+import {
+  type TimelineItem,
+  type CollectionId,
+  type TimelineItemMove,
+  type TimelineItemDrop,
+  isCollectionItem,
+} from "./media-strip.types";
 import {
   formatDuration,
   areEqual,
@@ -13,14 +19,16 @@ import {
   VALUE_ATTR,
   DATA_REORDER_HANDLE_ATTR,
   isElementFullyVisibleInScrollArea,
+  encodeDndTarget,
 } from "./media-strip.utils";
+import { wouldCreateCollectionCycle } from "./media-strip.validation";
 import { MediaStripThumbnail } from "./media-strip-thumbnail";
 import { useReorderKeyboard } from "./use-reorder-keyboard";
+import { useMediaStripBoard } from "./media-strip-board";
 import { cn } from "../lib/utils";
 
 type MediaStripItemButtonProps = MediaStripItemAreEqualProps & {
-  stripId: string;
-  onMoveItem?: (details: MediaStripMove) => void;
+  collectionId: CollectionId;
 };
 
 export const MediaStripItemButton = memo(
@@ -28,7 +36,7 @@ export const MediaStripItemButton = memo(
     item,
     style,
     thumbnailVariant,
-    stripId,
+    collectionId,
     onMoveItem,
     items,
     isKeyboardReordering = false,
@@ -36,21 +44,23 @@ export const MediaStripItemButton = memo(
     const durationLabel = formatDuration(item.durationSeconds);
     const ariaLabel = `${item.name}, ${durationLabel} (Selectable item)`;
     const handleAriaLabel = isKeyboardReordering
-      ? "Reorder mode active. Use Arrow Left/Right to reorder, Arrow Up/Down to move between strips, Home/End to skip to edges, Escape or Space to exit."
+      ? "Reorder mode active. Use Arrow Left/Right to reorder, Arrow Up/Down to move between collections, Home/End to skip to edges, N to nest into adjacent collection, Escape or Space to exit."
       : "Reorder handle";
 
     const handleRef = useRef<HTMLButtonElement>(null);
+    const { activeDragId, collectionsById, activeNestTargetId } = useMediaStripBoard();
 
     // Keyboard-based item reordering logic
     const handleKeyDown = useReorderKeyboard({
       item,
       items,
-      stripId,
+      collectionId,
       onMoveItem,
       isKeyboardReordering,
     });
 
     // Dnd Kit sortable setup
+    const encodedId = encodeDndTarget({ type: "item", itemId: item.id });
     const {
       attributes,
       listeners,
@@ -58,11 +68,35 @@ export const MediaStripItemButton = memo(
       transform,
       transition,
       isDragging,
-    } = useSortable({ id: item.id });
+    } = useSortable({ id: encodedId });
+
+    const isCollection = item.kind === "collection";
+    const isOverNest = isCollectionItem(item) && activeNestTargetId === item.collectionId;
+    const showNestOverlay = isCollection && !!activeDragId && activeDragId !== item.id;
+
+    const isInvalidCycle = useMemo(() => {
+      if (!showNestOverlay || !activeDragId || !isCollectionItem(item)) return false;
+
+      let activeItemCollectionId: CollectionId | null = null;
+      for (const col of Object.values(collectionsById)) {
+        const found = col.items.find(i => i.id === activeDragId);
+        if (found && isCollectionItem(found)) {
+          activeItemCollectionId = found.collectionId;
+          break;
+        }
+      }
+
+      if (activeItemCollectionId) {
+        return wouldCreateCollectionCycle({
+          movingCollectionId: activeItemCollectionId,
+          targetCollectionId: item.collectionId,
+          collectionsById,
+        });
+      }
+      return false;
+    }, [showNestOverlay, activeDragId, item, collectionsById]);
 
     // Focus preservation on the reorder handle.
-    // Note: item.id is a necessary dependency because React recycling in virtualized lists
-    // reuses DOM button elements/instances for different item IDs when scrolling.
     useEffect(() => {
       if (isKeyboardReordering && handleRef.current) {
         handleRef.current.focus();
@@ -87,7 +121,6 @@ export const MediaStripItemButton = memo(
       });
     };
 
-    // Render a dashed ghost placeholder in the list while dragging is active
     if (isDragging) {
       return (
         <div
@@ -98,10 +131,12 @@ export const MediaStripItemButton = memo(
       );
     }
 
-    // Combine absolute positions with sortable CSS translations
+    // Combine absolute positions with sortable CSS translations.
+    // When hovering over the nesting hotspot (isOverNest === true), we bypass
+    // the sortable transform to keep the collection card at its original, stable visual position.
     const combinedStyle: CSSProperties = {
       ...style,
-      transform: transform ? CSS.Transform.toString(transform) : undefined,
+      transform: (transform && !isOverNest) ? CSS.Transform.toString(transform) : undefined,
       transition: transition || undefined,
     };
 
@@ -133,11 +168,22 @@ export const MediaStripItemButton = memo(
           </Badge>
         </ToggleGroupItem>
 
+
+        {/* Visual Nest Feedback: covers the entire card, rendered only when dragging over the hotspot */}
+        {showNestOverlay && isOverNest && (
+          <div
+            className={cn(
+              "absolute inset-0 z-10 rounded-lg border-2 pointer-events-none flex items-center justify-center font-bold text-xs select-none",
+              isInvalidCycle ? "border-destructive bg-destructive/15 text-destructive" : "border-primary bg-primary/15 text-primary"
+            )}
+          >
+            <span className="bg-background/95 backdrop-blur-sm px-2 py-1 rounded shadow-md border text-[10px]">
+              {isInvalidCycle ? "Cannot drop (cycle)" : "Drop to Nest"}
+            </span>
+          </div>
+        )}
+
         {/* Reorder Handle: SIBLING absolutely positioned on top, avoiding invalid HTML button nesting */}
-        {/* NOTE: This handle button does not have data-value or value attributes. This is crucial */}
-        {/* because media-strip.tsx uses a capture-phase keydown listener for grid arrow navigation. */}
-        {/* By omitting data-value/value on the handle, that capture handler safely bails out early */}
-        {/* when focus is on the handle, preventing double-handling of arrow keys during keyboard reordering. */}
         <button
           type="button"
           ref={handleRef}
@@ -145,14 +191,14 @@ export const MediaStripItemButton = memo(
           {...{ [DATA_REORDER_HANDLE_ATTR]: item.id }}
           aria-label={handleAriaLabel}
           className={cn(
-            "absolute top-1.5 right-1.5 p-0.5 rounded cursor-grab hover:bg-muted text-muted-foreground active:cursor-grabbing z-30 pointer-events-auto opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm border shadow-sm",
+            "absolute top-1.5 left-1/2 -translate-x-1/2 p-0.5 rounded cursor-grab hover:bg-muted text-muted-foreground active:cursor-grabbing z-30 pointer-events-auto opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm border shadow-sm",
             isKeyboardReordering && "opacity-100 bg-primary text-primary-foreground hover:bg-primary"
           )}
           {...attributes}
           {...listeners}
           onKeyDown={handleKeyDown}
         >
-          <GripVertical className="h-3.5 w-3.5" />
+          <GripHorizontal className="h-3.5 w-3.5" />
         </button>
       </div>
     );
