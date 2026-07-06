@@ -24,7 +24,7 @@ export type CollectionId = string & {
 export const asTimelineItemId = (
   id: string
 ): TimelineItemResult<TimelineItemId, "empty-id"> => {
-  if (!id) {
+  if (!id || !id.trim()) {
     return { ok: false, error: "empty-id" };
   }
   return { ok: true, value: id as TimelineItemId };
@@ -33,7 +33,7 @@ export const asTimelineItemId = (
 export const asCollectionId = (
   id: string
 ): TimelineItemResult<CollectionId, "empty-id"> => {
-  if (!id) {
+  if (!id || !id.trim()) {
     return { ok: false, error: "empty-id" };
   }
   return { ok: true, value: id as CollectionId };
@@ -55,8 +55,6 @@ type MediaTimelineItemBase = TimelineItemBase &
   Readonly<{
     /** Source media URL/path. */
     src: string;
-    /** Optional thumbnail/poster override. */
-    posterSrc?: string;
     /** Optional sequence of thumbnail/poster overrides. */
     posterSrcs?: readonly string[];
   }>;
@@ -146,5 +144,13 @@ export const assertNever = (value: never): never => {
  *   use(result.value);
  */
 export type TimelineItemResult<T, E> =
-  | Readonly<{ ok: true; value: T }>
-  | Readonly<{ ok: false; error: E }>;
+  | Readonly<{ ok: true; value: T; readonly __itemResult?: never }>
+  | Readonly<{ ok: false; error: E; readonly __itemResult?: never }>;
+
+export type MediaStripMove = {
+  itemId: TimelineItemId;
+  fromStripId: string;
+  toStripId: string;
+  fromIndex: number;
+  toIndex: number;
+};

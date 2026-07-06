@@ -42,11 +42,15 @@ describe("Timeline Items Branding", () => {
     const validCol = asCollectionId("collection-1");
     const invalidItem = asTimelineItemId("");
     const invalidCol = asCollectionId("");
+    const whitespaceItem = asTimelineItemId("   ");
+    const whitespaceCol = asCollectionId("   ");
 
     expect(validItem).toEqual({ ok: true, value: "item-1" as TimelineItemId });
     expect(validCol).toEqual({ ok: true, value: "collection-1" as CollectionId });
     expect(invalidItem).toEqual({ ok: false, error: "empty-id" });
     expect(invalidCol).toEqual({ ok: false, error: "empty-id" });
+    expect(whitespaceItem).toEqual({ ok: false, error: "empty-id" });
+    expect(whitespaceCol).toEqual({ ok: false, error: "empty-id" });
   });
 });
 
@@ -230,7 +234,6 @@ describe("Media Items String Validation", () => {
   test("validates correct string values", () => {
     const item = {
       src: "https://example.com/video.mp4",
-      posterSrc: "https://example.com/poster.jpg",
       posterSrcs: ["https://example.com/frame1.jpg", "https://example.com/frame2.jpg"],
     };
     expect(validateMediaItemStrings(item as any)).toEqual({ valid: true });
@@ -246,14 +249,17 @@ describe("Media Items String Validation", () => {
     });
   });
 
-  test("fails for invalid posterSrc type", () => {
-    const item = {
-      src: "https://example.com/video.mp4",
-      posterSrc: 123,
-    };
-    expect(validateMediaItemStrings(item as any)).toEqual({
+  test("fails for empty or whitespace src", () => {
+    const itemEmpty = { src: "" };
+    expect(validateMediaItemStrings(itemEmpty as any)).toEqual({
       valid: false,
-      reason: "invalid-poster-src",
+      reason: "invalid-src",
+    });
+
+    const itemWhitespace = { src: "   " };
+    expect(validateMediaItemStrings(itemWhitespace as any)).toEqual({
+      valid: false,
+      reason: "invalid-src",
     });
   });
 
@@ -272,6 +278,15 @@ describe("Media Items String Validation", () => {
       posterSrcs: ["https://example.com/frame1.jpg", 123],
     };
     expect(validateMediaItemStrings(itemInvalidElements as any)).toEqual({
+      valid: false,
+      reason: "invalid-poster-srcs",
+    });
+
+    const itemEmptyElement = {
+      src: "https://example.com/video.mp4",
+      posterSrcs: ["https://example.com/frame1.jpg", ""],
+    };
+    expect(validateMediaItemStrings(itemEmptyElement as any)).toEqual({
       valid: false,
       reason: "invalid-poster-srcs",
     });
@@ -556,22 +571,27 @@ describe("MediaStrip getItemWidth helper", () => {
 describe("MediaStripItemButton areEqual custom comparator", () => {
   const itemA = { id: "item-a" as TimelineItemId, name: "Item A" } as any;
   const itemB = { id: "item-b" as TimelineItemId, name: "Item B" } as any;
+  const items = [itemA, itemB];
 
   test("returns true for identical items and matching styles", () => {
     const prev = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 8px)",
       },
     };
     const next = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 8px)",
       },
@@ -582,18 +602,22 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if items change", () => {
     const prev = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 8px)",
       },
     };
     const next = {
       item: itemB,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 8px)",
       },
@@ -604,18 +628,22 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style width changes", () => {
     const prev = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 8px)",
       },
     };
     const next = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "120px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 8px)",
       },
@@ -623,21 +651,25 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     expect(areEqual(prev, next)).toBe(false);
   });
 
-  test("returns false if style transform changes", () => {
+  test("returns false if style left changes", () => {
     const prev = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 8px)",
       },
     };
     const next = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(20px)",
+        left: "20px",
         top: 4,
         height: "calc(100% - 8px)",
       },
@@ -648,18 +680,22 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style top changes", () => {
     const prev = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 8px)",
       },
     };
     const next = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 6,
         height: "calc(100% - 8px)",
       },
@@ -670,20 +706,50 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style height changes", () => {
     const prev = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 8px)",
       },
     };
     const next = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 12px)",
+      },
+    };
+    expect(areEqual(prev, next)).toBe(false);
+  });
+
+  test("returns false if isKeyboardReordering changes", () => {
+    const prev = {
+      item: itemA,
+      items,
+      isKeyboardReordering: false,
+      style: {
+        width: "100px",
+        left: "10px",
+        top: 4,
+        height: "calc(100% - 8px)",
+      },
+    };
+    const next = {
+      item: itemA,
+      items,
+      isKeyboardReordering: true,
+      style: {
+        width: "100px",
+        left: "10px",
+        top: 4,
+        height: "calc(100% - 8px)",
       },
     };
     expect(areEqual(prev, next)).toBe(false);
@@ -692,16 +758,20 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("handles missing or undefined style objects safely", () => {
     const prev = {
       item: itemA,
-    };
+      items,
+      isKeyboardReordering: false,
+    } as any;
     const next = {
       item: itemA,
+      items,
+      isKeyboardReordering: false,
       style: {
         width: "100px",
-        transform: "translateX(10px)",
+        left: "10px",
         top: 4,
         height: "calc(100% - 8px)",
       },
-    };
+    } as any;
     expect(areEqual(prev, next)).toBe(false);
     expect(areEqual(next, prev)).toBe(false);
     expect(areEqual(prev, prev)).toBe(true);

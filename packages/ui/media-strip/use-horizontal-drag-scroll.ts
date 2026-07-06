@@ -7,13 +7,15 @@ import {
 } from "react";
 
 const SCROLL_CLICK_SUPPRESSION_MS = 180;
+// Drag distance threshold in pixels before starting drag scroll.
+// Cross-referenced with dnd-kit's activationConstraint.distance = 5 in media-strip-board.tsx.
+// We keep it slightly lower (4px) to make scroll area dragging feel slightly more responsive.
 const DRAG_CLICK_THRESHOLD_PX = 4;
 
 export function useHorizontalDragScroll(
   viewportRef: React.RefObject<HTMLDivElement | null>,
   viewportContentRef: React.RefObject<HTMLDivElement | null>
 ) {
-  const didDragRef = useRef(false);
   const maxScrollLeftRef = useRef(0);
   const suppressClickUntilRef = useRef(0);
 
@@ -32,7 +34,15 @@ export function useHorizontalDragScroll(
     lastTime: 0,
     velocity: 0,
     pointerId: -1,
+    didDrag: false,
   });
+
+  // Track active window event listeners for unmount cleanup
+  const activeListenersRef = useRef<{
+    move: ((e: PointerEvent) => void) | null;
+    up: ((e: PointerEvent) => void) | null;
+    cancel: ((e: PointerEvent) => void) | null;
+  }>({ move: null, up: null, cancel: null });
 
   const getViewport = useCallback(() => {
     return viewportRef.current;
@@ -91,9 +101,15 @@ export function useHorizontalDragScroll(
     const element = getViewport();
     if (!element) return;
 
-    const step = () => {
+    let lastFrameTime = performance.now();
+
+    const step = (now: number) => {
       const state = dragStateRef.current;
-      state.velocity *= 0.95; // Decay factor
+      const dt = (now - lastFrameTime) / 16.67; // frames-equivalent elapsed
+      lastFrameTime = now;
+
+      // Decay factor, adjusted for time elapsed
+      state.velocity *= Math.pow(0.95, dt);
 
       if (Math.abs(state.velocity) < 0.1) {
         inertiaFrameRef.current = null;
@@ -122,15 +138,28 @@ export function useHorizontalDragScroll(
 
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      // Guard against secondary pointer downs during active drags (multi-touch listener leaks)
+      if (dragStateRef.current.isDragging) {
+        return;
+      }
+
       if (event.pointerType === "mouse" && event.button !== 0) {
         return;
       }
 
-      if (
-        event.target instanceof HTMLElement &&
-        event.target.closest('[data-slot="scroll-area-scrollbar"]')
-      ) {
-        return;
+      // Interactive element guards to prevent scroll interference with clicks or DnD handle gestures
+      if (event.target instanceof Element) {
+        const isInteractive =
+          event.target.closest("a") ||
+          event.target.closest("input") ||
+          event.target.closest("select") ||
+          event.target.closest("textarea") ||
+          event.target.closest("[data-dnd-handle]") ||
+          event.target.closest('[data-slot="scroll-area-scrollbar"]');
+
+        if (isInteractive) {
+          return;
+        }
       }
 
       const viewport = getViewport();
@@ -143,7 +172,9 @@ export function useHorizontalDragScroll(
       // Stop any ongoing inertia scroll
       stopInertia();
 
-      didDragRef.current = false;
+      // Capture the target DOM node immediately to fix the synthetic event currentTarget nulling bug
+      const dragRoot = event.currentTarget;
+
       const state = dragStateRef.current;
       Object.assign(state, {
         isDragging: true,
@@ -153,18 +184,19 @@ export function useHorizontalDragScroll(
         lastTime: event.timeStamp,
         velocity: 0,
         pointerId: event.pointerId,
+        didDrag: false,
       });
 
       try {
-        event.currentTarget.setPointerCapture(event.pointerId);
+        dragRoot.setPointerCapture(event.pointerId);
       } catch {}
 
       const onPointerMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== state.pointerId) return;
 
         const deltaX = moveEvent.clientX - state.startX;
-        if (!didDragRef.current && Math.abs(deltaX) > DRAG_CLICK_THRESHOLD_PX) {
-          didDragRef.current = true;
+        if (!state.didDrag && Math.abs(deltaX) > DRAG_CLICK_THRESHOLD_PX) {
+          state.didDrag = true;
         }
 
         const maxScroll = maxScrollLeftRef.current;
@@ -184,29 +216,36 @@ export function useHorizontalDragScroll(
         state.lastTime = moveEvent.timeStamp;
       };
 
+      const cleanup = () => {
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerCancel);
+
+        activeListenersRef.current.move = null;
+        activeListenersRef.current.up = null;
+        activeListenersRef.current.cancel = null;
+      };
+
       const onPointerUp = (upEvent: PointerEvent) => {
         if (upEvent.pointerId !== state.pointerId) return;
 
         state.isDragging = false;
         try {
-          if (event.currentTarget.hasPointerCapture(upEvent.pointerId)) {
-            event.currentTarget.releasePointerCapture(upEvent.pointerId);
+          if (dragRoot.hasPointerCapture(upEvent.pointerId)) {
+            dragRoot.releasePointerCapture(upEvent.pointerId);
           }
         } catch {}
 
-        // Remove listeners
-        window.removeEventListener("pointermove", onPointerMove);
-        window.removeEventListener("pointerup", onPointerUp);
-        window.removeEventListener("pointercancel", onPointerCancel);
+        cleanup();
 
         // Click suppression if we dragged
-        if (didDragRef.current) {
+        if (state.didDrag) {
           suppressClickUntilRef.current =
             performance.now() + SCROLL_CLICK_SUPPRESSION_MS;
         }
 
         // Run inertia
-        if (didDragRef.current && Math.abs(state.velocity) > 1) {
+        if (state.didDrag && Math.abs(state.velocity) > 1) {
           runInertia();
         }
 
@@ -218,17 +257,20 @@ export function useHorizontalDragScroll(
 
         state.isDragging = false;
         try {
-          if (event.currentTarget.hasPointerCapture(cancelEvent.pointerId)) {
-            event.currentTarget.releasePointerCapture(cancelEvent.pointerId);
+          if (dragRoot.hasPointerCapture(cancelEvent.pointerId)) {
+            dragRoot.releasePointerCapture(cancelEvent.pointerId);
           }
         } catch {}
 
-        window.removeEventListener("pointermove", onPointerMove);
-        window.removeEventListener("pointerup", onPointerUp);
-        window.removeEventListener("pointercancel", onPointerCancel);
+        cleanup();
 
         state.pointerId = -1;
       };
+
+      // Store window listeners for unmount cleanup
+      activeListenersRef.current.move = onPointerMove;
+      activeListenersRef.current.up = onPointerUp;
+      activeListenersRef.current.cancel = onPointerCancel;
 
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
@@ -244,9 +286,14 @@ export function useHorizontalDragScroll(
     }
   }, []);
 
-  // Clean up any pending animation frames on unmount
+  // Clean up any pending window listeners and animation frames on unmount
   useEffect(() => {
     return () => {
+      const listeners = activeListenersRef.current;
+      if (listeners.move) window.removeEventListener("pointermove", listeners.move);
+      if (listeners.up) window.removeEventListener("pointerup", listeners.up);
+      if (listeners.cancel) window.removeEventListener("pointercancel", listeners.cancel);
+
       if (inertiaFrameRef.current !== null) {
         cancelAnimationFrame(inertiaFrameRef.current);
       }

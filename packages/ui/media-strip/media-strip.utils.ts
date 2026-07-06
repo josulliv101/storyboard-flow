@@ -1,7 +1,13 @@
 import { type CSSProperties } from "react";
-import type { TimelineItem, VideoTimelineItem } from "./media-strip.types";
+import type { TimelineItem, VideoTimelineItem, MediaStripMove } from "./media-strip.types";
 
 export const MIN_ITEM_WIDTH_PX = 96;
+
+/**
+ * Padding applied to the ToggleGroup container in pixels.
+ * Coupled with Tailwind's "p-1" class (0.25rem = 4px).
+ */
+export const TOGGLE_GROUP_PADDING_PX = 4;
 
 export const getTimelineItemEndTimeSeconds = (item: TimelineItem): number =>
   item.startTimeSeconds + item.durationSeconds;
@@ -36,27 +42,44 @@ export function formatDuration(seconds: number): string {
   return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
 }
 
+/** Shared props type between the item button and the custom memoization comparator. */
+export type MediaStripItemAreEqualProps = {
+  item: TimelineItem;
+  style?: CSSProperties;
+  thumbnailVariant?: "single" | "sequence";
+  items: TimelineItem[];
+  isKeyboardReordering?: boolean;
+  stripId?: string;
+  onMoveItem?: (details: MediaStripMove) => void;
+};
+
 /**
  * Custom comparison function to optimize MediaStripItemButton memoization.
  * Performs reference equality check on the item and structural equality checks
  * on the virtualized absolute positioning styles.
  *
- * NOTE: Constant properties (like `position: "absolute"` and `left: 0`) are
- * intentionally skipped since they are identical across all items. Only styles
- * that vary per virtual item (`width`, `transform`, `top`, `height`) are compared here.
- * If layout logic is modified in the future (e.g. for RTL left adjustments), those
- * fields must be added here to avoid stale renders.
+ * NOTE: style.left (derived from virtualItem.start) and style.width (derived from itemWidths)
+ * vary per virtual item and are compared. style.top and style.height are constant (defined
+ * relative to TOGGLE_GROUP_PADDING_PX) but are included for robustness.
+ * Constant properties (like `position: "absolute"`) are skipped since they are identical
+ * across all items.
+ * Transform/transition properties are computed separately via useSortable inside the
+ * MediaStripItemButton component and are not compared here.
  */
 export function areEqual(
-  prevProps: { item: TimelineItem; style?: CSSProperties; thumbnailVariant?: "single" | "sequence" },
-  nextProps: { item: TimelineItem; style?: CSSProperties; thumbnailVariant?: "single" | "sequence" }
+  prevProps: MediaStripItemAreEqualProps,
+  nextProps: MediaStripItemAreEqualProps
 ): boolean {
   return (
     prevProps.item === nextProps.item &&
     prevProps.style?.width === nextProps.style?.width &&
-    prevProps.style?.transform === nextProps.style?.transform &&
+    prevProps.style?.left === nextProps.style?.left &&
     prevProps.style?.top === nextProps.style?.top &&
     prevProps.style?.height === nextProps.style?.height &&
-    prevProps.thumbnailVariant === nextProps.thumbnailVariant
+    prevProps.thumbnailVariant === nextProps.thumbnailVariant &&
+    prevProps.items === nextProps.items &&
+    prevProps.isKeyboardReordering === nextProps.isKeyboardReordering &&
+    prevProps.stripId === nextProps.stripId &&
+    prevProps.onMoveItem === nextProps.onMoveItem
   );
 }

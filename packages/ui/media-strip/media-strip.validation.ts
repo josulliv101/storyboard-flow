@@ -5,7 +5,7 @@ import {
   type ImageTimelineItem,
   type TimelineItemResult,
   type TimelineItem,
-  assertNever,
+  type TimelineItemKind,
 } from "./media-strip.types";
 import { getVideoVisibleDurationSeconds } from "./media-strip.utils";
 
@@ -78,7 +78,6 @@ export const validateTimelineItemTiming = (
 export type MediaTimelineItemValidationResult =
   | TimelineItemTimingValidationResult
   | Readonly<{ valid: false; reason: "invalid-src" }>
-  | Readonly<{ valid: false; reason: "invalid-poster-src" }>
   | Readonly<{ valid: false; reason: "invalid-poster-srcs" }>;
 
 export type MediaTimelineItemValidationFailure = Extract<
@@ -86,19 +85,23 @@ export type MediaTimelineItemValidationFailure = Extract<
   { valid: false }
 >;
 
+export type MediaItemStrings = {
+  src: string;
+  posterSrcs?: readonly string[];
+};
+
 export const validateMediaItemStrings = (
-  item: { src: string; posterSrc?: string; posterSrcs?: readonly string[] }
+  item: MediaItemStrings
 ): MediaTimelineItemValidationResult => {
-  if (typeof item.src !== "string") {
+  if (typeof item.src !== "string" || item.src.trim() === "") {
     return { valid: false, reason: "invalid-src" };
   }
 
-  if (item.posterSrc !== undefined && typeof item.posterSrc !== "string") {
-    return { valid: false, reason: "invalid-poster-src" };
-  }
-
   if (item.posterSrcs !== undefined) {
-    if (!Array.isArray(item.posterSrcs) || item.posterSrcs.some(url => typeof url !== "string")) {
+    if (
+      !Array.isArray(item.posterSrcs) ||
+      item.posterSrcs.some((url) => typeof url !== "string" || url.trim() === "")
+    ) {
       return { valid: false, reason: "invalid-poster-srcs" };
     }
   }
@@ -246,30 +249,39 @@ export const validateVideoTimelineItem = (
   return { valid: true };
 };
 
+export type ValidationResultOf<T extends TimelineItem> = T extends { kind: "image" }
+  ? MediaTimelineItemValidationResult
+  : T extends { kind: "video" }
+  ? VideoTimelineItemValidationResult
+  : T extends { kind: "collection" }
+  ? CollectionTimelineItemValidationResult
+  : TimelineItemValidationResult;
+
 export type TimelineItemValidationResult =
   | TimelineItemTimingValidationResult
   | MediaTimelineItemValidationResult
   | CollectionTimelineItemValidationResult
   | VideoTimelineItemValidationResult;
 
+const validators: {
+  [K in TimelineItemKind]: (item: Extract<TimelineItem, { kind: K }>) => TimelineItemValidationResult;
+} = {
+  image: validateImageTimelineItem,
+  video: validateVideoTimelineItem,
+  collection: validateCollectionTimelineItem,
+};
+
 /**
  * Validates any TimelineItem variant dynamically by dispatching to its
  * corresponding kind-specific validation logic.
  */
-export function validateTimelineItem(item: TimelineItem): TimelineItemValidationResult {
-  switch (item.kind) {
-    case "image":
-      return validateImageTimelineItem(item);
-
-    case "video":
-      return validateVideoTimelineItem(item);
-
-    case "collection":
-      return validateCollectionTimelineItem(item);
-
-    default:
-      return assertNever(item);
-  }
+export function validateTimelineItem<T extends TimelineItem>(
+  item: T
+): ValidationResultOf<T> {
+  // Safe cast because T is narrowed to its specific kind by indexing the validators record,
+  // which contains exhaustive validation functions for every possible TimelineItemKind.
+  const validator = validators[item.kind] as (item: T) => ValidationResultOf<T>;
+  return validator(item);
 }
 
 // --- Smart constructors ------------------------------------------------------
