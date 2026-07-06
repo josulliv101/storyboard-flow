@@ -35,6 +35,7 @@ import { MediaStripItemButton } from "./media-strip-item";
 import { getItemWidth, TOGGLE_GROUP_PADDING_PX } from "./media-strip.utils";
 import { useMediaStripBoard } from "./media-strip-board";
 import { useScrollToAndFocus } from "./use-scroll-to-and-focus";
+import { MediaStripMove, TimelineItem, TimelineItemId } from "./media-strip.types";
 
 
 
