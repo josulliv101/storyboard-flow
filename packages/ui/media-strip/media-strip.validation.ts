@@ -209,9 +209,19 @@ export type VideoTimelineItemValidationFailure = Extract<
 export const validateVideoTimelineItem = (
   item: VideoTimelineItem
 ): VideoTimelineItemValidationResult => {
-  const timingResult = validateTimelineItemTiming(item);
-  if (!timingResult.valid) {
-    return timingResult;
+  // 1. Initial timing checks (excluding duration check)
+  const idResult = asTimelineItemId(item.id);
+  if (!idResult.ok) {
+    return { valid: false, reason: "empty-id" };
+  }
+  if (typeof item.name !== "string" || item.name.trim() === "") {
+    return { valid: false, reason: "empty-name" };
+  }
+  if (!Number.isFinite(item.startTimeSeconds)) {
+    return { valid: false, reason: "non-finite-start-time" };
+  }
+  if (isEffectivelyNegativeSeconds(item.startTimeSeconds)) {
+    return { valid: false, reason: "negative-start-time" };
   }
 
   const mediaStringsResult = validateMediaItemStrings(item);
@@ -219,30 +229,29 @@ export const validateVideoTimelineItem = (
     return mediaStringsResult;
   }
 
+  // 2. Finite checks on video-specific props
   if (!Number.isFinite(item.sourceDurationSeconds)) {
     return { valid: false, reason: "non-finite-source-duration" };
   }
-
   if (!Number.isFinite(item.trimInSeconds)) {
     return { valid: false, reason: "non-finite-trim-in" };
   }
-
   if (!Number.isFinite(item.trimOutSeconds)) {
     return { valid: false, reason: "non-finite-trim-out" };
   }
 
+  // 3. Non-negative checks on video-specific props
   if (isEffectivelyNegativeSeconds(item.sourceDurationSeconds)) {
     return { valid: false, reason: "negative-source-duration" };
   }
-
   if (isEffectivelyNegativeSeconds(item.trimInSeconds)) {
     return { valid: false, reason: "negative-trim-in" };
   }
-
   if (isEffectivelyNegativeSeconds(item.trimOutSeconds)) {
     return { valid: false, reason: "negative-trim-out" };
   }
 
+  // 4. Trim exceeds check
   if (
     !isApproximatelyLessThanOrEqual(
       item.trimInSeconds + item.trimOutSeconds,
@@ -252,6 +261,15 @@ export const validateVideoTimelineItem = (
     return { valid: false, reason: "trim-exceeds-source" };
   }
 
+  // 5. General duration timing check (now safe, since we know trim <= source)
+  if (!Number.isFinite(item.durationSeconds)) {
+    return { valid: false, reason: "non-finite-duration" };
+  }
+  if (isEffectivelyNegativeSeconds(item.durationSeconds)) {
+    return { valid: false, reason: "negative-duration" };
+  }
+
+  // 6. Check that duration matches derived value
   const expectedDurationSeconds = getVideoVisibleDurationSeconds(item);
   if (!isApproximatelyEqual(item.durationSeconds, expectedDurationSeconds)) {
     return {

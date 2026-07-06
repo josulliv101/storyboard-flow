@@ -70,6 +70,8 @@ export function useReorderKeyboard({
 
           moveItem(item.id, nextStripId, targetIndex);
           announce(`Moved "${item.name}" to strip "${nextStripId}" at position ${targetIndex + 1}.`);
+        } else {
+          announce(direction === "up" ? "Already at the top strip." : "Already at the bottom strip.");
         }
       } else if (event.key === "Home") {
         moveTo(0, `Moved "${item.name}" to start of strip.`);

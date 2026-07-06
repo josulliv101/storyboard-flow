@@ -848,3 +848,193 @@ describe("Drag and Scroll Activation Thresholds", () => {
     );
   });
 });
+
+describe("Video Constructor Failure Ordering & Trim Validation", () => {
+  test("createVideoTimelineItem returns trim-exceeds-source when derived duration would be negative", () => {
+    const result = createVideoTimelineItem({
+      id: "vid-1",
+      name: "Vid",
+      src: "vid.mp4",
+      startTimeSeconds: 0,
+      sourceDurationSeconds: 10,
+      trimInSeconds: 8,
+      trimOutSeconds: 8,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("trim-exceeds-source");
+    }
+  });
+
+  test("updateVideoTimelineItem rejects invalid trim updates", () => {
+    const video = {
+      id: "vid-1" as TimelineItemId,
+      name: "Video",
+      kind: "video" as const,
+      src: "vid.mp4",
+      startTimeSeconds: 0,
+      sourceDurationSeconds: 10,
+      trimInSeconds: 2,
+      trimOutSeconds: 2,
+      durationSeconds: 6,
+    };
+
+    // trimInSeconds: -1
+    const res1 = updateVideoTimelineItem(video, { trimInSeconds: -1 });
+    expect(res1.ok).toBe(false);
+
+    // trimOutSeconds: -1
+    const res2 = updateVideoTimelineItem(video, { trimOutSeconds: -1 });
+    expect(res2.ok).toBe(false);
+
+    // trimInSeconds + trimOutSeconds > sourceDurationSeconds
+    const res3 = updateVideoTimelineItem(video, { trimInSeconds: 6, trimOutSeconds: 6 });
+    expect(res3.ok).toBe(false);
+    if (!res3.ok) {
+      expect(res3.error.reason).toBe("trim-exceeds-source");
+    }
+
+    // sourceDurationSeconds: NaN
+    const res4 = updateVideoTimelineItem(video, { sourceDurationSeconds: NaN });
+    expect(res4.ok).toBe(false);
+  });
+});
+
+describe("Tiny Negative Normalization for all constructors", () => {
+  test("normalizes tiny negative startTimeSeconds for collection timeline items", () => {
+    const result = createCollectionTimelineItem({
+      id: "col-1",
+      name: "Collection",
+      collectionId: "collection-col",
+      itemCount: 5,
+      startTimeSeconds: -0.0000001,
+      durationSeconds: 10,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.startTimeSeconds).toBe(0);
+    }
+  });
+
+  test("normalizes tiny negative trimInSeconds for video timeline items", () => {
+    const result = createVideoTimelineItem({
+      id: "vid-1",
+      name: "Video",
+      src: "vid.mp4",
+      startTimeSeconds: 0,
+      sourceDurationSeconds: 10,
+      trimInSeconds: -0.0000001,
+      trimOutSeconds: 2,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.trimInSeconds).toBe(0);
+    }
+  });
+});
+
+describe("updateCollectionTimelineItem failure cases", () => {
+  const collection = {
+    id: "col-1" as TimelineItemId,
+    name: "Collection",
+    kind: "collection" as const,
+    collectionId: "collection-col" as CollectionId,
+    itemCount: 5,
+    startTimeSeconds: 0,
+    durationSeconds: 10,
+  };
+
+  test("rejects negative itemCount", () => {
+    const result = updateCollectionTimelineItem(collection, { itemCount: -1 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("negative-item-count");
+    }
+  });
+
+  test("rejects non-integer itemCount", () => {
+    const result = updateCollectionTimelineItem(collection, { itemCount: 1.5 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("non-integer-item-count");
+    }
+  });
+
+  test("rejects empty collectionId", () => {
+    const result = updateCollectionTimelineItem(collection, { collectionId: "" as any });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("empty-id");
+    }
+  });
+
+  test("rejects negative durationSeconds", () => {
+    const result = updateCollectionTimelineItem(collection, { durationSeconds: -1 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("negative-duration");
+    }
+  });
+});
+
+describe("getItemWidth defensive behavior and formatDuration edge cases", () => {
+  test("getItemWidth returns MIN_ITEM_WIDTH_PX on invalid inputs", () => {
+    expect(getItemWidth({ durationSeconds: NaN }, 32)).toBe(MIN_ITEM_WIDTH_PX);
+    expect(getItemWidth({ durationSeconds: Infinity }, 0)).toBe(MIN_ITEM_WIDTH_PX);
+    expect(getItemWidth({ durationSeconds: 5 }, NaN)).toBe(MIN_ITEM_WIDTH_PX);
+    expect(getItemWidth({ durationSeconds: 5 }, -32)).toBe(MIN_ITEM_WIDTH_PX);
+  });
+
+  test("formatDuration handles non-finite values and negative inputs", () => {
+    expect(formatDuration(-1)).toBe("00:00");
+    expect(formatDuration(NaN)).toBe("00:00");
+    expect(formatDuration(Infinity)).toBe("00:00");
+  });
+});
+
+describe("areEqual additional comparator tests", () => {
+  const itemA = { id: "item-a" as TimelineItemId, name: "Item A" } as any;
+  const items = [itemA];
+
+  const baseProps = {
+    item: itemA,
+    items,
+    isKeyboardReordering: false,
+    thumbnailVariant: "sequence" as const,
+    stripId: "strip-1",
+    onMoveItem: () => {},
+    style: {
+      width: "100px",
+      left: "10px",
+      top: 4,
+      height: "calc(100% - 8px)",
+    },
+  };
+
+  test("returns false when thumbnailVariant changes", () => {
+    const prev = { ...baseProps, thumbnailVariant: "sequence" as const };
+    const next = { ...baseProps, thumbnailVariant: "single" as const };
+    expect(areEqual(prev, next)).toBe(false);
+  });
+
+  test("returns false when stripId changes", () => {
+    const prev = { ...baseProps, stripId: "strip-1" };
+    const next = { ...baseProps, stripId: "strip-2" };
+    expect(areEqual(prev, next)).toBe(false);
+  });
+
+  test("returns false when onMoveItem reference changes", () => {
+    const prev = { ...baseProps, onMoveItem: () => {} };
+    const next = { ...baseProps, onMoveItem: () => {} };
+    expect(areEqual(prev, next)).toBe(false);
+  });
+
+  test("returns false when items reference changes but contents are identical", () => {
+    const prev = { ...baseProps, items: [itemA] };
+    const next = { ...baseProps, items: [itemA] };
+    expect(areEqual(prev, next)).toBe(false);
+  });
+});

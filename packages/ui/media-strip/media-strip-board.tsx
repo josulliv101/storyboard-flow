@@ -61,6 +61,9 @@ export function MediaStripBoard({
   // Registry for child media strips (maintained for backwards compatibility, but not relied on for visual ordering)
   const [registeredStrips, setRegisteredStrips] = useState<string[]>([]);
 
+  // Container ref to scope DOM queries and support multiple boards on the same page
+  const containerRef = useRef<HTMLDivElement>(null);
+
   // Keyboard reorder initial position session state
   const initialPositionRef = useRef<{ stripId: string; index: number } | null>(null);
 
@@ -130,9 +133,11 @@ export function MediaStripBoard({
 
   const getAdjacentStripId = useCallback(
     (currentStripId: string, direction: "up" | "down"): string | null => {
-      // Query all rendered strip elements in the DOM to establish visual order.
+      const container = containerRef.current;
+      if (!container) return null;
+      // Query all rendered strip elements in the DOM scoped to this board container to establish visual order.
       // This avoids relying on React effect-mount registration order, which may not match DOM order.
-      const stripEls = Array.from(document.querySelectorAll("[data-strip-id]"));
+      const stripEls = Array.from(container.querySelectorAll("[data-strip-id]"));
       if (stripEls.length === 0) return null;
 
       stripEls.sort((a, b) => {
@@ -373,14 +378,15 @@ export function MediaStripBoard({
 
   return (
     <MediaStripBoardContext.Provider value={contextValue}>
-      <DndContext
-        sensors={sensors}
-        collisionDetection={collisionDetectionStrategy}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragEnd={handleDragEnd}
-      >
-        {children}
+      <div ref={containerRef} style={{ display: "contents" }}>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={collisionDetectionStrategy}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+        >
+          {children}
 
         <DragOverlay>
           {activeDragItem ? (
@@ -406,7 +412,8 @@ export function MediaStripBoard({
         >
           {announcement}
         </div>
-      </DndContext>
+        </DndContext>
+      </div>
     </MediaStripBoardContext.Provider>
   );
 }
@@ -420,6 +427,7 @@ function DragOverlayItem({
 }) {
   return (
     <div
+      data-testid="drag-overlay-item"
       className="bg-card border-primary border p-2 rounded-lg opacity-85 shadow-2xl flex flex-col items-stretch justify-start gap-2 text-left pointer-events-none select-none"
       style={{
         width: `${width}px`,

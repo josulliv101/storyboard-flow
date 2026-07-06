@@ -49,17 +49,23 @@ export function getItemWidth(
   item: Pick<TimelineItem, "durationSeconds">,
   pxPerSecond: number
 ): number {
-  return Math.max(MIN_ITEM_WIDTH_PX, item.durationSeconds * pxPerSecond);
+  const width = item.durationSeconds * pxPerSecond;
+  if (!Number.isFinite(width) || width < 0) {
+    return MIN_ITEM_WIDTH_PX;
+  }
+  return Math.max(MIN_ITEM_WIDTH_PX, width);
 }
 
 /**
  * Formats a duration in seconds into a readable string (e.g. MM:SS or H:MM:SS).
  */
 export function formatDuration(seconds: number): string {
-  const clampedSeconds = Math.max(0, seconds);
-  const hours = Math.floor(clampedSeconds / 3600);
-  const mins = Math.floor((clampedSeconds % 3600) / 60);
-  const secs = Math.floor(clampedSeconds % 60);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return "00:00";
+  }
+  const hours = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
 
   if (hours > 0) {
     return `${hours}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
