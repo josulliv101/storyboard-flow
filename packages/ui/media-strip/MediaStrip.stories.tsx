@@ -853,3 +853,31 @@ export const ReorderableMediaStrips: Story = {
     ),
   ],
 };
+
+export const MultiStripDragRegression: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    // Locate the first item reorder handle in the DOM
+    const firstHandle = canvasElement.querySelector("[data-reorder-handle]") as HTMLElement;
+    if (!firstHandle) return;
+
+    // Simulate drag start, dragging down to the adjacent container, oscillating to trigger
+    // multiple dragover/collision frames, and then releasing to verify no depth ceiling crash occurs.
+    await userEvent.pointer([
+      { target: firstHandle, coords: { x: 5, y: 5 }, keys: "[MouseLeft>]" },
+      { coords: { x: 5, y: 150 } },
+      { coords: { x: 5, y: 155 } },
+      { coords: { x: 5, y: 150 } },
+      { keys: "[/MouseLeft]" }
+    ]);
+  },
+};

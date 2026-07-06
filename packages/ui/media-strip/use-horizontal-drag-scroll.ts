@@ -5,12 +5,10 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { DRAG_ACTIVATION_THRESHOLDS_PX } from "./media-strip.utils";
 
 const SCROLL_CLICK_SUPPRESSION_MS = 180;
-// Drag distance threshold in pixels before starting drag scroll.
-// Cross-referenced with dnd-kit's activationConstraint.distance = 5 in media-strip-board.tsx.
-// We keep it slightly lower (4px) to make scroll area dragging feel slightly more responsive.
-const DRAG_CLICK_THRESHOLD_PX = 4;
+const DRAG_CLICK_THRESHOLD_PX = DRAG_ACTIVATION_THRESHOLDS_PX.scroll;
 
 export function useHorizontalDragScroll(
   viewportRef: React.RefObject<HTMLDivElement | null>,

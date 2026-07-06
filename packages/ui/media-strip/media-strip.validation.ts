@@ -6,6 +6,8 @@ import {
   type TimelineItemResult,
   type TimelineItem,
   type TimelineItemKind,
+  asTimelineItemId,
+  asCollectionId,
 } from "./media-strip.types";
 import { getVideoVisibleDurationSeconds } from "./media-strip.utils";
 
@@ -37,6 +39,7 @@ const isApproximatelyLessThanOrEqual = (a: number, b: number): boolean =>
  */
 export type TimelineItemTimingValidationResult =
   | Readonly<{ valid: true }>
+  | Readonly<{ valid: false; reason: "empty-id" }>
   | Readonly<{ valid: false; reason: "empty-name" }>
   | Readonly<{ valid: false; reason: "non-finite-start-time" }>
   | Readonly<{ valid: false; reason: "non-finite-duration" }>
@@ -52,6 +55,12 @@ export type TimelineItemTimingValidationFailure = Extract<
 export const validateTimelineItemTiming = (
   item: TimelineItemBase
 ): TimelineItemTimingValidationResult => {
+  // Validate TimelineItemId at runtime to guarantee nominal safety
+  const idResult = asTimelineItemId(item.id);
+  if (!idResult.ok) {
+    return { valid: false, reason: "empty-id" };
+  }
+
   if (typeof item.name !== "string" || item.name.trim() === "") {
     return { valid: false, reason: "empty-name" };
   }
@@ -137,6 +146,12 @@ export const validateCollectionTimelineItem = (
   const timingResult = validateTimelineItemTiming(item);
   if (!timingResult.valid) {
     return timingResult;
+  }
+
+  // Validate CollectionId at runtime to guarantee nominal safety
+  const collectionIdResult = asCollectionId(item.collectionId);
+  if (!collectionIdResult.ok) {
+    return { valid: false, reason: "empty-id" };
   }
 
   // itemCount is a plain integer count, not derived from time arithmetic —
@@ -278,8 +293,8 @@ const validators: {
 export function validateTimelineItem<T extends TimelineItem>(
   item: T
 ): ValidationResultOf<T> {
-  // Safe cast because T is narrowed to its specific kind by indexing the validators record,
-  // which contains exhaustive validation functions for every possible TimelineItemKind.
+  // Safe type assertion: indexing the validators record by item.kind guarantees a match.
+  // The validators map covers every K in TimelineItemKind exhaustively, and T's kind is K.
   const validator = validators[item.kind] as (item: T) => ValidationResultOf<T>;
   return validator(item);
 }
@@ -289,13 +304,16 @@ export function validateTimelineItem<T extends TimelineItem>(
 // than leaving invariants to be checked (or forgotten) later. All three
 // return the same `TimelineItemResult<T, E>` envelope so calling code doesn't need a
 // different shape per kind.
+//
+// Accept plain strings for ID properties at the factory boundary to allow callers
+// to supply unbranded values, which are branded internally after successful runtime checks.
 
-export type CreateImageTimelineItemInput = Omit<ImageTimelineItem, "kind">;
+export type CreateImageTimelineItemInput = Omit<ImageTimelineItem, "kind" | "id"> & { id: string };
 
 export type CreateCollectionTimelineItemInput = Omit<
   CollectionTimelineItem,
-  "kind"
->;
+  "kind" | "id" | "collectionId"
+> & { id: string; collectionId: string };
 
 /**
  * `durationSeconds` is derived from `sourceDurationSeconds`, `trimInSeconds`,
@@ -305,14 +323,20 @@ export type CreateCollectionTimelineItemInput = Omit<
  */
 export type CreateVideoTimelineItemInput = Omit<
   VideoTimelineItem,
-  "kind" | "durationSeconds"
->;
+  "kind" | "id" | "durationSeconds"
+> & { id: string };
 
 export const createImageTimelineItem = (
   input: CreateImageTimelineItemInput
 ): TimelineItemResult<ImageTimelineItem, MediaTimelineItemValidationFailure> => {
+  const idResult = asTimelineItemId(input.id);
+  if (!idResult.ok) {
+    return { ok: false, error: { valid: false, reason: "empty-id" } };
+  }
+
   const candidate: ImageTimelineItem = {
     ...input,
+    id: idResult.value,
     startTimeSeconds: normalizeTinyNegativeSeconds(input.startTimeSeconds),
     durationSeconds: normalizeTinyNegativeSeconds(input.durationSeconds),
     kind: "image",
@@ -331,8 +355,20 @@ export const createCollectionTimelineItem = (
   CollectionTimelineItem,
   CollectionTimelineItemValidationFailure
 > => {
+  const idResult = asTimelineItemId(input.id);
+  if (!idResult.ok) {
+    return { ok: false, error: { valid: false, reason: "empty-id" } };
+  }
+
+  const collectionIdResult = asCollectionId(input.collectionId);
+  if (!collectionIdResult.ok) {
+    return { ok: false, error: { valid: false, reason: "empty-id" } };
+  }
+
   const candidate: CollectionTimelineItem = {
     ...input,
+    id: idResult.value,
+    collectionId: collectionIdResult.value,
     startTimeSeconds: normalizeTinyNegativeSeconds(input.startTimeSeconds),
     durationSeconds: normalizeTinyNegativeSeconds(input.durationSeconds),
     kind: "collection",
@@ -348,6 +384,11 @@ export const createCollectionTimelineItem = (
 export const createVideoTimelineItem = (
   input: CreateVideoTimelineItemInput
 ): TimelineItemResult<VideoTimelineItem, VideoTimelineItemValidationFailure> => {
+  const idResult = asTimelineItemId(input.id);
+  if (!idResult.ok) {
+    return { ok: false, error: { valid: false, reason: "empty-id" } };
+  }
+
   const sourceDurationSeconds = normalizeTinyNegativeSeconds(
     input.sourceDurationSeconds
   );
@@ -364,6 +405,7 @@ export const createVideoTimelineItem = (
 
   const candidate: VideoTimelineItem = {
     ...input,
+    id: idResult.value,
     startTimeSeconds: normalizeTinyNegativeSeconds(input.startTimeSeconds),
     sourceDurationSeconds,
     trimInSeconds,

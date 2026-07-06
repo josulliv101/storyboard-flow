@@ -142,15 +142,36 @@ export const assertNever = (value: never): never => {
  *   const result = createImageTimelineItem(input);
  *   if (!result.ok) { report(result.error); return; }
  *   use(result.value);
+ *
+ * Note on `__itemResult`: This is a phantom field (a type-level nominal marker)
+ * present on both union branches. It prevents structural TypeScript collapse
+ * between the success and failure shapes in cases where T and E might structurally
+ * overlap (e.g. if both are objects with similar optional fields or empty interfaces).
  */
 export type TimelineItemResult<T, E> =
   | Readonly<{ ok: true; value: T; readonly __itemResult?: never }>
   | Readonly<{ ok: false; error: E; readonly __itemResult?: never }>;
 
+/**
+ * Represents a drag-and-drop or keyboard-triggered movement of a timeline item
+ * from one media strip to another (or within the same strip).
+ */
 export type MediaStripMove = {
+  /** The unique identifier of the timeline item being moved. */
   itemId: TimelineItemId;
+  /**
+   * The identifier of the source strip. This is a plain string because strip IDs
+   * are caller-supplied container keys (e.g., dictionary keys in the host application)
+   * rather than domain data managed/validated directly by this package.
+   */
   fromStripId: string;
+  /**
+   * The identifier of the destination strip. Like `fromStripId`, this is a plain
+   * string representing a caller-supplied container key.
+   */
   toStripId: string;
+  /** The 0-based index of the item within the source strip before the move. */
   fromIndex: number;
+  /** The 0-based index of the item within the destination strip after the move. */
   toIndex: number;
 };

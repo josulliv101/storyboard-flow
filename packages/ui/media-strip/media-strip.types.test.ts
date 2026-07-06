@@ -34,6 +34,7 @@ import {
   formatDuration,
   areEqual,
   MIN_ITEM_WIDTH_PX,
+  DRAG_ACTIVATION_THRESHOLDS_PX,
 } from "./media-strip.utils";
 
 describe("Timeline Items Branding", () => {
@@ -835,5 +836,15 @@ describe("validateTimelineItem dynamic dispatcher", () => {
       valid: false,
       reason: "negative-item-count",
     });
+  });
+});
+
+describe("Drag and Scroll Activation Thresholds", () => {
+  test("asserts scroll threshold is strictly less than board threshold", () => {
+    // This pins the UX constraint: diagonal/small drags below 5px prioritize
+    // horizontal scroll area scrolling over board-level item reordering.
+    expect(DRAG_ACTIVATION_THRESHOLDS_PX.scroll).toBeLessThan(
+      DRAG_ACTIVATION_THRESHOLDS_PX.board
+    );
   });
 });

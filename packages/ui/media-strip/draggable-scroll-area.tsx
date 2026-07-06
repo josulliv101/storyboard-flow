@@ -1,4 +1,4 @@
-import { type RefObject, type ReactNode } from "react";
+import { type RefObject, type ReactNode, useMemo } from "react";
 
 import { ScrollArea, ScrollBar } from "../core/scroll-area";
 import { useHorizontalDragScroll } from "./use-horizontal-drag-scroll";
@@ -23,7 +23,10 @@ export function DraggableScrollArea({
     handleClickCapture,
   } = useHorizontalDragScroll(viewportRef, viewportContentRef);
 
-  const derivedTestId = testId ?? `media-strip-drag-scroll-${label.toLowerCase().replace(/\s+/g, "-")}`;
+  const derivedTestId = useMemo(
+    () => testId ?? `media-strip-drag-scroll-${label.toLowerCase().replace(/\s+/g, "-")}`,
+    [testId, label]
+  );
 
   return (
     <div

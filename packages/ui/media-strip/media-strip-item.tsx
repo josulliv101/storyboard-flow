@@ -1,13 +1,21 @@
-import { type FocusEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, memo, useRef, useEffect } from "react";
+import { type FocusEvent, type CSSProperties, memo, useRef, useEffect } from "react";
 import { GripVertical } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Badge } from "../core/badge";
 import { ToggleGroupItem } from "../core/toggle-group";
-import { type TimelineItem, type TimelineItemId, type MediaStripMove } from "./media-strip.types";
-import { formatDuration, areEqual, type MediaStripItemAreEqualProps } from "./media-strip.utils";
+import { type TimelineItem, type MediaStripMove } from "./media-strip.types";
+import {
+  formatDuration,
+  areEqual,
+  type MediaStripItemAreEqualProps,
+  DATA_VALUE_ATTR,
+  VALUE_ATTR,
+  DATA_REORDER_HANDLE_ATTR,
+  isElementFullyVisibleInScrollArea,
+} from "./media-strip.utils";
 import { MediaStripThumbnail } from "./media-strip-thumbnail";
-import { useMediaStripBoard } from "./media-strip-board";
+import { useReorderKeyboard } from "./use-reorder-keyboard";
 import { cn } from "../lib/utils";
 
 type MediaStripItemButtonProps = MediaStripItemAreEqualProps & {
@@ -33,14 +41,14 @@ export const MediaStripItemButton = memo(
 
     const handleRef = useRef<HTMLButtonElement>(null);
 
-    const {
-      startKeyboardReorder,
-      cancelKeyboardReorder,
-      confirmKeyboardReorder,
-      getAdjacentStripId,
-      itemsByStripId,
-      announce,
-    } = useMediaStripBoard();
+    // Keyboard-based item reordering logic
+    const handleKeyDown = useReorderKeyboard({
+      item,
+      items,
+      stripId,
+      onMoveItem,
+      isKeyboardReordering,
+    });
 
     // Dnd Kit sortable setup
     const {
@@ -52,7 +60,9 @@ export const MediaStripItemButton = memo(
       isDragging,
     } = useSortable({ id: item.id });
 
-    // Focus preservation on the reorder handle
+    // Focus preservation on the reorder handle.
+    // Note: item.id is a necessary dependency because React recycling in virtualized lists
+    // reuses DOM button elements/instances for different item IDs when scrolling.
     useEffect(() => {
       if (isKeyboardReordering && handleRef.current) {
         handleRef.current.focus();
@@ -60,96 +70,21 @@ export const MediaStripItemButton = memo(
     }, [isKeyboardReordering, item.id]);
 
     const handleFocus = (event: FocusEvent<HTMLButtonElement>) => {
-      event.currentTarget.scrollIntoView({
+      const element = event.currentTarget;
+
+      // Look for the scroll area container to see if the element is already in view
+      const scrollArea = element.closest("[data-testid^='media-strip-drag-scroll-']");
+      if (scrollArea instanceof HTMLElement) {
+        if (isElementFullyVisibleInScrollArea(element, scrollArea)) {
+          return;
+        }
+      }
+
+      element.scrollIntoView({
         behavior: "smooth",
         block: "nearest",
         inline: "nearest",
       });
-    };
-
-    const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
-      const index = items.findIndex((i) => i.id === item.id);
-      if (index === -1) return;
-
-      const moveTo = (toIndex: number, message: string, boundaryMessage?: string) => {
-        if (toIndex < 0 || toIndex >= items.length) {
-          if (boundaryMessage) {
-            announce(boundaryMessage);
-          }
-          return;
-        }
-        if (toIndex === index) return;
-        if (onMoveItem) {
-          onMoveItem({
-            itemId: item.id,
-            fromStripId: stripId,
-            toStripId: stripId,
-            fromIndex: index,
-            toIndex,
-          });
-          announce(message);
-        }
-      };
-
-      if (isKeyboardReordering) {
-        if (event.key === "ArrowLeft") {
-          event.preventDefault();
-          event.stopPropagation();
-          moveTo(index - 1, `Moved "${item.name}" to position ${index}.`, `Already first in strip.`);
-        } else if (event.key === "ArrowRight") {
-          event.preventDefault();
-          event.stopPropagation();
-          moveTo(index + 1, `Moved "${item.name}" to position ${index + 2}.`, `Already last in strip.`);
-        } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-          event.preventDefault();
-          event.stopPropagation();
-
-          // Query the board-scoped strip order registry
-          const direction = event.key === "ArrowUp" ? "up" : "down";
-          const nextStripId = getAdjacentStripId(stripId, direction);
-
-          if (nextStripId && onMoveItem) {
-            const targetList = itemsByStripId[nextStripId] || [];
-            // Clamp target index to prevent out-of-bounds array insertions
-            const targetIndex = Math.max(0, Math.min(index, targetList.length));
-
-            onMoveItem({
-              itemId: item.id,
-              fromStripId: stripId,
-              toStripId: nextStripId,
-              fromIndex: index,
-              toIndex: targetIndex,
-            });
-            announce(`Moved "${item.name}" to adjacent strip.`);
-          }
-        } else if (event.key === "Home") {
-          event.preventDefault();
-          event.stopPropagation();
-          moveTo(0, `Moved "${item.name}" to start of strip.`);
-        } else if (event.key === "End") {
-          event.preventDefault();
-          event.stopPropagation();
-          moveTo(items.length - 1, `Moved "${item.name}" to end of strip.`);
-        } else if (event.key === "Escape") {
-          event.preventDefault();
-          event.stopPropagation();
-          cancelKeyboardReorder();
-        } else if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          event.stopPropagation();
-          confirmKeyboardReorder();
-          announce(`Dropped "${item.name}" at position ${index + 1}.`);
-        }
-      } else {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          event.stopPropagation();
-          startKeyboardReorder(item.id, stripId, index);
-          announce(
-            `Picked up "${item.name}" via keyboard. Use ArrowLeft/Right to reorder, ArrowUp/Down to move between strips, Home/End to skip to edges, Enter or Space to drop, Escape to cancel.`
-          );
-        }
-      }
     };
 
     // Render a dashed ghost placeholder in the list while dragging is active
@@ -184,7 +119,7 @@ export const MediaStripItemButton = memo(
             isKeyboardReordering && "ring-2 ring-primary border-primary bg-primary/5 shadow-md"
           )}
           value={item.id}
-          data-value={item.id}
+          {...{ [DATA_VALUE_ATTR]: item.id }}
           onFocus={handleFocus}
         >
           <MediaStripThumbnail item={item} variant={thumbnailVariant} />
@@ -207,7 +142,7 @@ export const MediaStripItemButton = memo(
           type="button"
           ref={handleRef}
           data-dnd-handle="true"
-          data-reorder-handle={item.id}
+          {...{ [DATA_REORDER_HANDLE_ATTR]: item.id }}
           aria-label={handleAriaLabel}
           className={cn(
             "absolute top-1.5 right-1.5 p-0.5 rounded cursor-grab hover:bg-muted text-muted-foreground active:cursor-grabbing z-30 pointer-events-auto opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm border shadow-sm",
@@ -224,3 +159,5 @@ export const MediaStripItemButton = memo(
   },
   areEqual
 );
+
+MediaStripItemButton.displayName = "MediaStripItemButton";
