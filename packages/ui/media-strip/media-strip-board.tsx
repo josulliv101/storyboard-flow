@@ -184,14 +184,17 @@ export function MediaStripBoard({
     if (itemId && orig) {
       // O(1) Current position lookup
       const current = itemLookup.get(itemId);
-      if (current && (current.stripId !== orig.stripId || current.index !== orig.index)) {
-        moveItem(itemId, orig.stripId, orig.index);
+      if (current) {
+        if (current.stripId !== orig.stripId || current.index !== orig.index) {
+          moveItem(itemId, orig.stripId, orig.index);
+        }
+        announce(`Dropped "${current.item.name}" at position ${orig.index + 1}.`);
       }
     }
 
     setActiveKeyboardReorderId(null);
     initialPositionRef.current = null;
-  }, [activeKeyboardReorderId, itemLookup, moveItem]);
+  }, [activeKeyboardReorderId, itemLookup, moveItem, announce]);
 
   const confirmKeyboardReorder = useCallback(() => {
     setActiveKeyboardReorderId(null);

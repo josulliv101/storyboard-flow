@@ -35,6 +35,14 @@ export function useReorderKeyboard({
     const index = items.findIndex((i) => i.id === item.id);
     if (index === -1) return;
 
+    // Block reorder navigation keys from bubbling up to parent containers (like ToggleGroup)
+    // to prevent triggering roving tabindex selection focus changes.
+    const keysToBlock = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "Escape"];
+    if (keysToBlock.includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
     const moveTo = (toIndex: number, message: string, boundaryMessage?: string) => {
       if (toIndex < 0 || toIndex >= items.length) {
         if (boundaryMessage) {
@@ -49,17 +57,10 @@ export function useReorderKeyboard({
 
     if (isKeyboardReordering) {
       if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        event.stopPropagation();
         moveTo(index - 1, `Moved "${item.name}" to position ${index}.`, `Already first in strip.`);
       } else if (event.key === "ArrowRight") {
-        event.preventDefault();
-        event.stopPropagation();
         moveTo(index + 1, `Moved "${item.name}" to position ${index + 2}.`, `Already last in strip.`);
       } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-        event.preventDefault();
-        event.stopPropagation();
-
         const direction = event.key === "ArrowUp" ? "up" : "down";
         const nextStripId = getAdjacentStripId(stripId, direction);
 
@@ -71,25 +72,18 @@ export function useReorderKeyboard({
           announce(`Moved "${item.name}" to strip "${nextStripId}" at position ${targetIndex + 1}.`);
         }
       } else if (event.key === "Home") {
-        event.preventDefault();
-        event.stopPropagation();
         moveTo(0, `Moved "${item.name}" to start of strip.`);
       } else if (event.key === "End") {
-        event.preventDefault();
-        event.stopPropagation();
         moveTo(items.length - 1, `Moved "${item.name}" to end of strip.`);
       } else if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
         cancelKeyboardReorder();
       } else if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        event.stopPropagation();
         confirmKeyboardReorder();
         announce(`Dropped "${item.name}" at position ${index + 1}.`);
       }
     } else {
       if (event.key === "Enter" || event.key === " ") {
+        // Space / Enter are not in keysToBlock, so they are prevented/stopped here.
         event.preventDefault();
         event.stopPropagation();
         startKeyboardReorder(item.id, stripId, index);

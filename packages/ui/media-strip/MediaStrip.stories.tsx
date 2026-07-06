@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { expect, fn, userEvent } from "storybook/test";
+import { expect, fn, userEvent, within, waitFor } from "storybook/test";
 
 import { MediaStrip, type MediaStripProps, type MediaStripSelection } from "./media-strip";
 import { MediaStripBoard } from "./media-strip-board";
@@ -854,6 +854,208 @@ export const ReorderableMediaStrips: Story = {
   ],
 };
 
+const waitForLayout = async (element: HTMLElement) => {
+  await waitFor(() => {
+    const rect = element.getBoundingClientRect();
+    expect(rect.width).toBeGreaterThan(0);
+    expect(rect.height).toBeGreaterThan(0);
+  });
+};
+
+// Helper functions for programmatic PointerEvent simulation in headless story tests
+const simulatePointerDrag = async (handle: HTMLElement, target: HTMLElement) => {
+  await waitForLayout(handle);
+  await waitForLayout(target);
+
+  const startRect = handle.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+
+  // 1. Pointer Down
+  handle.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      clientX: startRect.left + 5,
+      clientY: startRect.top + 5,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      isPrimary: true,
+    })
+  );
+
+  // 2. Drag slightly to trigger dnd-kit pointer sensor activation constraint (> 5px)
+  document.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: startRect.left + 20,
+      clientY: startRect.top + 5,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      isPrimary: true,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  // 3. Drag to target
+  document.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: targetRect.left + targetRect.width / 2,
+      clientY: targetRect.top + targetRect.height / 2,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      isPrimary: true,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  // 4. Release mouse button (Pointer Up)
+  document.dispatchEvent(
+    new PointerEvent("pointerup", {
+      clientX: targetRect.left + targetRect.width / 2,
+      clientY: targetRect.top + targetRect.height / 2,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      isPrimary: true,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+};
+
+const simulateDragOscillation = async (handle: HTMLElement, target: HTMLElement) => {
+  await waitForLayout(handle);
+  await waitForLayout(target);
+
+  const startRect = handle.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+
+  // 1. Pointer Down
+  handle.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      clientX: startRect.left + 5,
+      clientY: startRect.top + 5,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  // 2. Move past threshold
+  document.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: startRect.left + 20,
+      clientY: startRect.top + 5,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // 3. Move to target
+  document.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: targetRect.left + targetRect.width / 2,
+      clientY: targetRect.top + targetRect.height / 2,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // 4. Oscillate back and forth to trigger multiple collision detection runs
+  for (let i = 0; i < 5; i++) {
+    document.dispatchEvent(
+      new PointerEvent("pointermove", {
+        clientX: targetRect.left + targetRect.width / 2 + (i % 2 === 0 ? 5 : -5),
+        clientY: targetRect.top + targetRect.height / 2,
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        pointerId: 1,
+      })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  // 5. Pointer Up
+  document.dispatchEvent(
+    new PointerEvent("pointerup", {
+      clientX: targetRect.left + targetRect.width / 2,
+      clientY: targetRect.top + targetRect.height / 2,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+};
+
+const simulateScrollAreaDrag = async (scrollArea: HTMLElement) => {
+  await waitForLayout(scrollArea);
+
+  const rect = scrollArea.getBoundingClientRect();
+
+  scrollArea.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      clientX: rect.left + 100,
+      clientY: rect.top + 50,
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  document.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: rect.left + 50,
+      clientY: rect.top + 50,
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  document.dispatchEvent(
+    new PointerEvent("pointerup", {
+      clientX: rect.left + 50,
+      clientY: rect.top + 50,
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+};
+
 export const MultiStripDragRegression: Story = {
   render: () => <ReorderDemo />,
   decorators: [
@@ -868,16 +1070,297 @@ export const MultiStripDragRegression: Story = {
   play: async ({ canvasElement }) => {
     // Locate the first item reorder handle in the DOM
     const firstHandle = canvasElement.querySelector("[data-reorder-handle]") as HTMLElement;
-    if (!firstHandle) return;
+    const targetItem = canvasElement.querySelector("[data-strip-id='strip-b'] [data-value]") as HTMLElement;
+    if (!firstHandle || !targetItem) return;
 
-    // Simulate drag start, dragging down to the adjacent container, oscillating to trigger
-    // multiple dragover/collision frames, and then releasing to verify no depth ceiling crash occurs.
-    await userEvent.pointer([
-      { target: firstHandle, coords: { x: 5, y: 5 }, keys: "[MouseLeft>]" },
-      { coords: { x: 5, y: 150 } },
-      { coords: { x: 5, y: 155 } },
-      { coords: { x: 5, y: 150 } },
-      { keys: "[/MouseLeft]" }
+    await simulateDragOscillation(firstHandle, targetItem);
+  },
+};
+
+export const KeyboardReorderWithinStrip: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    handle.focus();
+    await userEvent.keyboard(" ");
+
+    // Reorder right: moves from index 0 -> index 1
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(await canvas.findByText(/moved "item a1" to position 2/i)).toBeInTheDocument();
+
+    // Reorder left: moves from index 1 -> index 0
+    await userEvent.keyboard("{ArrowLeft}");
+    await expect(await canvas.findByText(/moved "item a1" to position 1/i)).toBeInTheDocument();
+
+    // Drop
+    await userEvent.keyboard(" ");
+    await expect(await canvas.findByText(/dropped "item a1" at position 1/i)).toBeInTheDocument();
+  },
+};
+
+export const KeyboardReorderBetweenStrips: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    handle.focus();
+    await userEvent.keyboard("{Enter}");
+
+    // Reorder down to Strip B
+    await userEvent.keyboard("{ArrowDown}");
+    await expect(await canvas.findByText(/moved "item a1" to strip "strip-b" at position/i)).toBeInTheDocument();
+  },
+};
+
+export const KeyboardReorderCancel: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    handle.focus();
+    await userEvent.keyboard("{Enter}");
+
+    // Move to position 2
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(await canvas.findByText(/moved "item a1" to position 2/i)).toBeInTheDocument();
+
+    // Cancel reorder using Escape, reverting the move
+    await userEvent.keyboard("{Escape}");
+    await expect(await canvas.findByText(/dropped "item a1" at position 1/i)).toBeInTheDocument();
+  },
+};
+
+export const PointerDragWithinStrip: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
+    const secondItem = canvas.getByRole("button", { name: /item a2/i });
+
+    // Drag horizontally to index 1 over Item A2 using programmatic pointer events
+    await simulatePointerDrag(handle, secondItem);
+
+    await expect(await canvas.findByText(/dropped "item a1" at position/i)).toBeInTheDocument();
+  },
+};
+
+export const PointerDragBetweenStrips: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
+    const targetItem = canvas.getByRole("button", { name: /item b1/i });
+
+    // Drag vertically down to Strip B over Item B1 using programmatic pointer events
+    await simulatePointerDrag(handle, targetItem);
+
+    await expect(await canvas.findByText(/dropped "item a1" at position/i)).toBeInTheDocument();
+  },
+};
+
+export const PointerDragIntoEmptyStrip: Story = {
+  render: () => {
+    const [stripA, setStripA] = useState<TimelineItem[]>([
+      unwrapResult(
+        createImageTimelineItem({
+          id: "item-1",
+          name: "Item 1",
+          src: "img.png",
+          startTimeSeconds: 0,
+          durationSeconds: 4,
+        })
+      ),
     ]);
+    const [stripB, setStripB] = useState<TimelineItem[]>([]);
+
+    const handleMoveItem = useCallback(
+      ({ itemId, toStripId }: MediaStripMove) => {
+        const item = stripA.find((i) => i.id === itemId);
+        if (item && toStripId === "strip-b") {
+          setStripB([item]);
+          setStripA([]);
+        }
+      },
+      [stripA]
+    );
+
+    return (
+      <MediaStripBoard itemsByStripId={{ "strip-a": stripA, "strip-b": stripB }} onMoveItem={handleMoveItem}>
+        <div className="flex flex-col gap-8 p-4">
+          <MediaStrip stripId="strip-a" heading="Strip A" items={stripA} selectedIds={[]} onSelectionChange={() => {}} />
+          <MediaStrip stripId="strip-b" heading="Strip B" items={stripB} selectedIds={[]} onSelectionChange={() => {}} />
+        </div>
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item 1/i });
+    const handle = firstItem.closest("[data-testid^='media-strip-']")?.querySelector("[data-reorder-handle]") as HTMLElement;
+    const emptyDroppable = canvasElement.querySelector("[data-strip-id='strip-b'] .border-dashed") as HTMLElement;
+
+    // Drag down to empty Strip B droppable container using programmatic pointer events
+    await simulatePointerDrag(handle, emptyDroppable);
+
+    await waitFor(() => {
+      const stripB = canvasElement.querySelector("[data-strip-id='strip-b']") as HTMLElement;
+      expect(within(stripB).queryByText(/no media items yet/i)).not.toBeInTheDocument();
+      expect(within(stripB).getByRole("button", { name: /item 1/i })).toBeInTheDocument();
+    });
+  },
+};
+
+export const SelectedItemRemainsSelected: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+
+    // Select the first item by focusing it and pressing Enter
+    firstItem.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(firstItem).toHaveAttribute("aria-pressed", "true");
+    });
+
+    const handle = firstItem.closest("[data-testid^='media-strip-']")?.querySelector("[data-reorder-handle]") as HTMLElement;
+    handle.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("{ArrowRight}");
+    await userEvent.keyboard("{Enter}");
+
+    // Assert that the item remains selected after reordering
+    const movedItem = await canvas.findByRole("button", { name: /item a1/i });
+    await waitFor(() => {
+      expect(movedItem).toHaveAttribute("aria-pressed", "true");
+    });
+  },
+};
+
+export const DraggingScrollAreaDoesNotSelect: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const scrollArea = canvasElement.querySelector("[data-testid^='media-strip-drag-scroll-']") as HTMLElement;
+
+    // Perform a pointer drag on the scroll area background to scroll it using programmatic pointer events
+    await simulateScrollAreaDrag(scrollArea);
+
+    // Assert that selection remains unchanged
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    await expect(firstItem).not.toHaveAttribute("aria-pressed", "true");
+  },
+};
+
+export const ReorderHandleArrowKeysDoNotNavigate: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const handle = firstItem.closest("[data-testid^='media-strip-']")?.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    // Focus the reorder handle
+    handle.focus();
+
+    // Press ArrowRight (WITHOUT entering reorder mode first)
+    await userEvent.keyboard("{ArrowRight}");
+
+    // Focus should remain on the handle, NOT jump to the next item
+    await expect(canvasElement.ownerDocument.activeElement).toBe(handle);
   },
 };
