@@ -2,11 +2,7 @@ import { type CSSProperties } from "react";
 import {
   type TimelineItem,
   type VideoTimelineItem,
-  type TimelineItemId,
   type CollectionId,
-  type TimelineCollection,
-  type TimelineItemCommand,
-  isCollectionItem,
 } from "./media-strip.types";
 
 export const MIN_ITEM_WIDTH_PX = 96;
@@ -40,6 +36,13 @@ export const DRAG_ACTIVATION_THRESHOLDS_PX = {
   scroll: 4,
   board: 5,
 };
+
+/**
+ * Reference frame duration used to express pointer velocities in px/frame at
+ * 60fps. Shared by the drag-scroll gesture tracking and the inertia animation
+ * so the velocity handed from one to the other means the same thing in both.
+ */
+export const FRAME_DURATION_60FPS_MS = 16.67;
 
 /**
  * Shared DOM attribute names to keep selectors in sync across files.
@@ -118,16 +121,24 @@ export type MediaStripItemAreEqualProps = {
   index: number;
   isKeyboardReordering?: boolean;
   collectionId?: CollectionId;
-  onMoveItem?: (command: TimelineItemCommand) => void;
 };
+
+// Compile-time-exhaustive whitelist: adding a prop to
+// `MediaStripItemAreEqualProps` without listing it here (or explicitly
+// excluding it like `style`) is a type error, not a silent memoization
+// regression.
+const SHALLOW_COMPARED_PROP_KEYS = {
+  item: true,
+  thumbnailVariant: true,
+  index: true,
+  isKeyboardReordering: true,
+  collectionId: true,
+} satisfies Record<Exclude<keyof MediaStripItemAreEqualProps, "style">, true>;
 
 /**
  * Custom comparison function to optimize MediaStripItemButton memoization.
  * Performs reference equality check on the item and structural equality checks
  * on the virtualized absolute positioning styles.
- *
- * Whitelists other props for shallow comparison so that any future added props
- * must be explicitly considered and compared, preventing silent memoization regression.
  */
 export function areEqual(
   prevProps: MediaStripItemAreEqualProps,
@@ -145,16 +156,9 @@ export function areEqual(
     return false;
   }
 
-  // whitelist for simple value/reference checks
-  // Note: if you add a new prop to MediaStripItemAreEqualProps, add it here.
-  const keys: Exclude<keyof MediaStripItemAreEqualProps, "style">[] = [
-    "item",
-    "thumbnailVariant",
-    "index",
-    "isKeyboardReordering",
-    "collectionId",
-    "onMoveItem",
-  ];
+  const keys = Object.keys(SHALLOW_COMPARED_PROP_KEYS) as Array<
+    keyof typeof SHALLOW_COMPARED_PROP_KEYS
+  >;
 
   return keys.every((key) => prevProps[key] === nextProps[key]);
 }

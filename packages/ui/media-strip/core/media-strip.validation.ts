@@ -36,12 +36,12 @@ const isApproximatelyLessThanOrEqual = (a: number, b: number): boolean =>
   a - b < EPSILON_SECONDS;
 
 /**
- * Timing invariants that apply to EVERY `TimelineItem` variant, not just
- * video — an image or collection card can just as easily end up with a
- * negative `startTimeSeconds`/`durationSeconds` from a bad drag or an
- * upstream calculation bug.
+ * Base invariants (identity + timing) that apply to EVERY `TimelineItem`
+ * variant, not just video — an image or collection card can just as easily
+ * end up with a negative `startTimeSeconds`/`durationSeconds` from a bad
+ * drag or an upstream calculation bug.
  */
-export type TimelineItemTimingValidationResult =
+export type TimelineItemBaseValidationResult =
   | Readonly<{ valid: true }>
   | Readonly<{ valid: false; reason: "empty-id" }>
   | Readonly<{ valid: false; reason: "empty-name" }>
@@ -51,14 +51,20 @@ export type TimelineItemTimingValidationResult =
   | Readonly<{ valid: false; reason: "negative-duration" }>;
 
 /** Failure-only slice, so `TimelineItemResult`'s error generic can't include `{ valid: true }`. */
-export type TimelineItemTimingValidationFailure = Extract<
-  TimelineItemTimingValidationResult,
+export type TimelineItemBaseValidationFailure = Extract<
+  TimelineItemBaseValidationResult,
   { valid: false }
 >;
 
-export const validateTimelineItemTiming = (
+// The base invariants are split into two halves because
+// `validateVideoTimelineItem` must run the identity/start checks first but
+// defer the duration checks until trim bounds are known. Sharing the halves
+// (instead of the video validator re-implementing them inline) means a new
+// base invariant automatically applies to every variant.
+
+const findIdentityAndStartFailure = (
   item: TimelineItemBase
-): TimelineItemTimingValidationResult => {
+): TimelineItemBaseValidationFailure | null => {
   // Validate TimelineItemId at runtime to guarantee nominal safety
   const idResult = parseTimelineItemId(item.id);
   if (!idResult.ok) {
@@ -73,23 +79,35 @@ export const validateTimelineItemTiming = (
     return { valid: false, reason: "non-finite-start-time" };
   }
 
-  if (!Number.isFinite(item.durationSeconds)) {
-    return { valid: false, reason: "non-finite-duration" };
-  }
-
   if (isEffectivelyNegativeSeconds(item.startTimeSeconds)) {
     return { valid: false, reason: "negative-start-time" };
+  }
+
+  return null;
+};
+
+const findDurationFailure = (
+  item: TimelineItemBase
+): TimelineItemBaseValidationFailure | null => {
+  if (!Number.isFinite(item.durationSeconds)) {
+    return { valid: false, reason: "non-finite-duration" };
   }
 
   if (isEffectivelyNegativeSeconds(item.durationSeconds)) {
     return { valid: false, reason: "negative-duration" };
   }
 
-  return { valid: true };
+  return null;
 };
 
+export const validateTimelineItemBase = (
+  item: TimelineItemBase
+): TimelineItemBaseValidationResult =>
+  findIdentityAndStartFailure(item) ??
+  findDurationFailure(item) ?? { valid: true };
+
 export type MediaTimelineItemValidationResult =
-  | TimelineItemTimingValidationResult
+  | TimelineItemBaseValidationResult
   | Readonly<{ valid: false; reason: "invalid-src" }>
   | Readonly<{ valid: false; reason: "invalid-poster-srcs" }>;
 
@@ -125,15 +143,16 @@ export const validateMediaItemStrings = (
 export const validateImageTimelineItem = (
   item: ImageTimelineItem
 ): MediaTimelineItemValidationResult => {
-  const timingResult = validateTimelineItemTiming(item);
-  if (!timingResult.valid) {
-    return timingResult;
+  const baseResult = validateTimelineItemBase(item);
+  if (!baseResult.valid) {
+    return baseResult;
   }
   return validateMediaItemStrings(item);
 };
 
 export type CollectionTimelineItemValidationResult =
-  | TimelineItemTimingValidationResult
+  | TimelineItemBaseValidationResult
+  | Readonly<{ valid: false; reason: "empty-collection-id" }>
   | Readonly<{ valid: false; reason: "non-finite-item-count" }>
   | Readonly<{ valid: false; reason: "non-integer-item-count" }>
   | Readonly<{ valid: false; reason: "negative-item-count" }>;
@@ -147,15 +166,17 @@ export type CollectionTimelineItemValidationFailure = Extract<
 export const validateCollectionTimelineItem = (
   item: CollectionTimelineItem
 ): CollectionTimelineItemValidationResult => {
-  const timingResult = validateTimelineItemTiming(item);
-  if (!timingResult.valid) {
-    return timingResult;
+  const baseResult = validateTimelineItemBase(item);
+  if (!baseResult.valid) {
+    return baseResult;
   }
 
-  // Validate CollectionId at runtime to guarantee nominal safety
+  // Validate CollectionId at runtime to guarantee nominal safety. Distinct
+  // reason from "empty-id" so callers can tell which of the two ID fields
+  // failed.
   const collectionIdResult = parseCollectionId(item.collectionId);
   if (!collectionIdResult.ok) {
-    return { valid: false, reason: "empty-id" };
+    return { valid: false, reason: "empty-collection-id" };
   }
 
   // itemCount is a plain integer count, not derived from time arithmetic —
@@ -213,19 +234,11 @@ export type VideoTimelineItemValidationFailure = Extract<
 export const validateVideoTimelineItem = (
   item: VideoTimelineItem
 ): VideoTimelineItemValidationResult => {
-  // 1. Initial timing checks (excluding duration check)
-  const idResult = parseTimelineItemId(item.id);
-  if (!idResult.ok) {
-    return { valid: false, reason: "empty-id" };
-  }
-  if (typeof item.name !== "string" || item.name.trim() === "") {
-    return { valid: false, reason: "empty-name" };
-  }
-  if (!Number.isFinite(item.startTimeSeconds)) {
-    return { valid: false, reason: "non-finite-start-time" };
-  }
-  if (isEffectivelyNegativeSeconds(item.startTimeSeconds)) {
-    return { valid: false, reason: "negative-start-time" };
+  // 1. Identity/start checks — the duration half of the base validation is
+  // deferred to step 5, after trim bounds are known.
+  const identityFailure = findIdentityAndStartFailure(item);
+  if (identityFailure) {
+    return identityFailure;
   }
 
   const mediaStringsResult = validateMediaItemStrings(item);
@@ -265,12 +278,10 @@ export const validateVideoTimelineItem = (
     return { valid: false, reason: "trim-exceeds-source" };
   }
 
-  // 5. General duration timing check (now safe, since we know trim <= source)
-  if (!Number.isFinite(item.durationSeconds)) {
-    return { valid: false, reason: "non-finite-duration" };
-  }
-  if (isEffectivelyNegativeSeconds(item.durationSeconds)) {
-    return { valid: false, reason: "negative-duration" };
+  // 5. General duration check (now safe, since we know trim <= source)
+  const durationFailure = findDurationFailure(item);
+  if (durationFailure) {
+    return durationFailure;
   }
 
   // 6. Check that duration matches derived value
@@ -295,7 +306,7 @@ export type ValidationResultOf<T extends TimelineItem> = T extends { kind: "imag
   : TimelineItemValidationResult;
 
 export type TimelineItemValidationResult =
-  | TimelineItemTimingValidationResult
+  | TimelineItemBaseValidationResult
   | MediaTimelineItemValidationResult
   | CollectionTimelineItemValidationResult
   | VideoTimelineItemValidationResult;
@@ -384,7 +395,7 @@ export const createCollectionTimelineItem = (
 
   const collectionIdResult = parseCollectionId(input.collectionId);
   if (!collectionIdResult.ok) {
-    return { ok: false, error: { valid: false, reason: "empty-id" } };
+    return { ok: false, error: { valid: false, reason: "empty-collection-id" } };
   }
 
   const candidate: CollectionTimelineItem = {

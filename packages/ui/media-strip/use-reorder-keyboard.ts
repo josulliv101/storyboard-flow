@@ -3,9 +3,9 @@ import {
   type TimelineItem,
   type CollectionId,
   type KeyboardReorderAction,
-} from "./media-strip.types";
+} from "./core/media-strip.types";
 import { useMediaStripBoardStable } from "./media-strip-board";
-import { KEYBOARD_REORDER_INSTRUCTIONS } from "./media-strip.utils";
+import { KEYBOARD_REORDER_INSTRUCTIONS } from "./core/media-strip.utils";
 
 type UseReorderKeyboardProps = {
   item: TimelineItem;
@@ -31,10 +31,15 @@ export function useReorderKeyboard({
   } = useMediaStripBoardStable();
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    // Swallowed keys list. We block arrows, Home, End, Escape, Nest keys, and confirm keys (Enter & Space)
-    // unconditionally so that arrow-key presses on the reorder handle do not trigger the ToggleGroup's
-    // roving focus navigation, and Enter/Space trigger reorder pick-up rather than default button actions.
-    const keysToBlock = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "Escape", "n", "N", "Enter", " "];
+    // Keys the handle owns. Arrows are blocked even when idle so a stray
+    // arrow press on the handle doesn't trigger the ToggleGroup's roving
+    // focus navigation, and Enter/Space are blocked so they pick up/drop
+    // instead of firing the button's default action. Home/End/N/Escape are
+    // only meaningful mid-session, so when idle they keep their defaults
+    // (e.g. page scroll).
+    const idleKeys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter", " "];
+    const sessionKeys = [...idleKeys, "Home", "End", "Escape", "n", "N"];
+    const keysToBlock = isKeyboardReordering ? sessionKeys : idleKeys;
 
     if (keysToBlock.includes(event.key)) {
       event.preventDefault();

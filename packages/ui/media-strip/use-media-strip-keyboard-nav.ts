@@ -1,6 +1,6 @@
 import { type KeyboardEvent, useCallback } from "react";
-import { type TimelineItem } from "./media-strip.types";
-import { DATA_VALUE_ATTR, VALUE_ATTR } from "./media-strip.utils";
+import { type TimelineItem } from "./core/media-strip.types";
+import { DATA_VALUE_ATTR, VALUE_ATTR } from "./core/media-strip.utils";
 
 /**
  * Custom hook to handle arrow key grid navigation across items in a media strip.

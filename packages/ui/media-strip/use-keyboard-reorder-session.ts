@@ -8,8 +8,8 @@ import {
   type KeyboardReorderAction,
   type CollectionTimelineItem,
   isCollectionItem,
-} from "./media-strip.types";
-import { wouldCreateCollectionCycle } from "./media-strip.validation";
+} from "./core/media-strip.types";
+import { wouldCreateCollectionCycle } from "./core/media-strip.validation";
 
 type UseKeyboardReorderSessionProps = {
   itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;

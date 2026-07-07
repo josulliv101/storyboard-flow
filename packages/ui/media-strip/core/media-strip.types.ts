@@ -20,13 +20,16 @@ type BrandedString<TBrand extends symbol> = string & {
 export type TimelineItemId = BrandedString<typeof timelineItemIdBrand>;
 export type CollectionId = BrandedString<typeof collectionIdBrand>;
 
-const isValidTimelineId = (id: string): id is TimelineItemId => {
-  return !!id && !!id.trim();
-};
+// The runtime check is intentionally just "non-empty": IDs have no further
+// format guarantees. The nominal distinction between the two ID types is
+// enforced at compile time only — any non-empty string parses as either.
+const isNonEmptyString = (value: string): boolean => !!value && !!value.trim();
 
-const isValidCollectionId = (id: string): id is CollectionId => {
-  return !!id && !!id.trim();
-};
+const isValidTimelineId = (id: string): id is TimelineItemId =>
+  isNonEmptyString(id);
+
+const isValidCollectionId = (id: string): id is CollectionId =>
+  isNonEmptyString(id);
 
 export const parseTimelineItemId = (
   id: string
@@ -44,6 +47,28 @@ export const parseCollectionId = (
     return { ok: true, value: id };
   }
   return { ok: false, error: "empty-id" };
+};
+
+// Parse-or-throw conveniences for IDs that are trusted at authoring time
+// (string literals in stories/tests, framework-generated ids). These exist so
+// call sites never need an `as TimelineItemId` / `as CollectionId` cast — use
+// the `parse*` variants instead when the input is genuinely untrusted and the
+// caller can handle failure.
+
+export const asTimelineItemId = (id: string): TimelineItemId => {
+  const result = parseTimelineItemId(id);
+  if (!result.ok) {
+    throw new Error(`Invalid TimelineItemId: ${JSON.stringify(id)} (${result.error})`);
+  }
+  return result.value;
+};
+
+export const asCollectionId = (id: string): CollectionId => {
+  const result = parseCollectionId(id);
+  if (!result.ok) {
+    throw new Error(`Invalid CollectionId: ${JSON.stringify(id)} (${result.error})`);
+  }
+  return result.value;
 };
 
 // --- Core types --------------------------------------------------------------
@@ -89,6 +114,13 @@ export type CollectionTimelineItem = TimelineItemBase &
     kind: "collection";
     /** Backing collection/media group id, used to fetch its items. */
     collectionId: CollectionId;
+    /**
+     * Display-only fallback count for when the backing collection isn't
+     * loaded. The backing collection's `items.length` is the source of
+     * truth — derive from it whenever it's available (see
+     * `MediaStripThumbnail`), and use `syncCollectionItemCounts` to refresh
+     * this snapshot after collection ops.
+     */
     itemCount: number;
   }>;
 
@@ -150,14 +182,12 @@ export const assertNever = (value: never): never => {
  *   if (!result.ok) { report(result.error); return; }
  *   use(result.value);
  *
- * Note on `__itemResult`: This is a phantom field (a type-level nominal marker)
- * present on both union branches. It prevents structural TypeScript collapse
- * between the success and failure shapes in cases where T and E might structurally
- * overlap (e.g. if both are objects with similar optional fields or empty interfaces).
+ * The `ok` literal is the discriminant; narrowing on it fully separates the
+ * two branches regardless of whether T and E structurally overlap.
  */
 export type TimelineItemResult<T, E> =
-  | Readonly<{ ok: true; value: T; readonly __itemResult?: never }>
-  | Readonly<{ ok: false; error: E; readonly __itemResult?: never }>;
+  | Readonly<{ ok: true; value: T }>
+  | Readonly<{ ok: false; error: E }>;
 
 
 

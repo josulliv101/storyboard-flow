@@ -2,17 +2,18 @@ import {
   useCallback,
   useEffect,
   useRef,
-  useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { DRAG_ACTIVATION_THRESHOLDS_PX } from "./media-strip.utils";
+import {
+  DRAG_ACTIVATION_THRESHOLDS_PX,
+  FRAME_DURATION_60FPS_MS,
+} from "./core/media-strip.utils";
 import { usePointerDragInertia } from "./use-pointer-drag-inertia";
 
 const SCROLL_CLICK_SUPPRESSION_MS = 180;
 const DRAG_CLICK_THRESHOLD_PX = DRAG_ACTIVATION_THRESHOLDS_PX.scroll;
 
 const INERTIA_TUNING = {
-  FRAME_MS_60FPS: 16.67,
   EMA_INSTANTANEOUS_WEIGHT: 0.7,
   EMA_PREVIOUS_WEIGHT: 0.3,
   MIN_VELOCITY_TO_START_INERTIA: 1,
@@ -31,9 +32,6 @@ export function useHorizontalDragScroll(
 
   const { startInertia, stopInertia } = usePointerDragInertia();
 
-  // State is used to feed any scroll layouts if needed
-  const [maxScrollLeft, setMaxScrollLeft] = useState(0);
-
   // Drag coordinates/velocity state ref to avoid component re-renders
   const dragStateRef = useRef({
     isDragging: false,
@@ -46,12 +44,9 @@ export function useHorizontalDragScroll(
     didDrag: false,
   });
 
-  // Track active window event listeners for unmount cleanup
-  const activeListenersRef = useRef<{
-    move: ((e: PointerEvent) => void) | null;
-    up: ((e: PointerEvent) => void) | null;
-    cancel: ((e: PointerEvent) => void) | null;
-  }>({ move: null, up: null, cancel: null });
+  // One AbortController per active drag; aborting removes every window
+  // listener registered for that drag, including on unmount mid-drag.
+  const dragAbortRef = useRef<AbortController | null>(null);
 
   const getViewport = useCallback(() => {
     return viewportRef.current;
@@ -62,7 +57,6 @@ export function useHorizontalDragScroll(
 
     if (!viewport) {
       maxScrollLeftRef.current = 0;
-      setMaxScrollLeft(0);
       return 0;
     }
 
@@ -72,10 +66,6 @@ export function useHorizontalDragScroll(
     );
 
     maxScrollLeftRef.current = nextMaxScrollLeft;
-
-    setMaxScrollLeft((current) =>
-      current === nextMaxScrollLeft ? current : nextMaxScrollLeft
-    );
 
     return nextMaxScrollLeft;
   }, [getViewport]);
@@ -97,7 +87,7 @@ export function useHorizontalDragScroll(
     return () => {
       resizeObserver.disconnect();
     };
-  }, [getViewport, updateScrollBounds]);
+  }, [getViewport, updateScrollBounds, viewportContentRef]);
 
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -158,6 +148,9 @@ export function useHorizontalDragScroll(
         }
       }
 
+      const controller = new AbortController();
+      dragAbortRef.current = controller;
+
       const onPointerMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== state.pointerId) return;
 
@@ -175,7 +168,7 @@ export function useHorizontalDragScroll(
         const elapsed = moveEvent.timeStamp - state.lastTime;
         if (elapsed > 0) {
           const instantaneous =
-            (-(moveEvent.clientX - state.lastX) / elapsed) * INERTIA_TUNING.FRAME_MS_60FPS;
+            (-(moveEvent.clientX - state.lastX) / elapsed) * FRAME_DURATION_60FPS_MS;
           state.velocity =
             INERTIA_TUNING.EMA_INSTANTANEOUS_WEIGHT * instantaneous +
             INERTIA_TUNING.EMA_PREVIOUS_WEIGHT * state.velocity;
@@ -186,13 +179,10 @@ export function useHorizontalDragScroll(
       };
 
       const cleanup = () => {
-        window.removeEventListener("pointermove", onPointerMove);
-        window.removeEventListener("pointerup", onPointerUp);
-        window.removeEventListener("pointercancel", onPointerCancel);
-
-        activeListenersRef.current.move = null;
-        activeListenersRef.current.up = null;
-        activeListenersRef.current.cancel = null;
+        controller.abort();
+        if (dragAbortRef.current === controller) {
+          dragAbortRef.current = null;
+        }
       };
 
       const onPointerUp = (upEvent: PointerEvent) => {
@@ -244,14 +234,11 @@ export function useHorizontalDragScroll(
         state.pointerId = -1;
       };
 
-      // Store window listeners for unmount cleanup
-      activeListenersRef.current.move = onPointerMove;
-      activeListenersRef.current.up = onPointerUp;
-      activeListenersRef.current.cancel = onPointerCancel;
+      const { signal } = controller;
 
-      window.addEventListener("pointermove", onPointerMove);
-      window.addEventListener("pointerup", onPointerUp);
-      window.addEventListener("pointercancel", onPointerCancel);
+      window.addEventListener("pointermove", onPointerMove, { signal });
+      window.addEventListener("pointerup", onPointerUp, { signal });
+      window.addEventListener("pointercancel", onPointerCancel, { signal });
     },
     [getViewport, updateScrollBounds, stopInertia, startInertia]
   );
@@ -263,20 +250,16 @@ export function useHorizontalDragScroll(
     }
   }, []);
 
-  // Clean up any pending window listeners and animation frames on unmount
+  // Clean up any in-flight drag listeners and animation frames on unmount
   useEffect(() => {
     return () => {
-      const listeners = activeListenersRef.current;
-      if (listeners.move) window.removeEventListener("pointermove", listeners.move);
-      if (listeners.up) window.removeEventListener("pointerup", listeners.up);
-      if (listeners.cancel) window.removeEventListener("pointercancel", listeners.cancel);
-
+      dragAbortRef.current?.abort();
+      dragAbortRef.current = null;
       stopInertia();
     };
   }, [stopInertia]);
 
   return {
-    maxScrollLeft,
     handlePointerDown,
     handleClickCapture,
   };

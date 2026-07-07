@@ -33,8 +33,8 @@ import { cn } from "../lib/utils";
 
 import { DraggableScrollArea } from "./draggable-scroll-area";
 import { MediaStripItemButton } from "./media-strip-item";
-import { getItemWidth, TOGGLE_GROUP_PADDING_PX } from "./media-strip.utils";
-import { encodeDndTarget } from "./media-strip.dnd";
+import { getItemWidth, TOGGLE_GROUP_PADDING_PX } from "./core/media-strip.utils";
+import { encodeDndTarget } from "./core/media-strip.dnd";
 import {
   useMediaStripBoardStable,
   useMediaStripBoardDrag,
@@ -42,10 +42,12 @@ import {
 import { useScrollToAndFocus } from "./use-scroll-to-and-focus";
 import { useMediaStripKeyboardNav } from "./use-media-strip-keyboard-nav";
 import {
+  asCollectionId,
+  parseTimelineItemId,
   type TimelineItem,
   type TimelineItemId,
   type CollectionId,
-} from "./media-strip.types";
+} from "./core/media-strip.types";
 
 export type MediaStripSelection = {
   selectedIds: TimelineItemId[];
@@ -84,9 +86,8 @@ export const MediaStrip = memo(
     const viewportRef = useRef<HTMLDivElement>(null);
     const viewportContentRef = useRef<HTMLDivElement | null>(null);
 
-    // useId() is guaranteed to be non-empty, making it safe to bypass the runtime validation
-    // checks in asCollectionId and brand directly here.
-    const defaultCollectionId = useId() as CollectionId;
+    // useId() is guaranteed to be non-empty, so this parse can never throw.
+    const defaultCollectionId = asCollectionId(useId());
     const activeCollectionId = collectionId ?? defaultCollectionId;
 
     // Integrate with the shared board Dnd Context
@@ -101,17 +102,18 @@ export const MediaStrip = memo(
 
     // Register this collection ID within the board-scoped registry
     useEffect(() => {
-      if (registerCollection && unregisterCollection) {
-        registerCollection(activeCollectionId);
-        return () => {
-          unregisterCollection(activeCollectionId);
-        };
-      }
+      registerCollection(activeCollectionId);
+      return () => {
+        unregisterCollection(activeCollectionId);
+      };
     }, [activeCollectionId, registerCollection, unregisterCollection]);
 
     // Register this strip as a droppable zone.
     const { setNodeRef: setDroppableRef, isOver } = useDroppable({
-      id: `container:${activeCollectionId}`,
+      id: encodeDndTarget({
+        type: "collection-container",
+        collectionId: activeCollectionId,
+      }),
     });
 
     // Combine local scroll content ref with Dnd Kit droppable ref
@@ -136,7 +138,10 @@ export const MediaStrip = memo(
     const handleSelectionChange = useCallback(
       (values: string[]) => {
         const selectedItems = values
-          .map((value) => itemById.get(value as TimelineItemId))
+          .map((value) => {
+            const parsed = parseTimelineItemId(value);
+            return parsed.ok ? itemById.get(parsed.value) : undefined;
+          })
           .filter((item): item is TimelineItem => item !== undefined);
 
         const nextSelectedIds = selectedItems.map((item) => item.id);

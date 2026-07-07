@@ -4,7 +4,7 @@ import {
   DATA_VALUE_ATTR,
   VALUE_ATTR,
   DATA_REORDER_HANDLE_ATTR,
-} from "./media-strip.utils";
+} from "./core/media-strip.utils";
 
 const FOCUS_FALLBACK_TIMEOUT_MS = 500;
 

@@ -13,6 +13,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import {
+  parseCollectionId,
   type TimelineItem,
   type TimelineItemId,
   type CollectionId,
@@ -20,7 +21,7 @@ import {
   type TimelineItemCommand,
   type KeyboardReorderAction,
   isCollectionItem,
-} from "./media-strip.types";
+} from "./core/media-strip.types";
 import {
   formatDuration,
   TOGGLE_GROUP_PADDING_PX,
@@ -28,13 +29,13 @@ import {
   DATA_VALUE_ATTR,
   VALUE_ATTR,
   DEFAULT_DRAG_OVERLAY_WIDTH_PX,
-} from "./media-strip.utils";
+} from "./core/media-strip.utils";
 import {
   decodeDndTarget,
   resolveDropIntent,
   detectCollision,
-} from "./media-strip.dnd";
-import { wouldCreateCollectionCycle } from "./media-strip.validation";
+} from "./core/media-strip.dnd";
+import { wouldCreateCollectionCycle } from "./core/media-strip.validation";
 import { MediaStripThumbnail } from "./media-strip-thumbnail";
 import { useBoardRegistry } from "./use-board-registry";
 import { useBoardDragState } from "./use-board-drag-state";
@@ -88,21 +89,20 @@ export function useMediaStripBoardStableOptional() {
 function isAncestorCollection(
   possibleAncestor: CollectionId,
   child: CollectionId,
-  itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>
+  parentByCollectionId: ReadonlyMap<CollectionId, CollectionId>
 ): boolean {
-  let currentId: CollectionId | undefined = child;
-  while (currentId) {
-    let parentColId: CollectionId | undefined = undefined;
-    for (const [_, entry] of itemLookup.entries()) {
-      if (entry.item.kind === "collection" && entry.item.collectionId === currentId) {
-        parentColId = entry.collectionId;
-        break;
-      }
-    }
-    if (parentColId === possibleAncestor) {
+  const seen = new Set<CollectionId>();
+  let currentId = parentByCollectionId.get(child);
+  while (currentId !== undefined) {
+    if (currentId === possibleAncestor) {
       return true;
     }
-    currentId = parentColId;
+    // Defensive cycle guard: a corrupt graph must not hang the pointer-move path.
+    if (seen.has(currentId)) {
+      return false;
+    }
+    seen.add(currentId);
+    currentId = parentByCollectionId.get(currentId);
   }
   return false;
 }
@@ -171,9 +171,24 @@ export function MediaStripBoard({
     return lookup;
   }, [collectionsByIdResolved, activeCollectionIds]);
 
-
+  // Parent-edge map (collectionId -> id of the collection whose items contain
+  // it) so ancestor checks on the pointer-move hot path walk O(depth) instead
+  // of scanning the whole item lookup per level.
+  const parentByCollectionId = useMemo(() => {
+    const parents = new Map<CollectionId, CollectionId>();
+    for (const entry of itemLookup.values()) {
+      if (entry.item.kind === "collection") {
+        parents.set(entry.item.collectionId, entry.collectionId);
+      }
+    }
+    return parents;
+  }, [itemLookup]);
 
   const announce = useCallback((message: string) => {
+    // aria-live regions only re-announce when the text content actually
+    // changes, so repeating the same message (e.g. two rejected moves in a
+    // row) would be silent. Toggling a trailing zero-width space makes the
+    // content "new" to the screen reader without changing what it speaks.
     setAnnouncement((prev) => {
       if (prev === message) {
         return message + "\u200B";
@@ -218,22 +233,25 @@ export function MediaStripBoard({
 
   const getAdjacentCollectionId = useCallback(
     (currentCollectionId: CollectionId, direction: "up" | "down"): CollectionId | null => {
-      const container = containerRef.current;
-      if (!container) return null;
+      // The ordered `visibleCollectionIds` prop is the canonical source of
+      // strip order. The DOM query is only a fallback for strips that
+      // self-registered at runtime without being listed in the prop.
+      let colIds: readonly CollectionId[] = visibleCollectionIdsResolved;
 
-      const colEls = Array.from(container.querySelectorAll("[data-collection-id]"));
-      if (colEls.length === 0) return null;
+      if (!colIds.includes(currentCollectionId)) {
+        const container = containerRef.current;
+        if (!container) return null;
 
-      colEls.sort((a, b) => {
-        const compare = a.compareDocumentPosition(b);
-        if (compare & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-        if (compare & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-        return 0;
-      });
-
-      const colIds = colEls
-        .map((el) => el.getAttribute("data-collection-id"))
-        .filter((id): id is string => !!id) as CollectionId[];
+        // querySelectorAll already returns elements in document order.
+        colIds = Array.from(container.querySelectorAll("[data-collection-id]")).flatMap(
+          (el) => {
+            const attr = el.getAttribute("data-collection-id");
+            if (attr === null) return [];
+            const parsed = parseCollectionId(attr);
+            return parsed.ok ? [parsed.value] : [];
+          }
+        );
+      }
 
       const idx = colIds.indexOf(currentCollectionId);
       if (idx === -1) return null;
@@ -244,7 +262,7 @@ export function MediaStripBoard({
       }
       return null;
     },
-    []
+    [visibleCollectionIdsResolved]
   );
 
   // 4. Keyboard Reorder Session Management
@@ -471,14 +489,17 @@ export function MediaStripBoard({
                 if (!activeDragSourceCollectionId) return true;
                 const colEl = element.closest("[data-collection-id]");
                 if (!colEl) return true;
-                const colId = colEl.getAttribute("data-collection-id") as CollectionId;
+                const parsedColId = parseCollectionId(colEl.getAttribute("data-collection-id") ?? "");
+                // An unparseable id can't match the source or hovered strip.
+                if (!parsedColId.ok) return false;
+                const colId = parsedColId.value;
 
                 // 1. Always scroll the active drag source container
                 if (colId === activeDragSourceCollectionId) return true;
 
                 // 2. Scroll the currently hovered container, unless it is an ancestor of the source container
                 if (colId === activeOverCollectionIdRef.current) {
-                  return !isAncestorCollection(colId, activeDragSourceCollectionId, itemLookup);
+                  return !isAncestorCollection(colId, activeDragSourceCollectionId, parentByCollectionId);
                 }
 
                 return false;
