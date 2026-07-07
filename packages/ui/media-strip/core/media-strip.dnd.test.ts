@@ -1,10 +1,7 @@
 import { describe, test, expect } from "vitest";
 import {
-  type UniqueIdentifier,
-  type Active,
-  type ClientRect,
-  type DroppableContainer,
-} from "@dnd-kit/core";
+  type MediaStripDndDroppableContainer,
+} from "./media-strip.dnd-adapter";
 import {
   asTimelineItemId,
   asCollectionId,
@@ -113,7 +110,7 @@ describe("detectCollision strategy with hotspots", () => {
     [asTimelineItemId("item-folder"), { collectionId: asCollectionId("col-root"), index: 0, item: folderItem }],
   ]);
 
-  const droppableContainers: DroppableContainer[] = [
+  const droppableContainers: MediaStripDndDroppableContainer[] = [
     {
       id: "item:item-folder",
       rect: {

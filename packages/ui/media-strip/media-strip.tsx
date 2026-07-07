@@ -11,8 +11,6 @@ import {
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { LayoutGroup } from "motion/react";
-import { useDroppable } from "@dnd-kit/core";
-import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 
 import { Button } from "../core/button";
 import {
@@ -39,6 +37,10 @@ import {
   useMediaStripBoardStable,
   useMediaStripBoardDrag,
 } from "./media-strip-board";
+import {
+  MediaStripDroppable,
+  MediaStripSortableItems,
+} from "./media-strip-dnd-kit";
 import { useScrollToAndFocus } from "./use-scroll-to-and-focus";
 import { useMediaStripKeyboardNav } from "./use-media-strip-keyboard-nav";
 import {
@@ -108,22 +110,12 @@ export const MediaStrip = memo(
       };
     }, [activeCollectionId, registerCollection, unregisterCollection]);
 
-    // Register this strip as a droppable zone.
-    const { setNodeRef: setDroppableRef, isOver } = useDroppable({
-      id: encodeDndTarget({
+    const containerDndId = useMemo(() => {
+      return encodeDndTarget({
         type: "collection-container",
         collectionId: activeCollectionId,
-      }),
-    });
-
-    // Combine local scroll content ref with Dnd Kit droppable ref
-    const mergedRef = useCallback(
-      (element: HTMLDivElement | null) => {
-        viewportContentRef.current = element;
-        setDroppableRef(element);
-      },
-      [setDroppableRef]
-    );
+      });
+    }, [activeCollectionId]);
 
     const itemById = useMemo(() => {
       return new Map<TimelineItemId, TimelineItem>(
@@ -229,68 +221,76 @@ export const MediaStrip = memo(
         </CardHeader>
 
         <CardContent className="min-w-0">
-          {resolvedItems.length === 0 ? (
-            <div
-              ref={setDroppableRef}
-              className={cn(
-                "rounded-lg border border-dashed p-4 transition-all duration-200",
-                isOver ? "border-primary bg-primary/5 scale-[1.01] shadow-sm" : "border-border"
-              )}
-            >
-              <MediaStripEmptyState emptyLabel={emptyLabel} />
-            </div>
-          ) : (
-            <DraggableScrollArea
-              label={`${heading} items`}
-              viewportRef={viewportRef}
-              viewportContentRef={viewportContentRef}
-              testId={`media-strip-drag-scroll-${activeCollectionId}`}
-            >
-              <ToggleGroup
-                multiple
-                ref={mergedRef}
-                aria-label={`${heading} selection`}
-                className="relative max-w-none items-stretch p-1 h-[9.5rem]"
-                style={{
-                  width: `${Math.max(0, rowVirtualizer.getTotalSize() - itemGap)}px`,
-                }}
-                value={visibleSelectedIds}
-                onValueChange={handleSelectionChange}
-                onKeyDownCapture={handleKeyDownCapture}
-                variant="outline"
-              >
-                <SortableContext
-                  items={sortableItemIds}
-                  strategy={horizontalListSortingStrategy}
+          <MediaStripDroppable id={containerDndId}>
+            {({ isOver, setNodeRef }) => {
+              const mergedRef = (element: HTMLDivElement | null) => {
+                viewportContentRef.current = element;
+                if (typeof setNodeRef === "function") {
+                  setNodeRef(element);
+                }
+              };
+
+              return resolvedItems.length === 0 ? (
+                <div
+                  ref={setNodeRef}
+                  className={cn(
+                    "rounded-lg border border-dashed p-4 transition-all duration-200",
+                    isOver ? "border-primary bg-primary/5 scale-[1.01] shadow-sm" : "border-border"
+                  )}
                 >
-                  <LayoutGroup id={activeCollectionId}>
-                    {rowVirtualizer.getVirtualItems().map((virtualItem) => {
-                      const item = resolvedItems[virtualItem.index];
-                      const baseWidth = itemWidths[virtualItem.index];
-                      const isKeyboardReordering = activeKeyboardReorderId === item.id;
-                      return (
-                        <MediaStripItemButton
-                          key={String(item.id)}
-                          item={item}
-                          thumbnailVariant={thumbnailVariant}
-                          collectionId={activeCollectionId}
-                          index={virtualItem.index}
-                          isKeyboardReordering={isKeyboardReordering}
-                          style={{
-                            position: "absolute",
-                            top: TOGGLE_GROUP_PADDING_PX,
-                            left: `${virtualItem.start}px`,
-                            width: `${baseWidth}px`,
-                            height: `calc(100% - ${2 * TOGGLE_GROUP_PADDING_PX}px)`,
-                          }}
-                        />
-                      );
-                    })}
-                  </LayoutGroup>
-                </SortableContext>
-              </ToggleGroup>
-            </DraggableScrollArea>
-          )}
+                  <MediaStripEmptyState emptyLabel={emptyLabel} />
+                </div>
+              ) : (
+                <DraggableScrollArea
+                  label={`${heading} items`}
+                  viewportRef={viewportRef}
+                  viewportContentRef={viewportContentRef}
+                  testId={`media-strip-drag-scroll-${activeCollectionId}`}
+                >
+                  <ToggleGroup
+                    multiple
+                    ref={mergedRef}
+                    aria-label={`${heading} selection`}
+                    className="relative max-w-none items-stretch p-1 h-[9.5rem]"
+                    style={{
+                      width: `${Math.max(0, rowVirtualizer.getTotalSize() - itemGap)}px`,
+                    }}
+                    value={visibleSelectedIds}
+                    onValueChange={handleSelectionChange}
+                    onKeyDownCapture={handleKeyDownCapture}
+                    variant="outline"
+                  >
+                    <MediaStripSortableItems items={sortableItemIds}>
+                      <LayoutGroup id={activeCollectionId}>
+                        {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+                          const item = resolvedItems[virtualItem.index];
+                          const baseWidth = itemWidths[virtualItem.index];
+                          const isKeyboardReordering = activeKeyboardReorderId === item.id;
+                          return (
+                            <MediaStripItemButton
+                              key={String(item.id)}
+                              item={item}
+                              thumbnailVariant={thumbnailVariant}
+                              collectionId={activeCollectionId}
+                              index={virtualItem.index}
+                              isKeyboardReordering={isKeyboardReordering}
+                              style={{
+                                position: "absolute",
+                                top: TOGGLE_GROUP_PADDING_PX,
+                                left: `${virtualItem.start}px`,
+                                width: `${baseWidth}px`,
+                                height: `calc(100% - ${2 * TOGGLE_GROUP_PADDING_PX}px)`,
+                              }}
+                            />
+                          );
+                        })}
+                      </LayoutGroup>
+                    </MediaStripSortableItems>
+                  </ToggleGroup>
+                </DraggableScrollArea>
+              );
+            }}
+          </MediaStripDroppable>
         </CardContent>
       </Card>
     );

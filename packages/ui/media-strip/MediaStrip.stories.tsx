@@ -602,7 +602,7 @@ export const KeyboardVirtualNavigation: Story = {
   },
 };
 
-const ReorderDemo = () => {
+const ReorderDemo = ({ dndAdapter = "dnd-kit" }: { dndAdapter?: "dnd-kit" | "pragmatic" }) => {
   const [collections, setCollections] = useState<TimelineCollectionsById>(() =>
     new Map<CollectionId, TimelineCollection>([
       [asCollectionId("strip-a"), {
@@ -655,6 +655,7 @@ const ReorderDemo = () => {
   return (
     <MediaStripBoard
       collectionsById={collections}
+      dndAdapter={dndAdapter}
       visibleCollectionIds={visibleCollectionIds}
       onMoveItem={handleMoveItem}
     >
@@ -692,6 +693,10 @@ const ReorderDemo = () => {
 
 export const ReorderableMediaStrips: Story = {
   render: () => <ReorderDemo />,
+};
+
+export const ReorderableMediaStripsPragmaticDnd: Story = {
+  render: () => <ReorderDemo dndAdapter="pragmatic" />,
 };
 
 export const MultiStripDragRegression: Story = {
@@ -1174,7 +1179,7 @@ export const FractionalDurations: Story = {
 
 export const ThousandsOfItemsVirtualized: Story = {
   render: () => {
-    const items = useMemo(() => {
+    const [items, setItems] = useState(() => {
       return Array.from({ length: 1000 }).map((_, i) =>
         unwrapResult(
           createImageTimelineItem({
@@ -1186,6 +1191,17 @@ export const ThousandsOfItemsVirtualized: Story = {
           })
         )
       );
+    });
+    const handleMoveItem = useCallback((command: TimelineItemCommand) => {
+      setItems((prev) => {
+        if (command.type !== "move") return prev;
+        const next = [...prev];
+        const index = next.findIndex((item) => item.id === command.itemId);
+        if (index === -1) return prev;
+        const [moved] = next.splice(index, 1);
+        next.splice(Math.max(0, Math.min(command.toIndex, next.length)), 0, moved);
+        return next;
+      });
     }, []);
     const collectionsById = new Map<CollectionId, TimelineCollection>([
       [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "1,000 Virtualized Items", items }],
@@ -1193,7 +1209,11 @@ export const ThousandsOfItemsVirtualized: Story = {
     const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
-      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        visibleCollectionIds={visibleCollectionIds}
+        onMoveItem={handleMoveItem}
+      >
         <MediaStrip collectionId={asCollectionId("strip-1")} heading="1,000 Virtualized Items" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
@@ -1458,7 +1478,7 @@ export const ReorderWhileScrolled: Story = {
   },
 };
 
-function StatefulNestedCollectionsBoard() {
+function StatefulNestedCollectionsBoard({ dndAdapter = "dnd-kit" }: { dndAdapter?: "dnd-kit" | "pragmatic" }) {
   const [collections, setCollections] = useState<TimelineCollectionsById>(() => {
     const rootItems: TimelineItem[] = [
       unwrapResult(createImageTimelineItem({
@@ -1496,6 +1516,14 @@ function StatefulNestedCollectionsBoard() {
         startTimeSeconds: 0,
         durationSeconds: 5,
       })),
+      unwrapResult(createCollectionTimelineItem({
+        id: "card-col-d",
+        name: "Trip Subfolder",
+        collectionId: asCollectionId("col-d"),
+        itemCount: 1,
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })),
       unwrapResult(createImageTimelineItem({
         id: "img-3",
         name: "Mountain Hike",
@@ -1522,6 +1550,20 @@ function StatefulNestedCollectionsBoard() {
         name: "Empty Folder",
         items: [],
       }],
+      [asCollectionId("col-d"), {
+        id: asCollectionId("col-d"),
+        name: "Trip Subfolder",
+        items: [
+          unwrapResult(createImageTimelineItem({
+            id: "img-4",
+            name: "Postcard Detail",
+            src: createPhotoThumbnail("postcard-detail"),
+            posterSrcs: [createPhotoThumbnail("postcard-detail")],
+            startTimeSeconds: 0,
+            durationSeconds: 5,
+          })),
+        ],
+      }],
     ]);
   });
 
@@ -1532,7 +1574,12 @@ function StatefulNestedCollectionsBoard() {
   }, []);
 
   return (
-    <MediaStripBoard collectionsById={collections} visibleCollectionIds={[asCollectionId("col-a")]} onMoveItem={handleMoveOrDrop}>
+    <MediaStripBoard
+      collectionsById={collections}
+      dndAdapter={dndAdapter}
+      visibleCollectionIds={[asCollectionId("col-a")]}
+      onMoveItem={handleMoveOrDrop}
+    >
       <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
         <div>
           <h3 className="text-md font-bold mb-1">Nested Collections Demo</h3>
@@ -1567,5 +1614,9 @@ function StatefulNestedCollectionsBoard() {
 
 export const DeeplyNestedCollections: StoryObj = {
   render: () => <StatefulNestedCollectionsBoard />,
+};
+
+export const DeeplyNestedCollectionsPragmaticDnd: StoryObj = {
+  render: () => <StatefulNestedCollectionsBoard dndAdapter="pragmatic" />,
 };
 

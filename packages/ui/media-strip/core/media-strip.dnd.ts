@@ -1,12 +1,4 @@
 import {
-  type UniqueIdentifier,
-  type Collision,
-  closestCenter,
-  type Active,
-  type ClientRect,
-  type DroppableContainer,
-} from "@dnd-kit/core";
-import {
   type CollectionId,
   type TimelineCollection,
   type TimelineItemId,
@@ -16,6 +8,14 @@ import {
   parseCollectionId,
 } from "./media-strip.types";
 import { NEST_HOTSPOT_MIN_OFFSET, NEST_HOTSPOT_MAX_OFFSET } from "./media-strip.utils";
+import {
+  getClosestCenterCollisions,
+  type MediaStripDndActive,
+  type MediaStripDndClientRect,
+  type MediaStripDndCollision,
+  type MediaStripDndDroppableContainer,
+  type MediaStripDndIdentifier,
+} from "./media-strip.dnd-adapter";
 
 /**
  * Encodes DndTarget options into a unique string ID suitable for DnD context tracking.
@@ -62,8 +62,8 @@ export function resolveDropIntent({
   collectionsById,
   itemLookup,
 }: {
-  overId: UniqueIdentifier;
-  activeId: UniqueIdentifier;
+  overId: MediaStripDndIdentifier;
+  activeId: MediaStripDndIdentifier;
   collectionsById: ReadonlyMap<CollectionId, TimelineCollection>;
   itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
 }): { type: "move"; itemId: TimelineItemId; fromCollectionId: CollectionId; toCollectionId: CollectionId; toIndex: number } | null {
@@ -105,11 +105,11 @@ export function resolveDropIntent({
 }
 
 export type DetectCollisionProps = {
-  active: Active;
-  collisionRect: ClientRect;
-  droppableRects: Map<UniqueIdentifier, ClientRect>;
+  active: MediaStripDndActive;
+  collisionRect: MediaStripDndClientRect;
+  droppableRects: Map<MediaStripDndIdentifier, MediaStripDndClientRect>;
   pointerCoordinates: { x: number; y: number } | null;
-  droppableContainers: DroppableContainer[];
+  droppableContainers: MediaStripDndDroppableContainer[];
   itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
 };
 
@@ -126,7 +126,7 @@ export function detectCollision({
   itemLookup,
 }: DetectCollisionProps): {
   nestTargetId: CollectionId | null;
-  intersections: Collision[];
+  intersections: MediaStripDndCollision[];
 } {
   const activeId = active.id;
   const itemContainers = droppableContainers.filter(
@@ -136,7 +136,7 @@ export function detectCollision({
     (c) => decodeDndTarget(String(c.id))?.type === "collection-container"
   );
 
-  let intersections = closestCenter({
+  let intersections = getClosestCenterCollisions({
     active,
     collisionRect,
     droppableRects,
@@ -145,7 +145,7 @@ export function detectCollision({
   });
 
   if (intersections.length === 0) {
-    intersections = closestCenter({
+    intersections = getClosestCenterCollisions({
       active,
       collisionRect,
       droppableRects,
