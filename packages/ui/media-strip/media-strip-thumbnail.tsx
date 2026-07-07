@@ -1,8 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from "react";
 
-import type { TimelineItem, MediaTimelineItem } from "./media-strip.types";
-import { isMediaItem } from "./media-strip.types";
-import { THUMBNAIL_HEIGHT_PX } from "./media-strip.utils";
+import type { TimelineItem, MediaTimelineItem } from "./core/media-strip.types";
+import { isMediaItem } from "./core/media-strip.types";
+import { THUMBNAIL_HEIGHT_PX } from "./core/media-strip.utils";
 import { useMediaStripBoardStableOptional } from "./media-strip-board";
 
 type MediaStripThumbnailProps = {

@@ -6,30 +6,37 @@ import {
   type DroppableContainer,
 } from "@dnd-kit/core";
 import {
+  asTimelineItemId,
+  asCollectionId,
   type CollectionId,
   type TimelineCollection,
   type TimelineItemId,
   type TimelineItem,
 } from "./media-strip.types";
-import { resolveDropIntent, detectCollision } from "./media-strip.dnd";
+import {
+  resolveDropIntent,
+  detectCollision,
+  encodeDndTarget,
+  decodeDndTarget,
+} from "./media-strip.dnd";
 
 describe("resolveDropIntent helper", () => {
-  const itemA = { id: "item-a" as TimelineItemId, name: "Item A" } as TimelineItem;
-  const itemB = { id: "item-b" as TimelineItemId, name: "Item B" } as TimelineItem;
+  const itemA = { id: asTimelineItemId("item-a"), name: "Item A" } as TimelineItem;
+  const itemB = { id: asTimelineItemId("item-b"), name: "Item B" } as TimelineItem;
 
   const collections = new Map<CollectionId, TimelineCollection>([
     [
-      "col-root" as CollectionId,
+      asCollectionId("col-root"),
       {
-        id: "col-root" as CollectionId,
+        id: asCollectionId("col-root"),
         name: "Root",
         items: [itemA, itemB],
       },
     ],
     [
-      "col-empty" as CollectionId,
+      asCollectionId("col-empty"),
       {
-        id: "col-empty" as CollectionId,
+        id: asCollectionId("col-empty"),
         name: "Empty Folder",
         items: [],
       },
@@ -37,8 +44,8 @@ describe("resolveDropIntent helper", () => {
   ]);
 
   const itemLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
-    ["item-a" as TimelineItemId, { collectionId: "col-root" as CollectionId, index: 0, item: itemA }],
-    ["item-b" as TimelineItemId, { collectionId: "col-root" as CollectionId, index: 1, item: itemB }],
+    [asTimelineItemId("item-a"), { collectionId: asCollectionId("col-root"), index: 0, item: itemA }],
+    [asTimelineItemId("item-b"), { collectionId: asCollectionId("col-root"), index: 1, item: itemB }],
   ]);
 
   test("drop before item", () => {
@@ -51,9 +58,9 @@ describe("resolveDropIntent helper", () => {
 
     expect(result).toEqual({
       type: "move",
-      itemId: "item-a" as TimelineItemId,
-      fromCollectionId: "col-root" as CollectionId,
-      toCollectionId: "col-root" as CollectionId,
+      itemId: asTimelineItemId("item-a"),
+      fromCollectionId: asCollectionId("col-root"),
+      toCollectionId: asCollectionId("col-root"),
       toIndex: 1,
     });
   });
@@ -68,9 +75,9 @@ describe("resolveDropIntent helper", () => {
 
     expect(result).toEqual({
       type: "move",
-      itemId: "item-a" as TimelineItemId,
-      fromCollectionId: "col-root" as CollectionId,
-      toCollectionId: "col-root" as CollectionId,
+      itemId: asTimelineItemId("item-a"),
+      fromCollectionId: asCollectionId("col-root"),
+      toCollectionId: asCollectionId("col-root"),
       toIndex: 2,
     });
   });
@@ -85,9 +92,9 @@ describe("resolveDropIntent helper", () => {
 
     expect(result).toEqual({
       type: "move",
-      itemId: "item-a" as TimelineItemId,
-      fromCollectionId: "col-root" as CollectionId,
-      toCollectionId: "col-empty" as CollectionId,
+      itemId: asTimelineItemId("item-a"),
+      fromCollectionId: asCollectionId("col-root"),
+      toCollectionId: asCollectionId("col-empty"),
       toIndex: 0,
     });
   });
@@ -95,15 +102,15 @@ describe("resolveDropIntent helper", () => {
 
 describe("detectCollision strategy with hotspots", () => {
   const folderItem = {
-    id: "item-folder" as TimelineItemId,
+    id: asTimelineItemId("item-folder"),
     name: "Holiday Folder",
     kind: "collection" as const,
-    collectionId: "col-folder" as CollectionId,
+    collectionId: asCollectionId("col-folder"),
     itemCount: 0,
   } as TimelineItem;
 
   const itemLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
-    ["item-folder" as TimelineItemId, { collectionId: "col-root" as CollectionId, index: 0, item: folderItem }],
+    [asTimelineItemId("item-folder"), { collectionId: asCollectionId("col-root"), index: 0, item: folderItem }],
   ]);
 
   const droppableContainers: DroppableContainer[] = [
@@ -203,5 +210,31 @@ describe("detectCollision strategy with hotspots", () => {
     });
 
     expect(result.nestTargetId).toBeNull();
+  });
+});
+
+describe("DndTarget encoding/decoding", () => {
+  test("round-trips every DndTarget variant", () => {
+    const itemTarget = { type: "item" as const, itemId: asTimelineItemId("item-1") };
+    const containerTarget = { type: "collection-container" as const, collectionId: asCollectionId("col-1") };
+    const nestTarget = { type: "collection-nest-target" as const, collectionId: asCollectionId("col-2") };
+
+    const encodedItem = encodeDndTarget(itemTarget);
+    const encodedContainer = encodeDndTarget(containerTarget);
+    const encodedNest = encodeDndTarget(nestTarget);
+
+    expect(encodedItem).toBe("item:item-1");
+    expect(encodedContainer).toBe("container:col-1");
+    expect(encodedNest).toBe("nest:col-2");
+
+    expect(decodeDndTarget(encodedItem)).toEqual(itemTarget);
+    expect(decodeDndTarget(encodedContainer)).toEqual(containerTarget);
+    expect(decodeDndTarget(encodedNest)).toEqual(nestTarget);
+    expect(decodeDndTarget("invalid-prefix:something")).toBeNull();
+  });
+
+  test("round-trips IDs that themselves contain the separator", () => {
+    const itemTarget = { type: "item" as const, itemId: asTimelineItemId("item:with:colons") };
+    expect(decodeDndTarget(encodeDndTarget(itemTarget))).toEqual(itemTarget);
   });
 });

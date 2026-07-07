@@ -1,6 +1,6 @@
 import { useReducer, useCallback } from "react";
-import { type TimelineItemId, type CollectionId } from "./media-strip.types";
-import { DEFAULT_DRAG_OVERLAY_WIDTH_PX } from "./media-strip.utils";
+import { type TimelineItemId, type CollectionId } from "./core/media-strip.types";
+import { DEFAULT_DRAG_OVERLAY_WIDTH_PX } from "./core/media-strip.utils";
 
 type DragState = {
   activeDragId: TimelineItemId | null;
@@ -12,9 +12,7 @@ type DragState = {
 type DragAction =
   | { type: "DRAG_START"; itemId: TimelineItemId; collectionId: CollectionId; width: number }
   | { type: "DRAG_MOVE"; nestTargetId: CollectionId | null }
-  | { type: "DRAG_END_OR_CANCEL" }
-  | { type: "SET_NEST_TARGET"; nestTargetId: CollectionId | null }
-  | { type: "SET_DRAG_WIDTH"; width: number };
+  | { type: "DRAG_END_OR_CANCEL" };
 
 function dragReducer(state: DragState, action: DragAction): DragState {
   switch (action.type) {
@@ -26,7 +24,6 @@ function dragReducer(state: DragState, action: DragAction): DragState {
         activeDragWidth: action.width,
       };
     case "DRAG_MOVE":
-    case "SET_NEST_TARGET":
       return {
         ...state,
         activeNestTargetId: action.nestTargetId,
@@ -37,11 +34,6 @@ function dragReducer(state: DragState, action: DragAction): DragState {
         activeDragSourceCollectionId: null,
         activeNestTargetId: null,
         activeDragWidth: DEFAULT_DRAG_OVERLAY_WIDTH_PX,
-      };
-    case "SET_DRAG_WIDTH":
-      return {
-        ...state,
-        activeDragWidth: action.width,
       };
     default:
       return state;
@@ -71,10 +63,6 @@ export function useBoardDragState() {
     dispatch({ type: "DRAG_END_OR_CANCEL" });
   }, []);
 
-  const setDragWidth = useCallback((width: number) => {
-    dispatch({ type: "SET_DRAG_WIDTH", width });
-  }, []);
-
   return {
     activeDragId: state.activeDragId,
     activeDragSourceCollectionId: state.activeDragSourceCollectionId,
@@ -83,6 +71,5 @@ export function useBoardDragState() {
     startDrag,
     moveDrag,
     endDrag,
-    setDragWidth,
   };
 }

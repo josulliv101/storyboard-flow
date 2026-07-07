@@ -5,28 +5,30 @@ import { expect, fn, userEvent, within, waitFor } from "storybook/test";
 import { MediaStrip, type MediaStripProps, type MediaStripSelection } from "./media-strip";
 import { MediaStripBoard } from "./media-strip-board";
 import {
-  parseTimelineItemId,
+  asTimelineItemId,
+  asCollectionId,
   type TimelineItem,
   type TimelineItemId,
-  type TimelineItemResult,
   type CollectionId,
   type TimelineCollection,
   type TimelineCollectionsById,
   type TimelineItemCommand,
-} from "./media-strip.types";
+} from "./core/media-strip.types";
 import {
   createImageTimelineItem,
   createVideoTimelineItem,
   createCollectionTimelineItem,
-} from "./media-strip.validation";
-import { applyTimelineItemCommand } from "./media-strip.collection-ops";
-
-function unwrapResult<T, E>(result: TimelineItemResult<T, E>): T {
-  if (!result.ok) {
-    throw new Error(`Failed to construct timeline item: ${JSON.stringify(result.error)}`);
-  }
-  return result.value;
-}
+} from "./core/media-strip.validation";
+import { applyTimelineItemCommand } from "./core/media-strip.collection-ops";
+import {
+  unwrapResult,
+  createThumbnail,
+  createPhotoThumbnail,
+  createImg,
+  simulatePointerDrag,
+  simulateDragOscillation,
+  simulateScrollAreaDrag,
+} from "./media-strip.stories-helpers";
 
 type StoryMediaItem = {
   id: string;
@@ -51,37 +53,18 @@ const dogVideoThumbnails = {
   "00:04": new URL("./fixtures/dog-exit-4s.png", import.meta.url).href,
 } satisfies Record<string, string>;
 
-const createThumbnail = (color: string, label: string) =>
-  `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" viewBox="0 0 480 270"><rect width="480" height="270" rx="18" fill="${encodeURIComponent(color)}"/><text x="50%" y="50%" fill="white" font-family="Arial, sans-serif" font-size="32" font-weight="700" text-anchor="middle" dominant-baseline="middle">${encodeURIComponent(label)}</text></svg>`;
-
-const createPhotoThumbnail = (seed: string) =>
-  createThumbnail(
-    `#${Array.from(seed)
-      .reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) % 0xffffff, 0)
-      .toString(16)
-      .padStart(6, "0")}`,
-    seed
-      .split("-")
-      .map((word) => word[0]?.toUpperCase() ?? "")
-      .join(""),
-  );
-
 function durationToSeconds(duration: string) {
   const [minutes = "0", seconds = "0"] = duration.split(":");
   return Number(minutes) * 60 + Number(seconds);
 }
 
 function toTimelineItem(item: StoryMediaItem): TimelineItem {
-  const idResult = parseTimelineItemId(item.id);
-  if (!idResult.ok) {
-    throw new Error(`Failed to parse timeline item ID: ${item.id}`);
-  }
-  const id = idResult.value;
+  // The factories accept unbranded string ids and validate them internally.
   const seconds = durationToSeconds(item.duration);
 
   if (item.kind === "video") {
     const result = createVideoTimelineItem({
-      id,
+      id: item.id,
       name: item.title,
       src: item.videoSrc,
       posterSrcs: [item.thumbnailUrl],
@@ -94,7 +77,7 @@ function toTimelineItem(item: StoryMediaItem): TimelineItem {
     throw new Error(`Failed to create video timeline item: ${result.error.reason}`);
   } else {
     const result = createImageTimelineItem({
-      id,
+      id: item.id,
       name: item.title,
       src: item.thumbnailUrl,
       posterSrcs: [item.thumbnailUrl],
@@ -167,23 +150,6 @@ const items: StoryMediaItem[] = [
 const mediaItems = items.map(toTimelineItem);
 const repeatedThumbnail = createThumbnail("#475569", "Repeat");
 
-const createImg = (id: string, name: string, color: string, duration: number) => {
-  const thumb = createThumbnail(color, name);
-  const idResult = parseTimelineItemId(id);
-  if (!idResult.ok) throw new Error("Constructor error: invalid ID");
-
-  const result = createImageTimelineItem({
-    id: idResult.value,
-    name,
-    src: thumb,
-    posterSrcs: [thumb],
-    startTimeSeconds: 0,
-    durationSeconds: duration,
-  });
-  if (!result.ok) throw new Error("Constructor error");
-  return result.value;
-};
-
 const shortAndLongItems: TimelineItem[] = [
   createImg("clip-short", "Flash Insert", "#0891b2", 1),
   createImg("clip-long", "Extended Walkthrough", "#9333ea", 135),
@@ -238,7 +204,7 @@ function StatefulMediaStrip(props: MediaStripProps & { items?: readonly Timeline
     [props.onSelectionChange]
   );
 
-  const collectionId = props.collectionId || ("default-strip" as CollectionId);
+  const collectionId = props.collectionId || (asCollectionId("default-strip"));
   const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
     [collectionId, {
       id: collectionId,
@@ -271,9 +237,12 @@ const meta = {
     onAction: fn(),
     onSelectionChange: fn(),
     items: mediaItems,
-    selectedIds: ["close" as TimelineItemId],
+    selectedIds: [asTimelineItemId("close")],
     heading: "Scene media",
   },
+  // Single shared decorator — story-level decorators STACK with this one, so
+  // per-story copies double-wrap the canvas. Only add a story-level decorator
+  // when the story genuinely needs a different frame (see VeryNarrowContainer).
   decorators: [
     (Story) => (
       <div className="min-h-screen bg-background p-8 text-foreground">
@@ -297,7 +266,7 @@ export const Starter: Story = {
 
     await expect(args.onSelectionChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        selectedIds: expect.arrayContaining(["insert" as TimelineItemId]),
+        selectedIds: expect.arrayContaining([asTimelineItemId("insert")]),
       }),
     );
   },
@@ -313,7 +282,7 @@ export const SelectedState: Story = {
 
 export const KeyboardSelection: Story = {
   args: {
-    selectedIds: ["wide" as TimelineItemId],
+    selectedIds: [asTimelineItemId("wide")],
   },
   play: async ({ args, canvas, canvasElement }) => {
     const firstClip = canvas.getByRole("button", { name: /opening wide/i });
@@ -326,7 +295,7 @@ export const KeyboardSelection: Story = {
     );
     await expect(args.onSelectionChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        selectedIds: expect.arrayContaining(["close" as TimelineItemId]),
+        selectedIds: expect.arrayContaining([asTimelineItemId("close")]),
       }),
     );
   },
@@ -349,7 +318,7 @@ export const MissingPosterFallback: Story = {
     items: [
       unwrapResult(
         createImageTimelineItem({
-          id: "clip-missing" as TimelineItemId,
+          id: asTimelineItemId("clip-missing"),
           name: "Offline Poster",
           src: "https://example.com/offline-media.jpg",
           startTimeSeconds: 0,
@@ -359,7 +328,7 @@ export const MissingPosterFallback: Story = {
       mediaItems[0],
       mediaItems[1],
     ],
-    selectedIds: ["clip-missing" as TimelineItemId],
+    selectedIds: [asTimelineItemId("clip-missing")],
   },
 };
 
@@ -368,7 +337,7 @@ export const RepeatedThumbnails: Story = {
     items: [
       unwrapResult(
         createImageTimelineItem({
-          id: "repeat-1" as TimelineItemId,
+          id: asTimelineItemId("repeat-1"),
           name: "Take One",
           src: repeatedThumbnail,
           posterSrcs: [repeatedThumbnail],
@@ -378,7 +347,7 @@ export const RepeatedThumbnails: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: "repeat-2" as TimelineItemId,
+          id: asTimelineItemId("repeat-2"),
           name: "Take Two",
           src: repeatedThumbnail,
           posterSrcs: [repeatedThumbnail],
@@ -388,7 +357,7 @@ export const RepeatedThumbnails: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: "repeat-3" as TimelineItemId,
+          id: asTimelineItemId("repeat-3"),
           name: "Take Three",
           src: repeatedThumbnail,
           posterSrcs: [repeatedThumbnail],
@@ -397,7 +366,7 @@ export const RepeatedThumbnails: Story = {
         })
       ),
     ],
-    selectedIds: ["repeat-2" as TimelineItemId],
+    selectedIds: [asTimelineItemId("repeat-2")],
     pxPerSecond: 80,
   },
 };
@@ -408,7 +377,7 @@ export const SingleImageThumbnails: Story = {
     items: [
       unwrapResult(
         createImageTimelineItem({
-          id: "single-1" as TimelineItemId,
+          id: asTimelineItemId("single-1"),
           name: "Take One (Single Image)",
           src: repeatedThumbnail,
           posterSrcs: [repeatedThumbnail],
@@ -418,7 +387,7 @@ export const SingleImageThumbnails: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: "single-2" as TimelineItemId,
+          id: asTimelineItemId("single-2"),
           name: "Take Two (Single Image)",
           src: repeatedThumbnail,
           posterSrcs: [repeatedThumbnail],
@@ -427,7 +396,7 @@ export const SingleImageThumbnails: Story = {
         })
       ),
     ],
-    selectedIds: ["single-1" as TimelineItemId],
+    selectedIds: [asTimelineItemId("single-1")],
   },
 };
 
@@ -436,7 +405,7 @@ export const SequenceOfDifferentImages: Story = {
     items: [
       unwrapResult(
         createImageTimelineItem({
-          id: "seq-diff-1" as TimelineItemId,
+          id: asTimelineItemId("seq-diff-1"),
           name: "Short Clip (3s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
@@ -451,7 +420,7 @@ export const SequenceOfDifferentImages: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: "seq-diff-2" as TimelineItemId,
+          id: asTimelineItemId("seq-diff-2"),
           name: "Medium Clip (6s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
@@ -466,7 +435,7 @@ export const SequenceOfDifferentImages: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: "seq-diff-3" as TimelineItemId,
+          id: asTimelineItemId("seq-diff-3"),
           name: "Long Clip (9s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
@@ -481,7 +450,7 @@ export const SequenceOfDifferentImages: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: "seq-diff-4" as TimelineItemId,
+          id: asTimelineItemId("seq-diff-4"),
           name: "Max Width Clip (12s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
@@ -495,21 +464,21 @@ export const SequenceOfDifferentImages: Story = {
         })
       ),
     ],
-    selectedIds: ["seq-diff-2" as TimelineItemId],
+    selectedIds: [asTimelineItemId("seq-diff-2")],
   },
 };
 
 export const ShortLongAndTrimmedClips: Story = {
   args: {
     items: shortAndLongItems,
-    selectedIds: ["clip-trimmed" as TimelineItemId],
+    selectedIds: [asTimelineItemId("clip-trimmed")],
   },
 };
 
 export const ManyItemTimeline: Story = {
   args: {
     items: manyItems,
-    selectedIds: ["cutaway-10" as TimelineItemId],
+    selectedIds: [asTimelineItemId("cutaway-10")],
     heading: "Timeline media",
   },
   play: async ({ canvasElement }) => {
@@ -553,7 +522,7 @@ export const ManyItemTimeline: Story = {
 
 export const MultipleSelectionInitial: Story = {
   args: {
-    selectedIds: ["wide" as TimelineItemId, "close" as TimelineItemId],
+    selectedIds: [asTimelineItemId("wide"), asTimelineItemId("close")],
   },
   play: async ({ canvas }) => {
     await expect(
@@ -567,7 +536,7 @@ export const MultipleSelectionInitial: Story = {
 
 export const MultipleSelectionToggle: Story = {
   args: {
-    selectedIds: ["wide" as TimelineItemId],
+    selectedIds: [asTimelineItemId("wide")],
   },
   play: async ({ args, canvas }) => {
     await userEvent.click(
@@ -577,8 +546,8 @@ export const MultipleSelectionToggle: Story = {
     await expect(args.onSelectionChange).toHaveBeenCalledWith(
       expect.objectContaining({
         selectedIds: expect.arrayContaining([
-          "wide" as TimelineItemId,
-          "close" as TimelineItemId,
+          asTimelineItemId("wide"),
+          asTimelineItemId("close"),
         ]),
       }),
     );
@@ -590,7 +559,7 @@ export const BrokenPosterFallback: Story = {
     items: [
       unwrapResult(
         createImageTimelineItem({
-          id: "clip-broken" as TimelineItemId,
+          id: asTimelineItemId("clip-broken"),
           name: "Broken Link Poster",
           src: "https://example.com/broken-image.jpg",
           posterSrcs: ["https://example.com/broken-image.jpg"],
@@ -600,13 +569,13 @@ export const BrokenPosterFallback: Story = {
       ),
       mediaItems[0],
     ],
-    selectedIds: ["clip-broken" as TimelineItemId],
+    selectedIds: [asTimelineItemId("clip-broken")],
   },
 };
 
 export const KeyboardVirtualNavigation: Story = {
   args: {
-    selectedIds: ["wide" as TimelineItemId],
+    selectedIds: [asTimelineItemId("wide")],
   },
   play: async ({ args, canvas, canvasElement }) => {
     const firstClip = canvas.getByRole("button", { name: /opening wide/i });
@@ -627,198 +596,65 @@ export const KeyboardVirtualNavigation: Story = {
     await expect(canvasElement.ownerDocument.activeElement).toBe(targetClip);
     await expect(args.onSelectionChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        selectedIds: expect.arrayContaining(["cutaway-10" as TimelineItemId]),
+        selectedIds: expect.arrayContaining([asTimelineItemId("cutaway-10")]),
       }),
     );
   },
 };
 
 const ReorderDemo = () => {
-  const [stripA, setStripA] = useState<TimelineItem[]>(() => [
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-a1" as TimelineItemId,
-        name: "Item A1",
-        src: createThumbnail("#f43f5e", "A1"),
-        startTimeSeconds: 0,
-        durationSeconds: 5,
-      })
-    ),
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-a2" as TimelineItemId,
-        name: "Item A2",
-        src: createThumbnail("#ec4899", "A2"),
-        startTimeSeconds: 0,
-        durationSeconds: 6,
-      })
-    ),
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-a3" as TimelineItemId,
-        name: "Item A3",
-        src: createThumbnail("#d946ef", "A3"),
-        startTimeSeconds: 0,
-        durationSeconds: 4,
-      })
-    ),
-  ]);
-
-  const [stripB, setStripB] = useState<TimelineItem[]>(() => [
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-b1" as TimelineItemId,
-        name: "Item B1",
-        src: createThumbnail("#3b82f6", "B1"),
-        startTimeSeconds: 0,
-        durationSeconds: 5,
-      })
-    ),
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-b2" as TimelineItemId,
-        name: "Item B2",
-        src: createThumbnail("#06b6d4", "B2"),
-        startTimeSeconds: 0,
-        durationSeconds: 7,
-      })
-    ),
-  ]);
-
-  const [stripC, setStripC] = useState<TimelineItem[]>(() => [
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-c1" as TimelineItemId,
-        name: "Item C1",
-        src: createThumbnail("#10b981", "C1"),
-        startTimeSeconds: 0,
-        durationSeconds: 4,
-      })
-    ),
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-c2" as TimelineItemId,
-        name: "Item C2",
-        src: createThumbnail("#059669", "C2"),
-        startTimeSeconds: 0,
-        durationSeconds: 5,
-      })
-    ),
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-c3" as TimelineItemId,
-        name: "Item C3",
-        src: createThumbnail("#047857", "C3"),
-        startTimeSeconds: 0,
-        durationSeconds: 3,
-      })
-    ),
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-c4" as TimelineItemId,
-        name: "Item C4",
-        src: createThumbnail("#14b8a6", "C4"),
-        startTimeSeconds: 0,
-        durationSeconds: 6,
-      })
-    ),
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-c5" as TimelineItemId,
-        name: "Item C5",
-        src: createThumbnail("#0db9e8", "C5"),
-        startTimeSeconds: 0,
-        durationSeconds: 8,
-      })
-    ),
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-c6" as TimelineItemId,
-        name: "Item C6",
-        src: createThumbnail("#f59e0b", "C6"),
-        startTimeSeconds: 0,
-        durationSeconds: 5,
-      })
-    ),
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-c7" as TimelineItemId,
-        name: "Item C7",
-        src: createThumbnail("#d97706", "C7"),
-        startTimeSeconds: 0,
-        durationSeconds: 7,
-      })
-    ),
-    unwrapResult(
-      createImageTimelineItem({
-        id: "item-c8" as TimelineItemId,
-        name: "Item C8",
-        src: createThumbnail("#b45309", "C8"),
-        startTimeSeconds: 0,
-        durationSeconds: 4,
-      })
-    ),
-  ]);
+  const [collections, setCollections] = useState<TimelineCollectionsById>(() =>
+    new Map<CollectionId, TimelineCollection>([
+      [asCollectionId("strip-a"), {
+        id: asCollectionId("strip-a"),
+        name: "Media Strip A",
+        items: [
+          createImg("item-a1", "Item A1", "#f43f5e", 5),
+          createImg("item-a2", "Item A2", "#ec4899", 6),
+          createImg("item-a3", "Item A3", "#d946ef", 4),
+        ],
+      }],
+      [asCollectionId("strip-b"), {
+        id: asCollectionId("strip-b"),
+        name: "Media Strip B",
+        items: [
+          createImg("item-b1", "Item B1", "#3b82f6", 5),
+          createImg("item-b2", "Item B2", "#06b6d4", 7),
+        ],
+      }],
+      [asCollectionId("strip-c"), {
+        id: asCollectionId("strip-c"),
+        name: "Media Strip C",
+        items: [
+          createImg("item-c1", "Item C1", "#10b981", 4),
+          createImg("item-c2", "Item C2", "#059669", 5),
+          createImg("item-c3", "Item C3", "#047857", 3),
+          createImg("item-c4", "Item C4", "#14b8a6", 6),
+          createImg("item-c5", "Item C5", "#0db9e8", 8),
+          createImg("item-c6", "Item C6", "#f59e0b", 5),
+          createImg("item-c7", "Item C7", "#d97706", 7),
+          createImg("item-c8", "Item C8", "#b45309", 4),
+        ],
+      }],
+    ])
+  );
 
   const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>([]);
 
-  const handleMoveItem = useCallback(
-    (command: TimelineItemCommand) => {
-      if (command.type !== "move") return;
-      const { itemId, fromCollectionId: fromStripId, toCollectionId: toStripId, toIndex } = command;
-      let itemToMove: TimelineItem | undefined;
-      let nextStripA = [...stripA];
-      let nextStripB = [...stripB];
-      let nextStripC = [...stripC];
+  // Route every board command through the same pure reducer the package ships,
+  // instead of re-implementing per-strip move logic in the demo.
+  const handleMoveItem = useCallback((command: TimelineItemCommand) => {
+    setCollections((prev) => applyTimelineItemCommand({ collectionsById: prev, command }));
+  }, []);
 
-      if (fromStripId === "strip-a") {
-        const index = nextStripA.findIndex((i) => i.id === itemId);
-        if (index !== -1) {
-          [itemToMove] = nextStripA.splice(index, 1);
-        }
-      } else if (fromStripId === "strip-b") {
-        const index = nextStripB.findIndex((i) => i.id === itemId);
-        if (index !== -1) {
-          [itemToMove] = nextStripB.splice(index, 1);
-        }
-      } else {
-        const index = nextStripC.findIndex((i) => i.id === itemId);
-        if (index !== -1) {
-          [itemToMove] = nextStripC.splice(index, 1);
-        }
-      }
-
-      if (!itemToMove) return;
-
-      if (toStripId === "strip-a") {
-        const clampedIndex = Math.max(0, Math.min(toIndex, nextStripA.length));
-        nextStripA.splice(clampedIndex, 0, itemToMove);
-      } else if (toStripId === "strip-b") {
-        const clampedIndex = Math.max(0, Math.min(toIndex, nextStripB.length));
-        nextStripB.splice(clampedIndex, 0, itemToMove);
-      } else {
-        const clampedIndex = Math.max(0, Math.min(toIndex, nextStripC.length));
-        nextStripC.splice(clampedIndex, 0, itemToMove);
-      }
-
-      setStripA(nextStripA);
-      setStripB(nextStripB);
-      setStripC(nextStripC);
-    },
-    [stripA, stripB, stripC]
+  const visibleCollectionIds = useMemo(
+    () => [asCollectionId("strip-a"), asCollectionId("strip-b"), asCollectionId("strip-c")],
+    []
   );
-
-  const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
-    ["strip-a" as CollectionId, { id: "strip-a" as CollectionId, name: "Media Strip A", items: stripA }],
-    ["strip-b" as CollectionId, { id: "strip-b" as CollectionId, name: "Media Strip B", items: stripB }],
-    ["strip-c" as CollectionId, { id: "strip-c" as CollectionId, name: "Media Strip C", items: stripC }],
-  ]), [stripA, stripB, stripC]);
-
-  const visibleCollectionIds = useMemo(() => ["strip-a" as CollectionId, "strip-b" as CollectionId, "strip-c" as CollectionId], []);
 
   return (
     <MediaStripBoard
-      collectionsById={collectionsById}
+      collectionsById={collections}
       visibleCollectionIds={visibleCollectionIds}
       onMoveItem={handleMoveItem}
     >
@@ -832,19 +668,19 @@ const ReorderDemo = () => {
           </p>
         </div>
         <MediaStrip
-          collectionId={"strip-a" as CollectionId}
+          collectionId={asCollectionId("strip-a")}
           heading="Media Strip A (Red/Pink)"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
         />
         <MediaStrip
-          collectionId={"strip-b" as CollectionId}
+          collectionId={asCollectionId("strip-b")}
           heading="Media Strip B (Blue/Cyan)"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
         />
         <MediaStrip
-          collectionId={"strip-c" as CollectionId}
+          collectionId={asCollectionId("strip-c")}
           heading="Media Strip C (Green/Emerald with Lots of Items)"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
@@ -856,230 +692,10 @@ const ReorderDemo = () => {
 
 export const ReorderableMediaStrips: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
-};
-
-const waitForLayout = async (element: HTMLElement) => {
-  await waitFor(() => {
-    const rect = element.getBoundingClientRect();
-    expect(rect.width).toBeGreaterThan(0);
-    expect(rect.height).toBeGreaterThan(0);
-  });
-};
-
-// Helper functions for programmatic PointerEvent simulation in headless story tests
-const simulatePointerDrag = async (handle: HTMLElement, target: HTMLElement) => {
-  await waitForLayout(handle);
-  await waitForLayout(target);
-
-  const startRect = handle.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-
-  // 1. Pointer Down
-  handle.dispatchEvent(
-    new PointerEvent("pointerdown", {
-      clientX: startRect.left + 5,
-      clientY: startRect.top + 5,
-      bubbles: true,
-      cancelable: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-      isPrimary: true,
-    })
-  );
-
-  // 2. Drag slightly to trigger dnd-kit pointer sensor activation constraint (> 5px)
-  document.dispatchEvent(
-    new PointerEvent("pointermove", {
-      clientX: startRect.left + 20,
-      clientY: startRect.top + 5,
-      bubbles: true,
-      cancelable: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-      isPrimary: true,
-    })
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 100));
-
-  // 3. Drag to target
-  document.dispatchEvent(
-    new PointerEvent("pointermove", {
-      clientX: targetRect.left + targetRect.width / 2,
-      clientY: targetRect.top + targetRect.height / 2,
-      bubbles: true,
-      cancelable: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-      isPrimary: true,
-    })
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 100));
-
-  // 4. Release mouse button (Pointer Up)
-  document.dispatchEvent(
-    new PointerEvent("pointerup", {
-      clientX: targetRect.left + targetRect.width / 2,
-      clientY: targetRect.top + targetRect.height / 2,
-      bubbles: true,
-      cancelable: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-      isPrimary: true,
-    })
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 50));
-};
-
-const simulateDragOscillation = async (handle: HTMLElement, target: HTMLElement) => {
-  await waitForLayout(handle);
-  await waitForLayout(target);
-
-  const startRect = handle.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-
-  // 1. Pointer Down
-  handle.dispatchEvent(
-    new PointerEvent("pointerdown", {
-      clientX: startRect.left + 5,
-      clientY: startRect.top + 5,
-      bubbles: true,
-      cancelable: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-    })
-  );
-
-  // 2. Move past threshold
-  document.dispatchEvent(
-    new PointerEvent("pointermove", {
-      clientX: startRect.left + 20,
-      clientY: startRect.top + 5,
-      bubbles: true,
-      cancelable: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-    })
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 50));
-
-  // 3. Move to target
-  document.dispatchEvent(
-    new PointerEvent("pointermove", {
-      clientX: targetRect.left + targetRect.width / 2,
-      clientY: targetRect.top + targetRect.height / 2,
-      bubbles: true,
-      cancelable: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-    })
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 50));
-
-  // 4. Oscillate back and forth to trigger multiple collision detection runs
-  for (let i = 0; i < 5; i++) {
-    document.dispatchEvent(
-      new PointerEvent("pointermove", {
-        clientX: targetRect.left + targetRect.width / 2 + (i % 2 === 0 ? 5 : -5),
-        clientY: targetRect.top + targetRect.height / 2,
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        buttons: 1,
-        pointerId: 1,
-      })
-    );
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-
-  // 5. Pointer Up
-  document.dispatchEvent(
-    new PointerEvent("pointerup", {
-      clientX: targetRect.left + targetRect.width / 2,
-      clientY: targetRect.top + targetRect.height / 2,
-      bubbles: true,
-      cancelable: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-    })
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 50));
-};
-
-const simulateScrollAreaDrag = async (scrollArea: HTMLElement) => {
-  await waitForLayout(scrollArea);
-
-  const rect = scrollArea.getBoundingClientRect();
-
-  scrollArea.dispatchEvent(
-    new PointerEvent("pointerdown", {
-      clientX: rect.left + 100,
-      clientY: rect.top + 50,
-      bubbles: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-    })
-  );
-
-  document.dispatchEvent(
-    new PointerEvent("pointermove", {
-      clientX: rect.left + 50,
-      clientY: rect.top + 50,
-      bubbles: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-    })
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 50));
-
-  document.dispatchEvent(
-    new PointerEvent("pointerup", {
-      clientX: rect.left + 50,
-      clientY: rect.top + 50,
-      bubbles: true,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-    })
-  );
 };
 
 export const MultiStripDragRegression: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     // Locate the first item reorder handle in the DOM
     const firstHandle = canvasElement.querySelector("[data-reorder-handle]") as HTMLElement;
@@ -1092,15 +708,6 @@ export const MultiStripDragRegression: Story = {
 
 export const KeyboardReorderWithinStrip: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item a1/i });
@@ -1126,15 +733,6 @@ export const KeyboardReorderWithinStrip: Story = {
 
 export const KeyboardReorderBetweenStrips: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item a1/i });
@@ -1152,15 +750,6 @@ export const KeyboardReorderBetweenStrips: Story = {
 
 export const KeyboardReorderCancel: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item a1/i });
@@ -1182,15 +771,6 @@ export const KeyboardReorderCancel: Story = {
 
 export const PointerDragWithinStrip: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item a1/i });
@@ -1207,15 +787,6 @@ export const PointerDragWithinStrip: Story = {
 
 export const PointerDragBetweenStrips: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item a1/i });
@@ -1259,10 +830,10 @@ export const PointerDragIntoEmptyStrip: Story = {
     );
 
     const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      ["strip-a" as CollectionId, { id: "strip-a" as CollectionId, name: "Strip A", items: stripA }],
-      ["strip-b" as CollectionId, { id: "strip-b" as CollectionId, name: "Strip B", items: stripB }],
+      [asCollectionId("strip-a"), { id: asCollectionId("strip-a"), name: "Strip A", items: stripA }],
+      [asCollectionId("strip-b"), { id: asCollectionId("strip-b"), name: "Strip B", items: stripB }],
     ]), [stripA, stripB]);
-    const visibleCollectionIds = useMemo(() => ["strip-a" as CollectionId, "strip-b" as CollectionId], []);
+    const visibleCollectionIds = useMemo(() => [asCollectionId("strip-a"), asCollectionId("strip-b")], []);
 
     return (
       <MediaStripBoard
@@ -1271,21 +842,12 @@ export const PointerDragIntoEmptyStrip: Story = {
         onMoveItem={handleMoveItem}
       >
         <div className="flex flex-col gap-8 p-4">
-          <MediaStrip collectionId={"strip-a" as CollectionId} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
-          <MediaStrip collectionId={"strip-b" as CollectionId} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
+          <MediaStrip collectionId={asCollectionId("strip-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
+          <MediaStrip collectionId={asCollectionId("strip-b")} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
         </div>
       </MediaStripBoard>
     );
   },
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item 1/i });
@@ -1305,15 +867,6 @@ export const PointerDragIntoEmptyStrip: Story = {
 
 export const SelectedItemRemainsSelected: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item a1/i });
@@ -1341,15 +894,6 @@ export const SelectedItemRemainsSelected: Story = {
 
 export const DraggingScrollAreaDoesNotSelect: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const scrollArea = canvasElement.querySelector("[data-testid^='media-strip-drag-scroll-']") as HTMLElement;
@@ -1365,15 +909,6 @@ export const DraggingScrollAreaDoesNotSelect: Story = {
 
 export const ReorderHandleArrowKeysDoNotNavigate: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item a1/i });
@@ -1416,9 +951,9 @@ export const CollectionItems: Story = {
     );
 
     const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Strips containing Collections", items }],
+      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Strips containing Collections", items }],
     ]), [items]);
-    const visibleCollectionIds = useMemo(() => ["strip-1" as CollectionId], []);
+    const visibleCollectionIds = useMemo(() => [asCollectionId("strip-1")], []);
 
     return (
       <MediaStripBoard
@@ -1427,7 +962,7 @@ export const CollectionItems: Story = {
         onMoveItem={handleMoveItem}
       >
         <MediaStrip
-          collectionId={"strip-1" as CollectionId}
+          collectionId={asCollectionId("strip-1")}
           heading="Strips containing Collections"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
@@ -1435,15 +970,6 @@ export const CollectionItems: Story = {
       </MediaStripBoard>
     );
   },
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     // Assert collection label matches itemCount formatting
@@ -1473,25 +999,16 @@ export const VideoWithoutPoster: Story = {
       })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Video without Poster", items }],
+      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Video without Poster", items }],
     ]);
-    const visibleCollectionIds = ["strip-1" as CollectionId];
+    const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Video without Poster" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Video without Poster" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const noPosterElements = canvas.getAllByText(/no poster/i);
@@ -1520,25 +1037,16 @@ export const MixedBrokenPosterSequence: Story = {
       })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Mixed Poster Sequence", items }],
+      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Mixed Poster Sequence", items }],
     ]);
-    const visibleCollectionIds = ["strip-1" as CollectionId];
+    const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Mixed Poster Sequence" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Mixed Poster Sequence" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     // Wait to allow onError to fire asynchronously in the browser
@@ -1558,22 +1066,20 @@ export const VeryNarrowContainer: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-2", name: "Another short name", src: "img.png", startTimeSeconds: 4, durationSeconds: 4 })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Very Narrow", items }],
+      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Very Narrow", items }],
     ]);
-    const visibleCollectionIds = ["strip-1" as CollectionId];
+    const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Very Narrow" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Very Narrow" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
   decorators: [
     (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="w-[280px] border border-red-500/25 p-2 rounded">
-          <Story />
-        </div>
+      <div className="w-[280px] border border-red-500/25 p-2 rounded">
+        <Story />
       </div>
     ),
   ],
@@ -1590,22 +1096,20 @@ export const VeryWideContainer: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-2", name: "Item 2", src: "img.png", startTimeSeconds: 40, durationSeconds: 40 })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Very Wide", items }],
+      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Very Wide", items }],
     ]);
-    const visibleCollectionIds = ["strip-1" as CollectionId];
+    const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Very Wide" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Very Wide" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
   decorators: [
     (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="w-[1400px] border border-green-500/25 p-2 rounded">
-          <Story />
-        </div>
+      <div className="w-[1400px] border border-green-500/25 p-2 rounded">
+        <Story />
       </div>
     ),
   ],
@@ -1623,25 +1127,16 @@ export const LongNamesAndWeirdCharacters: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-3", name: "日本語 title", src: "img.png", startTimeSeconds: 20, durationSeconds: 10 })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Long Names & Characters", items }],
+      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Long Names & Characters", items }],
     ]);
-    const visibleCollectionIds = ["strip-1" as CollectionId];
+    const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Long Names & Characters" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Long Names & Characters" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     // Assert that clips are accessible by their exact names
@@ -1661,25 +1156,16 @@ export const FractionalDurations: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-5", name: "Clip 5 (3600.4s)", src: "img.png", startTimeSeconds: 61.782, durationSeconds: 3600.4 })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Fractional Durations", items }],
+      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Fractional Durations", items }],
     ]);
-    const visibleCollectionIds = ["strip-1" as CollectionId];
+    const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Fractional Durations" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Fractional Durations" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     expect(canvas.getByText(/fractional durations/i)).toBeInTheDocument();
@@ -1702,25 +1188,16 @@ export const ThousandsOfItemsVirtualized: Story = {
       );
     }, []);
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "1,000 Virtualized Items", items }],
+      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "1,000 Virtualized Items", items }],
     ]);
-    const visibleCollectionIds = ["strip-1" as CollectionId];
+    const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="1,000 Virtualized Items" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={asCollectionId("strip-1")} heading="1,000 Virtualized Items" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const scrollArea = canvasElement.querySelector("[data-slot='scroll-area-viewport']") as HTMLElement;
     const buttons = canvasElement.querySelectorAll("[data-testid^='media-strip-item-']");
@@ -1796,16 +1273,16 @@ export const MultipleBoardsOnPage: Story = {
     }, [board2A, board2B]);
 
     const collections1 = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      ["strip-1a" as CollectionId, { id: "strip-1a" as CollectionId, name: "Strip 1A", items: board1A }],
-      ["strip-1b" as CollectionId, { id: "strip-1b" as CollectionId, name: "Strip 1B", items: board1B }],
+      [asCollectionId("strip-1a"), { id: asCollectionId("strip-1a"), name: "Strip 1A", items: board1A }],
+      [asCollectionId("strip-1b"), { id: asCollectionId("strip-1b"), name: "Strip 1B", items: board1B }],
     ]), [board1A, board1B]);
-    const visible1 = useMemo(() => ["strip-1a" as CollectionId, "strip-1b" as CollectionId], []);
+    const visible1 = useMemo(() => [asCollectionId("strip-1a"), asCollectionId("strip-1b")], []);
 
     const collections2 = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      ["strip-2a" as CollectionId, { id: "strip-2a" as CollectionId, name: "Strip 2A", items: board2A }],
-      ["strip-2b" as CollectionId, { id: "strip-2b" as CollectionId, name: "Strip 2B", items: board2B }],
+      [asCollectionId("strip-2a"), { id: asCollectionId("strip-2a"), name: "Strip 2A", items: board2A }],
+      [asCollectionId("strip-2b"), { id: asCollectionId("strip-2b"), name: "Strip 2B", items: board2B }],
     ]), [board2A, board2B]);
-    const visible2 = useMemo(() => ["strip-2a" as CollectionId, "strip-2b" as CollectionId], []);
+    const visible2 = useMemo(() => [asCollectionId("strip-2a"), asCollectionId("strip-2b")], []);
 
     return (
       <div className="flex flex-col gap-12">
@@ -1813,8 +1290,8 @@ export const MultipleBoardsOnPage: Story = {
           <h3 className="text-sm font-bold mb-2">Board 1</h3>
           <MediaStripBoard collectionsById={collections1} visibleCollectionIds={visible1} onMoveItem={handleMove1}>
             <div className="flex flex-col gap-4">
-              <MediaStrip collectionId={"strip-1a" as CollectionId} heading="Strip 1A" selectedIds={[]} onSelectionChange={() => { }} />
-              <MediaStrip collectionId={"strip-1b" as CollectionId} heading="Strip 1B" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={asCollectionId("strip-1a")} heading="Strip 1A" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={asCollectionId("strip-1b")} heading="Strip 1B" selectedIds={[]} onSelectionChange={() => { }} />
             </div>
           </MediaStripBoard>
         </div>
@@ -1822,23 +1299,14 @@ export const MultipleBoardsOnPage: Story = {
           <h3 className="text-sm font-bold mb-2">Board 2</h3>
           <MediaStripBoard collectionsById={collections2} visibleCollectionIds={visible2} onMoveItem={handleMove2}>
             <div className="flex flex-col gap-4">
-              <MediaStrip collectionId={"strip-2a" as CollectionId} heading="Strip 2A" selectedIds={[]} onSelectionChange={() => { }} />
-              <MediaStrip collectionId={"strip-2b" as CollectionId} heading="Strip 2B" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={asCollectionId("strip-2a")} heading="Strip 2A" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={asCollectionId("strip-2b")} heading="Strip 2B" selectedIds={[]} onSelectionChange={() => { }} />
             </div>
           </MediaStripBoard>
         </div>
       </div>
     );
   },
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const item1B = canvas.getByRole("button", { name: /item 1b/i });
@@ -1862,15 +1330,6 @@ export const MultipleBoardsOnPage: Story = {
 
 export const KeyboardReorderBoundaryAnnouncements: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item a1/i });
@@ -1896,15 +1355,6 @@ export const KeyboardReorderBoundaryAnnouncements: Story = {
 
 export const EscapeCancelAcrossStrips: Story = {
   render: () => <ReorderDemo />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item a1/i });
@@ -1963,9 +1413,9 @@ export const ReorderWhileScrolled: Story = {
     );
 
     const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Long Strip for Scrolling", items }],
+      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Long Strip for Scrolling", items }],
     ]), [items]);
-    const visibleCollectionIds = useMemo(() => ["strip-1" as CollectionId], []);
+    const visibleCollectionIds = useMemo(() => [asCollectionId("strip-1")], []);
 
     return (
       <MediaStripBoard
@@ -1973,19 +1423,10 @@ export const ReorderWhileScrolled: Story = {
         visibleCollectionIds={visibleCollectionIds}
         onMoveItem={handleMoveItem}
       >
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Long Strip for Scrolling" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Long Strip for Scrolling" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const scrollArea = canvasElement.querySelector("[data-slot='scroll-area-viewport']") as HTMLElement;
@@ -2031,7 +1472,7 @@ function StatefulNestedCollectionsBoard() {
       unwrapResult(createCollectionTimelineItem({
         id: "card-col-b",
         name: "Holiday Folder",
-        collectionId: "col-b" as CollectionId,
+        collectionId: asCollectionId("col-b"),
         itemCount: 2,
         startTimeSeconds: 0,
         durationSeconds: 10,
@@ -2039,7 +1480,7 @@ function StatefulNestedCollectionsBoard() {
       unwrapResult(createCollectionTimelineItem({
         id: "card-col-c",
         name: "Empty Folder",
-        collectionId: "col-c" as CollectionId,
+        collectionId: asCollectionId("col-c"),
         itemCount: 0,
         startTimeSeconds: 0,
         durationSeconds: 5,
@@ -2066,18 +1507,18 @@ function StatefulNestedCollectionsBoard() {
     ];
 
     return new Map<CollectionId, TimelineCollection>([
-      ["col-a" as CollectionId, {
-        id: "col-a" as CollectionId,
+      [asCollectionId("col-a"), {
+        id: asCollectionId("col-a"),
         name: "Root Collection A",
         items: rootItems,
       }],
-      ["col-b" as CollectionId, {
-        id: "col-b" as CollectionId,
+      [asCollectionId("col-b"), {
+        id: asCollectionId("col-b"),
         name: "Holiday Folder",
         items: colBItems,
       }],
-      ["col-c" as CollectionId, {
-        id: "col-c" as CollectionId,
+      [asCollectionId("col-c"), {
+        id: asCollectionId("col-c"),
         name: "Empty Folder",
         items: [],
       }],
@@ -2091,7 +1532,7 @@ function StatefulNestedCollectionsBoard() {
   }, []);
 
   return (
-    <MediaStripBoard collectionsById={collections} visibleCollectionIds={["col-a" as CollectionId]} onMoveItem={handleMoveOrDrop}>
+    <MediaStripBoard collectionsById={collections} visibleCollectionIds={[asCollectionId("col-a")]} onMoveItem={handleMoveOrDrop}>
       <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
         <div>
           <h3 className="text-md font-bold mb-1">Nested Collections Demo</h3>
@@ -2102,19 +1543,19 @@ function StatefulNestedCollectionsBoard() {
           </p>
         </div>
         <MediaStrip
-          collectionId={"col-a" as CollectionId}
+          collectionId={asCollectionId("col-a")}
           heading="Root Collection (Strip)"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
         />
         <MediaStrip
-          collectionId={"col-b" as CollectionId}
+          collectionId={asCollectionId("col-b")}
           heading="Holiday Folder Contents"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
         />
         <MediaStrip
-          collectionId={"col-c" as CollectionId}
+          collectionId={asCollectionId("col-c")}
           heading="Empty Folder Contents"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
@@ -2126,14 +1567,5 @@ function StatefulNestedCollectionsBoard() {
 
 export const DeeplyNestedCollections: StoryObj = {
   render: () => <StatefulNestedCollectionsBoard />,
-  decorators: [
-    (Story) => (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="max-w-2xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
 };
 

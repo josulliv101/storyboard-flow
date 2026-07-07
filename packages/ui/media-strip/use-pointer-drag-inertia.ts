@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
+import { FRAME_DURATION_60FPS_MS } from "./core/media-strip.utils";
 
 const INERTIA_TUNING = {
-  FRAME_MS_60FPS: 16.67,
   VELOCITY_DECAY: 0.95,
   MIN_VELOCITY_THRESHOLD: 0.1,
 };
@@ -34,7 +34,7 @@ export function usePointerDragInertia() {
     let lastFrameTime = performance.now();
 
     const step = (now: number) => {
-      const dt = (now - lastFrameTime) / INERTIA_TUNING.FRAME_MS_60FPS;
+      const dt = (now - lastFrameTime) / FRAME_DURATION_60FPS_MS;
       lastFrameTime = now;
 
       // Decay velocity over elapsed time

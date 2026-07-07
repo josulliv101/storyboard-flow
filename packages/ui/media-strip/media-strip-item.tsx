@@ -8,7 +8,7 @@ import {
   type TimelineItem,
   type CollectionId,
   isCollectionItem,
-} from "./media-strip.types";
+} from "./core/media-strip.types";
 import {
   formatDuration,
   areEqual,
@@ -17,9 +17,9 @@ import {
   DATA_REORDER_HANDLE_ATTR,
   isElementFullyVisibleInScrollArea,
   KEYBOARD_REORDER_INSTRUCTIONS,
-} from "./media-strip.utils";
-import { encodeDndTarget } from "./media-strip.dnd";
-import { wouldCreateCollectionCycle } from "./media-strip.validation";
+} from "./core/media-strip.utils";
+import { encodeDndTarget } from "./core/media-strip.dnd";
+import { wouldCreateCollectionCycle } from "./core/media-strip.validation";
 import { MediaStripThumbnail } from "./media-strip-thumbnail";
 import { useReorderKeyboard } from "./use-reorder-keyboard";
 import { useMediaStripBoardDrag, useMediaStripBoardStable } from "./media-strip-board";

@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { type CollectionId } from "./media-strip.types";
+import { type CollectionId } from "./core/media-strip.types";
 
 /**
  * Custom hook to manage the collection registry inside MediaStripBoard.

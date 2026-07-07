@@ -1,21 +1,57 @@
 import { describe, test, expect } from "vitest";
 import {
+  asCollectionId,
   type CollectionId,
   type TimelineCollection,
-  type TimelineItemId,
+  type TimelineItem,
+  type TimelineItemResult,
 } from "./media-strip.types";
+import {
+  createImageTimelineItem,
+  createCollectionTimelineItem,
+} from "./media-strip.validation";
 import { validateProjectTimeline } from "./media-strip.project-validation";
 
+function unwrap<T, E>(result: TimelineItemResult<T, E>): T {
+  if (!result.ok) {
+    throw new Error(`Test fixture failed to construct: ${JSON.stringify(result.error)}`);
+  }
+  return result.value;
+}
+
+const makeImage = (id: string, name: string, startTimeSeconds = 0): TimelineItem =>
+  unwrap(
+    createImageTimelineItem({
+      id,
+      name,
+      src: `${id}.png`,
+      startTimeSeconds,
+      durationSeconds: 10,
+    })
+  );
+
+const makeCollectionItem = (id: string, name: string, collectionId: string): TimelineItem =>
+  unwrap(
+    createCollectionTimelineItem({
+      id,
+      name,
+      collectionId,
+      itemCount: 0,
+      startTimeSeconds: 0,
+      durationSeconds: 10,
+    })
+  );
+
 describe("validateProjectTimeline graph validator", () => {
-  const itemA = { id: "item-a" as TimelineItemId, name: "Item A", kind: "video" as const, startTimeSeconds: 0, durationSeconds: 10 } as any;
-  const itemB = { id: "item-b" as TimelineItemId, name: "Item B", kind: "video" as const, startTimeSeconds: 10, durationSeconds: 10 } as any;
+  const itemA = makeImage("item-a", "Item A");
+  const itemB = makeImage("item-b", "Item B", 10);
 
   test("returns valid for a simple flat project timeline", () => {
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        "col-root" as CollectionId,
+        asCollectionId("col-root"),
         {
-          id: "col-root" as CollectionId,
+          id: asCollectionId("col-root"),
           name: "Root",
           items: [itemA, itemB],
         },
@@ -24,7 +60,7 @@ describe("validateProjectTimeline graph validator", () => {
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: ["col-root" as CollectionId],
+      rootCollectionIds: [asCollectionId("col-root")],
     });
 
     expect(result.valid).toBe(true);
@@ -38,7 +74,7 @@ describe("validateProjectTimeline graph validator", () => {
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: ["col-root" as CollectionId],
+      rootCollectionIds: [asCollectionId("col-root")],
     });
 
     expect(result.valid).toBe(false);
@@ -49,21 +85,13 @@ describe("validateProjectTimeline graph validator", () => {
   });
 
   test("missing nested collection referenced by collection item", () => {
-    const colItem = {
-      id: "item-folder" as TimelineItemId,
-      name: "Folder",
-      kind: "collection" as const,
-      collectionId: "col-missing" as CollectionId,
-      itemCount: 0,
-      startTimeSeconds: 0,
-      durationSeconds: 10,
-    } as any;
+    const colItem = makeCollectionItem("item-folder", "Folder", "col-missing");
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        "col-root" as CollectionId,
+        asCollectionId("col-root"),
         {
-          id: "col-root" as CollectionId,
+          id: asCollectionId("col-root"),
           name: "Root",
           items: [colItem],
         },
@@ -72,7 +100,7 @@ describe("validateProjectTimeline graph validator", () => {
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: ["col-root" as CollectionId],
+      rootCollectionIds: [asCollectionId("col-root")],
     });
 
     expect(result.valid).toBe(false);
@@ -83,40 +111,24 @@ describe("validateProjectTimeline graph validator", () => {
   });
 
   test("detects cyclic collection dependencies (deep cycle)", () => {
-    const colItemB = {
-      id: "item-folder-b" as TimelineItemId,
-      name: "Folder B Item",
-      kind: "collection" as const,
-      collectionId: "col-b" as CollectionId,
-      itemCount: 0,
-      startTimeSeconds: 0,
-      durationSeconds: 10,
-    } as any;
-    const colItemA = {
-      id: "item-folder-a" as TimelineItemId,
-      name: "Folder A Item",
-      kind: "collection" as const,
-      collectionId: "col-a" as CollectionId,
-      itemCount: 0,
-      startTimeSeconds: 0,
-      durationSeconds: 10,
-    } as any;
+    const colItemB = makeCollectionItem("item-folder-b", "Folder B Item", "col-b");
+    const colItemA = makeCollectionItem("item-folder-a", "Folder A Item", "col-a");
 
     // col-a references col-b; col-b references col-a (Cycle!)
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        "col-a" as CollectionId,
-        { id: "col-a" as CollectionId, name: "Folder A", items: [colItemB] },
+        asCollectionId("col-a"),
+        { id: asCollectionId("col-a"), name: "Folder A", items: [colItemB] },
       ],
       [
-        "col-b" as CollectionId,
-        { id: "col-b" as CollectionId, name: "Folder B", items: [colItemA] },
+        asCollectionId("col-b"),
+        { id: asCollectionId("col-b"), name: "Folder B", items: [colItemA] },
       ],
     ]);
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: ["col-a" as CollectionId],
+      rootCollectionIds: [asCollectionId("col-a")],
     });
 
     expect(result.valid).toBe(false);
@@ -127,13 +139,13 @@ describe("validateProjectTimeline graph validator", () => {
   });
 
   test("detects duplicate global item IDs", () => {
-    const itemA2 = { id: "item-a" as TimelineItemId, name: "Item A Duplicate", kind: "video" as const, startTimeSeconds: 0, durationSeconds: 10 } as any;
+    const itemA2 = makeImage("item-a", "Item A Duplicate");
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        "col-root" as CollectionId,
+        asCollectionId("col-root"),
         {
-          id: "col-root" as CollectionId,
+          id: asCollectionId("col-root"),
           name: "Root",
           items: [itemA, itemA2],
         },
@@ -142,7 +154,7 @@ describe("validateProjectTimeline graph validator", () => {
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: ["col-root" as CollectionId],
+      rootCollectionIds: [asCollectionId("col-root")],
       assumeGlobalItemIds: true,
     });
 
@@ -155,18 +167,18 @@ describe("validateProjectTimeline graph validator", () => {
   test("identifies orphaned (unreachable) collections", () => {
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        "col-root" as CollectionId,
-        { id: "col-root" as CollectionId, name: "Root", items: [itemA] },
+        asCollectionId("col-root"),
+        { id: asCollectionId("col-root"), name: "Root", items: [itemA] },
       ],
       [
-        "col-orphaned" as CollectionId,
-        { id: "col-orphaned" as CollectionId, name: "Lost Folder", items: [itemB] },
+        asCollectionId("col-orphaned"),
+        { id: asCollectionId("col-orphaned"), name: "Lost Folder", items: [itemB] },
       ],
     ]);
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: ["col-root" as CollectionId],
+      rootCollectionIds: [asCollectionId("col-root")],
     });
 
     expect(result.valid).toBe(true);
