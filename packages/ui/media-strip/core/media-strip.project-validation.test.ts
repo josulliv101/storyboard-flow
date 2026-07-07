@@ -138,6 +138,34 @@ describe("validateProjectTimeline graph validator", () => {
     }
   });
 
+  test("reported cycle includes the closing node so the loop edge is visible", () => {
+    const colItemB = makeCollectionItem("item-folder-b", "Folder B Item", "col-b");
+    const colItemA = makeCollectionItem("item-folder-a", "Folder A Item", "col-a");
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      [
+        asCollectionId("col-a"),
+        { id: asCollectionId("col-a"), name: "Folder A", items: [colItemB] },
+      ],
+      [
+        asCollectionId("col-b"),
+        { id: asCollectionId("col-b"), name: "Folder B", items: [colItemA] },
+      ],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: [asCollectionId("col-a")],
+    });
+
+    expect(result.valid).toBe(false);
+    if (!result.valid && result.reason === "collection-cycle") {
+      // col-a -> col-b -> col-a: the last entry must repeat the node that
+      // closes the loop, not just list the two nodes involved.
+      expect(result.cycle).toEqual(["col-a", "col-b", "col-a"]);
+    }
+  });
+
   test("detects duplicate global item IDs", () => {
     const itemA2 = makeImage("item-a", "Item A Duplicate");
 
@@ -184,6 +212,91 @@ describe("validateProjectTimeline graph validator", () => {
     expect(result.valid).toBe(true);
     if (result.valid) {
       expect(result.orphanedCollectionIds).toEqual(["col-orphaned"]);
+    }
+  });
+
+  test("catches a dangling collection reference that lives entirely inside an orphan", () => {
+    // col-orphaned is unreachable from col-root, but its own contents must
+    // still be validated — a missing reference inside it must not silently
+    // pass just because nothing else points to it.
+    const danglingRefItem = makeCollectionItem("item-dangling", "Dangling Ref", "col-does-not-exist");
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      [
+        asCollectionId("col-root"),
+        { id: asCollectionId("col-root"), name: "Root", items: [itemA] },
+      ],
+      [
+        asCollectionId("col-orphaned"),
+        { id: asCollectionId("col-orphaned"), name: "Lost Folder", items: [danglingRefItem] },
+      ],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: [asCollectionId("col-root")],
+    });
+
+    expect(result.valid).toBe(false);
+    if (!result.valid && result.reason === "missing-collection") {
+      expect(result.collectionId).toBe("col-does-not-exist");
+      expect(result.itemId).toBe("item-dangling");
+    }
+  });
+
+  test("catches a cycle that exists entirely among orphaned collections", () => {
+    const orphanItemB = makeCollectionItem("item-orphan-b", "Orphan B Item", "col-orphan-b");
+    const orphanItemA = makeCollectionItem("item-orphan-a", "Orphan A Item", "col-orphan-a");
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      [
+        asCollectionId("col-root"),
+        { id: asCollectionId("col-root"), name: "Root", items: [itemA] },
+      ],
+      [
+        asCollectionId("col-orphan-a"),
+        { id: asCollectionId("col-orphan-a"), name: "Orphan A", items: [orphanItemB] },
+      ],
+      [
+        asCollectionId("col-orphan-b"),
+        { id: asCollectionId("col-orphan-b"), name: "Orphan B", items: [orphanItemA] },
+      ],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: [asCollectionId("col-root")],
+    });
+
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.reason).toBe("collection-cycle");
+    }
+  });
+
+  test("catches a duplicate item ID that exists only inside an orphan", () => {
+    const duplicateOrphanItem = makeImage("item-a", "Duplicate of root item A");
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      [
+        asCollectionId("col-root"),
+        { id: asCollectionId("col-root"), name: "Root", items: [itemA] },
+      ],
+      [
+        asCollectionId("col-orphaned"),
+        { id: asCollectionId("col-orphaned"), name: "Lost Folder", items: [duplicateOrphanItem] },
+      ],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: [asCollectionId("col-root")],
+      assumeGlobalItemIds: true,
+    });
+
+    expect(result.valid).toBe(false);
+    if (!result.valid && result.reason === "duplicate-global-item-ids") {
+      expect(result.itemId).toBe("item-a");
     }
   });
 });
