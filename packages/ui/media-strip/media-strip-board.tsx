@@ -19,170 +19,85 @@ import {
   type TimelineItemId,
   type CollectionId,
   type TimelineCollection,
-  type TimelineItemMove,
-  type TimelineItemDrop,
-  type TimelineDropIntent,
+  type TimelineItemCommand,
+  type KeyboardReorderAction,
   isCollectionItem,
 } from "./media-strip.types";
 import {
   formatDuration,
   TOGGLE_GROUP_PADDING_PX,
   DRAG_ACTIVATION_THRESHOLDS_PX,
-  decodeDndTarget,
   DATA_VALUE_ATTR,
   VALUE_ATTR,
 } from "./media-strip.utils";
+import {
+  encodeDndTarget,
+  decodeDndTarget,
+  resolveDropIntent,
+  detectCollision,
+} from "./media-strip.dnd";
 import { wouldCreateCollectionCycle } from "./media-strip.validation";
 import { MediaStripThumbnail } from "./media-strip-thumbnail";
+import { useBoardRegistry } from "./use-board-registry";
+import { useBoardDragState } from "./use-board-drag-state";
+import { useKeyboardReorderSession } from "./use-keyboard-reorder-session";
 
-type MediaStripBoardContextType = {
-  activeDragId: TimelineItemId | null;
-  activeDragSourceCollectionId: CollectionId | null;
-  activeKeyboardReorderId: TimelineItemId | null;
-  activeNestTargetId: CollectionId | null;
-  startKeyboardReorder: (itemId: TimelineItemId, collectionId: CollectionId, index: number) => void;
-  cancelKeyboardReorder: () => void;
-  confirmKeyboardReorder: () => void;
-  announce: (message: string) => void;
-  collectionsById: Readonly<Record<CollectionId, TimelineCollection>>;
+type MediaStripBoardStableContextType = {
+  collectionsById: ReadonlyMap<CollectionId, TimelineCollection>;
+  itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
   registerCollection: (collectionId: CollectionId) => void;
   unregisterCollection: (collectionId: CollectionId) => void;
   getAdjacentCollectionId: (currentCollectionId: CollectionId, direction: "up" | "down") => CollectionId | null;
-  moveItem: (itemId: TimelineItemId, toCollectionId: CollectionId, toIndex: number) => void;
-  nestItem: (itemId: TimelineItemId, targetCollectionId: CollectionId) => void;
+  applyCommand: (command: TimelineItemCommand) => void;
+  announce: (message: string) => void;
+  startKeyboardReorder: (itemId: TimelineItemId, collectionId: CollectionId, index: number) => void;
+  cancelKeyboardReorder: () => void;
+  confirmKeyboardReorder: () => void;
+  handleKeyboardReorderAction: (itemId: TimelineItemId, action: KeyboardReorderAction) => void;
 };
 
-export const MediaStripBoardContext = createContext<MediaStripBoardContextType | null>(null);
+type MediaStripBoardDragContextType = {
+  activeDragId: TimelineItemId | null;
+  activeDragSourceCollectionId: CollectionId | null;
+  activeNestTargetId: CollectionId | null;
+  activeDragWidth: number;
+  activeKeyboardReorderId: TimelineItemId | null;
+};
 
-export function useMediaStripBoard() {
-  const context = useContext(MediaStripBoardContext);
+export const MediaStripBoardStableContext = createContext<MediaStripBoardStableContextType | null>(null);
+export const MediaStripBoardDragContext = createContext<MediaStripBoardDragContextType | null>(null);
+
+export function useMediaStripBoardStable() {
+  const context = useContext(MediaStripBoardStableContext);
   if (!context) {
-    throw new Error("useMediaStripBoard must be used within a MediaStripBoard provider");
+    throw new Error("useMediaStripBoardStable must be used within a MediaStripBoard provider");
   }
   return context;
 }
 
-function useBoardRegistry() {
-  const [registeredCollections, setRegisteredCollections] = useState<CollectionId[]>([]);
-
-  const registerCollection = useCallback((collectionId: CollectionId) => {
-    setRegisteredCollections((prev) => (prev.includes(collectionId) ? prev : [...prev, collectionId]));
-  }, []);
-
-  const unregisterCollection = useCallback((collectionId: CollectionId) => {
-    setRegisteredCollections((prev) => prev.filter((id) => id !== collectionId));
-  }, []);
-
-  return {
-    registeredCollections,
-    registerCollection,
-    unregisterCollection,
-  };
+export function useMediaStripBoardDrag() {
+  const context = useContext(MediaStripBoardDragContext);
+  if (!context) {
+    throw new Error("useMediaStripBoardDrag must be used within a MediaStripBoard provider");
+  }
+  return context;
 }
 
-function useBoardDragState() {
-  const [activeDragId, setActiveDragId] = useState<TimelineItemId | null>(null);
-  const [activeDragSourceCollectionId, setActiveDragSourceCollectionId] = useState<CollectionId | null>(null);
-  const [activeNestTargetId, setActiveNestTargetId] = useState<CollectionId | null>(null);
-  const [activeDragWidth, setActiveDragWidth] = useState<number>(160);
-
-  return {
-    activeDragId,
-    setActiveDragId,
-    activeDragSourceCollectionId,
-    setActiveDragSourceCollectionId,
-    activeNestTargetId,
-    setActiveNestTargetId,
-    activeDragWidth,
-    setActiveDragWidth,
-  };
+export function useMediaStripBoardStableOptional() {
+  return useContext(MediaStripBoardStableContext);
 }
 
-function useDropIntent({
-  collectionsByIdResolved,
-  itemLookup,
-}: {
-  collectionsByIdResolved: Readonly<Record<CollectionId, TimelineCollection>>;
-  itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
-}) {
-  const resolveDropIntent = useCallback(
-    (overId: UniqueIdentifier, activeId: UniqueIdentifier): TimelineDropIntent | null => {
-      const decoded = decodeDndTarget(String(overId));
-      if (!decoded) return null;
-
-      if (decoded.type === "collection-container") {
-        return {
-          type: "insert",
-          toCollectionId: decoded.collectionId,
-          toIndex: collectionsByIdResolved[decoded.collectionId]?.items.length ?? 0,
-        };
-      }
-
-      if (decoded.type === "item") {
-        const foundTarget = itemLookup.get(decoded.itemId);
-        if (foundTarget) {
-          return {
-            type: "insert",
-            toCollectionId: foundTarget.collectionId,
-            toIndex: foundTarget.index,
-          };
-        }
-      }
-
-      return null;
-    },
-    [collectionsByIdResolved, itemLookup]
-  );
-
-  return { resolveDropIntent };
+export function useMediaStripBoardDragOptional() {
+  return useContext(MediaStripBoardDragContext);
 }
 
-function useKeyboardReorderSession({
-  itemLookup,
-  moveItem,
-  announce,
-}: {
-  itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
-  moveItem: (itemId: TimelineItemId, toCollectionId: CollectionId, toIndex: number) => void;
-  announce: (message: string) => void;
-}) {
-  const [activeKeyboardReorderId, setActiveKeyboardReorderId] = useState<TimelineItemId | null>(null);
-  const initialPositionRef = useRef<{ collectionId: CollectionId; index: number } | null>(null);
-
-  const startKeyboardReorder = useCallback((itemId: TimelineItemId, collectionId: CollectionId, index: number) => {
-    setActiveKeyboardReorderId(itemId);
-    initialPositionRef.current = { collectionId, index };
-  }, []);
-
-  const cancelKeyboardReorder = useCallback(() => {
-    const itemId = activeKeyboardReorderId;
-    const orig = initialPositionRef.current;
-
-    if (itemId && orig) {
-      const current = itemLookup.get(itemId);
-      if (current) {
-        if (current.collectionId !== orig.collectionId || current.index !== orig.index) {
-          moveItem(itemId, orig.collectionId, orig.index);
-        }
-        announce(`Reorder cancelled. Reverted "${current.item.name}" to position ${orig.index + 1}.`);
-      }
-    }
-
-    setActiveKeyboardReorderId(null);
-    initialPositionRef.current = null;
-  }, [activeKeyboardReorderId, itemLookup, moveItem, announce]);
-
-  const confirmKeyboardReorder = useCallback(() => {
-    setActiveKeyboardReorderId(null);
-    initialPositionRef.current = null;
-  }, []);
-
-  return {
-    activeKeyboardReorderId,
-    startKeyboardReorder,
-    cancelKeyboardReorder,
-    confirmKeyboardReorder,
-  };
+export function useMediaStripBoard() {
+  const stable = useContext(MediaStripBoardStableContext);
+  const drag = useContext(MediaStripBoardDragContext);
+  if (!stable || !drag) {
+    throw new Error("useMediaStripBoard must be used within a MediaStripBoard provider");
+  }
+  return useMemo(() => ({ ...stable, ...drag }), [stable, drag]);
 }
 
 export function MediaStripBoard({
@@ -192,18 +107,14 @@ export function MediaStripBoard({
   onMoveItem,
 }: {
   children: React.ReactNode;
-  collectionsById?: Readonly<Record<CollectionId, TimelineCollection>>;
+  collectionsById?: ReadonlyMap<CollectionId, TimelineCollection>;
   visibleCollectionIds?: readonly CollectionId[];
-  onMoveItem?: (move: TimelineItemMove | TimelineItemDrop) => void;
+  onMoveItem?: (command: TimelineItemCommand) => void;
 }) {
   const [announcement, setAnnouncement] = useState<string>("");
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Refs for tracking drag move & collision suppression
-  const lastMoveRef = useRef<{ itemId: TimelineItemId; toCollectionId: CollectionId; toIndex: number } | null>(null);
   const activeNestTargetRef = useRef<CollectionId | null>(null);
-  const recentlyMovedToNewContainer = useRef(false);
-  const lastOverIdRef = useRef<UniqueIdentifier | null>(null);
 
   // 1. Board Registry
   const { registeredCollections, registerCollection, unregisterCollection } = useBoardRegistry();
@@ -211,17 +122,17 @@ export function MediaStripBoard({
   // 2. Drag State Management
   const {
     activeDragId,
-    setActiveDragId,
     activeDragSourceCollectionId,
-    setActiveDragSourceCollectionId,
     activeNestTargetId,
-    setActiveNestTargetId,
     activeDragWidth,
-    setActiveDragWidth,
+    startDrag,
+    moveDrag,
+    endDrag,
+    setDragWidth,
   } = useBoardDragState();
 
   const collectionsByIdResolved = useMemo(
-    () => collectionsById ?? {},
+    () => collectionsById ?? new Map<CollectionId, TimelineCollection>(),
     [collectionsById]
   );
 
@@ -243,7 +154,7 @@ export function MediaStripBoard({
   const itemLookup = useMemo(() => {
     const lookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>();
     for (const collectionId of activeCollectionIds) {
-      const col = collectionsByIdResolved[collectionId];
+      const col = collectionsByIdResolved.get(collectionId);
       if (col && Array.isArray(col.items)) {
         col.items.forEach((item, index) => {
           lookup.set(item.id, { collectionId, index, item });
@@ -253,11 +164,7 @@ export function MediaStripBoard({
     return lookup;
   }, [collectionsByIdResolved, activeCollectionIds]);
 
-  useEffect(() => {
-    requestAnimationFrame(() => {
-      recentlyMovedToNewContainer.current = false;
-    });
-  }, [collectionsByIdResolved]);
+
 
   const announce = useCallback((message: string) => {
     setAnnouncement((prev) => {
@@ -271,128 +178,29 @@ export function MediaStripBoard({
     });
   }, []);
 
-  // 3. Move and Nest Callbacks
-  const moveItem = useCallback((itemId: TimelineItemId, toCollectionId: CollectionId, toIndex: number) => {
-    const foundSource = itemLookup.get(itemId);
-    if (!foundSource) return;
-
-    if (isCollectionItem(foundSource.item)) {
-      if (wouldCreateCollectionCycle({
-        movingCollectionId: foundSource.item.collectionId,
-        targetCollectionId: toCollectionId,
-        collectionsById: collectionsByIdResolved,
-      })) {
-        announce("Cannot move a collection into itself or one of its nested collections.");
-        return;
-      }
-    }
-
+  // 3. Unified Command Pipeline Callback
+  const applyCommand = useCallback((command: TimelineItemCommand) => {
     if (onMoveItem) {
-      onMoveItem({
-        itemId,
-        fromCollectionId: foundSource.collectionId,
-        toCollectionId,
-        fromIndex: foundSource.index,
-        toIndex,
-      });
+      onMoveItem(command);
+    } else if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        `[MediaStripBoard] applyCommand was triggered, but "onMoveItem" callback is undefined. Drag-and-drop actions will not persist changes.`
+      );
     }
-  }, [itemLookup, onMoveItem, collectionsByIdResolved, announce]);
+  }, [onMoveItem]);
 
-  const nestItem = useCallback((itemId: TimelineItemId, targetCollectionId: CollectionId) => {
-    const foundSource = itemLookup.get(itemId);
-    if (!foundSource) return;
 
-    if (isCollectionItem(foundSource.item)) {
-      if (wouldCreateCollectionCycle({
-        movingCollectionId: foundSource.item.collectionId,
-        targetCollectionId,
-        collectionsById: collectionsByIdResolved,
-      })) {
-        announce("Cannot move a collection into itself or one of its nested collections.");
-        return;
-      }
-    }
-
-    if (onMoveItem) {
-      onMoveItem({
-        itemId,
-        fromCollectionId: foundSource.collectionId,
-        fromIndex: foundSource.index,
-        intent: {
-          type: "nest",
-          toCollectionId: targetCollectionId,
-        },
-      });
-    }
-  }, [itemLookup, onMoveItem, collectionsByIdResolved, announce]);
-
-  // 4. Keyboard Reorder Session Management
-  const {
-    activeKeyboardReorderId,
-    startKeyboardReorder,
-    cancelKeyboardReorder,
-    confirmKeyboardReorder,
-  } = useKeyboardReorderSession({ itemLookup, moveItem, announce });
-
-  // 5. Drop Intent Resolution
-  const { resolveDropIntent } = useDropIntent({ collectionsByIdResolved, itemLookup });
 
   const collisionDetectionStrategy = useCallback<CollisionDetection>((args) => {
-    if (recentlyMovedToNewContainer.current && lastOverIdRef.current != null) {
-      return [{ id: lastOverIdRef.current }];
-    }
-
-    const itemContainers = args.droppableContainers.filter(
-      (c) => decodeDndTarget(String(c.id))?.type === "item" && c.id !== args.active.id
-    );
-    const containerBackgrounds = args.droppableContainers.filter(
-      (c) => decodeDndTarget(String(c.id))?.type === "collection-container"
-    );
-
-    let intersections = closestCenter({
-      ...args,
-      droppableContainers: itemContainers,
+    const { nestTargetId, intersections } = detectCollision({
+      active: args.active,
+      collisionRect: args.collisionRect,
+      droppableRects: args.droppableRects,
+      pointerCoordinates: args.pointerCoordinates,
+      droppableContainers: args.droppableContainers,
+      itemLookup,
     });
-
-    if (intersections.length === 0) {
-      intersections = closestCenter({
-        ...args,
-        droppableContainers: containerBackgrounds,
-      });
-    }
-
-    activeNestTargetRef.current = null;
-    if (intersections.length > 0 && args.pointerCoordinates) {
-      const primaryCollision = intersections[0];
-      const decoded = decodeDndTarget(String(primaryCollision.id));
-      if (decoded && decoded.type === "item") {
-        const found = itemLookup.get(decoded.itemId);
-        if (found && found.item.kind === "collection") {
-          const container = args.droppableContainers.find(c => c.id === primaryCollision.id);
-          const rect = container?.rect.current;
-          if (rect) {
-            const width = rect.width;
-            const height = rect.height;
-            const hotspotLeft = rect.left + width * 0.2;
-            const hotspotRight = rect.left + width * 0.8;
-            const hotspotTop = rect.top + height * 0.2;
-            const hotspotBottom = rect.top + height * 0.8;
-
-            const px = args.pointerCoordinates.x;
-            const py = args.pointerCoordinates.y;
-
-            if (px >= hotspotLeft && px <= hotspotRight && py >= hotspotTop && py <= hotspotBottom) {
-              const activeDecoded = decodeDndTarget(String(args.active.id));
-              const activeItemId = activeDecoded?.type === "item" ? activeDecoded.itemId : args.active.id;
-              if (activeItemId !== found.item.id) {
-                activeNestTargetRef.current = found.item.collectionId;
-              }
-            }
-          }
-        }
-      }
-    }
-
+    activeNestTargetRef.current = nestTargetId;
     return intersections;
   }, [itemLookup]);
 
@@ -432,6 +240,21 @@ export function MediaStripBoard({
     []
   );
 
+  // 4. Keyboard Reorder Session Management
+  const {
+    activeKeyboardReorderId,
+    startKeyboardReorder,
+    cancelKeyboardReorder,
+    confirmKeyboardReorder,
+    handleKeyboardReorderAction,
+  } = useKeyboardReorderSession({
+    itemLookup,
+    collectionsById: collectionsByIdResolved,
+    getAdjacentCollectionId,
+    applyCommand,
+    announce,
+  });
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -445,94 +268,53 @@ export function MediaStripBoard({
     if (!decoded || decoded.type !== "item") return;
     const itemId = decoded.itemId;
 
-    setActiveDragId(itemId);
-    lastMoveRef.current = null;
-    lastOverIdRef.current = null;
-    recentlyMovedToNewContainer.current = false;
-
+    let dragWidth = 160;
     const escapedId = CSS.escape(String(itemId));
     const activeEl = containerRef.current?.querySelector(
       `[${DATA_VALUE_ATTR}="${escapedId}"], [${VALUE_ATTR}="${escapedId}"]`
     );
     if (activeEl) {
-      setActiveDragWidth(activeEl.getBoundingClientRect().width);
-    } else {
-      setActiveDragWidth(160);
+      dragWidth = activeEl.getBoundingClientRect().width;
     }
 
     const found = itemLookup.get(itemId);
     if (found) {
-      setActiveDragSourceCollectionId(found.collectionId);
+      startDrag(itemId, found.collectionId, dragWidth);
       announce(`Picked up item "${found.item.name}".`);
     }
-  }, [itemLookup, announce, setActiveDragId, setActiveDragSourceCollectionId, setActiveDragWidth]);
+  }, [itemLookup, announce, startDrag]);
 
   const handleDragMove = useCallback(() => {
-    setActiveNestTargetId(activeNestTargetRef.current);
-  }, [setActiveNestTargetId]);
+    moveDrag(activeNestTargetRef.current);
+  }, [moveDrag]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
-    const { active, over } = event;
-    setActiveNestTargetId(activeNestTargetRef.current);
-
-    if (!over) return;
-    lastOverIdRef.current = over.id;
-
-    const decodedActive = decodeDndTarget(String(active.id));
-    if (!decodedActive || decodedActive.type !== "item") return;
-    const itemId = decodedActive.itemId;
-
-    const foundSource = itemLookup.get(itemId);
-    if (!foundSource) return;
-
-    const intent = resolveDropIntent(over.id, active.id);
-    if (!intent) return;
-
-    const isNestIntent = activeNestTargetRef.current != null;
-
-    if (!isNestIntent && intent.type === "insert" && foundSource.collectionId !== intent.toCollectionId) {
-      const targetCollectionId = intent.toCollectionId;
-      const targetIndex = intent.toIndex;
-
-      const lastMove = lastMoveRef.current;
-      if (
-        lastMove &&
-        lastMove.itemId === itemId &&
-        lastMove.toCollectionId === targetCollectionId &&
-        lastMove.toIndex === targetIndex
-      ) {
-        return;
-      }
-      lastMoveRef.current = { itemId, toCollectionId: targetCollectionId, toIndex: targetIndex };
-      recentlyMovedToNewContainer.current = true;
-
-      moveItem(itemId, targetCollectionId, targetIndex);
-    }
-  }, [itemLookup, resolveDropIntent, moveItem, setActiveNestTargetId]);
+    moveDrag(activeNestTargetRef.current);
+  }, [moveDrag]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { over, active } = event;
     const itemId = activeDragId;
     const nestTargetId = activeNestTargetRef.current;
 
-    setActiveNestTargetId(null);
     activeNestTargetRef.current = null;
-    lastMoveRef.current = null;
-    lastOverIdRef.current = null;
-    recentlyMovedToNewContainer.current = false;
 
     if (!itemId) return;
 
     const foundSource = itemLookup.get(itemId);
     if (!foundSource) {
-      setActiveDragId(null);
-      setActiveDragSourceCollectionId(null);
+      endDrag();
       announce("Cancelled drag.");
       return;
     }
 
     if (over) {
-      const intent = resolveDropIntent(over.id, active.id);
+      const intent = resolveDropIntent({
+        overId: over.id,
+        activeId: active.id,
+        collectionsById: collectionsByIdResolved,
+        itemLookup,
+      });
 
       if (intent) {
         if (isCollectionItem(foundSource.item)) {
@@ -543,26 +325,20 @@ export function MediaStripBoard({
             collectionsById: collectionsByIdResolved,
           })) {
             announce("Cannot move a collection into itself or one of its nested collections.");
-            setActiveDragId(null);
-            setActiveDragSourceCollectionId(null);
+            endDrag();
             return;
           }
         }
 
         if (nestTargetId) {
-          if (onMoveItem) {
-            onMoveItem({
-              itemId,
-              fromCollectionId: foundSource.collectionId,
-              fromIndex: foundSource.index,
-              intent: {
-                type: "nest",
-                toCollectionId: nestTargetId,
-              },
-            });
-            announce(`Moved "${foundSource.item.name}" into collection.`);
-          }
-        } else if (intent.type === "insert") {
+          applyCommand({
+            type: "nest",
+            itemId,
+            fromCollectionId: foundSource.collectionId,
+            targetCollectionId: nestTargetId,
+          });
+          announce(`Moved "${foundSource.item.name}" into collection.`);
+        } else if (intent.type === "move") {
           const targetCollectionId = intent.toCollectionId;
           const targetIndex = intent.toIndex;
 
@@ -570,7 +346,13 @@ export function MediaStripBoard({
             foundSource.collectionId !== targetCollectionId ||
             foundSource.index !== targetIndex
           ) {
-            moveItem(itemId, targetCollectionId, targetIndex);
+            applyCommand({
+              type: "move",
+              itemId,
+              fromCollectionId: foundSource.collectionId,
+              toCollectionId: targetCollectionId,
+              toIndex: targetIndex,
+            });
             announce(`Dropped "${foundSource.item.name}" at position ${targetIndex + 1}.`);
           } else {
             announce(`Dropped "${foundSource.item.name}" at position ${foundSource.index + 1}.`);
@@ -583,104 +365,112 @@ export function MediaStripBoard({
       announce("Cancelled drag.");
     }
 
-    setActiveDragId(null);
-    setActiveDragSourceCollectionId(null);
+    endDrag();
   }, [
     activeDragId,
     itemLookup,
-    resolveDropIntent,
-    moveItem,
-    onMoveItem,
+    applyCommand,
     collectionsByIdResolved,
     announce,
-    setActiveDragId,
-    setActiveDragSourceCollectionId,
-    setActiveNestTargetId,
+    endDrag,
   ]);
 
-  const contextValue = useMemo(
+  const stableContextValue = useMemo(
     () => ({
-      activeDragId,
-      activeDragSourceCollectionId,
-      activeKeyboardReorderId,
-      activeNestTargetId,
-      startKeyboardReorder,
-      cancelKeyboardReorder,
-      confirmKeyboardReorder,
-      announce,
       collectionsById: collectionsByIdResolved,
+      itemLookup,
       registerCollection,
       unregisterCollection,
       getAdjacentCollectionId,
-      moveItem,
-      nestItem,
+      applyCommand,
+      announce,
+      startKeyboardReorder,
+      cancelKeyboardReorder,
+      confirmKeyboardReorder,
+      handleKeyboardReorderAction,
+    }),
+    [
+      collectionsByIdResolved,
+      itemLookup,
+      registerCollection,
+      unregisterCollection,
+      getAdjacentCollectionId,
+      applyCommand,
+      announce,
+      startKeyboardReorder,
+      cancelKeyboardReorder,
+      confirmKeyboardReorder,
+      handleKeyboardReorderAction,
+    ]
+  );
+
+  const dragContextValue = useMemo(
+    () => ({
+      activeDragId,
+      activeDragSourceCollectionId,
+      activeNestTargetId,
+      activeDragWidth,
+      activeKeyboardReorderId,
     }),
     [
       activeDragId,
       activeDragSourceCollectionId,
-      activeKeyboardReorderId,
       activeNestTargetId,
-      startKeyboardReorder,
-      cancelKeyboardReorder,
-      confirmKeyboardReorder,
-      announce,
-      collectionsByIdResolved,
-      registerCollection,
-      unregisterCollection,
-      getAdjacentCollectionId,
-      moveItem,
-      nestItem,
+      activeDragWidth,
+      activeKeyboardReorderId,
     ]
   );
 
   return (
-    <MediaStripBoardContext.Provider value={contextValue}>
-      <div ref={containerRef} style={{ display: "contents" }}>
-        <DndContext
-          sensors={sensors}
-          collisionDetection={collisionDetectionStrategy}
-          onDragStart={handleDragStart}
-          onDragMove={handleDragMove}
-          onDragOver={handleDragOver}
-          onDragEnd={handleDragEnd}
-          autoScroll={{
-            canScroll: (element) => {
-              if (!activeDragSourceCollectionId) return true;
-              const colEl = element.closest("[data-collection-id]");
-              if (!colEl) return true;
-              const colId = colEl.getAttribute("data-collection-id");
-              return colId === activeDragSourceCollectionId;
-            }
-          }}
-        >
-          {children}
-
-          <DragOverlay>
-            {activeDragItem ? (
-              <DragOverlayItem item={activeDragItem} width={activeDragWidth} />
-            ) : null}
-          </DragOverlay>
-
-          <div
-            aria-live="polite"
-            role="status"
-            style={{
-              position: "absolute",
-              width: "1px",
-              height: "1px",
-              padding: "0",
-              margin: "-1px",
-              overflow: "hidden",
-              clip: "rect(0, 0, 0, 0)",
-              whiteSpace: "nowrap",
-              border: "0",
+    <MediaStripBoardStableContext.Provider value={stableContextValue}>
+      <MediaStripBoardDragContext.Provider value={dragContextValue}>
+        <div ref={containerRef} style={{ display: "contents" }}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={collisionDetectionStrategy}
+            onDragStart={handleDragStart}
+            onDragMove={handleDragMove}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+            autoScroll={{
+              canScroll: (element) => {
+                if (!activeDragSourceCollectionId) return true;
+                const colEl = element.closest("[data-collection-id]");
+                if (!colEl) return true;
+                const colId = colEl.getAttribute("data-collection-id");
+                return colId === activeDragSourceCollectionId;
+              }
             }}
           >
-            {announcement}
-          </div>
-        </DndContext>
-      </div>
-    </MediaStripBoardContext.Provider>
+            {children}
+
+            <DragOverlay>
+              {activeDragItem ? (
+                <DragOverlayItem item={activeDragItem} width={activeDragWidth} />
+              ) : null}
+            </DragOverlay>
+
+            <div
+              aria-live="polite"
+              role="status"
+              style={{
+                position: "absolute",
+                width: "1px",
+                height: "1px",
+                padding: "0",
+                margin: "-1px",
+                overflow: "hidden",
+                clip: "rect(0, 0, 0, 0)",
+                whiteSpace: "nowrap",
+                border: "0",
+              }}
+            >
+              {announcement}
+            </div>
+          </DndContext>
+        </div>
+      </MediaStripBoardDragContext.Provider>
+    </MediaStripBoardStableContext.Provider>
   );
 }
 

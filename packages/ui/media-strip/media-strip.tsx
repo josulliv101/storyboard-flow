@@ -33,16 +33,20 @@ import { cn } from "../lib/utils";
 
 import { DraggableScrollArea } from "./draggable-scroll-area";
 import { MediaStripItemButton } from "./media-strip-item";
-import { getItemWidth, TOGGLE_GROUP_PADDING_PX, encodeDndTarget } from "./media-strip.utils";
-import { useMediaStripBoard } from "./media-strip-board";
+import { getItemWidth, TOGGLE_GROUP_PADDING_PX } from "./media-strip.utils";
+import { encodeDndTarget } from "./media-strip.dnd";
+import {
+  useMediaStripBoardStableOptional,
+  useMediaStripBoardDragOptional,
+  MediaStripBoard,
+} from "./media-strip-board";
 import { useScrollToAndFocus } from "./use-scroll-to-and-focus";
 import { useMediaStripKeyboardNav } from "./use-media-strip-keyboard-nav";
 import {
   type TimelineItem,
   type TimelineItemId,
   type CollectionId,
-  type TimelineItemMove,
-  type TimelineItemDrop,
+  type TimelineItemCommand,
 } from "./media-strip.types";
 
 export type MediaStripSelection = {
@@ -62,11 +66,11 @@ export type MediaStripProps = Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   itemGap?: number;
   selectedIds: readonly TimelineItemId[];
   thumbnailVariant?: "single" | "sequence";
-  onMoveItem?: (details: TimelineItemMove | TimelineItemDrop) => void;
+  onMoveItem?: (command: TimelineItemCommand) => void;
 };
 
-export const MediaStrip = memo(
-  function MediaStrip({
+export const MediaStripInner = memo(
+  function MediaStripInner({
     actionLabel = "Add media",
     className,
     emptyLabel = "No media items yet.",
@@ -84,20 +88,28 @@ export const MediaStrip = memo(
   }: MediaStripProps) {
     const headingId = useId();
     const viewportRef = useRef<HTMLDivElement>(null);
-    const viewportContentRef = useRef<HTMLDivElement>(null);
+    const viewportContentRef = useRef<HTMLDivElement | null>(null);
 
+    // useId() is guaranteed to be non-empty, making it safe to bypass the runtime validation
+    // checks in asCollectionId and brand directly here.
     const defaultCollectionId = useId() as CollectionId;
     const activeCollectionId = collectionId ?? defaultCollectionId;
 
     // Integrate with the shared board Dnd Context
-    const { activeKeyboardReorderId, registerCollection, unregisterCollection } = useMediaStripBoard();
+    const stable = useMediaStripBoardStableOptional();
+    const drag = useMediaStripBoardDragOptional();
+    const activeKeyboardReorderId = drag?.activeKeyboardReorderId ?? null;
+    const registerCollection = stable?.registerCollection;
+    const unregisterCollection = stable?.unregisterCollection;
 
     // Register this collection ID within the board-scoped registry
     useEffect(() => {
-      registerCollection(activeCollectionId);
-      return () => {
-        unregisterCollection(activeCollectionId);
-      };
+      if (registerCollection && unregisterCollection) {
+        registerCollection(activeCollectionId);
+        return () => {
+          unregisterCollection(activeCollectionId);
+        };
+      }
     }, [activeCollectionId, registerCollection, unregisterCollection]);
 
     // Register this strip as a droppable zone.
@@ -284,7 +296,24 @@ export const MediaStrip = memo(
   }
 );
 
+export const MediaStrip = memo(
+  function MediaStrip(props: MediaStripProps) {
+    const isInsideBoard = useMediaStripBoardStableOptional() !== null;
+
+    if (isInsideBoard) {
+      return <MediaStripInner {...props} />;
+    }
+
+    return (
+      <MediaStripBoard onMoveItem={props.onMoveItem}>
+        <MediaStripInner {...props} />
+      </MediaStripBoard>
+    );
+  }
+);
+
 MediaStrip.displayName = "MediaStrip";
+MediaStripInner.displayName = "MediaStripInner";
 
 function MediaStripEmptyState({ emptyLabel }: { emptyLabel: string }) {
   return (

@@ -1,0 +1,249 @@
+import { jsx as _jsx } from "react/jsx-runtime";
+import { expect, within } from "storybook/test";
+import { TimelineClipItem, } from "./TimelineClipItem";
+import { TimelineClipItemProvider, } from "./TimelineClipItemContext";
+const PLACEHOLDER_IMG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='225'%3E%3Crect width='400' height='225' fill='%23334155'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-family='sans-serif' font-size='14'%3EImage%3C%2Ftext%3E%3C/svg%3E";
+const PLACEHOLDER_POSTER = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='225'%3E%3Crect width='400' height='225' fill='%231e293b'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-family='sans-serif' font-size='14'%3EPoster%3C%2Ftext%3E%3C/svg%3E";
+const THUMB_W = 160;
+const THUMB_GAP = 12;
+function makeImageClip(index, overrides) {
+    return Object.assign({ id: `img-story-${index}`, index, kind: "image", src: PLACEHOLDER_IMG, alt: `Image clip ${index}`, aspect: 16 / 9, trackIndex: 0, startTime: index * 3, duration: 3, sourceDuration: 3, trimIn: 0, trimOut: 0 }, overrides);
+}
+const imageClip = makeImageClip(0);
+const videoClip = {
+    id: "vid-story-1",
+    index: 0,
+    kind: "video",
+    src: "",
+    poster: PLACEHOLDER_POSTER,
+    alt: "Sample video",
+    aspect: 16 / 9,
+    trackIndex: 0,
+    startTime: 0,
+    duration: 5,
+    sourceDuration: 10,
+    trimIn: 2,
+    trimOut: 3,
+};
+const collectionClip = {
+    id: "collection-story-1",
+    index: 0,
+    kind: "collection",
+    title: "Scene Selects",
+    childTimelineId: "scene-selects",
+    itemCount: 12,
+    alt: "Scene Selects collection",
+    aspect: 16 / 9,
+    trackIndex: 0,
+    startTime: 0,
+    duration: 4,
+    sourceDuration: 4,
+    trimIn: 0,
+    trimOut: 0,
+};
+const defaultResizeHandlers = {
+    onResizeDown: () => { },
+    onResizeMove: () => { },
+    onResizeUp: () => { },
+    onResizeKeyDown: () => { },
+};
+function getProviderValue(args) {
+    return {
+        metrics: {
+            pixelsPerSecond: args.pixelsPerSecond,
+            itemTop: args.itemTop,
+            itemHeight: args.itemHeight,
+            gridMetrics: args.gridMetrics,
+            thumbnailMode: args.thumbnailMode,
+            thumbnailWidth: args.thumbnailWidth,
+            thumbnailGap: args.thumbnailGap,
+        },
+        resizeHandlers: {
+            onResizeDown: args.onResizeDown,
+            onResizeMove: args.onResizeMove,
+            onResizeUp: args.onResizeUp,
+            onResizeKeyDown: args.onResizeKeyDown,
+        },
+        mediaActions: {
+            onDurationLoaded: args.onDurationLoaded,
+        },
+        collectionActions: {
+            getCollectionHref: args.getCollectionHref,
+            onOpenCollection: args.onOpenCollection,
+            onRenameCollection: args.onRenameCollection,
+            onToggleCollectionEndpoint: args.onToggleCollectionEndpoint,
+        },
+    };
+}
+function TimelineClipItemStory(args) {
+    return (_jsx(TimelineClipItemProvider, { value: getProviderValue(args), children: _jsx(TimelineClipItem, { clip: args.clip, state: args.state }) }));
+}
+const meta = {
+    title: "UI/Timeline/clip/TimelineClipItem",
+    component: TimelineClipItemStory,
+    decorators: [
+        (Story) => (_jsx("div", { className: "font-sans text-white", style: {
+                position: "relative",
+                width: "100%",
+                height: 300,
+                background: "#09090b",
+                borderRadius: 8,
+                overflow: "hidden",
+            }, children: _jsx(Story, {}) })),
+    ],
+    args: Object.assign({ clip: imageClip, pixelsPerSecond: 100, itemTop: 44, itemHeight: 200, state: {} }, defaultResizeHandlers),
+};
+export default meta;
+export const ImageDefault = {
+    args: { clip: imageClip },
+};
+export const VideoDefault = {
+    args: { clip: videoClip },
+};
+export const ImageSelected = {
+    args: {
+        clip: imageClip,
+        state: { isSelected: true },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const leftHandle = await canvas.findByTestId("timeline-trim-left");
+        const rightHandle = await canvas.findByTestId("timeline-trim-right");
+        expect(leftHandle).toBeInTheDocument();
+        expect(rightHandle).toBeInTheDocument();
+    },
+};
+export const VideoSelected = {
+    args: {
+        clip: videoClip,
+        state: { isSelected: true },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const leftHandle = await canvas.findByTestId("timeline-trim-left");
+        const rightHandle = await canvas.findByTestId("timeline-trim-right");
+        expect(leftHandle).toBeInTheDocument();
+        expect(rightHandle).toBeInTheDocument();
+    },
+};
+export const MissingPoster = {
+    args: {
+        clip: Object.assign(Object.assign({}, videoClip), { poster: undefined }),
+    },
+};
+export const VideoWithScrubPreview = {
+    args: {
+        clip: videoClip,
+        state: { isSelected: true, scrubPreviewTime: 4.5 },
+    },
+};
+export const GrowingOpposite = {
+    args: {
+        clip: imageClip,
+        state: { isSelected: true, isGrowingOpposite: true },
+    },
+};
+export const ReorderPreview = {
+    args: {
+        clip: imageClip,
+        state: {
+            isReordering: true,
+            reorderPreview: {
+                activeClipId: imageClip.id,
+                dragLeft: 0,
+                dragTop: 0,
+                dragOffsetY: 0,
+                targetIndex: 1,
+                clientX: 180,
+                clientY: 150,
+                pointerOffsetX: 48,
+                pointerOffsetY: 36,
+            },
+        },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const sourceClip = await canvas.findByTestId("timeline-clip-0");
+        expect(sourceClip).toHaveAttribute("data-reordering", "true");
+        const body = within(document.body);
+        expect(await body.findByTestId("timeline-reorder-preview")).toBeInTheDocument();
+    },
+};
+export const ShortClip = {
+    args: {
+        clip: makeImageClip(0, { duration: 0.5, sourceDuration: 0.5 }),
+    },
+};
+export const LongClip = {
+    args: {
+        clip: makeImageClip(0, { duration: 60, sourceDuration: 60 }),
+        pixelsPerSecond: 10,
+    },
+};
+export const RepeatedThumbnails = {
+    args: {
+        clip: makeImageClip(0, { duration: 20, sourceDuration: 20 }),
+        itemTop: 0,
+    },
+};
+export const ThumbnailMode = {
+    args: {
+        clip: makeImageClip(0),
+        thumbnailMode: true,
+        thumbnailWidth: THUMB_W,
+        thumbnailGap: THUMB_GAP,
+        itemTop: 0,
+        itemHeight: 120,
+    },
+};
+export const ThumbnailModeSelected = {
+    args: {
+        clip: makeImageClip(0),
+        thumbnailMode: true,
+        thumbnailWidth: THUMB_W,
+        thumbnailGap: THUMB_GAP,
+        itemTop: 0,
+        itemHeight: 120,
+        state: { isSelected: true },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        expect(canvas.queryByTestId("timeline-trim-left")).not.toBeInTheDocument();
+        expect(canvas.queryByTestId("timeline-trim-right")).not.toBeInTheDocument();
+    },
+};
+export const ManyItems = {
+    args: {
+        clip: makeImageClip(0),
+        thumbnailMode: true,
+        thumbnailWidth: THUMB_W,
+        thumbnailGap: THUMB_GAP,
+        itemTop: 0,
+        itemHeight: 120,
+    },
+    render: (args) => (_jsx(TimelineClipItemProvider, { value: getProviderValue(args), children: _jsx("div", { style: {
+                position: "relative",
+                width: 12 * (THUMB_W + THUMB_GAP),
+                height: 120,
+            }, children: Array.from({ length: 12 }, (_, index) => (_jsx(TimelineClipItem, { clip: makeImageClip(index), state: args.state }, index))) }) })),
+};
+export const CollectionDefault = {
+    args: {
+        clip: collectionClip,
+    },
+};
+export const CollectionSelected = {
+    args: {
+        clip: collectionClip,
+        state: { isSelected: true },
+    },
+    play: async ({ canvasElement }) => {
+        const canvas = within(canvasElement);
+        const clip = await canvas.findByTestId("timeline-clip-0");
+        expect(clip).toHaveAttribute("data-selected", "true");
+        expect(canvas.queryByTestId("timeline-trim-left")).not.toBeInTheDocument();
+        expect(canvas.queryByTestId("timeline-trim-right")).not.toBeInTheDocument();
+        expect(clip.querySelector(".ring-amber-400")).toBeNull();
+        expect(clip.querySelector(".border-amber-400")).toBeNull();
+    },
+};

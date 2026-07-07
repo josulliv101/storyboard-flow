@@ -10,6 +10,15 @@ import { DRAG_ACTIVATION_THRESHOLDS_PX } from "./media-strip.utils";
 const SCROLL_CLICK_SUPPRESSION_MS = 180;
 const DRAG_CLICK_THRESHOLD_PX = DRAG_ACTIVATION_THRESHOLDS_PX.scroll;
 
+const INERTIA_TUNING = {
+  FRAME_MS_60FPS: 16.67,
+  VELOCITY_DECAY: 0.95,
+  MIN_VELOCITY_THRESHOLD: 0.1,
+  EMA_INSTANTANEOUS_WEIGHT: 0.7,
+  EMA_PREVIOUS_WEIGHT: 0.3,
+  MIN_VELOCITY_TO_START_INERTIA: 1,
+};
+
 export function useHorizontalDragScroll(
   viewportRef: React.RefObject<HTMLDivElement | null>,
   viewportContentRef: React.RefObject<HTMLDivElement | null>
@@ -103,13 +112,13 @@ export function useHorizontalDragScroll(
 
     const step = (now: number) => {
       const state = dragStateRef.current;
-      const dt = (now - lastFrameTime) / 16.67; // frames-equivalent elapsed
+      const dt = (now - lastFrameTime) / INERTIA_TUNING.FRAME_MS_60FPS; // frames-equivalent elapsed
       lastFrameTime = now;
 
       // Decay factor, adjusted for time elapsed
-      state.velocity *= Math.pow(0.95, dt);
+      state.velocity *= Math.pow(INERTIA_TUNING.VELOCITY_DECAY, dt);
 
-      if (Math.abs(state.velocity) < 0.1) {
+      if (Math.abs(state.velocity) < INERTIA_TUNING.MIN_VELOCITY_THRESHOLD) {
         inertiaFrameRef.current = null;
         return;
       }
@@ -187,7 +196,11 @@ export function useHorizontalDragScroll(
 
       try {
         dragRoot.setPointerCapture(event.pointerId);
-      } catch {}
+      } catch (err) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("Failed to set pointer capture:", err);
+        }
+      }
 
       const onPointerMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== state.pointerId) return;
@@ -206,8 +219,10 @@ export function useHorizontalDragScroll(
         const elapsed = moveEvent.timeStamp - state.lastTime;
         if (elapsed > 0) {
           const instantaneous =
-            (-(moveEvent.clientX - state.lastX) / elapsed) * 16.67;
-          state.velocity = 0.7 * instantaneous + 0.3 * state.velocity;
+            (-(moveEvent.clientX - state.lastX) / elapsed) * INERTIA_TUNING.FRAME_MS_60FPS;
+          state.velocity =
+            INERTIA_TUNING.EMA_INSTANTANEOUS_WEIGHT * instantaneous +
+            INERTIA_TUNING.EMA_PREVIOUS_WEIGHT * state.velocity;
         }
 
         state.lastX = moveEvent.clientX;
@@ -232,7 +247,11 @@ export function useHorizontalDragScroll(
           if (dragRoot.hasPointerCapture(upEvent.pointerId)) {
             dragRoot.releasePointerCapture(upEvent.pointerId);
           }
-        } catch {}
+        } catch (err) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn("Failed to release pointer capture on pointerup:", err);
+          }
+        }
 
         cleanup();
 
@@ -243,7 +262,7 @@ export function useHorizontalDragScroll(
         }
 
         // Run inertia
-        if (state.didDrag && Math.abs(state.velocity) > 1) {
+        if (state.didDrag && Math.abs(state.velocity) > INERTIA_TUNING.MIN_VELOCITY_TO_START_INERTIA) {
           runInertia();
         }
 
@@ -258,7 +277,11 @@ export function useHorizontalDragScroll(
           if (dragRoot.hasPointerCapture(cancelEvent.pointerId)) {
             dragRoot.releasePointerCapture(cancelEvent.pointerId);
           }
-        } catch {}
+        } catch (err) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn("Failed to release pointer capture on pointercancel:", err);
+          }
+        }
 
         cleanup();
 

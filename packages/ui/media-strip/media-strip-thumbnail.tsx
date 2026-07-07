@@ -3,7 +3,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo, useContext
 import type { TimelineItem, MediaTimelineItem } from "./media-strip.types";
 import { isMediaItem } from "./media-strip.types";
 import { THUMBNAIL_HEIGHT_PX } from "./media-strip.utils";
-import { MediaStripBoardContext } from "./media-strip-board";
+import { useMediaStripBoardStableOptional } from "./media-strip-board";
 
 type MediaStripThumbnailProps = {
   item: TimelineItem;
@@ -15,10 +15,10 @@ export const MediaStripThumbnail = memo(
     item,
     variant = "sequence",
   }: MediaStripThumbnailProps) {
-    const board = useContext(MediaStripBoardContext);
+    const board = useMediaStripBoardStableOptional();
 
     if (!isMediaItem(item)) {
-      const derivedCount = board?.collectionsById?.[item.collectionId]?.items.length ?? item.itemCount;
+      const derivedCount = board?.collectionsById?.get(item.collectionId)?.items.length ?? item.itemCount;
 
       return (
         <span
@@ -53,9 +53,8 @@ const MediaStripPosterThumbnail = memo(
     const [failedUrls, setFailedUrls] = useState<Set<string>>(new Set());
 
     const containerRef = useRef<HTMLSpanElement>(null);
-    const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({
+    const [containerSize, setContainerSize] = useState<{ width: number }>({
       width: 0,
-      height: 0,
     });
 
     const posterUrlsKey = useMemo(() => item.posterSrcs ? item.posterSrcs.join(",") : "", [item.posterSrcs]);
@@ -74,20 +73,19 @@ const MediaStripPosterThumbnail = memo(
       if (typeof ResizeObserver === "undefined") return;
 
       const rect = element.getBoundingClientRect();
-      setContainerSize({ width: Math.round(rect.width), height: Math.round(rect.height) });
+      setContainerSize({ width: Math.round(rect.width) });
 
       const observer = new ResizeObserver((entries) => {
         if (!entries || entries.length === 0) return;
-        const { width, height } = entries[0].contentRect;
+        const { width } = entries[0].contentRect;
         const roundedWidth = Math.round(width);
-        const roundedHeight = Math.round(height);
 
         // Prevent redundant state updates on micro-pixel variations
         setContainerSize((prev) => {
-          if (prev.width === roundedWidth && prev.height === roundedHeight) {
+          if (prev.width === roundedWidth) {
             return prev;
           }
-          return { width: roundedWidth, height: roundedHeight };
+          return { width: roundedWidth };
         });
       });
 
@@ -114,7 +112,7 @@ const MediaStripPosterThumbnail = memo(
     // This causes count to temporarily fallback to 1 during the initial render tick,
     // briefly flashing a single thumbnail before re-flowing to the actual layout once dimensions
     // are measured. This is an accepted tradeoff to ensure SSR safety and avoid layout thrashing.
-    const thumbnailWidth = containerSize.height || THUMBNAIL_HEIGHT_PX;
+    const thumbnailWidth = THUMBNAIL_HEIGHT_PX;
     const count =
       isSequence && containerSize.width > 0
         ? Math.max(1, Math.floor(containerSize.width / thumbnailWidth))

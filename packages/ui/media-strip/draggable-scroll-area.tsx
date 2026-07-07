@@ -32,6 +32,7 @@ export function DraggableScrollArea({
     <div
       className="relative min-w-0 cursor-grab touch-pan-y select-none active:cursor-grabbing"
       data-testid={derivedTestId}
+      data-scroll-area="true"
       // Intercepts click events at the capture phase to suppress click propagation
       // for a short window after a drag finishes, preventing accidental item selection.
       onClickCapture={handleClickCapture}

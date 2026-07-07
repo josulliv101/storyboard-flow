@@ -4,8 +4,8 @@ export * from "./media-strip.validation";
 export * from "./media-strip.utils";
 
 export {
-  asTimelineItemId,
-  asCollectionId,
+  parseTimelineItemId as asTimelineItemId,
+  parseCollectionId as asCollectionId,
   isImageItem,
   isVideoItem,
   isMediaItem,

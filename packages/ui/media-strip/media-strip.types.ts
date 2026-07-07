@@ -13,30 +13,37 @@ export type MediaKind = "image" | "video";
 declare const timelineItemIdBrand: unique symbol;
 declare const collectionIdBrand: unique symbol;
 
-export type TimelineItemId = string & {
-  readonly [timelineItemIdBrand]: true;
+type BrandedString<TBrand extends symbol> = string & {
+  readonly [K in TBrand]: true;
 };
 
-export type CollectionId = string & {
-  readonly [collectionIdBrand]: true;
+export type TimelineItemId = BrandedString<typeof timelineItemIdBrand>;
+export type CollectionId = BrandedString<typeof collectionIdBrand>;
+
+const isValidTimelineId = (id: string): id is TimelineItemId => {
+  return !!id && !!id.trim();
 };
 
-export const asTimelineItemId = (
+const isValidCollectionId = (id: string): id is CollectionId => {
+  return !!id && !!id.trim();
+};
+
+export const parseTimelineItemId = (
   id: string
 ): TimelineItemResult<TimelineItemId, "empty-id"> => {
-  if (!id || !id.trim()) {
-    return { ok: false, error: "empty-id" };
+  if (isValidTimelineId(id)) {
+    return { ok: true, value: id };
   }
-  return { ok: true, value: id as TimelineItemId };
+  return { ok: false, error: "empty-id" };
 };
 
-export const asCollectionId = (
+export const parseCollectionId = (
   id: string
 ): TimelineItemResult<CollectionId, "empty-id"> => {
-  if (!id || !id.trim()) {
-    return { ok: false, error: "empty-id" };
+  if (isValidCollectionId(id)) {
+    return { ok: true, value: id };
   }
-  return { ok: true, value: id as CollectionId };
+  return { ok: false, error: "empty-id" };
 };
 
 // --- Core types --------------------------------------------------------------
@@ -160,46 +167,36 @@ export type TimelineCollection = Readonly<{
   items: readonly TimelineItem[];
 }>;
 
-export type TimelineCollectionsById = Readonly<Record<CollectionId, TimelineCollection>>;
+export type TimelineCollectionsById = ReadonlyMap<CollectionId, TimelineCollection>;
 
-export type MediaStripView = Readonly<{
-  collectionId: CollectionId;
-  heading?: string;
-  emptyLabel?: string;
-}>;
-
-export type TimelineBoardView = Readonly<{
-  stripViews: readonly MediaStripView[];
-}>;
-
-export type TimelineItemMove = Readonly<{
-  itemId: TimelineItemId;
-  fromCollectionId: CollectionId;
-  toCollectionId: CollectionId;
-  fromIndex: number;
-  toIndex: number;
-}>;
-
-export type TimelineDropIntent =
+export type TimelineItemCommand =
   | Readonly<{
-      type: "insert";
-      toCollectionId: CollectionId;
-      toIndex: number;
-    }>
+    type: "move";
+    itemId: TimelineItemId;
+    fromCollectionId: CollectionId;
+    toCollectionId: CollectionId;
+    toIndex: number;
+  }>
   | Readonly<{
-      type: "nest";
-      toCollectionId: CollectionId;
-      toIndex?: number;
-    }>;
-
-export type TimelineItemDrop = Readonly<{
-  itemId: TimelineItemId;
-  fromCollectionId: CollectionId;
-  fromIndex: number;
-  intent: TimelineDropIntent;
-}>;
+    type: "nest";
+    itemId: TimelineItemId;
+    fromCollectionId: CollectionId;
+    targetCollectionId: CollectionId;
+    toIndex?: number;
+  }>;
 
 export type DndTarget =
   | Readonly<{ type: "item"; itemId: TimelineItemId }>
   | Readonly<{ type: "collection-container"; collectionId: CollectionId }>
-  | Readonly<{ type: "collection-nest-target"; collectionId: CollectionId }>;
+  | Readonly<{ type: "collection-nest-target"; collectionId: CollectionId }>;
+
+export type KeyboardReorderAction =
+  | "move-left"
+  | "move-right"
+  | "move-up"
+  | "move-down"
+  | "move-home"
+  | "move-end"
+  | "nest"
+  | "confirm"
+  | "cancel";

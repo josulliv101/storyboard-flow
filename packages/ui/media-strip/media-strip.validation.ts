@@ -6,8 +6,8 @@ import {
   type TimelineItemResult,
   type TimelineItem,
   type TimelineItemKind,
-  asTimelineItemId,
-  asCollectionId,
+  parseTimelineItemId,
+  parseCollectionId,
   isCollectionItem,
   type CollectionId,
   type TimelineItemId,
@@ -60,7 +60,7 @@ export const validateTimelineItemTiming = (
   item: TimelineItemBase
 ): TimelineItemTimingValidationResult => {
   // Validate TimelineItemId at runtime to guarantee nominal safety
-  const idResult = asTimelineItemId(item.id);
+  const idResult = parseTimelineItemId(item.id);
   if (!idResult.ok) {
     return { valid: false, reason: "empty-id" };
   }
@@ -153,7 +153,7 @@ export const validateCollectionTimelineItem = (
   }
 
   // Validate CollectionId at runtime to guarantee nominal safety
-  const collectionIdResult = asCollectionId(item.collectionId);
+  const collectionIdResult = parseCollectionId(item.collectionId);
   if (!collectionIdResult.ok) {
     return { valid: false, reason: "empty-id" };
   }
@@ -214,7 +214,7 @@ export const validateVideoTimelineItem = (
   item: VideoTimelineItem
 ): VideoTimelineItemValidationResult => {
   // 1. Initial timing checks (excluding duration check)
-  const idResult = asTimelineItemId(item.id);
+  const idResult = parseTimelineItemId(item.id);
   if (!idResult.ok) {
     return { valid: false, reason: "empty-id" };
   }
@@ -351,7 +351,7 @@ export type CreateVideoTimelineItemInput = Omit<
 export const createImageTimelineItem = (
   input: CreateImageTimelineItemInput
 ): TimelineItemResult<ImageTimelineItem, MediaTimelineItemValidationFailure> => {
-  const idResult = asTimelineItemId(input.id);
+  const idResult = parseTimelineItemId(input.id);
   if (!idResult.ok) {
     return { ok: false, error: { valid: false, reason: "empty-id" } };
   }
@@ -377,12 +377,12 @@ export const createCollectionTimelineItem = (
   CollectionTimelineItem,
   CollectionTimelineItemValidationFailure
 > => {
-  const idResult = asTimelineItemId(input.id);
+  const idResult = parseTimelineItemId(input.id);
   if (!idResult.ok) {
     return { ok: false, error: { valid: false, reason: "empty-id" } };
   }
 
-  const collectionIdResult = asCollectionId(input.collectionId);
+  const collectionIdResult = parseCollectionId(input.collectionId);
   if (!collectionIdResult.ok) {
     return { ok: false, error: { valid: false, reason: "empty-id" } };
   }
@@ -406,7 +406,7 @@ export const createCollectionTimelineItem = (
 export const createVideoTimelineItem = (
   input: CreateVideoTimelineItemInput
 ): TimelineItemResult<VideoTimelineItem, VideoTimelineItemValidationFailure> => {
-  const idResult = asTimelineItemId(input.id);
+  const idResult = parseTimelineItemId(input.id);
   if (!idResult.ok) {
     return { ok: false, error: { valid: false, reason: "empty-id" } };
   }
@@ -500,7 +500,7 @@ export type TimelineCollectionValidationResult =
 export function validateTimelineCollection(
   collection: TimelineCollection
 ): TimelineCollectionValidationResult {
-  const collectionIdResult = asCollectionId(collection.id);
+  const collectionIdResult = parseCollectionId(collection.id);
   if (!collectionIdResult.ok) {
     return { valid: false, reason: "empty-id" };
   }
@@ -527,7 +527,7 @@ export function validateTimelineCollection(
 }
 
 export type ProjectValidationResult =
-  | Readonly<{ valid: true }>
+  | Readonly<{ valid: true; orphanedCollectionIds: CollectionId[] }>
   | Readonly<{ valid: false; reason: "missing-collection"; collectionId: CollectionId; itemId: TimelineItemId }>
   | Readonly<{ valid: false; reason: "collection-cycle"; cycle: CollectionId[] }>
   | Readonly<{ valid: false; reason: "duplicate-global-item-ids"; itemId: TimelineItemId }>;
@@ -537,7 +537,7 @@ export function validateProjectTimeline({
   rootCollectionIds,
   assumeGlobalItemIds = true,
 }: {
-  collectionsById: Readonly<Record<CollectionId, TimelineCollection>>;
+  collectionsById: ReadonlyMap<CollectionId, TimelineCollection>;
   rootCollectionIds: readonly CollectionId[];
   assumeGlobalItemIds?: boolean;
 }): ProjectValidationResult {
@@ -550,12 +550,12 @@ export function validateProjectTimeline({
       return { valid: false, reason: "collection-cycle", cycle: Array.from(path) };
     }
     if (visited.has(colId)) {
-      return { valid: true };
+      return { valid: true, orphanedCollectionIds: [] };
     }
 
-    const col = collectionsById[colId];
+    const col = collectionsById.get(colId);
     if (!col) {
-      return { valid: true };
+      return { valid: true, orphanedCollectionIds: [] };
     }
 
     path.add(colId);
@@ -570,7 +570,7 @@ export function validateProjectTimeline({
       }
 
       if (isCollectionItem(item)) {
-        const referencedCol = collectionsById[item.collectionId];
+        const referencedCol = collectionsById.get(item.collectionId);
         if (!referencedCol) {
           return {
             valid: false,
@@ -585,28 +585,30 @@ export function validateProjectTimeline({
     }
 
     path.delete(colId);
-    return { valid: true };
+    return { valid: true, orphanedCollectionIds: [] };
   }
 
-  for (const colId of Object.keys(collectionsById) as CollectionId[]) {
-    const col = collectionsById[colId];
-    for (const item of col.items) {
-      if (isCollectionItem(item)) {
-        if (!collectionsById[item.collectionId]) {
-          return {
-            valid: false,
-            reason: "missing-collection",
-            collectionId: item.collectionId,
-            itemId: item.id,
-          };
-        }
-      }
+  for (const rootId of rootCollectionIds) {
+    if (!collectionsById.has(rootId)) {
+      return {
+        valid: false,
+        reason: "missing-collection",
+        collectionId: rootId,
+        itemId: "" as TimelineItemId,
+      };
     }
-    const res = dfs(colId);
+    const res = dfs(rootId);
     if (!res.valid) return res;
   }
 
-  return { valid: true };
+  const orphanedCollectionIds: CollectionId[] = [];
+  for (const colId of collectionsById.keys()) {
+    if (!visited.has(colId)) {
+      orphanedCollectionIds.push(colId);
+    }
+  }
+
+  return { valid: true, orphanedCollectionIds };
 }
 
 export function wouldCreateCollectionCycle({
@@ -616,7 +618,7 @@ export function wouldCreateCollectionCycle({
 }: {
   movingCollectionId: CollectionId;
   targetCollectionId: CollectionId;
-  collectionsById: Readonly<Record<CollectionId, TimelineCollection>>;
+  collectionsById: ReadonlyMap<CollectionId, TimelineCollection>;
 }): boolean {
   if (movingCollectionId === targetCollectionId) {
     return true;
@@ -633,7 +635,7 @@ export function wouldCreateCollectionCycle({
     }
     visited.add(currentId);
 
-    const col = collectionsById[currentId];
+    const col = collectionsById.get(currentId);
     if (!col) return false;
 
     for (const item of col.items) {

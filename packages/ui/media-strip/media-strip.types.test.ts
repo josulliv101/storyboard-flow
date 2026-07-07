@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
-  asTimelineItemId,
-  asCollectionId,
+  parseTimelineItemId,
+  parseCollectionId,
   isImageItem,
   isVideoItem,
   isMediaItem,
@@ -40,21 +40,25 @@ import {
   areEqual,
   MIN_ITEM_WIDTH_PX,
   DRAG_ACTIVATION_THRESHOLDS_PX,
+} from "./media-strip.utils";
+import {
   encodeDndTarget,
   decodeDndTarget,
+  detectCollision,
+} from "./media-strip.dnd";
+import {
   syncCollectionItemCounts,
-  moveTimelineItem,
-  applyTimelineItemMoveOrDrop,
-} from "./media-strip.utils";
+  applyTimelineItemCommand,
+} from "./media-strip.collection-ops";
 
 describe("Timeline Items Branding", () => {
   test("validates timeline item and collection IDs", () => {
-    const validItem = asTimelineItemId("item-1");
-    const validCol = asCollectionId("collection-1");
-    const invalidItem = asTimelineItemId("");
-    const invalidCol = asCollectionId("");
-    const whitespaceItem = asTimelineItemId("   ");
-    const whitespaceCol = asCollectionId("   ");
+    const validItem = parseTimelineItemId("item-1");
+    const validCol = parseCollectionId("collection-1");
+    const invalidItem = parseTimelineItemId("");
+    const invalidCol = parseCollectionId("");
+    const whitespaceItem = parseTimelineItemId("   ");
+    const whitespaceCol = parseCollectionId("   ");
 
     expect(validItem).toEqual({ ok: true, value: "item-1" as TimelineItemId });
     expect(validCol).toEqual({ ok: true, value: "collection-1" as CollectionId });
@@ -326,6 +330,15 @@ describe("Collection Timing and Integrity Validation", () => {
         startTimeSeconds: -1,
       })
     ).toEqual({ valid: false, reason: "negative-start-time" });
+  });
+
+  test("fails for empty collectionId", () => {
+    expect(
+      validateCollectionTimelineItem({
+        ...baseCollection,
+        collectionId: "" as CollectionId,
+      })
+    ).toEqual({ valid: false, reason: "empty-collection-id" });
   });
 
   test("fails for invalid item counts", () => {
@@ -1015,7 +1028,7 @@ describe("areEqual additional comparator tests", () => {
     isKeyboardReordering: false,
     thumbnailVariant: "sequence" as const,
     collectionId: "strip-1" as CollectionId,
-    onMoveItem: () => {},
+    onMoveItem: () => { },
     style: {
       width: "100px",
       left: "10px",
@@ -1037,8 +1050,8 @@ describe("areEqual additional comparator tests", () => {
   });
 
   test("returns false when onMoveItem reference changes", () => {
-    const prev = { ...baseProps, onMoveItem: () => {} };
-    const next = { ...baseProps, onMoveItem: () => {} };
+    const prev = { ...baseProps, onMoveItem: () => { } };
+    const next = { ...baseProps, onMoveItem: () => { } };
     expect(areEqual(prev, next)).toBe(false);
   });
 
@@ -1093,10 +1106,10 @@ describe("Cycle Detection for Nested Collections", () => {
     items: [],
   };
 
-  const collections: Record<CollectionId, TimelineCollection> = {
-    ["col-a" as CollectionId]: colA,
-    ["col-b" as CollectionId]: colB,
-  };
+  const collections = new Map<CollectionId, TimelineCollection>([
+    ["col-a" as CollectionId, colA],
+    ["col-b" as CollectionId, colB],
+  ]);
 
   test("detects when nesting creates a cycle", () => {
     expect(
@@ -1176,10 +1189,10 @@ describe("Collection and Project Validation", () => {
       ],
     };
 
-    const collections = {
-      ["col-a" as CollectionId]: colA,
-      ["col-b" as CollectionId]: colB,
-    };
+    const collections = new Map<CollectionId, TimelineCollection>([
+      ["col-a" as CollectionId, colA],
+      ["col-b" as CollectionId, colB],
+    ]);
 
     const result = validateProjectTimeline({
       collectionsById: collections,
@@ -1189,6 +1202,35 @@ describe("Collection and Project Validation", () => {
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(result.reason).toBe("collection-cycle");
+    }
+  });
+
+  test("returns orphanedCollectionIds for unreachable collections from roots", () => {
+    const colA: TimelineCollection = {
+      id: "col-a" as CollectionId,
+      name: "A",
+      items: [],
+    };
+
+    const colOrphan: TimelineCollection = {
+      id: "col-orphan" as CollectionId,
+      name: "Orphaned",
+      items: [],
+    };
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      ["col-a" as CollectionId, colA],
+      ["col-orphan" as CollectionId, colOrphan],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: ["col-a" as CollectionId],
+    });
+
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.orphanedCollectionIds).toEqual(["col-orphan"]);
     }
   });
 });
@@ -1214,24 +1256,184 @@ describe("Collection Move and Count synchronization", () => {
       items: [],
     };
 
-    const collections = {
-      ["col-a" as CollectionId]: colA,
-      ["col-b" as CollectionId]: colB,
-    };
+    const collections = new Map<CollectionId, TimelineCollection>([
+      ["col-a" as CollectionId, colA],
+      ["col-b" as CollectionId, colB],
+    ]);
 
-    const result = moveTimelineItem({
+    const result = applyTimelineItemCommand({
       collectionsById: collections,
-      move: {
+      command: {
+        type: "move",
         itemId: "item-1" as TimelineItemId,
         fromCollectionId: "col-a" as CollectionId,
         toCollectionId: "col-b" as CollectionId,
-        fromIndex: 0,
         toIndex: 0,
       },
     });
 
-    expect(result["col-a" as CollectionId].items.length).toBe(0);
-    expect(result["col-b" as CollectionId].items.length).toBe(1);
-    expect(result["col-b" as CollectionId].items[0].id).toBe("item-1");
+    expect(result.get("col-a" as CollectionId)?.items.length).toBe(0);
+    expect(result.get("col-b" as CollectionId)?.items.length).toBe(1);
+    expect(result.get("col-b" as CollectionId)?.items[0].id).toBe("item-1");
+  });
+});
+
+describe("Pure Collision Detection Helper", () => {
+  test("detects hotspot nesting correctly when pointer is in the middle of a collection card", () => {
+    const item1 = {
+      id: "item-col-b" as TimelineItemId,
+      name: "Holiday Folder",
+      kind: "collection" as const,
+      collectionId: "col-b" as CollectionId,
+      itemCount: 0,
+      startTimeSeconds: 0,
+      durationSeconds: 10,
+    };
+
+    const itemLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
+      ["item-col-b" as TimelineItemId, { collectionId: "col-a" as CollectionId, index: 0, item: item1 }],
+    ]);
+
+    const droppableContainers = [
+      {
+        id: "item:item-col-b",
+        rect: {
+          current: {
+            width: 200,
+            height: 100,
+            left: 100,
+            top: 100,
+            right: 300,
+            bottom: 200,
+          },
+        },
+        data: { current: {} },
+      },
+    ];
+
+    // Pointer is in the middle of card-col-b (hotspot triggers between 20% and 80%)
+    // width: 200, left: 100 -> center is 200. hotspot is 140 to 260
+    // height: 100, top: 100 -> center is 150. hotspot is 120 to 180
+    const pointerInHotspot = { x: 200, y: 150 };
+
+    const result = detectCollision({
+      active: {
+        id: "item:item-a1",
+        rect: {
+          current: {
+            width: 100,
+            height: 100,
+            left: 0,
+            top: 0,
+            right: 100,
+            bottom: 100,
+          },
+        },
+      },
+      collisionRect: {
+        width: 100,
+        height: 100,
+        left: 0,
+        top: 0,
+        right: 100,
+        bottom: 100,
+      },
+      droppableRects: new Map([
+        [
+          "item:item-col-b",
+          {
+            width: 200,
+            height: 100,
+            left: 100,
+            top: 100,
+            right: 300,
+            bottom: 200,
+          },
+        ],
+      ]),
+      pointerCoordinates: pointerInHotspot,
+      droppableContainers,
+      itemLookup,
+    });
+
+    expect(result.nestTargetId).toBe("col-b" as CollectionId);
+  });
+
+  test("does not trigger nesting when pointer is near the edge of a collection card", () => {
+    const item1 = {
+      id: "item-col-b" as TimelineItemId,
+      name: "Holiday Folder",
+      kind: "collection" as const,
+      collectionId: "col-b" as CollectionId,
+      itemCount: 0,
+      startTimeSeconds: 0,
+      durationSeconds: 10,
+    };
+
+    const itemLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
+      ["item-col-b" as TimelineItemId, { collectionId: "col-a" as CollectionId, index: 0, item: item1 }],
+    ]);
+
+    const droppableContainers = [
+      {
+        id: "item:item-col-b",
+        rect: {
+          current: {
+            width: 200,
+            height: 100,
+            left: 100,
+            top: 100,
+            right: 300,
+            bottom: 200,
+          },
+        },
+        data: { current: {} },
+      },
+    ];
+
+    // Pointer is near the left edge of card-col-b (x = 110, which is outside 140 to 260)
+    const pointerNearEdge = { x: 110, y: 150 };
+
+    const result = detectCollision({
+      active: {
+        id: "item:item-a1",
+        rect: {
+          current: {
+            width: 100,
+            height: 100,
+            left: 0,
+            top: 0,
+            right: 100,
+            bottom: 100,
+          },
+        },
+      },
+      collisionRect: {
+        width: 100,
+        height: 100,
+        left: 0,
+        top: 0,
+        right: 100,
+        bottom: 100,
+      },
+      droppableRects: new Map([
+        [
+          "item:item-col-b",
+          {
+            width: 200,
+            height: 100,
+            left: 100,
+            top: 100,
+            right: 300,
+            bottom: 200,
+          },
+        ],
+      ]),
+      pointerCoordinates: pointerNearEdge,
+      droppableContainers,
+      itemLookup,
+    });
+
+    expect(result.nestTargetId).toBeNull();
   });
 });

@@ -14,6 +14,8 @@ export function useMediaStripKeyboardNav(
 ) {
   const handleKeyDownCapture = useCallback(
     (event: KeyboardEvent) => {
+      // Note: Arrow key events on the item button container itself are captured here to manage
+      // grid roving tabindex. For keyboard-driven reordering within the handles, refer to use-reorder-keyboard.ts.
       if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
 
       const currentEl = event.target as HTMLElement;

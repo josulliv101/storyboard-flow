@@ -1,0 +1,1 @@
+export { MediaStripBaseTitle } from "./MediaStripBaseTitle";

@@ -6,6 +6,8 @@ import {
   DATA_REORDER_HANDLE_ATTR,
 } from "./media-strip.utils";
 
+const FOCUS_FALLBACK_TIMEOUT_MS = 500;
+
 /**
  * A custom hook to coordinate scrolling a virtualized list to an index
  * and shifting focus to the corresponding item once it mounts in the DOM.
@@ -89,7 +91,7 @@ export function useScrollToAndFocus(
             `[useScrollToAndFocus] MutationObserver timed out waiting for selector: ${selector}`
           );
         }
-      }, 500);
+      }, FOCUS_FALLBACK_TIMEOUT_MS);
     },
     [viewportRef, rowVirtualizer]
   );

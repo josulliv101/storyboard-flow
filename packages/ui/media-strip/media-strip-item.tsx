@@ -7,8 +7,7 @@ import { ToggleGroupItem } from "../core/toggle-group";
 import {
   type TimelineItem,
   type CollectionId,
-  type TimelineItemMove,
-  type TimelineItemDrop,
+  type TimelineItemCommand,
   isCollectionItem,
 } from "./media-strip.types";
 import {
@@ -19,12 +18,12 @@ import {
   VALUE_ATTR,
   DATA_REORDER_HANDLE_ATTR,
   isElementFullyVisibleInScrollArea,
-  encodeDndTarget,
 } from "./media-strip.utils";
+import { encodeDndTarget } from "./media-strip.dnd";
 import { wouldCreateCollectionCycle } from "./media-strip.validation";
 import { MediaStripThumbnail } from "./media-strip-thumbnail";
 import { useReorderKeyboard } from "./use-reorder-keyboard";
-import { useMediaStripBoard } from "./media-strip-board";
+import { useMediaStripBoardDrag, useMediaStripBoardStable } from "./media-strip-board";
 import { cn } from "../lib/utils";
 
 type MediaStripItemButtonProps = MediaStripItemAreEqualProps & {
@@ -48,14 +47,13 @@ export const MediaStripItemButton = memo(
       : "Reorder handle";
 
     const handleRef = useRef<HTMLButtonElement>(null);
-    const { activeDragId, collectionsById, activeNestTargetId } = useMediaStripBoard();
+    const { activeDragId, activeNestTargetId } = useMediaStripBoardDrag();
+    const { collectionsById, itemLookup } = useMediaStripBoardStable();
 
-    // Keyboard-based item reordering logic
     const handleKeyDown = useReorderKeyboard({
       item,
       items,
       collectionId,
-      onMoveItem,
       isKeyboardReordering,
     });
 
@@ -77,24 +75,17 @@ export const MediaStripItemButton = memo(
     const isInvalidCycle = useMemo(() => {
       if (!showNestOverlay || !activeDragId || !isCollectionItem(item)) return false;
 
-      let activeItemCollectionId: CollectionId | null = null;
-      for (const col of Object.values(collectionsById)) {
-        const found = col.items.find(i => i.id === activeDragId);
-        if (found && isCollectionItem(found)) {
-          activeItemCollectionId = found.collectionId;
-          break;
-        }
-      }
-
-      if (activeItemCollectionId) {
+      const foundSource = itemLookup?.get(activeDragId);
+      const activeItem = foundSource?.item;
+      if (activeItem && isCollectionItem(activeItem)) {
         return wouldCreateCollectionCycle({
-          movingCollectionId: activeItemCollectionId,
+          movingCollectionId: activeItem.collectionId,
           targetCollectionId: item.collectionId,
           collectionsById,
         });
       }
       return false;
-    }, [showNestOverlay, activeDragId, item, collectionsById]);
+    }, [showNestOverlay, activeDragId, item, collectionsById, itemLookup]);
 
     // Focus preservation on the reorder handle.
     useEffect(() => {
@@ -107,7 +98,7 @@ export const MediaStripItemButton = memo(
       const element = event.currentTarget;
 
       // Look for the scroll area container to see if the element is already in view
-      const scrollArea = element.closest("[data-testid^='media-strip-drag-scroll-']");
+      const scrollArea = element.closest("[data-scroll-area]");
       if (scrollArea instanceof HTMLElement) {
         if (isElementFullyVisibleInScrollArea(element, scrollArea)) {
           return;
