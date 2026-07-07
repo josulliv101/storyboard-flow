@@ -1,1 +1,0 @@
-export { MediaStripBaseHeader } from "./MediaStripBaseHeader";

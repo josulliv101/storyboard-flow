@@ -1,1 +1,0 @@
-export { MediaStripBaseItemDescription } from "./MediaStripBaseItemDescription";

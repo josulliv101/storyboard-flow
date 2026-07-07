@@ -1,1 +1,0 @@
-export { MediaStripBaseEmpty } from "./MediaStripBaseEmpty";
