@@ -7,7 +7,6 @@ import { ToggleGroupItem } from "../core/toggle-group";
 import {
   type TimelineItem,
   type CollectionId,
-  type TimelineItemCommand,
   isCollectionItem,
 } from "./media-strip.types";
 import {
@@ -15,9 +14,9 @@ import {
   areEqual,
   type MediaStripItemAreEqualProps,
   DATA_VALUE_ATTR,
-  VALUE_ATTR,
   DATA_REORDER_HANDLE_ATTR,
   isElementFullyVisibleInScrollArea,
+  KEYBOARD_REORDER_INSTRUCTIONS,
 } from "./media-strip.utils";
 import { encodeDndTarget } from "./media-strip.dnd";
 import { wouldCreateCollectionCycle } from "./media-strip.validation";
@@ -36,14 +35,13 @@ export const MediaStripItemButton = memo(
     style,
     thumbnailVariant,
     collectionId,
-    onMoveItem,
-    items,
+    index,
     isKeyboardReordering = false,
   }: MediaStripItemButtonProps) {
     const durationLabel = formatDuration(item.durationSeconds);
     const ariaLabel = `${item.name}, ${durationLabel} (Selectable item)`;
     const handleAriaLabel = isKeyboardReordering
-      ? "Reorder mode active. Use Arrow Left/Right to reorder, Arrow Up/Down to move between collections, Home/End to skip to edges, N to nest into adjacent collection, Escape or Space to exit."
+      ? `Reorder mode active. ${KEYBOARD_REORDER_INSTRUCTIONS}`
       : "Reorder handle";
 
     const handleRef = useRef<HTMLButtonElement>(null);
@@ -52,7 +50,7 @@ export const MediaStripItemButton = memo(
 
     const handleKeyDown = useReorderKeyboard({
       item,
-      items,
+      index,
       collectionId,
       isKeyboardReordering,
     });

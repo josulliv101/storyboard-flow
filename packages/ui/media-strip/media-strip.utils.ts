@@ -18,6 +18,19 @@ export const MIN_ITEM_WIDTH_PX = 96;
 export const THUMBNAIL_HEIGHT_PX = 96;
 
 /**
+ * Nesting hotspot boundary offset scale factors.
+ * An item dropped within [20%, 80%] of a nested collection's card bounding box triggers nesting.
+ */
+export const NEST_HOTSPOT_MIN_OFFSET = 0.2;
+export const NEST_HOTSPOT_MAX_OFFSET = 0.8;
+
+/**
+ * Default width in pixels for the drag overlay representation of a media item
+ * if its real dimensions cannot be resolved from the DOM.
+ */
+export const DEFAULT_DRAG_OVERLAY_WIDTH_PX = 160;
+
+/**
  * Distance thresholds in pixels to activate dragging gestures.
  * - scroll: drag distance required to initiate drag scrolling on the scroll area.
  * - board: drag distance required to initiate dnd-kit item reordering.
@@ -102,7 +115,7 @@ export type MediaStripItemAreEqualProps = {
   item: TimelineItem;
   style?: CSSProperties;
   thumbnailVariant?: "single" | "sequence";
-  items: readonly TimelineItem[];
+  index: number;
   isKeyboardReordering?: boolean;
   collectionId?: CollectionId;
   onMoveItem?: (command: TimelineItemCommand) => void;
@@ -137,7 +150,7 @@ export function areEqual(
   const keys: Exclude<keyof MediaStripItemAreEqualProps, "style">[] = [
     "item",
     "thumbnailVariant",
-    "items",
+    "index",
     "isKeyboardReordering",
     "collectionId",
     "onMoveItem",
@@ -145,4 +158,11 @@ export function areEqual(
 
   return keys.every((key) => prevProps[key] === nextProps[key]);
 }
+
+/**
+ * Unified instructions for keyboard reordering mode.
+ * shared by the handle's aria-label and the screen-reader announcements to prevent copy drift.
+ */
+export const KEYBOARD_REORDER_INSTRUCTIONS =
+  "Use ArrowLeft/Right to reorder, ArrowUp/Down to move between collections, Home/End to skip to edges, N to nest, Enter or Space to drop, Escape to cancel.";
 

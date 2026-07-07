@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo, useContext } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from "react";
 
 import type { TimelineItem, MediaTimelineItem } from "./media-strip.types";
 import { isMediaItem } from "./media-strip.types";

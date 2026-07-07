@@ -1,10 +1,10 @@
 import {
   type CollectionId,
   type TimelineCollection,
-  type TimelineItemId,
   type TimelineItemCommand,
   isCollectionItem,
 } from "./media-strip.types";
+import { wouldCreateCollectionCycle } from "./media-strip.validation";
 
 /**
  * Synchronizes the derived count of nested items in a collection to prevent timing/count drift.
@@ -58,13 +58,32 @@ export function applyTimelineItemCommand({
     const toCol = collectionsById.get(toCollectionId);
     if (!toCol) return collectionsById;
 
+    if (fromCollectionId !== toCollectionId) {
+      const item = fromCol.items.find((i) => i.id === itemId);
+      if (item && isCollectionItem(item)) {
+        if (
+          wouldCreateCollectionCycle({
+            movingCollectionId: item.collectionId,
+            targetCollectionId: toCollectionId,
+            collectionsById,
+          })
+        ) {
+          return collectionsById;
+        }
+      }
+    }
+
     const nextCollections = new Map(collectionsById);
 
     if (fromCollectionId === toCollectionId) {
       const items = [...fromCol.items];
       const actualFromIndex = items.findIndex((i) => i.id === itemId);
       if (actualFromIndex === -1) return collectionsById;
+      if (actualFromIndex === toIndex) return collectionsById;
+
       const [removed] = items.splice(actualFromIndex, 1);
+      // Clamp targetIdx to [0, items.length] (since one item was removed, items.length is originalLength - 1).
+      // Placing the item at targetIdx places it at the exact requested toIndex, shifting intermediate items.
       const targetIdx = Math.max(0, Math.min(toIndex, items.length));
       items.splice(targetIdx, 0, removed);
 

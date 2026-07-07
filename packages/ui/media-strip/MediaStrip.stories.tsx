@@ -201,7 +201,7 @@ const manyItems = Array.from({ length: 3 }, () => items)
     });
   });
 
-function StatefulMediaStrip(props: MediaStripProps) {
+function StatefulMediaStrip(props: MediaStripProps & { items?: readonly TimelineItem[] }) {
   const [items, setItems] = useState<readonly TimelineItem[]>(() => props.items || []);
   const [selectedIds, setSelectedIds] = useState<readonly TimelineItemId[]>(() => props.selectedIds || []);
 
@@ -257,9 +257,7 @@ function StatefulMediaStrip(props: MediaStripProps) {
       <MediaStrip
         {...props}
         collectionId={collectionId}
-        items={items}
         selectedIds={selectedIds}
-        onMoveItem={handleMoveItem}
         onSelectionChange={handleSelectionChange}
       />
     </MediaStripBoard>
@@ -836,26 +834,20 @@ const ReorderDemo = () => {
         <MediaStrip
           collectionId={"strip-a" as CollectionId}
           heading="Media Strip A (Red/Pink)"
-          items={stripA}
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
-          onMoveItem={handleMoveItem}
         />
         <MediaStrip
           collectionId={"strip-b" as CollectionId}
           heading="Media Strip B (Blue/Cyan)"
-          items={stripB}
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
-          onMoveItem={handleMoveItem}
         />
         <MediaStrip
           collectionId={"strip-c" as CollectionId}
           heading="Media Strip C (Green/Emerald with Lots of Items)"
-          items={stripC}
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
-          onMoveItem={handleMoveItem}
         />
       </div>
     </MediaStripBoard>
@@ -1279,8 +1271,8 @@ export const PointerDragIntoEmptyStrip: Story = {
         onMoveItem={handleMoveItem}
       >
         <div className="flex flex-col gap-8 p-4">
-          <MediaStrip collectionId={"strip-a" as CollectionId} heading="Strip A" items={stripA} selectedIds={[]} onSelectionChange={() => { }} />
-          <MediaStrip collectionId={"strip-b" as CollectionId} heading="Strip B" items={stripB} selectedIds={[]} onSelectionChange={() => { }} />
+          <MediaStrip collectionId={"strip-a" as CollectionId} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
+          <MediaStrip collectionId={"strip-b" as CollectionId} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
         </div>
       </MediaStripBoard>
     );
@@ -1437,7 +1429,6 @@ export const CollectionItems: Story = {
         <MediaStrip
           collectionId={"strip-1" as CollectionId}
           heading="Strips containing Collections"
-          items={items}
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
         />
@@ -1488,7 +1479,7 @@ export const VideoWithoutPoster: Story = {
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Video without Poster" items={items} selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Video without Poster" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -1535,7 +1526,7 @@ export const MixedBrokenPosterSequence: Story = {
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Mixed Poster Sequence" items={items} selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Mixed Poster Sequence" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -1573,7 +1564,7 @@ export const VeryNarrowContainer: Story = {
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Very Narrow" items={items} selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Very Narrow" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -1605,7 +1596,7 @@ export const VeryWideContainer: Story = {
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Very Wide" items={items} selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Very Wide" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -1638,7 +1629,7 @@ export const LongNamesAndWeirdCharacters: Story = {
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Long Names & Characters" items={items} selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Long Names & Characters" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -1676,7 +1667,7 @@ export const FractionalDurations: Story = {
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Fractional Durations" items={items} selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Fractional Durations" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -1717,7 +1708,7 @@ export const ThousandsOfItemsVirtualized: Story = {
 
     return (
       <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="1,000 Virtualized Items" items={items} selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="1,000 Virtualized Items" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -1822,8 +1813,8 @@ export const MultipleBoardsOnPage: Story = {
           <h3 className="text-sm font-bold mb-2">Board 1</h3>
           <MediaStripBoard collectionsById={collections1} visibleCollectionIds={visible1} onMoveItem={handleMove1}>
             <div className="flex flex-col gap-4">
-              <MediaStrip collectionId={"strip-1a" as CollectionId} heading="Strip 1A" items={board1A} selectedIds={[]} onSelectionChange={() => { }} />
-              <MediaStrip collectionId={"strip-1b" as CollectionId} heading="Strip 1B" items={board1B} selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={"strip-1a" as CollectionId} heading="Strip 1A" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={"strip-1b" as CollectionId} heading="Strip 1B" selectedIds={[]} onSelectionChange={() => { }} />
             </div>
           </MediaStripBoard>
         </div>
@@ -1831,8 +1822,8 @@ export const MultipleBoardsOnPage: Story = {
           <h3 className="text-sm font-bold mb-2">Board 2</h3>
           <MediaStripBoard collectionsById={collections2} visibleCollectionIds={visible2} onMoveItem={handleMove2}>
             <div className="flex flex-col gap-4">
-              <MediaStrip collectionId={"strip-2a" as CollectionId} heading="Strip 2A" items={board2A} selectedIds={[]} onSelectionChange={() => { }} />
-              <MediaStrip collectionId={"strip-2b" as CollectionId} heading="Strip 2B" items={board2B} selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={"strip-2a" as CollectionId} heading="Strip 2A" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={"strip-2b" as CollectionId} heading="Strip 2B" selectedIds={[]} onSelectionChange={() => { }} />
             </div>
           </MediaStripBoard>
         </div>
@@ -1982,7 +1973,7 @@ export const ReorderWhileScrolled: Story = {
         visibleCollectionIds={visibleCollectionIds}
         onMoveItem={handleMoveItem}
       >
-        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Long Strip for Scrolling" items={items} selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Long Strip for Scrolling" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -2113,26 +2104,20 @@ function StatefulNestedCollectionsBoard() {
         <MediaStrip
           collectionId={"col-a" as CollectionId}
           heading="Root Collection (Strip)"
-          items={collections.get("col-a" as CollectionId)?.items ?? []}
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
-          onMoveItem={handleMoveOrDrop}
         />
         <MediaStrip
           collectionId={"col-b" as CollectionId}
           heading="Holiday Folder Contents"
-          items={collections.get("col-b" as CollectionId)?.items ?? []}
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
-          onMoveItem={handleMoveOrDrop}
         />
         <MediaStrip
           collectionId={"col-c" as CollectionId}
           heading="Empty Folder Contents"
-          items={collections.get("col-c" as CollectionId)?.items ?? []}
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
-          onMoveItem={handleMoveOrDrop}
         />
       </div>
     </MediaStripBoard>

@@ -1,12 +1,21 @@
-import { type UniqueIdentifier, type Collision, closestCenter } from "@dnd-kit/core";
+import {
+  type UniqueIdentifier,
+  type Collision,
+  closestCenter,
+  type Active,
+  type ClientRect,
+  type DroppableContainer,
+} from "@dnd-kit/core";
 import {
   type CollectionId,
   type TimelineCollection,
   type TimelineItemId,
   type TimelineItem,
   type DndTarget,
-  type TimelineItemCommand,
+  parseTimelineItemId,
+  parseCollectionId,
 } from "./media-strip.types";
+import { NEST_HOTSPOT_MIN_OFFSET, NEST_HOTSPOT_MAX_OFFSET } from "./media-strip.utils";
 
 /**
  * Encodes DndTarget options into a unique string ID suitable for DnD context tracking.
@@ -31,11 +40,14 @@ export function decodeDndTarget(id: string): DndTarget | null {
   const value = parts.slice(1).join(":");
 
   if (prefix === "item") {
-    return { type: "item", itemId: value as TimelineItemId };
+    const parsed = parseTimelineItemId(value);
+    return parsed.ok ? { type: "item", itemId: parsed.value } : null;
   } else if (prefix === "container") {
-    return { type: "collection-container", collectionId: value as CollectionId };
+    const parsed = parseCollectionId(value);
+    return parsed.ok ? { type: "collection-container", collectionId: parsed.value } : null;
   } else if (prefix === "nest") {
-    return { type: "collection-nest-target", collectionId: value as CollectionId };
+    const parsed = parseCollectionId(value);
+    return parsed.ok ? { type: "collection-nest-target", collectionId: parsed.value } : null;
   }
   return null;
 }
@@ -93,11 +105,11 @@ export function resolveDropIntent({
 }
 
 export type DetectCollisionProps = {
-  active: { id: UniqueIdentifier; rect: { current: any } };
-  collisionRect: any;
-  droppableRects: any;
+  active: Active;
+  collisionRect: ClientRect;
+  droppableRects: Map<UniqueIdentifier, ClientRect>;
   pointerCoordinates: { x: number; y: number } | null;
-  droppableContainers: any[];
+  droppableContainers: DroppableContainer[];
   itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
 };
 
@@ -125,7 +137,7 @@ export function detectCollision({
   );
 
   let intersections = closestCenter({
-    active: active as any,
+    active,
     collisionRect,
     droppableRects,
     droppableContainers: itemContainers,
@@ -134,7 +146,7 @@ export function detectCollision({
 
   if (intersections.length === 0) {
     intersections = closestCenter({
-      active: active as any,
+      active,
       collisionRect,
       droppableRects,
       droppableContainers: containerBackgrounds,
@@ -154,10 +166,10 @@ export function detectCollision({
         if (rect) {
           const width = rect.width;
           const height = rect.height;
-          const hotspotLeft = rect.left + width * 0.2;
-          const hotspotRight = rect.left + width * 0.8;
-          const hotspotTop = rect.top + height * 0.2;
-          const hotspotBottom = rect.top + height * 0.8;
+          const hotspotLeft = rect.left + width * NEST_HOTSPOT_MIN_OFFSET;
+          const hotspotRight = rect.left + width * NEST_HOTSPOT_MAX_OFFSET;
+          const hotspotTop = rect.top + height * NEST_HOTSPOT_MIN_OFFSET;
+          const hotspotBottom = rect.top + height * NEST_HOTSPOT_MAX_OFFSET;
 
           const px = pointerCoordinates.x;
           const py = pointerCoordinates.y;

@@ -36,9 +36,8 @@ import { MediaStripItemButton } from "./media-strip-item";
 import { getItemWidth, TOGGLE_GROUP_PADDING_PX } from "./media-strip.utils";
 import { encodeDndTarget } from "./media-strip.dnd";
 import {
-  useMediaStripBoardStableOptional,
-  useMediaStripBoardDragOptional,
-  MediaStripBoard,
+  useMediaStripBoardStable,
+  useMediaStripBoardDrag,
 } from "./media-strip-board";
 import { useScrollToAndFocus } from "./use-scroll-to-and-focus";
 import { useMediaStripKeyboardNav } from "./use-media-strip-keyboard-nav";
@@ -46,7 +45,6 @@ import {
   type TimelineItem,
   type TimelineItemId,
   type CollectionId,
-  type TimelineItemCommand,
 } from "./media-strip.types";
 
 export type MediaStripSelection = {
@@ -59,31 +57,27 @@ export type MediaStripProps = Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   emptyLabel?: string;
   heading?: string;
   collectionId?: CollectionId;
-  items: readonly TimelineItem[];
   onAction?: () => void;
   onSelectionChange: (selection: MediaStripSelection) => void;
   pxPerSecond?: number;
   itemGap?: number;
   selectedIds: readonly TimelineItemId[];
   thumbnailVariant?: "single" | "sequence";
-  onMoveItem?: (command: TimelineItemCommand) => void;
 };
 
-export const MediaStripInner = memo(
-  function MediaStripInner({
+export const MediaStrip = memo(
+  function MediaStrip({
     actionLabel = "Add media",
     className,
     emptyLabel = "No media items yet.",
     heading = "Media strip",
     collectionId,
-    items,
     onAction,
     onSelectionChange,
     pxPerSecond = 32,
     itemGap = 12,
     selectedIds,
     thumbnailVariant = "sequence",
-    onMoveItem,
     ...props
   }: MediaStripProps) {
     const headingId = useId();
@@ -96,11 +90,14 @@ export const MediaStripInner = memo(
     const activeCollectionId = collectionId ?? defaultCollectionId;
 
     // Integrate with the shared board Dnd Context
-    const stable = useMediaStripBoardStableOptional();
-    const drag = useMediaStripBoardDragOptional();
-    const activeKeyboardReorderId = drag?.activeKeyboardReorderId ?? null;
-    const registerCollection = stable?.registerCollection;
-    const unregisterCollection = stable?.unregisterCollection;
+    const stable = useMediaStripBoardStable();
+    const drag = useMediaStripBoardDrag();
+    const activeKeyboardReorderId = drag.activeKeyboardReorderId;
+    const registerCollection = stable.registerCollection;
+    const unregisterCollection = stable.unregisterCollection;
+
+    const col = stable.collectionsById.get(activeCollectionId);
+    const resolvedItems: readonly TimelineItem[] = col ? col.items : [];
 
     // Register this collection ID within the board-scoped registry
     useEffect(() => {
@@ -128,9 +125,9 @@ export const MediaStripInner = memo(
 
     const itemById = useMemo(() => {
       return new Map<TimelineItemId, TimelineItem>(
-        items.map((item) => [item.id, item])
+        resolvedItems.map((item) => [item.id, item])
       );
-    }, [items]);
+    }, [resolvedItems]);
 
     const visibleSelectedIds = useMemo(() => {
       return selectedIds.filter((id) => itemById.has(id));
@@ -154,15 +151,15 @@ export const MediaStripInner = memo(
 
     // Memoize item widths to avoid double-computation in estimateSize and the render loop
     const itemWidths = useMemo(() => {
-      return items.map((item) => getItemWidth(item, pxPerSecond));
-    }, [items, pxPerSecond]);
+      return resolvedItems.map((item) => getItemWidth(item, pxPerSecond));
+    }, [resolvedItems, pxPerSecond]);
 
     const rowVirtualizer = useVirtualizer({
-      count: items.length,
+      count: resolvedItems.length,
       getScrollElement: () => viewportRef.current,
       getItemKey: useCallback(
-        (index: number) => String(items[index]?.id ?? index),
-        [items]
+        (index: number) => String(resolvedItems[index]?.id ?? index),
+        [resolvedItems]
       ),
       estimateSize: useCallback(
         (index: number) => {
@@ -179,8 +176,8 @@ export const MediaStripInner = memo(
     // Monitor the index of the active keyboard reorder item within this strip's items.
     const keyboardReorderIndex = useMemo(() => {
       if (!activeKeyboardReorderId) return -1;
-      return items.findIndex((item) => item.id === activeKeyboardReorderId);
-    }, [items, activeKeyboardReorderId]);
+      return resolvedItems.findIndex((item) => item.id === activeKeyboardReorderId);
+    }, [resolvedItems, activeKeyboardReorderId]);
 
     useEffect(() => {
       if (keyboardReorderIndex === -1 || !activeKeyboardReorderId) return;
@@ -189,15 +186,15 @@ export const MediaStripInner = memo(
 
     // Handle capture-phase keyboard arrow navigation across the items grid
     const handleKeyDownCapture = useMediaStripKeyboardNav(
-      items,
+      resolvedItems,
       viewportRef,
       scrollToAndFocus
     );
 
     // Memoize sortable items list using the encoded DnD targets format
     const sortableItemIds = useMemo(() => {
-      return items.map((item) => encodeDndTarget({ type: "item", itemId: item.id }));
-    }, [items]);
+      return resolvedItems.map((item) => encodeDndTarget({ type: "item", itemId: item.id }));
+    }, [resolvedItems]);
 
     return (
       <Card
@@ -227,7 +224,7 @@ export const MediaStripInner = memo(
         </CardHeader>
 
         <CardContent className="min-w-0">
-          {items.length === 0 ? (
+          {resolvedItems.length === 0 ? (
             <div
               ref={setDroppableRef}
               className={cn(
@@ -263,7 +260,7 @@ export const MediaStripInner = memo(
                 >
                   <LayoutGroup id={activeCollectionId}>
                     {rowVirtualizer.getVirtualItems().map((virtualItem) => {
-                      const item = items[virtualItem.index];
+                      const item = resolvedItems[virtualItem.index];
                       const baseWidth = itemWidths[virtualItem.index];
                       const isKeyboardReordering = activeKeyboardReorderId === item.id;
                       return (
@@ -272,8 +269,7 @@ export const MediaStripInner = memo(
                           item={item}
                           thumbnailVariant={thumbnailVariant}
                           collectionId={activeCollectionId}
-                          onMoveItem={onMoveItem}
-                          items={items}
+                          index={virtualItem.index}
                           isKeyboardReordering={isKeyboardReordering}
                           style={{
                             position: "absolute",
@@ -296,24 +292,7 @@ export const MediaStripInner = memo(
   }
 );
 
-export const MediaStrip = memo(
-  function MediaStrip(props: MediaStripProps) {
-    const isInsideBoard = useMediaStripBoardStableOptional() !== null;
-
-    if (isInsideBoard) {
-      return <MediaStripInner {...props} />;
-    }
-
-    return (
-      <MediaStripBoard onMoveItem={props.onMoveItem}>
-        <MediaStripInner {...props} />
-      </MediaStripBoard>
-    );
-  }
-);
-
 MediaStrip.displayName = "MediaStrip";
-MediaStripInner.displayName = "MediaStripInner";
 
 function MediaStripEmptyState({ emptyLabel }: { emptyLabel: string }) {
   return (

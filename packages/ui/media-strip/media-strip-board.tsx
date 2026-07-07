@@ -6,10 +6,8 @@ import {
   useSensors,
   useSensor,
   PointerSensor,
-  closestCenter,
   DragOverlay,
   type CollisionDetection,
-  type UniqueIdentifier,
   type DragStartEvent,
   type DragOverEvent,
   type DragEndEvent,
@@ -29,9 +27,9 @@ import {
   DRAG_ACTIVATION_THRESHOLDS_PX,
   DATA_VALUE_ATTR,
   VALUE_ATTR,
+  DEFAULT_DRAG_OVERLAY_WIDTH_PX,
 } from "./media-strip.utils";
 import {
-  encodeDndTarget,
   decodeDndTarget,
   resolveDropIntent,
   detectCollision,
@@ -87,17 +85,26 @@ export function useMediaStripBoardStableOptional() {
   return useContext(MediaStripBoardStableContext);
 }
 
-export function useMediaStripBoardDragOptional() {
-  return useContext(MediaStripBoardDragContext);
-}
-
-export function useMediaStripBoard() {
-  const stable = useContext(MediaStripBoardStableContext);
-  const drag = useContext(MediaStripBoardDragContext);
-  if (!stable || !drag) {
-    throw new Error("useMediaStripBoard must be used within a MediaStripBoard provider");
+function isAncestorCollection(
+  possibleAncestor: CollectionId,
+  child: CollectionId,
+  itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>
+): boolean {
+  let currentId: CollectionId | undefined = child;
+  while (currentId) {
+    let parentColId: CollectionId | undefined = undefined;
+    for (const [_, entry] of itemLookup.entries()) {
+      if (entry.item.kind === "collection" && entry.item.collectionId === currentId) {
+        parentColId = entry.collectionId;
+        break;
+      }
+    }
+    if (parentColId === possibleAncestor) {
+      return true;
+    }
+    currentId = parentColId;
   }
-  return useMemo(() => ({ ...stable, ...drag }), [stable, drag]);
+  return false;
 }
 
 export function MediaStripBoard({
@@ -115,6 +122,7 @@ export function MediaStripBoard({
   const containerRef = useRef<HTMLDivElement>(null);
 
   const activeNestTargetRef = useRef<CollectionId | null>(null);
+  const activeOverCollectionIdRef = useRef<CollectionId | null>(null);
 
   // 1. Board Registry
   const { registeredCollections, registerCollection, unregisterCollection } = useBoardRegistry();
@@ -128,7 +136,6 @@ export function MediaStripBoard({
     startDrag,
     moveDrag,
     endDrag,
-    setDragWidth,
   } = useBoardDragState();
 
   const collectionsByIdResolved = useMemo(
@@ -268,7 +275,7 @@ export function MediaStripBoard({
     if (!decoded || decoded.type !== "item") return;
     const itemId = decoded.itemId;
 
-    let dragWidth = 160;
+    let dragWidth = DEFAULT_DRAG_OVERLAY_WIDTH_PX;
     const escapedId = CSS.escape(String(itemId));
     const activeEl = containerRef.current?.querySelector(
       `[${DATA_VALUE_ATTR}="${escapedId}"], [${VALUE_ATTR}="${escapedId}"]`
@@ -279,6 +286,7 @@ export function MediaStripBoard({
 
     const found = itemLookup.get(itemId);
     if (found) {
+      activeOverCollectionIdRef.current = found.collectionId;
       startDrag(itemId, found.collectionId, dragWidth);
       announce(`Picked up item "${found.item.name}".`);
     }
@@ -290,7 +298,25 @@ export function MediaStripBoard({
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     moveDrag(activeNestTargetRef.current);
-  }, [moveDrag]);
+    const { over } = event;
+    if (over) {
+      const decoded = decodeDndTarget(String(over.id));
+      if (decoded) {
+        if (decoded.type === "collection-container") {
+          activeOverCollectionIdRef.current = decoded.collectionId;
+        } else if (decoded.type === "item") {
+          const found = itemLookup.get(decoded.itemId);
+          if (found) {
+            activeOverCollectionIdRef.current = found.collectionId;
+          }
+        } else if (decoded.type === "collection-nest-target") {
+          activeOverCollectionIdRef.current = decoded.collectionId;
+        }
+      }
+    } else {
+      activeOverCollectionIdRef.current = null;
+    }
+  }, [moveDrag, itemLookup]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { over, active } = event;
@@ -298,6 +324,7 @@ export function MediaStripBoard({
     const nestTargetId = activeNestTargetRef.current;
 
     activeNestTargetRef.current = null;
+    activeOverCollectionIdRef.current = null;
 
     if (!itemId) return;
 
@@ -375,6 +402,12 @@ export function MediaStripBoard({
     endDrag,
   ]);
 
+  const handleDragCancel = useCallback(() => {
+    activeNestTargetRef.current = null;
+    activeOverCollectionIdRef.current = null;
+    endDrag();
+    announce("Cancelled drag.");
+  }, [endDrag, announce]);
   const stableContextValue = useMemo(
     () => ({
       collectionsById: collectionsByIdResolved,
@@ -432,13 +465,23 @@ export function MediaStripBoard({
             onDragMove={handleDragMove}
             onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
             autoScroll={{
               canScroll: (element) => {
                 if (!activeDragSourceCollectionId) return true;
                 const colEl = element.closest("[data-collection-id]");
                 if (!colEl) return true;
-                const colId = colEl.getAttribute("data-collection-id");
-                return colId === activeDragSourceCollectionId;
+                const colId = colEl.getAttribute("data-collection-id") as CollectionId;
+
+                // 1. Always scroll the active drag source container
+                if (colId === activeDragSourceCollectionId) return true;
+
+                // 2. Scroll the currently hovered container, unless it is an ancestor of the source container
+                if (colId === activeOverCollectionIdRef.current) {
+                  return !isAncestorCollection(colId, activeDragSourceCollectionId, itemLookup);
+                }
+
+                return false;
               }
             }}
           >

@@ -5,10 +5,11 @@ import {
   type KeyboardReorderAction,
 } from "./media-strip.types";
 import { useMediaStripBoardStable } from "./media-strip-board";
+import { KEYBOARD_REORDER_INSTRUCTIONS } from "./media-strip.utils";
 
 type UseReorderKeyboardProps = {
   item: TimelineItem;
-  items: readonly TimelineItem[];
+  index: number;
   collectionId: CollectionId;
   isKeyboardReordering: boolean;
 };
@@ -19,7 +20,7 @@ type UseReorderKeyboardProps = {
  */
 export function useReorderKeyboard({
   item,
-  items,
+  index,
   collectionId,
   isKeyboardReordering,
 }: UseReorderKeyboardProps) {
@@ -30,9 +31,6 @@ export function useReorderKeyboard({
   } = useMediaStripBoardStable();
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    const index = items.findIndex((i) => i.id === item.id);
-    if (index === -1) return;
-
     // Swallowed keys list. We block arrows, Home, End, Escape, Nest keys, and confirm keys (Enter & Space)
     // unconditionally so that arrow-key presses on the reorder handle do not trigger the ToggleGroup's
     // roving focus navigation, and Enter/Space trigger reorder pick-up rather than default button actions.
@@ -72,7 +70,7 @@ export function useReorderKeyboard({
       if (event.key === "Enter" || event.key === " ") {
         startKeyboardReorder(item.id, collectionId, index);
         announce(
-          `Picked up "${item.name}" via keyboard. Use ArrowLeft/Right to reorder, ArrowUp/Down to move between collections, Home/End to skip to edges, N to nest into adjacent collection, Enter or Space to drop, Escape to cancel.`
+          `Picked up "${item.name}" via keyboard. ${KEYBOARD_REORDER_INSTRUCTIONS}`
         );
       }
     }

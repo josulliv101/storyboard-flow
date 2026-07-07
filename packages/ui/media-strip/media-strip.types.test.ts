@@ -28,9 +28,9 @@ import {
   updateCollectionTimelineItem,
   updateVideoTimelineItem,
   validateTimelineCollection,
-  validateProjectTimeline,
   wouldCreateCollectionCycle,
 } from "./media-strip.validation";
+import { validateProjectTimeline } from "./media-strip.project-validation";
 
 import {
   getTimelineItemEndTimeSeconds,
@@ -338,7 +338,7 @@ describe("Collection Timing and Integrity Validation", () => {
         ...baseCollection,
         collectionId: "" as CollectionId,
       })
-    ).toEqual({ valid: false, reason: "empty-collection-id" });
+    ).toEqual({ valid: false, reason: "empty-id" });
   });
 
   test("fails for invalid item counts", () => {
@@ -595,12 +595,12 @@ describe("MediaStrip getItemWidth helper", () => {
 describe("MediaStripItemButton areEqual custom comparator", () => {
   const itemA = { id: "item-a" as TimelineItemId, name: "Item A" } as any;
   const itemB = { id: "item-b" as TimelineItemId, name: "Item B" } as any;
-  const items = [itemA, itemB];
+  const index = 0;
 
   test("returns true for identical items and matching styles", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -611,7 +611,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -626,7 +626,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if items change", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -637,7 +637,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemB,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -652,7 +652,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style width changes", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -663,7 +663,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "120px",
@@ -678,7 +678,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style left changes", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -689,7 +689,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -704,7 +704,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style top changes", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -715,7 +715,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -730,7 +730,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style height changes", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -741,7 +741,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -756,7 +756,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if isKeyboardReordering changes", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -767,7 +767,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: true,
       style: {
         width: "100px",
@@ -782,12 +782,12 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("handles missing or undefined style objects safely", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
     } as any;
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -1020,11 +1020,10 @@ describe("getItemWidth defensive behavior and formatDuration edge cases", () => 
 
 describe("areEqual additional comparator tests", () => {
   const itemA = { id: "item-a" as TimelineItemId, name: "Item A" } as any;
-  const items = [itemA];
 
   const baseProps = {
     item: itemA,
-    items,
+    index: 0,
     isKeyboardReordering: false,
     thumbnailVariant: "sequence" as const,
     collectionId: "strip-1" as CollectionId,
@@ -1055,9 +1054,9 @@ describe("areEqual additional comparator tests", () => {
     expect(areEqual(prev, next)).toBe(false);
   });
 
-  test("returns false when items reference changes but contents are identical", () => {
-    const prev = { ...baseProps, items: [itemA] };
-    const next = { ...baseProps, items: [itemA] };
+  test("returns false when index changes", () => {
+    const prev = { ...baseProps, index: 0 };
+    const next = { ...baseProps, index: 1 };
     expect(areEqual(prev, next)).toBe(false);
   });
 });
@@ -1329,7 +1328,7 @@ describe("Pure Collision Detection Helper", () => {
             bottom: 100,
           },
         },
-      },
+      } as any,
       collisionRect: {
         width: 100,
         height: 100,
@@ -1337,7 +1336,7 @@ describe("Pure Collision Detection Helper", () => {
         top: 0,
         right: 100,
         bottom: 100,
-      },
+      } as any,
       droppableRects: new Map([
         [
           "item:item-col-b",
@@ -1350,9 +1349,9 @@ describe("Pure Collision Detection Helper", () => {
             bottom: 200,
           },
         ],
-      ]),
+      ]) as any,
       pointerCoordinates: pointerInHotspot,
-      droppableContainers,
+      droppableContainers: droppableContainers as any,
       itemLookup,
     });
 
@@ -1407,7 +1406,7 @@ describe("Pure Collision Detection Helper", () => {
             bottom: 100,
           },
         },
-      },
+      } as any,
       collisionRect: {
         width: 100,
         height: 100,
@@ -1415,7 +1414,7 @@ describe("Pure Collision Detection Helper", () => {
         top: 0,
         right: 100,
         bottom: 100,
-      },
+      } as any,
       droppableRects: new Map([
         [
           "item:item-col-b",
@@ -1428,9 +1427,9 @@ describe("Pure Collision Detection Helper", () => {
             bottom: 200,
           },
         ],
-      ]),
+      ]) as any,
       pointerCoordinates: pointerNearEdge,
-      droppableContainers,
+      droppableContainers: droppableContainers as any,
       itemLookup,
     });
 

@@ -6,19 +6,22 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { DRAG_ACTIVATION_THRESHOLDS_PX } from "./media-strip.utils";
+import { usePointerDragInertia } from "./use-pointer-drag-inertia";
 
 const SCROLL_CLICK_SUPPRESSION_MS = 180;
 const DRAG_CLICK_THRESHOLD_PX = DRAG_ACTIVATION_THRESHOLDS_PX.scroll;
 
 const INERTIA_TUNING = {
   FRAME_MS_60FPS: 16.67,
-  VELOCITY_DECAY: 0.95,
-  MIN_VELOCITY_THRESHOLD: 0.1,
   EMA_INSTANTANEOUS_WEIGHT: 0.7,
   EMA_PREVIOUS_WEIGHT: 0.3,
   MIN_VELOCITY_TO_START_INERTIA: 1,
 };
 
+/**
+ * Custom hook to enable inertia scroll dragging on custom scroller components.
+ * delegates actual animation rendering and velocity decay to usePointerDragInertia.
+ */
 export function useHorizontalDragScroll(
   viewportRef: React.RefObject<HTMLDivElement | null>,
   viewportContentRef: React.RefObject<HTMLDivElement | null>
@@ -26,8 +29,7 @@ export function useHorizontalDragScroll(
   const maxScrollLeftRef = useRef(0);
   const suppressClickUntilRef = useRef(0);
 
-  // Inertia animation frame ref
-  const inertiaFrameRef = useRef<number | null>(null);
+  const { startInertia, stopInertia } = usePointerDragInertia();
 
   // State is used to feed any scroll layouts if needed
   const [maxScrollLeft, setMaxScrollLeft] = useState(0);
@@ -96,52 +98,6 @@ export function useHorizontalDragScroll(
       resizeObserver.disconnect();
     };
   }, [getViewport, updateScrollBounds]);
-
-  const stopInertia = useCallback(() => {
-    if (inertiaFrameRef.current !== null) {
-      cancelAnimationFrame(inertiaFrameRef.current);
-      inertiaFrameRef.current = null;
-    }
-  }, []);
-
-  const runInertia = useCallback(() => {
-    const element = getViewport();
-    if (!element) return;
-
-    let lastFrameTime = performance.now();
-
-    const step = (now: number) => {
-      const state = dragStateRef.current;
-      const dt = (now - lastFrameTime) / INERTIA_TUNING.FRAME_MS_60FPS; // frames-equivalent elapsed
-      lastFrameTime = now;
-
-      // Decay factor, adjusted for time elapsed
-      state.velocity *= Math.pow(INERTIA_TUNING.VELOCITY_DECAY, dt);
-
-      if (Math.abs(state.velocity) < INERTIA_TUNING.MIN_VELOCITY_THRESHOLD) {
-        inertiaFrameRef.current = null;
-        return;
-      }
-
-      const maxScroll = maxScrollLeftRef.current;
-      const nextScrollLeft = Math.max(
-        0,
-        Math.min(element.scrollLeft + state.velocity, maxScroll)
-      );
-
-      element.scrollLeft = nextScrollLeft;
-
-      if (nextScrollLeft === 0 || nextScrollLeft === maxScroll) {
-        state.velocity = 0;
-        inertiaFrameRef.current = null;
-        return;
-      }
-
-      inertiaFrameRef.current = requestAnimationFrame(step);
-    };
-
-    inertiaFrameRef.current = requestAnimationFrame(step);
-  }, [getViewport]);
 
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -263,7 +219,7 @@ export function useHorizontalDragScroll(
 
         // Run inertia
         if (state.didDrag && Math.abs(state.velocity) > INERTIA_TUNING.MIN_VELOCITY_TO_START_INERTIA) {
-          runInertia();
+          startInertia(state.velocity, viewport, maxScrollLeftRef.current);
         }
 
         state.pointerId = -1;
@@ -297,7 +253,7 @@ export function useHorizontalDragScroll(
       window.addEventListener("pointerup", onPointerUp);
       window.addEventListener("pointercancel", onPointerCancel);
     },
-    [getViewport, updateScrollBounds, stopInertia, runInertia]
+    [getViewport, updateScrollBounds, stopInertia, startInertia]
   );
 
   const handleClickCapture = useCallback((event: React.MouseEvent) => {
@@ -315,11 +271,9 @@ export function useHorizontalDragScroll(
       if (listeners.up) window.removeEventListener("pointerup", listeners.up);
       if (listeners.cancel) window.removeEventListener("pointercancel", listeners.cancel);
 
-      if (inertiaFrameRef.current !== null) {
-        cancelAnimationFrame(inertiaFrameRef.current);
-      }
+      stopInertia();
     };
-  }, []);
+  }, [stopInertia]);
 
   return {
     maxScrollLeft,

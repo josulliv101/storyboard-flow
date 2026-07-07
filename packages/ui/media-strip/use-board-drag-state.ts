@@ -1,5 +1,6 @@
 import { useReducer, useCallback } from "react";
 import { type TimelineItemId, type CollectionId } from "./media-strip.types";
+import { DEFAULT_DRAG_OVERLAY_WIDTH_PX } from "./media-strip.utils";
 
 type DragState = {
   activeDragId: TimelineItemId | null;
@@ -35,7 +36,7 @@ function dragReducer(state: DragState, action: DragAction): DragState {
         activeDragId: null,
         activeDragSourceCollectionId: null,
         activeNestTargetId: null,
-        activeDragWidth: 160,
+        activeDragWidth: DEFAULT_DRAG_OVERLAY_WIDTH_PX,
       };
     case "SET_DRAG_WIDTH":
       return {
@@ -55,7 +56,7 @@ export function useBoardDragState() {
     activeDragId: null,
     activeDragSourceCollectionId: null,
     activeNestTargetId: null,
-    activeDragWidth: 160,
+    activeDragWidth: DEFAULT_DRAG_OVERLAY_WIDTH_PX,
   });
 
   const startDrag = useCallback((itemId: TimelineItemId, collectionId: CollectionId, width: number) => {
