@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
-  asTimelineItemId,
-  asCollectionId,
+  parseTimelineItemId,
+  parseCollectionId,
   isImageItem,
   isVideoItem,
   isMediaItem,
@@ -11,6 +11,8 @@ import {
   type CollectionTimelineItem,
   type TimelineItemId,
   type CollectionId,
+  type TimelineCollection,
+  type TimelineItem,
 } from "./media-strip.types";
 
 import {
@@ -25,7 +27,10 @@ import {
   updateImageTimelineItem,
   updateCollectionTimelineItem,
   updateVideoTimelineItem,
+  validateTimelineCollection,
+  wouldCreateCollectionCycle,
 } from "./media-strip.validation";
+import { validateProjectTimeline } from "./media-strip.project-validation";
 
 import {
   getTimelineItemEndTimeSeconds,
@@ -34,16 +39,26 @@ import {
   formatDuration,
   areEqual,
   MIN_ITEM_WIDTH_PX,
+  DRAG_ACTIVATION_THRESHOLDS_PX,
 } from "./media-strip.utils";
+import {
+  encodeDndTarget,
+  decodeDndTarget,
+  detectCollision,
+} from "./media-strip.dnd";
+import {
+  syncCollectionItemCounts,
+  applyTimelineItemCommand,
+} from "./media-strip.collection-ops";
 
 describe("Timeline Items Branding", () => {
   test("validates timeline item and collection IDs", () => {
-    const validItem = asTimelineItemId("item-1");
-    const validCol = asCollectionId("collection-1");
-    const invalidItem = asTimelineItemId("");
-    const invalidCol = asCollectionId("");
-    const whitespaceItem = asTimelineItemId("   ");
-    const whitespaceCol = asCollectionId("   ");
+    const validItem = parseTimelineItemId("item-1");
+    const validCol = parseCollectionId("collection-1");
+    const invalidItem = parseTimelineItemId("");
+    const invalidCol = parseCollectionId("");
+    const whitespaceItem = parseTimelineItemId("   ");
+    const whitespaceCol = parseCollectionId("   ");
 
     expect(validItem).toEqual({ ok: true, value: "item-1" as TimelineItemId });
     expect(validCol).toEqual({ ok: true, value: "collection-1" as CollectionId });
@@ -317,6 +332,15 @@ describe("Collection Timing and Integrity Validation", () => {
     ).toEqual({ valid: false, reason: "negative-start-time" });
   });
 
+  test("fails for empty collectionId", () => {
+    expect(
+      validateCollectionTimelineItem({
+        ...baseCollection,
+        collectionId: "" as CollectionId,
+      })
+    ).toEqual({ valid: false, reason: "empty-id" });
+  });
+
   test("fails for invalid item counts", () => {
     expect(
       validateCollectionTimelineItem({
@@ -571,12 +595,12 @@ describe("MediaStrip getItemWidth helper", () => {
 describe("MediaStripItemButton areEqual custom comparator", () => {
   const itemA = { id: "item-a" as TimelineItemId, name: "Item A" } as any;
   const itemB = { id: "item-b" as TimelineItemId, name: "Item B" } as any;
-  const items = [itemA, itemB];
+  const index = 0;
 
   test("returns true for identical items and matching styles", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -587,7 +611,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -602,7 +626,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if items change", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -613,7 +637,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemB,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -628,7 +652,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style width changes", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -639,7 +663,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "120px",
@@ -654,7 +678,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style left changes", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -665,7 +689,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -680,7 +704,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style top changes", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -691,7 +715,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -706,7 +730,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if style height changes", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -717,7 +741,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -732,7 +756,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("returns false if isKeyboardReordering changes", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -743,7 +767,7 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
     };
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: true,
       style: {
         width: "100px",
@@ -758,12 +782,12 @@ describe("MediaStripItemButton areEqual custom comparator", () => {
   test("handles missing or undefined style objects safely", () => {
     const prev = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
     } as any;
     const next = {
       item: itemA,
-      items,
+      index,
       isKeyboardReordering: false,
       style: {
         width: "100px",
@@ -835,5 +859,580 @@ describe("validateTimelineItem dynamic dispatcher", () => {
       valid: false,
       reason: "negative-item-count",
     });
+  });
+});
+
+describe("Drag and Scroll Activation Thresholds", () => {
+  test("asserts scroll threshold is strictly less than board threshold", () => {
+    // This pins the UX constraint: diagonal/small drags below 5px prioritize
+    // horizontal scroll area scrolling over board-level item reordering.
+    expect(DRAG_ACTIVATION_THRESHOLDS_PX.scroll).toBeLessThan(
+      DRAG_ACTIVATION_THRESHOLDS_PX.board
+    );
+  });
+});
+
+describe("Video Constructor Failure Ordering & Trim Validation", () => {
+  test("createVideoTimelineItem returns trim-exceeds-source when derived duration would be negative", () => {
+    const result = createVideoTimelineItem({
+      id: "vid-1",
+      name: "Vid",
+      src: "vid.mp4",
+      startTimeSeconds: 0,
+      sourceDurationSeconds: 10,
+      trimInSeconds: 8,
+      trimOutSeconds: 8,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("trim-exceeds-source");
+    }
+  });
+
+  test("updateVideoTimelineItem rejects invalid trim updates", () => {
+    const video = {
+      id: "vid-1" as TimelineItemId,
+      name: "Video",
+      kind: "video" as const,
+      src: "vid.mp4",
+      startTimeSeconds: 0,
+      sourceDurationSeconds: 10,
+      trimInSeconds: 2,
+      trimOutSeconds: 2,
+      durationSeconds: 6,
+    };
+
+    // trimInSeconds: -1
+    const res1 = updateVideoTimelineItem(video, { trimInSeconds: -1 });
+    expect(res1.ok).toBe(false);
+
+    // trimOutSeconds: -1
+    const res2 = updateVideoTimelineItem(video, { trimOutSeconds: -1 });
+    expect(res2.ok).toBe(false);
+
+    // trimInSeconds + trimOutSeconds > sourceDurationSeconds
+    const res3 = updateVideoTimelineItem(video, { trimInSeconds: 6, trimOutSeconds: 6 });
+    expect(res3.ok).toBe(false);
+    if (!res3.ok) {
+      expect(res3.error.reason).toBe("trim-exceeds-source");
+    }
+
+    // sourceDurationSeconds: NaN
+    const res4 = updateVideoTimelineItem(video, { sourceDurationSeconds: NaN });
+    expect(res4.ok).toBe(false);
+  });
+});
+
+describe("Tiny Negative Normalization for all constructors", () => {
+  test("normalizes tiny negative startTimeSeconds for collection timeline items", () => {
+    const result = createCollectionTimelineItem({
+      id: "col-1",
+      name: "Collection",
+      collectionId: "collection-col",
+      itemCount: 5,
+      startTimeSeconds: -0.0000001,
+      durationSeconds: 10,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.startTimeSeconds).toBe(0);
+    }
+  });
+
+  test("normalizes tiny negative trimInSeconds for video timeline items", () => {
+    const result = createVideoTimelineItem({
+      id: "vid-1",
+      name: "Video",
+      src: "vid.mp4",
+      startTimeSeconds: 0,
+      sourceDurationSeconds: 10,
+      trimInSeconds: -0.0000001,
+      trimOutSeconds: 2,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.trimInSeconds).toBe(0);
+    }
+  });
+});
+
+describe("updateCollectionTimelineItem failure cases", () => {
+  const collection = {
+    id: "col-1" as TimelineItemId,
+    name: "Collection",
+    kind: "collection" as const,
+    collectionId: "collection-col" as CollectionId,
+    itemCount: 5,
+    startTimeSeconds: 0,
+    durationSeconds: 10,
+  };
+
+  test("rejects negative itemCount", () => {
+    const result = updateCollectionTimelineItem(collection, { itemCount: -1 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("negative-item-count");
+    }
+  });
+
+  test("rejects non-integer itemCount", () => {
+    const result = updateCollectionTimelineItem(collection, { itemCount: 1.5 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("non-integer-item-count");
+    }
+  });
+
+  test("rejects empty collectionId", () => {
+    const result = updateCollectionTimelineItem(collection, { collectionId: "" as any });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("empty-id");
+    }
+  });
+
+  test("rejects negative durationSeconds", () => {
+    const result = updateCollectionTimelineItem(collection, { durationSeconds: -1 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("negative-duration");
+    }
+  });
+});
+
+describe("getItemWidth defensive behavior and formatDuration edge cases", () => {
+  test("getItemWidth returns MIN_ITEM_WIDTH_PX on invalid inputs", () => {
+    expect(getItemWidth({ durationSeconds: NaN }, 32)).toBe(MIN_ITEM_WIDTH_PX);
+    expect(getItemWidth({ durationSeconds: Infinity }, 0)).toBe(MIN_ITEM_WIDTH_PX);
+    expect(getItemWidth({ durationSeconds: 5 }, NaN)).toBe(MIN_ITEM_WIDTH_PX);
+    expect(getItemWidth({ durationSeconds: 5 }, -32)).toBe(MIN_ITEM_WIDTH_PX);
+  });
+
+  test("formatDuration handles non-finite values and negative inputs", () => {
+    expect(formatDuration(-1)).toBe("00:00");
+    expect(formatDuration(NaN)).toBe("00:00");
+    expect(formatDuration(Infinity)).toBe("00:00");
+  });
+});
+
+describe("areEqual additional comparator tests", () => {
+  const itemA = { id: "item-a" as TimelineItemId, name: "Item A" } as any;
+
+  const baseProps = {
+    item: itemA,
+    index: 0,
+    isKeyboardReordering: false,
+    thumbnailVariant: "sequence" as const,
+    collectionId: "strip-1" as CollectionId,
+    onMoveItem: () => { },
+    style: {
+      width: "100px",
+      left: "10px",
+      top: 4,
+      height: "calc(100% - 8px)",
+    },
+  };
+
+  test("returns false when thumbnailVariant changes", () => {
+    const prev = { ...baseProps, thumbnailVariant: "sequence" as const };
+    const next = { ...baseProps, thumbnailVariant: "single" as const };
+    expect(areEqual(prev, next)).toBe(false);
+  });
+
+  test("returns false when collectionId changes", () => {
+    const prev = { ...baseProps, collectionId: "strip-1" as CollectionId };
+    const next = { ...baseProps, collectionId: "strip-2" as CollectionId };
+    expect(areEqual(prev, next)).toBe(false);
+  });
+
+  test("returns false when onMoveItem reference changes", () => {
+    const prev = { ...baseProps, onMoveItem: () => { } };
+    const next = { ...baseProps, onMoveItem: () => { } };
+    expect(areEqual(prev, next)).toBe(false);
+  });
+
+  test("returns false when index changes", () => {
+    const prev = { ...baseProps, index: 0 };
+    const next = { ...baseProps, index: 1 };
+    expect(areEqual(prev, next)).toBe(false);
+  });
+});
+
+describe("Deeply Nested Collections Dnd Target encoding/decoding", () => {
+  test("correctly encodes and decodes DndTargets", () => {
+    const itemTarget = { type: "item" as const, itemId: "item-1" as TimelineItemId };
+    const containerTarget = { type: "collection-container" as const, collectionId: "col-1" as CollectionId };
+    const nestTarget = { type: "collection-nest-target" as const, collectionId: "col-2" as CollectionId };
+
+    const encodedItem = encodeDndTarget(itemTarget);
+    const encodedContainer = encodeDndTarget(containerTarget);
+    const encodedNest = encodeDndTarget(nestTarget);
+
+    expect(encodedItem).toBe("item:item-1");
+    expect(encodedContainer).toBe("container:col-1");
+    expect(encodedNest).toBe("nest:col-2");
+
+    expect(decodeDndTarget(encodedItem)).toEqual(itemTarget);
+    expect(decodeDndTarget(encodedContainer)).toEqual(containerTarget);
+    expect(decodeDndTarget(encodedNest)).toEqual(nestTarget);
+    expect(decodeDndTarget("invalid-prefix:something")).toBeNull();
+  });
+});
+
+describe("Cycle Detection for Nested Collections", () => {
+  const colA: TimelineCollection = {
+    id: "col-a" as CollectionId,
+    name: "Collection A",
+    items: [
+      {
+        id: "item-a" as TimelineItemId,
+        name: "Pointer to B",
+        kind: "collection",
+        collectionId: "col-b" as CollectionId,
+        itemCount: 0,
+        startTimeSeconds: 0,
+        durationSeconds: 10,
+      },
+    ],
+  };
+
+  const colB: TimelineCollection = {
+    id: "col-b" as CollectionId,
+    name: "Collection B",
+    items: [],
+  };
+
+  const collections = new Map<CollectionId, TimelineCollection>([
+    ["col-a" as CollectionId, colA],
+    ["col-b" as CollectionId, colB],
+  ]);
+
+  test("detects when nesting creates a cycle", () => {
+    expect(
+      wouldCreateCollectionCycle({
+        movingCollectionId: "col-a" as CollectionId,
+        targetCollectionId: "col-b" as CollectionId,
+        collectionsById: collections,
+      })
+    ).toBe(true);
+
+    expect(
+      wouldCreateCollectionCycle({
+        movingCollectionId: "col-b" as CollectionId,
+        targetCollectionId: "col-a" as CollectionId,
+        collectionsById: collections,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("Collection and Project Validation", () => {
+  test("validates a collection correctly", () => {
+    const validCol: TimelineCollection = {
+      id: "col-1" as CollectionId,
+      name: "Valid Collection",
+      items: [
+        {
+          id: "item-1" as TimelineItemId,
+          name: "Image Item",
+          kind: "image",
+          src: "image.jpg",
+          startTimeSeconds: 0,
+          durationSeconds: 10,
+        },
+      ],
+    };
+    expect(validateTimelineCollection(validCol).valid).toBe(true);
+
+    const invalidCol: TimelineCollection = {
+      id: "" as CollectionId,
+      name: "",
+      items: [],
+    };
+    expect(validateTimelineCollection(invalidCol).valid).toBe(false);
+  });
+
+  test("validates a project timeline correctly", () => {
+    const colA: TimelineCollection = {
+      id: "col-a" as CollectionId,
+      name: "A",
+      items: [
+        {
+          id: "item-b" as TimelineItemId,
+          name: "B Card",
+          kind: "collection",
+          collectionId: "col-b" as CollectionId,
+          itemCount: 0,
+          startTimeSeconds: 0,
+          durationSeconds: 5,
+        },
+      ],
+    };
+
+    const colB: TimelineCollection = {
+      id: "col-b" as CollectionId,
+      name: "B",
+      items: [
+        {
+          id: "item-a" as TimelineItemId,
+          name: "A Card (Cycle)",
+          kind: "collection",
+          collectionId: "col-a" as CollectionId,
+          itemCount: 0,
+          startTimeSeconds: 0,
+          durationSeconds: 5,
+        },
+      ],
+    };
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      ["col-a" as CollectionId, colA],
+      ["col-b" as CollectionId, colB],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: ["col-a" as CollectionId],
+    });
+
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.reason).toBe("collection-cycle");
+    }
+  });
+
+  test("returns orphanedCollectionIds for unreachable collections from roots", () => {
+    const colA: TimelineCollection = {
+      id: "col-a" as CollectionId,
+      name: "A",
+      items: [],
+    };
+
+    const colOrphan: TimelineCollection = {
+      id: "col-orphan" as CollectionId,
+      name: "Orphaned",
+      items: [],
+    };
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      ["col-a" as CollectionId, colA],
+      ["col-orphan" as CollectionId, colOrphan],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: ["col-a" as CollectionId],
+    });
+
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.orphanedCollectionIds).toEqual(["col-orphan"]);
+    }
+  });
+});
+
+describe("Collection Move and Count synchronization", () => {
+  test("moves item and synchronizes counts correctly", () => {
+    const item1 = {
+      id: "item-1" as TimelineItemId,
+      name: "Image 1",
+      kind: "image" as const,
+      src: "image1.jpg",
+      startTimeSeconds: 0,
+      durationSeconds: 10,
+    };
+    const colA: TimelineCollection = {
+      id: "col-a" as CollectionId,
+      name: "Col A",
+      items: [item1],
+    };
+    const colB: TimelineCollection = {
+      id: "col-b" as CollectionId,
+      name: "Col B",
+      items: [],
+    };
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      ["col-a" as CollectionId, colA],
+      ["col-b" as CollectionId, colB],
+    ]);
+
+    const result = applyTimelineItemCommand({
+      collectionsById: collections,
+      command: {
+        type: "move",
+        itemId: "item-1" as TimelineItemId,
+        fromCollectionId: "col-a" as CollectionId,
+        toCollectionId: "col-b" as CollectionId,
+        toIndex: 0,
+      },
+    });
+
+    expect(result.get("col-a" as CollectionId)?.items.length).toBe(0);
+    expect(result.get("col-b" as CollectionId)?.items.length).toBe(1);
+    expect(result.get("col-b" as CollectionId)?.items[0].id).toBe("item-1");
+  });
+});
+
+describe("Pure Collision Detection Helper", () => {
+  test("detects hotspot nesting correctly when pointer is in the middle of a collection card", () => {
+    const item1 = {
+      id: "item-col-b" as TimelineItemId,
+      name: "Holiday Folder",
+      kind: "collection" as const,
+      collectionId: "col-b" as CollectionId,
+      itemCount: 0,
+      startTimeSeconds: 0,
+      durationSeconds: 10,
+    };
+
+    const itemLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
+      ["item-col-b" as TimelineItemId, { collectionId: "col-a" as CollectionId, index: 0, item: item1 }],
+    ]);
+
+    const droppableContainers = [
+      {
+        id: "item:item-col-b",
+        rect: {
+          current: {
+            width: 200,
+            height: 100,
+            left: 100,
+            top: 100,
+            right: 300,
+            bottom: 200,
+          },
+        },
+        data: { current: {} },
+      },
+    ];
+
+    // Pointer is in the middle of card-col-b (hotspot triggers between 20% and 80%)
+    // width: 200, left: 100 -> center is 200. hotspot is 140 to 260
+    // height: 100, top: 100 -> center is 150. hotspot is 120 to 180
+    const pointerInHotspot = { x: 200, y: 150 };
+
+    const result = detectCollision({
+      active: {
+        id: "item:item-a1",
+        rect: {
+          current: {
+            width: 100,
+            height: 100,
+            left: 0,
+            top: 0,
+            right: 100,
+            bottom: 100,
+          },
+        },
+      } as any,
+      collisionRect: {
+        width: 100,
+        height: 100,
+        left: 0,
+        top: 0,
+        right: 100,
+        bottom: 100,
+      } as any,
+      droppableRects: new Map([
+        [
+          "item:item-col-b",
+          {
+            width: 200,
+            height: 100,
+            left: 100,
+            top: 100,
+            right: 300,
+            bottom: 200,
+          },
+        ],
+      ]) as any,
+      pointerCoordinates: pointerInHotspot,
+      droppableContainers: droppableContainers as any,
+      itemLookup,
+    });
+
+    expect(result.nestTargetId).toBe("col-b" as CollectionId);
+  });
+
+  test("does not trigger nesting when pointer is near the edge of a collection card", () => {
+    const item1 = {
+      id: "item-col-b" as TimelineItemId,
+      name: "Holiday Folder",
+      kind: "collection" as const,
+      collectionId: "col-b" as CollectionId,
+      itemCount: 0,
+      startTimeSeconds: 0,
+      durationSeconds: 10,
+    };
+
+    const itemLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
+      ["item-col-b" as TimelineItemId, { collectionId: "col-a" as CollectionId, index: 0, item: item1 }],
+    ]);
+
+    const droppableContainers = [
+      {
+        id: "item:item-col-b",
+        rect: {
+          current: {
+            width: 200,
+            height: 100,
+            left: 100,
+            top: 100,
+            right: 300,
+            bottom: 200,
+          },
+        },
+        data: { current: {} },
+      },
+    ];
+
+    // Pointer is near the left edge of card-col-b (x = 110, which is outside 140 to 260)
+    const pointerNearEdge = { x: 110, y: 150 };
+
+    const result = detectCollision({
+      active: {
+        id: "item:item-a1",
+        rect: {
+          current: {
+            width: 100,
+            height: 100,
+            left: 0,
+            top: 0,
+            right: 100,
+            bottom: 100,
+          },
+        },
+      } as any,
+      collisionRect: {
+        width: 100,
+        height: 100,
+        left: 0,
+        top: 0,
+        right: 100,
+        bottom: 100,
+      } as any,
+      droppableRects: new Map([
+        [
+          "item:item-col-b",
+          {
+            width: 200,
+            height: 100,
+            left: 100,
+            top: 100,
+            right: 300,
+            bottom: 200,
+          },
+        ],
+      ]) as any,
+      pointerCoordinates: pointerNearEdge,
+      droppableContainers: droppableContainers as any,
+      itemLookup,
+    });
+
+    expect(result.nestTargetId).toBeNull();
   });
 });

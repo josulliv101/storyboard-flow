@@ -1,358 +1,535 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, useRef, useMemo } from "react";
+import React, { createContext, useContext, useState, useCallback, useRef, useMemo, useEffect } from "react";
 import {
   DndContext,
   useSensors,
   useSensor,
   PointerSensor,
-  closestCenter,
   DragOverlay,
+  type CollisionDetection,
   type DragStartEvent,
   type DragOverEvent,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { type TimelineItem, type TimelineItemId, asTimelineItemId, type MediaStripMove } from "./media-strip.types";
-import { formatDuration, TOGGLE_GROUP_PADDING_PX } from "./media-strip.utils";
+import {
+  type TimelineItem,
+  type TimelineItemId,
+  type CollectionId,
+  type TimelineCollection,
+  type TimelineItemCommand,
+  type KeyboardReorderAction,
+  isCollectionItem,
+} from "./media-strip.types";
+import {
+  formatDuration,
+  TOGGLE_GROUP_PADDING_PX,
+  DRAG_ACTIVATION_THRESHOLDS_PX,
+  DATA_VALUE_ATTR,
+  VALUE_ATTR,
+  DEFAULT_DRAG_OVERLAY_WIDTH_PX,
+} from "./media-strip.utils";
+import {
+  decodeDndTarget,
+  resolveDropIntent,
+  detectCollision,
+} from "./media-strip.dnd";
+import { wouldCreateCollectionCycle } from "./media-strip.validation";
 import { MediaStripThumbnail } from "./media-strip-thumbnail";
+import { useBoardRegistry } from "./use-board-registry";
+import { useBoardDragState } from "./use-board-drag-state";
+import { useKeyboardReorderSession } from "./use-keyboard-reorder-session";
 
-type MediaStripBoardContextType = {
-  activeDragId: TimelineItemId | null;
-  activeDragSourceStripId: string | null;
-  activeKeyboardReorderId: TimelineItemId | null;
-  startKeyboardReorder: (itemId: TimelineItemId, stripId: string, index: number) => void;
+type MediaStripBoardStableContextType = {
+  collectionsById: ReadonlyMap<CollectionId, TimelineCollection>;
+  itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
+  registerCollection: (collectionId: CollectionId) => void;
+  unregisterCollection: (collectionId: CollectionId) => void;
+  getAdjacentCollectionId: (currentCollectionId: CollectionId, direction: "up" | "down") => CollectionId | null;
+  applyCommand: (command: TimelineItemCommand) => void;
+  announce: (message: string) => void;
+  startKeyboardReorder: (itemId: TimelineItemId, collectionId: CollectionId, index: number) => void;
   cancelKeyboardReorder: () => void;
   confirmKeyboardReorder: () => void;
-  announce: (message: string) => void;
-  itemsByStripId: Record<string, TimelineItem[]>;
-  registerStrip: (stripId: string) => void;
-  unregisterStrip: (stripId: string) => void;
-  getAdjacentStripId: (currentStripId: string, direction: "up" | "down") => string | null;
+  handleKeyboardReorderAction: (itemId: TimelineItemId, action: KeyboardReorderAction) => void;
 };
 
-export const MediaStripBoardContext = createContext<MediaStripBoardContextType | null>(null);
+type MediaStripBoardDragContextType = {
+  activeDragId: TimelineItemId | null;
+  activeDragSourceCollectionId: CollectionId | null;
+  activeNestTargetId: CollectionId | null;
+  activeDragWidth: number;
+  activeKeyboardReorderId: TimelineItemId | null;
+};
 
-export function useMediaStripBoard() {
-  const context = useContext(MediaStripBoardContext);
+export const MediaStripBoardStableContext = createContext<MediaStripBoardStableContextType | null>(null);
+export const MediaStripBoardDragContext = createContext<MediaStripBoardDragContextType | null>(null);
+
+export function useMediaStripBoardStable() {
+  const context = useContext(MediaStripBoardStableContext);
   if (!context) {
-    throw new Error("useMediaStripBoard must be used within a MediaStripBoard provider");
+    throw new Error("useMediaStripBoardStable must be used within a MediaStripBoard provider");
   }
   return context;
 }
 
+export function useMediaStripBoardDrag() {
+  const context = useContext(MediaStripBoardDragContext);
+  if (!context) {
+    throw new Error("useMediaStripBoardDrag must be used within a MediaStripBoard provider");
+  }
+  return context;
+}
+
+export function useMediaStripBoardStableOptional() {
+  return useContext(MediaStripBoardStableContext);
+}
+
+function isAncestorCollection(
+  possibleAncestor: CollectionId,
+  child: CollectionId,
+  itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>
+): boolean {
+  let currentId: CollectionId | undefined = child;
+  while (currentId) {
+    let parentColId: CollectionId | undefined = undefined;
+    for (const [_, entry] of itemLookup.entries()) {
+      if (entry.item.kind === "collection" && entry.item.collectionId === currentId) {
+        parentColId = entry.collectionId;
+        break;
+      }
+    }
+    if (parentColId === possibleAncestor) {
+      return true;
+    }
+    currentId = parentColId;
+  }
+  return false;
+}
+
 export function MediaStripBoard({
   children,
-  itemsByStripId,
+  collectionsById,
+  visibleCollectionIds,
   onMoveItem,
 }: {
   children: React.ReactNode;
-  itemsByStripId: Record<string, TimelineItem[]>;
-  onMoveItem?: (move: MediaStripMove) => void;
+  collectionsById?: ReadonlyMap<CollectionId, TimelineCollection>;
+  visibleCollectionIds?: readonly CollectionId[];
+  onMoveItem?: (command: TimelineItemCommand) => void;
 }) {
-  const [activeDragId, setActiveDragId] = useState<TimelineItemId | null>(null);
-  const [activeDragSourceStripId, setActiveDragSourceStripId] = useState<string | null>(null);
-  const [activeKeyboardReorderId, setActiveKeyboardReorderId] = useState<TimelineItemId | null>(null);
   const [announcement, setAnnouncement] = useState<string>("");
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  // Registry for child media strips to support scoped cross-strip navigation
-  const [registeredStrips, setRegisteredStrips] = useState<string[]>([]);
+  const activeNestTargetRef = useRef<CollectionId | null>(null);
+  const activeOverCollectionIdRef = useRef<CollectionId | null>(null);
 
-  // Keyboard reorder initial position session state
-  const initialPositionRef = useRef<{ stripId: string; index: number } | null>(null);
+  // 1. Board Registry
+  const { registeredCollections, registerCollection, unregisterCollection } = useBoardRegistry();
 
-  // O(1) Lookup index map to prevent performance-killing linear scans during fast drags
+  // 2. Drag State Management
+  const {
+    activeDragId,
+    activeDragSourceCollectionId,
+    activeNestTargetId,
+    activeDragWidth,
+    startDrag,
+    moveDrag,
+    endDrag,
+  } = useBoardDragState();
+
+  const collectionsByIdResolved = useMemo(
+    () => collectionsById ?? new Map<CollectionId, TimelineCollection>(),
+    [collectionsById]
+  );
+
+  const visibleCollectionIdsResolved = useMemo(
+    () => visibleCollectionIds ?? [],
+    [visibleCollectionIds]
+  );
+
+  const activeCollectionIds = useMemo(() => {
+    const ids = new Set<CollectionId>();
+    if (visibleCollectionIdsResolved) {
+      visibleCollectionIdsResolved.forEach((id) => ids.add(id));
+    }
+    registeredCollections.forEach((id) => ids.add(id));
+    return ids;
+  }, [visibleCollectionIdsResolved, registeredCollections]);
+
+  // Lookup map to support O(1) index searches
   const itemLookup = useMemo(() => {
-    const lookup = new Map<TimelineItemId, { stripId: string; index: number; item: TimelineItem }>();
-    for (const [stripId, list] of Object.entries(itemsByStripId)) {
-      list.forEach((item, index) => {
-        lookup.set(item.id, { stripId, index, item });
-      });
+    const lookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>();
+    for (const collectionId of activeCollectionIds) {
+      const col = collectionsByIdResolved.get(collectionId);
+      if (col && Array.isArray(col.items)) {
+        col.items.forEach((item, index) => {
+          lookup.set(item.id, { collectionId, index, item });
+        });
+      }
     }
     return lookup;
-  }, [itemsByStripId]);
+  }, [collectionsByIdResolved, activeCollectionIds]);
+
+
+
+  const announce = useCallback((message: string) => {
+    setAnnouncement((prev) => {
+      if (prev === message) {
+        return message + "\u200B";
+      }
+      if (prev === message + "\u200B") {
+        return message;
+      }
+      return message;
+    });
+  }, []);
+
+  // 3. Unified Command Pipeline Callback
+  const applyCommand = useCallback((command: TimelineItemCommand) => {
+    if (onMoveItem) {
+      onMoveItem(command);
+    } else if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        `[MediaStripBoard] applyCommand was triggered, but "onMoveItem" callback is undefined. Drag-and-drop actions will not persist changes.`
+      );
+    }
+  }, [onMoveItem]);
+
+
+
+  const collisionDetectionStrategy = useCallback<CollisionDetection>((args) => {
+    const { nestTargetId, intersections } = detectCollision({
+      active: args.active,
+      collisionRect: args.collisionRect,
+      droppableRects: args.droppableRects,
+      pointerCoordinates: args.pointerCoordinates,
+      droppableContainers: args.droppableContainers,
+      itemLookup,
+    });
+    activeNestTargetRef.current = nestTargetId;
+    return intersections;
+  }, [itemLookup]);
 
   const activeDragItem = useMemo(() => {
     if (!activeDragId) return null;
     return itemLookup.get(activeDragId)?.item ?? null;
   }, [activeDragId, itemLookup]);
 
-  const registerStrip = useCallback((stripId: string) => {
-    setRegisteredStrips((prev) => (prev.includes(stripId) ? prev : [...prev, stripId]));
-  }, []);
+  const getAdjacentCollectionId = useCallback(
+    (currentCollectionId: CollectionId, direction: "up" | "down"): CollectionId | null => {
+      const container = containerRef.current;
+      if (!container) return null;
 
-  const unregisterStrip = useCallback((stripId: string) => {
-    setRegisteredStrips((prev) => prev.filter((id) => id !== stripId));
-  }, []);
+      const colEls = Array.from(container.querySelectorAll("[data-collection-id]"));
+      if (colEls.length === 0) return null;
 
-  const getAdjacentStripId = useCallback(
-    (currentStripId: string, direction: "up" | "down"): string | null => {
-      const idx = registeredStrips.indexOf(currentStripId);
+      colEls.sort((a, b) => {
+        const compare = a.compareDocumentPosition(b);
+        if (compare & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+        if (compare & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+        return 0;
+      });
+
+      const colIds = colEls
+        .map((el) => el.getAttribute("data-collection-id"))
+        .filter((id): id is string => !!id) as CollectionId[];
+
+      const idx = colIds.indexOf(currentCollectionId);
       if (idx === -1) return null;
+
       const targetIdx = direction === "down" ? idx + 1 : idx - 1;
-      if (targetIdx >= 0 && targetIdx < registeredStrips.length) {
-        return registeredStrips[targetIdx];
+      if (targetIdx >= 0 && targetIdx < colIds.length) {
+        return colIds[targetIdx];
       }
       return null;
     },
-    [registeredStrips]
+    []
   );
 
-  const announce = useCallback((message: string) => {
-    setAnnouncement(message);
-  }, []);
-
-  const startKeyboardReorder = useCallback((itemId: TimelineItemId, stripId: string, index: number) => {
-    setActiveKeyboardReorderId(itemId);
-    initialPositionRef.current = { stripId, index };
-  }, []);
-
-  const cancelKeyboardReorder = useCallback(() => {
-    const itemId = activeKeyboardReorderId;
-    const orig = initialPositionRef.current;
-
-    if (itemId && orig && onMoveItem) {
-      // O(1) Current position lookup
-      const current = itemLookup.get(itemId);
-      if (current && (current.stripId !== orig.stripId || current.index !== orig.index)) {
-        onMoveItem({
-          itemId,
-          fromStripId: current.stripId,
-          toStripId: orig.stripId,
-          fromIndex: current.index,
-          toIndex: orig.index,
-        });
-      }
-    }
-
-    setActiveKeyboardReorderId(null);
-    initialPositionRef.current = null;
-  }, [activeKeyboardReorderId, itemLookup, onMoveItem]);
-
-  const confirmKeyboardReorder = useCallback(() => {
-    setActiveKeyboardReorderId(null);
-    initialPositionRef.current = null;
-  }, []);
+  // 4. Keyboard Reorder Session Management
+  const {
+    activeKeyboardReorderId,
+    startKeyboardReorder,
+    cancelKeyboardReorder,
+    confirmKeyboardReorder,
+    handleKeyboardReorderAction,
+  } = useKeyboardReorderSession({
+    itemLookup,
+    collectionsById: collectionsByIdResolved,
+    getAdjacentCollectionId,
+    applyCommand,
+    announce,
+  });
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        // Drag distance threshold in pixels before initiating item drag.
-        // Cross-referenced with DRAG_CLICK_THRESHOLD_PX = 4 in use-horizontal-drag-scroll.ts.
-        // Slightly higher (5px) to give priority to click selections and prevent accidental reorders.
-        distance: 5,
+        distance: DRAG_ACTIVATION_THRESHOLDS_PX.board,
       },
     })
   );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
-    const parsed = asTimelineItemId(String(event.active.id));
-    if (!parsed.ok) return;
-    const itemId = parsed.value;
-    setActiveDragId(itemId);
+    const decoded = decodeDndTarget(String(event.active.id));
+    if (!decoded || decoded.type !== "item") return;
+    const itemId = decoded.itemId;
+
+    let dragWidth = DEFAULT_DRAG_OVERLAY_WIDTH_PX;
+    const escapedId = CSS.escape(String(itemId));
+    const activeEl = containerRef.current?.querySelector(
+      `[${DATA_VALUE_ATTR}="${escapedId}"], [${VALUE_ATTR}="${escapedId}"]`
+    );
+    if (activeEl) {
+      dragWidth = activeEl.getBoundingClientRect().width;
+    }
 
     const found = itemLookup.get(itemId);
     if (found) {
-      setActiveDragSourceStripId(found.stripId);
+      activeOverCollectionIdRef.current = found.collectionId;
+      startDrag(itemId, found.collectionId, dragWidth);
       announce(`Picked up item "${found.item.name}".`);
     }
-  }, [itemLookup, announce]);
+  }, [itemLookup, announce, startDrag]);
+
+  const handleDragMove = useCallback(() => {
+    moveDrag(activeNestTargetRef.current);
+  }, [moveDrag]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
-    const { active, over } = event;
-    if (!over) return;
-
-    const parsedActive = asTimelineItemId(String(active.id));
-    if (!parsedActive.ok) return;
-    const itemId = parsedActive.value;
-
-    const overId = over.id;
-
-    let targetStripId = "";
-    let targetIndex = 0;
-
-    if (overId in itemsByStripId) {
-      targetStripId = String(overId);
-      targetIndex = itemsByStripId[targetStripId].length;
-    } else {
-      const parsedOver = asTimelineItemId(String(overId));
-      if (parsedOver.ok) {
-        const foundTarget = itemLookup.get(parsedOver.value);
-        if (foundTarget) {
-          targetStripId = foundTarget.stripId;
-          targetIndex = foundTarget.index;
+    moveDrag(activeNestTargetRef.current);
+    const { over } = event;
+    if (over) {
+      const decoded = decodeDndTarget(String(over.id));
+      if (decoded) {
+        if (decoded.type === "collection-container") {
+          activeOverCollectionIdRef.current = decoded.collectionId;
+        } else if (decoded.type === "item") {
+          const found = itemLookup.get(decoded.itemId);
+          if (found) {
+            activeOverCollectionIdRef.current = found.collectionId;
+          }
+        } else if (decoded.type === "collection-nest-target") {
+          activeOverCollectionIdRef.current = decoded.collectionId;
         }
       }
+    } else {
+      activeOverCollectionIdRef.current = null;
     }
-
-    if (!targetStripId) return;
-
-    const foundSource = itemLookup.get(itemId);
-    if (!foundSource) return;
-
-    // ONLY perform real-time cross-container moves inside onDragOver.
-    // Within-strip reordering is animated visually via CSS transforms and committed in onDragEnd.
-    if (foundSource.stripId !== targetStripId) {
-      if (onMoveItem) {
-        onMoveItem({
-          itemId,
-          fromStripId: foundSource.stripId,
-          toStripId: targetStripId,
-          fromIndex: foundSource.index,
-          toIndex: targetIndex,
-        });
-      }
-    }
-  }, [itemsByStripId, itemLookup, onMoveItem]);
+  }, [moveDrag, itemLookup]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
-    const { over } = event;
+    const { over, active } = event;
     const itemId = activeDragId;
+    const nestTargetId = activeNestTargetRef.current;
+
+    activeNestTargetRef.current = null;
+    activeOverCollectionIdRef.current = null;
+
     if (!itemId) return;
 
     const foundSource = itemLookup.get(itemId);
     if (!foundSource) {
-      setActiveDragId(null);
-      setActiveDragSourceStripId(null);
-      announce(`Cancelled drag.`);
+      endDrag();
+      announce("Cancelled drag.");
       return;
     }
 
-    let targetStripId = foundSource.stripId;
-    let targetIndex = foundSource.index;
-
     if (over) {
-      const overId = over.id;
-      let calculatedTargetStripId = "";
-      let calculatedTargetIndex = -1;
+      const intent = resolveDropIntent({
+        overId: over.id,
+        activeId: active.id,
+        collectionsById: collectionsByIdResolved,
+        itemLookup,
+      });
 
-      if (overId in itemsByStripId) {
-        calculatedTargetStripId = String(overId);
-        calculatedTargetIndex = itemsByStripId[calculatedTargetStripId].length;
-      } else {
-        const parsedOver = asTimelineItemId(String(overId));
-        if (parsedOver.ok) {
-          const foundTarget = itemLookup.get(parsedOver.value);
-          if (foundTarget) {
-            calculatedTargetStripId = foundTarget.stripId;
-            calculatedTargetIndex = foundTarget.index;
+      if (intent) {
+        if (isCollectionItem(foundSource.item)) {
+          const targetCollectionId = nestTargetId || intent.toCollectionId;
+          if (wouldCreateCollectionCycle({
+            movingCollectionId: foundSource.item.collectionId,
+            targetCollectionId,
+            collectionsById: collectionsByIdResolved,
+          })) {
+            announce("Cannot move a collection into itself or one of its nested collections.");
+            endDrag();
+            return;
           }
         }
-      }
 
-      if (calculatedTargetStripId && calculatedTargetIndex !== -1) {
-        targetStripId = calculatedTargetStripId;
-        targetIndex = calculatedTargetIndex;
-      }
-
-      // If dragged within the same strip, commit reorder now
-      if (
-        targetIndex !== -1 &&
-        foundSource.stripId === targetStripId &&
-        foundSource.index !== targetIndex
-      ) {
-        if (onMoveItem) {
-          onMoveItem({
+        if (nestTargetId) {
+          applyCommand({
+            type: "nest",
             itemId,
-            fromStripId: foundSource.stripId,
-            toStripId: targetStripId,
-            fromIndex: foundSource.index,
-            toIndex: targetIndex,
+            fromCollectionId: foundSource.collectionId,
+            targetCollectionId: nestTargetId,
           });
+          announce(`Moved "${foundSource.item.name}" into collection.`);
+        } else if (intent.type === "move") {
+          const targetCollectionId = intent.toCollectionId;
+          const targetIndex = intent.toIndex;
+
+          if (
+            foundSource.collectionId !== targetCollectionId ||
+            foundSource.index !== targetIndex
+          ) {
+            applyCommand({
+              type: "move",
+              itemId,
+              fromCollectionId: foundSource.collectionId,
+              toCollectionId: targetCollectionId,
+              toIndex: targetIndex,
+            });
+            announce(`Dropped "${foundSource.item.name}" at position ${targetIndex + 1}.`);
+          } else {
+            announce(`Dropped "${foundSource.item.name}" at position ${foundSource.index + 1}.`);
+          }
         }
+      } else {
+        announce("Cancelled drag.");
       }
-    }
-
-    setActiveDragId(null);
-    setActiveDragSourceStripId(null);
-
-    // Compute the drop position announcement synchronously using targetIndex/targetStripId
-    if (over && targetIndex !== -1) {
-      announce(`Dropped "${foundSource.item.name}" at position ${targetIndex + 1}.`);
     } else {
-      announce(`Cancelled drag.`);
+      announce("Cancelled drag.");
     }
-  }, [activeDragId, itemLookup, itemsByStripId, onMoveItem, announce]);
 
-  // Memoize the context value object to prevent unnecessary re-rendering of all consumers
-  const contextValue = useMemo(
+    endDrag();
+  }, [
+    activeDragId,
+    itemLookup,
+    applyCommand,
+    collectionsByIdResolved,
+    announce,
+    endDrag,
+  ]);
+
+  const handleDragCancel = useCallback(() => {
+    activeNestTargetRef.current = null;
+    activeOverCollectionIdRef.current = null;
+    endDrag();
+    announce("Cancelled drag.");
+  }, [endDrag, announce]);
+  const stableContextValue = useMemo(
     () => ({
-      activeDragId,
-      activeDragSourceStripId,
-      activeKeyboardReorderId,
+      collectionsById: collectionsByIdResolved,
+      itemLookup,
+      registerCollection,
+      unregisterCollection,
+      getAdjacentCollectionId,
+      applyCommand,
+      announce,
       startKeyboardReorder,
       cancelKeyboardReorder,
       confirmKeyboardReorder,
+      handleKeyboardReorderAction,
+    }),
+    [
+      collectionsByIdResolved,
+      itemLookup,
+      registerCollection,
+      unregisterCollection,
+      getAdjacentCollectionId,
+      applyCommand,
       announce,
-      itemsByStripId,
-      registerStrip,
-      unregisterStrip,
-      getAdjacentStripId,
+      startKeyboardReorder,
+      cancelKeyboardReorder,
+      confirmKeyboardReorder,
+      handleKeyboardReorderAction,
+    ]
+  );
+
+  const dragContextValue = useMemo(
+    () => ({
+      activeDragId,
+      activeDragSourceCollectionId,
+      activeNestTargetId,
+      activeDragWidth,
+      activeKeyboardReorderId,
     }),
     [
       activeDragId,
-      activeDragSourceStripId,
+      activeDragSourceCollectionId,
+      activeNestTargetId,
+      activeDragWidth,
       activeKeyboardReorderId,
-      startKeyboardReorder,
-      cancelKeyboardReorder,
-      confirmKeyboardReorder,
-      announce,
-      itemsByStripId,
-      registerStrip,
-      unregisterStrip,
-      getAdjacentStripId,
     ]
   );
 
   return (
-    <MediaStripBoardContext.Provider value={contextValue}>
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragEnd={handleDragEnd}
-      >
-        {children}
+    <MediaStripBoardStableContext.Provider value={stableContextValue}>
+      <MediaStripBoardDragContext.Provider value={dragContextValue}>
+        <div ref={containerRef} style={{ display: "contents" }}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={collisionDetectionStrategy}
+            onDragStart={handleDragStart}
+            onDragMove={handleDragMove}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
+            autoScroll={{
+              canScroll: (element) => {
+                if (!activeDragSourceCollectionId) return true;
+                const colEl = element.closest("[data-collection-id]");
+                if (!colEl) return true;
+                const colId = colEl.getAttribute("data-collection-id") as CollectionId;
 
-        <DragOverlay>
-          {activeDragItem ? (
-            <DragOverlayItem item={activeDragItem} />
-          ) : null}
-        </DragOverlay>
+                // 1. Always scroll the active drag source container
+                if (colId === activeDragSourceCollectionId) return true;
 
-        {/* hidden aria-live status announcer */}
-        <div
-          aria-live="polite"
-          role="status"
-          style={{
-            position: "absolute",
-            width: "1px",
-            height: "1px",
-            padding: "0",
-            margin: "-1px",
-            overflow: "hidden",
-            clip: "rect(0, 0, 0, 0)",
-            whiteSpace: "nowrap",
-            border: "0",
-          }}
-        >
-          {announcement}
+                // 2. Scroll the currently hovered container, unless it is an ancestor of the source container
+                if (colId === activeOverCollectionIdRef.current) {
+                  return !isAncestorCollection(colId, activeDragSourceCollectionId, itemLookup);
+                }
+
+                return false;
+              }
+            }}
+          >
+            {children}
+
+            <DragOverlay>
+              {activeDragItem ? (
+                <DragOverlayItem item={activeDragItem} width={activeDragWidth} />
+              ) : null}
+            </DragOverlay>
+
+            <div
+              aria-live="polite"
+              role="status"
+              style={{
+                position: "absolute",
+                width: "1px",
+                height: "1px",
+                padding: "0",
+                margin: "-1px",
+                overflow: "hidden",
+                clip: "rect(0, 0, 0, 0)",
+                whiteSpace: "nowrap",
+                border: "0",
+              }}
+            >
+              {announcement}
+            </div>
+          </DndContext>
         </div>
-      </DndContext>
-    </MediaStripBoardContext.Provider>
+      </MediaStripBoardDragContext.Provider>
+    </MediaStripBoardStableContext.Provider>
   );
 }
 
 function DragOverlayItem({
   item,
+  width,
 }: {
   item: TimelineItem;
+  width: number;
 }) {
   return (
     <div
+      data-testid="drag-overlay-item"
       className="bg-card border-primary border p-2 rounded-lg opacity-85 shadow-2xl flex flex-col items-stretch justify-start gap-2 text-left pointer-events-none select-none"
       style={{
-        width: "160px",
+        width: `${width}px`,
         height: `calc(9.5rem - ${2 * TOGGLE_GROUP_PADDING_PX}px)`,
       }}
     >

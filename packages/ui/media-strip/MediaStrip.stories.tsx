@@ -1,20 +1,25 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { expect, fn, userEvent } from "storybook/test";
+import { expect, fn, userEvent, within, waitFor } from "storybook/test";
 
 import { MediaStrip, type MediaStripProps, type MediaStripSelection } from "./media-strip";
 import { MediaStripBoard } from "./media-strip-board";
 import {
-  asTimelineItemId,
+  parseTimelineItemId,
   type TimelineItem,
   type TimelineItemId,
   type TimelineItemResult,
-  type MediaStripMove,
+  type CollectionId,
+  type TimelineCollection,
+  type TimelineCollectionsById,
+  type TimelineItemCommand,
 } from "./media-strip.types";
 import {
   createImageTimelineItem,
   createVideoTimelineItem,
+  createCollectionTimelineItem,
 } from "./media-strip.validation";
+import { applyTimelineItemCommand } from "./media-strip.collection-ops";
 
 function unwrapResult<T, E>(result: TimelineItemResult<T, E>): T {
   if (!result.ok) {
@@ -67,7 +72,7 @@ function durationToSeconds(duration: string) {
 }
 
 function toTimelineItem(item: StoryMediaItem): TimelineItem {
-  const idResult = asTimelineItemId(item.id);
+  const idResult = parseTimelineItemId(item.id);
   if (!idResult.ok) {
     throw new Error(`Failed to parse timeline item ID: ${item.id}`);
   }
@@ -164,7 +169,7 @@ const repeatedThumbnail = createThumbnail("#475569", "Repeat");
 
 const createImg = (id: string, name: string, color: string, duration: number) => {
   const thumb = createThumbnail(color, name);
-  const idResult = asTimelineItemId(id);
+  const idResult = parseTimelineItemId(id);
   if (!idResult.ok) throw new Error("Constructor error: invalid ID");
 
   const result = createImageTimelineItem({
@@ -196,9 +201,9 @@ const manyItems = Array.from({ length: 3 }, () => items)
     });
   });
 
-function StatefulMediaStrip(props: MediaStripProps) {
-  const [items, setItems] = useState<TimelineItem[]>(() => props.items || []);
-  const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>(() => props.selectedIds || []);
+function StatefulMediaStrip(props: MediaStripProps & { items?: readonly TimelineItem[] }) {
+  const [items, setItems] = useState<readonly TimelineItem[]>(() => props.items || []);
+  const [selectedIds, setSelectedIds] = useState<readonly TimelineItemId[]>(() => props.selectedIds || []);
 
   useEffect(() => {
     setItems(props.items || []);
@@ -209,7 +214,9 @@ function StatefulMediaStrip(props: MediaStripProps) {
   }, [props.selectedIds]);
 
   const handleMoveItem = useCallback(
-    ({ itemId, fromIndex, toIndex }: MediaStripMove) => {
+    (command: TimelineItemCommand) => {
+      if (command.type !== "move") return;
+      const { itemId, toIndex } = command;
       setItems((prev) => {
         const next = [...prev];
         const index = next.findIndex((i) => i.id === itemId);
@@ -231,16 +238,26 @@ function StatefulMediaStrip(props: MediaStripProps) {
     [props.onSelectionChange]
   );
 
-  const stripId = props.stripId || "default-strip";
-  const itemsByStripId = useMemo(() => ({ [stripId]: items }), [stripId, items]);
+  const collectionId = props.collectionId || ("default-strip" as CollectionId);
+  const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
+    [collectionId, {
+      id: collectionId,
+      name: collectionId,
+      items,
+    }]
+  ]), [collectionId, items]);
+  const visibleCollectionIds = useMemo(() => [collectionId], [collectionId]);
 
   return (
-    <MediaStripBoard itemsByStripId={itemsByStripId} onMoveItem={handleMoveItem}>
+    <MediaStripBoard
+      collectionsById={collectionsById}
+      visibleCollectionIds={visibleCollectionIds}
+      onMoveItem={handleMoveItem}
+    >
       <MediaStrip
         {...props}
-        items={items}
+        collectionId={collectionId}
         selectedIds={selectedIds}
-        onMoveItem={handleMoveItem}
         onSelectionChange={handleSelectionChange}
       />
     </MediaStripBoard>
@@ -746,13 +763,9 @@ const ReorderDemo = () => {
   const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>([]);
 
   const handleMoveItem = useCallback(
-    ({
-      itemId,
-      fromStripId,
-      toStripId,
-      fromIndex,
-      toIndex,
-    }: MediaStripMove) => {
+    (command: TimelineItemCommand) => {
+      if (command.type !== "move") return;
+      const { itemId, fromCollectionId: fromStripId, toCollectionId: toStripId, toIndex } = command;
       let itemToMove: TimelineItem | undefined;
       let nextStripA = [...stripA];
       let nextStripB = [...stripB];
@@ -795,14 +808,20 @@ const ReorderDemo = () => {
     [stripA, stripB, stripC]
   );
 
-  const itemsByStripId = {
-    "strip-a": stripA,
-    "strip-b": stripB,
-    "strip-c": stripC,
-  };
+  const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
+    ["strip-a" as CollectionId, { id: "strip-a" as CollectionId, name: "Media Strip A", items: stripA }],
+    ["strip-b" as CollectionId, { id: "strip-b" as CollectionId, name: "Media Strip B", items: stripB }],
+    ["strip-c" as CollectionId, { id: "strip-c" as CollectionId, name: "Media Strip C", items: stripC }],
+  ]), [stripA, stripB, stripC]);
+
+  const visibleCollectionIds = useMemo(() => ["strip-a" as CollectionId, "strip-b" as CollectionId, "strip-c" as CollectionId], []);
 
   return (
-    <MediaStripBoard itemsByStripId={itemsByStripId} onMoveItem={handleMoveItem}>
+    <MediaStripBoard
+      collectionsById={collectionsById}
+      visibleCollectionIds={visibleCollectionIds}
+      onMoveItem={handleMoveItem}
+    >
       <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
         <div>
           <p className="text-sm text-zinc-400 mb-2">
@@ -813,28 +832,22 @@ const ReorderDemo = () => {
           </p>
         </div>
         <MediaStrip
-          stripId="strip-a"
+          collectionId={"strip-a" as CollectionId}
           heading="Media Strip A (Red/Pink)"
-          items={stripA}
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
-          onMoveItem={handleMoveItem}
         />
         <MediaStrip
-          stripId="strip-b"
+          collectionId={"strip-b" as CollectionId}
           heading="Media Strip B (Blue/Cyan)"
-          items={stripB}
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
-          onMoveItem={handleMoveItem}
         />
         <MediaStrip
-          stripId="strip-c"
+          collectionId={"strip-c" as CollectionId}
           heading="Media Strip C (Green/Emerald with Lots of Items)"
-          items={stripC}
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
-          onMoveItem={handleMoveItem}
         />
       </div>
     </MediaStripBoard>
@@ -853,3 +866,1274 @@ export const ReorderableMediaStrips: Story = {
     ),
   ],
 };
+
+const waitForLayout = async (element: HTMLElement) => {
+  await waitFor(() => {
+    const rect = element.getBoundingClientRect();
+    expect(rect.width).toBeGreaterThan(0);
+    expect(rect.height).toBeGreaterThan(0);
+  });
+};
+
+// Helper functions for programmatic PointerEvent simulation in headless story tests
+const simulatePointerDrag = async (handle: HTMLElement, target: HTMLElement) => {
+  await waitForLayout(handle);
+  await waitForLayout(target);
+
+  const startRect = handle.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+
+  // 1. Pointer Down
+  handle.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      clientX: startRect.left + 5,
+      clientY: startRect.top + 5,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      isPrimary: true,
+    })
+  );
+
+  // 2. Drag slightly to trigger dnd-kit pointer sensor activation constraint (> 5px)
+  document.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: startRect.left + 20,
+      clientY: startRect.top + 5,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      isPrimary: true,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  // 3. Drag to target
+  document.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: targetRect.left + targetRect.width / 2,
+      clientY: targetRect.top + targetRect.height / 2,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      isPrimary: true,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  // 4. Release mouse button (Pointer Up)
+  document.dispatchEvent(
+    new PointerEvent("pointerup", {
+      clientX: targetRect.left + targetRect.width / 2,
+      clientY: targetRect.top + targetRect.height / 2,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      isPrimary: true,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+};
+
+const simulateDragOscillation = async (handle: HTMLElement, target: HTMLElement) => {
+  await waitForLayout(handle);
+  await waitForLayout(target);
+
+  const startRect = handle.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+
+  // 1. Pointer Down
+  handle.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      clientX: startRect.left + 5,
+      clientY: startRect.top + 5,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  // 2. Move past threshold
+  document.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: startRect.left + 20,
+      clientY: startRect.top + 5,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // 3. Move to target
+  document.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: targetRect.left + targetRect.width / 2,
+      clientY: targetRect.top + targetRect.height / 2,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  // 4. Oscillate back and forth to trigger multiple collision detection runs
+  for (let i = 0; i < 5; i++) {
+    document.dispatchEvent(
+      new PointerEvent("pointermove", {
+        clientX: targetRect.left + targetRect.width / 2 + (i % 2 === 0 ? 5 : -5),
+        clientY: targetRect.top + targetRect.height / 2,
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        pointerId: 1,
+      })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  // 5. Pointer Up
+  document.dispatchEvent(
+    new PointerEvent("pointerup", {
+      clientX: targetRect.left + targetRect.width / 2,
+      clientY: targetRect.top + targetRect.height / 2,
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+};
+
+const simulateScrollAreaDrag = async (scrollArea: HTMLElement) => {
+  await waitForLayout(scrollArea);
+
+  const rect = scrollArea.getBoundingClientRect();
+
+  scrollArea.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      clientX: rect.left + 100,
+      clientY: rect.top + 50,
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  document.dispatchEvent(
+    new PointerEvent("pointermove", {
+      clientX: rect.left + 50,
+      clientY: rect.top + 50,
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  document.dispatchEvent(
+    new PointerEvent("pointerup", {
+      clientX: rect.left + 50,
+      clientY: rect.top + 50,
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+    })
+  );
+};
+
+export const MultiStripDragRegression: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    // Locate the first item reorder handle in the DOM
+    const firstHandle = canvasElement.querySelector("[data-reorder-handle]") as HTMLElement;
+    const targetItem = canvasElement.querySelector("[data-strip-id='strip-b'] [data-value]") as HTMLElement;
+    if (!firstHandle || !targetItem) return;
+
+    await simulateDragOscillation(firstHandle, targetItem);
+  },
+};
+
+export const KeyboardReorderWithinStrip: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    handle.focus();
+    await userEvent.keyboard(" ");
+
+    // Reorder right: moves from index 0 -> index 1
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(await canvas.findByText(/moved "item a1" to position 2/i)).toBeInTheDocument();
+
+    // Reorder left: moves from index 1 -> index 0
+    await userEvent.keyboard("{ArrowLeft}");
+    await expect(await canvas.findByText(/moved "item a1" to position 1/i)).toBeInTheDocument();
+
+    // Drop
+    await userEvent.keyboard(" ");
+    await expect(await canvas.findByText(/dropped "item a1" at position 1/i)).toBeInTheDocument();
+  },
+};
+
+export const KeyboardReorderBetweenStrips: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    handle.focus();
+    await userEvent.keyboard("{Enter}");
+
+    // Reorder down to Strip B
+    await userEvent.keyboard("{ArrowDown}");
+    await expect(await canvas.findByText(/moved "item a1" to collection "Media Strip B" at position/i)).toBeInTheDocument();
+  },
+};
+
+export const KeyboardReorderCancel: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    handle.focus();
+    await userEvent.keyboard("{Enter}");
+
+    // Move to position 2
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(await canvas.findByText(/moved "item a1" to position 2/i)).toBeInTheDocument();
+
+    // Cancel reorder using Escape, reverting the move
+    await userEvent.keyboard("{Escape}");
+    await expect(await canvas.findByText(/reverted "item a1" to position 1/i)).toBeInTheDocument();
+  },
+};
+
+export const PointerDragWithinStrip: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
+    const secondItem = canvas.getByRole("button", { name: /item a2/i });
+
+    // Drag horizontally to index 1 over Item A2 using programmatic pointer events
+    await simulatePointerDrag(handle, secondItem);
+
+    await expect(await canvas.findByText(/dropped "item a1" at position/i)).toBeInTheDocument();
+  },
+};
+
+export const PointerDragBetweenStrips: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
+    const targetItem = canvas.getByRole("button", { name: /item b1/i });
+
+    // Drag vertically down to Strip B over Item B1 using programmatic pointer events
+    await simulatePointerDrag(handle, targetItem);
+
+    await expect(await canvas.findByText(/dropped "item a1" at position/i)).toBeInTheDocument();
+  },
+};
+
+export const PointerDragIntoEmptyStrip: Story = {
+  render: () => {
+    const [stripA, setStripA] = useState<TimelineItem[]>([
+      unwrapResult(
+        createImageTimelineItem({
+          id: "item-1",
+          name: "Item 1",
+          src: "img.png",
+          startTimeSeconds: 0,
+          durationSeconds: 4,
+        })
+      ),
+    ]);
+    const [stripB, setStripB] = useState<TimelineItem[]>([]);
+
+    const handleMoveItem = useCallback(
+      (command: TimelineItemCommand) => {
+        if (command.type !== "move") return;
+        const { itemId, toCollectionId: toStripId } = command;
+        const item = stripA.find((i) => i.id === itemId);
+        if (item && toStripId === "strip-b") {
+          setStripB([item]);
+          setStripA([]);
+        }
+      },
+      [stripA]
+    );
+
+    const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
+      ["strip-a" as CollectionId, { id: "strip-a" as CollectionId, name: "Strip A", items: stripA }],
+      ["strip-b" as CollectionId, { id: "strip-b" as CollectionId, name: "Strip B", items: stripB }],
+    ]), [stripA, stripB]);
+    const visibleCollectionIds = useMemo(() => ["strip-a" as CollectionId, "strip-b" as CollectionId], []);
+
+    return (
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        visibleCollectionIds={visibleCollectionIds}
+        onMoveItem={handleMoveItem}
+      >
+        <div className="flex flex-col gap-8 p-4">
+          <MediaStrip collectionId={"strip-a" as CollectionId} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
+          <MediaStrip collectionId={"strip-b" as CollectionId} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
+        </div>
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item 1/i });
+    const handle = firstItem.closest("[data-testid^='media-strip-']")?.querySelector("[data-reorder-handle]") as HTMLElement;
+    const emptyDroppable = canvasElement.querySelector("[data-strip-id='strip-b'] .border-dashed") as HTMLElement;
+
+    // Drag down to empty Strip B droppable container using programmatic pointer events
+    await simulatePointerDrag(handle, emptyDroppable);
+
+    await waitFor(() => {
+      const stripB = canvasElement.querySelector("[data-strip-id='strip-b']") as HTMLElement;
+      expect(within(stripB).queryByText(/no media items yet/i)).not.toBeInTheDocument();
+      expect(within(stripB).getByRole("button", { name: /item 1/i })).toBeInTheDocument();
+    });
+  },
+};
+
+export const SelectedItemRemainsSelected: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+
+    // Select the first item by focusing it and pressing Enter
+    firstItem.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(firstItem).toHaveAttribute("aria-pressed", "true");
+    });
+
+    const handle = firstItem.closest("[data-testid^='media-strip-']")?.querySelector("[data-reorder-handle]") as HTMLElement;
+    handle.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("{ArrowRight}");
+    await userEvent.keyboard("{Enter}");
+
+    // Assert that the item remains selected after reordering
+    const movedItem = await canvas.findByRole("button", { name: /item a1/i });
+    await waitFor(() => {
+      expect(movedItem).toHaveAttribute("aria-pressed", "true");
+    });
+  },
+};
+
+export const DraggingScrollAreaDoesNotSelect: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const scrollArea = canvasElement.querySelector("[data-testid^='media-strip-drag-scroll-']") as HTMLElement;
+
+    // Perform a pointer drag on the scroll area background to scroll it using programmatic pointer events
+    await simulateScrollAreaDrag(scrollArea);
+
+    // Assert that selection remains unchanged
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    await expect(firstItem).not.toHaveAttribute("aria-pressed", "true");
+  },
+};
+
+export const ReorderHandleArrowKeysDoNotNavigate: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const handle = firstItem.closest("[data-testid^='media-strip-']")?.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    // Focus the reorder handle
+    handle.focus();
+
+    // Press ArrowRight (WITHOUT entering reorder mode first)
+    await userEvent.keyboard("{ArrowRight}");
+
+    // Focus should remain on the handle, NOT jump to the next item
+    await expect(canvasElement.ownerDocument.activeElement).toBe(handle);
+  },
+};
+
+export const CollectionItems: Story = {
+  render: () => {
+    const [items, setItems] = useState<TimelineItem[]>(() => [
+      unwrapResult(createImageTimelineItem({ id: "img-1", name: "Image Item", src: "img.png", startTimeSeconds: 0, durationSeconds: 4 })),
+      unwrapResult(createCollectionTimelineItem({ id: "col-1", name: "Collection A", collectionId: "col-id-a", itemCount: 5, startTimeSeconds: 4, durationSeconds: 8 })),
+      unwrapResult(createVideoTimelineItem({ id: "vid-1", name: "Video Item", src: "vid.mp4", sourceDurationSeconds: 20, trimInSeconds: 2, trimOutSeconds: 3, startTimeSeconds: 12 })),
+      unwrapResult(createCollectionTimelineItem({ id: "col-2", name: "Collection B", collectionId: "col-id-b", itemCount: 12, startTimeSeconds: 27, durationSeconds: 10 })),
+    ]);
+    const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>([]);
+
+    const handleMoveItem = useCallback(
+      (command: TimelineItemCommand) => {
+        if (command.type !== "move") return;
+        const { itemId, toIndex } = command;
+        const next = [...items];
+        const idx = next.findIndex((i) => i.id === itemId);
+        if (idx !== -1) {
+          const [removed] = next.splice(idx, 1);
+          next.splice(toIndex, 0, removed);
+          setItems(next);
+        }
+      },
+      [items]
+    );
+
+    const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
+      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Strips containing Collections", items }],
+    ]), [items]);
+    const visibleCollectionIds = useMemo(() => ["strip-1" as CollectionId], []);
+
+    return (
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        visibleCollectionIds={visibleCollectionIds}
+        onMoveItem={handleMoveItem}
+      >
+        <MediaStrip
+          collectionId={"strip-1" as CollectionId}
+          heading="Strips containing Collections"
+          selectedIds={selectedIds}
+          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+        />
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // Assert collection label matches itemCount formatting
+    expect(canvas.getByText("Collection (5 items)")).toBeInTheDocument();
+    expect(canvas.getByText("Collection (12 items)")).toBeInTheDocument();
+
+    const firstItem = canvas.getByRole("button", { name: /collection a/i });
+    firstItem.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(firstItem).toHaveAttribute("aria-pressed", "true");
+    });
+  },
+};
+
+export const VideoWithoutPoster: Story = {
+  render: () => {
+    const items = [
+      unwrapResult(createVideoTimelineItem({
+        id: "vid-1",
+        name: "Dog Video",
+        src: "dog.mp4",
+        sourceDurationSeconds: 10,
+        trimInSeconds: 0,
+        trimOutSeconds: 0,
+        startTimeSeconds: 0,
+      })),
+    ];
+    const collectionsById = new Map<CollectionId, TimelineCollection>([
+      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Video without Poster", items }],
+    ]);
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
+    return (
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Video without Poster" selectedIds={[]} onSelectionChange={() => { }} />
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const noPosterElements = canvas.getAllByText(/no poster/i);
+    expect(noPosterElements.length).toBeGreaterThan(0);
+    expect(canvasElement.querySelector("img")).toBeNull();
+  },
+};
+
+export const MixedBrokenPosterSequence: Story = {
+  render: () => {
+    const items = [
+      unwrapResult(createVideoTimelineItem({
+        id: "vid-1",
+        name: "Mixed Poster Sequence",
+        src: "dog.mp4",
+        sourceDurationSeconds: 20,
+        trimInSeconds: 0,
+        trimOutSeconds: 0,
+        startTimeSeconds: 0,
+        posterSrcs: [
+          "https://invalid-url-broken-1.jpg",
+          createThumbnail("#10b981", "Good 1"),
+          "https://invalid-url-broken-2.jpg",
+          createThumbnail("#3b82f6", "Good 2"),
+        ],
+      })),
+    ];
+    const collectionsById = new Map<CollectionId, TimelineCollection>([
+      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Mixed Poster Sequence", items }],
+    ]);
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
+    return (
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Mixed Poster Sequence" selectedIds={[]} onSelectionChange={() => { }} />
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // Wait to allow onError to fire asynchronously in the browser
+    await waitFor(() => {
+      // The broken URLs should fail and display "No poster" text for those slots,
+      // while the good ones still display as images.
+      const noPosterSlots = canvas.queryAllByText(/no poster/i);
+      expect(noPosterSlots.length).toBeGreaterThan(0);
+    });
+  },
+};
+
+export const VeryNarrowContainer: Story = {
+  render: () => {
+    const items = [
+      unwrapResult(createImageTimelineItem({ id: "item-1", name: "Short name", src: "img.png", startTimeSeconds: 0, durationSeconds: 4 })),
+      unwrapResult(createImageTimelineItem({ id: "item-2", name: "Another short name", src: "img.png", startTimeSeconds: 4, durationSeconds: 4 })),
+    ];
+    const collectionsById = new Map<CollectionId, TimelineCollection>([
+      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Very Narrow", items }],
+    ]);
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
+    return (
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Very Narrow" selectedIds={[]} onSelectionChange={() => { }} />
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="w-[280px] border border-red-500/25 p-2 rounded">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText(/very narrow/i)).toBeInTheDocument();
+  },
+};
+
+export const VeryWideContainer: Story = {
+  render: () => {
+    const items = [
+      unwrapResult(createImageTimelineItem({ id: "item-1", name: "Item 1", src: "img.png", startTimeSeconds: 0, durationSeconds: 40 })),
+      unwrapResult(createImageTimelineItem({ id: "item-2", name: "Item 2", src: "img.png", startTimeSeconds: 40, durationSeconds: 40 })),
+    ];
+    const collectionsById = new Map<CollectionId, TimelineCollection>([
+      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Very Wide", items }],
+    ]);
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
+    return (
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Very Wide" selectedIds={[]} onSelectionChange={() => { }} />
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="w-[1400px] border border-green-500/25 p-2 rounded">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText(/very wide/i)).toBeInTheDocument();
+  },
+};
+
+export const LongNamesAndWeirdCharacters: Story = {
+  render: () => {
+    const items = [
+      unwrapResult(createImageTimelineItem({ id: "item-1", name: "Really really really long clip name that should truncate gracefully", src: "img.png", startTimeSeconds: 0, durationSeconds: 10 })),
+      unwrapResult(createImageTimelineItem({ id: "item-2", name: "Clip / Shot #004 — Café 🚗", src: "img.png", startTimeSeconds: 10, durationSeconds: 10 })),
+      unwrapResult(createImageTimelineItem({ id: "item-3", name: "日本語 title", src: "img.png", startTimeSeconds: 20, durationSeconds: 10 })),
+    ];
+    const collectionsById = new Map<CollectionId, TimelineCollection>([
+      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Long Names & Characters", items }],
+    ]);
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
+    return (
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Long Names & Characters" selectedIds={[]} onSelectionChange={() => { }} />
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // Assert that clips are accessible by their exact names
+    expect(canvas.getByRole("button", { name: /really really really long clip name/i })).toBeInTheDocument();
+    expect(canvas.getByRole("button", { name: /clip \/ shot #004 — café/i })).toBeInTheDocument();
+    expect(canvas.getByRole("button", { name: /日本語 title/i })).toBeInTheDocument();
+  },
+};
+
+export const FractionalDurations: Story = {
+  render: () => {
+    const items = [
+      unwrapResult(createImageTimelineItem({ id: "item-1", name: "Clip 1 (33ms)", src: "img.png", startTimeSeconds: 0, durationSeconds: 0.033 })),
+      unwrapResult(createImageTimelineItem({ id: "item-2", name: "Clip 2 (0.5s)", src: "img.png", startTimeSeconds: 0.033, durationSeconds: 0.5 })),
+      unwrapResult(createImageTimelineItem({ id: "item-3", name: "Clip 3 (1.25s)", src: "img.png", startTimeSeconds: 0.533, durationSeconds: 1.25 })),
+      unwrapResult(createImageTimelineItem({ id: "item-4", name: "Clip 4 (59.999s)", src: "img.png", startTimeSeconds: 1.783, durationSeconds: 59.999 })),
+      unwrapResult(createImageTimelineItem({ id: "item-5", name: "Clip 5 (3600.4s)", src: "img.png", startTimeSeconds: 61.782, durationSeconds: 3600.4 })),
+    ];
+    const collectionsById = new Map<CollectionId, TimelineCollection>([
+      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Fractional Durations", items }],
+    ]);
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
+    return (
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Fractional Durations" selectedIds={[]} onSelectionChange={() => { }} />
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText(/fractional durations/i)).toBeInTheDocument();
+  },
+};
+
+export const ThousandsOfItemsVirtualized: Story = {
+  render: () => {
+    const items = useMemo(() => {
+      return Array.from({ length: 1000 }).map((_, i) =>
+        unwrapResult(
+          createImageTimelineItem({
+            id: `item-${i}`,
+            name: `Item ${i}`,
+            src: "img.png",
+            startTimeSeconds: i * 4,
+            durationSeconds: 4,
+          })
+        )
+      );
+    }, []);
+    const collectionsById = new Map<CollectionId, TimelineCollection>([
+      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "1,000 Virtualized Items", items }],
+    ]);
+    const visibleCollectionIds = ["strip-1" as CollectionId];
+
+    return (
+      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="1,000 Virtualized Items" selectedIds={[]} onSelectionChange={() => { }} />
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const scrollArea = canvasElement.querySelector("[data-slot='scroll-area-viewport']") as HTMLElement;
+    const buttons = canvasElement.querySelectorAll("[data-testid^='media-strip-item-']");
+
+    // Virtualized viewport should only render visible items (<100)
+    expect(buttons.length).toBeLessThan(100);
+
+    // Scroll container dimensions should verify horizontal overflow
+    expect(scrollArea.scrollWidth).toBeGreaterThan(scrollArea.clientWidth);
+  },
+};
+
+export const MultipleBoardsOnPage: Story = {
+  render: () => {
+    const [board1A, setBoard1A] = useState<TimelineItem[]>([
+      unwrapResult(createImageTimelineItem({ id: "item-1a", name: "Item 1A", src: "img.png", startTimeSeconds: 0, durationSeconds: 4 })),
+    ]);
+    const [board1B, setBoard1B] = useState<TimelineItem[]>([
+      unwrapResult(createImageTimelineItem({ id: "item-1b", name: "Item 1B", src: "img.png", startTimeSeconds: 0, durationSeconds: 4 })),
+    ]);
+    const [board2A, setBoard2A] = useState<TimelineItem[]>([
+      unwrapResult(createImageTimelineItem({ id: "item-2a", name: "Item 2A", src: "img.png", startTimeSeconds: 0, durationSeconds: 4 })),
+    ]);
+    const [board2B, setBoard2B] = useState<TimelineItem[]>([
+      unwrapResult(createImageTimelineItem({ id: "item-2b", name: "Item 2B", src: "img.png", startTimeSeconds: 0, durationSeconds: 4 })),
+    ]);
+
+    const handleMove1 = useCallback((command: TimelineItemCommand) => {
+      if (command.type !== "move") return;
+      const { itemId, toCollectionId: toStripId, toIndex } = command;
+      const all = { "strip-1a": board1A, "strip-1b": board1B };
+      const fromStripId = board1A.some(i => i.id === itemId) ? "strip-1a" : "strip-1b";
+      const item = all[fromStripId].find(i => i.id === itemId)!;
+
+      if (fromStripId === "strip-1a") {
+        setBoard1A(board1A.filter(i => i.id !== itemId));
+      } else {
+        setBoard1B(board1B.filter(i => i.id !== itemId));
+      }
+
+      if (toStripId === "strip-1a") {
+        const next = [...board1A.filter(i => i.id !== itemId)];
+        next.splice(toIndex, 0, item);
+        setBoard1A(next);
+      } else {
+        const next = [...board1B.filter(i => i.id !== itemId)];
+        next.splice(toIndex, 0, item);
+        setBoard1B(next);
+      }
+    }, [board1A, board1B]);
+
+    const handleMove2 = useCallback((command: TimelineItemCommand) => {
+      if (command.type !== "move") return;
+      const { itemId, toCollectionId: toStripId, toIndex } = command;
+      const fromStripId = board2A.some(i => i.id === itemId) ? "strip-2a" : "strip-2b";
+      const item = (fromStripId === "strip-2a" ? board2A : board2B).find(i => i.id === itemId)!;
+
+      if (fromStripId === "strip-2a") {
+        setBoard2A(board2A.filter(i => i.id !== itemId));
+      } else {
+        setBoard2B(board2B.filter(i => i.id !== itemId));
+      }
+
+      if (toStripId === "strip-2a") {
+        const next = [...board2A.filter(i => i.id !== itemId)];
+        next.splice(toIndex, 0, item);
+        setBoard2A(next);
+      } else {
+        const next = [...board2B.filter(i => i.id !== itemId)];
+        next.splice(toIndex, 0, item);
+        setBoard2B(next);
+      }
+    }, [board2A, board2B]);
+
+    const collections1 = useMemo(() => new Map<CollectionId, TimelineCollection>([
+      ["strip-1a" as CollectionId, { id: "strip-1a" as CollectionId, name: "Strip 1A", items: board1A }],
+      ["strip-1b" as CollectionId, { id: "strip-1b" as CollectionId, name: "Strip 1B", items: board1B }],
+    ]), [board1A, board1B]);
+    const visible1 = useMemo(() => ["strip-1a" as CollectionId, "strip-1b" as CollectionId], []);
+
+    const collections2 = useMemo(() => new Map<CollectionId, TimelineCollection>([
+      ["strip-2a" as CollectionId, { id: "strip-2a" as CollectionId, name: "Strip 2A", items: board2A }],
+      ["strip-2b" as CollectionId, { id: "strip-2b" as CollectionId, name: "Strip 2B", items: board2B }],
+    ]), [board2A, board2B]);
+    const visible2 = useMemo(() => ["strip-2a" as CollectionId, "strip-2b" as CollectionId], []);
+
+    return (
+      <div className="flex flex-col gap-12">
+        <div className="border p-4 rounded-lg bg-card">
+          <h3 className="text-sm font-bold mb-2">Board 1</h3>
+          <MediaStripBoard collectionsById={collections1} visibleCollectionIds={visible1} onMoveItem={handleMove1}>
+            <div className="flex flex-col gap-4">
+              <MediaStrip collectionId={"strip-1a" as CollectionId} heading="Strip 1A" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={"strip-1b" as CollectionId} heading="Strip 1B" selectedIds={[]} onSelectionChange={() => { }} />
+            </div>
+          </MediaStripBoard>
+        </div>
+        <div className="border p-4 rounded-lg bg-card">
+          <h3 className="text-sm font-bold mb-2">Board 2</h3>
+          <MediaStripBoard collectionsById={collections2} visibleCollectionIds={visible2} onMoveItem={handleMove2}>
+            <div className="flex flex-col gap-4">
+              <MediaStrip collectionId={"strip-2a" as CollectionId} heading="Strip 2A" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={"strip-2b" as CollectionId} heading="Strip 2B" selectedIds={[]} onSelectionChange={() => { }} />
+            </div>
+          </MediaStripBoard>
+        </div>
+      </div>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const item1B = canvas.getByRole("button", { name: /item 1b/i });
+    const handle = item1B.closest("[data-testid^='media-strip-']")?.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    // Pick up item 1B
+    handle.focus();
+    await userEvent.keyboard("{Enter}");
+
+    // Press ArrowDown. Since Board 1 has strip-1b at the bottom, it should be blocked from going into Board 2.
+    await userEvent.keyboard("{ArrowDown}");
+
+    // Assert announcement was "Already at the bottom collection." immediately after arrow key press
+    const announcer = canvasElement.ownerDocument.body.querySelector("[aria-live='polite']") as HTMLElement;
+    expect(announcer.textContent).toContain("Already at the bottom collection.");
+
+    // Press Enter to confirm drop and clean up
+    await userEvent.keyboard("{Enter}");
+  },
+};
+
+export const KeyboardReorderBoundaryAnnouncements: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const handle = firstItem.closest("[data-testid^='media-strip-']")?.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    // Focus and activate reorder
+    handle.focus();
+    await userEvent.keyboard("{Enter}");
+
+    // 1. Move Left at first item
+    await userEvent.keyboard("{ArrowLeft}");
+    const announcer = canvasElement.ownerDocument.body.querySelector("[aria-live='polite']") as HTMLElement;
+    expect(announcer.textContent).toContain("Already first in collection.");
+
+    // 2. Move Up at top strip
+    await userEvent.keyboard("{ArrowUp}");
+    expect(announcer.textContent).toContain("Already at the top collection.");
+
+    // Confirm reorder
+    await userEvent.keyboard("{Enter}");
+  },
+};
+
+export const EscapeCancelAcrossStrips: Story = {
+  render: () => <ReorderDemo />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const handle = firstItem.closest("[data-testid^='media-strip-']")?.querySelector("[data-reorder-handle]") as HTMLElement;
+
+    // Pick up item a1 from Strip A (index 0)
+    handle.focus();
+    await userEvent.keyboard("{Enter}");
+
+    // Move to Strip B (ArrowDown)
+    await userEvent.keyboard("{ArrowDown}");
+
+    // Move within Strip B (ArrowRight)
+    await userEvent.keyboard("{ArrowRight}");
+
+    // Cancel (Escape)
+    await userEvent.keyboard("{Escape}");
+
+    // Assert it returned to Strip A at index 0
+    const stripA = canvasElement.querySelector("[data-strip-id='strip-a']") as HTMLElement;
+    await waitFor(() => {
+      expect(within(stripA).getByRole("button", { name: /item a1/i })).toBeInTheDocument();
+    });
+  },
+};
+
+export const ReorderWhileScrolled: Story = {
+  render: () => {
+    const [items, setItems] = useState(() =>
+      Array.from({ length: 40 }).map((_, i) =>
+        unwrapResult(
+          createImageTimelineItem({
+            id: `item-${i}`,
+            name: `Item ${i}`,
+            src: "img.png",
+            startTimeSeconds: i * 4,
+            durationSeconds: 4,
+          })
+        )
+      )
+    );
+
+    const handleMoveItem = useCallback(
+      (command: TimelineItemCommand) => {
+        if (command.type !== "move") return;
+        const { itemId, toIndex } = command;
+        const next = [...items];
+        const idx = next.findIndex((i) => i.id === itemId);
+        if (idx !== -1) {
+          const [removed] = next.splice(idx, 1);
+          next.splice(toIndex, 0, removed);
+          setItems(next);
+        }
+      },
+      [items]
+    );
+
+    const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
+      ["strip-1" as CollectionId, { id: "strip-1" as CollectionId, name: "Long Strip for Scrolling", items }],
+    ]), [items]);
+    const visibleCollectionIds = useMemo(() => ["strip-1" as CollectionId], []);
+
+    return (
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        visibleCollectionIds={visibleCollectionIds}
+        onMoveItem={handleMoveItem}
+      >
+        <MediaStrip collectionId={"strip-1" as CollectionId} heading="Long Strip for Scrolling" selectedIds={[]} onSelectionChange={() => { }} />
+      </MediaStripBoard>
+    );
+  },
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const scrollArea = canvasElement.querySelector("[data-slot='scroll-area-viewport']") as HTMLElement;
+
+    // Scroll deep into the strip (e.g. scrollLeft = 800)
+    scrollArea.scrollLeft = 800;
+    scrollArea.dispatchEvent(new Event("scroll"));
+    await waitFor(() => {
+      expect(scrollArea.scrollLeft).toBeGreaterThan(500);
+    });
+
+    // Find a visible item at this scrolled position (e.g. Item 10)
+    await canvas.findByRole("button", { name: /item 10/i });
+    const handle = canvasElement.querySelector("[data-reorder-handle='item-10']") as HTMLElement;
+
+    handle.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("{ArrowRight}");
+    await userEvent.keyboard("{Enter}");
+
+    // Assert item was moved (Item 10 should be after Item 11)
+    // Focus should remain on the handle of Item 10
+    await waitFor(() => {
+      expect(canvasElement.ownerDocument.activeElement).toBe(handle);
+    });
+
+    // Scroll position should not have jumped back to 0
+    expect(scrollArea.scrollLeft).toBeGreaterThan(500);
+  },
+};
+
+function StatefulNestedCollectionsBoard() {
+  const [collections, setCollections] = useState<TimelineCollectionsById>(() => {
+    const rootItems: TimelineItem[] = [
+      unwrapResult(createImageTimelineItem({
+        id: "img-1",
+        name: "Beautiful Sunset",
+        src: createPhotoThumbnail("beautiful-sunset"),
+        posterSrcs: [createPhotoThumbnail("beautiful-sunset")],
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })),
+      unwrapResult(createCollectionTimelineItem({
+        id: "card-col-b",
+        name: "Holiday Folder",
+        collectionId: "col-b" as CollectionId,
+        itemCount: 2,
+        startTimeSeconds: 0,
+        durationSeconds: 10,
+      })),
+      unwrapResult(createCollectionTimelineItem({
+        id: "card-col-c",
+        name: "Empty Folder",
+        collectionId: "col-c" as CollectionId,
+        itemCount: 0,
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })),
+    ];
+
+    const colBItems: TimelineItem[] = [
+      unwrapResult(createImageTimelineItem({
+        id: "img-2",
+        name: "Beach Day",
+        src: createPhotoThumbnail("beach-day"),
+        posterSrcs: [createPhotoThumbnail("beach-day")],
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })),
+      unwrapResult(createImageTimelineItem({
+        id: "img-3",
+        name: "Mountain Hike",
+        src: createPhotoThumbnail("mountain-hike"),
+        posterSrcs: [createPhotoThumbnail("mountain-hike")],
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })),
+    ];
+
+    return new Map<CollectionId, TimelineCollection>([
+      ["col-a" as CollectionId, {
+        id: "col-a" as CollectionId,
+        name: "Root Collection A",
+        items: rootItems,
+      }],
+      ["col-b" as CollectionId, {
+        id: "col-b" as CollectionId,
+        name: "Holiday Folder",
+        items: colBItems,
+      }],
+      ["col-c" as CollectionId, {
+        id: "col-c" as CollectionId,
+        name: "Empty Folder",
+        items: [],
+      }],
+    ]);
+  });
+
+  const [selectedIds, setSelectedIds] = useState<TimelineItemId[]>([]);
+
+  const handleMoveOrDrop = useCallback((command: TimelineItemCommand) => {
+    setCollections((prev) => applyTimelineItemCommand({ collectionsById: prev, command }));
+  }, []);
+
+  return (
+    <MediaStripBoard collectionsById={collections} visibleCollectionIds={["col-a" as CollectionId]} onMoveItem={handleMoveOrDrop}>
+      <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
+        <div>
+          <h3 className="text-md font-bold mb-1">Nested Collections Demo</h3>
+          <p className="text-xs text-zinc-400 mb-4">
+            - Drag and drop "Beautiful Sunset" onto the center of "Holiday Folder" or "Empty Folder" cards to nest them.
+            <br />
+            - Try keyboard reordering: focus the reorder handle of "Beautiful Sunset", press Space, move next to "Holiday Folder", and press N to nest it!
+          </p>
+        </div>
+        <MediaStrip
+          collectionId={"col-a" as CollectionId}
+          heading="Root Collection (Strip)"
+          selectedIds={selectedIds}
+          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+        />
+        <MediaStrip
+          collectionId={"col-b" as CollectionId}
+          heading="Holiday Folder Contents"
+          selectedIds={selectedIds}
+          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+        />
+        <MediaStrip
+          collectionId={"col-c" as CollectionId}
+          heading="Empty Folder Contents"
+          selectedIds={selectedIds}
+          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+        />
+      </div>
+    </MediaStripBoard>
+  );
+}
+
+export const DeeplyNestedCollections: StoryObj = {
+  render: () => <StatefulNestedCollectionsBoard />,
+  decorators: [
+    (Story) => (
+      <div className="min-h-screen bg-background p-8 text-foreground">
+        <div className="max-w-2xl">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+};
+

@@ -1,7 +1,52 @@
 import { type CSSProperties } from "react";
-import type { TimelineItem, VideoTimelineItem, MediaStripMove } from "./media-strip.types";
+import {
+  type TimelineItem,
+  type VideoTimelineItem,
+  type TimelineItemId,
+  type CollectionId,
+  type TimelineCollection,
+  type TimelineItemCommand,
+  isCollectionItem,
+} from "./media-strip.types";
 
 export const MIN_ITEM_WIDTH_PX = 96;
+
+/**
+ * Height of the thumbnail card in pixels.
+ * Coupled with Tailwind's "h-24" class (6rem = 96px).
+ */
+export const THUMBNAIL_HEIGHT_PX = 96;
+
+/**
+ * Nesting hotspot boundary offset scale factors.
+ * An item dropped within [20%, 80%] of a nested collection's card bounding box triggers nesting.
+ */
+export const NEST_HOTSPOT_MIN_OFFSET = 0.2;
+export const NEST_HOTSPOT_MAX_OFFSET = 0.8;
+
+/**
+ * Default width in pixels for the drag overlay representation of a media item
+ * if its real dimensions cannot be resolved from the DOM.
+ */
+export const DEFAULT_DRAG_OVERLAY_WIDTH_PX = 160;
+
+/**
+ * Distance thresholds in pixels to activate dragging gestures.
+ * - scroll: drag distance required to initiate drag scrolling on the scroll area.
+ * - board: drag distance required to initiate dnd-kit item reordering.
+ * Board threshold is slightly higher to prioritize clicks and distinguish them from drag scrolls.
+ */
+export const DRAG_ACTIVATION_THRESHOLDS_PX = {
+  scroll: 4,
+  board: 5,
+};
+
+/**
+ * Shared DOM attribute names to keep selectors in sync across files.
+ */
+export const DATA_VALUE_ATTR = "data-value";
+export const VALUE_ATTR = "value";
+export const DATA_REORDER_HANDLE_ATTR = "data-reorder-handle";
 
 /**
  * Padding applied to the ToggleGroup container in pixels.
@@ -25,13 +70,20 @@ export function getItemWidth(
   item: Pick<TimelineItem, "durationSeconds">,
   pxPerSecond: number
 ): number {
-  return Math.max(MIN_ITEM_WIDTH_PX, item.durationSeconds * pxPerSecond);
+  const width = item.durationSeconds * pxPerSecond;
+  if (!Number.isFinite(width) || width < 0) {
+    return MIN_ITEM_WIDTH_PX;
+  }
+  return Math.max(MIN_ITEM_WIDTH_PX, width);
 }
 
 /**
  * Formats a duration in seconds into a readable string (e.g. MM:SS or H:MM:SS).
  */
 export function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return "00:00";
+  }
   const hours = Math.floor(seconds / 3600);
   const mins = Math.floor((seconds % 3600) / 60);
   const secs = Math.floor(seconds % 60);
@@ -42,15 +94,31 @@ export function formatDuration(seconds: number): string {
   return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
 }
 
+/**
+ * Checks if a DOM element is horizontally fully visible within its scroll container.
+ */
+export function isElementFullyVisibleInScrollArea(
+  element: HTMLElement,
+  container: HTMLElement,
+  bufferPx = 4
+): boolean {
+  const rect = element.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  return (
+    rect.left >= containerRect.left - bufferPx &&
+    rect.right <= containerRect.right + bufferPx
+  );
+}
+
 /** Shared props type between the item button and the custom memoization comparator. */
 export type MediaStripItemAreEqualProps = {
   item: TimelineItem;
   style?: CSSProperties;
   thumbnailVariant?: "single" | "sequence";
-  items: TimelineItem[];
+  index: number;
   isKeyboardReordering?: boolean;
-  stripId?: string;
-  onMoveItem?: (details: MediaStripMove) => void;
+  collectionId?: CollectionId;
+  onMoveItem?: (command: TimelineItemCommand) => void;
 };
 
 /**
@@ -58,28 +126,43 @@ export type MediaStripItemAreEqualProps = {
  * Performs reference equality check on the item and structural equality checks
  * on the virtualized absolute positioning styles.
  *
- * NOTE: style.left (derived from virtualItem.start) and style.width (derived from itemWidths)
- * vary per virtual item and are compared. style.top and style.height are constant (defined
- * relative to TOGGLE_GROUP_PADDING_PX) but are included for robustness.
- * Constant properties (like `position: "absolute"`) are skipped since they are identical
- * across all items.
- * Transform/transition properties are computed separately via useSortable inside the
- * MediaStripItemButton component and are not compared here.
+ * Whitelists other props for shallow comparison so that any future added props
+ * must be explicitly considered and compared, preventing silent memoization regression.
  */
 export function areEqual(
   prevProps: MediaStripItemAreEqualProps,
   nextProps: MediaStripItemAreEqualProps
 ): boolean {
-  return (
-    prevProps.item === nextProps.item &&
-    prevProps.style?.width === nextProps.style?.width &&
-    prevProps.style?.left === nextProps.style?.left &&
-    prevProps.style?.top === nextProps.style?.top &&
-    prevProps.style?.height === nextProps.style?.height &&
-    prevProps.thumbnailVariant === nextProps.thumbnailVariant &&
-    prevProps.items === nextProps.items &&
-    prevProps.isKeyboardReordering === nextProps.isKeyboardReordering &&
-    prevProps.stripId === nextProps.stripId &&
-    prevProps.onMoveItem === nextProps.onMoveItem
-  );
+  // Structural checks on virtualized style object properties
+  const prevStyle = prevProps.style;
+  const nextStyle = nextProps.style;
+  if (
+    prevStyle?.width !== nextStyle?.width ||
+    prevStyle?.left !== nextStyle?.left ||
+    prevStyle?.top !== nextStyle?.top ||
+    prevStyle?.height !== nextStyle?.height
+  ) {
+    return false;
+  }
+
+  // whitelist for simple value/reference checks
+  // Note: if you add a new prop to MediaStripItemAreEqualProps, add it here.
+  const keys: Exclude<keyof MediaStripItemAreEqualProps, "style">[] = [
+    "item",
+    "thumbnailVariant",
+    "index",
+    "isKeyboardReordering",
+    "collectionId",
+    "onMoveItem",
+  ];
+
+  return keys.every((key) => prevProps[key] === nextProps[key]);
 }
+
+/**
+ * Unified instructions for keyboard reordering mode.
+ * shared by the handle's aria-label and the screen-reader announcements to prevent copy drift.
+ */
+export const KEYBOARD_REORDER_INSTRUCTIONS =
+  "Use ArrowLeft/Right to reorder, ArrowUp/Down to move between collections, Home/End to skip to edges, N to nest, Enter or Space to drop, Escape to cancel.";
+

@@ -13,30 +13,37 @@ export type MediaKind = "image" | "video";
 declare const timelineItemIdBrand: unique symbol;
 declare const collectionIdBrand: unique symbol;
 
-export type TimelineItemId = string & {
-  readonly [timelineItemIdBrand]: true;
+type BrandedString<TBrand extends symbol> = string & {
+  readonly [K in TBrand]: true;
 };
 
-export type CollectionId = string & {
-  readonly [collectionIdBrand]: true;
+export type TimelineItemId = BrandedString<typeof timelineItemIdBrand>;
+export type CollectionId = BrandedString<typeof collectionIdBrand>;
+
+const isValidTimelineId = (id: string): id is TimelineItemId => {
+  return !!id && !!id.trim();
 };
 
-export const asTimelineItemId = (
+const isValidCollectionId = (id: string): id is CollectionId => {
+  return !!id && !!id.trim();
+};
+
+export const parseTimelineItemId = (
   id: string
 ): TimelineItemResult<TimelineItemId, "empty-id"> => {
-  if (!id || !id.trim()) {
-    return { ok: false, error: "empty-id" };
+  if (isValidTimelineId(id)) {
+    return { ok: true, value: id };
   }
-  return { ok: true, value: id as TimelineItemId };
+  return { ok: false, error: "empty-id" };
 };
 
-export const asCollectionId = (
+export const parseCollectionId = (
   id: string
 ): TimelineItemResult<CollectionId, "empty-id"> => {
-  if (!id || !id.trim()) {
-    return { ok: false, error: "empty-id" };
+  if (isValidCollectionId(id)) {
+    return { ok: true, value: id };
   }
-  return { ok: true, value: id as CollectionId };
+  return { ok: false, error: "empty-id" };
 };
 
 // --- Core types --------------------------------------------------------------
@@ -142,15 +149,54 @@ export const assertNever = (value: never): never => {
  *   const result = createImageTimelineItem(input);
  *   if (!result.ok) { report(result.error); return; }
  *   use(result.value);
+ *
+ * Note on `__itemResult`: This is a phantom field (a type-level nominal marker)
+ * present on both union branches. It prevents structural TypeScript collapse
+ * between the success and failure shapes in cases where T and E might structurally
+ * overlap (e.g. if both are objects with similar optional fields or empty interfaces).
  */
 export type TimelineItemResult<T, E> =
   | Readonly<{ ok: true; value: T; readonly __itemResult?: never }>
   | Readonly<{ ok: false; error: E; readonly __itemResult?: never }>;
 
-export type MediaStripMove = {
-  itemId: TimelineItemId;
-  fromStripId: string;
-  toStripId: string;
-  fromIndex: number;
-  toIndex: number;
-};
+
+
+export type TimelineCollection = Readonly<{
+  id: CollectionId;
+  name: string;
+  items: readonly TimelineItem[];
+}>;
+
+export type TimelineCollectionsById = ReadonlyMap<CollectionId, TimelineCollection>;
+
+export type TimelineItemCommand =
+  | Readonly<{
+    type: "move";
+    itemId: TimelineItemId;
+    fromCollectionId: CollectionId;
+    toCollectionId: CollectionId;
+    toIndex: number;
+  }>
+  | Readonly<{
+    type: "nest";
+    itemId: TimelineItemId;
+    fromCollectionId: CollectionId;
+    targetCollectionId: CollectionId;
+    toIndex?: number;
+  }>;
+
+export type DndTarget =
+  | Readonly<{ type: "item"; itemId: TimelineItemId }>
+  | Readonly<{ type: "collection-container"; collectionId: CollectionId }>
+  | Readonly<{ type: "collection-nest-target"; collectionId: CollectionId }>;
+
+export type KeyboardReorderAction =
+  | "move-left"
+  | "move-right"
+  | "move-up"
+  | "move-down"
+  | "move-home"
+  | "move-end"
+  | "nest"
+  | "confirm"
+  | "cancel";
