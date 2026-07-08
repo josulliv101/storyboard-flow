@@ -10,6 +10,7 @@
     "storybook": "npm run storybook --workspace=apps/storybook",
     "build-storybook": "npm run build-storybook --workspace=apps/storybook",
     "dev:frontend": "cross-env NODE_OPTIONS=\"--max-old-space-size=4096 --heapsnapshot-near-heap-limit=1\" npm run dev --workspace=apps/web",
+    "dev:media-strip-rsc": "npm run dev --workspace=apps/media-strip-rsc",
     "dev:backend": "npm run dev --workspace=apps/backend",
     "setup:backend": "npm run setup --workspace=apps/backend"
   },

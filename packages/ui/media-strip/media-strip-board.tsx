@@ -2,17 +2,6 @@
 
 import React, { createContext, useContext, useState, useCallback, useRef, useMemo, useEffect } from "react";
 import {
-  DndContext,
-  useSensors,
-  useSensor,
-  PointerSensor,
-  DragOverlay,
-  type CollisionDetection,
-  type DragStartEvent,
-  type DragOverEvent,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
   parseCollectionId,
   type TimelineItem,
   type TimelineItemId,
@@ -29,6 +18,8 @@ import {
   DATA_VALUE_ATTR,
   VALUE_ATTR,
   DEFAULT_DRAG_OVERLAY_WIDTH_PX,
+  NEST_HOTSPOT_MAX_OFFSET,
+  NEST_HOTSPOT_MIN_OFFSET,
 } from "./core/media-strip.utils";
 import {
   decodeDndTarget,
@@ -40,6 +31,19 @@ import { MediaStripThumbnail } from "./media-strip-thumbnail";
 import { useBoardRegistry } from "./use-board-registry";
 import { useBoardDragState } from "./use-board-drag-state";
 import { useKeyboardReorderSession } from "./use-keyboard-reorder-session";
+import {
+  MediaStripDndProvider,
+  MediaStripDragOverlay,
+} from "./media-strip-dnd-provider";
+import {
+  type MediaStripDndCollisionDetection,
+  type MediaStripDndDragEndEvent,
+  type MediaStripDndDragMoveEvent,
+  type MediaStripDndDragOverEvent,
+  type MediaStripDndDragStartEvent,
+  type MediaStripDndIdentifier,
+} from "./core/media-strip.dnd-adapter";
+import { type MediaStripDndAdapter } from "./media-strip-dnd.types";
 
 type MediaStripBoardStableContextType = {
   collectionsById: ReadonlyMap<CollectionId, TimelineCollection>;
@@ -110,11 +114,13 @@ function isAncestorCollection(
 export function MediaStripBoard({
   children,
   collectionsById,
+  dndAdapter,
   visibleCollectionIds,
   onMoveItem,
 }: {
   children: React.ReactNode;
   collectionsById?: ReadonlyMap<CollectionId, TimelineCollection>;
+  dndAdapter: MediaStripDndAdapter;
   visibleCollectionIds?: readonly CollectionId[];
   onMoveItem?: (command: TimelineItemCommand) => void;
 }) {
@@ -213,7 +219,7 @@ export function MediaStripBoard({
 
 
 
-  const collisionDetectionStrategy = useCallback<CollisionDetection>((args) => {
+  const collisionDetectionStrategy = useCallback<MediaStripDndCollisionDetection>((args) => {
     const { nestTargetId, intersections } = detectCollision({
       active: args.active,
       collisionRect: args.collisionRect,
@@ -280,15 +286,7 @@ export function MediaStripBoard({
     announce,
   });
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: DRAG_ACTIVATION_THRESHOLDS_PX.board,
-      },
-    })
-  );
-
-  const handleDragStart = useCallback((event: DragStartEvent) => {
+  const handleDragStart = useCallback((event: MediaStripDndDragStartEvent) => {
     const decoded = decodeDndTarget(String(event.active.id));
     if (!decoded || decoded.type !== "item") return;
     const itemId = decoded.itemId;
@@ -310,11 +308,17 @@ export function MediaStripBoard({
     }
   }, [itemLookup, announce, startDrag]);
 
-  const handleDragMove = useCallback(() => {
+  const handleDragMove = useCallback((event?: MediaStripDndDragMoveEvent) => {
+    if (event && "nestTargetId" in event) {
+      activeNestTargetRef.current = event.nestTargetId ?? null;
+    }
     moveDrag(activeNestTargetRef.current);
   }, [moveDrag]);
 
-  const handleDragOver = useCallback((event: DragOverEvent) => {
+  const handleDragOver = useCallback((event: MediaStripDndDragOverEvent) => {
+    if ("nestTargetId" in event) {
+      activeNestTargetRef.current = event.nestTargetId ?? null;
+    }
     moveDrag(activeNestTargetRef.current);
     const { over } = event;
     if (over) {
@@ -336,10 +340,10 @@ export function MediaStripBoard({
     }
   }, [moveDrag, itemLookup]);
 
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
+  const handleDragEnd = useCallback((event: MediaStripDndDragEndEvent) => {
     const { over, active } = event;
     const itemId = activeDragId;
-    const nestTargetId = activeNestTargetRef.current;
+    const nestTargetId = ("nestTargetId" in event ? event.nestTargetId : undefined) ?? activeNestTargetRef.current;
 
     activeNestTargetRef.current = null;
     activeOverCollectionIdRef.current = null;
@@ -420,6 +424,43 @@ export function MediaStripBoard({
     endDrag,
   ]);
 
+  const getNestTargetId = useCallback(({
+    activeId,
+    element,
+    input,
+    overId,
+  }: {
+    activeId: MediaStripDndIdentifier;
+    element: Element;
+    input: { clientX: number; clientY: number };
+    overId: MediaStripDndIdentifier;
+  }): CollectionId | null => {
+    const decoded = decodeDndTarget(String(overId));
+    if (!decoded || decoded.type !== "item") return null;
+
+    const found = itemLookup.get(decoded.itemId);
+    if (!found || found.item.kind !== "collection") return null;
+
+    const rect = element.getBoundingClientRect();
+    const hotspotLeft = rect.left + rect.width * NEST_HOTSPOT_MIN_OFFSET;
+    const hotspotRight = rect.left + rect.width * NEST_HOTSPOT_MAX_OFFSET;
+    const hotspotTop = rect.top + rect.height * NEST_HOTSPOT_MIN_OFFSET;
+    const hotspotBottom = rect.top + rect.height * NEST_HOTSPOT_MAX_OFFSET;
+
+    if (
+      input.clientX < hotspotLeft ||
+      input.clientX > hotspotRight ||
+      input.clientY < hotspotTop ||
+      input.clientY > hotspotBottom
+    ) {
+      return null;
+    }
+
+    const activeDecoded = decodeDndTarget(String(activeId));
+    const activeItemId = activeDecoded?.type === "item" ? activeDecoded.itemId : activeId;
+    return activeItemId !== found.item.id ? found.item.collectionId : null;
+  }, [itemLookup]);
+
   const handleDragCancel = useCallback(() => {
     activeNestTargetRef.current = null;
     activeOverCollectionIdRef.current = null;
@@ -476,9 +517,13 @@ export function MediaStripBoard({
     <MediaStripBoardStableContext.Provider value={stableContextValue}>
       <MediaStripBoardDragContext.Provider value={dragContextValue}>
         <div ref={containerRef} style={{ display: "contents" }}>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={collisionDetectionStrategy}
+          <MediaStripDndProvider
+            adapter={dndAdapter}
+            dndKit={{
+              activationDistance: DRAG_ACTIVATION_THRESHOLDS_PX.board,
+              collisionDetection: collisionDetectionStrategy,
+            }}
+            getNestTargetId={getNestTargetId}
             onDragStart={handleDragStart}
             onDragMove={handleDragMove}
             onDragOver={handleDragOver}
@@ -508,11 +553,11 @@ export function MediaStripBoard({
           >
             {children}
 
-            <DragOverlay>
+            <MediaStripDragOverlay>
               {activeDragItem ? (
                 <DragOverlayItem item={activeDragItem} width={activeDragWidth} />
               ) : null}
-            </DragOverlay>
+            </MediaStripDragOverlay>
 
             <div
               aria-live="polite"
@@ -531,7 +576,7 @@ export function MediaStripBoard({
             >
               {announcement}
             </div>
-          </DndContext>
+          </MediaStripDndProvider>
         </div>
       </MediaStripBoardDragContext.Provider>
     </MediaStripBoardStableContext.Provider>

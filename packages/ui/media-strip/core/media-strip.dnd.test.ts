@@ -1,10 +1,7 @@
 import { describe, test, expect } from "vitest";
 import {
-  type UniqueIdentifier,
-  type Active,
-  type ClientRect,
-  type DroppableContainer,
-} from "@dnd-kit/core";
+  type MediaStripDndDroppableContainer,
+} from "./media-strip.dnd-adapter";
 import {
   asTimelineItemId,
   asCollectionId,
@@ -48,7 +45,7 @@ describe("resolveDropIntent helper", () => {
     [asTimelineItemId("item-b"), { collectionId: asCollectionId("col-root"), index: 1, item: itemB }],
   ]);
 
-  test("drop before item", () => {
+  test("drop over item resolves to that item's final index", () => {
     const result = resolveDropIntent({
       overId: "item:item-b",
       activeId: "item:item-a",
@@ -113,7 +110,7 @@ describe("detectCollision strategy with hotspots", () => {
     [asTimelineItemId("item-folder"), { collectionId: asCollectionId("col-root"), index: 0, item: folderItem }],
   ]);
 
-  const droppableContainers: DroppableContainer[] = [
+  const droppableContainers: MediaStripDndDroppableContainer[] = [
     {
       id: "item:item-folder",
       rect: {

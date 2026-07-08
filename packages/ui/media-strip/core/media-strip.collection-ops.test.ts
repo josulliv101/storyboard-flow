@@ -81,7 +81,7 @@ describe("applyTimelineItemCommand reducer", () => {
     ],
   ]);
 
-  test("move within same collection", () => {
+  test("move within same collection to the requested final index", () => {
     const result = applyTimelineItemCommand({
       collectionsById: initialCollections,
       command: {
@@ -95,6 +95,37 @@ describe("applyTimelineItemCommand reducer", () => {
 
     const rootCol = result.get(asCollectionId("col-root"))!;
     expect(rootCol.items.map((i) => i.id)).toEqual(["item-b", "item-a", "item-col-nested"]);
+  });
+
+  test("move backward within same collection to the requested final index", () => {
+    const result = applyTimelineItemCommand({
+      collectionsById: initialCollections,
+      command: {
+        type: "move",
+        itemId: asTimelineItemId("item-col-nested"),
+        fromCollectionId: asCollectionId("col-root"),
+        toCollectionId: asCollectionId("col-root"),
+        toIndex: 0,
+      },
+    });
+
+    const rootCol = result.get(asCollectionId("col-root"))!;
+    expect(rootCol.items.map((i) => i.id)).toEqual(["item-col-nested", "item-a", "item-b"]);
+  });
+
+  test("returns the original map when same-collection final index is unchanged", () => {
+    const result = applyTimelineItemCommand({
+      collectionsById: initialCollections,
+      command: {
+        type: "move",
+        itemId: asTimelineItemId("item-a"),
+        fromCollectionId: asCollectionId("col-root"),
+        toCollectionId: asCollectionId("col-root"),
+        toIndex: 0,
+      },
+    });
+
+    expect(result).toBe(initialCollections);
   });
 
   test("move across different collections", () => {

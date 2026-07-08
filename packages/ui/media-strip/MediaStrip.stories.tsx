@@ -4,6 +4,9 @@ import { expect, fn, userEvent, within, waitFor } from "storybook/test";
 
 import { MediaStrip, type MediaStripProps, type MediaStripSelection } from "./media-strip";
 import { MediaStripBoard } from "./media-strip-board";
+import { dndKitMediaStripDndAdapter } from "./adapters/dnd-kit-adapter";
+import { nativeHtml5MediaStripDndAdapter } from "./adapters/native-html5-adapter";
+import { pragmaticMediaStripDndAdapter } from "./adapters/pragmatic-adapter";
 import {
   asTimelineItemId,
   asCollectionId,
@@ -14,6 +17,7 @@ import {
   type TimelineCollectionsById,
   type TimelineItemCommand,
 } from "./core/media-strip.types";
+import { type MediaStripDndAdapter } from "./media-strip-dnd.types";
 import {
   createImageTimelineItem,
   createVideoTimelineItem,
@@ -217,6 +221,7 @@ function StatefulMediaStrip(props: MediaStripProps & { items?: readonly Timeline
   return (
     <MediaStripBoard
       collectionsById={collectionsById}
+      dndAdapter={dndKitMediaStripDndAdapter}
       visibleCollectionIds={visibleCollectionIds}
       onMoveItem={handleMoveItem}
     >
@@ -602,7 +607,11 @@ export const KeyboardVirtualNavigation: Story = {
   },
 };
 
-const ReorderDemo = () => {
+const ReorderDemo = ({
+  dndAdapter = dndKitMediaStripDndAdapter,
+}: {
+  dndAdapter?: MediaStripDndAdapter;
+}) => {
   const [collections, setCollections] = useState<TimelineCollectionsById>(() =>
     new Map<CollectionId, TimelineCollection>([
       [asCollectionId("strip-a"), {
@@ -655,6 +664,7 @@ const ReorderDemo = () => {
   return (
     <MediaStripBoard
       collectionsById={collections}
+      dndAdapter={dndAdapter}
       visibleCollectionIds={visibleCollectionIds}
       onMoveItem={handleMoveItem}
     >
@@ -692,6 +702,14 @@ const ReorderDemo = () => {
 
 export const ReorderableMediaStrips: Story = {
   render: () => <ReorderDemo />,
+};
+
+export const ReorderableMediaStripsPragmaticDnd: Story = {
+  render: () => <ReorderDemo dndAdapter={pragmaticMediaStripDndAdapter} />,
+};
+
+export const ReorderableMediaStripsNativeHtml5: Story = {
+  render: () => <ReorderDemo dndAdapter={nativeHtml5MediaStripDndAdapter} />,
 };
 
 export const MultiStripDragRegression: Story = {
@@ -801,53 +819,60 @@ export const PointerDragBetweenStrips: Story = {
   },
 };
 
+const EmptyStripDropDemo = ({
+  dndAdapter = dndKitMediaStripDndAdapter,
+}: {
+  dndAdapter?: MediaStripDndAdapter;
+}) => {
+  const [stripA, setStripA] = useState<TimelineItem[]>([
+    unwrapResult(
+      createImageTimelineItem({
+        id: "item-1",
+        name: "Item 1",
+        src: "img.png",
+        startTimeSeconds: 0,
+        durationSeconds: 4,
+      })
+    ),
+  ]);
+  const [stripB, setStripB] = useState<TimelineItem[]>([]);
+
+  const handleMoveItem = useCallback(
+    (command: TimelineItemCommand) => {
+      if (command.type !== "move") return;
+      const { itemId, toCollectionId: toStripId } = command;
+      const item = stripA.find((i) => i.id === itemId);
+      if (item && toStripId === "strip-b") {
+        setStripB([item]);
+        setStripA([]);
+      }
+    },
+    [stripA]
+  );
+
+  const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
+    [asCollectionId("strip-a"), { id: asCollectionId("strip-a"), name: "Strip A", items: stripA }],
+    [asCollectionId("strip-b"), { id: asCollectionId("strip-b"), name: "Strip B", items: stripB }],
+  ]), [stripA, stripB]);
+  const visibleCollectionIds = useMemo(() => [asCollectionId("strip-a"), asCollectionId("strip-b")], []);
+
+  return (
+    <MediaStripBoard
+      collectionsById={collectionsById}
+      dndAdapter={dndAdapter}
+      visibleCollectionIds={visibleCollectionIds}
+      onMoveItem={handleMoveItem}
+    >
+      <div className="flex flex-col gap-8 p-4">
+        <MediaStrip collectionId={asCollectionId("strip-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={asCollectionId("strip-b")} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
+      </div>
+    </MediaStripBoard>
+  );
+};
+
 export const PointerDragIntoEmptyStrip: Story = {
-  render: () => {
-    const [stripA, setStripA] = useState<TimelineItem[]>([
-      unwrapResult(
-        createImageTimelineItem({
-          id: "item-1",
-          name: "Item 1",
-          src: "img.png",
-          startTimeSeconds: 0,
-          durationSeconds: 4,
-        })
-      ),
-    ]);
-    const [stripB, setStripB] = useState<TimelineItem[]>([]);
-
-    const handleMoveItem = useCallback(
-      (command: TimelineItemCommand) => {
-        if (command.type !== "move") return;
-        const { itemId, toCollectionId: toStripId } = command;
-        const item = stripA.find((i) => i.id === itemId);
-        if (item && toStripId === "strip-b") {
-          setStripB([item]);
-          setStripA([]);
-        }
-      },
-      [stripA]
-    );
-
-    const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-a"), { id: asCollectionId("strip-a"), name: "Strip A", items: stripA }],
-      [asCollectionId("strip-b"), { id: asCollectionId("strip-b"), name: "Strip B", items: stripB }],
-    ]), [stripA, stripB]);
-    const visibleCollectionIds = useMemo(() => [asCollectionId("strip-a"), asCollectionId("strip-b")], []);
-
-    return (
-      <MediaStripBoard
-        collectionsById={collectionsById}
-        visibleCollectionIds={visibleCollectionIds}
-        onMoveItem={handleMoveItem}
-      >
-        <div className="flex flex-col gap-8 p-4">
-          <MediaStrip collectionId={asCollectionId("strip-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
-          <MediaStrip collectionId={asCollectionId("strip-b")} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
-        </div>
-      </MediaStripBoard>
-    );
-  },
+  render: () => <EmptyStripDropDemo />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const firstItem = canvas.getByRole("button", { name: /item 1/i });
@@ -863,6 +888,10 @@ export const PointerDragIntoEmptyStrip: Story = {
       expect(within(stripB).getByRole("button", { name: /item 1/i })).toBeInTheDocument();
     });
   },
+};
+
+export const PointerDragIntoEmptyStripNativeHtml5: Story = {
+  render: () => <EmptyStripDropDemo dndAdapter={nativeHtml5MediaStripDndAdapter} />,
 };
 
 export const SelectedItemRemainsSelected: Story = {
@@ -958,6 +987,7 @@ export const CollectionItems: Story = {
     return (
       <MediaStripBoard
         collectionsById={collectionsById}
+        dndAdapter={dndKitMediaStripDndAdapter}
         visibleCollectionIds={visibleCollectionIds}
         onMoveItem={handleMoveItem}
       >
@@ -1004,7 +1034,11 @@ export const VideoWithoutPoster: Story = {
     const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
-      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        dndAdapter={dndKitMediaStripDndAdapter}
+        visibleCollectionIds={visibleCollectionIds}
+      >
         <MediaStrip collectionId={asCollectionId("strip-1")} heading="Video without Poster" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
@@ -1042,7 +1076,11 @@ export const MixedBrokenPosterSequence: Story = {
     const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
-      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        dndAdapter={dndKitMediaStripDndAdapter}
+        visibleCollectionIds={visibleCollectionIds}
+      >
         <MediaStrip collectionId={asCollectionId("strip-1")} heading="Mixed Poster Sequence" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
@@ -1071,7 +1109,11 @@ export const VeryNarrowContainer: Story = {
     const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
-      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        dndAdapter={dndKitMediaStripDndAdapter}
+        visibleCollectionIds={visibleCollectionIds}
+      >
         <MediaStrip collectionId={asCollectionId("strip-1")} heading="Very Narrow" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
@@ -1101,7 +1143,11 @@ export const VeryWideContainer: Story = {
     const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
-      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        dndAdapter={dndKitMediaStripDndAdapter}
+        visibleCollectionIds={visibleCollectionIds}
+      >
         <MediaStrip collectionId={asCollectionId("strip-1")} heading="Very Wide" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
@@ -1132,7 +1178,11 @@ export const LongNamesAndWeirdCharacters: Story = {
     const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
-      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        dndAdapter={dndKitMediaStripDndAdapter}
+        visibleCollectionIds={visibleCollectionIds}
+      >
         <MediaStrip collectionId={asCollectionId("strip-1")} heading="Long Names & Characters" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
@@ -1161,7 +1211,11 @@ export const FractionalDurations: Story = {
     const visibleCollectionIds = [asCollectionId("strip-1")];
 
     return (
-      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
+      <MediaStripBoard
+        collectionsById={collectionsById}
+        dndAdapter={dndKitMediaStripDndAdapter}
+        visibleCollectionIds={visibleCollectionIds}
+      >
         <MediaStrip collectionId={asCollectionId("strip-1")} heading="Fractional Durations" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
@@ -1172,32 +1226,54 @@ export const FractionalDurations: Story = {
   },
 };
 
-export const ThousandsOfItemsVirtualized: Story = {
-  render: () => {
-    const items = useMemo(() => {
-      return Array.from({ length: 1000 }).map((_, i) =>
-        unwrapResult(
-          createImageTimelineItem({
-            id: `item-${i}`,
-            name: `Item ${i}`,
-            src: "img.png",
-            startTimeSeconds: i * 4,
-            durationSeconds: 4,
-          })
-        )
-      );
-    }, []);
-    const collectionsById = new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "1,000 Virtualized Items", items }],
-    ]);
-    const visibleCollectionIds = [asCollectionId("strip-1")];
-
-    return (
-      <MediaStripBoard collectionsById={collectionsById} visibleCollectionIds={visibleCollectionIds}>
-        <MediaStrip collectionId={asCollectionId("strip-1")} heading="1,000 Virtualized Items" selectedIds={[]} onSelectionChange={() => { }} />
-      </MediaStripBoard>
+const VirtualizedItemsDemo = ({
+  dndAdapter = dndKitMediaStripDndAdapter,
+}: {
+  dndAdapter?: MediaStripDndAdapter;
+}) => {
+  const [items, setItems] = useState(() => {
+    return Array.from({ length: 1000 }).map((_, i) =>
+      unwrapResult(
+        createImageTimelineItem({
+          id: `item-${i}`,
+          name: `Item ${i}`,
+          src: "img.png",
+          startTimeSeconds: i * 4,
+          durationSeconds: 4,
+        })
+      )
     );
-  },
+  });
+  const handleMoveItem = useCallback((command: TimelineItemCommand) => {
+    setItems((prev) => {
+      if (command.type !== "move") return prev;
+      const next = [...prev];
+      const index = next.findIndex((item) => item.id === command.itemId);
+      if (index === -1) return prev;
+      const [moved] = next.splice(index, 1);
+      next.splice(Math.max(0, Math.min(command.toIndex, next.length)), 0, moved);
+      return next;
+    });
+  }, []);
+  const collectionsById = new Map<CollectionId, TimelineCollection>([
+    [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "1,000 Virtualized Items", items }],
+  ]);
+  const visibleCollectionIds = [asCollectionId("strip-1")];
+
+  return (
+    <MediaStripBoard
+      collectionsById={collectionsById}
+      dndAdapter={dndAdapter}
+      visibleCollectionIds={visibleCollectionIds}
+      onMoveItem={handleMoveItem}
+    >
+      <MediaStrip collectionId={asCollectionId("strip-1")} heading="1,000 Virtualized Items" selectedIds={[]} onSelectionChange={() => { }} />
+    </MediaStripBoard>
+  );
+};
+
+export const ThousandsOfItemsVirtualized: Story = {
+  render: () => <VirtualizedItemsDemo />,
   play: async ({ canvasElement }) => {
     const scrollArea = canvasElement.querySelector("[data-slot='scroll-area-viewport']") as HTMLElement;
     const buttons = canvasElement.querySelectorAll("[data-testid^='media-strip-item-']");
@@ -1208,6 +1284,10 @@ export const ThousandsOfItemsVirtualized: Story = {
     // Scroll container dimensions should verify horizontal overflow
     expect(scrollArea.scrollWidth).toBeGreaterThan(scrollArea.clientWidth);
   },
+};
+
+export const ThousandsOfItemsVirtualizedNativeHtml5: Story = {
+  render: () => <VirtualizedItemsDemo dndAdapter={nativeHtml5MediaStripDndAdapter} />,
 };
 
 export const MultipleBoardsOnPage: Story = {
@@ -1288,7 +1368,12 @@ export const MultipleBoardsOnPage: Story = {
       <div className="flex flex-col gap-12">
         <div className="border p-4 rounded-lg bg-card">
           <h3 className="text-sm font-bold mb-2">Board 1</h3>
-          <MediaStripBoard collectionsById={collections1} visibleCollectionIds={visible1} onMoveItem={handleMove1}>
+          <MediaStripBoard
+            collectionsById={collections1}
+            dndAdapter={dndKitMediaStripDndAdapter}
+            visibleCollectionIds={visible1}
+            onMoveItem={handleMove1}
+          >
             <div className="flex flex-col gap-4">
               <MediaStrip collectionId={asCollectionId("strip-1a")} heading="Strip 1A" selectedIds={[]} onSelectionChange={() => { }} />
               <MediaStrip collectionId={asCollectionId("strip-1b")} heading="Strip 1B" selectedIds={[]} onSelectionChange={() => { }} />
@@ -1297,7 +1382,12 @@ export const MultipleBoardsOnPage: Story = {
         </div>
         <div className="border p-4 rounded-lg bg-card">
           <h3 className="text-sm font-bold mb-2">Board 2</h3>
-          <MediaStripBoard collectionsById={collections2} visibleCollectionIds={visible2} onMoveItem={handleMove2}>
+          <MediaStripBoard
+            collectionsById={collections2}
+            dndAdapter={dndKitMediaStripDndAdapter}
+            visibleCollectionIds={visible2}
+            onMoveItem={handleMove2}
+          >
             <div className="flex flex-col gap-4">
               <MediaStrip collectionId={asCollectionId("strip-2a")} heading="Strip 2A" selectedIds={[]} onSelectionChange={() => { }} />
               <MediaStrip collectionId={asCollectionId("strip-2b")} heading="Strip 2B" selectedIds={[]} onSelectionChange={() => { }} />
@@ -1420,6 +1510,7 @@ export const ReorderWhileScrolled: Story = {
     return (
       <MediaStripBoard
         collectionsById={collectionsById}
+        dndAdapter={dndKitMediaStripDndAdapter}
         visibleCollectionIds={visibleCollectionIds}
         onMoveItem={handleMoveItem}
       >
@@ -1458,7 +1549,11 @@ export const ReorderWhileScrolled: Story = {
   },
 };
 
-function StatefulNestedCollectionsBoard() {
+function StatefulNestedCollectionsBoard({
+  dndAdapter = dndKitMediaStripDndAdapter,
+}: {
+  dndAdapter?: MediaStripDndAdapter;
+}) {
   const [collections, setCollections] = useState<TimelineCollectionsById>(() => {
     const rootItems: TimelineItem[] = [
       unwrapResult(createImageTimelineItem({
@@ -1496,6 +1591,14 @@ function StatefulNestedCollectionsBoard() {
         startTimeSeconds: 0,
         durationSeconds: 5,
       })),
+      unwrapResult(createCollectionTimelineItem({
+        id: "card-col-d",
+        name: "Trip Subfolder",
+        collectionId: asCollectionId("col-d"),
+        itemCount: 1,
+        startTimeSeconds: 0,
+        durationSeconds: 5,
+      })),
       unwrapResult(createImageTimelineItem({
         id: "img-3",
         name: "Mountain Hike",
@@ -1522,6 +1625,20 @@ function StatefulNestedCollectionsBoard() {
         name: "Empty Folder",
         items: [],
       }],
+      [asCollectionId("col-d"), {
+        id: asCollectionId("col-d"),
+        name: "Trip Subfolder",
+        items: [
+          unwrapResult(createImageTimelineItem({
+            id: "img-4",
+            name: "Postcard Detail",
+            src: createPhotoThumbnail("postcard-detail"),
+            posterSrcs: [createPhotoThumbnail("postcard-detail")],
+            startTimeSeconds: 0,
+            durationSeconds: 5,
+          })),
+        ],
+      }],
     ]);
   });
 
@@ -1532,7 +1649,12 @@ function StatefulNestedCollectionsBoard() {
   }, []);
 
   return (
-    <MediaStripBoard collectionsById={collections} visibleCollectionIds={[asCollectionId("col-a")]} onMoveItem={handleMoveOrDrop}>
+    <MediaStripBoard
+      collectionsById={collections}
+      dndAdapter={dndAdapter}
+      visibleCollectionIds={[asCollectionId("col-a")]}
+      onMoveItem={handleMoveOrDrop}
+    >
       <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
         <div>
           <h3 className="text-md font-bold mb-1">Nested Collections Demo</h3>
@@ -1567,5 +1689,13 @@ function StatefulNestedCollectionsBoard() {
 
 export const DeeplyNestedCollections: StoryObj = {
   render: () => <StatefulNestedCollectionsBoard />,
+};
+
+export const DeeplyNestedCollectionsPragmaticDnd: StoryObj = {
+  render: () => <StatefulNestedCollectionsBoard dndAdapter={pragmaticMediaStripDndAdapter} />,
+};
+
+export const DeeplyNestedCollectionsNativeHtml5: StoryObj = {
+  render: () => <StatefulNestedCollectionsBoard dndAdapter={nativeHtml5MediaStripDndAdapter} />,
 };
 

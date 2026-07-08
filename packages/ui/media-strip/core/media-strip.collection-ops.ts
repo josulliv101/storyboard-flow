@@ -79,12 +79,11 @@ export function applyTimelineItemCommand({
       const items = [...fromCol.items];
       const actualFromIndex = items.findIndex((i) => i.id === itemId);
       if (actualFromIndex === -1) return collectionsById;
-      if (actualFromIndex === toIndex) return collectionsById;
 
       const [removed] = items.splice(actualFromIndex, 1);
-      // Clamp targetIdx to [0, items.length] (since one item was removed, items.length is originalLength - 1).
-      // Placing the item at targetIdx places it at the exact requested toIndex, shifting intermediate items.
+      // TimelineItemCommand.toIndex is the desired final index after removal.
       const targetIdx = Math.max(0, Math.min(toIndex, items.length));
+      if (actualFromIndex === targetIdx) return collectionsById;
       items.splice(targetIdx, 0, removed);
 
       nextCollections.set(fromCollectionId, {
