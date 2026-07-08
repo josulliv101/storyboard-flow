@@ -21,6 +21,76 @@ export const NEST_HOTSPOT_MIN_OFFSET = 0.2;
 export const NEST_HOTSPOT_MAX_OFFSET = 0.8;
 
 /**
+ * Rect shape accepted by `isPointInNestHotspot`: both `DOMRect` (from
+ * `getBoundingClientRect`) and `MediaStripDndClientRect` (the DnD-adapter's
+ * own rect type) satisfy this structurally.
+ */
+export type NestHotspotRect = Readonly<{
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}>;
+
+/**
+ * True if `point` falls within the central [20%, 80%] hotspot of `rect` —
+ * the region that triggers nesting a dragged item into a collection card
+ * instead of reordering next to it. Shared by every DnD adapter's nest-target
+ * detection (dnd-kit's collision detection, and the pointer-driven adapters'
+ * `getNestTargetId`) so the hotspot geometry can't drift between them.
+ */
+export function isPointInNestHotspot(
+  rect: NestHotspotRect,
+  point: { x: number; y: number }
+): boolean {
+  const hotspotLeft = rect.left + rect.width * NEST_HOTSPOT_MIN_OFFSET;
+  const hotspotRight = rect.left + rect.width * NEST_HOTSPOT_MAX_OFFSET;
+  const hotspotTop = rect.top + rect.height * NEST_HOTSPOT_MIN_OFFSET;
+  const hotspotBottom = rect.top + rect.height * NEST_HOTSPOT_MAX_OFFSET;
+
+  return (
+    point.x >= hotspotLeft &&
+    point.x <= hotspotRight &&
+    point.y >= hotspotTop &&
+    point.y <= hotspotBottom
+  );
+}
+
+/**
+ * True if `point` falls anywhere within `rect` (inclusive of its edges).
+ * Used to prioritize whichever droppable the pointer is actually
+ * geometrically over, before falling back to a pure nearest-neighbor search
+ * — see `detectCollision` for why the fallback alone isn't reliable.
+ */
+export function isPointWithinRect(
+  rect: NestHotspotRect,
+  point: { x: number; y: number }
+): boolean {
+  return (
+    point.x >= rect.left &&
+    point.x <= rect.left + rect.width &&
+    point.y >= rect.top &&
+    point.y <= rect.top + rect.height
+  );
+}
+
+/**
+ * Which side of `rect` a horizontal drop should land on, given a reference
+ * x-coordinate (the pointer position for the pointer-driven adapters, or the
+ * dragged item's own current x-position for dnd-kit). Splitting at the
+ * midpoint keeps this in sync with `isPointInNestHotspot`'s [20%, 80%]
+ * center band: outside that band is always "before"/"after" territory, so
+ * the two checks never disagree about whether a point is a reorder or a nest.
+ */
+export function resolveItemDropSide(
+  rect: NestHotspotRect,
+  referenceX: number
+): "before" | "after" {
+  const midpointX = rect.left + rect.width / 2;
+  return referenceX < midpointX ? "before" : "after";
+}
+
+/**
  * Default width in pixels for the drag overlay representation of a media item
  * if its real dimensions cannot be resolved from the DOM.
  */
@@ -168,5 +238,5 @@ export function areEqual(
  * shared by the handle's aria-label and the screen-reader announcements to prevent copy drift.
  */
 export const KEYBOARD_REORDER_INSTRUCTIONS =
-  "Use ArrowLeft/Right to reorder, ArrowUp/Down to move between collections, Home/End to skip to edges, N to nest, Enter or Space to drop, Escape to cancel.";
+  "Use ArrowLeft/Right to reorder, ArrowUp/Down to move between collections, Home/End to skip to edges, N to nest, U to move out to the parent collection, Enter or Space to drop, Escape to cancel.";
 

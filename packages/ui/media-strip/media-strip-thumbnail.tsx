@@ -3,7 +3,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from "rea
 import type { TimelineItem, MediaTimelineItem } from "./core/media-strip.types";
 import { isMediaItem } from "./core/media-strip.types";
 import { THUMBNAIL_HEIGHT_PX } from "./core/media-strip.utils";
-import { useMediaStripBoardStableOptional } from "./media-strip-board";
+import { useMediaStripBoardStableOptional } from "./media-strip-board-context";
 
 type MediaStripThumbnailProps = {
   item: TimelineItem;

@@ -20,7 +20,6 @@ import {
 } from "@atlaskit/pragmatic-drag-and-drop/types";
 
 import {
-  type MediaStripDndAutoScrollOptions,
   type MediaStripDndIdentifier,
 } from "../core/media-strip.dnd-adapter";
 import {
@@ -35,12 +34,13 @@ import {
   MediaStripDndRuntimeContext,
   useMediaStripDndRuntime,
 } from "../media-strip-dnd-runtime";
+import { scrollDraggedViewport } from "./dom-autoscroll";
 
 export function PragmaticProvider({
   adapter,
   autoScroll,
   children,
-  getNestTargetId,
+  getDropTargetInfo,
   onDragCancel,
   onDragEnd,
   onDragMove,
@@ -52,8 +52,8 @@ export function PragmaticProvider({
   const getEventPayload = useCallback((sourceId: MediaStripDndIdentifier, input: Input, dropTargets: DropTargetRecord[]) => {
     const overRecord = dropTargets[0];
     const overId = overRecord ? getDndIdentifier(overRecord.data.id) : null;
-    const nestTargetId = overRecord && overId && getNestTargetId
-      ? getNestTargetId({
+    const info = overRecord && overId && getDropTargetInfo
+      ? getDropTargetInfo({
         activeId: sourceId,
         overId,
         element: overRecord.element,
@@ -64,9 +64,10 @@ export function PragmaticProvider({
     return {
       active: { id: sourceId },
       over: overId ? { id: overId } : null,
-      nestTargetId,
+      nestTargetId: info?.nestTargetId ?? null,
+      placement: info?.placement ?? null,
     };
-  }, [getNestTargetId]);
+  }, [getDropTargetInfo]);
 
   useEffect(() => {
     return monitorForElements({
@@ -84,7 +85,7 @@ export function PragmaticProvider({
         const sourceId = getDndIdentifier(source.data.id);
         if (!sourceId) return;
 
-        scrollPragmaticAutoScroll(location.current.input, autoScroll);
+        scrollDraggedViewport(location.current.input, autoScroll);
         setOverlayPosition(toOverlayPosition(location.current.input));
         const payload = getEventPayload(sourceId, location.current.input, location.current.dropTargets);
         onDragMove?.(payload);
@@ -94,7 +95,7 @@ export function PragmaticProvider({
         const sourceId = getDndIdentifier(source.data.id);
         if (!sourceId) return;
 
-        scrollPragmaticAutoScroll(location.current.input, autoScroll);
+        scrollDraggedViewport(location.current.input, autoScroll);
         setOverlayPosition(toOverlayPosition(location.current.input));
         const payload = getEventPayload(sourceId, location.current.input, location.current.dropTargets);
         onDragMove?.(payload);
@@ -231,40 +232,17 @@ function toOverlayPosition(input: Input): { x: number; y: number } {
   };
 }
 
-function scrollPragmaticAutoScroll(
-  input: Input,
-  autoScroll: MediaStripDndAutoScrollOptions | undefined
-) {
-  if (!autoScroll || typeof document === "undefined") return;
-
-  const element = document.elementFromPoint(input.clientX, input.clientY);
-  const scrollArea = element?.closest('[data-scroll-area="true"]');
-  const viewport = scrollArea?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
-  if (!viewport) return;
-  if (autoScroll.canScroll && !autoScroll.canScroll(viewport)) return;
-
-  const rect = viewport.getBoundingClientRect();
-  const threshold = autoScroll.threshold ?? 48;
-  const maxSpeed = autoScroll.maxSpeed ?? 18;
-  const distanceFromLeft = input.clientX - rect.left;
-  const distanceFromRight = rect.right - input.clientX;
-
-  let delta = 0;
-  if (distanceFromLeft >= 0 && distanceFromLeft < threshold) {
-    delta = -scaleAutoScrollSpeed(threshold - distanceFromLeft, threshold, maxSpeed);
-  } else if (distanceFromRight >= 0 && distanceFromRight < threshold) {
-    delta = scaleAutoScrollSpeed(threshold - distanceFromRight, threshold, maxSpeed);
-  }
-
-  if (delta !== 0) {
-    viewport.scrollBy({ left: delta });
-  }
-}
-
-function scaleAutoScrollSpeed(distance: number, threshold: number, maxSpeed: number) {
-  return Math.max(1, Math.ceil((distance / threshold) * maxSpeed));
-}
-
+/**
+ * Experimental: this adapter's actual drag interaction is not covered by
+ * this package's automated test suite. `@atlaskit/pragmatic-drag-and-drop`
+ * re-derives the element under the pointer via its own internal
+ * `elementFromPoint`-based "honey pot" mechanism, which doesn't reliably
+ * respond to this package's synthetic-event test helpers — a regression in
+ * this adapter's behavior would not be caught by CI. It renders and its
+ * static structure typechecks, but treat its actual drag/drop/nest
+ * behavior as unverified until that test gap is closed. See
+ * ARCHITECTURE.md's "Known gaps" for details.
+ */
 export const pragmaticMediaStripDndAdapter = {
   id: "pragmatic",
   DragOverlay: PragmaticDragOverlay,
@@ -272,4 +250,12 @@ export const pragmaticMediaStripDndAdapter = {
   Provider: PragmaticProvider,
   SortableItem: PragmaticSortableItem,
   SortableItems: PragmaticSortableItems,
+  capabilities: {
+    supportsSortableTransforms: false,
+    supportsCollisionDetection: false,
+    supportsCustomDragOverlay: true,
+    supportsKeyboardSensor: false,
+    requiresManualAutoScroll: true,
+    requiresManualOverlayPosition: true,
+  },
 } satisfies MediaStripDndAdapter;

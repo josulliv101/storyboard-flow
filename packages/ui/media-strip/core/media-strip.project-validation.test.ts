@@ -299,4 +299,69 @@ describe("validateProjectTimeline graph validator", () => {
       expect(result.itemId).toBe("item-a");
     }
   });
+
+  test("rejects a collection referenced by two different parents", () => {
+    // Both col-a and col-b independently reference col-shared — collections
+    // are a tree, so a second parent must be rejected, not silently allowed.
+    const sharedFromA = makeCollectionItem("item-shared-from-a", "Shared (via A)", "col-shared");
+    const sharedFromB = makeCollectionItem("item-shared-from-b", "Shared (via B)", "col-shared");
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      [
+        asCollectionId("col-root"),
+        { id: asCollectionId("col-root"), name: "Root", items: [] },
+      ],
+      [
+        asCollectionId("col-a"),
+        { id: asCollectionId("col-a"), name: "Folder A", items: [sharedFromA] },
+      ],
+      [
+        asCollectionId("col-b"),
+        { id: asCollectionId("col-b"), name: "Folder B", items: [sharedFromB] },
+      ],
+      [
+        asCollectionId("col-shared"),
+        { id: asCollectionId("col-shared"), name: "Shared Folder", items: [] },
+      ],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: [asCollectionId("col-a"), asCollectionId("col-b")],
+    });
+
+    expect(result.valid).toBe(false);
+    if (!result.valid && result.reason === "multiple-parents") {
+      expect(result.collectionId).toBe("col-shared");
+      expect(result.parentCollectionIds).toEqual(["col-a", "col-b"]);
+    } else {
+      throw new Error(`Expected reason "multiple-parents", got: ${JSON.stringify(result)}`);
+    }
+  });
+
+  test("does not reject the same parent referencing the same child collection twice", () => {
+    // Two item cards in the SAME collection both pointing at col-shared is a
+    // (weird but) different concern from a second, distinct parent — only
+    // the latter violates the single-parent tree invariant.
+    const cardOne = makeCollectionItem("item-shared-1", "Shared (card 1)", "col-shared");
+    const cardTwo = makeCollectionItem("item-shared-2", "Shared (card 2)", "col-shared");
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      [
+        asCollectionId("col-root"),
+        { id: asCollectionId("col-root"), name: "Root", items: [cardOne, cardTwo] },
+      ],
+      [
+        asCollectionId("col-shared"),
+        { id: asCollectionId("col-shared"), name: "Shared Folder", items: [] },
+      ],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: [asCollectionId("col-root")],
+    });
+
+    expect(result.valid).toBe(true);
+  });
 });

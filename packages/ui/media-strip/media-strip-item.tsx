@@ -44,8 +44,25 @@ export const MediaStripItemButton = memo(
       : "Reorder handle";
 
     const handleRef = useRef<HTMLButtonElement>(null);
-    const { activeDragId, activeNestTargetId } = useMediaStripBoardDrag();
+    const { activeDragId, activeNestTargetId, activeDropPlacement, rejectedItemId } = useMediaStripBoardDrag();
     const { collectionsById, itemLookup } = useMediaStripBoardStable();
+    const isRejected = rejectedItemId === item.id;
+
+    // "Drop here" line indicators — only meaningful while some other item is
+    // being dragged, and only for the item(s) the current DropPlacement
+    // actually references. "inside" placement is already conveyed by the
+    // nest overlay below (isOverNest derives from the same underlying
+    // hotspot check), so this only covers "before"/"after".
+    const isDropBeforeTarget =
+      !!activeDragId &&
+      activeDragId !== item.id &&
+      activeDropPlacement?.kind === "before" &&
+      activeDropPlacement.itemId === item.id;
+    const isDropAfterTarget =
+      !!activeDragId &&
+      activeDragId !== item.id &&
+      activeDropPlacement?.kind === "after" &&
+      activeDropPlacement.itemId === item.id;
 
     const handleKeyDown = useReorderKeyboard({
       item,
@@ -148,10 +165,16 @@ export const MediaStripItemButton = memo(
                 aria-label={ariaLabel}
                 className={cn(
                   "h-auto flex-col items-stretch justify-start gap-2 whitespace-normal p-2 text-left w-full h-full data-pressed:border-primary data-pressed:bg-primary/5 transition-all border relative",
-                  isKeyboardReordering && "ring-2 ring-primary border-primary bg-primary/5 shadow-md"
+                  isKeyboardReordering && "ring-2 ring-primary border-primary bg-primary/5 shadow-md",
+                  // Brief visual cue for a rejected drop (e.g. an invalid
+                  // nesting cycle) — the aria-live announcement already
+                  // covers screen readers, this covers sighted users who
+                  // would otherwise see the drag silently snap back.
+                  isRejected && "ring-2 ring-destructive border-destructive animate-pulse"
                 )}
                 value={item.id}
                 {...{ [DATA_VALUE_ATTR]: item.id }}
+                {...(isRejected ? { "data-rejected": "true" } : {})}
                 onFocus={handleFocus}
               >
                 <MediaStripThumbnail item={item} variant={thumbnailVariant} />
@@ -178,6 +201,25 @@ export const MediaStripItemButton = memo(
                     {isInvalidCycle ? "Cannot drop (cycle)" : "Drop to Nest"}
                   </span>
                 </div>
+              )}
+
+              {/* "Drop here" indicators: a thin bar on the side of the card the
+                  dragged item would land on. Suppressed while the nest
+                  overlay is showing, since "inside" always wins over
+                  "before"/"after" (see resolveDropTargetInfo). */}
+              {!isOverNest && isDropBeforeTarget && (
+                <div
+                  aria-hidden="true"
+                  data-drop-indicator="before"
+                  className="absolute inset-y-1 -left-1.5 z-20 w-1 rounded-full bg-primary pointer-events-none"
+                />
+              )}
+              {!isOverNest && isDropAfterTarget && (
+                <div
+                  aria-hidden="true"
+                  data-drop-indicator="after"
+                  className="absolute inset-y-1 -right-1.5 z-20 w-1 rounded-full bg-primary pointer-events-none"
+                />
               )}
 
               {/* Reorder Handle: SIBLING absolutely positioned on top, avoiding invalid HTML button nesting */}

@@ -15,8 +15,10 @@ type UseKeyboardReorderSessionProps = {
   itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
   collectionsById: ReadonlyMap<CollectionId, TimelineCollection>;
   getAdjacentCollectionId: (currentCollectionId: CollectionId, direction: "up" | "down") => CollectionId | null;
+  parentByCollectionId: ReadonlyMap<CollectionId, CollectionId>;
   applyCommand: (command: TimelineItemCommand) => void;
   announce: (message: string) => void;
+  flashRejection: (itemId: TimelineItemId) => void;
 };
 
 /**
@@ -26,8 +28,10 @@ export function useKeyboardReorderSession({
   itemLookup,
   collectionsById,
   getAdjacentCollectionId,
+  parentByCollectionId,
   applyCommand,
   announce,
+  flashRejection,
 }: UseKeyboardReorderSessionProps) {
   const [activeKeyboardReorderId, setActiveKeyboardReorderId] = useState<TimelineItemId | null>(null);
   const initialPositionRef = useRef<{ collectionId: CollectionId; index: number; itemName: string } | null>(null);
@@ -127,6 +131,7 @@ export function useKeyboardReorderSession({
               collectionsById,
             })) {
               announce("Cannot move a collection into itself or one of its nested collections.");
+              flashRejection(itemId);
               return;
             }
           }
@@ -165,6 +170,7 @@ export function useKeyboardReorderSession({
               collectionsById,
             })) {
               announce("Cannot move a collection into itself or one of its nested collections.");
+              flashRejection(itemId);
               return;
             }
           }
@@ -182,6 +188,34 @@ export function useKeyboardReorderSession({
         }
         break;
       }
+      case "move-to-parent": {
+        const parentCollectionId = parentByCollectionId.get(collectionId);
+        const parentCol = parentCollectionId ? collectionsById.get(parentCollectionId) : undefined;
+
+        if (!parentCollectionId || !parentCol) {
+          announce("Already at the top level; no parent collection to move out to.");
+          break;
+        }
+
+        // Land right after the collection-item card that represents the
+        // current collection, so the item surfaces next to where it came
+        // from instead of jumping to the start of the parent's contents.
+        const anchorIndex = parentCol.items.findIndex(
+          (candidate) => candidate.kind === "collection" && candidate.collectionId === collectionId
+        );
+        const toIndex = anchorIndex === -1 ? parentCol.items.length : anchorIndex + 1;
+
+        applyCommand({
+          type: "move",
+          itemId,
+          fromCollectionId: collectionId,
+          toCollectionId: parentCollectionId,
+          toIndex,
+        });
+        announce(`Moved "${item.name}" out to collection "${parentCol.name}".`);
+        confirmKeyboardReorder();
+        break;
+      }
       case "confirm": {
         confirmKeyboardReorder();
         announce(`Dropped "${item.name}" at position ${index + 1}.`);
@@ -196,8 +230,10 @@ export function useKeyboardReorderSession({
     itemLookup,
     collectionsById,
     getAdjacentCollectionId,
+    parentByCollectionId,
     applyCommand,
     announce,
+    flashRejection,
     confirmKeyboardReorder,
     cancelKeyboardReorder,
   ]);

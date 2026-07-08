@@ -2,8 +2,12 @@ import { type KeyboardEvent } from "react";
 import {
   type TimelineItem,
   type CollectionId,
-  type KeyboardReorderAction,
 } from "./core/media-strip.types";
+import {
+  getKeyboardReorderAction,
+  IDLE_INTERCEPTED_KEYS,
+  SESSION_INTERCEPTED_KEYS,
+} from "./core/media-strip.keyboard";
 import { useMediaStripBoardStable } from "./media-strip-board";
 import { KEYBOARD_REORDER_INSTRUCTIONS } from "./core/media-strip.utils";
 
@@ -31,15 +35,7 @@ export function useReorderKeyboard({
   } = useMediaStripBoardStable();
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    // Keys the handle owns. Arrows are blocked even when idle so a stray
-    // arrow press on the handle doesn't trigger the ToggleGroup's roving
-    // focus navigation, and Enter/Space are blocked so they pick up/drop
-    // instead of firing the button's default action. Home/End/N/Escape are
-    // only meaningful mid-session, so when idle they keep their defaults
-    // (e.g. page scroll).
-    const idleKeys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Enter", " "];
-    const sessionKeys = [...idleKeys, "Home", "End", "Escape", "n", "N"];
-    const keysToBlock = isKeyboardReordering ? sessionKeys : idleKeys;
+    const keysToBlock = isKeyboardReordering ? SESSION_INTERCEPTED_KEYS : IDLE_INTERCEPTED_KEYS;
 
     if (keysToBlock.includes(event.key)) {
       event.preventDefault();
@@ -47,27 +43,7 @@ export function useReorderKeyboard({
     }
 
     if (isKeyboardReordering) {
-      let action: KeyboardReorderAction | null = null;
-      if (event.key === "ArrowLeft") {
-        action = "move-left";
-      } else if (event.key === "ArrowRight") {
-        action = "move-right";
-      } else if (event.key === "ArrowUp") {
-        action = "move-up";
-      } else if (event.key === "ArrowDown") {
-        action = "move-down";
-      } else if (event.key === "Home") {
-        action = "move-home";
-      } else if (event.key === "End") {
-        action = "move-end";
-      } else if (event.key.toLowerCase() === "n") {
-        action = "nest";
-      } else if (event.key === "Escape") {
-        action = "cancel";
-      } else if (event.key === "Enter" || event.key === " ") {
-        action = "confirm";
-      }
-
+      const action = getKeyboardReorderAction(event.key, isKeyboardReordering);
       if (action) {
         handleKeyboardReorderAction(item.id, action);
       }

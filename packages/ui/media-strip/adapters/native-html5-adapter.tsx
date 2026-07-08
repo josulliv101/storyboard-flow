@@ -14,7 +14,6 @@ import {
 } from "react";
 
 import {
-  type MediaStripDndAutoScrollOptions,
   type MediaStripDndIdentifier,
 } from "../core/media-strip.dnd-adapter";
 import {
@@ -30,6 +29,7 @@ import {
   MediaStripDndRuntimeContext,
   useMediaStripDndRuntime,
 } from "../media-strip-dnd-runtime";
+import { scrollDraggedViewport } from "./dom-autoscroll";
 
 const NATIVE_DND_MIME = "application/x-storyboard-media-strip-dnd-id";
 
@@ -67,7 +67,7 @@ export function NativeHtml5Provider({
   adapter,
   autoScroll,
   children,
-  getNestTargetId,
+  getDropTargetInfo,
   onDragCancel,
   onDragEnd,
   onDragMove,
@@ -115,8 +115,8 @@ export function NativeHtml5Provider({
     target: NativeDropTarget | null,
     input: MediaStripDndPointerInput
   ) => {
-    const nestTargetId = target && getNestTargetId
-      ? getNestTargetId({
+    const info = target && getDropTargetInfo
+      ? getDropTargetInfo({
         activeId: sourceId,
         overId: target.id,
         element: target.element,
@@ -127,9 +127,10 @@ export function NativeHtml5Provider({
     return {
       active: { id: sourceId },
       over: target ? { id: target.id } : null,
-      nestTargetId,
+      nestTargetId: info?.nestTargetId ?? null,
+      placement: info?.placement ?? null,
     };
-  }, [getNestTargetId]);
+  }, [getDropTargetInfo]);
 
   const startDrag = useCallback((id: MediaStripDndIdentifier, event: ReactDragEvent<HTMLElement>) => {
     const dataTransfer = event.dataTransfer;
@@ -164,7 +165,7 @@ export function NativeHtml5Provider({
     const input = toPointerInput(event);
     overIdStore.set(target.id);
     scheduleOverlayPosition(toOverlayPosition(event));
-    scrollNativeAutoScroll(input, autoScroll);
+    scrollDraggedViewport(input, autoScroll);
 
     const payload = getPayload(sourceId, target, input);
     onDragMove?.(payload);
@@ -209,7 +210,7 @@ export function NativeHtml5Provider({
       if (!activeIdRef.current) return;
       const input = toPointerInput(event);
       scheduleOverlayPosition(toOverlayPosition(event));
-      scrollNativeAutoScroll(input, autoScroll);
+      scrollDraggedViewport(input, autoScroll);
     };
 
     document.addEventListener("dragover", handleDocumentDragOver, { capture: true });
@@ -433,40 +434,6 @@ function toOverlayPosition(event: DragEvent | ReactDragEvent<HTMLElement>) {
   };
 }
 
-function scrollNativeAutoScroll(
-  input: MediaStripDndPointerInput,
-  autoScroll: MediaStripDndAutoScrollOptions | undefined
-) {
-  if (!autoScroll || typeof document === "undefined") return;
-
-  const element = document.elementFromPoint(input.clientX, input.clientY);
-  const scrollArea = element?.closest('[data-scroll-area="true"]');
-  const viewport = scrollArea?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
-  if (!viewport) return;
-  if (autoScroll.canScroll && !autoScroll.canScroll(viewport)) return;
-
-  const rect = viewport.getBoundingClientRect();
-  const threshold = autoScroll.threshold ?? 48;
-  const maxSpeed = autoScroll.maxSpeed ?? 18;
-  const distanceFromLeft = input.clientX - rect.left;
-  const distanceFromRight = rect.right - input.clientX;
-
-  let delta = 0;
-  if (distanceFromLeft >= 0 && distanceFromLeft < threshold) {
-    delta = -scaleAutoScrollSpeed(threshold - distanceFromLeft, threshold, maxSpeed);
-  } else if (distanceFromRight >= 0 && distanceFromRight < threshold) {
-    delta = scaleAutoScrollSpeed(threshold - distanceFromRight, threshold, maxSpeed);
-  }
-
-  if (delta !== 0) {
-    viewport.scrollBy({ left: delta });
-  }
-}
-
-function scaleAutoScrollSpeed(distance: number, threshold: number, maxSpeed: number) {
-  return Math.max(1, Math.ceil((distance / threshold) * maxSpeed));
-}
-
 export const nativeHtml5MediaStripDndAdapter = {
   id: "native-html5",
   DragOverlay: NativeHtml5DragOverlay,
@@ -474,4 +441,12 @@ export const nativeHtml5MediaStripDndAdapter = {
   Provider: NativeHtml5Provider,
   SortableItem: NativeHtml5SortableItem,
   SortableItems: NativeHtml5SortableItems,
+  capabilities: {
+    supportsSortableTransforms: false,
+    supportsCollisionDetection: false,
+    supportsCustomDragOverlay: true,
+    supportsKeyboardSensor: false,
+    requiresManualAutoScroll: true,
+    requiresManualOverlayPosition: true,
+  },
 } satisfies MediaStripDndAdapter;

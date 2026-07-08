@@ -9,15 +9,32 @@ export type ProjectValidationResult =
   | Readonly<{ valid: true; orphanedCollectionIds: CollectionId[] }>
   | Readonly<{ valid: false; reason: "missing-collection"; collectionId: CollectionId; itemId?: TimelineItemId }>
   | Readonly<{ valid: false; reason: "collection-cycle"; cycle: CollectionId[] }>
-  | Readonly<{ valid: false; reason: "duplicate-global-item-ids"; itemId: TimelineItemId }>;
+  | Readonly<{ valid: false; reason: "duplicate-global-item-ids"; itemId: TimelineItemId }>
+  | Readonly<{
+    valid: false;
+    reason: "multiple-parents";
+    collectionId: CollectionId;
+    parentCollectionIds: readonly [CollectionId, CollectionId];
+  }>;
 
 /**
  * Validates the graph structure of a project's timeline collections,
- * detecting missing references, cycles, and duplicate IDs — across every
- * collection in `collectionsById`, not just the ones reachable from
- * `rootCollectionIds`. Orphaned (unreachable) collections still have their
- * internal structure fully validated in a second pass; only their
- * *reachability* is reported differently, via `orphanedCollectionIds`.
+ * detecting missing references, cycles, duplicate IDs, and shared
+ * (multi-parent) collections — across every collection in `collectionsById`,
+ * not just the ones reachable from `rootCollectionIds`. Orphaned
+ * (unreachable) collections still have their internal structure fully
+ * validated in a second pass; only their *reachability* is reported
+ * differently, via `orphanedCollectionIds`.
+ *
+ * Collections are modeled as a tree, not a DAG: each collection may be
+ * referenced by at most one `CollectionTimelineItem` project-wide. This is
+ * a deliberate choice, not just a validation nicety — `parentByCollectionId`
+ * in media-strip-board.tsx (which drives ancestor-cycle checks during a
+ * drag) is a single-valued map that already assumes a collection has at
+ * most one parent. A collection shared by two parents would silently pick
+ * whichever parent was registered last, rather than erroring, so this
+ * check exists to catch the graph shape that map can't represent before it
+ * causes that kind of silent misbehavior.
  */
 export function validateProjectTimeline({
   collectionsById,
@@ -36,6 +53,12 @@ export function validateProjectTimeline({
   const reachableFromRoot = new Set<CollectionId>();
   const path = new Set<CollectionId>();
   const allItemIds = new Set<TimelineItemId>();
+  // Child collectionId -> the one collection allowed to claim it as a
+  // child. Populated (and checked) every time a CollectionTimelineItem is
+  // encountered, regardless of `visited` — the visited-gate below exists to
+  // avoid re-walking a subtree's contents twice, but a second parent must
+  // still be caught even if the child was already visited via the first one.
+  const parentByChildCollectionId = new Map<CollectionId, CollectionId>();
 
   function dfs(colId: CollectionId, markReachable: boolean): ProjectValidationResult {
     if (path.has(colId)) {
@@ -75,6 +98,18 @@ export function validateProjectTimeline({
             itemId: item.id,
           };
         }
+
+        const existingParent = parentByChildCollectionId.get(item.collectionId);
+        if (existingParent !== undefined && existingParent !== colId) {
+          return {
+            valid: false,
+            reason: "multiple-parents",
+            collectionId: item.collectionId,
+            parentCollectionIds: [existingParent, colId],
+          };
+        }
+        parentByChildCollectionId.set(item.collectionId, colId);
+
         const res = dfs(item.collectionId, markReachable);
         if (!res.valid) return res;
       }

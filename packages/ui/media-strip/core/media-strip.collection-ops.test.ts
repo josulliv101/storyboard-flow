@@ -12,13 +12,27 @@ import {
   createImageTimelineItem,
   createCollectionTimelineItem,
 } from "./media-strip.validation";
-import { applyTimelineItemCommand, syncCollectionItemCounts } from "./media-strip.collection-ops";
+import {
+  applyTimelineItemCommand,
+  syncCollectionItemCounts,
+  type ApplyTimelineItemCommandResult,
+} from "./media-strip.collection-ops";
 
 function unwrap<T, E>(result: TimelineItemResult<T, E>): T {
   if (!result.ok) {
     throw new Error(`Test fixture failed to construct: ${JSON.stringify(result.error)}`);
   }
   return result.value;
+}
+
+/** Unwraps a successful ApplyTimelineItemCommandResult, failing the test loudly otherwise. */
+function expectApplied(
+  result: ApplyTimelineItemCommandResult
+): ReadonlyMap<CollectionId, TimelineCollection> {
+  if (!result.ok) {
+    throw new Error(`Expected command to apply, got rejected with reason: ${result.reason}`);
+  }
+  return result.collectionsById;
 }
 
 const makeImage = (id: string, name: string): TimelineItem =>
@@ -82,7 +96,7 @@ describe("applyTimelineItemCommand reducer", () => {
   ]);
 
   test("move within same collection to the requested final index", () => {
-    const result = applyTimelineItemCommand({
+    const result = expectApplied(applyTimelineItemCommand({
       collectionsById: initialCollections,
       command: {
         type: "move",
@@ -91,14 +105,14 @@ describe("applyTimelineItemCommand reducer", () => {
         toCollectionId: asCollectionId("col-root"),
         toIndex: 1,
       },
-    });
+    }));
 
     const rootCol = result.get(asCollectionId("col-root"))!;
     expect(rootCol.items.map((i) => i.id)).toEqual(["item-b", "item-a", "item-col-nested"]);
   });
 
   test("move backward within same collection to the requested final index", () => {
-    const result = applyTimelineItemCommand({
+    const result = expectApplied(applyTimelineItemCommand({
       collectionsById: initialCollections,
       command: {
         type: "move",
@@ -107,13 +121,13 @@ describe("applyTimelineItemCommand reducer", () => {
         toCollectionId: asCollectionId("col-root"),
         toIndex: 0,
       },
-    });
+    }));
 
     const rootCol = result.get(asCollectionId("col-root"))!;
     expect(rootCol.items.map((i) => i.id)).toEqual(["item-col-nested", "item-a", "item-b"]);
   });
 
-  test("returns the original map when same-collection final index is unchanged", () => {
+  test("rejects with reason 'same-position' when the same-collection final index is unchanged", () => {
     const result = applyTimelineItemCommand({
       collectionsById: initialCollections,
       command: {
@@ -125,11 +139,11 @@ describe("applyTimelineItemCommand reducer", () => {
       },
     });
 
-    expect(result).toBe(initialCollections);
+    expect(result).toEqual({ ok: false, reason: "same-position" });
   });
 
   test("move across different collections", () => {
-    const result = applyTimelineItemCommand({
+    const result = expectApplied(applyTimelineItemCommand({
       collectionsById: initialCollections,
       command: {
         type: "move",
@@ -138,7 +152,7 @@ describe("applyTimelineItemCommand reducer", () => {
         toCollectionId: asCollectionId("col-other"),
         toIndex: 0,
       },
-    });
+    }));
 
     const rootCol = result.get(asCollectionId("col-root"))!;
     const otherCol = result.get(asCollectionId("col-other"))!;
@@ -148,7 +162,7 @@ describe("applyTimelineItemCommand reducer", () => {
   });
 
   test("nest media into a collection item", () => {
-    const result = applyTimelineItemCommand({
+    const result = expectApplied(applyTimelineItemCommand({
       collectionsById: initialCollections,
       command: {
         type: "nest",
@@ -157,7 +171,7 @@ describe("applyTimelineItemCommand reducer", () => {
         targetCollectionId: asCollectionId("col-nested"),
         toIndex: 0,
       },
-    });
+    }));
 
     const rootCol = result.get(asCollectionId("col-root"))!;
     const nestedCol = result.get(asCollectionId("col-nested"))!;
@@ -185,7 +199,7 @@ describe("applyTimelineItemCommand reducer", () => {
       items: [itemA, itemB, itemC, doubleNestedItem],
     });
 
-    const result = applyTimelineItemCommand({
+    const result = expectApplied(applyTimelineItemCommand({
       collectionsById: collections,
       command: {
         type: "nest",
@@ -193,13 +207,72 @@ describe("applyTimelineItemCommand reducer", () => {
         fromCollectionId: asCollectionId("col-root"),
         targetCollectionId: asCollectionId("col-nested"),
       },
-    });
+    }));
 
     const nestedCol = result.get(asCollectionId("col-nested"))!;
     expect(nestedCol.items.map((i) => i.id)).toEqual(["item-double"]);
   });
 
-  test("reject cycle-creating collection nestings", () => {
+  test("rejects with reason 'missing-source' when fromCollectionId doesn't exist", () => {
+    const result = applyTimelineItemCommand({
+      collectionsById: initialCollections,
+      command: {
+        type: "move",
+        itemId: asTimelineItemId("item-a"),
+        fromCollectionId: asCollectionId("col-does-not-exist"),
+        toCollectionId: asCollectionId("col-root"),
+        toIndex: 0,
+      },
+    });
+
+    expect(result).toEqual({ ok: false, reason: "missing-source" });
+  });
+
+  test("rejects with reason 'missing-source' when the item isn't actually in fromCollectionId", () => {
+    const result = applyTimelineItemCommand({
+      collectionsById: initialCollections,
+      command: {
+        type: "move",
+        itemId: asTimelineItemId("item-not-in-root"),
+        fromCollectionId: asCollectionId("col-root"),
+        toCollectionId: asCollectionId("col-other"),
+        toIndex: 0,
+      },
+    });
+
+    expect(result).toEqual({ ok: false, reason: "missing-source" });
+  });
+
+  test("rejects with reason 'missing-target' when toCollectionId doesn't exist", () => {
+    const result = applyTimelineItemCommand({
+      collectionsById: initialCollections,
+      command: {
+        type: "move",
+        itemId: asTimelineItemId("item-a"),
+        fromCollectionId: asCollectionId("col-root"),
+        toCollectionId: asCollectionId("col-does-not-exist"),
+        toIndex: 0,
+      },
+    });
+
+    expect(result).toEqual({ ok: false, reason: "missing-target" });
+  });
+
+  test("rejects with reason 'missing-target' when nest targetCollectionId doesn't exist", () => {
+    const result = applyTimelineItemCommand({
+      collectionsById: initialCollections,
+      command: {
+        type: "nest",
+        itemId: asTimelineItemId("item-a"),
+        fromCollectionId: asCollectionId("col-root"),
+        targetCollectionId: asCollectionId("col-does-not-exist"),
+      },
+    });
+
+    expect(result).toEqual({ ok: false, reason: "missing-target" });
+  });
+
+  test("rejects with reason 'cycle' for cycle-creating collection nestings", () => {
     // Nested collection col-nested contains a collection col-double
     // If we try to nest col-nested into col-double, it should be rejected.
     const doubleNestedItem = makeCollectionItem("item-double", "Double Folder Item", "col-double");
@@ -230,8 +303,8 @@ describe("applyTimelineItemCommand reducer", () => {
       },
     });
 
-    // The operation should be aborted/no-oped due to collection cycle prevention
-    expect(result).toBe(collections);
+    // The operation should be rejected, not silently no-op'd, due to collection cycle prevention
+    expect(result).toEqual({ ok: false, reason: "cycle" });
   });
 
   test("syncCollectionItemCounts defensive synchronization", () => {
@@ -252,5 +325,26 @@ describe("applyTimelineItemCommand reducer", () => {
     const synced = syncCollectionItemCounts(collections);
     const updatedParent = synced.get(asCollectionId("col-root"))!.items[0];
     expect(isCollectionItem(updatedParent) && updatedParent.itemCount).toBe(2);
+  });
+
+  test("syncCollectionItemCounts preserves the fallback count when the backing collection isn't loaded", () => {
+    // col-folder is NOT in collectionsById at all (e.g. lazily-loaded and
+    // not yet fetched). itemCount is documented as the fallback for exactly
+    // this case — syncing must not stomp it down to 0.
+    const parentItem = makeCollectionItem("item-folder", "Folder", "col-folder", 12);
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      [
+        asCollectionId("col-root"),
+        { id: asCollectionId("col-root"), name: "Root", items: [parentItem] },
+      ],
+    ]);
+
+    const synced = syncCollectionItemCounts(collections);
+
+    // Nothing changed, so the reducer should return the same map reference.
+    expect(synced).toBe(collections);
+    const updatedParent = synced.get(asCollectionId("col-root"))!.items[0];
+    expect(isCollectionItem(updatedParent) && updatedParent.itemCount).toBe(12);
   });
 });

@@ -1,4 +1,4 @@
-import { type CollectionId } from "./media-strip.types";
+import { type CollectionId, type DropPlacement } from "./media-strip.types";
 
 export type MediaStripDndAdapterId = "dnd-kit" | "pragmatic" | "native-html5";
 export type MediaStripDndIdentifier = string | number;
@@ -44,6 +44,7 @@ export type MediaStripDndNormalizedDragMoveEvent = {
   active: { id: MediaStripDndIdentifier };
   over: { id: MediaStripDndIdentifier } | null;
   nestTargetId?: CollectionId | null;
+  placement?: DropPlacement | null;
 };
 
 export type MediaStripDndDragMoveEvent = MediaStripDndNormalizedDragMoveEvent;

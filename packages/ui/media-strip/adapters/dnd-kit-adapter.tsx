@@ -176,4 +176,12 @@ export const dndKitMediaStripDndAdapter = {
   Provider: DndKitProvider,
   SortableItem: DndKitSortableItem,
   SortableItems: DndKitSortableItems,
+  capabilities: {
+    supportsSortableTransforms: true,
+    supportsCollisionDetection: true,
+    supportsCustomDragOverlay: true,
+    supportsKeyboardSensor: false,
+    requiresManualAutoScroll: false,
+    requiresManualOverlayPosition: false,
+  },
 } satisfies MediaStripDndAdapter;
