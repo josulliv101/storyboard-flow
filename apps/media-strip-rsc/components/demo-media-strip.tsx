@@ -15,6 +15,7 @@ import {
   type TimelineItemCommand,
   type TimelineItemId,
 } from "@storyboard/ui/media-strip";
+import { dndKitMediaStripDndAdapter } from "@storyboard/ui/media-strip/adapters/dnd-kit-adapter";
 
 import type {
   RoutedMediaCollection,
@@ -107,6 +108,7 @@ export function DemoMediaStrip(props: DemoMediaStripProps) {
     <div className="min-w-0 rounded-lg border border-white/10 bg-black/20 p-3">
       <MediaStripBoard
         collectionsById={collectionsById}
+        dndAdapter={dndKitMediaStripDndAdapter}
         visibleCollectionIds={visibleCollectionIds}
         onMoveItem={handleMoveItem}
       >

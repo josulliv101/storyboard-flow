@@ -78,6 +78,11 @@ export {
   syncCollectionItemCounts,
 } from "./core/media-strip.collection-ops";
 
+export type {
+  MediaStripDndAdapter,
+  MediaStripDndAdapterComponents,
+} from "./media-strip-dnd.types";
+
 export {
   validateProjectTimeline,
   type ProjectValidationResult,

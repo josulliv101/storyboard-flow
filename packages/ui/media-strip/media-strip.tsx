@@ -8,6 +8,7 @@ import {
   useEffect,
   memo,
   type ComponentPropsWithoutRef,
+  type Ref,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { LayoutGroup } from "motion/react";
@@ -40,7 +41,7 @@ import {
 import {
   MediaStripDroppable,
   MediaStripSortableItems,
-} from "./media-strip-dnd-kit";
+} from "./media-strip-dnd-provider";
 import { useScrollToAndFocus } from "./use-scroll-to-and-focus";
 import { useMediaStripKeyboardNav } from "./use-media-strip-keyboard-nav";
 import {
@@ -87,6 +88,7 @@ export const MediaStrip = memo(
     const headingId = useId();
     const viewportRef = useRef<HTMLDivElement>(null);
     const viewportContentRef = useRef<HTMLDivElement | null>(null);
+    const droppableNodeRef = useRef<Ref<HTMLDivElement>>(null);
 
     // useId() is guaranteed to be non-empty, so this parse can never throw.
     const defaultCollectionId = asCollectionId(useId());
@@ -188,6 +190,11 @@ export const MediaStrip = memo(
       scrollToAndFocus
     );
 
+    const setViewportAndDroppableRef = useCallback((element: HTMLDivElement | null) => {
+      viewportContentRef.current = element;
+      setRefValue(droppableNodeRef.current, element);
+    }, []);
+
     // Memoize sortable items list using the encoded DnD targets format
     const sortableItemIds = useMemo(() => {
       return resolvedItems.map((item) => encodeDndTarget({ type: "item", itemId: item.id }));
@@ -223,12 +230,7 @@ export const MediaStrip = memo(
         <CardContent className="min-w-0">
           <MediaStripDroppable id={containerDndId}>
             {({ isOver, setNodeRef }) => {
-              const mergedRef = (element: HTMLDivElement | null) => {
-                viewportContentRef.current = element;
-                if (typeof setNodeRef === "function") {
-                  setNodeRef(element);
-                }
-              };
+              droppableNodeRef.current = setNodeRef;
 
               return resolvedItems.length === 0 ? (
                 <div
@@ -249,7 +251,7 @@ export const MediaStrip = memo(
                 >
                   <ToggleGroup
                     multiple
-                    ref={mergedRef}
+                    ref={setViewportAndDroppableRef}
                     aria-label={`${heading} selection`}
                     className="relative max-w-none items-stretch p-1 h-[9.5rem]"
                     style={{
@@ -308,4 +310,15 @@ function MediaStripEmptyState({ emptyLabel }: { emptyLabel: string }) {
       </EmptyHeader>
     </Empty>
   );
+}
+
+function setRefValue<T>(ref: Ref<T> | undefined, value: T | null) {
+  if (!ref) return;
+  if (typeof ref === "function") {
+    ref(value);
+    return;
+  }
+  if ("current" in ref) {
+    (ref as { current: T | null }).current = value;
+  }
 }

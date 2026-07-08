@@ -1,6 +1,31 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 const storyPath = (storyId: string) => `/iframe.html?id=${storyId}&viewMode=story`;
+
+async function dragLocatorToLocator(
+  page: Page,
+  source: Locator,
+  target: Locator,
+  targetXRatio = 0.5,
+  targetYRatio = 0.5,
+) {
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+
+  expect(sourceBox).not.toBeNull();
+  expect(targetBox).not.toBeNull();
+
+  const startX = sourceBox!.x + sourceBox!.width / 2;
+  const startY = sourceBox!.y + sourceBox!.height / 2;
+  const endX = targetBox!.x + targetBox!.width * targetXRatio;
+  const endY = targetBox!.y + targetBox!.height * targetYRatio;
+
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + 10, startY, { steps: 3 });
+  await page.mouse.move(endX, endY, { steps: 16 });
+  await page.mouse.up();
+}
 
 test.describe('MediaStrip E2E Reordering & Scroll Gestures', () => {
   
@@ -70,8 +95,49 @@ test.describe('MediaStrip E2E Reordering & Scroll Gestures', () => {
     }).toPass();
   });
 
+  test('native html5 adapter pointer drag within strip', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--reorderable-media-strips-native-html-5'));
+
+    const handleA1 = page.locator('[data-reorder-handle="item-a1"]');
+    const itemA2 = page.locator('[data-value="item-a2"]');
+
+    await handleA1.waitFor({ state: 'visible' });
+    await itemA2.waitFor({ state: 'visible' });
+
+    await dragLocatorToLocator(page, handleA1, itemA2, 0.8);
+
+    await expect(async () => {
+      const boxA1 = await page.locator('[data-value="item-a1"]').boundingBox();
+      const boxA2 = await page.locator('[data-value="item-a2"]').boundingBox();
+      expect(boxA2!.x).toBeLessThan(boxA1!.x);
+    }).toPass();
+  });
+
   test('keyboard reorder within strip', async ({ page }) => {
     await page.goto(storyPath('ui-mediastrip-mediastrip--reorderable-media-strips'));
+
+    const handleA1 = page.locator('[data-reorder-handle="item-a1"]');
+    const itemA1 = page.locator('[data-value="item-a1"]');
+    const itemA2 = page.locator('[data-value="item-a2"]');
+
+    await handleA1.waitFor({ state: 'visible' });
+    await itemA1.waitFor({ state: 'visible' });
+    await itemA2.waitFor({ state: 'visible' });
+
+    await handleA1.focus();
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+
+    await expect(async () => {
+      const boxA1 = await itemA1.boundingBox();
+      const boxA2 = await itemA2.boundingBox();
+      expect(boxA2!.x).toBeLessThan(boxA1!.x);
+    }).toPass();
+  });
+
+  test('native html5 adapter keyboard reorder within strip', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--reorderable-media-strips-native-html-5'));
 
     const handleA1 = page.locator('[data-reorder-handle="item-a1"]');
     const itemA1 = page.locator('[data-value="item-a1"]');
@@ -306,6 +372,22 @@ test.describe('MediaStrip E2E Reordering & Scroll Gestures', () => {
     await expect(folderStrip.locator('[data-value="img-1"]')).toBeVisible();
   });
 
+  test('native html5 adapter pointer drag into empty strip', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--pointer-drag-into-empty-strip-native-html-5'));
+
+    const handleItem1 = page.locator('[data-reorder-handle="item-1"]');
+    const stripB = page.locator('[data-testid="media-strip-strip-b"]');
+    const emptyDropZone = stripB.locator('.rounded-lg.border-dashed').first();
+
+    await handleItem1.waitFor({ state: 'visible' });
+    await emptyDropZone.waitFor({ state: 'visible' });
+
+    await dragLocatorToLocator(page, handleItem1, emptyDropZone);
+
+    await expect(stripB.locator('[data-value="item-1"]')).toBeVisible();
+    await expect(stripB.getByText(/no media items yet/i)).not.toBeVisible();
+  });
+
   test('pragmatic adapter nested collection drag-and-drop nesting hotspot', async ({ page }) => {
     await page.goto(storyPath('ui-mediastrip-mediastrip--deeply-nested-collections-pragmatic-dnd'));
 
@@ -333,6 +415,23 @@ test.describe('MediaStrip E2E Reordering & Scroll Gestures', () => {
     await expect(page.locator('text=Drop to Nest')).toBeVisible();
 
     await page.mouse.up();
+
+    const rootStrip = page.locator('[data-testid="media-strip-col-a"]');
+    const folderStrip = page.locator('[data-testid="media-strip-col-b"]');
+    await expect(rootStrip.locator('[data-value="img-1"]')).not.toBeVisible();
+    await expect(folderStrip.locator('[data-value="img-1"]')).toBeVisible();
+  });
+
+  test('native html5 adapter nested collection drag-and-drop nesting hotspot', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--deeply-nested-collections-native-html-5'));
+
+    const handleImg1 = page.locator('[data-reorder-handle="img-1"]');
+    const cardColB = page.locator('[data-value="card-col-b"]');
+
+    await handleImg1.waitFor({ state: 'visible' });
+    await cardColB.waitFor({ state: 'visible' });
+
+    await dragLocatorToLocator(page, handleImg1, cardColB);
 
     const rootStrip = page.locator('[data-testid="media-strip-col-a"]');
     const folderStrip = page.locator('[data-testid="media-strip-col-b"]');
@@ -397,6 +496,41 @@ test.describe('MediaStrip E2E Reordering & Scroll Gestures', () => {
     await page.mouse.move(startX, startY);
     await page.mouse.down();
     await page.mouse.move(centerX, centerY, { steps: 10 });
+
+    await expect(page.locator('text=Cannot drop (cycle)')).toBeVisible();
+
+    await page.mouse.up();
+
+    const rootStrip = page.locator('[data-testid="media-strip-col-a"]');
+    const subfolderStrip = page.locator('[data-testid="media-strip-col-d"]');
+    await expect(rootStrip.locator('[data-value="card-col-b"]')).toBeVisible();
+    await expect(subfolderStrip.locator('[data-value="card-col-b"]')).not.toBeVisible();
+  });
+
+  test('native html5 adapter nested collection invalid cycle prevention', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--deeply-nested-collections-native-html-5'));
+
+    const handleColB = page.locator('[data-reorder-handle="card-col-b"]');
+    const cardColD = page.locator('[data-value="card-col-d"]');
+
+    await handleColB.waitFor({ state: 'visible' });
+    await cardColD.waitFor({ state: 'visible' });
+
+    const handleBox = await handleColB.boundingBox();
+    const cardColDBox = await cardColD.boundingBox();
+
+    expect(handleBox).not.toBeNull();
+    expect(cardColDBox).not.toBeNull();
+
+    const startX = handleBox!.x + handleBox!.width / 2;
+    const startY = handleBox!.y + handleBox!.height / 2;
+    const centerX = cardColDBox!.x + cardColDBox!.width / 2;
+    const centerY = cardColDBox!.y + cardColDBox!.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + 10, startY, { steps: 3 });
+    await page.mouse.move(centerX, centerY, { steps: 16 });
 
     await expect(page.locator('text=Cannot drop (cycle)')).toBeVisible();
 
@@ -596,6 +730,40 @@ test.describe('MediaStrip E2E Reordering & Scroll Gestures', () => {
     await page.mouse.down();
     await page.mouse.move(endX, endY, { steps: 10 });
     await page.mouse.up();
+
+    await expect(async () => {
+      const box20 = await item20.boundingBox();
+      const box21 = await item21.boundingBox();
+      expect(box21!.x).toBeLessThan(box20!.x);
+    }).toPass();
+
+    const scrollLeftAfter = await viewport.evaluate((el) => el.scrollLeft);
+    expect(scrollLeftAfter).toBeGreaterThan(2500);
+  });
+
+  test('native html5 adapter virtualized long strip pointer drag persists reorder', async ({ page }) => {
+    await page.goto(storyPath('ui-mediastrip-mediastrip--thousands-of-items-virtualized-native-html-5'));
+
+    const viewport = page.locator('[data-slot="scroll-area-viewport"]');
+    await viewport.waitFor({ state: 'visible' });
+
+    const initiallyRenderedItems = await page.locator('[data-value^="item-"]').count();
+    expect(initiallyRenderedItems).toBeLessThan(100);
+
+    await viewport.evaluate((el) => { el.scrollLeft = 2800; });
+
+    const handle20 = page.locator('[data-reorder-handle="item-20"]');
+    const item20 = page.locator('[data-value="item-20"]');
+    const item21 = page.locator('[data-value="item-21"]');
+
+    await handle20.waitFor({ state: 'visible' });
+    await item20.waitFor({ state: 'visible' });
+    await item21.waitFor({ state: 'visible' });
+
+    const renderedItems = await page.locator('[data-value^="item-"]').count();
+    expect(renderedItems).toBeLessThan(100);
+
+    await dragLocatorToLocator(page, handle20, item21, 0.8);
 
     await expect(async () => {
       const box20 = await item20.boundingBox();

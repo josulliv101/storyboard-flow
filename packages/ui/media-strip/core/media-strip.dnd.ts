@@ -107,9 +107,9 @@ export function resolveDropIntent({
 export type DetectCollisionProps = {
   active: MediaStripDndActive;
   collisionRect: MediaStripDndClientRect;
-  droppableRects: Map<MediaStripDndIdentifier, MediaStripDndClientRect>;
+  droppableRects: ReadonlyMap<MediaStripDndIdentifier, MediaStripDndClientRect>;
   pointerCoordinates: { x: number; y: number } | null;
-  droppableContainers: MediaStripDndDroppableContainer[];
+  droppableContainers: readonly MediaStripDndDroppableContainer[];
   itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
 };
 

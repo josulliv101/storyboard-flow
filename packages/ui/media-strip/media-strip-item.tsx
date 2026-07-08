@@ -21,7 +21,7 @@ import { wouldCreateCollectionCycle } from "./core/media-strip.validation";
 import { MediaStripThumbnail } from "./media-strip-thumbnail";
 import { useReorderKeyboard } from "./use-reorder-keyboard";
 import { useMediaStripBoardDrag, useMediaStripBoardStable } from "./media-strip-board";
-import { MediaStripSortableItem } from "./media-strip-dnd-kit";
+import { MediaStripSortableItem } from "./media-strip-dnd-provider";
 import { cn } from "../lib/utils";
 
 type MediaStripItemButtonProps = MediaStripItemAreEqualProps & {

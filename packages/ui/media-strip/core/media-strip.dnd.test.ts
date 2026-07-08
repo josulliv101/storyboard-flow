@@ -45,7 +45,7 @@ describe("resolveDropIntent helper", () => {
     [asTimelineItemId("item-b"), { collectionId: asCollectionId("col-root"), index: 1, item: itemB }],
   ]);
 
-  test("drop before item", () => {
+  test("drop over item resolves to that item's final index", () => {
     const result = resolveDropIntent({
       overId: "item:item-b",
       activeId: "item:item-a",

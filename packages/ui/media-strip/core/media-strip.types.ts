@@ -205,6 +205,11 @@ export type TimelineItemCommand =
     itemId: TimelineItemId;
     fromCollectionId: CollectionId;
     toCollectionId: CollectionId;
+    /**
+     * Final insertion index after the source item has been removed. For
+     * cross-collection moves this is the destination collection insertion
+     * index; for same-collection moves it is the resulting item index.
+     */
     toIndex: number;
   }>
   | Readonly<{

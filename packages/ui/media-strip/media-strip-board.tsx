@@ -34,9 +34,8 @@ import { useKeyboardReorderSession } from "./use-keyboard-reorder-session";
 import {
   MediaStripDndProvider,
   MediaStripDragOverlay,
-} from "./media-strip-dnd-kit";
+} from "./media-strip-dnd-provider";
 import {
-  type MediaStripDndAdapterId,
   type MediaStripDndCollisionDetection,
   type MediaStripDndDragEndEvent,
   type MediaStripDndDragMoveEvent,
@@ -44,6 +43,7 @@ import {
   type MediaStripDndDragStartEvent,
   type MediaStripDndIdentifier,
 } from "./core/media-strip.dnd-adapter";
+import { type MediaStripDndAdapter } from "./media-strip-dnd.types";
 
 type MediaStripBoardStableContextType = {
   collectionsById: ReadonlyMap<CollectionId, TimelineCollection>;
@@ -114,13 +114,13 @@ function isAncestorCollection(
 export function MediaStripBoard({
   children,
   collectionsById,
-  dndAdapter = "dnd-kit",
+  dndAdapter,
   visibleCollectionIds,
   onMoveItem,
 }: {
   children: React.ReactNode;
   collectionsById?: ReadonlyMap<CollectionId, TimelineCollection>;
-  dndAdapter?: MediaStripDndAdapterId;
+  dndAdapter: MediaStripDndAdapter;
   visibleCollectionIds?: readonly CollectionId[];
   onMoveItem?: (command: TimelineItemCommand) => void;
 }) {
@@ -518,9 +518,11 @@ export function MediaStripBoard({
       <MediaStripBoardDragContext.Provider value={dragContextValue}>
         <div ref={containerRef} style={{ display: "contents" }}>
           <MediaStripDndProvider
-            activationDistance={DRAG_ACTIVATION_THRESHOLDS_PX.board}
             adapter={dndAdapter}
-            collisionDetection={collisionDetectionStrategy}
+            dndKit={{
+              activationDistance: DRAG_ACTIVATION_THRESHOLDS_PX.board,
+              collisionDetection: collisionDetectionStrategy,
+            }}
             getNestTargetId={getNestTargetId}
             onDragStart={handleDragStart}
             onDragMove={handleDragMove}
