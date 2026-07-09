@@ -30,6 +30,7 @@ import {
   useMediaStripDndRuntime,
 } from "../media-strip-dnd-runtime";
 import { scrollDraggedViewport } from "./dom-autoscroll";
+import { useConstantStore, useRafBatchedStoreSetter } from "./external-store";
 
 const NATIVE_DND_MIME = "application/x-storyboard-media-strip-dnd-id";
 
@@ -42,11 +43,6 @@ type NativeDropTarget = Readonly<{
 }>;
 
 type NativeOverlayPosition = Readonly<{ x: number; y: number }>;
-type NativeStore<T> = Readonly<{
-  getSnapshot: () => T;
-  set: (value: T) => void;
-  subscribe: (listener: () => void) => () => void;
-}>;
 
 type NativeDndContextType = Readonly<{
   activeId: MediaStripDndIdentifier | null;
@@ -79,27 +75,11 @@ export function NativeHtml5Provider({
   const overIdStore = useConstantStore<MediaStripDndIdentifier | null>(null);
   const activeIdRef = useRef<MediaStripDndIdentifier | null>(null);
   const didDropRef = useRef(false);
-  const pendingOverlayPositionRef = useRef<NativeOverlayPosition | null>(null);
-  const overlayFrameRef = useRef<number | null>(null);
 
-  const cancelScheduledOverlayPosition = useCallback(() => {
-    if (overlayFrameRef.current !== null) {
-      cancelAnimationFrame(overlayFrameRef.current);
-      overlayFrameRef.current = null;
-    }
-    pendingOverlayPositionRef.current = null;
-  }, []);
-
-  const scheduleOverlayPosition = useCallback((position: NativeOverlayPosition | null) => {
-    pendingOverlayPositionRef.current = position;
-
-    if (overlayFrameRef.current !== null) return;
-
-    overlayFrameRef.current = requestAnimationFrame(() => {
-      overlayFrameRef.current = null;
-      overlayStore.set(pendingOverlayPositionRef.current);
-    });
-  }, [overlayStore]);
+  const {
+    schedule: scheduleOverlayPosition,
+    cancelScheduled: cancelScheduledOverlayPosition,
+  } = useRafBatchedStoreSetter(overlayStore);
 
   const clearDragState = useCallback(() => {
     activeIdRef.current = null;
@@ -220,12 +200,6 @@ export function NativeHtml5Provider({
     };
   }, [activeId, autoScroll, scheduleOverlayPosition]);
 
-  useEffect(() => {
-    return () => {
-      cancelScheduledOverlayPosition();
-    };
-  }, [cancelScheduledOverlayPosition]);
-
   const nativeContextValue = useMemo(() => ({
     activeId,
     cancelDrag,
@@ -248,10 +222,7 @@ export function NativeHtml5Provider({
     startDrag,
   ]);
 
-  const runtimeContextValue = useMemo(() => ({
-    adapter,
-    overlayPosition: null,
-  }), [adapter]);
+  const runtimeContextValue = useMemo(() => ({ adapter }), [adapter]);
 
   return (
     <MediaStripDndRuntimeContext.Provider value={runtimeContextValue}>
@@ -344,34 +315,6 @@ function useNativeOverlayPosition() {
 function useNativeOverId() {
   const { getOverIdSnapshot, subscribeOverId } = useNativeDnd();
   return useSyncExternalStore(subscribeOverId, getOverIdSnapshot, getOverIdSnapshot);
-}
-
-function useConstantStore<T>(initialValue: T): NativeStore<T> {
-  const storeRef = useRef<NativeStore<T> | null>(null);
-  if (!storeRef.current) {
-    storeRef.current = createNativeStore(initialValue);
-  }
-  return storeRef.current;
-}
-
-function createNativeStore<T>(initialValue: T): NativeStore<T> {
-  let value = initialValue;
-  const listeners = new Set<() => void>();
-
-  return {
-    getSnapshot: () => value,
-    set: (nextValue) => {
-      if (Object.is(value, nextValue)) return;
-      value = nextValue;
-      listeners.forEach((listener) => listener());
-    },
-    subscribe: (listener) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-  };
 }
 
 function useNativeDropTarget(

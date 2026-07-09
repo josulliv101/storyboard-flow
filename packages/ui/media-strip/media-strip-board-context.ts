@@ -8,7 +8,6 @@ import {
   type TimelineCollection,
   type TimelineItemCommand,
   type KeyboardReorderAction,
-  type DropPlacement,
 } from "./core/media-strip.types";
 
 // Split out from media-strip-board.tsx so components that only need to read
@@ -30,45 +29,18 @@ export type MediaStripBoardStableContextType = {
   handleKeyboardReorderAction: (itemId: TimelineItemId, action: KeyboardReorderAction) => void;
 };
 
-export type MediaStripBoardDragContextType = {
-  activeDragId: TimelineItemId | null;
-  activeDragSourceCollectionId: CollectionId | null;
-  activeNestTargetId: CollectionId | null;
-  /**
-   * Live drop placement for the in-progress drag, updated on every
-   * move/over. Drives the before/after "drop here" indicator bars in
-   * media-strip-item.tsx. "inside" placement is intentionally not read
-   * from here for that purpose — the nest hotspot overlay derives its own
-   * `isOverNest` from `activeNestTargetId` instead, since that's the
-   * signal that already existed before DropPlacement did.
-   */
-  activeDropPlacement: DropPlacement | null;
-  activeDragWidth: number;
-  activeKeyboardReorderId: TimelineItemId | null;
-  /**
-   * Id of the item whose drop was just rejected (currently: a nest-cycle
-   * attempt), for ~600ms after the rejection — long enough for a brief
-   * visual cue on that item's card. `null` the rest of the time, including
-   * during a drag itself.
-   */
-  rejectedItemId: TimelineItemId | null;
-};
+// Per-move drag state (drop placement, nest target, rejection flash) does
+// NOT live in context — it's in an external selector store
+// (media-strip-drag-store.ts) so an item re-renders only when its own slice
+// changes, not on every pointer move. This context holds only stable,
+// board-level values.
 
 export const MediaStripBoardStableContext = createContext<MediaStripBoardStableContextType | null>(null);
-export const MediaStripBoardDragContext = createContext<MediaStripBoardDragContextType | null>(null);
 
 export function useMediaStripBoardStable() {
   const context = useContext(MediaStripBoardStableContext);
   if (!context) {
     throw new Error("useMediaStripBoardStable must be used within a MediaStripBoard provider");
-  }
-  return context;
-}
-
-export function useMediaStripBoardDrag() {
-  const context = useContext(MediaStripBoardDragContext);
-  if (!context) {
-    throw new Error("useMediaStripBoardDrag must be used within a MediaStripBoard provider");
   }
   return context;
 }

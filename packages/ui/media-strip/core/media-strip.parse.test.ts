@@ -301,6 +301,34 @@ describe("parseTimelineCollectionsById", () => {
     });
   });
 
+  test("rejects an object key that doesn't match the parsed collection's id", () => {
+    // Would otherwise silently key this collection under "col-b" (its parsed
+    // id) rather than "col-a" (where the caller wrote it).
+    const result = parseTimelineCollectionsById({
+      "col-a": { id: "col-b", name: "Drifted", items: [] },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: { reason: "collection-id-key-mismatch", key: "col-a", collectionId: "col-b" },
+    });
+  });
+
+  test("two keys resolving to the same id surface as a key mismatch, never a silent overwrite", () => {
+    // The pre-guard hazard: both entries parse fine and the second's
+    // `result.set(id)` clobbers the first. With key===id enforced, the first
+    // entry whose key differs from its id is rejected up front.
+    const result = parseTimelineCollectionsById({
+      "col-a": { id: "shared", name: "First", items: [] },
+      "col-b": { id: "shared", name: "Second", items: [] },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.reason).toBe("collection-id-key-mismatch");
+    }
+  });
+
   test("parses a valid multi-collection project into a Map keyed by parsed CollectionId", () => {
     const result = parseTimelineCollectionsById({
       "col-a": { id: "col-a", name: "A", items: [] },

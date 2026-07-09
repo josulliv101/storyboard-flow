@@ -3,8 +3,8 @@ import {
   type MediaStripDndDroppableContainer,
 } from "./media-strip.dnd-adapter";
 import {
-  asTimelineItemId,
-  asCollectionId,
+  trustedTimelineItemId,
+  trustedCollectionId,
   type CollectionId,
   type TimelineCollection,
   type TimelineItemId,
@@ -37,15 +37,15 @@ describe("resolveItemDropSide", () => {
 
 describe("resolveDropTargetInfo", () => {
   const folderItem = {
-    id: asTimelineItemId("item-folder"),
+    id: trustedTimelineItemId("item-folder"),
     name: "Holiday Folder",
     kind: "collection" as const,
-    collectionId: asCollectionId("col-folder"),
+    collectionId: trustedCollectionId("col-folder"),
     itemCount: 0,
   } as TimelineItem;
 
   const itemLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
-    [asTimelineItemId("item-folder"), { collectionId: asCollectionId("col-root"), index: 0, item: folderItem }],
+    [trustedTimelineItemId("item-folder"), { collectionId: trustedCollectionId("col-root"), index: 0, item: folderItem }],
   ]);
 
   const rect = { left: 100, top: 100, width: 200, height: 100, right: 300, bottom: 200 };
@@ -53,7 +53,7 @@ describe("resolveDropTargetInfo", () => {
   test("hovering the left half of an item resolves to 'before'", () => {
     const result = resolveDropTargetInfo({
       activeId: "item:item-a",
-      decodedOver: { type: "item", itemId: asTimelineItemId("item-folder") },
+      decodedOver: { type: "item", itemId: trustedTimelineItemId("item-folder") },
       rect,
       point: { x: 110, y: 150 },
       itemLookup,
@@ -61,14 +61,14 @@ describe("resolveDropTargetInfo", () => {
 
     expect(result).toEqual({
       nestTargetId: null,
-      placement: { kind: "before", itemId: asTimelineItemId("item-folder") },
+      placement: { kind: "before", itemId: trustedTimelineItemId("item-folder") },
     });
   });
 
   test("hovering the right half of an item resolves to 'after'", () => {
     const result = resolveDropTargetInfo({
       activeId: "item:item-a",
-      decodedOver: { type: "item", itemId: asTimelineItemId("item-folder") },
+      decodedOver: { type: "item", itemId: trustedTimelineItemId("item-folder") },
       rect,
       point: { x: 290, y: 150 },
       itemLookup,
@@ -76,29 +76,29 @@ describe("resolveDropTargetInfo", () => {
 
     expect(result).toEqual({
       nestTargetId: null,
-      placement: { kind: "after", itemId: asTimelineItemId("item-folder") },
+      placement: { kind: "after", itemId: trustedTimelineItemId("item-folder") },
     });
   });
 
   test("hovering the nest hotspot of a collection card collapses placement to 'inside'", () => {
     const result = resolveDropTargetInfo({
       activeId: "item:item-a",
-      decodedOver: { type: "item", itemId: asTimelineItemId("item-folder") },
+      decodedOver: { type: "item", itemId: trustedTimelineItemId("item-folder") },
       rect,
       point: { x: 200, y: 150 },
       itemLookup,
     });
 
     expect(result).toEqual({
-      nestTargetId: asCollectionId("col-folder"),
-      placement: { kind: "inside", collectionId: asCollectionId("col-folder") },
+      nestTargetId: trustedCollectionId("col-folder"),
+      placement: { kind: "inside", collectionId: trustedCollectionId("col-folder") },
     });
   });
 
   test("hovering yourself (left half) resolves to null/null, not 'before' on yourself", () => {
     const result = resolveDropTargetInfo({
       activeId: "item:item-folder",
-      decodedOver: { type: "item", itemId: asTimelineItemId("item-folder") },
+      decodedOver: { type: "item", itemId: trustedTimelineItemId("item-folder") },
       rect,
       point: { x: 110, y: 150 },
       itemLookup,
@@ -116,7 +116,7 @@ describe("resolveDropTargetInfo", () => {
     // index), so it produced a real one-slot move on a "drop on yourself."
     const result = resolveDropTargetInfo({
       activeId: "item:item-folder",
-      decodedOver: { type: "item", itemId: asTimelineItemId("item-folder") },
+      decodedOver: { type: "item", itemId: trustedTimelineItemId("item-folder") },
       rect,
       point: { x: 290, y: 150 },
       itemLookup,
@@ -128,7 +128,7 @@ describe("resolveDropTargetInfo", () => {
   test("hovering your own nest hotspot resolves to null/null, not nesting into yourself", () => {
     const result = resolveDropTargetInfo({
       activeId: "item:item-folder",
-      decodedOver: { type: "item", itemId: asTimelineItemId("item-folder") },
+      decodedOver: { type: "item", itemId: trustedTimelineItemId("item-folder") },
       rect,
       point: { x: 200, y: 150 },
       itemLookup,
@@ -140,7 +140,7 @@ describe("resolveDropTargetInfo", () => {
   test("hovering a container background resolves to 'container-end'", () => {
     const result = resolveDropTargetInfo({
       activeId: "item:item-a",
-      decodedOver: { type: "collection-container", collectionId: asCollectionId("col-root") },
+      decodedOver: { type: "collection-container", collectionId: trustedCollectionId("col-root") },
       rect,
       point: { x: 200, y: 150 },
       itemLookup,
@@ -148,7 +148,7 @@ describe("resolveDropTargetInfo", () => {
 
     expect(result).toEqual({
       nestTargetId: null,
-      placement: { kind: "container-end", collectionId: asCollectionId("col-root") },
+      placement: { kind: "container-end", collectionId: trustedCollectionId("col-root") },
     });
   });
 
@@ -168,27 +168,27 @@ describe("resolveDropTargetInfo", () => {
 describe("resolveTimelineCommandFromDrag", () => {
   // Fixture: a 4-item same collection [A, B, C, D], plus a second empty
   // collection to exercise cross-collection and container-end paths.
-  const itemA = { id: asTimelineItemId("item-a"), name: "Item A" } as TimelineItem;
-  const itemB = { id: asTimelineItemId("item-b"), name: "Item B" } as TimelineItem;
-  const itemC = { id: asTimelineItemId("item-c"), name: "Item C" } as TimelineItem;
-  const itemD = { id: asTimelineItemId("item-d"), name: "Item D" } as TimelineItem;
+  const itemA = { id: trustedTimelineItemId("item-a"), name: "Item A" } as TimelineItem;
+  const itemB = { id: trustedTimelineItemId("item-b"), name: "Item B" } as TimelineItem;
+  const itemC = { id: trustedTimelineItemId("item-c"), name: "Item C" } as TimelineItem;
+  const itemD = { id: trustedTimelineItemId("item-d"), name: "Item D" } as TimelineItem;
 
   const collections = new Map<CollectionId, TimelineCollection>([
     [
-      asCollectionId("col-root"),
-      { id: asCollectionId("col-root"), name: "Root", items: [itemA, itemB, itemC, itemD] },
+      trustedCollectionId("col-root"),
+      { id: trustedCollectionId("col-root"), name: "Root", items: [itemA, itemB, itemC, itemD] },
     ],
     [
-      asCollectionId("col-empty"),
-      { id: asCollectionId("col-empty"), name: "Empty Folder", items: [] },
+      trustedCollectionId("col-empty"),
+      { id: trustedCollectionId("col-empty"), name: "Empty Folder", items: [] },
     ],
   ]);
 
   const itemLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
-    [asTimelineItemId("item-a"), { collectionId: asCollectionId("col-root"), index: 0, item: itemA }],
-    [asTimelineItemId("item-b"), { collectionId: asCollectionId("col-root"), index: 1, item: itemB }],
-    [asTimelineItemId("item-c"), { collectionId: asCollectionId("col-root"), index: 2, item: itemC }],
-    [asTimelineItemId("item-d"), { collectionId: asCollectionId("col-root"), index: 3, item: itemD }],
+    [trustedTimelineItemId("item-a"), { collectionId: trustedCollectionId("col-root"), index: 0, item: itemA }],
+    [trustedTimelineItemId("item-b"), { collectionId: trustedCollectionId("col-root"), index: 1, item: itemB }],
+    [trustedTimelineItemId("item-c"), { collectionId: trustedCollectionId("col-root"), index: 2, item: itemC }],
+    [trustedTimelineItemId("item-d"), { collectionId: trustedCollectionId("col-root"), index: 3, item: itemD }],
   ]);
 
   test("dragging forward within the same collection lands 'after' the target, not one slot short", () => {
@@ -196,8 +196,8 @@ describe("resolveTimelineCommandFromDrag", () => {
     // bug where a raw (pre-removal) target index was used as a post-removal
     // insertion index, landing one slot too far right.
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-a"),
-      placement: { kind: "after", itemId: asTimelineItemId("item-c") },
+      itemId: trustedTimelineItemId("item-a"),
+      placement: { kind: "after", itemId: trustedTimelineItemId("item-c") },
       itemLookup,
       collectionsById: collections,
     });
@@ -206,9 +206,9 @@ describe("resolveTimelineCommandFromDrag", () => {
       ok: true,
       command: {
         type: "move",
-        itemId: asTimelineItemId("item-a"),
-        fromCollectionId: asCollectionId("col-root"),
-        toCollectionId: asCollectionId("col-root"),
+        itemId: trustedTimelineItemId("item-a"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        toCollectionId: trustedCollectionId("col-root"),
         toIndex: 2,
       },
       announcement: 'Dropped "Item A" at position 3.',
@@ -218,53 +218,53 @@ describe("resolveTimelineCommandFromDrag", () => {
   test("dragging forward within the same collection lands 'before' the target", () => {
     // [A, B, C, D], drag A before C -> [B, A, C, D].
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-a"),
-      placement: { kind: "before", itemId: asTimelineItemId("item-c") },
+      itemId: trustedTimelineItemId("item-a"),
+      placement: { kind: "before", itemId: trustedTimelineItemId("item-c") },
       itemLookup,
       collectionsById: collections,
     });
 
     expect(result).toMatchObject({
       ok: true,
-      command: { toCollectionId: asCollectionId("col-root"), toIndex: 1 },
+      command: { toCollectionId: trustedCollectionId("col-root"), toIndex: 1 },
     });
   });
 
   test("dragging backward within the same collection lands 'after' the target", () => {
     // [A, B, C, D], drag D after B -> [A, B, D, C].
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-d"),
-      placement: { kind: "after", itemId: asTimelineItemId("item-b") },
+      itemId: trustedTimelineItemId("item-d"),
+      placement: { kind: "after", itemId: trustedTimelineItemId("item-b") },
       itemLookup,
       collectionsById: collections,
     });
 
     expect(result).toMatchObject({
       ok: true,
-      command: { toCollectionId: asCollectionId("col-root"), toIndex: 2 },
+      command: { toCollectionId: trustedCollectionId("col-root"), toIndex: 2 },
     });
   });
 
   test("dragging backward within the same collection lands 'before' the target", () => {
     // [A, B, C, D], drag D before B -> [A, D, B, C].
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-d"),
-      placement: { kind: "before", itemId: asTimelineItemId("item-b") },
+      itemId: trustedTimelineItemId("item-d"),
+      placement: { kind: "before", itemId: trustedTimelineItemId("item-b") },
       itemLookup,
       collectionsById: collections,
     });
 
     expect(result).toMatchObject({
       ok: true,
-      command: { toCollectionId: asCollectionId("col-root"), toIndex: 1 },
+      command: { toCollectionId: trustedCollectionId("col-root"), toIndex: 1 },
     });
   });
 
   test("dropping immediately after your own predecessor is a same-position no-op", () => {
     // [A, B, C, D], drag B after A -> no-op, B is already right after A.
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-b"),
-      placement: { kind: "after", itemId: asTimelineItemId("item-a") },
+      itemId: trustedTimelineItemId("item-b"),
+      placement: { kind: "after", itemId: trustedTimelineItemId("item-a") },
       itemLookup,
       collectionsById: collections,
     });
@@ -281,48 +281,48 @@ describe("resolveTimelineCommandFromDrag", () => {
     // cross-collection append case below: here the pre-removal length (4)
     // must NOT be used directly, since post-removal the collection only has 3 items left.
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-a"),
-      placement: { kind: "after", itemId: asTimelineItemId("item-d") },
+      itemId: trustedTimelineItemId("item-a"),
+      placement: { kind: "after", itemId: trustedTimelineItemId("item-d") },
       itemLookup,
       collectionsById: collections,
     });
 
     expect(result).toMatchObject({
       ok: true,
-      command: { toCollectionId: asCollectionId("col-root"), toIndex: 3 },
+      command: { toCollectionId: trustedCollectionId("col-root"), toIndex: 3 },
     });
   });
 
   test("cross-collection drop after an item appends without a same-collection index shift", () => {
-    const itemX = { id: asTimelineItemId("item-x"), name: "Item X" } as TimelineItem;
-    const crossCollections = new Map(collections).set(asCollectionId("col-other"), {
-      id: asCollectionId("col-other"),
+    const itemX = { id: trustedTimelineItemId("item-x"), name: "Item X" } as TimelineItem;
+    const crossCollections = new Map(collections).set(trustedCollectionId("col-other"), {
+      id: trustedCollectionId("col-other"),
       name: "Other",
       items: [itemX],
     });
-    const crossLookup = new Map(itemLookup).set(asTimelineItemId("item-x"), {
-      collectionId: asCollectionId("col-other"),
+    const crossLookup = new Map(itemLookup).set(trustedTimelineItemId("item-x"), {
+      collectionId: trustedCollectionId("col-other"),
       index: 0,
       item: itemX,
     });
 
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-a"),
-      placement: { kind: "after", itemId: asTimelineItemId("item-x") },
+      itemId: trustedTimelineItemId("item-a"),
+      placement: { kind: "after", itemId: trustedTimelineItemId("item-x") },
       itemLookup: crossLookup,
       collectionsById: crossCollections,
     });
 
     expect(result).toMatchObject({
       ok: true,
-      command: { toCollectionId: asCollectionId("col-other"), toIndex: 1 },
+      command: { toCollectionId: trustedCollectionId("col-other"), toIndex: 1 },
     });
   });
 
   test("drop on empty container background resolves to index 0", () => {
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-a"),
-      placement: { kind: "container-end", collectionId: asCollectionId("col-empty") },
+      itemId: trustedTimelineItemId("item-a"),
+      placement: { kind: "container-end", collectionId: trustedCollectionId("col-empty") },
       itemLookup,
       collectionsById: collections,
     });
@@ -331,9 +331,9 @@ describe("resolveTimelineCommandFromDrag", () => {
       ok: true,
       command: {
         type: "move",
-        itemId: asTimelineItemId("item-a"),
-        fromCollectionId: asCollectionId("col-root"),
-        toCollectionId: asCollectionId("col-empty"),
+        itemId: trustedTimelineItemId("item-a"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        toCollectionId: trustedCollectionId("col-empty"),
         toIndex: 0,
       },
       announcement: 'Dropped "Item A" at position 1.',
@@ -342,8 +342,8 @@ describe("resolveTimelineCommandFromDrag", () => {
 
   test("'inside' placement resolves to a nest command", () => {
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-a"),
-      placement: { kind: "inside", collectionId: asCollectionId("col-empty") },
+      itemId: trustedTimelineItemId("item-a"),
+      placement: { kind: "inside", collectionId: trustedCollectionId("col-empty") },
       itemLookup,
       collectionsById: collections,
     });
@@ -352,9 +352,9 @@ describe("resolveTimelineCommandFromDrag", () => {
       ok: true,
       command: {
         type: "nest",
-        itemId: asTimelineItemId("item-a"),
-        fromCollectionId: asCollectionId("col-root"),
-        targetCollectionId: asCollectionId("col-empty"),
+        itemId: trustedTimelineItemId("item-a"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        targetCollectionId: trustedCollectionId("col-empty"),
       },
       announcement: 'Moved "Item A" into collection.',
     });
@@ -362,24 +362,24 @@ describe("resolveTimelineCommandFromDrag", () => {
 
   test("nesting a collection into its own descendant is rejected as a cycle", () => {
     const folderItem = {
-      id: asTimelineItemId("card-parent"),
+      id: trustedTimelineItemId("card-parent"),
       name: "Parent Folder",
       kind: "collection" as const,
-      collectionId: asCollectionId("col-parent"),
+      collectionId: trustedCollectionId("col-parent"),
       itemCount: 1,
     } as TimelineItem;
 
     const nestedCollections = new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("col-root"), { id: asCollectionId("col-root"), name: "Root", items: [folderItem] }],
-      [asCollectionId("col-parent"), { id: asCollectionId("col-parent"), name: "Parent", items: [] }],
+      [trustedCollectionId("col-root"), { id: trustedCollectionId("col-root"), name: "Root", items: [folderItem] }],
+      [trustedCollectionId("col-parent"), { id: trustedCollectionId("col-parent"), name: "Parent", items: [] }],
     ]);
     const nestedLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
-      [asTimelineItemId("card-parent"), { collectionId: asCollectionId("col-root"), index: 0, item: folderItem }],
+      [trustedTimelineItemId("card-parent"), { collectionId: trustedCollectionId("col-root"), index: 0, item: folderItem }],
     ]);
 
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("card-parent"),
-      placement: { kind: "inside", collectionId: asCollectionId("col-parent") },
+      itemId: trustedTimelineItemId("card-parent"),
+      placement: { kind: "inside", collectionId: trustedCollectionId("col-parent") },
       itemLookup: nestedLookup,
       collectionsById: nestedCollections,
     });
@@ -393,7 +393,7 @@ describe("resolveTimelineCommandFromDrag", () => {
 
   test("no placement (released outside any droppable) cancels the drag", () => {
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-a"),
+      itemId: trustedTimelineItemId("item-a"),
       placement: null,
       itemLookup,
       collectionsById: collections,
@@ -405,7 +405,7 @@ describe("resolveTimelineCommandFromDrag", () => {
   test("no active item id cancels the drag", () => {
     const result = resolveTimelineCommandFromDrag({
       itemId: null,
-      placement: { kind: "before", itemId: asTimelineItemId("item-b") },
+      placement: { kind: "before", itemId: trustedTimelineItemId("item-b") },
       itemLookup,
       collectionsById: collections,
     });
@@ -415,8 +415,8 @@ describe("resolveTimelineCommandFromDrag", () => {
 
   test("a placement referencing an item no longer in the lookup is a missing-target", () => {
     const result = resolveTimelineCommandFromDrag({
-      itemId: asTimelineItemId("item-a"),
-      placement: { kind: "after", itemId: asTimelineItemId("item-ghost") },
+      itemId: trustedTimelineItemId("item-a"),
+      placement: { kind: "after", itemId: trustedTimelineItemId("item-ghost") },
       itemLookup,
       collectionsById: collections,
     });
@@ -427,15 +427,15 @@ describe("resolveTimelineCommandFromDrag", () => {
 
 describe("detectCollision strategy with hotspots", () => {
   const folderItem = {
-    id: asTimelineItemId("item-folder"),
+    id: trustedTimelineItemId("item-folder"),
     name: "Holiday Folder",
     kind: "collection" as const,
-    collectionId: asCollectionId("col-folder"),
+    collectionId: trustedCollectionId("col-folder"),
     itemCount: 0,
   } as TimelineItem;
 
   const itemLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
-    [asTimelineItemId("item-folder"), { collectionId: asCollectionId("col-root"), index: 0, item: folderItem }],
+    [trustedTimelineItemId("item-folder"), { collectionId: trustedCollectionId("col-root"), index: 0, item: folderItem }],
   ]);
 
   const droppableContainers: MediaStripDndDroppableContainer[] = [
@@ -545,9 +545,9 @@ describe("detectCollision prioritizes the droppable actually under the pointer",
   // so a naive "item pass first, container pass only if item pass found
   // nothing" strategy would always resolve to item-far here, since a
   // closest-center search over a non-empty item list is never empty.
-  const farItem = { id: asTimelineItemId("item-far"), name: "Far Item" } as TimelineItem;
+  const farItem = { id: trustedTimelineItemId("item-far"), name: "Far Item" } as TimelineItem;
   const itemLookup = new Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>([
-    [asTimelineItemId("item-far"), { collectionId: asCollectionId("col-far"), index: 0, item: farItem }],
+    [trustedTimelineItemId("item-far"), { collectionId: trustedCollectionId("col-far"), index: 0, item: farItem }],
   ]);
 
   const droppableContainers: MediaStripDndDroppableContainer[] = [
@@ -601,9 +601,9 @@ describe("detectCollision prioritizes the droppable actually under the pointer",
 
 describe("DndTarget encoding/decoding", () => {
   test("round-trips every DndTarget variant", () => {
-    const itemTarget = { type: "item" as const, itemId: asTimelineItemId("item-1") };
-    const containerTarget = { type: "collection-container" as const, collectionId: asCollectionId("col-1") };
-    const nestTarget = { type: "collection-nest-target" as const, collectionId: asCollectionId("col-2") };
+    const itemTarget = { type: "item" as const, itemId: trustedTimelineItemId("item-1") };
+    const containerTarget = { type: "collection-container" as const, collectionId: trustedCollectionId("col-1") };
+    const nestTarget = { type: "collection-nest-target" as const, collectionId: trustedCollectionId("col-2") };
 
     const encodedItem = encodeDndTarget(itemTarget);
     const encodedContainer = encodeDndTarget(containerTarget);
@@ -620,7 +620,7 @@ describe("DndTarget encoding/decoding", () => {
   });
 
   test("round-trips IDs that themselves contain the separator", () => {
-    const itemTarget = { type: "item" as const, itemId: asTimelineItemId("item:with:colons") };
+    const itemTarget = { type: "item" as const, itemId: trustedTimelineItemId("item:with:colons") };
     expect(decodeDndTarget(encodeDndTarget(itemTarget))).toEqual(itemTarget);
   });
 });

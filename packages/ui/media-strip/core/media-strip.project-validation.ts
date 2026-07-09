@@ -60,7 +60,20 @@ export function validateProjectTimeline({
   // still be caught even if the child was already visited via the first one.
   const parentByChildCollectionId = new Map<CollectionId, CollectionId>();
 
-  function dfs(colId: CollectionId, markReachable: boolean): ProjectValidationResult {
+  // Iterative DFS (explicit frame stack) rather than recursion: this walks
+  // an externally-supplied graph, so a pathologically deep collection chain
+  // must not blow the call stack. Each frame carries a cursor (`itemIndex`)
+  // into its collection's items so a child is explored immediately when
+  // reached and control resumes at the next sibling afterward — preserving
+  // the exact item-order interleaving (and therefore which of several
+  // possible errors is reported first) of the original recursion.
+  type DfsFrame = { colId: CollectionId; col: TimelineCollection; itemIndex: number };
+  const stack: DfsFrame[] = [];
+
+  // Runs the entry checks for `colId` and, if it should be explored, pushes
+  // a frame. Returns a cycle result to bubble up, or `null` to proceed
+  // (whether it pushed a frame or skipped an already-visited/missing node).
+  const enter = (colId: CollectionId, markReachable: boolean): ProjectValidationResult | null => {
     if (path.has(colId)) {
       // Append colId again so the reported cycle shows the edge that closes
       // the loop (e.g. [a, b, a]), not just the set of nodes involved.
@@ -68,19 +81,32 @@ export function validateProjectTimeline({
     }
     if (visited.has(colId)) {
       if (markReachable) reachableFromRoot.add(colId);
-      return { valid: true, orphanedCollectionIds: [] };
+      return null;
     }
-
     const col = collectionsById.get(colId);
-    if (!col) {
-      return { valid: true, orphanedCollectionIds: [] };
-    }
+    if (!col) return null;
 
     path.add(colId);
     visited.add(colId);
     if (markReachable) reachableFromRoot.add(colId);
+    stack.push({ colId, col, itemIndex: 0 });
+    return null;
+  };
 
-    for (const item of col.items) {
+  const run = (startId: CollectionId, markReachable: boolean): ProjectValidationResult => {
+    const cycleAtStart = enter(startId, markReachable);
+    if (cycleAtStart) return cycleAtStart;
+
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      if (frame.itemIndex >= frame.col.items.length) {
+        path.delete(frame.colId);
+        stack.pop();
+        continue;
+      }
+
+      const item = frame.col.items[frame.itemIndex++];
+
       if (assumeGlobalItemIds) {
         if (allItemIds.has(item.id)) {
           return { valid: false, reason: "duplicate-global-item-ids", itemId: item.id };
@@ -100,24 +126,26 @@ export function validateProjectTimeline({
         }
 
         const existingParent = parentByChildCollectionId.get(item.collectionId);
-        if (existingParent !== undefined && existingParent !== colId) {
+        if (existingParent !== undefined && existingParent !== frame.colId) {
           return {
             valid: false,
             reason: "multiple-parents",
             collectionId: item.collectionId,
-            parentCollectionIds: [existingParent, colId],
+            parentCollectionIds: [existingParent, frame.colId],
           };
         }
-        parentByChildCollectionId.set(item.collectionId, colId);
+        parentByChildCollectionId.set(item.collectionId, frame.colId);
 
-        const res = dfs(item.collectionId, markReachable);
-        if (!res.valid) return res;
+        // Explore the child now; the next loop iteration picks up its frame
+        // (depth-first), and this frame resumes at the next sibling once the
+        // child subtree drains.
+        const cycle = enter(item.collectionId, markReachable);
+        if (cycle) return cycle;
       }
     }
 
-    path.delete(colId);
     return { valid: true, orphanedCollectionIds: [] };
-  }
+  };
 
   // Pass 1: walk from the declared roots. Anything visited here is reachable.
   for (const rootId of rootCollectionIds) {
@@ -128,7 +156,7 @@ export function validateProjectTimeline({
         collectionId: rootId,
       };
     }
-    const res = dfs(rootId, true);
+    const res = run(rootId, true);
     if (!res.valid) return res;
   }
 
@@ -138,7 +166,7 @@ export function validateProjectTimeline({
   // so orphan status computed below is unaffected.
   for (const colId of collectionsById.keys()) {
     if (visited.has(colId)) continue;
-    const res = dfs(colId, false);
+    const res = run(colId, false);
     if (!res.valid) return res;
   }
 

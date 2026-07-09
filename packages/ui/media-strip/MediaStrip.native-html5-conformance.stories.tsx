@@ -6,7 +6,7 @@ import { MediaStrip } from "./media-strip";
 import { MediaStripBoard } from "./media-strip-board";
 import { nativeHtml5MediaStripDndAdapter } from "./adapters/native-html5-adapter";
 import {
-  asCollectionId,
+  trustedCollectionId,
   type TimelineItem,
   type TimelineItemId,
   type CollectionId,
@@ -26,6 +26,7 @@ import {
   simulateNativeDrag,
   simulateNativeDragToPoint,
   simulateNativeDragCancel,
+  dispatchNativeDragSequence,
 } from "./media-strip.stories-helpers";
 
 // Cross-adapter conformance suite: the same nine scenarios already covered
@@ -67,8 +68,8 @@ function getItemNames(strip: HTMLElement): (string | null)[] {
 const ThreeStripDemo = () => {
   const [collections, setCollections] = useState<TimelineCollectionsById>(() =>
     new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("nh-strip-a"), {
-        id: asCollectionId("nh-strip-a"),
+      [trustedCollectionId("nh-strip-a"), {
+        id: trustedCollectionId("nh-strip-a"),
         name: "Strip A",
         items: [
           createImg("nh-a1", "Item A1", "#f43f5e", 5),
@@ -76,8 +77,8 @@ const ThreeStripDemo = () => {
           createImg("nh-a3", "Item A3", "#d946ef", 4),
         ],
       }],
-      [asCollectionId("nh-strip-b"), {
-        id: asCollectionId("nh-strip-b"),
+      [trustedCollectionId("nh-strip-b"), {
+        id: trustedCollectionId("nh-strip-b"),
         name: "Strip B",
         items: [
           createImg("nh-b1", "Item B1", "#3b82f6", 5),
@@ -95,7 +96,7 @@ const ThreeStripDemo = () => {
   }, []);
 
   const visibleCollectionIds = useMemo(
-    () => [asCollectionId("nh-strip-a"), asCollectionId("nh-strip-b")],
+    () => [trustedCollectionId("nh-strip-a"), trustedCollectionId("nh-strip-b")],
     []
   );
 
@@ -107,11 +108,51 @@ const ThreeStripDemo = () => {
       onMoveItem={handleMoveItem}
     >
       <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
-        <MediaStrip collectionId={asCollectionId("nh-strip-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
-        <MediaStrip collectionId={asCollectionId("nh-strip-b")} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("nh-strip-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("nh-strip-b")} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
       </div>
     </MediaStripBoard>
   );
+};
+
+export const ConformanceNativeHtml5DragSourceShowsPlaceholder: Story = {
+  render: () => <ThreeStripDemo />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const firstItem = canvas.getByRole("button", { name: /item a1/i });
+    const container = firstItem.closest("[data-testid^='media-strip-']") as HTMLElement;
+    const handle = container.querySelector("[data-reorder-handle='nh-a1']") as HTMLElement;
+    const targetItem = canvas.getByRole("button", { name: /item a3/i });
+
+    await waitForLayout(targetItem);
+    const startRect = handle.getBoundingClientRect();
+    const targetRect = targetItem.getBoundingClientRect();
+    const dataTransfer = new DataTransfer();
+
+    // Start the drag and hover the target — but hold BEFORE dropping.
+    await dispatchNativeDragSequence([
+      { element: handle, type: "dragstart", clientX: startRect.left + 5, clientY: startRect.top + 5, dataTransfer, delayAfterMs: 50 },
+      { element: targetItem, type: "dragover", clientX: targetRect.left + targetRect.width / 2, clientY: targetRect.top + targetRect.height / 2, dataTransfer, delayAfterMs: 50 },
+    ]);
+
+    // Unlike dnd-kit/pragmatic (which unmount the source into a placeholder),
+    // native-html5 keeps the source card mounted — so its drag-end listener
+    // survives — and instead dims it in place as the placeholder cue.
+    const sourceCard = canvasElement.querySelector("[data-value='nh-a1']") as HTMLElement;
+    await waitFor(() => expect(sourceCard).toHaveAttribute("data-drag-source", "true"));
+
+    // The drag still completes (dragend fires on the still-mounted handle),
+    // proving the parity cue didn't break the native drag lifecycle.
+    await dispatchNativeDragSequence([
+      { element: targetItem, type: "drop", clientX: targetRect.left + targetRect.width / 2, clientY: targetRect.top + targetRect.height / 2, dataTransfer, delayAfterMs: 50 },
+      { element: handle, type: "dragend", clientX: targetRect.left + targetRect.width / 2, clientY: targetRect.top + targetRect.height / 2, dataTransfer, delayAfterMs: 50 },
+    ]);
+
+    // Cue clears once the drag ends.
+    await waitFor(() =>
+      expect(canvasElement.querySelector("[data-value='nh-a1']")).not.toHaveAttribute("data-drag-source")
+    );
+  },
 };
 
 export const ConformanceNativeHtml5SameStripBefore: Story = {
@@ -300,11 +341,11 @@ const EmptyStripDemo = () => {
   );
 
   const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
-    [asCollectionId("nh-empty-strip-a"), { id: asCollectionId("nh-empty-strip-a"), name: "Strip A", items: stripA }],
-    [asCollectionId("nh-empty-strip-b"), { id: asCollectionId("nh-empty-strip-b"), name: "Strip B", items: stripB }],
+    [trustedCollectionId("nh-empty-strip-a"), { id: trustedCollectionId("nh-empty-strip-a"), name: "Strip A", items: stripA }],
+    [trustedCollectionId("nh-empty-strip-b"), { id: trustedCollectionId("nh-empty-strip-b"), name: "Strip B", items: stripB }],
   ]), [stripA, stripB]);
   const visibleCollectionIds = useMemo(
-    () => [asCollectionId("nh-empty-strip-a"), asCollectionId("nh-empty-strip-b")],
+    () => [trustedCollectionId("nh-empty-strip-a"), trustedCollectionId("nh-empty-strip-b")],
     []
   );
 
@@ -316,8 +357,8 @@ const EmptyStripDemo = () => {
       onMoveItem={handleMoveItem}
     >
       <div className="flex flex-col gap-8 p-4">
-        <MediaStrip collectionId={asCollectionId("nh-empty-strip-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
-        <MediaStrip collectionId={asCollectionId("nh-empty-strip-b")} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("nh-empty-strip-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("nh-empty-strip-b")} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
       </div>
     </MediaStripBoard>
   );
@@ -356,7 +397,7 @@ const NestedCollectionsDemo = () => {
       unwrapResult(createCollectionTimelineItem({
         id: "nh-nest-card-col-b",
         name: "Holiday Folder",
-        collectionId: asCollectionId("nh-nest-col-b"),
+        collectionId: trustedCollectionId("nh-nest-col-b"),
         itemCount: 1,
         startTimeSeconds: 0,
         durationSeconds: 10,
@@ -364,7 +405,7 @@ const NestedCollectionsDemo = () => {
       unwrapResult(createCollectionTimelineItem({
         id: "nh-nest-card-col-c",
         name: "Empty Folder",
-        collectionId: asCollectionId("nh-nest-col-c"),
+        collectionId: trustedCollectionId("nh-nest-col-c"),
         itemCount: 0,
         startTimeSeconds: 0,
         durationSeconds: 5,
@@ -375,7 +416,7 @@ const NestedCollectionsDemo = () => {
       unwrapResult(createCollectionTimelineItem({
         id: "nh-nest-card-col-d",
         name: "Trip Subfolder",
-        collectionId: asCollectionId("nh-nest-col-d"),
+        collectionId: trustedCollectionId("nh-nest-col-d"),
         itemCount: 0,
         startTimeSeconds: 0,
         durationSeconds: 5,
@@ -383,10 +424,10 @@ const NestedCollectionsDemo = () => {
     ];
 
     return new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("nh-nest-col-a"), { id: asCollectionId("nh-nest-col-a"), name: "Root", items: rootItems }],
-      [asCollectionId("nh-nest-col-b"), { id: asCollectionId("nh-nest-col-b"), name: "Holiday Folder", items: colBItems }],
-      [asCollectionId("nh-nest-col-c"), { id: asCollectionId("nh-nest-col-c"), name: "Empty Folder", items: [] }],
-      [asCollectionId("nh-nest-col-d"), { id: asCollectionId("nh-nest-col-d"), name: "Trip Subfolder", items: [] }],
+      [trustedCollectionId("nh-nest-col-a"), { id: trustedCollectionId("nh-nest-col-a"), name: "Root", items: rootItems }],
+      [trustedCollectionId("nh-nest-col-b"), { id: trustedCollectionId("nh-nest-col-b"), name: "Holiday Folder", items: colBItems }],
+      [trustedCollectionId("nh-nest-col-c"), { id: trustedCollectionId("nh-nest-col-c"), name: "Empty Folder", items: [] }],
+      [trustedCollectionId("nh-nest-col-d"), { id: trustedCollectionId("nh-nest-col-d"), name: "Trip Subfolder", items: [] }],
     ]);
   });
 
@@ -401,13 +442,13 @@ const NestedCollectionsDemo = () => {
     <MediaStripBoard
       collectionsById={collections}
       dndAdapter={nativeHtml5MediaStripDndAdapter}
-      visibleCollectionIds={[asCollectionId("nh-nest-col-a")]}
+      visibleCollectionIds={[trustedCollectionId("nh-nest-col-a")]}
       onMoveItem={handleMoveOrDrop}
     >
       <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
-        <MediaStrip collectionId={asCollectionId("nh-nest-col-a")} heading="Root Collection (Strip)" selectedIds={[]} onSelectionChange={() => { }} />
-        <MediaStrip collectionId={asCollectionId("nh-nest-col-b")} heading="Holiday Folder Contents" selectedIds={[]} onSelectionChange={() => { }} />
-        <MediaStrip collectionId={asCollectionId("nh-nest-col-c")} heading="Empty Folder Contents" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("nh-nest-col-a")} heading="Root Collection (Strip)" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("nh-nest-col-b")} heading="Holiday Folder Contents" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("nh-nest-col-c")} heading="Empty Folder Contents" selectedIds={[]} onSelectionChange={() => { }} />
       </div>
     </MediaStripBoard>
   );

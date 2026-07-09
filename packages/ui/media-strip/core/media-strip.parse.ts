@@ -47,30 +47,42 @@ export type TimelineItemFieldShapeError = Readonly<{
   expected: "string" | "number" | "string[]";
 }>;
 
-function requireStringField(
-  obj: Record<string, unknown>,
-  field: string
-): TimelineItemFieldShapeError | null {
-  return typeof obj[field] === "string" ? null : { reason: "invalid-field", field, expected: "string" };
-}
+// The field helpers return the *narrowed* value on success rather than
+// error-or-null, so a caller reads `result.value` (typed) instead of
+// re-asserting `input.id as string` after the check — the "checked,
+// therefore this type" relationship is enforced by TS, not by a cast at
+// every call site.
+type FieldResult<T> =
+  | Readonly<{ ok: true; value: T }>
+  | Readonly<{ ok: false; error: TimelineItemFieldShapeError }>;
 
-function requireNumberField(
-  obj: Record<string, unknown>,
-  field: string
-): TimelineItemFieldShapeError | null {
-  return typeof obj[field] === "number" ? null : { reason: "invalid-field", field, expected: "number" };
-}
-
-function requireOptionalStringArrayField(
-  obj: Record<string, unknown>,
-  field: string
-): TimelineItemFieldShapeError | null {
+function getStringField(obj: Record<string, unknown>, field: string): FieldResult<string> {
   const value = obj[field];
-  if (value === undefined) return null;
+  return typeof value === "string"
+    ? { ok: true, value }
+    : { ok: false, error: { reason: "invalid-field", field, expected: "string" } };
+}
+
+function getNumberField(obj: Record<string, unknown>, field: string): FieldResult<number> {
+  const value = obj[field];
+  return typeof value === "number"
+    ? { ok: true, value }
+    : { ok: false, error: { reason: "invalid-field", field, expected: "number" } };
+}
+
+function getOptionalStringArrayField(
+  obj: Record<string, unknown>,
+  field: string
+): FieldResult<readonly string[] | undefined> {
+  const value = obj[field];
+  if (value === undefined) return { ok: true, value: undefined };
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
-    return { reason: "invalid-field", field, expected: "string[]" };
+    return { ok: false, error: { reason: "invalid-field", field, expected: "string[]" } };
   }
-  return null;
+  // The `every` check above establishes this at runtime; TS can't narrow an
+  // `unknown[]` from a predicate, so this one cast is unavoidable — but it's
+  // localized to the helper, right next to the check that proves it.
+  return { ok: true, value: value as readonly string[] };
 }
 
 // --- parseTimelineItem --------------------------------------------------------
@@ -106,70 +118,70 @@ export function parseTimelineItem(input: unknown): TimelineItemResult<TimelineIt
     return { ok: false, error: { reason: "invalid-kind", kind } };
   }
 
-  const idErr = requireStringField(input, "id");
-  if (idErr) return { ok: false, error: idErr };
-  const nameErr = requireStringField(input, "name");
-  if (nameErr) return { ok: false, error: nameErr };
-  const startErr = requireNumberField(input, "startTimeSeconds");
-  if (startErr) return { ok: false, error: startErr };
+  const id = getStringField(input, "id");
+  if (!id.ok) return id;
+  const name = getStringField(input, "name");
+  if (!name.ok) return name;
+  const startTimeSeconds = getNumberField(input, "startTimeSeconds");
+  if (!startTimeSeconds.ok) return startTimeSeconds;
 
   if (kind === "collection") {
-    const collectionIdErr = requireStringField(input, "collectionId");
-    if (collectionIdErr) return { ok: false, error: collectionIdErr };
-    const itemCountErr = requireNumberField(input, "itemCount");
-    if (itemCountErr) return { ok: false, error: itemCountErr };
-    const durationErr = requireNumberField(input, "durationSeconds");
-    if (durationErr) return { ok: false, error: durationErr };
+    const collectionId = getStringField(input, "collectionId");
+    if (!collectionId.ok) return collectionId;
+    const itemCount = getNumberField(input, "itemCount");
+    if (!itemCount.ok) return itemCount;
+    const durationSeconds = getNumberField(input, "durationSeconds");
+    if (!durationSeconds.ok) return durationSeconds;
 
     const result = createCollectionTimelineItem({
-      id: input.id as string,
-      name: input.name as string,
-      collectionId: input.collectionId as string,
-      itemCount: input.itemCount as number,
-      startTimeSeconds: input.startTimeSeconds as number,
-      durationSeconds: input.durationSeconds as number,
+      id: id.value,
+      name: name.value,
+      collectionId: collectionId.value,
+      itemCount: itemCount.value,
+      startTimeSeconds: startTimeSeconds.value,
+      durationSeconds: durationSeconds.value,
     });
     return result.ok ? result : { ok: false, error: { reason: "invalid-value", error: result.error } };
   }
 
   // image and video share the media fields (src, optional posterSrcs).
-  const srcErr = requireStringField(input, "src");
-  if (srcErr) return { ok: false, error: srcErr };
-  const posterSrcsErr = requireOptionalStringArrayField(input, "posterSrcs");
-  if (posterSrcsErr) return { ok: false, error: posterSrcsErr };
+  const src = getStringField(input, "src");
+  if (!src.ok) return src;
+  const posterSrcs = getOptionalStringArrayField(input, "posterSrcs");
+  if (!posterSrcs.ok) return posterSrcs;
 
   if (kind === "image") {
-    const durationErr = requireNumberField(input, "durationSeconds");
-    if (durationErr) return { ok: false, error: durationErr };
+    const durationSeconds = getNumberField(input, "durationSeconds");
+    if (!durationSeconds.ok) return durationSeconds;
 
     const result = createImageTimelineItem({
-      id: input.id as string,
-      name: input.name as string,
-      src: input.src as string,
-      posterSrcs: input.posterSrcs as readonly string[] | undefined,
-      startTimeSeconds: input.startTimeSeconds as number,
-      durationSeconds: input.durationSeconds as number,
+      id: id.value,
+      name: name.value,
+      src: src.value,
+      posterSrcs: posterSrcs.value,
+      startTimeSeconds: startTimeSeconds.value,
+      durationSeconds: durationSeconds.value,
     });
     return result.ok ? result : { ok: false, error: { reason: "invalid-value", error: result.error } };
   }
 
   // kind === "video"
-  const sourceDurationErr = requireNumberField(input, "sourceDurationSeconds");
-  if (sourceDurationErr) return { ok: false, error: sourceDurationErr };
-  const trimInErr = requireNumberField(input, "trimInSeconds");
-  if (trimInErr) return { ok: false, error: trimInErr };
-  const trimOutErr = requireNumberField(input, "trimOutSeconds");
-  if (trimOutErr) return { ok: false, error: trimOutErr };
+  const sourceDurationSeconds = getNumberField(input, "sourceDurationSeconds");
+  if (!sourceDurationSeconds.ok) return sourceDurationSeconds;
+  const trimInSeconds = getNumberField(input, "trimInSeconds");
+  if (!trimInSeconds.ok) return trimInSeconds;
+  const trimOutSeconds = getNumberField(input, "trimOutSeconds");
+  if (!trimOutSeconds.ok) return trimOutSeconds;
 
   const result = createVideoTimelineItem({
-    id: input.id as string,
-    name: input.name as string,
-    src: input.src as string,
-    posterSrcs: input.posterSrcs as readonly string[] | undefined,
-    startTimeSeconds: input.startTimeSeconds as number,
-    sourceDurationSeconds: input.sourceDurationSeconds as number,
-    trimInSeconds: input.trimInSeconds as number,
-    trimOutSeconds: input.trimOutSeconds as number,
+    id: id.value,
+    name: name.value,
+    src: src.value,
+    posterSrcs: posterSrcs.value,
+    startTimeSeconds: startTimeSeconds.value,
+    sourceDurationSeconds: sourceDurationSeconds.value,
+    trimInSeconds: trimInSeconds.value,
+    trimOutSeconds: trimOutSeconds.value,
   });
   return result.ok ? result : { ok: false, error: { reason: "invalid-value", error: result.error } };
 }
@@ -196,10 +208,10 @@ export function parseTimelineCollection(
     return { ok: false, error: { reason: "not-an-object" } };
   }
 
-  const idErr = requireStringField(input, "id");
-  if (idErr) return { ok: false, error: idErr };
-  const nameErr = requireStringField(input, "name");
-  if (nameErr) return { ok: false, error: nameErr };
+  const id = getStringField(input, "id");
+  if (!id.ok) return id;
+  const name = getStringField(input, "name");
+  if (!name.ok) return name;
 
   if (!Array.isArray(input.items)) {
     return { ok: false, error: { reason: "items-not-an-array" } };
@@ -214,14 +226,14 @@ export function parseTimelineCollection(
     parsedItems.push(itemResult.value);
   }
 
-  const idParsed = parseCollectionId(input.id as string);
+  const idParsed = parseCollectionId(id.value);
   if (!idParsed.ok) {
     return { ok: false, error: { reason: "invalid-value", validation: { valid: false, reason: "empty-id" } } };
   }
 
   const candidate: TimelineCollection = {
     id: idParsed.value,
-    name: input.name as string,
+    name: name.value,
     items: parsedItems,
   };
 
@@ -237,7 +249,8 @@ export function parseTimelineCollection(
 
 export type TimelineCollectionsByIdParseError =
   | Readonly<{ reason: "not-an-object" }>
-  | Readonly<{ reason: "invalid-collection"; key: string; error: TimelineCollectionParseError }>;
+  | Readonly<{ reason: "invalid-collection"; key: string; error: TimelineCollectionParseError }>
+  | Readonly<{ reason: "collection-id-key-mismatch"; key: string; collectionId: CollectionId }>;
 
 /**
  * Parses genuinely `unknown` input into a `TimelineCollectionsById`. Expects
@@ -247,6 +260,16 @@ export type TimelineCollectionsByIdParseError =
  * deliberate format choice for this parser, not dictated by anything else in
  * the codebase; adjust here if your wire format differs (e.g. an array of
  * `[id, collection]` entries).
+ *
+ * The result map is keyed by the *parsed* collection's `id`, so the object
+ * key must agree with it — otherwise the entry would silently land under a
+ * different key than the caller wrote (`{ "col-a": { id: "col-b" } }` keying
+ * under `col-b`). That's rejected rather than papered over: this is a
+ * genuinely-untrusted boundary, and a key/id disagreement means the source
+ * data is already inconsistent. Enforcing key===id also rules out the
+ * silent-overwrite-on-duplicate-id hazard for free: object keys are unique,
+ * so once every id must equal its (unique) key, no two entries can share an
+ * id — a duplicate id can only arrive as a key mismatch, caught below.
  */
 export function parseTimelineCollectionsById(
   input: unknown
@@ -261,6 +284,12 @@ export function parseTimelineCollectionsById(
     if (!parsed.ok) {
       return { ok: false, error: { reason: "invalid-collection", key, error: parsed.error } };
     }
+
+    // Branded CollectionId is a string at runtime; compare structurally.
+    if (parsed.value.id !== key) {
+      return { ok: false, error: { reason: "collection-id-key-mismatch", key, collectionId: parsed.value.id } };
+    }
+
     result.set(parsed.value.id, parsed.value);
   }
 

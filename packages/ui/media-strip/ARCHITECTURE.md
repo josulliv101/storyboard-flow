@@ -10,6 +10,13 @@ and the source directly.
 ```
 core/                   Pure, framework- and DOM-independent domain logic.
                          No React, no adapter-specific types leak in here.
+                         If a helper needs a react import, an HTMLElement,
+                         or a DOM attribute name, it belongs in
+                         media-strip.dom-utils.ts instead — that split is
+                         what keeps this claim true.
+media-strip.dom-utils.ts React/DOM-coupled helpers (the memo comparator,
+                         DOM attribute-name constants, scroll-visibility
+                         measurement) that core/ is not allowed to hold.
 adapters/                One file per DnD backend (dnd-kit, pragmatic,
                          native-html5). Each implements the same
                          MediaStripDndAdapterComponents interface.
@@ -19,6 +26,10 @@ media-strip-dnd*.ts(x)   The adapter-agnostic runtime: context, provider
 media-strip-board*.ts(x) The multi-strip orchestrator: registry, drag
                          state, the drag controller, keyboard reorder
                          session, and the context those all publish.
+media-strip-drag-store.ts External selector store for per-move drag state,
+                         with the per-item subscription hooks (see the
+                         "selector store" invariant below for why it's not
+                         React context).
 media-strip.tsx          A single strip: virtualization, selection,
                          rendering.
 use-*.ts                 One hook per stateful concern, composed by
@@ -82,7 +93,18 @@ path that also produces `TimelineItemCommand`s, but it's index-driven
 through `resolveTimelineCommandFromDrag`. It does reuse the same
 `wouldCreateCollectionCycle` check and the same command shapes, so a
 keyboard-driven nest and a pointer-driven nest still end up producing
-identical `TimelineItemCommand`s.
+identical `TimelineItemCommand`s. It has its own pure resolver for the same
+reason `resolveTimelineCommandFromDrag` exists —
+`resolveKeyboardReorderAction` (`core/media-strip.keyboard.ts`) takes an
+item id, a `KeyboardReorderAction` (everything except `"confirm"`/
+`"cancel"`, which are genuine session-lifecycle transitions the hook still
+owns directly), and read-only board state, and returns a `{kind: "move" |
+"no-op" | "rejected", ...}` resolution with no side effects. See its unit
+tests in `core/media-strip.keyboard.test.ts` for the exact no-op-vs-
+announced-boundary matrix (e.g. `move-home` when already first is a
+*silent* no-op, but `move-left` when already first announces "Already
+first in collection." — that asymmetry is existing behavior, preserved
+intentionally, not a bug).
 
 ## The adapter contract
 
@@ -97,6 +119,19 @@ command semantics.** Concretely:
   shape (`core/media-strip.dnd-adapter.ts`) before `resolveTimelineCommandFromDrag`
   ever sees them. Nothing downstream of that normalization is allowed to
   know which adapter is active.
+- `nestTargetId`/`placement` on those events are required-but-nullable,
+  never optional: pragmatic and native-html5 resolve them per move (via
+  `getDropTargetInfo`); dnd-kit passes explicit `null`s because its
+  resolution arrives out-of-band through the collision-detection callback.
+  The board's drag controller branches on
+  `capabilities.supportsCollisionDetection` to know which source to trust —
+  not on whether the fields happen to be present.
+- The runtime context (`media-strip-dnd-runtime.tsx`) carries the adapter
+  and nothing per-drag. Fast-changing drag state (e.g. the manual adapters'
+  overlay position) lives in adapter-local external stores
+  (`adapters/external-store.ts`) subscribed to by exactly the leaf that
+  renders it — routing it through the context re-renders the whole strip
+  subtree per pointer move (the bug the pragmatic adapter used to have).
 - `MediaStripDndCapabilities` (`media-strip-dnd.types.ts`) declares what
   each adapter actually does under the hood (sortable transforms, built-in
   collision detection, manual vs. automatic autoscroll/overlay
@@ -156,8 +191,11 @@ everywhere downstream of that boundary, where the shape is already trusted.
 
 - **Branded IDs** (`TimelineItemId`, `CollectionId` in `core/media-strip.types.ts`)
   are both plain strings at runtime — the branding is compile-time only,
-  enforced by nominal types plus `parse*`/`as*` constructors. Never cast
-  one to the other.
+  enforced by nominal types plus `parse*`/`trusted*` constructors. Never
+  cast one to the other. `trustedTimelineItemId`/`trustedCollectionId`
+  parse-or-throw for authoring-time-trusted input (literals,
+  framework-generated ids) — named `trusted*`, not `as*`, because they run
+  a real runtime check and throw on failure, unlike a TypeScript `as` cast.
 - **Nesting wins over reordering.** `resolveDropTargetInfo` collapses
   `DropPlacement` to `{ kind: "inside" }` the moment the pointer enters a
   collection card's center [20%, 80%] hotspot (`isPointInNestHotspot`).
@@ -192,6 +230,22 @@ everywhere downstream of that boundary, where the shape is already trusted.
   and the new state comes back in as props. There is currently no
   undo/redo or history inside this package; if the host app wants that,
   it owns it, since it's the one holding the actual collection state.
+- **Per-move drag state goes through a selector store, not React context.**
+  Drop placement, nest target/validity, and the rejection flash change on
+  every pointer move. If items read those from context, *every* mounted item
+  re-renders on *every* move (context has no per-consumer selectivity), even
+  though only one item's drop indicator or nest overlay actually changes.
+  So that state lives in an external store (`media-strip-drag-store.ts`);
+  each item subscribes via `useSyncExternalStore` to a selector that returns
+  a primitive (`useMediaStripItemDropSide`, `useMediaStripItemNestState`,
+  `useMediaStripItemRejected`), and React's `Object.is` check skips the
+  re-render whenever that item's slice is unchanged. The board still holds
+  this state as React state (it drives the drag overlay + aria-live
+  announcer) and pushes each snapshot into the store in a `useLayoutEffect`
+  — synchronously after the board's commit, before paint, so subscribers
+  update in the same frame. `MediaStripBoardStableContext` still carries the
+  genuinely stable board-level values (the collection map, registry
+  callbacks, keyboard-session actions).
 - **`resolveDropTargetInfo` must reject the active item as its own drop
   target before computing a placement, not just before nesting into it.**
   dnd-kit's `detectCollision` filters the active item out of its candidate
@@ -221,6 +275,34 @@ everywhere downstream of that boundary, where the shape is already trusted.
   doesn't corrupt either map the way the other three reasons do. See
   `InvalidGraphWarnsInDev` and `LazilyUnloadedCollectionDoesNotWarn` in
   `MediaStrip.edge-cases.stories.tsx`.
+- **The non-empty-strip droppable must be at least viewport-width, not just
+  content-width.** In `media-strip.tsx`, the `ToggleGroup` that wraps a
+  strip's items is also its container-background droppable
+  (`setViewportAndDroppableRef` attaches both refs to the same node) — a
+  short strip in a wide container used to leave the space to the right of
+  its last item outside any droppable, unlike the empty-state branch (a
+  plain div with no explicit width, which naturally fills its parent).
+  Fixed with `min-w-full` alongside the existing content-width inline
+  style. This is asserted as a direct geometry check
+  (`ShortStripDroppableFillsWideContainer` in
+  `MediaStrip.reorder.stories.tsx`), not an end-to-end drag: dnd-kit's
+  "closest item anywhere" fallback (see the `detectCollision` invariant
+  above) means a drag dropped near a short strip's only item can still
+  resolve correctly via that fallback regardless of this bug, which makes
+  an end-to-end drop assertion an unreliable way to pin down this
+  specific claim.
+- **`MediaStripSelection` carries `collectionId`, because `onSelectionChange`
+  only ever reports the strip that fired it.** A consumer sharing one
+  `selectedIds` array across multiple sibling `<MediaStrip>`s (a supported,
+  demonstrated pattern — see `ReorderDemo` in `MediaStrip.reorder.stories.tsx`)
+  cannot correctly do `onSelectionChange={(s) => setSelectedIds(s.selectedIds)}`:
+  that replaces the whole shared array with just the changed strip's
+  selection, silently clobbering the other strips'. `collectionId` lets a
+  board-aware consumer merge instead — drop only the ids that belonged to
+  the strip that changed, keep the rest. `ReorderDemo`'s
+  `handleSelectionChange` does this and is the canonical example to copy;
+  `SelectionSurvivesAcrossStrips` is the regression test proving it works
+  (and fails without the merge — verified by hand before landing this).
 
 ## Testing strategy
 
@@ -240,17 +322,20 @@ everywhere downstream of that boundary, where the shape is already trusted.
   - `simulateNativeDrag`/`dispatchNativeDragSequence` — dispatches native
     `DragEvent`s with a real `DataTransfer`. Verified working against the
     **native-html5** adapter.
-  - **The pragmatic adapter's actual drag interaction is not covered by
-    an automated test today.** `@atlaskit/pragmatic-drag-and-drop` ships
-    its own internal "honey pot" workaround that re-derives the element
-    under the pointer via `document.elementFromPoint` rather than relying
-    solely on which element a bubbled event lands on, so `simulateNativeDrag`
-    doesn't reliably drive it (confirmed empirically — a same-strip drag
-    silently no-ops). Its stories still render and get visually
-    documented, but a regression in the pragmatic adapter's actual drag
-    behavior would not be caught by the test suite. Fixing this would mean
-    reverse-engineering pragmatic's internal event handling further, which
-    hasn't been attempted beyond confirming it doesn't work out of the box.
+  - **The pragmatic adapter is exported as `experimental` for this exact
+    reason: its actual drag interaction is not covered by an automated test
+    today.** `@atlaskit/pragmatic-drag-and-drop` ships its own internal
+    "honey pot" workaround that re-derives the element under the pointer via
+    `document.elementFromPoint` rather than relying solely on which element a
+    bubbled event lands on, so `simulateNativeDrag` doesn't reliably drive it
+    (confirmed empirically — a same-strip drag silently no-ops). Its stories
+    still render and get visually documented, but a regression in its actual
+    drag behavior would not be caught by the test suite. The status is
+    encoded in the export name (`experimentalPragmaticMediaStripDndAdapter`),
+    not just here, so a consumer can't reach for it without seeing it.
+    Promoting it out of `experimental` means either reverse-engineering
+    pragmatic's internal event handling to drive it in a test, or
+    substituting a different verification path — neither attempted yet.
 
 ## Known gaps (check before assuming these are solved)
 
@@ -268,9 +353,9 @@ everywhere downstream of that boundary, where the shape is already trusted.
 - ~~Rejected drops (cycle, etc.) only get an aria-live announcement — no
   visual feedback for sighted pointer users yet.~~ Fixed: a rejected item
   briefly gets `data-rejected="true"` (destructive ring + pulse), driven by
-  `use-media-strip-rejection-flash.ts` and exposed via
-  `MediaStripBoardDragContext.rejectedItemId`, for both the pointer and
-  keyboard nest paths.
+  `use-media-strip-rejection-flash.ts` and read per-item via the drag store's
+  `useMediaStripItemRejected` selector, for both the pointer and keyboard
+  nest paths.
 - **Virtualization + pointer drag has been audited and the core case
   works.** dnd-kit re-measures its droppable registry as items mount, so
   dragging between two items that were unmounted moments ago (only

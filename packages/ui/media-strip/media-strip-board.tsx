@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useCallback, useRef, useMemo, useEffect } from "react";
+import React, { useCallback, useRef, useMemo, useEffect, useLayoutEffect } from "react";
 import {
   parseCollectionId,
+  isCollectionItem,
   type TimelineItem,
   type CollectionId,
   type TimelineCollection,
@@ -10,6 +11,7 @@ import {
   type TimelineItemCommand,
 } from "./core/media-strip.types";
 import { DRAG_ACTIVATION_THRESHOLDS_PX } from "./core/media-strip.utils";
+import { wouldCreateCollectionCycle } from "./core/media-strip.validation";
 import { validateProjectTimeline } from "./core/media-strip.project-validation";
 import { DragOverlayItem } from "./media-strip-drag-overlay-item";
 import { useBoardRegistry } from "./use-board-registry";
@@ -25,14 +27,15 @@ import {
 import { type MediaStripDndAdapter } from "./media-strip-dnd.types";
 import {
   MediaStripBoardStableContext,
-  MediaStripBoardDragContext,
 } from "./media-strip-board-context";
+import {
+  MediaStripDragStoreProvider,
+  useMediaStripDragStoreInstance,
+} from "./media-strip-drag-store";
 
 export {
   MediaStripBoardStableContext,
-  MediaStripBoardDragContext,
   useMediaStripBoardStable,
-  useMediaStripBoardDrag,
   useMediaStripBoardStableOptional,
 } from "./media-strip-board-context";
 
@@ -163,6 +166,24 @@ export function MediaStripBoard({
     return itemLookup.get(activeDragId)?.item ?? null;
   }, [activeDragId, itemLookup]);
 
+  // Whether the collection currently hovered as a nest target (`activeNestTargetId`)
+  // would form a cycle if the dragged item nested into it. Computed once here —
+  // the drop-time command resolver enforces the same rule, and the hovered
+  // card's "Cannot drop (cycle)" overlay reads this instead of re-running
+  // `wouldCreateCollectionCycle` in every collection-card component on every
+  // drag frame. Only meaningful when a collection is being dragged onto a
+  // nest target; false otherwise.
+  const activeNestTargetInvalid = useMemo(() => {
+    if (!activeNestTargetId || !activeDragItem || !isCollectionItem(activeDragItem)) {
+      return false;
+    }
+    return wouldCreateCollectionCycle({
+      movingCollectionId: activeDragItem.collectionId,
+      targetCollectionId: activeNestTargetId,
+      collectionsById: collectionsByIdResolved,
+    });
+  }, [activeNestTargetId, activeDragItem, collectionsByIdResolved]);
+
   const getAdjacentCollectionId = useCallback(
     (currentCollectionId: CollectionId, direction: "up" | "down"): CollectionId | null => {
       // The ordered `visibleCollectionIds` prop is the canonical source of
@@ -231,6 +252,7 @@ export function MediaStripBoard({
     parentByCollectionId,
     activeDragId,
     activeDragSourceCollectionId,
+    adapterResolvesDropTargetsInEvents: !dndAdapter.capabilities.supportsCollisionDetection,
     startDrag,
     moveDrag,
     endDrag,
@@ -268,30 +290,36 @@ export function MediaStripBoard({
     ]
   );
 
-  const dragContextValue = useMemo(
-    () => ({
+  // Per-move drag state is published through an external store, not context,
+  // so only the items whose slice changes re-render (see
+  // media-strip-drag-store.ts). The board still holds this state as React
+  // state (it drives the drag overlay + announcer here), and pushes each new
+  // snapshot into the store in a layout effect — synchronously after the
+  // board's own commit, before paint, so subscribed items update in the same
+  // frame with no visible lag.
+  const dragStore = useMediaStripDragStoreInstance();
+  useLayoutEffect(() => {
+    dragStore.set({
       activeDragId,
-      activeDragSourceCollectionId,
       activeNestTargetId,
+      activeNestTargetInvalid,
       activeDropPlacement,
-      activeDragWidth,
       activeKeyboardReorderId,
       rejectedItemId,
-    }),
-    [
-      activeDragId,
-      activeDragSourceCollectionId,
-      activeNestTargetId,
-      activeDropPlacement,
-      activeDragWidth,
-      activeKeyboardReorderId,
-      rejectedItemId,
-    ]
-  );
+    });
+  }, [
+    dragStore,
+    activeDragId,
+    activeNestTargetId,
+    activeNestTargetInvalid,
+    activeDropPlacement,
+    activeKeyboardReorderId,
+    rejectedItemId,
+  ]);
 
   return (
     <MediaStripBoardStableContext.Provider value={stableContextValue}>
-      <MediaStripBoardDragContext.Provider value={dragContextValue}>
+      <MediaStripDragStoreProvider value={dragStore}>
         <div ref={containerRef} style={{ display: "contents" }}>
           <MediaStripDndProvider
             adapter={dndAdapter}
@@ -334,7 +362,7 @@ export function MediaStripBoard({
             </div>
           </MediaStripDndProvider>
         </div>
-      </MediaStripBoardDragContext.Provider>
+      </MediaStripDragStoreProvider>
     </MediaStripBoardStableContext.Provider>
   );
 }

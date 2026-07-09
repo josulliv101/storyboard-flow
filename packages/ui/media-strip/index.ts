@@ -6,12 +6,12 @@ export * from "./media-strip-board";
 // so they can change without breaking consumers.
 
 export {
-  // `parse*` return a Result for untrusted input; `as*` parse-or-throw for
-  // authoring-time-trusted IDs (literals, framework-generated ids).
+  // `parse*` return a Result for untrusted input; `trusted*` parse-or-throw
+  // for authoring-time-trusted IDs (literals, framework-generated ids).
   parseTimelineItemId,
   parseCollectionId,
-  asTimelineItemId,
-  asCollectionId,
+  trustedTimelineItemId,
+  trustedCollectionId,
   isImageItem,
   isVideoItem,
   isMediaItem,
@@ -109,7 +109,7 @@ export type {
 // you use, directly from its own module:
 //   import { dndKitMediaStripDndAdapter } from "@storyboard/ui/media-strip/adapters/dnd-kit-adapter";
 //   import { nativeHtml5MediaStripDndAdapter } from "@storyboard/ui/media-strip/adapters/native-html5-adapter";
-//   import { pragmaticMediaStripDndAdapter } from "@storyboard/ui/media-strip/adapters/pragmatic-adapter"; // see its doc comment for a test-coverage caveat
+//   import { experimentalPragmaticMediaStripDndAdapter } from "@storyboard/ui/media-strip/adapters/pragmatic-adapter"; // experimental — drag interaction is untested, see its doc comment
 
 export {
   validateProjectTimeline,

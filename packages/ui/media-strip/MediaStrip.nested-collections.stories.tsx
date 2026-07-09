@@ -6,9 +6,9 @@ import { MediaStrip } from "./media-strip";
 import { MediaStripBoard } from "./media-strip-board";
 import { dndKitMediaStripDndAdapter } from "./adapters/dnd-kit-adapter";
 import { nativeHtml5MediaStripDndAdapter } from "./adapters/native-html5-adapter";
-import { pragmaticMediaStripDndAdapter } from "./adapters/pragmatic-adapter";
+import { experimentalPragmaticMediaStripDndAdapter } from "./adapters/pragmatic-adapter";
 import {
-  asCollectionId,
+  trustedCollectionId,
   type TimelineItem,
   type TimelineItemId,
   type CollectionId,
@@ -70,7 +70,7 @@ function StatefulNestedCollectionsBoard({
       unwrapResult(createCollectionTimelineItem({
         id: "card-col-b",
         name: "Holiday Folder",
-        collectionId: asCollectionId("col-b"),
+        collectionId: trustedCollectionId("col-b"),
         itemCount: 2,
         startTimeSeconds: 0,
         durationSeconds: 10,
@@ -78,7 +78,7 @@ function StatefulNestedCollectionsBoard({
       unwrapResult(createCollectionTimelineItem({
         id: "card-col-c",
         name: "Empty Folder",
-        collectionId: asCollectionId("col-c"),
+        collectionId: trustedCollectionId("col-c"),
         itemCount: 0,
         startTimeSeconds: 0,
         durationSeconds: 5,
@@ -97,7 +97,7 @@ function StatefulNestedCollectionsBoard({
       unwrapResult(createCollectionTimelineItem({
         id: "card-col-d",
         name: "Trip Subfolder",
-        collectionId: asCollectionId("col-d"),
+        collectionId: trustedCollectionId("col-d"),
         itemCount: 1,
         startTimeSeconds: 0,
         durationSeconds: 5,
@@ -113,23 +113,23 @@ function StatefulNestedCollectionsBoard({
     ];
 
     return new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("col-a"), {
-        id: asCollectionId("col-a"),
+      [trustedCollectionId("col-a"), {
+        id: trustedCollectionId("col-a"),
         name: "Root Collection A",
         items: rootItems,
       }],
-      [asCollectionId("col-b"), {
-        id: asCollectionId("col-b"),
+      [trustedCollectionId("col-b"), {
+        id: trustedCollectionId("col-b"),
         name: "Holiday Folder",
         items: colBItems,
       }],
-      [asCollectionId("col-c"), {
-        id: asCollectionId("col-c"),
+      [trustedCollectionId("col-c"), {
+        id: trustedCollectionId("col-c"),
         name: "Empty Folder",
         items: [],
       }],
-      [asCollectionId("col-d"), {
-        id: asCollectionId("col-d"),
+      [trustedCollectionId("col-d"), {
+        id: trustedCollectionId("col-d"),
         name: "Trip Subfolder",
         items: [
           unwrapResult(createImageTimelineItem({
@@ -158,7 +158,7 @@ function StatefulNestedCollectionsBoard({
     <MediaStripBoard
       collectionsById={collections}
       dndAdapter={dndAdapter}
-      visibleCollectionIds={[asCollectionId("col-a")]}
+      visibleCollectionIds={[trustedCollectionId("col-a")]}
       onMoveItem={handleMoveOrDrop}
     >
       <div className="flex flex-col gap-8 p-4 bg-zinc-950 rounded-lg">
@@ -171,19 +171,19 @@ function StatefulNestedCollectionsBoard({
           </p>
         </div>
         <MediaStrip
-          collectionId={asCollectionId("col-a")}
+          collectionId={trustedCollectionId("col-a")}
           heading="Root Collection (Strip)"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
         />
         <MediaStrip
-          collectionId={asCollectionId("col-b")}
+          collectionId={trustedCollectionId("col-b")}
           heading="Holiday Folder Contents"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
         />
         <MediaStrip
-          collectionId={asCollectionId("col-c")}
+          collectionId={trustedCollectionId("col-c")}
           heading="Empty Folder Contents"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
@@ -198,7 +198,7 @@ export const DeeplyNestedCollections: Story = {
 };
 
 export const DeeplyNestedCollectionsPragmaticDnd: Story = {
-  render: () => <StatefulNestedCollectionsBoard dndAdapter={pragmaticMediaStripDndAdapter} />,
+  render: () => <StatefulNestedCollectionsBoard dndAdapter={experimentalPragmaticMediaStripDndAdapter} />,
 };
 
 export const DeeplyNestedCollectionsNativeHtml5: Story = {

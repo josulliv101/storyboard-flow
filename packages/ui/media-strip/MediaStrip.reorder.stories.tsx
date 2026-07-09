@@ -2,13 +2,13 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState, useCallback, useMemo } from "react";
 import { expect, userEvent, within, waitFor } from "storybook/test";
 
-import { MediaStrip } from "./media-strip";
+import { MediaStrip, type MediaStripSelection } from "./media-strip";
 import { MediaStripBoard } from "./media-strip-board";
 import { dndKitMediaStripDndAdapter } from "./adapters/dnd-kit-adapter";
 import { nativeHtml5MediaStripDndAdapter } from "./adapters/native-html5-adapter";
-import { pragmaticMediaStripDndAdapter } from "./adapters/pragmatic-adapter";
+import { experimentalPragmaticMediaStripDndAdapter } from "./adapters/pragmatic-adapter";
 import {
-  asCollectionId,
+  trustedCollectionId,
   type TimelineItem,
   type TimelineItemId,
   type CollectionId,
@@ -62,8 +62,8 @@ const ReorderDemo = ({
 }) => {
   const [collections, setCollections] = useState<TimelineCollectionsById>(() =>
     new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-a"), {
-        id: asCollectionId("strip-a"),
+      [trustedCollectionId("strip-a"), {
+        id: trustedCollectionId("strip-a"),
         name: "Media Strip A",
         items: [
           createImg("item-a1", "Item A1", "#f43f5e", 5),
@@ -71,16 +71,16 @@ const ReorderDemo = ({
           createImg("item-a3", "Item A3", "#d946ef", 4),
         ],
       }],
-      [asCollectionId("strip-b"), {
-        id: asCollectionId("strip-b"),
+      [trustedCollectionId("strip-b"), {
+        id: trustedCollectionId("strip-b"),
         name: "Media Strip B",
         items: [
           createImg("item-b1", "Item B1", "#3b82f6", 5),
           createImg("item-b2", "Item B2", "#06b6d4", 7),
         ],
       }],
-      [asCollectionId("strip-c"), {
-        id: asCollectionId("strip-c"),
+      [trustedCollectionId("strip-c"), {
+        id: trustedCollectionId("strip-c"),
         name: "Media Strip C",
         items: [
           createImg("item-c1", "Item C1", "#10b981", 4),
@@ -107,8 +107,24 @@ const ReorderDemo = ({
     });
   }, []);
 
+  // selectedIds is shared across all three strips below. A naive
+  // `onSelectionChange={(s) => setSelectedIds(s.selectedIds)}` would replace
+  // the whole shared array with just this strip's selection, silently
+  // clobbering whatever was selected in the other strips. MediaStripSelection
+  // now carries `collectionId`, so this merges instead: drop only the ids
+  // that belonged to the strip that just changed, keep everything else.
+  const handleSelectionChange = useCallback((selection: MediaStripSelection) => {
+    setSelectedIds((prev) => {
+      const changedCollectionItemIds = new Set(
+        collections.get(selection.collectionId)?.items.map((item) => item.id) ?? []
+      );
+      const otherStripsSelectedIds = prev.filter((id) => !changedCollectionItemIds.has(id));
+      return [...otherStripsSelectedIds, ...selection.selectedIds];
+    });
+  }, [collections]);
+
   const visibleCollectionIds = useMemo(
-    () => [asCollectionId("strip-a"), asCollectionId("strip-b"), asCollectionId("strip-c")],
+    () => [trustedCollectionId("strip-a"), trustedCollectionId("strip-b"), trustedCollectionId("strip-c")],
     []
   );
 
@@ -129,22 +145,22 @@ const ReorderDemo = ({
           </p>
         </div>
         <MediaStrip
-          collectionId={asCollectionId("strip-a")}
+          collectionId={trustedCollectionId("strip-a")}
           heading="Media Strip A (Red/Pink)"
           selectedIds={selectedIds}
-          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+          onSelectionChange={handleSelectionChange}
         />
         <MediaStrip
-          collectionId={asCollectionId("strip-b")}
+          collectionId={trustedCollectionId("strip-b")}
           heading="Media Strip B (Blue/Cyan)"
           selectedIds={selectedIds}
-          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+          onSelectionChange={handleSelectionChange}
         />
         <MediaStrip
-          collectionId={asCollectionId("strip-c")}
+          collectionId={trustedCollectionId("strip-c")}
           heading="Media Strip C (Green/Emerald with Lots of Items)"
           selectedIds={selectedIds}
-          onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
+          onSelectionChange={handleSelectionChange}
         />
       </div>
     </MediaStripBoard>
@@ -155,8 +171,33 @@ export const ReorderableMediaStrips: Story = {
   render: () => <ReorderDemo />,
 };
 
+export const SelectionSurvivesAcrossStrips: Story = {
+  // Regression test for the selection-clobbering hazard MediaStripSelection
+  // used to invite: onSelectionChange only ever reports the strip that
+  // fired it, so a consumer using one shared selectedIds array across
+  // multiple strips could blindly replace the whole array and silently
+  // wipe out other strips' selections. `collectionId` on the payload lets
+  // ReorderDemo's handleSelectionChange merge correctly instead — this
+  // proves it actually does.
+  render: () => <ReorderDemo />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const itemA1 = canvas.getByRole("button", { name: /item a1/i });
+    const itemB1 = canvas.getByRole("button", { name: /item b1/i });
+
+    await userEvent.click(itemA1);
+    await waitFor(() => expect(itemA1).toHaveAttribute("aria-pressed", "true"));
+
+    await userEvent.click(itemB1);
+    await waitFor(() => expect(itemB1).toHaveAttribute("aria-pressed", "true"));
+
+    // Selecting in Strip B must not have cleared Strip A's selection.
+    expect(itemA1).toHaveAttribute("aria-pressed", "true");
+  },
+};
+
 export const ReorderableMediaStripsPragmaticDnd: Story = {
-  render: () => <ReorderDemo dndAdapter={pragmaticMediaStripDndAdapter} />,
+  render: () => <ReorderDemo dndAdapter={experimentalPragmaticMediaStripDndAdapter} />,
 };
 
 export const ReorderableMediaStripsNativeHtml5: Story = {
@@ -172,6 +213,43 @@ export const MultiStripDragRegression: Story = {
     if (!firstHandle || !targetItem) return;
 
     await simulateDragOscillation(firstHandle, targetItem);
+  },
+};
+
+export const ReorderHandlesAreDistinguishableToScreenReaders: Story = {
+  // Regression guard for the handle a11y fix: the long keyboard grammar
+  // lives in an aria-describedby description (not the name), and that
+  // description names its item so a screen reader user can tell handles
+  // apart instead of hearing a wall of identical "Reorder handle".
+  render: () => <ReorderDemo />,
+  play: async ({ canvasElement }) => {
+    const a1Handle = canvasElement.querySelector("[data-reorder-handle='item-a1']") as HTMLElement;
+    const a2Handle = canvasElement.querySelector("[data-reorder-handle='item-a2']") as HTMLElement;
+
+    // The name is short and must NOT carry the instruction wall.
+    expect(a1Handle.getAttribute("aria-label")).not.toMatch(/ArrowLeft/i);
+
+    // aria-describedby is a space-separated id list (the adapter's own DnD
+    // instructions plus ours); resolve and concatenate every referenced
+    // element's text, the way a screen reader announces it.
+    const resolveDescription = (handle: HTMLElement) => {
+      const ids = (handle.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean);
+      expect(ids.length).toBeGreaterThan(0);
+      return ids
+        .map((id) => canvasElement.querySelector(`#${CSS.escape(id)}`)?.textContent ?? "")
+        .join(" ");
+    };
+
+    const a1Desc = resolveDescription(a1Handle);
+    const a2Desc = resolveDescription(a2Handle);
+
+    // Our keyboard grammar lives in the description...
+    expect(a1Desc).toMatch(/ArrowLeft\/Right to reorder/i);
+    // ...and it names its own item (via the card's own name element),
+    // distinctly per handle.
+    expect(a1Desc).toMatch(/Item A1/);
+    expect(a2Desc).toMatch(/Item A2/);
+    expect(a1Desc).not.toMatch(/Item A2/);
   },
 };
 
@@ -302,10 +380,10 @@ const EmptyStripDropDemo = ({
   );
 
   const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
-    [asCollectionId("strip-a"), { id: asCollectionId("strip-a"), name: "Strip A", items: stripA }],
-    [asCollectionId("strip-b"), { id: asCollectionId("strip-b"), name: "Strip B", items: stripB }],
+    [trustedCollectionId("strip-a"), { id: trustedCollectionId("strip-a"), name: "Strip A", items: stripA }],
+    [trustedCollectionId("strip-b"), { id: trustedCollectionId("strip-b"), name: "Strip B", items: stripB }],
   ]), [stripA, stripB]);
-  const visibleCollectionIds = useMemo(() => [asCollectionId("strip-a"), asCollectionId("strip-b")], []);
+  const visibleCollectionIds = useMemo(() => [trustedCollectionId("strip-a"), trustedCollectionId("strip-b")], []);
 
   return (
     <MediaStripBoard
@@ -315,8 +393,8 @@ const EmptyStripDropDemo = ({
       onMoveItem={handleMoveItem}
     >
       <div className="flex flex-col gap-8 p-4">
-        <MediaStrip collectionId={asCollectionId("strip-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
-        <MediaStrip collectionId={asCollectionId("strip-b")} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("strip-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("strip-b")} heading="Strip B" selectedIds={[]} onSelectionChange={() => { }} />
       </div>
     </MediaStripBoard>
   );
@@ -616,13 +694,13 @@ export const PointerDragIntoEmptyStripWithOtherItemsOnBoard: Story = {
   render: () => {
     const [collections, setCollections] = useState<TimelineCollectionsById>(() =>
       new Map<CollectionId, TimelineCollection>([
-        [asCollectionId("multi-a"), {
-          id: asCollectionId("multi-a"), name: "Strip A",
+        [trustedCollectionId("multi-a"), {
+          id: trustedCollectionId("multi-a"), name: "Strip A",
           items: [createImg("multi-a1", "Item A1", "#f43f5e", 5), createImg("multi-a2", "Item A2", "#ec4899", 6)],
         }],
-        [asCollectionId("multi-b-empty"), { id: asCollectionId("multi-b-empty"), name: "Strip B (Empty)", items: [] }],
-        [asCollectionId("multi-c"), {
-          id: asCollectionId("multi-c"), name: "Strip C",
+        [trustedCollectionId("multi-b-empty"), { id: trustedCollectionId("multi-b-empty"), name: "Strip B (Empty)", items: [] }],
+        [trustedCollectionId("multi-c"), {
+          id: trustedCollectionId("multi-c"), name: "Strip C",
           items: [createImg("multi-c1", "Item C1", "#10b981", 4), createImg("multi-c2", "Item C2", "#059669", 5)],
         }],
       ])
@@ -636,7 +714,7 @@ export const PointerDragIntoEmptyStripWithOtherItemsOnBoard: Story = {
     }, []);
 
     const visibleCollectionIds = useMemo(
-      () => [asCollectionId("multi-a"), asCollectionId("multi-b-empty"), asCollectionId("multi-c")],
+      () => [trustedCollectionId("multi-a"), trustedCollectionId("multi-b-empty"), trustedCollectionId("multi-c")],
       []
     );
 
@@ -648,9 +726,9 @@ export const PointerDragIntoEmptyStripWithOtherItemsOnBoard: Story = {
         onMoveItem={handleMoveItem}
       >
         <div className="flex flex-col gap-8 p-4">
-          <MediaStrip collectionId={asCollectionId("multi-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
-          <MediaStrip collectionId={asCollectionId("multi-b-empty")} heading="Strip B (Empty)" selectedIds={[]} onSelectionChange={() => { }} />
-          <MediaStrip collectionId={asCollectionId("multi-c")} heading="Strip C" selectedIds={[]} onSelectionChange={() => { }} />
+          <MediaStrip collectionId={trustedCollectionId("multi-a")} heading="Strip A" selectedIds={[]} onSelectionChange={() => { }} />
+          <MediaStrip collectionId={trustedCollectionId("multi-b-empty")} heading="Strip B (Empty)" selectedIds={[]} onSelectionChange={() => { }} />
+          <MediaStrip collectionId={trustedCollectionId("multi-c")} heading="Strip C" selectedIds={[]} onSelectionChange={() => { }} />
         </div>
       </MediaStripBoard>
     );
@@ -675,54 +753,45 @@ export const PointerDragIntoEmptyStripWithOtherItemsOnBoard: Story = {
   },
 };
 
-export const PointerDragIntoWhitespaceRightOfShortStrip: Story = {
+export const ShortStripDroppableFillsWideContainer: Story = {
   // Regression test for a droppable-sizing bug: the non-empty-strip
   // droppable (the ToggleGroup in media-strip.tsx) is also the
-  // container-background droppable for this strip (setViewportAndDroppableRef
-  // attaches both refs to the same node) — but it used to be sized to its
-  // *content* width, not the visible viewport. A short strip in a wide
-  // container had dead space to the right of its last item that simply
-  // wasn't part of any droppable, unlike the empty-state branch (a plain
-  // div with no explicit width, which naturally fills its parent). This
-  // drops well past the target's single item, deep into what used to be
-  // that dead space.
+  // container-background droppable for this strip
+  // (setViewportAndDroppableRef attaches both refs to the same node) — but
+  // it used to be sized to its *content* width, not the visible viewport.
+  // A short strip in a wide container had dead space to the right of its
+  // last item that simply wasn't part of any droppable, unlike the
+  // empty-state branch (a plain div with no explicit width, which
+  // naturally fills its parent).
+  //
+  // This asserts the geometry directly rather than simulating a drag into
+  // that dead space: dnd-kit's "closest item anywhere" fallback (see the
+  // detectCollision invariant in ARCHITECTURE.md) means a drag dropped near
+  // a short strip's only item still resolves correctly via that fallback
+  // regardless of this bug, as long as no *other* item is fortuitously
+  // closer — which makes an end-to-end drop assertion an unreliable way to
+  // pin this down. The actual guarantee this fix provides is a geometric
+  // one: the droppable's rendered width, not an emergent property of
+  // whichever item happens to be nearest.
   render: () => {
-    const [collections, setCollections] = useState<TimelineCollectionsById>(() =>
+    const [collections] = useState<TimelineCollectionsById>(() =>
       new Map<CollectionId, TimelineCollection>([
-        [asCollectionId("whitespace-source"), {
-          id: asCollectionId("whitespace-source"), name: "Source",
-          items: [createImg("whitespace-src-1", "Source Item", "#f43f5e", 5)],
-        }],
-        [asCollectionId("whitespace-target"), {
-          id: asCollectionId("whitespace-target"), name: "Target (short)",
+        [trustedCollectionId("whitespace-target"), {
+          id: trustedCollectionId("whitespace-target"), name: "Target (short)",
           items: [createImg("whitespace-tgt-1", "Target Item", "#3b82f6", 2)],
         }],
       ])
     );
 
-    const handleMoveItem = useCallback((command: TimelineItemCommand) => {
-      setCollections((prev) => {
-        const result = applyTimelineItemCommand({ collectionsById: prev, command });
-        return result.ok ? result.collectionsById : prev;
-      });
-    }, []);
-
-    const visibleCollectionIds = useMemo(
-      () => [asCollectionId("whitespace-source"), asCollectionId("whitespace-target")],
-      []
-    );
+    const visibleCollectionIds = useMemo(() => [trustedCollectionId("whitespace-target")], []);
 
     return (
       <MediaStripBoard
         collectionsById={collections}
         dndAdapter={dndKitMediaStripDndAdapter}
         visibleCollectionIds={visibleCollectionIds}
-        onMoveItem={handleMoveItem}
       >
-        <div className="flex flex-col gap-8 p-4">
-          <MediaStrip collectionId={asCollectionId("whitespace-source")} heading="Source" selectedIds={[]} onSelectionChange={() => { }} />
-          <MediaStrip collectionId={asCollectionId("whitespace-target")} heading="Target (short)" selectedIds={[]} onSelectionChange={() => { }} />
-        </div>
+        <MediaStrip collectionId={trustedCollectionId("whitespace-target")} heading="Target (short)" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -735,26 +804,23 @@ export const PointerDragIntoWhitespaceRightOfShortStrip: Story = {
   ],
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const sourceItem = canvas.getByRole("button", { name: /source item/i });
-    const container = sourceItem.closest("[data-testid^='media-strip-']") as HTMLElement;
-    const handle = container.querySelector("[data-reorder-handle]") as HTMLElement;
-
-    const targetStrip = canvasElement.querySelector("[data-strip-id='whitespace-target']") as HTMLElement;
-    const targetItem = within(targetStrip).getByRole("button", { name: /target item/i });
+    const targetItem = canvas.getByRole("button", { name: /target item/i });
     await waitForLayout(targetItem);
-    const targetRect = targetStrip.getBoundingClientRect();
-    const targetItemRect = targetItem.getBoundingClientRect();
 
-    // Well past the single item's right edge, but still inside the strip's
-    // row — dead space under the old content-sized droppable.
-    await simulatePointerDragToPoint(handle, {
-      x: targetItemRect.right + 300,
-      y: targetRect.top + targetRect.height / 2,
-    });
+    const scrollArea = canvasElement.querySelector("[data-scroll-area='true']") as HTMLElement;
+    const droppable = canvasElement.querySelector("[data-slot='toggle-group']") as HTMLElement;
+    expect(scrollArea).toBeTruthy();
+    expect(droppable).toBeTruthy();
 
-    await waitFor(() => {
-      expect(within(targetStrip).getByRole("button", { name: /source item/i })).toBeInTheDocument();
-    });
+    const scrollAreaWidth = scrollArea.getBoundingClientRect().width;
+    const droppableWidth = droppable.getBoundingClientRect().width;
+    const itemWidth = targetItem.getBoundingClientRect().width;
+
+    // The single item alone is nowhere near the viewport's width, so this
+    // only passes if the droppable is actually stretched to fill the
+    // viewport, not merely sized to fit the item.
+    expect(itemWidth).toBeLessThan(scrollAreaWidth / 2);
+    expect(droppableWidth).toBeGreaterThanOrEqual(scrollAreaWidth - 1);
   },
 };
 

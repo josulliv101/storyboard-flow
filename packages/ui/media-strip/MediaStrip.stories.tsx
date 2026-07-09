@@ -6,8 +6,8 @@ import { MediaStrip, type MediaStripProps, type MediaStripSelection } from "./me
 import { MediaStripBoard } from "./media-strip-board";
 import { dndKitMediaStripDndAdapter } from "./adapters/dnd-kit-adapter";
 import {
-  asTimelineItemId,
-  asCollectionId,
+  trustedTimelineItemId,
+  trustedCollectionId,
   type TimelineItem,
   type TimelineItemId,
   type CollectionId,
@@ -208,7 +208,7 @@ function StatefulMediaStrip(props: MediaStripProps & { items?: readonly Timeline
     [props.onSelectionChange]
   );
 
-  const collectionId = props.collectionId || (asCollectionId("default-strip"));
+  const collectionId = props.collectionId || (trustedCollectionId("default-strip"));
   const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
     [collectionId, {
       id: collectionId,
@@ -242,7 +242,7 @@ const meta = {
     onAction: fn(),
     onSelectionChange: fn(),
     items: mediaItems,
-    selectedIds: [asTimelineItemId("close")],
+    selectedIds: [trustedTimelineItemId("close")],
     heading: "Scene media",
   },
   // Single shared decorator — story-level decorators STACK with this one, so
@@ -272,7 +272,7 @@ export const Starter: Story = {
 
     await expect(args.onSelectionChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        selectedIds: expect.arrayContaining([asTimelineItemId("insert")]),
+        selectedIds: expect.arrayContaining([trustedTimelineItemId("insert")]),
       }),
     );
   },
@@ -288,7 +288,7 @@ export const SelectedState: Story = {
 
 export const KeyboardSelection: Story = {
   args: {
-    selectedIds: [asTimelineItemId("wide")],
+    selectedIds: [trustedTimelineItemId("wide")],
   },
   play: async ({ args, canvas, canvasElement }) => {
     const firstClip = canvas.getByRole("button", { name: /opening wide/i });
@@ -301,7 +301,7 @@ export const KeyboardSelection: Story = {
     );
     await expect(args.onSelectionChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        selectedIds: expect.arrayContaining([asTimelineItemId("close")]),
+        selectedIds: expect.arrayContaining([trustedTimelineItemId("close")]),
       }),
     );
   },
@@ -324,7 +324,7 @@ export const MissingPosterFallback: Story = {
     items: [
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("clip-missing"),
+          id: trustedTimelineItemId("clip-missing"),
           name: "Offline Poster",
           src: "https://example.com/offline-media.jpg",
           startTimeSeconds: 0,
@@ -334,7 +334,7 @@ export const MissingPosterFallback: Story = {
       mediaItems[0],
       mediaItems[1],
     ],
-    selectedIds: [asTimelineItemId("clip-missing")],
+    selectedIds: [trustedTimelineItemId("clip-missing")],
   },
 };
 
@@ -343,7 +343,7 @@ export const RepeatedThumbnails: Story = {
     items: [
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("repeat-1"),
+          id: trustedTimelineItemId("repeat-1"),
           name: "Take One",
           src: repeatedThumbnail,
           posterSrcs: [repeatedThumbnail],
@@ -353,7 +353,7 @@ export const RepeatedThumbnails: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("repeat-2"),
+          id: trustedTimelineItemId("repeat-2"),
           name: "Take Two",
           src: repeatedThumbnail,
           posterSrcs: [repeatedThumbnail],
@@ -363,7 +363,7 @@ export const RepeatedThumbnails: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("repeat-3"),
+          id: trustedTimelineItemId("repeat-3"),
           name: "Take Three",
           src: repeatedThumbnail,
           posterSrcs: [repeatedThumbnail],
@@ -372,7 +372,7 @@ export const RepeatedThumbnails: Story = {
         })
       ),
     ],
-    selectedIds: [asTimelineItemId("repeat-2")],
+    selectedIds: [trustedTimelineItemId("repeat-2")],
     pxPerSecond: 80,
   },
 };
@@ -383,7 +383,7 @@ export const SingleImageThumbnails: Story = {
     items: [
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("single-1"),
+          id: trustedTimelineItemId("single-1"),
           name: "Take One (Single Image)",
           src: repeatedThumbnail,
           posterSrcs: [repeatedThumbnail],
@@ -393,7 +393,7 @@ export const SingleImageThumbnails: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("single-2"),
+          id: trustedTimelineItemId("single-2"),
           name: "Take Two (Single Image)",
           src: repeatedThumbnail,
           posterSrcs: [repeatedThumbnail],
@@ -402,7 +402,7 @@ export const SingleImageThumbnails: Story = {
         })
       ),
     ],
-    selectedIds: [asTimelineItemId("single-1")],
+    selectedIds: [trustedTimelineItemId("single-1")],
   },
 };
 
@@ -411,7 +411,7 @@ export const SequenceOfDifferentImages: Story = {
     items: [
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("seq-diff-1"),
+          id: trustedTimelineItemId("seq-diff-1"),
           name: "Short Clip (3s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
@@ -426,7 +426,7 @@ export const SequenceOfDifferentImages: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("seq-diff-2"),
+          id: trustedTimelineItemId("seq-diff-2"),
           name: "Medium Clip (6s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
@@ -441,7 +441,7 @@ export const SequenceOfDifferentImages: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("seq-diff-3"),
+          id: trustedTimelineItemId("seq-diff-3"),
           name: "Long Clip (9s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
@@ -456,7 +456,7 @@ export const SequenceOfDifferentImages: Story = {
       ),
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("seq-diff-4"),
+          id: trustedTimelineItemId("seq-diff-4"),
           name: "Max Width Clip (12s)",
           src: createThumbnail("#b91c1c", "Frame 1"),
           posterSrcs: [
@@ -470,21 +470,21 @@ export const SequenceOfDifferentImages: Story = {
         })
       ),
     ],
-    selectedIds: [asTimelineItemId("seq-diff-2")],
+    selectedIds: [trustedTimelineItemId("seq-diff-2")],
   },
 };
 
 export const ShortLongAndTrimmedClips: Story = {
   args: {
     items: shortAndLongItems,
-    selectedIds: [asTimelineItemId("clip-trimmed")],
+    selectedIds: [trustedTimelineItemId("clip-trimmed")],
   },
 };
 
 export const ManyItemTimeline: Story = {
   args: {
     items: manyItems,
-    selectedIds: [asTimelineItemId("cutaway-10")],
+    selectedIds: [trustedTimelineItemId("cutaway-10")],
     heading: "Timeline media",
   },
   play: async ({ canvasElement }) => {
@@ -528,7 +528,7 @@ export const ManyItemTimeline: Story = {
 
 export const MultipleSelectionInitial: Story = {
   args: {
-    selectedIds: [asTimelineItemId("wide"), asTimelineItemId("close")],
+    selectedIds: [trustedTimelineItemId("wide"), trustedTimelineItemId("close")],
   },
   play: async ({ canvas }) => {
     await expect(
@@ -542,7 +542,7 @@ export const MultipleSelectionInitial: Story = {
 
 export const MultipleSelectionToggle: Story = {
   args: {
-    selectedIds: [asTimelineItemId("wide")],
+    selectedIds: [trustedTimelineItemId("wide")],
   },
   play: async ({ args, canvas }) => {
     await userEvent.click(
@@ -552,8 +552,8 @@ export const MultipleSelectionToggle: Story = {
     await expect(args.onSelectionChange).toHaveBeenCalledWith(
       expect.objectContaining({
         selectedIds: expect.arrayContaining([
-          asTimelineItemId("wide"),
-          asTimelineItemId("close"),
+          trustedTimelineItemId("wide"),
+          trustedTimelineItemId("close"),
         ]),
       }),
     );
@@ -565,7 +565,7 @@ export const BrokenPosterFallback: Story = {
     items: [
       unwrapResult(
         createImageTimelineItem({
-          id: asTimelineItemId("clip-broken"),
+          id: trustedTimelineItemId("clip-broken"),
           name: "Broken Link Poster",
           src: "https://example.com/broken-image.jpg",
           posterSrcs: ["https://example.com/broken-image.jpg"],
@@ -575,13 +575,13 @@ export const BrokenPosterFallback: Story = {
       ),
       mediaItems[0],
     ],
-    selectedIds: [asTimelineItemId("clip-broken")],
+    selectedIds: [trustedTimelineItemId("clip-broken")],
   },
 };
 
 export const KeyboardVirtualNavigation: Story = {
   args: {
-    selectedIds: [asTimelineItemId("wide")],
+    selectedIds: [trustedTimelineItemId("wide")],
   },
   play: async ({ args, canvas, canvasElement }) => {
     const firstClip = canvas.getByRole("button", { name: /opening wide/i });
@@ -602,7 +602,7 @@ export const KeyboardVirtualNavigation: Story = {
     await expect(canvasElement.ownerDocument.activeElement).toBe(targetClip);
     await expect(args.onSelectionChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        selectedIds: expect.arrayContaining([asTimelineItemId("cutaway-10")]),
+        selectedIds: expect.arrayContaining([trustedTimelineItemId("cutaway-10")]),
       }),
     );
   },

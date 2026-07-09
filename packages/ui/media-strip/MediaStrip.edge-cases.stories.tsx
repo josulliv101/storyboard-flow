@@ -6,7 +6,7 @@ import { MediaStrip } from "./media-strip";
 import { MediaStripBoard } from "./media-strip-board";
 import { dndKitMediaStripDndAdapter } from "./adapters/dnd-kit-adapter";
 import {
-  asCollectionId,
+  trustedCollectionId,
   type TimelineItem,
   type TimelineItemId,
   type CollectionId,
@@ -70,9 +70,9 @@ export const CollectionItems: Story = {
     );
 
     const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Strips containing Collections", items }],
+      [trustedCollectionId("strip-1"), { id: trustedCollectionId("strip-1"), name: "Strips containing Collections", items }],
     ]), [items]);
-    const visibleCollectionIds = useMemo(() => [asCollectionId("strip-1")], []);
+    const visibleCollectionIds = useMemo(() => [trustedCollectionId("strip-1")], []);
 
     return (
       <MediaStripBoard
@@ -82,7 +82,7 @@ export const CollectionItems: Story = {
         onMoveItem={handleMoveItem}
       >
         <MediaStrip
-          collectionId={asCollectionId("strip-1")}
+          collectionId={trustedCollectionId("strip-1")}
           heading="Strips containing Collections"
           selectedIds={selectedIds}
           onSelectionChange={(s) => setSelectedIds(s.selectedIds)}
@@ -119,9 +119,9 @@ export const VideoWithoutPoster: Story = {
       })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Video without Poster", items }],
+      [trustedCollectionId("strip-1"), { id: trustedCollectionId("strip-1"), name: "Video without Poster", items }],
     ]);
-    const visibleCollectionIds = [asCollectionId("strip-1")];
+    const visibleCollectionIds = [trustedCollectionId("strip-1")];
 
     return (
       <MediaStripBoard
@@ -129,7 +129,7 @@ export const VideoWithoutPoster: Story = {
         dndAdapter={dndKitMediaStripDndAdapter}
         visibleCollectionIds={visibleCollectionIds}
       >
-        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Video without Poster" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("strip-1")} heading="Video without Poster" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -161,9 +161,9 @@ export const MixedBrokenPosterSequence: Story = {
       })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Mixed Poster Sequence", items }],
+      [trustedCollectionId("strip-1"), { id: trustedCollectionId("strip-1"), name: "Mixed Poster Sequence", items }],
     ]);
-    const visibleCollectionIds = [asCollectionId("strip-1")];
+    const visibleCollectionIds = [trustedCollectionId("strip-1")];
 
     return (
       <MediaStripBoard
@@ -171,7 +171,7 @@ export const MixedBrokenPosterSequence: Story = {
         dndAdapter={dndKitMediaStripDndAdapter}
         visibleCollectionIds={visibleCollectionIds}
       >
-        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Mixed Poster Sequence" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("strip-1")} heading="Mixed Poster Sequence" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -194,9 +194,9 @@ export const VeryNarrowContainer: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-2", name: "Another short name", src: "img.png", startTimeSeconds: 4, durationSeconds: 4 })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Very Narrow", items }],
+      [trustedCollectionId("strip-1"), { id: trustedCollectionId("strip-1"), name: "Very Narrow", items }],
     ]);
-    const visibleCollectionIds = [asCollectionId("strip-1")];
+    const visibleCollectionIds = [trustedCollectionId("strip-1")];
 
     return (
       <MediaStripBoard
@@ -204,7 +204,7 @@ export const VeryNarrowContainer: Story = {
         dndAdapter={dndKitMediaStripDndAdapter}
         visibleCollectionIds={visibleCollectionIds}
       >
-        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Very Narrow" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("strip-1")} heading="Very Narrow" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -228,9 +228,9 @@ export const VeryWideContainer: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-2", name: "Item 2", src: "img.png", startTimeSeconds: 40, durationSeconds: 40 })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Very Wide", items }],
+      [trustedCollectionId("strip-1"), { id: trustedCollectionId("strip-1"), name: "Very Wide", items }],
     ]);
-    const visibleCollectionIds = [asCollectionId("strip-1")];
+    const visibleCollectionIds = [trustedCollectionId("strip-1")];
 
     return (
       <MediaStripBoard
@@ -238,7 +238,7 @@ export const VeryWideContainer: Story = {
         dndAdapter={dndKitMediaStripDndAdapter}
         visibleCollectionIds={visibleCollectionIds}
       >
-        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Very Wide" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("strip-1")} heading="Very Wide" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -263,9 +263,9 @@ export const LongNamesAndWeirdCharacters: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-3", name: "日本語 title", src: "img.png", startTimeSeconds: 20, durationSeconds: 10 })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Long Names & Characters", items }],
+      [trustedCollectionId("strip-1"), { id: trustedCollectionId("strip-1"), name: "Long Names & Characters", items }],
     ]);
-    const visibleCollectionIds = [asCollectionId("strip-1")];
+    const visibleCollectionIds = [trustedCollectionId("strip-1")];
 
     return (
       <MediaStripBoard
@@ -273,7 +273,7 @@ export const LongNamesAndWeirdCharacters: Story = {
         dndAdapter={dndKitMediaStripDndAdapter}
         visibleCollectionIds={visibleCollectionIds}
       >
-        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Long Names & Characters" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("strip-1")} heading="Long Names & Characters" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -296,9 +296,9 @@ export const FractionalDurations: Story = {
       unwrapResult(createImageTimelineItem({ id: "item-5", name: "Clip 5 (3600.4s)", src: "img.png", startTimeSeconds: 61.782, durationSeconds: 3600.4 })),
     ];
     const collectionsById = new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Fractional Durations", items }],
+      [trustedCollectionId("strip-1"), { id: trustedCollectionId("strip-1"), name: "Fractional Durations", items }],
     ]);
-    const visibleCollectionIds = [asCollectionId("strip-1")];
+    const visibleCollectionIds = [trustedCollectionId("strip-1")];
 
     return (
       <MediaStripBoard
@@ -306,7 +306,7 @@ export const FractionalDurations: Story = {
         dndAdapter={dndKitMediaStripDndAdapter}
         visibleCollectionIds={visibleCollectionIds}
       >
-        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Fractional Durations" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("strip-1")} heading="Fractional Durations" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -320,8 +320,8 @@ export const FractionalDurations: Story = {
 
 function ValidatesGraphInDevBoard() {
   const validCollections = useMemo(() => new Map<CollectionId, TimelineCollection>([
-    [asCollectionId("edge-validate-root"), {
-      id: asCollectionId("edge-validate-root"),
+    [trustedCollectionId("edge-validate-root"), {
+      id: trustedCollectionId("edge-validate-root"),
       name: "Root",
       items: [
         unwrapResult(createImageTimelineItem({
@@ -340,8 +340,8 @@ function ValidatesGraphInDevBoard() {
   // real corruption, not a lazy-loading artifact. validateProjectTimeline
   // reports this as "duplicate-global-item-ids".
   const duplicateIdCollections = useMemo(() => new Map<CollectionId, TimelineCollection>([
-    [asCollectionId("edge-validate-root"), {
-      id: asCollectionId("edge-validate-root"),
+    [trustedCollectionId("edge-validate-root"), {
+      id: trustedCollectionId("edge-validate-root"),
       name: "Root",
       items: [
         unwrapResult(createImageTimelineItem({
@@ -368,14 +368,14 @@ function ValidatesGraphInDevBoard() {
   // are fetched). This must NOT warn: it doesn't corrupt itemLookup or
   // parentByCollectionId the way the duplicate-id case does.
   const lazyUnloadedCollections = useMemo(() => new Map<CollectionId, TimelineCollection>([
-    [asCollectionId("edge-validate-root"), {
-      id: asCollectionId("edge-validate-root"),
+    [trustedCollectionId("edge-validate-root"), {
+      id: trustedCollectionId("edge-validate-root"),
       name: "Root",
       items: [
         unwrapResult(createCollectionTimelineItem({
           id: "edge-validate-dangling-card",
           name: "Not-Yet-Loaded Folder",
-          collectionId: asCollectionId("edge-validate-missing"),
+          collectionId: trustedCollectionId("edge-validate-missing"),
           itemCount: 3,
           startTimeSeconds: 0,
           durationSeconds: 5,
@@ -397,10 +397,10 @@ function ValidatesGraphInDevBoard() {
       <MediaStripBoard
         collectionsById={collectionsById}
         dndAdapter={dndKitMediaStripDndAdapter}
-        visibleCollectionIds={[asCollectionId("edge-validate-root")]}
+        visibleCollectionIds={[trustedCollectionId("edge-validate-root")]}
       >
         <MediaStrip
-          collectionId={asCollectionId("edge-validate-root")}
+          collectionId={trustedCollectionId("edge-validate-root")}
           heading="Root"
           selectedIds={[]}
           onSelectionChange={() => { }}

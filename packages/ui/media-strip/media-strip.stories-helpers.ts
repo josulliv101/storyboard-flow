@@ -51,6 +51,22 @@ export const waitForLayout = async (element: HTMLElement) => {
   });
 };
 
+/**
+ * Waits `count` animation frames. Use before a synthetic drag when the
+ * layout was just perturbed (a programmatic scroll, freshly-mounted
+ * virtualized items): the drag simulators capture element rects up front
+ * and dnd-kit caches droppable rects at drag start, so measuring before
+ * the layout settles produces drops aimed at stale coordinates. Under
+ * full-suite CPU load this settle window is much wider than in isolation —
+ * which is exactly the kind of only-flaky-under-load failure this exists
+ * to prevent.
+ */
+export const waitForAnimationFrames = async (count: number) => {
+  for (let i = 0; i < count; i++) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+};
+
 // Helper functions for programmatic PointerEvent simulation in headless story tests
 
 type PointerSequenceStep = {
@@ -166,23 +182,31 @@ export const simulateDragOscillation = async (handle: HTMLElement, target: HTMLE
   const targetCenterX = targetRect.left + targetRect.width / 2;
   const targetCenterY = targetRect.top + targetRect.height / 2;
 
+  // isPrimary is required: dnd-kit's PointerSensor ignores non-primary
+  // pointer events entirely, and PointerEventInit defaults it to false — a
+  // sequence without it dispatches fine but never activates a drag. (This
+  // helper shipped without it for a while; its only consumer at the time
+  // had no post-drag assertions, so the silently-inert drag went unnoticed.)
+  const eventInit: PointerEventInit = { cancelable: true, isPrimary: true };
+
   await dispatchPointerSequence([
     // 1. Pointer Down
-    { element: handle, type: "pointerdown", clientX: startRect.left + 5, clientY: startRect.top + 5 },
+    { element: handle, type: "pointerdown", clientX: startRect.left + 5, clientY: startRect.top + 5, eventInit },
     // 2. Move past threshold
-    { element: document, type: "pointermove", clientX: startRect.left + 20, clientY: startRect.top + 5, delayAfterMs: 50 },
+    { element: document, type: "pointermove", clientX: startRect.left + 20, clientY: startRect.top + 5, eventInit, delayAfterMs: 50 },
     // 3. Move to target
-    { element: document, type: "pointermove", clientX: targetCenterX, clientY: targetCenterY, delayAfterMs: 50 },
+    { element: document, type: "pointermove", clientX: targetCenterX, clientY: targetCenterY, eventInit, delayAfterMs: 50 },
     // 4. Oscillate back and forth to trigger multiple collision detection runs
     ...Array.from({ length: 5 }, (_, i) => ({
       element: document as EventTarget,
       type: "pointermove" as const,
       clientX: targetCenterX + (i % 2 === 0 ? 5 : -5),
       clientY: targetCenterY,
+      eventInit,
       delayAfterMs: 20,
     })),
     // 5. Pointer Up
-    { element: document, type: "pointerup", clientX: targetCenterX, clientY: targetCenterY, delayAfterMs: 50 },
+    { element: document, type: "pointerup", clientX: targetCenterX, clientY: targetCenterY, eventInit, delayAfterMs: 50 },
   ]);
 };
 

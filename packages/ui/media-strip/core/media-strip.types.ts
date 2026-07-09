@@ -55,7 +55,7 @@ export const parseCollectionId = (
 // the `parse*` variants instead when the input is genuinely untrusted and the
 // caller can handle failure.
 
-export const asTimelineItemId = (id: string): TimelineItemId => {
+export const trustedTimelineItemId = (id: string): TimelineItemId => {
   const result = parseTimelineItemId(id);
   if (!result.ok) {
     throw new Error(`Invalid TimelineItemId: ${JSON.stringify(id)} (${result.error})`);
@@ -63,7 +63,7 @@ export const asTimelineItemId = (id: string): TimelineItemId => {
   return result.value;
 };
 
-export const asCollectionId = (id: string): CollectionId => {
+export const trustedCollectionId = (id: string): CollectionId => {
   const result = parseCollectionId(id);
   if (!result.ok) {
     throw new Error(`Invalid CollectionId: ${JSON.stringify(id)} (${result.error})`);

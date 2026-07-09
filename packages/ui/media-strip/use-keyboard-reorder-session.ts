@@ -6,10 +6,8 @@ import {
   type TimelineCollection,
   type TimelineItemCommand,
   type KeyboardReorderAction,
-  type CollectionTimelineItem,
-  isCollectionItem,
 } from "./core/media-strip.types";
-import { wouldCreateCollectionCycle } from "./core/media-strip.validation";
+import { resolveKeyboardReorderAction } from "./core/media-strip.keyboard";
 
 type UseKeyboardReorderSessionProps = {
   itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
@@ -71,158 +69,44 @@ export function useKeyboardReorderSession({
   }, []);
 
   const handleKeyboardReorderAction = useCallback((itemId: TimelineItemId, action: KeyboardReorderAction) => {
-    const found = itemLookup.get(itemId);
-    if (!found) return;
-    const { collectionId, index, item } = found;
+    if (action === "cancel") {
+      cancelKeyboardReorder();
+      return;
+    }
 
-    const col = collectionsById.get(collectionId);
-    if (!col) return;
-    const items = col.items;
-
-    const moveTo = (toIndex: number, message: string, boundaryMessage?: string) => {
-      if (toIndex < 0 || toIndex >= items.length) {
-        if (boundaryMessage) {
-          announce(boundaryMessage);
-        }
-        return;
+    if (action === "confirm") {
+      const found = itemLookup.get(itemId);
+      confirmKeyboardReorder();
+      if (found) {
+        announce(`Dropped "${found.item.name}" at position ${found.index + 1}.`);
       }
-      if (toIndex === index) return;
-      applyCommand({
-        type: "move",
-        itemId,
-        fromCollectionId: collectionId,
-        toCollectionId: collectionId,
-        toIndex,
-      });
-      announce(message);
-    };
+      return;
+    }
 
-    switch (action) {
-      case "move-left": {
-        moveTo(index - 1, `Moved "${item.name}" to position ${index}.`, `Already first in collection.`);
+    const resolution = resolveKeyboardReorderAction({
+      itemId,
+      action,
+      itemLookup,
+      collectionsById,
+      parentByCollectionId,
+      getAdjacentCollectionId,
+    });
+    if (!resolution) return;
+
+    switch (resolution.kind) {
+      case "move": {
+        applyCommand(resolution.command);
+        announce(resolution.announcement);
+        if (resolution.endsSession) confirmKeyboardReorder();
         break;
       }
-      case "move-right": {
-        moveTo(index + 1, `Moved "${item.name}" to position ${index + 2}.`, `Already last in collection.`);
+      case "rejected": {
+        announce(resolution.announcement);
+        flashRejection(itemId);
         break;
       }
-      case "move-home": {
-        moveTo(0, `Moved "${item.name}" to start of collection.`);
-        break;
-      }
-      case "move-end": {
-        moveTo(items.length - 1, `Moved "${item.name}" to end of collection.`);
-        break;
-      }
-      case "move-up":
-      case "move-down": {
-        const direction = action === "move-up" ? "up" : "down";
-        const nextCollectionId = getAdjacentCollectionId(collectionId, direction);
-        if (nextCollectionId) {
-          const targetCol = collectionsById.get(nextCollectionId);
-          const targetColName = targetCol ? targetCol.name : String(nextCollectionId);
-          const targetList = targetCol ? targetCol.items : [];
-          const targetIndex = Math.max(0, Math.min(index, targetList.length));
-
-          if (isCollectionItem(item)) {
-            if (wouldCreateCollectionCycle({
-              movingCollectionId: item.collectionId,
-              targetCollectionId: nextCollectionId,
-              collectionsById,
-            })) {
-              announce("Cannot move a collection into itself or one of its nested collections.");
-              flashRejection(itemId);
-              return;
-            }
-          }
-
-          applyCommand({
-            type: "move",
-            itemId,
-            fromCollectionId: collectionId,
-            toCollectionId: nextCollectionId,
-            toIndex: targetIndex,
-          });
-          announce(`Moved "${item.name}" to collection "${targetColName}" at position ${targetIndex + 1}.`);
-        } else {
-          announce(direction === "up" ? "Already at the top collection." : "Already at the bottom collection.");
-        }
-        break;
-      }
-      case "nest": {
-        const prevItem = index > 0 ? items[index - 1] : null;
-        const nextItem = index < items.length - 1 ? items[index + 1] : null;
-
-        let targetColItem: CollectionTimelineItem | null = null;
-        if (nextItem && nextItem.kind === "collection") {
-          targetColItem = nextItem;
-        } else if (prevItem && prevItem.kind === "collection") {
-          targetColItem = prevItem;
-        }
-
-        if (targetColItem) {
-          const targetCollectionId = targetColItem.collectionId;
-
-          if (isCollectionItem(item)) {
-            if (wouldCreateCollectionCycle({
-              movingCollectionId: item.collectionId,
-              targetCollectionId,
-              collectionsById,
-            })) {
-              announce("Cannot move a collection into itself or one of its nested collections.");
-              flashRejection(itemId);
-              return;
-            }
-          }
-
-          applyCommand({
-            type: "nest",
-            itemId,
-            fromCollectionId: collectionId,
-            targetCollectionId,
-          });
-          announce(`Moved "${item.name}" into collection "${targetColItem.name}".`);
-          confirmKeyboardReorder();
-        } else {
-          announce("No adjacent collection to nest into.");
-        }
-        break;
-      }
-      case "move-to-parent": {
-        const parentCollectionId = parentByCollectionId.get(collectionId);
-        const parentCol = parentCollectionId ? collectionsById.get(parentCollectionId) : undefined;
-
-        if (!parentCollectionId || !parentCol) {
-          announce("Already at the top level; no parent collection to move out to.");
-          break;
-        }
-
-        // Land right after the collection-item card that represents the
-        // current collection, so the item surfaces next to where it came
-        // from instead of jumping to the start of the parent's contents.
-        const anchorIndex = parentCol.items.findIndex(
-          (candidate) => candidate.kind === "collection" && candidate.collectionId === collectionId
-        );
-        const toIndex = anchorIndex === -1 ? parentCol.items.length : anchorIndex + 1;
-
-        applyCommand({
-          type: "move",
-          itemId,
-          fromCollectionId: collectionId,
-          toCollectionId: parentCollectionId,
-          toIndex,
-        });
-        announce(`Moved "${item.name}" out to collection "${parentCol.name}".`);
-        confirmKeyboardReorder();
-        break;
-      }
-      case "confirm": {
-        confirmKeyboardReorder();
-        announce(`Dropped "${item.name}" at position ${index + 1}.`);
-        break;
-      }
-      case "cancel": {
-        cancelKeyboardReorder();
+      case "no-op": {
+        if (resolution.announcement) announce(resolution.announcement);
         break;
       }
     }

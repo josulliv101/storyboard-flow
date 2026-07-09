@@ -1,6 +1,6 @@
-import { type KeyboardEvent, useCallback } from "react";
+import { type KeyboardEvent, useCallback, useMemo } from "react";
 import { type TimelineItem } from "./core/media-strip.types";
-import { DATA_VALUE_ATTR, VALUE_ATTR } from "./core/media-strip.utils";
+import { DATA_VALUE_ATTR, VALUE_ATTR } from "./media-strip.dom-utils";
 
 /**
  * Custom hook to handle arrow key grid navigation across items in a media strip.
@@ -12,6 +12,15 @@ export function useMediaStripKeyboardNav(
   viewportRef: React.RefObject<HTMLDivElement | null>,
   scrollToAndFocus: (index: number, valueId: string, preferHandle?: boolean) => void
 ) {
+  // id-string -> index, so a keypress is an O(1) lookup rather than a
+  // findIndex scan of `items` — which matters at the 1,000+ item scale the
+  // strip virtualizes for.
+  const indexByItemId = useMemo(() => {
+    const map = new Map<string, number>();
+    items.forEach((item, index) => map.set(String(item.id), index));
+    return map;
+  }, [items]);
+
   const handleKeyDownCapture = useCallback(
     (event: KeyboardEvent) => {
       // Note: Arrow key events on the item button container itself are captured here to manage
@@ -22,8 +31,8 @@ export function useMediaStripKeyboardNav(
       const currentId = currentEl.getAttribute(DATA_VALUE_ATTR) || currentEl.getAttribute(VALUE_ATTR);
       if (!currentId) return;
 
-      const currentIndex = items.findIndex((i) => String(i.id) === currentId);
-      if (currentIndex === -1) return;
+      const currentIndex = indexByItemId.get(currentId);
+      if (currentIndex === undefined) return;
 
       const nextIndex = event.key === "ArrowRight" ? currentIndex + 1 : currentIndex - 1;
       if (nextIndex < 0 || nextIndex >= items.length) return;
@@ -47,7 +56,7 @@ export function useMediaStripKeyboardNav(
 
       scrollToAndFocus(nextIndex, nextId, false);
     },
-    [items, viewportRef, scrollToAndFocus]
+    [items, indexByItemId, viewportRef, scrollToAndFocus]
   );
 
   return handleKeyDownCapture;

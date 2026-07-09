@@ -7,7 +7,7 @@ import { MediaStripBoard } from "./media-strip-board";
 import { dndKitMediaStripDndAdapter } from "./adapters/dnd-kit-adapter";
 import { nativeHtml5MediaStripDndAdapter } from "./adapters/native-html5-adapter";
 import {
-  asCollectionId,
+  trustedCollectionId,
   type TimelineItem,
   type CollectionId,
   type TimelineCollection,
@@ -15,7 +15,12 @@ import {
 } from "./core/media-strip.types";
 import { type MediaStripDndAdapter } from "./media-strip-dnd.types";
 import { createImageTimelineItem } from "./core/media-strip.validation";
-import { unwrapResult, simulatePointerDrag } from "./media-strip.stories-helpers";
+import {
+  unwrapResult,
+  simulatePointerDragHoldAt,
+  releasePointerDragAt,
+  waitForAnimationFrames,
+} from "./media-strip.stories-helpers";
 
 // Scale and multi-board stories: large virtualized item counts, several
 // independent MediaStripBoard instances on one page, and reordering while
@@ -72,9 +77,9 @@ const VirtualizedItemsDemo = ({
     });
   }, []);
   const collectionsById = new Map<CollectionId, TimelineCollection>([
-    [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "1,000 Virtualized Items", items }],
+    [trustedCollectionId("strip-1"), { id: trustedCollectionId("strip-1"), name: "1,000 Virtualized Items", items }],
   ]);
-  const visibleCollectionIds = [asCollectionId("strip-1")];
+  const visibleCollectionIds = [trustedCollectionId("strip-1")];
 
   return (
     <MediaStripBoard
@@ -83,7 +88,7 @@ const VirtualizedItemsDemo = ({
       visibleCollectionIds={visibleCollectionIds}
       onMoveItem={handleMoveItem}
     >
-      <MediaStrip collectionId={asCollectionId("strip-1")} heading="1,000 Virtualized Items" selectedIds={[]} onSelectionChange={() => { }} />
+      <MediaStrip collectionId={trustedCollectionId("strip-1")} heading="1,000 Virtualized Items" selectedIds={[]} onSelectionChange={() => { }} />
     </MediaStripBoard>
   );
 };
@@ -169,16 +174,16 @@ export const MultipleBoardsOnPage: Story = {
     }, [board2A, board2B]);
 
     const collections1 = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1a"), { id: asCollectionId("strip-1a"), name: "Strip 1A", items: board1A }],
-      [asCollectionId("strip-1b"), { id: asCollectionId("strip-1b"), name: "Strip 1B", items: board1B }],
+      [trustedCollectionId("strip-1a"), { id: trustedCollectionId("strip-1a"), name: "Strip 1A", items: board1A }],
+      [trustedCollectionId("strip-1b"), { id: trustedCollectionId("strip-1b"), name: "Strip 1B", items: board1B }],
     ]), [board1A, board1B]);
-    const visible1 = useMemo(() => [asCollectionId("strip-1a"), asCollectionId("strip-1b")], []);
+    const visible1 = useMemo(() => [trustedCollectionId("strip-1a"), trustedCollectionId("strip-1b")], []);
 
     const collections2 = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-2a"), { id: asCollectionId("strip-2a"), name: "Strip 2A", items: board2A }],
-      [asCollectionId("strip-2b"), { id: asCollectionId("strip-2b"), name: "Strip 2B", items: board2B }],
+      [trustedCollectionId("strip-2a"), { id: trustedCollectionId("strip-2a"), name: "Strip 2A", items: board2A }],
+      [trustedCollectionId("strip-2b"), { id: trustedCollectionId("strip-2b"), name: "Strip 2B", items: board2B }],
     ]), [board2A, board2B]);
-    const visible2 = useMemo(() => [asCollectionId("strip-2a"), asCollectionId("strip-2b")], []);
+    const visible2 = useMemo(() => [trustedCollectionId("strip-2a"), trustedCollectionId("strip-2b")], []);
 
     return (
       <div className="flex flex-col gap-12">
@@ -191,8 +196,8 @@ export const MultipleBoardsOnPage: Story = {
             onMoveItem={handleMove1}
           >
             <div className="flex flex-col gap-4">
-              <MediaStrip collectionId={asCollectionId("strip-1a")} heading="Strip 1A" selectedIds={[]} onSelectionChange={() => { }} />
-              <MediaStrip collectionId={asCollectionId("strip-1b")} heading="Strip 1B" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={trustedCollectionId("strip-1a")} heading="Strip 1A" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={trustedCollectionId("strip-1b")} heading="Strip 1B" selectedIds={[]} onSelectionChange={() => { }} />
             </div>
           </MediaStripBoard>
         </div>
@@ -205,8 +210,8 @@ export const MultipleBoardsOnPage: Story = {
             onMoveItem={handleMove2}
           >
             <div className="flex flex-col gap-4">
-              <MediaStrip collectionId={asCollectionId("strip-2a")} heading="Strip 2A" selectedIds={[]} onSelectionChange={() => { }} />
-              <MediaStrip collectionId={asCollectionId("strip-2b")} heading="Strip 2B" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={trustedCollectionId("strip-2a")} heading="Strip 2A" selectedIds={[]} onSelectionChange={() => { }} />
+              <MediaStrip collectionId={trustedCollectionId("strip-2b")} heading="Strip 2B" selectedIds={[]} onSelectionChange={() => { }} />
             </div>
           </MediaStripBoard>
         </div>
@@ -266,9 +271,9 @@ export const ReorderWhileScrolled: Story = {
     );
 
     const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Long Strip for Scrolling", items }],
+      [trustedCollectionId("strip-1"), { id: trustedCollectionId("strip-1"), name: "Long Strip for Scrolling", items }],
     ]), [items]);
-    const visibleCollectionIds = useMemo(() => [asCollectionId("strip-1")], []);
+    const visibleCollectionIds = useMemo(() => [trustedCollectionId("strip-1")], []);
 
     return (
       <MediaStripBoard
@@ -277,7 +282,7 @@ export const ReorderWhileScrolled: Story = {
         visibleCollectionIds={visibleCollectionIds}
         onMoveItem={handleMoveItem}
       >
-        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Long Strip for Scrolling" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("strip-1")} heading="Long Strip for Scrolling" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -344,9 +349,9 @@ export const PointerDragBetweenTwoUnmountedVirtualizedItems: Story = {
     );
 
     const collectionsById = useMemo(() => new Map<CollectionId, TimelineCollection>([
-      [asCollectionId("strip-1"), { id: asCollectionId("strip-1"), name: "Long Strip for Scrolling", items }],
+      [trustedCollectionId("strip-1"), { id: trustedCollectionId("strip-1"), name: "Long Strip for Scrolling", items }],
     ]), [items]);
-    const visibleCollectionIds = useMemo(() => [asCollectionId("strip-1")], []);
+    const visibleCollectionIds = useMemo(() => [trustedCollectionId("strip-1")], []);
 
     return (
       <MediaStripBoard
@@ -355,7 +360,7 @@ export const PointerDragBetweenTwoUnmountedVirtualizedItems: Story = {
         visibleCollectionIds={visibleCollectionIds}
         onMoveItem={handleMoveItem}
       >
-        <MediaStrip collectionId={asCollectionId("strip-1")} heading="Long Strip for Scrolling" selectedIds={[]} onSelectionChange={() => { }} />
+        <MediaStrip collectionId={trustedCollectionId("strip-1")} heading="Long Strip for Scrolling" selectedIds={[]} onSelectionChange={() => { }} />
       </MediaStripBoard>
     );
   },
@@ -376,20 +381,49 @@ export const PointerDragBetweenTwoUnmountedVirtualizedItems: Story = {
     const handle = container.querySelector("[data-reorder-handle='vitem-20']") as HTMLElement;
     const targetItem = await canvas.findByRole("button", { name: /item 22/i });
 
-    const sourceLeftBefore = sourceItem.getBoundingClientRect().left;
-    const targetLeftBefore = targetItem.getBoundingClientRect().left;
-    expect(sourceLeftBefore).toBeLessThan(targetLeftBefore);
+    // The synthetic scroll above just perturbed the whole layout and the two
+    // items only mounted moments ago. The drag simulator and dnd-kit both
+    // snapshot rects up front, so let the layout settle first — under
+    // full-suite CPU load, skipping this made the drop aim at stale
+    // coordinates and intermittently no-op (this test's old flake).
+    await waitForAnimationFrames(2);
 
-    await simulatePointerDrag(handle, targetItem);
+    expect(sourceItem.getBoundingClientRect().left).toBeLessThan(
+      targetItem.getBoundingClientRect().left
+    );
 
-    await waitFor(() => {
-      // Item 20 must still exist (proves the drag against a
-      // previously-unmounted item didn't silently drop/corrupt it) and must
-      // have moved rightward, toward where item 22 was — proving the
-      // reorder actually took effect rather than silently no-opping because
-      // dnd-kit's droppable registry didn't pick up the newly-mounted items.
-      const movedItem = canvas.getByRole("button", { name: /item 20/i });
-      expect(movedItem.getBoundingClientRect().left).toBeGreaterThan(sourceLeftBefore);
-    });
+    // Hold the drag at item 22's center and DWELL there before releasing,
+    // rather than dropping in one pass. dnd-kit recomputes `over` on a
+    // rAF/measure cadence; against droppables that only mounted moments ago
+    // (after the synthetic scroll), a single-pass drop can land before that
+    // recompute catches up and silently no-op. Dwelling gives the collision
+    // engine a stable window to settle on item 22 as the target before the
+    // drop commits — deterministic where the earlier oscillation, which
+    // could end mid-swing, was not.
+    const targetRect = targetItem.getBoundingClientRect();
+    const dropPoint = {
+      x: targetRect.left + targetRect.width / 2,
+      y: targetRect.top + targetRect.height / 2,
+    };
+    await simulatePointerDragHoldAt(handle, dropPoint, 250);
+    await releasePointerDragAt(dropPoint);
+
+    await waitFor(
+      () => {
+        // Item 20 must still exist (proves the drag against a
+        // previously-unmounted item didn't silently drop/corrupt it) and
+        // must now sit to the RIGHT of item 22 (dropping at the target's
+        // center resolves to "after"). Compared item-to-item in the same
+        // frame — unlike the old comparison against a pre-drag viewport
+        // coordinate, this can't be skewed by scroll shifting during the
+        // drag.
+        const movedItem = canvas.getByRole("button", { name: /item 20/i });
+        const formerTarget = canvas.getByRole("button", { name: /item 22/i });
+        expect(movedItem.getBoundingClientRect().left).toBeGreaterThan(
+          formerTarget.getBoundingClientRect().left
+        );
+      },
+      { timeout: 3000 }
+    );
   },
 };

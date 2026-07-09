@@ -1,10 +1,13 @@
 "use client";
 
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
   type Ref,
 } from "react";
 import {
@@ -32,9 +35,22 @@ import {
 } from "../media-strip-dnd.types";
 import {
   MediaStripDndRuntimeContext,
-  useMediaStripDndRuntime,
 } from "../media-strip-dnd-runtime";
 import { scrollDraggedViewport } from "./dom-autoscroll";
+import {
+  type ExternalStore,
+  useConstantStore,
+  useRafBatchedStoreSetter,
+} from "./external-store";
+
+type PragmaticOverlayPosition = Readonly<{ x: number; y: number }>;
+
+// Overlay position travels through its own external store, NOT the runtime
+// context: routing it through provider state re-rendered every runtime
+// context consumer (the entire strip subtree) on every pointer move. Only
+// PragmaticDragOverlay subscribes to this.
+const PragmaticOverlayStoreContext =
+  createContext<ExternalStore<PragmaticOverlayPosition | null> | null>(null);
 
 export function PragmaticProvider({
   adapter,
@@ -47,7 +63,11 @@ export function PragmaticProvider({
   onDragOver,
   onDragStart,
 }: MediaStripDndProviderProps) {
-  const [overlayPosition, setOverlayPosition] = useState<{ x: number; y: number } | null>(null);
+  const overlayStore = useConstantStore<PragmaticOverlayPosition | null>(null);
+  const {
+    schedule: scheduleOverlayPosition,
+    cancelScheduled: cancelScheduledOverlayPosition,
+  } = useRafBatchedStoreSetter(overlayStore);
 
   const getEventPayload = useCallback((sourceId: MediaStripDndIdentifier, input: Input, dropTargets: DropTargetRecord[]) => {
     const overRecord = dropTargets[0];
@@ -78,7 +98,7 @@ export function PragmaticProvider({
         const sourceId = getDndIdentifier(source.data.id);
         if (!sourceId) return;
 
-        setOverlayPosition(toOverlayPosition(location.current.input));
+        scheduleOverlayPosition(toOverlayPosition(location.current.input));
         onDragStart?.({ active: { id: sourceId } });
       },
       onDrag({ location, source }) {
@@ -86,7 +106,7 @@ export function PragmaticProvider({
         if (!sourceId) return;
 
         scrollDraggedViewport(location.current.input, autoScroll);
-        setOverlayPosition(toOverlayPosition(location.current.input));
+        scheduleOverlayPosition(toOverlayPosition(location.current.input));
         const payload = getEventPayload(sourceId, location.current.input, location.current.dropTargets);
         onDragMove?.(payload);
         onDragOver?.(payload);
@@ -96,7 +116,7 @@ export function PragmaticProvider({
         if (!sourceId) return;
 
         scrollDraggedViewport(location.current.input, autoScroll);
-        setOverlayPosition(toOverlayPosition(location.current.input));
+        scheduleOverlayPosition(toOverlayPosition(location.current.input));
         const payload = getEventPayload(sourceId, location.current.input, location.current.dropTargets);
         onDragMove?.(payload);
         onDragOver?.(payload);
@@ -111,19 +131,32 @@ export function PragmaticProvider({
         } else {
           onDragCancel?.();
         }
-        setOverlayPosition(null);
+        // Clear immediately (not via the rAF batch) so the overlay can't
+        // flash at a stale position for a frame after the drop.
+        cancelScheduledOverlayPosition();
+        overlayStore.set(null);
       },
     });
-  }, [autoScroll, getEventPayload, onDragCancel, onDragEnd, onDragMove, onDragOver, onDragStart]);
+  }, [
+    autoScroll,
+    getEventPayload,
+    onDragCancel,
+    onDragEnd,
+    onDragMove,
+    onDragOver,
+    onDragStart,
+    overlayStore,
+    scheduleOverlayPosition,
+    cancelScheduledOverlayPosition,
+  ]);
 
-  const contextValue = useMemo(() => ({
-    adapter,
-    overlayPosition,
-  }), [adapter, overlayPosition]);
+  const contextValue = useMemo(() => ({ adapter }), [adapter]);
 
   return (
     <MediaStripDndRuntimeContext.Provider value={contextValue}>
-      {children}
+      <PragmaticOverlayStoreContext.Provider value={overlayStore}>
+        {children}
+      </PragmaticOverlayStoreContext.Provider>
     </MediaStripDndRuntimeContext.Provider>
   );
 }
@@ -131,7 +164,15 @@ export function PragmaticProvider({
 export function PragmaticDragOverlay({
   children,
 }: MediaStripDndDragOverlayProps) {
-  const { overlayPosition } = useMediaStripDndRuntime();
+  const overlayStore = useContext(PragmaticOverlayStoreContext);
+  if (!overlayStore) {
+    throw new Error("PragmaticDragOverlay must be rendered inside PragmaticProvider.");
+  }
+  const overlayPosition = useSyncExternalStore(
+    overlayStore.subscribe,
+    overlayStore.getSnapshot,
+    overlayStore.getSnapshot
+  );
   if (!overlayPosition) return null;
 
   return (
@@ -218,11 +259,10 @@ export function PragmaticSortableItem({
 }
 
 function getDndIdentifier(value: unknown): MediaStripDndIdentifier | null {
-  if (typeof value === "string" || typeof value === "number") {
-    return value;
-  }
-
-  return null;
+  // Our ids are always encoded strings (see MediaStripDndIdentifier). This
+  // reads out of pragmatic's untyped data bag, so it still guards the type,
+  // but a non-string is never one of ours — treat it as absent.
+  return typeof value === "string" ? value : null;
 }
 
 function toOverlayPosition(input: Input): { x: number; y: number } {
@@ -233,17 +273,19 @@ function toOverlayPosition(input: Input): { x: number; y: number } {
 }
 
 /**
- * Experimental: this adapter's actual drag interaction is not covered by
- * this package's automated test suite. `@atlaskit/pragmatic-drag-and-drop`
- * re-derives the element under the pointer via its own internal
- * `elementFromPoint`-based "honey pot" mechanism, which doesn't reliably
- * respond to this package's synthetic-event test helpers — a regression in
- * this adapter's behavior would not be caught by CI. It renders and its
- * static structure typechecks, but treat its actual drag/drop/nest
- * behavior as unverified until that test gap is closed. See
- * ARCHITECTURE.md's "Known gaps" for details.
+ * @experimental Its actual drag interaction is NOT covered by this package's
+ * automated test suite. `@atlaskit/pragmatic-drag-and-drop` re-derives the
+ * element under the pointer via its own internal `elementFromPoint`-based
+ * "honey pot" mechanism, which doesn't reliably respond to this package's
+ * synthetic-event test helpers — a regression in this adapter's behavior
+ * would not be caught by CI. It renders and its static structure typechecks,
+ * but treat its actual drag/drop/nest behavior as unverified until that test
+ * gap is closed (see ARCHITECTURE.md's "Known gaps"). The `experimental`
+ * prefix in the export name is deliberate — it surfaces this status at every
+ * call site, not just here. Prefer `dndKitMediaStripDndAdapter` or
+ * `nativeHtml5MediaStripDndAdapter` (both fully tested) for anything shipping.
  */
-export const pragmaticMediaStripDndAdapter = {
+export const experimentalPragmaticMediaStripDndAdapter = {
   id: "pragmatic",
   DragOverlay: PragmaticDragOverlay,
   Droppable: PragmaticDroppable,

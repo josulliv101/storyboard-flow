@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import {
-  asTimelineItemId,
-  asCollectionId,
+  trustedTimelineItemId,
+  trustedCollectionId,
   type TimelineCollection,
   type CollectionId,
   type TimelineItem,
@@ -70,25 +70,25 @@ describe("applyTimelineItemCommand reducer", () => {
 
   const initialCollections = new Map<CollectionId, TimelineCollection>([
     [
-      asCollectionId("col-root"),
+      trustedCollectionId("col-root"),
       {
-        id: asCollectionId("col-root"),
+        id: trustedCollectionId("col-root"),
         name: "Root",
         items: [itemA, itemB, itemC],
       },
     ],
     [
-      asCollectionId("col-nested"),
+      trustedCollectionId("col-nested"),
       {
-        id: asCollectionId("col-nested"),
+        id: trustedCollectionId("col-nested"),
         name: "Nested",
         items: [],
       },
     ],
     [
-      asCollectionId("col-other"),
+      trustedCollectionId("col-other"),
       {
-        id: asCollectionId("col-other"),
+        id: trustedCollectionId("col-other"),
         name: "Other Strip",
         items: [],
       },
@@ -100,14 +100,14 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: initialCollections,
       command: {
         type: "move",
-        itemId: asTimelineItemId("item-a"),
-        fromCollectionId: asCollectionId("col-root"),
-        toCollectionId: asCollectionId("col-root"),
+        itemId: trustedTimelineItemId("item-a"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        toCollectionId: trustedCollectionId("col-root"),
         toIndex: 1,
       },
     }));
 
-    const rootCol = result.get(asCollectionId("col-root"))!;
+    const rootCol = result.get(trustedCollectionId("col-root"))!;
     expect(rootCol.items.map((i) => i.id)).toEqual(["item-b", "item-a", "item-col-nested"]);
   });
 
@@ -116,14 +116,14 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: initialCollections,
       command: {
         type: "move",
-        itemId: asTimelineItemId("item-col-nested"),
-        fromCollectionId: asCollectionId("col-root"),
-        toCollectionId: asCollectionId("col-root"),
+        itemId: trustedTimelineItemId("item-col-nested"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        toCollectionId: trustedCollectionId("col-root"),
         toIndex: 0,
       },
     }));
 
-    const rootCol = result.get(asCollectionId("col-root"))!;
+    const rootCol = result.get(trustedCollectionId("col-root"))!;
     expect(rootCol.items.map((i) => i.id)).toEqual(["item-col-nested", "item-a", "item-b"]);
   });
 
@@ -132,9 +132,9 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: initialCollections,
       command: {
         type: "move",
-        itemId: asTimelineItemId("item-a"),
-        fromCollectionId: asCollectionId("col-root"),
-        toCollectionId: asCollectionId("col-root"),
+        itemId: trustedTimelineItemId("item-a"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        toCollectionId: trustedCollectionId("col-root"),
         toIndex: 0,
       },
     });
@@ -147,15 +147,15 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: initialCollections,
       command: {
         type: "move",
-        itemId: asTimelineItemId("item-a"),
-        fromCollectionId: asCollectionId("col-root"),
-        toCollectionId: asCollectionId("col-other"),
+        itemId: trustedTimelineItemId("item-a"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        toCollectionId: trustedCollectionId("col-other"),
         toIndex: 0,
       },
     }));
 
-    const rootCol = result.get(asCollectionId("col-root"))!;
-    const otherCol = result.get(asCollectionId("col-other"))!;
+    const rootCol = result.get(trustedCollectionId("col-root"))!;
+    const otherCol = result.get(trustedCollectionId("col-other"))!;
 
     expect(rootCol.items.map((i) => i.id)).toEqual(["item-b", "item-col-nested"]);
     expect(otherCol.items.map((i) => i.id)).toEqual(["item-a"]);
@@ -166,15 +166,15 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: initialCollections,
       command: {
         type: "nest",
-        itemId: asTimelineItemId("item-a"),
-        fromCollectionId: asCollectionId("col-root"),
-        targetCollectionId: asCollectionId("col-nested"),
+        itemId: trustedTimelineItemId("item-a"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        targetCollectionId: trustedCollectionId("col-nested"),
         toIndex: 0,
       },
     }));
 
-    const rootCol = result.get(asCollectionId("col-root"))!;
-    const nestedCol = result.get(asCollectionId("col-nested"))!;
+    const rootCol = result.get(trustedCollectionId("col-root"))!;
+    const nestedCol = result.get(trustedCollectionId("col-nested"))!;
 
     expect(rootCol.items.map((i) => i.id)).toEqual(["item-b", "item-col-nested"]);
     expect(nestedCol.items.map((i) => i.id)).toEqual(["item-a"]);
@@ -185,16 +185,16 @@ describe("applyTimelineItemCommand reducer", () => {
 
   test("nest collection into collection", () => {
     const doubleNestedCol: TimelineCollection = {
-      id: asCollectionId("col-double"),
+      id: trustedCollectionId("col-double"),
       name: "Double Folder",
       items: [],
     };
     const doubleNestedItem = makeCollectionItem("item-double", "Double Folder Item", "col-double");
 
     const collections = new Map(initialCollections);
-    collections.set(asCollectionId("col-double"), doubleNestedCol);
-    collections.set(asCollectionId("col-root"), {
-      id: asCollectionId("col-root"),
+    collections.set(trustedCollectionId("col-double"), doubleNestedCol);
+    collections.set(trustedCollectionId("col-root"), {
+      id: trustedCollectionId("col-root"),
       name: "Root",
       items: [itemA, itemB, itemC, doubleNestedItem],
     });
@@ -203,13 +203,13 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: collections,
       command: {
         type: "nest",
-        itemId: asTimelineItemId("item-double"),
-        fromCollectionId: asCollectionId("col-root"),
-        targetCollectionId: asCollectionId("col-nested"),
+        itemId: trustedTimelineItemId("item-double"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        targetCollectionId: trustedCollectionId("col-nested"),
       },
     }));
 
-    const nestedCol = result.get(asCollectionId("col-nested"))!;
+    const nestedCol = result.get(trustedCollectionId("col-nested"))!;
     expect(nestedCol.items.map((i) => i.id)).toEqual(["item-double"]);
   });
 
@@ -218,9 +218,9 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: initialCollections,
       command: {
         type: "move",
-        itemId: asTimelineItemId("item-a"),
-        fromCollectionId: asCollectionId("col-does-not-exist"),
-        toCollectionId: asCollectionId("col-root"),
+        itemId: trustedTimelineItemId("item-a"),
+        fromCollectionId: trustedCollectionId("col-does-not-exist"),
+        toCollectionId: trustedCollectionId("col-root"),
         toIndex: 0,
       },
     });
@@ -233,9 +233,9 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: initialCollections,
       command: {
         type: "move",
-        itemId: asTimelineItemId("item-not-in-root"),
-        fromCollectionId: asCollectionId("col-root"),
-        toCollectionId: asCollectionId("col-other"),
+        itemId: trustedTimelineItemId("item-not-in-root"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        toCollectionId: trustedCollectionId("col-other"),
         toIndex: 0,
       },
     });
@@ -248,9 +248,9 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: initialCollections,
       command: {
         type: "move",
-        itemId: asTimelineItemId("item-a"),
-        fromCollectionId: asCollectionId("col-root"),
-        toCollectionId: asCollectionId("col-does-not-exist"),
+        itemId: trustedTimelineItemId("item-a"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        toCollectionId: trustedCollectionId("col-does-not-exist"),
         toIndex: 0,
       },
     });
@@ -263,9 +263,9 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: initialCollections,
       command: {
         type: "nest",
-        itemId: asTimelineItemId("item-a"),
-        fromCollectionId: asCollectionId("col-root"),
-        targetCollectionId: asCollectionId("col-does-not-exist"),
+        itemId: trustedTimelineItemId("item-a"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        targetCollectionId: trustedCollectionId("col-does-not-exist"),
       },
     });
 
@@ -279,16 +279,16 @@ describe("applyTimelineItemCommand reducer", () => {
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-root"),
-        { id: asCollectionId("col-root"), name: "Root", items: [itemC] }, // Root contains col-nested
+        trustedCollectionId("col-root"),
+        { id: trustedCollectionId("col-root"), name: "Root", items: [itemC] }, // Root contains col-nested
       ],
       [
-        asCollectionId("col-nested"),
-        { id: asCollectionId("col-nested"), name: "Nested", items: [doubleNestedItem] }, // Nested contains col-double
+        trustedCollectionId("col-nested"),
+        { id: trustedCollectionId("col-nested"), name: "Nested", items: [doubleNestedItem] }, // Nested contains col-double
       ],
       [
-        asCollectionId("col-double"),
-        { id: asCollectionId("col-double"), name: "Double Folder", items: [] },
+        trustedCollectionId("col-double"),
+        { id: trustedCollectionId("col-double"), name: "Double Folder", items: [] },
       ],
     ]);
 
@@ -297,9 +297,9 @@ describe("applyTimelineItemCommand reducer", () => {
       collectionsById: collections,
       command: {
         type: "nest",
-        itemId: asTimelineItemId("item-col-nested"),
-        fromCollectionId: asCollectionId("col-root"),
-        targetCollectionId: asCollectionId("col-double"),
+        itemId: trustedTimelineItemId("item-col-nested"),
+        fromCollectionId: trustedCollectionId("col-root"),
+        targetCollectionId: trustedCollectionId("col-double"),
       },
     });
 
@@ -313,18 +313,43 @@ describe("applyTimelineItemCommand reducer", () => {
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-root"),
-        { id: asCollectionId("col-root"), name: "Root", items: [parentItem] },
+        trustedCollectionId("col-root"),
+        { id: trustedCollectionId("col-root"), name: "Root", items: [parentItem] },
       ],
       [
-        asCollectionId("col-folder"),
-        { id: asCollectionId("col-folder"), name: "Folder", items: [itemA, itemB] }, // Contains 2 items
+        trustedCollectionId("col-folder"),
+        { id: trustedCollectionId("col-folder"), name: "Folder", items: [itemA, itemB] }, // Contains 2 items
       ],
     ]);
 
     const synced = syncCollectionItemCounts(collections);
-    const updatedParent = synced.get(asCollectionId("col-root"))!.items[0];
+    const updatedParent = synced.get(trustedCollectionId("col-root"))!.items[0];
     expect(isCollectionItem(updatedParent) && updatedParent.itemCount).toBe(2);
+  });
+
+  test("syncCollectionItemCounts only clones the collections that actually changed", () => {
+    // col-root's folder card has a stale count (must be rewritten); col-other
+    // is untouched. The rewrite should preserve col-other's object by
+    // reference rather than reallocating every collection.
+    const staleParent = makeCollectionItem("item-folder", "Folder", "col-folder", 99);
+    const otherCol = { id: trustedCollectionId("col-other"), name: "Other", items: [itemA] };
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      [trustedCollectionId("col-root"), { id: trustedCollectionId("col-root"), name: "Root", items: [staleParent] }],
+      [trustedCollectionId("col-folder"), { id: trustedCollectionId("col-folder"), name: "Folder", items: [itemA, itemB] }],
+      [trustedCollectionId("col-other"), otherCol],
+    ]);
+
+    const synced = syncCollectionItemCounts(collections);
+
+    // A change happened, so a new map is returned...
+    expect(synced).not.toBe(collections);
+    // ...but the untouched collection keeps its exact object identity.
+    expect(synced.get(trustedCollectionId("col-other"))).toBe(otherCol);
+    // ...and the changed one does not.
+    expect(synced.get(trustedCollectionId("col-root"))).not.toBe(
+      collections.get(trustedCollectionId("col-root"))
+    );
   });
 
   test("syncCollectionItemCounts preserves the fallback count when the backing collection isn't loaded", () => {
@@ -335,8 +360,8 @@ describe("applyTimelineItemCommand reducer", () => {
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-root"),
-        { id: asCollectionId("col-root"), name: "Root", items: [parentItem] },
+        trustedCollectionId("col-root"),
+        { id: trustedCollectionId("col-root"), name: "Root", items: [parentItem] },
       ],
     ]);
 
@@ -344,7 +369,7 @@ describe("applyTimelineItemCommand reducer", () => {
 
     // Nothing changed, so the reducer should return the same map reference.
     expect(synced).toBe(collections);
-    const updatedParent = synced.get(asCollectionId("col-root"))!.items[0];
+    const updatedParent = synced.get(trustedCollectionId("col-root"))!.items[0];
     expect(isCollectionItem(updatedParent) && updatedParent.itemCount).toBe(12);
   });
 });

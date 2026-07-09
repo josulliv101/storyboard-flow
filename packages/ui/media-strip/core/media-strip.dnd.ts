@@ -105,7 +105,7 @@ export function resolveDropTargetInfo({
     // self }`, which doesn't hit the same-position no-op in
     // resolveTimelineCommandFromDrag (that only catches "before" on
     // yourself) and produces a real spurious one-slot move.
-    const activeDecoded = decodeDndTarget(String(activeId));
+    const activeDecoded = decodeDndTarget(activeId);
     const activeItemId = activeDecoded?.type === "item" ? activeDecoded.itemId : activeId;
     if (activeItemId === decodedOver.itemId) {
       return { nestTargetId: null, placement: null };
@@ -168,10 +168,10 @@ export function detectCollision({
 } {
   const activeId = active.id;
   const itemContainers = droppableContainers.filter(
-    (c) => decodeDndTarget(String(c.id))?.type === "item" && c.id !== activeId
+    (c) => decodeDndTarget(c.id)?.type === "item" && c.id !== activeId
   );
   const containerBackgrounds = droppableContainers.filter(
-    (c) => decodeDndTarget(String(c.id))?.type === "collection-container"
+    (c) => decodeDndTarget(c.id)?.type === "collection-container"
   );
 
   const withinPointer = (containers: readonly MediaStripDndDroppableContainer[]) =>
@@ -237,7 +237,7 @@ export function detectCollision({
   }
 
   const primaryCollision = intersections[0];
-  const decodedOver = decodeDndTarget(String(primaryCollision.id));
+  const decodedOver = decodeDndTarget(primaryCollision.id);
   const rect = droppableContainers.find((c) => c.id === primaryCollision.id)?.rect.current ?? null;
   // dnd-kit's pointer sensor always supplies pointerCoordinates during a
   // pointer drag; this fallback only matters for collision-detection calls

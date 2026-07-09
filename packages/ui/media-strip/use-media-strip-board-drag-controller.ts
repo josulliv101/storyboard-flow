@@ -9,7 +9,8 @@ import {
   type TimelineItemCommand,
   type DropPlacement,
 } from "./core/media-strip.types";
-import { DATA_VALUE_ATTR, VALUE_ATTR, DEFAULT_DRAG_OVERLAY_WIDTH_PX } from "./core/media-strip.utils";
+import { DEFAULT_DRAG_OVERLAY_WIDTH_PX } from "./core/media-strip.utils";
+import { DATA_VALUE_ATTR, VALUE_ATTR } from "./media-strip.dom-utils";
 import {
   decodeDndTarget,
   detectCollision,
@@ -35,6 +36,15 @@ type UseMediaStripBoardDragControllerProps = {
   parentByCollectionId: ReadonlyMap<CollectionId, CollectionId>;
   activeDragId: TimelineItemId | null;
   activeDragSourceCollectionId: CollectionId | null;
+  /**
+   * Whether the active adapter resolves nestTargetId/placement in its
+   * normalized drag events (pragmatic, native-html5: they call
+   * getDropTargetInfo per move), as opposed to out-of-band via the
+   * collision-detection callback (dnd-kit — its events carry explicit
+   * nulls that must be ignored in favor of the collision results). Derive
+   * from `!adapter.capabilities.supportsCollisionDetection`.
+   */
+  adapterResolvesDropTargetsInEvents: boolean;
   startDrag: (itemId: TimelineItemId, collectionId: CollectionId, width: number) => void;
   moveDrag: (nestTargetId: CollectionId | null, placement: DropPlacement | null) => void;
   endDrag: () => void;
@@ -84,6 +94,7 @@ export function useMediaStripBoardDragController({
   parentByCollectionId,
   activeDragId,
   activeDragSourceCollectionId,
+  adapterResolvesDropTargetsInEvents,
   startDrag,
   moveDrag,
   endDrag,
@@ -110,12 +121,12 @@ export function useMediaStripBoardDragController({
   }, [itemLookup]);
 
   const handleDragStart = useCallback((event: MediaStripDndDragStartEvent) => {
-    const decoded = decodeDndTarget(String(event.active.id));
+    const decoded = decodeDndTarget(event.active.id);
     if (!decoded || decoded.type !== "item") return;
     const itemId = decoded.itemId;
 
     let dragWidth = DEFAULT_DRAG_OVERLAY_WIDTH_PX;
-    const escapedId = CSS.escape(String(itemId));
+    const escapedId = CSS.escape(itemId);
     const activeEl = containerRef.current?.querySelector(
       `[${DATA_VALUE_ATTR}="${escapedId}"], [${VALUE_ATTR}="${escapedId}"]`
     );
@@ -131,27 +142,23 @@ export function useMediaStripBoardDragController({
     }
   }, [containerRef, itemLookup, announce, startDrag]);
 
-  const handleDragMove = useCallback((event?: MediaStripDndDragMoveEvent) => {
-    if (event && "nestTargetId" in event) {
-      activeNestTargetRef.current = event.nestTargetId ?? null;
-    }
-    if (event && "placement" in event) {
-      activeDropPlacementRef.current = event.placement ?? null;
+  const handleDragMove = useCallback((event: MediaStripDndDragMoveEvent) => {
+    if (adapterResolvesDropTargetsInEvents) {
+      activeNestTargetRef.current = event.nestTargetId;
+      activeDropPlacementRef.current = event.placement;
     }
     moveDrag(activeNestTargetRef.current, activeDropPlacementRef.current);
-  }, [moveDrag]);
+  }, [adapterResolvesDropTargetsInEvents, moveDrag]);
 
   const handleDragOver = useCallback((event: MediaStripDndDragOverEvent) => {
-    if ("nestTargetId" in event) {
-      activeNestTargetRef.current = event.nestTargetId ?? null;
-    }
-    if ("placement" in event) {
-      activeDropPlacementRef.current = event.placement ?? null;
+    if (adapterResolvesDropTargetsInEvents) {
+      activeNestTargetRef.current = event.nestTargetId;
+      activeDropPlacementRef.current = event.placement;
     }
     moveDrag(activeNestTargetRef.current, activeDropPlacementRef.current);
     const { over } = event;
     if (over) {
-      const decoded = decodeDndTarget(String(over.id));
+      const decoded = decodeDndTarget(over.id);
       if (decoded) {
         if (decoded.type === "collection-container") {
           activeOverCollectionIdRef.current = decoded.collectionId;
@@ -171,7 +178,14 @@ export function useMediaStripBoardDragController({
 
   const handleDragEnd = useCallback((event: MediaStripDndDragEndEvent) => {
     const itemId = activeDragId;
-    const placement = ("placement" in event ? event.placement : undefined) ?? activeDropPlacementRef.current;
+    // Pointer adapters resolve placement fresh at drop time; if that drop
+    // resolves to nothing, fall back to the last move's placement (the ref)
+    // rather than treating a momentary resolution gap as a cancel. dnd-kit's
+    // events never carry a real placement — the ref (fed by collision
+    // detection) is the only source.
+    const placement = adapterResolvesDropTargetsInEvents
+      ? event.placement ?? activeDropPlacementRef.current
+      : activeDropPlacementRef.current;
 
     activeNestTargetRef.current = null;
     activeDropPlacementRef.current = null;
@@ -198,6 +212,7 @@ export function useMediaStripBoardDragController({
     endDrag();
   }, [
     activeDragId,
+    adapterResolvesDropTargetsInEvents,
     itemLookup,
     collectionsById,
     applyCommand,
@@ -217,7 +232,7 @@ export function useMediaStripBoardDragController({
     input: { clientX: number; clientY: number };
     overId: MediaStripDndIdentifier;
   }): MediaStripDndDropTargetInfo => {
-    const decodedOver = decodeDndTarget(String(overId));
+    const decodedOver = decodeDndTarget(overId);
     const rect = element.getBoundingClientRect();
     return resolveDropTargetInfo({
       activeId,
