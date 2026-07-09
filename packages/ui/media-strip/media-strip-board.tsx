@@ -1,115 +1,43 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, useRef, useMemo, useEffect } from "react";
+import React, { useCallback, useRef, useMemo, useEffect, useLayoutEffect } from "react";
 import {
   parseCollectionId,
+  isCollectionItem,
   type TimelineItem,
-  type TimelineItemId,
   type CollectionId,
   type TimelineCollection,
+  type TimelineItemId,
   type TimelineItemCommand,
-  type KeyboardReorderAction,
-  isCollectionItem,
 } from "./core/media-strip.types";
-import {
-  formatDuration,
-  TOGGLE_GROUP_PADDING_PX,
-  DRAG_ACTIVATION_THRESHOLDS_PX,
-  DATA_VALUE_ATTR,
-  VALUE_ATTR,
-  DEFAULT_DRAG_OVERLAY_WIDTH_PX,
-  NEST_HOTSPOT_MAX_OFFSET,
-  NEST_HOTSPOT_MIN_OFFSET,
-} from "./core/media-strip.utils";
-import {
-  decodeDndTarget,
-  resolveDropIntent,
-  detectCollision,
-} from "./core/media-strip.dnd";
+import { DRAG_ACTIVATION_THRESHOLDS_PX } from "./core/media-strip.utils";
 import { wouldCreateCollectionCycle } from "./core/media-strip.validation";
-import { MediaStripThumbnail } from "./media-strip-thumbnail";
+import { validateProjectTimeline } from "./core/media-strip.project-validation";
+import { DragOverlayItem } from "./media-strip-drag-overlay-item";
 import { useBoardRegistry } from "./use-board-registry";
 import { useBoardDragState } from "./use-board-drag-state";
 import { useKeyboardReorderSession } from "./use-keyboard-reorder-session";
+import { useMediaStripAnnouncements } from "./use-media-strip-announcements";
+import { useMediaStripRejectionFlash } from "./use-media-strip-rejection-flash";
+import { useMediaStripBoardDragController } from "./use-media-strip-board-drag-controller";
 import {
   MediaStripDndProvider,
   MediaStripDragOverlay,
 } from "./media-strip-dnd-provider";
-import {
-  type MediaStripDndCollisionDetection,
-  type MediaStripDndDragEndEvent,
-  type MediaStripDndDragMoveEvent,
-  type MediaStripDndDragOverEvent,
-  type MediaStripDndDragStartEvent,
-  type MediaStripDndIdentifier,
-} from "./core/media-strip.dnd-adapter";
 import { type MediaStripDndAdapter } from "./media-strip-dnd.types";
+import {
+  MediaStripBoardStableContext,
+} from "./media-strip-board-context";
+import {
+  MediaStripDragStoreProvider,
+  useMediaStripDragStoreInstance,
+} from "./media-strip-drag-store";
 
-type MediaStripBoardStableContextType = {
-  collectionsById: ReadonlyMap<CollectionId, TimelineCollection>;
-  itemLookup: Map<TimelineItemId, { collectionId: CollectionId; index: number; item: TimelineItem }>;
-  registerCollection: (collectionId: CollectionId) => void;
-  unregisterCollection: (collectionId: CollectionId) => void;
-  getAdjacentCollectionId: (currentCollectionId: CollectionId, direction: "up" | "down") => CollectionId | null;
-  applyCommand: (command: TimelineItemCommand) => void;
-  announce: (message: string) => void;
-  startKeyboardReorder: (itemId: TimelineItemId, collectionId: CollectionId, index: number) => void;
-  cancelKeyboardReorder: () => void;
-  confirmKeyboardReorder: () => void;
-  handleKeyboardReorderAction: (itemId: TimelineItemId, action: KeyboardReorderAction) => void;
-};
-
-type MediaStripBoardDragContextType = {
-  activeDragId: TimelineItemId | null;
-  activeDragSourceCollectionId: CollectionId | null;
-  activeNestTargetId: CollectionId | null;
-  activeDragWidth: number;
-  activeKeyboardReorderId: TimelineItemId | null;
-};
-
-export const MediaStripBoardStableContext = createContext<MediaStripBoardStableContextType | null>(null);
-export const MediaStripBoardDragContext = createContext<MediaStripBoardDragContextType | null>(null);
-
-export function useMediaStripBoardStable() {
-  const context = useContext(MediaStripBoardStableContext);
-  if (!context) {
-    throw new Error("useMediaStripBoardStable must be used within a MediaStripBoard provider");
-  }
-  return context;
-}
-
-export function useMediaStripBoardDrag() {
-  const context = useContext(MediaStripBoardDragContext);
-  if (!context) {
-    throw new Error("useMediaStripBoardDrag must be used within a MediaStripBoard provider");
-  }
-  return context;
-}
-
-export function useMediaStripBoardStableOptional() {
-  return useContext(MediaStripBoardStableContext);
-}
-
-function isAncestorCollection(
-  possibleAncestor: CollectionId,
-  child: CollectionId,
-  parentByCollectionId: ReadonlyMap<CollectionId, CollectionId>
-): boolean {
-  const seen = new Set<CollectionId>();
-  let currentId = parentByCollectionId.get(child);
-  while (currentId !== undefined) {
-    if (currentId === possibleAncestor) {
-      return true;
-    }
-    // Defensive cycle guard: a corrupt graph must not hang the pointer-move path.
-    if (seen.has(currentId)) {
-      return false;
-    }
-    seen.add(currentId);
-    currentId = parentByCollectionId.get(currentId);
-  }
-  return false;
-}
+export {
+  MediaStripBoardStableContext,
+  useMediaStripBoardStable,
+  useMediaStripBoardStableOptional,
+} from "./media-strip-board-context";
 
 export function MediaStripBoard({
   children,
@@ -124,11 +52,10 @@ export function MediaStripBoard({
   visibleCollectionIds?: readonly CollectionId[];
   onMoveItem?: (command: TimelineItemCommand) => void;
 }) {
-  const [announcement, setAnnouncement] = useState<string>("");
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const activeNestTargetRef = useRef<CollectionId | null>(null);
-  const activeOverCollectionIdRef = useRef<CollectionId | null>(null);
+  const { announcement, announce } = useMediaStripAnnouncements();
+  const { rejectedItemId, flashRejection } = useMediaStripRejectionFlash();
 
   // 1. Board Registry
   const { registeredCollections, registerCollection, unregisterCollection } = useBoardRegistry();
@@ -138,6 +65,7 @@ export function MediaStripBoard({
     activeDragId,
     activeDragSourceCollectionId,
     activeNestTargetId,
+    activeDropPlacement,
     activeDragWidth,
     startDrag,
     moveDrag,
@@ -190,21 +118,37 @@ export function MediaStripBoard({
     return parents;
   }, [itemLookup]);
 
-  const announce = useCallback((message: string) => {
-    // aria-live regions only re-announce when the text content actually
-    // changes, so repeating the same message (e.g. two rejected moves in a
-    // row) would be silent. Toggling a trailing zero-width space makes the
-    // content "new" to the screen reader without changing what it speaks.
-    setAnnouncement((prev) => {
-      if (prev === message) {
-        return message + "\u200B";
-      }
-      if (prev === message + "\u200B") {
-        return message;
-      }
-      return message;
+  // MediaStripBoard trusts collectionsById's graph shape (itemLookup is a
+  // Map keyed by item id, so duplicate global ids silently overwrite each
+  // other; parentByCollectionId is single-valued, so a shared/multi-parent
+  // collection silently picks whichever parent registered last). Neither
+  // failure mode throws — they just make drag-and-drop resolve to the wrong
+  // target. Surface them loudly in development instead of leaving them to
+  // manifest as "why did my drag do that" bug reports.
+  //
+  // "missing-collection" is deliberately excluded: a CollectionTimelineItem
+  // whose backing collection isn't in collectionsById yet is the expected
+  // shape for a lazily-loaded app (a collection card can render from its own
+  // itemCount before its contents are fetched — see the fallback-preserving
+  // behavior in syncCollectionItemCounts), not a broken graph. It doesn't
+  // corrupt itemLookup or parentByCollectionId the way the other three
+  // reasons do, so warning on it would just be noise for a supported case.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+
+    const result = validateProjectTimeline({
+      collectionsById: collectionsByIdResolved,
+      rootCollectionIds: visibleCollectionIdsResolved,
     });
-  }, []);
+
+    if (!result.valid && result.reason !== "missing-collection") {
+      console.warn(
+        `[MediaStripBoard] collectionsById failed validateProjectTimeline (reason: "${result.reason}"). ` +
+          "This graph shape can make drag-and-drop silently resolve to the wrong item or collection. Details:",
+        result
+      );
+    }
+  }, [collectionsByIdResolved, visibleCollectionIdsResolved]);
 
   // 3. Unified Command Pipeline Callback
   const applyCommand = useCallback((command: TimelineItemCommand) => {
@@ -217,25 +161,28 @@ export function MediaStripBoard({
     }
   }, [onMoveItem]);
 
-
-
-  const collisionDetectionStrategy = useCallback<MediaStripDndCollisionDetection>((args) => {
-    const { nestTargetId, intersections } = detectCollision({
-      active: args.active,
-      collisionRect: args.collisionRect,
-      droppableRects: args.droppableRects,
-      pointerCoordinates: args.pointerCoordinates,
-      droppableContainers: args.droppableContainers,
-      itemLookup,
-    });
-    activeNestTargetRef.current = nestTargetId;
-    return intersections;
-  }, [itemLookup]);
-
   const activeDragItem = useMemo(() => {
     if (!activeDragId) return null;
     return itemLookup.get(activeDragId)?.item ?? null;
   }, [activeDragId, itemLookup]);
+
+  // Whether the collection currently hovered as a nest target (`activeNestTargetId`)
+  // would form a cycle if the dragged item nested into it. Computed once here —
+  // the drop-time command resolver enforces the same rule, and the hovered
+  // card's "Cannot drop (cycle)" overlay reads this instead of re-running
+  // `wouldCreateCollectionCycle` in every collection-card component on every
+  // drag frame. Only meaningful when a collection is being dragged onto a
+  // nest target; false otherwise.
+  const activeNestTargetInvalid = useMemo(() => {
+    if (!activeNestTargetId || !activeDragItem || !isCollectionItem(activeDragItem)) {
+      return false;
+    }
+    return wouldCreateCollectionCycle({
+      movingCollectionId: activeDragItem.collectionId,
+      targetCollectionId: activeNestTargetId,
+      collectionsById: collectionsByIdResolved,
+    });
+  }, [activeNestTargetId, activeDragItem, collectionsByIdResolved]);
 
   const getAdjacentCollectionId = useCallback(
     (currentCollectionId: CollectionId, direction: "up" | "down"): CollectionId | null => {
@@ -282,191 +229,38 @@ export function MediaStripBoard({
     itemLookup,
     collectionsById: collectionsByIdResolved,
     getAdjacentCollectionId,
+    parentByCollectionId,
     applyCommand,
     announce,
+    flashRejection,
   });
 
-  const handleDragStart = useCallback((event: MediaStripDndDragStartEvent) => {
-    const decoded = decodeDndTarget(String(event.active.id));
-    if (!decoded || decoded.type !== "item") return;
-    const itemId = decoded.itemId;
-
-    let dragWidth = DEFAULT_DRAG_OVERLAY_WIDTH_PX;
-    const escapedId = CSS.escape(String(itemId));
-    const activeEl = containerRef.current?.querySelector(
-      `[${DATA_VALUE_ATTR}="${escapedId}"], [${VALUE_ATTR}="${escapedId}"]`
-    );
-    if (activeEl) {
-      dragWidth = activeEl.getBoundingClientRect().width;
-    }
-
-    const found = itemLookup.get(itemId);
-    if (found) {
-      activeOverCollectionIdRef.current = found.collectionId;
-      startDrag(itemId, found.collectionId, dragWidth);
-      announce(`Picked up item "${found.item.name}".`);
-    }
-  }, [itemLookup, announce, startDrag]);
-
-  const handleDragMove = useCallback((event?: MediaStripDndDragMoveEvent) => {
-    if (event && "nestTargetId" in event) {
-      activeNestTargetRef.current = event.nestTargetId ?? null;
-    }
-    moveDrag(activeNestTargetRef.current);
-  }, [moveDrag]);
-
-  const handleDragOver = useCallback((event: MediaStripDndDragOverEvent) => {
-    if ("nestTargetId" in event) {
-      activeNestTargetRef.current = event.nestTargetId ?? null;
-    }
-    moveDrag(activeNestTargetRef.current);
-    const { over } = event;
-    if (over) {
-      const decoded = decodeDndTarget(String(over.id));
-      if (decoded) {
-        if (decoded.type === "collection-container") {
-          activeOverCollectionIdRef.current = decoded.collectionId;
-        } else if (decoded.type === "item") {
-          const found = itemLookup.get(decoded.itemId);
-          if (found) {
-            activeOverCollectionIdRef.current = found.collectionId;
-          }
-        } else if (decoded.type === "collection-nest-target") {
-          activeOverCollectionIdRef.current = decoded.collectionId;
-        }
-      }
-    } else {
-      activeOverCollectionIdRef.current = null;
-    }
-  }, [moveDrag, itemLookup]);
-
-  const handleDragEnd = useCallback((event: MediaStripDndDragEndEvent) => {
-    const { over, active } = event;
-    const itemId = activeDragId;
-    const nestTargetId = ("nestTargetId" in event ? event.nestTargetId : undefined) ?? activeNestTargetRef.current;
-
-    activeNestTargetRef.current = null;
-    activeOverCollectionIdRef.current = null;
-
-    if (!itemId) return;
-
-    const foundSource = itemLookup.get(itemId);
-    if (!foundSource) {
-      endDrag();
-      announce("Cancelled drag.");
-      return;
-    }
-
-    if (over) {
-      const intent = resolveDropIntent({
-        overId: over.id,
-        activeId: active.id,
-        collectionsById: collectionsByIdResolved,
-        itemLookup,
-      });
-
-      if (intent) {
-        if (isCollectionItem(foundSource.item)) {
-          const targetCollectionId = nestTargetId || intent.toCollectionId;
-          if (wouldCreateCollectionCycle({
-            movingCollectionId: foundSource.item.collectionId,
-            targetCollectionId,
-            collectionsById: collectionsByIdResolved,
-          })) {
-            announce("Cannot move a collection into itself or one of its nested collections.");
-            endDrag();
-            return;
-          }
-        }
-
-        if (nestTargetId) {
-          applyCommand({
-            type: "nest",
-            itemId,
-            fromCollectionId: foundSource.collectionId,
-            targetCollectionId: nestTargetId,
-          });
-          announce(`Moved "${foundSource.item.name}" into collection.`);
-        } else if (intent.type === "move") {
-          const targetCollectionId = intent.toCollectionId;
-          const targetIndex = intent.toIndex;
-
-          if (
-            foundSource.collectionId !== targetCollectionId ||
-            foundSource.index !== targetIndex
-          ) {
-            applyCommand({
-              type: "move",
-              itemId,
-              fromCollectionId: foundSource.collectionId,
-              toCollectionId: targetCollectionId,
-              toIndex: targetIndex,
-            });
-            announce(`Dropped "${foundSource.item.name}" at position ${targetIndex + 1}.`);
-          } else {
-            announce(`Dropped "${foundSource.item.name}" at position ${foundSource.index + 1}.`);
-          }
-        }
-      } else {
-        announce("Cancelled drag.");
-      }
-    } else {
-      announce("Cancelled drag.");
-    }
-
-    endDrag();
-  }, [
-    activeDragId,
+  // 5. Pointer Drag Event Handling
+  const {
+    collisionDetectionStrategy,
+    getDropTargetInfo,
+    handleDragStart,
+    handleDragMove,
+    handleDragOver,
+    handleDragEnd,
+    handleDragCancel,
+    canScroll,
+  } = useMediaStripBoardDragController({
+    containerRef,
     itemLookup,
-    applyCommand,
-    collectionsByIdResolved,
-    announce,
+    collectionsById: collectionsByIdResolved,
+    parentByCollectionId,
+    activeDragId,
+    activeDragSourceCollectionId,
+    adapterResolvesDropTargetsInEvents: !dndAdapter.capabilities.supportsCollisionDetection,
+    startDrag,
+    moveDrag,
     endDrag,
-  ]);
+    applyCommand,
+    announce,
+    flashRejection,
+  });
 
-  const getNestTargetId = useCallback(({
-    activeId,
-    element,
-    input,
-    overId,
-  }: {
-    activeId: MediaStripDndIdentifier;
-    element: Element;
-    input: { clientX: number; clientY: number };
-    overId: MediaStripDndIdentifier;
-  }): CollectionId | null => {
-    const decoded = decodeDndTarget(String(overId));
-    if (!decoded || decoded.type !== "item") return null;
-
-    const found = itemLookup.get(decoded.itemId);
-    if (!found || found.item.kind !== "collection") return null;
-
-    const rect = element.getBoundingClientRect();
-    const hotspotLeft = rect.left + rect.width * NEST_HOTSPOT_MIN_OFFSET;
-    const hotspotRight = rect.left + rect.width * NEST_HOTSPOT_MAX_OFFSET;
-    const hotspotTop = rect.top + rect.height * NEST_HOTSPOT_MIN_OFFSET;
-    const hotspotBottom = rect.top + rect.height * NEST_HOTSPOT_MAX_OFFSET;
-
-    if (
-      input.clientX < hotspotLeft ||
-      input.clientX > hotspotRight ||
-      input.clientY < hotspotTop ||
-      input.clientY > hotspotBottom
-    ) {
-      return null;
-    }
-
-    const activeDecoded = decodeDndTarget(String(activeId));
-    const activeItemId = activeDecoded?.type === "item" ? activeDecoded.itemId : activeId;
-    return activeItemId !== found.item.id ? found.item.collectionId : null;
-  }, [itemLookup]);
-
-  const handleDragCancel = useCallback(() => {
-    activeNestTargetRef.current = null;
-    activeOverCollectionIdRef.current = null;
-    endDrag();
-    announce("Cancelled drag.");
-  }, [endDrag, announce]);
   const stableContextValue = useMemo(
     () => ({
       collectionsById: collectionsByIdResolved,
@@ -496,26 +290,36 @@ export function MediaStripBoard({
     ]
   );
 
-  const dragContextValue = useMemo(
-    () => ({
+  // Per-move drag state is published through an external store, not context,
+  // so only the items whose slice changes re-render (see
+  // media-strip-drag-store.ts). The board still holds this state as React
+  // state (it drives the drag overlay + announcer here), and pushes each new
+  // snapshot into the store in a layout effect — synchronously after the
+  // board's own commit, before paint, so subscribed items update in the same
+  // frame with no visible lag.
+  const dragStore = useMediaStripDragStoreInstance();
+  useLayoutEffect(() => {
+    dragStore.set({
       activeDragId,
-      activeDragSourceCollectionId,
       activeNestTargetId,
-      activeDragWidth,
+      activeNestTargetInvalid,
+      activeDropPlacement,
       activeKeyboardReorderId,
-    }),
-    [
-      activeDragId,
-      activeDragSourceCollectionId,
-      activeNestTargetId,
-      activeDragWidth,
-      activeKeyboardReorderId,
-    ]
-  );
+      rejectedItemId,
+    });
+  }, [
+    dragStore,
+    activeDragId,
+    activeNestTargetId,
+    activeNestTargetInvalid,
+    activeDropPlacement,
+    activeKeyboardReorderId,
+    rejectedItemId,
+  ]);
 
   return (
     <MediaStripBoardStableContext.Provider value={stableContextValue}>
-      <MediaStripBoardDragContext.Provider value={dragContextValue}>
+      <MediaStripDragStoreProvider value={dragStore}>
         <div ref={containerRef} style={{ display: "contents" }}>
           <MediaStripDndProvider
             adapter={dndAdapter}
@@ -523,33 +327,13 @@ export function MediaStripBoard({
               activationDistance: DRAG_ACTIVATION_THRESHOLDS_PX.board,
               collisionDetection: collisionDetectionStrategy,
             }}
-            getNestTargetId={getNestTargetId}
+            getDropTargetInfo={getDropTargetInfo}
             onDragStart={handleDragStart}
             onDragMove={handleDragMove}
             onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
             onDragCancel={handleDragCancel}
-            autoScroll={{
-              canScroll: (element) => {
-                if (!activeDragSourceCollectionId) return true;
-                const colEl = element.closest("[data-collection-id]");
-                if (!colEl) return true;
-                const parsedColId = parseCollectionId(colEl.getAttribute("data-collection-id") ?? "");
-                // An unparseable id can't match the source or hovered strip.
-                if (!parsedColId.ok) return false;
-                const colId = parsedColId.value;
-
-                // 1. Always scroll the active drag source container
-                if (colId === activeDragSourceCollectionId) return true;
-
-                // 2. Scroll the currently hovered container, unless it is an ancestor of the source container
-                if (colId === activeOverCollectionIdRef.current) {
-                  return !isAncestorCollection(colId, activeDragSourceCollectionId, parentByCollectionId);
-                }
-
-                return false;
-              }
-            }}
+            autoScroll={{ canScroll }}
           >
             {children}
 
@@ -578,34 +362,7 @@ export function MediaStripBoard({
             </div>
           </MediaStripDndProvider>
         </div>
-      </MediaStripBoardDragContext.Provider>
+      </MediaStripDragStoreProvider>
     </MediaStripBoardStableContext.Provider>
-  );
-}
-
-function DragOverlayItem({
-  item,
-  width,
-}: {
-  item: TimelineItem;
-  width: number;
-}) {
-  return (
-    <div
-      data-testid="drag-overlay-item"
-      className="bg-card border-primary border p-2 rounded-lg opacity-85 shadow-2xl flex flex-col items-stretch justify-start gap-2 text-left pointer-events-none select-none"
-      style={{
-        width: `${width}px`,
-        height: `calc(9.5rem - ${2 * TOGGLE_GROUP_PADDING_PX}px)`,
-      }}
-    >
-      <MediaStripThumbnail item={item} variant="sequence" />
-      <span className="truncate text-xs font-medium text-foreground pr-4">
-        {item.name}
-      </span>
-      <div className="self-start text-[10px] bg-secondary text-secondary-foreground px-1.5 py-0.5 rounded font-mono">
-        {formatDuration(item.durationSeconds)}
-      </div>
-    </div>
   );
 }

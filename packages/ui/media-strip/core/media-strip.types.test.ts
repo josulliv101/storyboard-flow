@@ -2,8 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   parseTimelineItemId,
   parseCollectionId,
-  asTimelineItemId,
-  asCollectionId,
+  trustedTimelineItemId,
+  trustedCollectionId,
   isImageItem,
   isVideoItem,
   isMediaItem,
@@ -24,8 +24,8 @@ describe("Timeline Items Branding", () => {
     const whitespaceItem = parseTimelineItemId("   ");
     const whitespaceCol = parseCollectionId("   ");
 
-    expect(validItem).toEqual({ ok: true, value: asTimelineItemId("item-1") });
-    expect(validCol).toEqual({ ok: true, value: asCollectionId("collection-1") });
+    expect(validItem).toEqual({ ok: true, value: trustedTimelineItemId("item-1") });
+    expect(validCol).toEqual({ ok: true, value: trustedCollectionId("collection-1") });
     expect(invalidItem).toEqual({ ok: false, error: "empty-id" });
     expect(invalidCol).toEqual({ ok: false, error: "empty-id" });
     expect(whitespaceItem).toEqual({ ok: false, error: "empty-id" });
@@ -35,7 +35,7 @@ describe("Timeline Items Branding", () => {
 
 describe("Timeline Items Type Guards", () => {
   const imageItem: ImageTimelineItem = {
-    id: asTimelineItemId("image-1"),
+    id: trustedTimelineItemId("image-1"),
     name: "Test Image",
     kind: "image",
     src: "http://example.com/image.jpg",
@@ -44,7 +44,7 @@ describe("Timeline Items Type Guards", () => {
   };
 
   const videoItem: VideoTimelineItem = {
-    id: asTimelineItemId("video-1"),
+    id: trustedTimelineItemId("video-1"),
     name: "Test Video",
     kind: "video",
     src: "http://example.com/video.mp4",
@@ -56,10 +56,10 @@ describe("Timeline Items Type Guards", () => {
   };
 
   const collectionItem: CollectionTimelineItem = {
-    id: asTimelineItemId("collection-1"),
+    id: trustedTimelineItemId("collection-1"),
     name: "Test Collection",
     kind: "collection",
-    collectionId: asCollectionId("collection-col-1"),
+    collectionId: trustedCollectionId("collection-col-1"),
     itemCount: 3,
     startTimeSeconds: 5,
     durationSeconds: 15,

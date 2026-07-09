@@ -8,9 +8,11 @@ import {
   useEffect,
   memo,
   type ComponentPropsWithoutRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
   type Ref,
+  type RefObject,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { LayoutGroup } from "motion/react";
 
 import { Button } from "../core/button";
@@ -32,20 +34,19 @@ import { cn } from "../lib/utils";
 
 import { DraggableScrollArea } from "./draggable-scroll-area";
 import { MediaStripItemButton } from "./media-strip-item";
-import { getItemWidth, TOGGLE_GROUP_PADDING_PX } from "./core/media-strip.utils";
+import { STRIP_ROW_HEIGHT_REM, TOGGLE_GROUP_PADDING_PX } from "./core/media-strip.utils";
 import { encodeDndTarget } from "./core/media-strip.dnd";
-import {
-  useMediaStripBoardStable,
-  useMediaStripBoardDrag,
-} from "./media-strip-board";
+import { useMediaStripBoardStable } from "./media-strip-board";
+import { useMediaStripActiveKeyboardReorderId } from "./media-strip-drag-store";
 import {
   MediaStripDroppable,
   MediaStripSortableItems,
 } from "./media-strip-dnd-provider";
 import { useScrollToAndFocus } from "./use-scroll-to-and-focus";
 import { useMediaStripKeyboardNav } from "./use-media-strip-keyboard-nav";
+import { useMediaStripVirtualizer } from "./use-media-strip-virtualizer";
 import {
-  asCollectionId,
+  trustedCollectionId,
   parseTimelineItemId,
   type TimelineItem,
   type TimelineItemId,
@@ -53,6 +54,7 @@ import {
 } from "./core/media-strip.types";
 
 export type MediaStripSelection = {
+  collectionId: CollectionId;
   selectedIds: TimelineItemId[];
   selectedItems: TimelineItem[];
 };
@@ -88,16 +90,17 @@ export const MediaStrip = memo(
     const headingId = useId();
     const viewportRef = useRef<HTMLDivElement>(null);
     const viewportContentRef = useRef<HTMLDivElement | null>(null);
-    const droppableNodeRef = useRef<Ref<HTMLDivElement>>(null);
 
     // useId() is guaranteed to be non-empty, so this parse can never throw.
-    const defaultCollectionId = asCollectionId(useId());
+    const defaultCollectionId = trustedCollectionId(useId());
     const activeCollectionId = collectionId ?? defaultCollectionId;
 
     // Integrate with the shared board Dnd Context
     const stable = useMediaStripBoardStable();
-    const drag = useMediaStripBoardDrag();
-    const activeKeyboardReorderId = drag.activeKeyboardReorderId;
+    // Selector subscription: the strip only re-renders when the active
+    // keyboard-reorder item changes (pick-up/drop), not on pointer-drag
+    // moves — those flow to individual items via the drag store instead.
+    const activeKeyboardReorderId = useMediaStripActiveKeyboardReorderId();
     const registerCollection = stable.registerCollection;
     const unregisterCollection = stable.unregisterCollection;
 
@@ -141,34 +144,20 @@ export const MediaStrip = memo(
         const nextSelectedIds = selectedItems.map((item) => item.id);
 
         onSelectionChange({
+          collectionId: activeCollectionId,
           selectedIds: nextSelectedIds,
           selectedItems,
         });
       },
-      [itemById, onSelectionChange]
+      [activeCollectionId, itemById, onSelectionChange]
     );
 
-    // Memoize item widths to avoid double-computation in estimateSize and the render loop
-    const itemWidths = useMemo(() => {
-      return resolvedItems.map((item) => getItemWidth(item, pxPerSecond));
-    }, [resolvedItems, pxPerSecond]);
-
-    const rowVirtualizer = useVirtualizer({
-      count: resolvedItems.length,
-      getScrollElement: () => viewportRef.current,
-      getItemKey: useCallback(
-        (index: number) => String(resolvedItems[index]?.id ?? index),
-        [resolvedItems]
-      ),
-      estimateSize: useCallback(
-        (index: number) => {
-          return itemWidths[index] + itemGap;
-        },
-        [itemWidths, itemGap]
-      ),
-      horizontal: true,
-      overscan: 5,
-    });
+    const { itemWidths, rowVirtualizer } = useMediaStripVirtualizer(
+      resolvedItems,
+      pxPerSecond,
+      itemGap,
+      viewportRef
+    );
 
     const scrollToAndFocus = useScrollToAndFocus(viewportRef, rowVirtualizer);
 
@@ -189,11 +178,6 @@ export const MediaStrip = memo(
       viewportRef,
       scrollToAndFocus
     );
-
-    const setViewportAndDroppableRef = useCallback((element: HTMLDivElement | null) => {
-      viewportContentRef.current = element;
-      setRefValue(droppableNodeRef.current, element);
-    }, []);
 
     // Memoize sortable items list using the encoded DnD targets format
     const sortableItemIds = useMemo(() => {
@@ -230,8 +214,6 @@ export const MediaStrip = memo(
         <CardContent className="min-w-0">
           <MediaStripDroppable id={containerDndId}>
             {({ isOver, setNodeRef }) => {
-              droppableNodeRef.current = setNodeRef;
-
               return resolvedItems.length === 0 ? (
                 <div
                   ref={setNodeRef}
@@ -249,18 +231,14 @@ export const MediaStrip = memo(
                   viewportContentRef={viewportContentRef}
                   testId={`media-strip-drag-scroll-${activeCollectionId}`}
                 >
-                  <ToggleGroup
-                    multiple
-                    ref={setViewportAndDroppableRef}
-                    aria-label={`${heading} selection`}
-                    className="relative max-w-none items-stretch p-1 h-[9.5rem]"
-                    style={{
-                      width: `${Math.max(0, rowVirtualizer.getTotalSize() - itemGap)}px`,
-                    }}
+                  <MediaStripItemRow
+                    droppableRef={setNodeRef}
+                    viewportContentRef={viewportContentRef}
+                    ariaLabel={`${heading} selection`}
+                    widthPx={Math.max(0, rowVirtualizer.getTotalSize() - itemGap)}
                     value={visibleSelectedIds}
                     onValueChange={handleSelectionChange}
                     onKeyDownCapture={handleKeyDownCapture}
-                    variant="outline"
                   >
                     <MediaStripSortableItems items={sortableItemIds}>
                       <LayoutGroup id={activeCollectionId}>
@@ -288,7 +266,7 @@ export const MediaStrip = memo(
                         })}
                       </LayoutGroup>
                     </MediaStripSortableItems>
-                  </ToggleGroup>
+                  </MediaStripItemRow>
                 </DraggableScrollArea>
               );
             }}
@@ -300,6 +278,72 @@ export const MediaStrip = memo(
 );
 
 MediaStrip.displayName = "MediaStrip";
+
+/**
+ * The item row's `ToggleGroup`, which is also this strip's droppable surface
+ * (the drag-scroll hook needs the same node via `viewportContentRef`). It
+ * exists as its own component solely so it can merge the adapter-provided
+ * `droppableRef` (only knowable inside `MediaStripDroppable`'s render prop)
+ * with `viewportContentRef` via a hook-legal `useCallback` — rather than
+ * stashing `droppableRef` into a ref during render, which is a render-phase
+ * side effect that concurrent/StrictMode double-renders can run twice or
+ * discard.
+ *
+ * The merged ref must stay stable across renders: media-strip re-renders on
+ * every pointer move during a drag (`activeDropPlacement`), and a
+ * fresh ref callback each render would detach + re-attach the droppable
+ * node every frame, breaking dnd-kit's droppable tracking mid-drag. It IS
+ * stable, because `droppableRef` is stable for all three adapters (dnd-kit's
+ * `useDroppable().setNodeRef`, and the native/pragmatic `useState` setters).
+ */
+function MediaStripItemRow({
+  droppableRef,
+  viewportContentRef,
+  ariaLabel,
+  widthPx,
+  value,
+  onValueChange,
+  onKeyDownCapture,
+  children,
+}: {
+  droppableRef: Ref<HTMLDivElement>;
+  viewportContentRef: RefObject<HTMLDivElement | null>;
+  ariaLabel: string;
+  widthPx: number;
+  value: string[];
+  onValueChange: (values: string[]) => void;
+  onKeyDownCapture: (event: ReactKeyboardEvent) => void;
+  children: ReactNode;
+}) {
+  const setRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      viewportContentRef.current = element;
+      setRefValue(droppableRef, element);
+    },
+    [droppableRef, viewportContentRef]
+  );
+
+  return (
+    <ToggleGroup
+      multiple
+      ref={setRef}
+      aria-label={ariaLabel}
+      // min-w-full makes the droppable surface at least as wide as the
+      // visible viewport, not just the content — without it, a short strip
+      // in a wide container has dead space to the right of the last item
+      // that isn't part of the droppable (unlike the empty-state branch,
+      // which has no explicit width and naturally fills its parent).
+      className="relative max-w-none min-w-full items-stretch p-1"
+      style={{ width: `${widthPx}px`, height: `${STRIP_ROW_HEIGHT_REM}rem` }}
+      value={value}
+      onValueChange={onValueChange}
+      onKeyDownCapture={onKeyDownCapture}
+      variant="outline"
+    >
+      {children}
+    </ToggleGroup>
+  );
+}
 
 function MediaStripEmptyState({ emptyLabel }: { emptyLabel: string }) {
   return (

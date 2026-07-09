@@ -8,6 +8,7 @@ import {
   type TimelineItemKind,
   parseTimelineItemId,
   parseCollectionId,
+  assertNever,
   isCollectionItem,
   type CollectionId,
   type TimelineItemId,
@@ -328,7 +329,17 @@ export function validateTimelineItem<T extends TimelineItem>(
 ): ValidationResultOf<T> {
   // Safe type assertion: indexing the validators record by item.kind guarantees a match.
   // The validators map covers every K in TimelineItemKind exhaustively, and T's kind is K.
-  const validator = validators[item.kind] as (item: T) => ValidationResultOf<T>;
+  const validator = validators[item.kind] as
+    | ((item: T) => ValidationResultOf<T>)
+    | undefined;
+  if (!validator) {
+    // Only reachable when `item` isn't really a TimelineItem (an invalid
+    // `kind` from a bad cast or `unknown` data that skipped the parse
+    // boundary). Throwing here is the documented behavior — parse* is the
+    // safe ingestion path; see media-strip.parse.ts — but assertNever gives
+    // a readable message instead of a raw "validator is not a function".
+    return assertNever(item.kind as never);
+  }
   return validator(item);
 }
 
@@ -552,30 +563,32 @@ export function wouldCreateCollectionCycle({
     return true;
   }
 
+  // Iterative DFS (explicit stack) rather than recursion: this ingests
+  // externally-supplied graphs, and a pathologically deep collection chain
+  // would blow the call stack before the visited-set could stop it.
   const visited = new Set<CollectionId>();
+  const stack: CollectionId[] = [movingCollectionId];
 
-  function hasDescendant(currentId: CollectionId): boolean {
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
     if (currentId === targetCollectionId) {
       return true;
     }
     if (visited.has(currentId)) {
-      return false;
+      continue;
     }
     visited.add(currentId);
 
     const col = collectionsById.get(currentId);
-    if (!col) return false;
+    if (!col) continue;
 
     for (const item of col.items) {
       if (isCollectionItem(item)) {
-        if (hasDescendant(item.collectionId)) {
-          return true;
-        }
+        stack.push(item.collectionId);
       }
     }
-    return false;
   }
 
-  return hasDescendant(movingCollectionId);
+  return false;
 }
 

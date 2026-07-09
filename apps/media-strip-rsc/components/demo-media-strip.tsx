@@ -5,7 +5,7 @@ import {
   MediaStrip,
   MediaStripBoard,
   applyTimelineItemCommand,
-  asCollectionId,
+  trustedCollectionId,
   createCollectionTimelineItem,
   createImageTimelineItem,
   createVideoTimelineItem,
@@ -62,7 +62,7 @@ function buildCollections(
 
   return new Map<CollectionId, TimelineCollection>(
     collections.map((collection) => {
-      const id = asCollectionId(collection.id);
+      const id = trustedCollectionId(collection.id);
       return [
         id,
         {
@@ -83,7 +83,7 @@ export function DemoMediaStrip(props: DemoMediaStripProps) {
     [props.collections]
   );
   const collectionId = useMemo(
-    () => asCollectionId(props.activeCollectionId),
+    () => trustedCollectionId(props.activeCollectionId),
     [props.activeCollectionId]
   );
   const visibleCollectionIds = useMemo(() => [collectionId], [collectionId]);
@@ -96,12 +96,13 @@ export function DemoMediaStrip(props: DemoMediaStripProps) {
   }
 
   const handleMoveItem = (command: TimelineItemCommand) => {
-    setCollectionsById((current) =>
-      applyTimelineItemCommand({
+    setCollectionsById((current) => {
+      const result = applyTimelineItemCommand({
         collectionsById: current,
         command,
-      })
-    );
+      });
+      return result.ok ? result.collectionsById : current;
+    });
   };
 
   return (

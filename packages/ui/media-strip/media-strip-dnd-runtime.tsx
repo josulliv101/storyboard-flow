@@ -4,9 +4,14 @@ import { createContext, useContext } from "react";
 
 import { type MediaStripDndAdapter } from "./media-strip-dnd.types";
 
+// Deliberately just the adapter, nothing per-drag: anything that changes
+// during a drag (e.g. the manual adapters' overlay position) must NOT live
+// here, because every MediaStrip* indirection component reads this context —
+// per-move updates would re-render the whole strip subtree. Fast-changing
+// drag state belongs in an adapter-local external store subscribed to by
+// exactly the leaf that renders it.
 export type MediaStripDndRuntimeContextType = {
   adapter: MediaStripDndAdapter;
-  overlayPosition: { x: number; y: number } | null;
 };
 
 export const MediaStripDndRuntimeContext =

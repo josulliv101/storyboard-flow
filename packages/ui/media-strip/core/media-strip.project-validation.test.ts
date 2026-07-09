@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
 import {
-  asCollectionId,
+  trustedCollectionId,
   type CollectionId,
   type TimelineCollection,
   type TimelineItem,
@@ -49,9 +49,9 @@ describe("validateProjectTimeline graph validator", () => {
   test("returns valid for a simple flat project timeline", () => {
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-root"),
+        trustedCollectionId("col-root"),
         {
-          id: asCollectionId("col-root"),
+          id: trustedCollectionId("col-root"),
           name: "Root",
           items: [itemA, itemB],
         },
@@ -60,7 +60,7 @@ describe("validateProjectTimeline graph validator", () => {
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: [asCollectionId("col-root")],
+      rootCollectionIds: [trustedCollectionId("col-root")],
     });
 
     expect(result.valid).toBe(true);
@@ -74,7 +74,7 @@ describe("validateProjectTimeline graph validator", () => {
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: [asCollectionId("col-root")],
+      rootCollectionIds: [trustedCollectionId("col-root")],
     });
 
     expect(result.valid).toBe(false);
@@ -89,9 +89,9 @@ describe("validateProjectTimeline graph validator", () => {
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-root"),
+        trustedCollectionId("col-root"),
         {
-          id: asCollectionId("col-root"),
+          id: trustedCollectionId("col-root"),
           name: "Root",
           items: [colItem],
         },
@@ -100,7 +100,7 @@ describe("validateProjectTimeline graph validator", () => {
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: [asCollectionId("col-root")],
+      rootCollectionIds: [trustedCollectionId("col-root")],
     });
 
     expect(result.valid).toBe(false);
@@ -117,18 +117,18 @@ describe("validateProjectTimeline graph validator", () => {
     // col-a references col-b; col-b references col-a (Cycle!)
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-a"),
-        { id: asCollectionId("col-a"), name: "Folder A", items: [colItemB] },
+        trustedCollectionId("col-a"),
+        { id: trustedCollectionId("col-a"), name: "Folder A", items: [colItemB] },
       ],
       [
-        asCollectionId("col-b"),
-        { id: asCollectionId("col-b"), name: "Folder B", items: [colItemA] },
+        trustedCollectionId("col-b"),
+        { id: trustedCollectionId("col-b"), name: "Folder B", items: [colItemA] },
       ],
     ]);
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: [asCollectionId("col-a")],
+      rootCollectionIds: [trustedCollectionId("col-a")],
     });
 
     expect(result.valid).toBe(false);
@@ -144,18 +144,18 @@ describe("validateProjectTimeline graph validator", () => {
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-a"),
-        { id: asCollectionId("col-a"), name: "Folder A", items: [colItemB] },
+        trustedCollectionId("col-a"),
+        { id: trustedCollectionId("col-a"), name: "Folder A", items: [colItemB] },
       ],
       [
-        asCollectionId("col-b"),
-        { id: asCollectionId("col-b"), name: "Folder B", items: [colItemA] },
+        trustedCollectionId("col-b"),
+        { id: trustedCollectionId("col-b"), name: "Folder B", items: [colItemA] },
       ],
     ]);
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: [asCollectionId("col-a")],
+      rootCollectionIds: [trustedCollectionId("col-a")],
     });
 
     expect(result.valid).toBe(false);
@@ -171,9 +171,9 @@ describe("validateProjectTimeline graph validator", () => {
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-root"),
+        trustedCollectionId("col-root"),
         {
-          id: asCollectionId("col-root"),
+          id: trustedCollectionId("col-root"),
           name: "Root",
           items: [itemA, itemA2],
         },
@@ -182,7 +182,7 @@ describe("validateProjectTimeline graph validator", () => {
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: [asCollectionId("col-root")],
+      rootCollectionIds: [trustedCollectionId("col-root")],
       assumeGlobalItemIds: true,
     });
 
@@ -195,18 +195,18 @@ describe("validateProjectTimeline graph validator", () => {
   test("identifies orphaned (unreachable) collections", () => {
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-root"),
-        { id: asCollectionId("col-root"), name: "Root", items: [itemA] },
+        trustedCollectionId("col-root"),
+        { id: trustedCollectionId("col-root"), name: "Root", items: [itemA] },
       ],
       [
-        asCollectionId("col-orphaned"),
-        { id: asCollectionId("col-orphaned"), name: "Lost Folder", items: [itemB] },
+        trustedCollectionId("col-orphaned"),
+        { id: trustedCollectionId("col-orphaned"), name: "Lost Folder", items: [itemB] },
       ],
     ]);
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: [asCollectionId("col-root")],
+      rootCollectionIds: [trustedCollectionId("col-root")],
     });
 
     expect(result.valid).toBe(true);
@@ -223,18 +223,18 @@ describe("validateProjectTimeline graph validator", () => {
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-root"),
-        { id: asCollectionId("col-root"), name: "Root", items: [itemA] },
+        trustedCollectionId("col-root"),
+        { id: trustedCollectionId("col-root"), name: "Root", items: [itemA] },
       ],
       [
-        asCollectionId("col-orphaned"),
-        { id: asCollectionId("col-orphaned"), name: "Lost Folder", items: [danglingRefItem] },
+        trustedCollectionId("col-orphaned"),
+        { id: trustedCollectionId("col-orphaned"), name: "Lost Folder", items: [danglingRefItem] },
       ],
     ]);
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: [asCollectionId("col-root")],
+      rootCollectionIds: [trustedCollectionId("col-root")],
     });
 
     expect(result.valid).toBe(false);
@@ -250,22 +250,22 @@ describe("validateProjectTimeline graph validator", () => {
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-root"),
-        { id: asCollectionId("col-root"), name: "Root", items: [itemA] },
+        trustedCollectionId("col-root"),
+        { id: trustedCollectionId("col-root"), name: "Root", items: [itemA] },
       ],
       [
-        asCollectionId("col-orphan-a"),
-        { id: asCollectionId("col-orphan-a"), name: "Orphan A", items: [orphanItemB] },
+        trustedCollectionId("col-orphan-a"),
+        { id: trustedCollectionId("col-orphan-a"), name: "Orphan A", items: [orphanItemB] },
       ],
       [
-        asCollectionId("col-orphan-b"),
-        { id: asCollectionId("col-orphan-b"), name: "Orphan B", items: [orphanItemA] },
+        trustedCollectionId("col-orphan-b"),
+        { id: trustedCollectionId("col-orphan-b"), name: "Orphan B", items: [orphanItemA] },
       ],
     ]);
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: [asCollectionId("col-root")],
+      rootCollectionIds: [trustedCollectionId("col-root")],
     });
 
     expect(result.valid).toBe(false);
@@ -279,18 +279,18 @@ describe("validateProjectTimeline graph validator", () => {
 
     const collections = new Map<CollectionId, TimelineCollection>([
       [
-        asCollectionId("col-root"),
-        { id: asCollectionId("col-root"), name: "Root", items: [itemA] },
+        trustedCollectionId("col-root"),
+        { id: trustedCollectionId("col-root"), name: "Root", items: [itemA] },
       ],
       [
-        asCollectionId("col-orphaned"),
-        { id: asCollectionId("col-orphaned"), name: "Lost Folder", items: [duplicateOrphanItem] },
+        trustedCollectionId("col-orphaned"),
+        { id: trustedCollectionId("col-orphaned"), name: "Lost Folder", items: [duplicateOrphanItem] },
       ],
     ]);
 
     const result = validateProjectTimeline({
       collectionsById: collections,
-      rootCollectionIds: [asCollectionId("col-root")],
+      rootCollectionIds: [trustedCollectionId("col-root")],
       assumeGlobalItemIds: true,
     });
 
@@ -298,5 +298,70 @@ describe("validateProjectTimeline graph validator", () => {
     if (!result.valid && result.reason === "duplicate-global-item-ids") {
       expect(result.itemId).toBe("item-a");
     }
+  });
+
+  test("rejects a collection referenced by two different parents", () => {
+    // Both col-a and col-b independently reference col-shared — collections
+    // are a tree, so a second parent must be rejected, not silently allowed.
+    const sharedFromA = makeCollectionItem("item-shared-from-a", "Shared (via A)", "col-shared");
+    const sharedFromB = makeCollectionItem("item-shared-from-b", "Shared (via B)", "col-shared");
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      [
+        trustedCollectionId("col-root"),
+        { id: trustedCollectionId("col-root"), name: "Root", items: [] },
+      ],
+      [
+        trustedCollectionId("col-a"),
+        { id: trustedCollectionId("col-a"), name: "Folder A", items: [sharedFromA] },
+      ],
+      [
+        trustedCollectionId("col-b"),
+        { id: trustedCollectionId("col-b"), name: "Folder B", items: [sharedFromB] },
+      ],
+      [
+        trustedCollectionId("col-shared"),
+        { id: trustedCollectionId("col-shared"), name: "Shared Folder", items: [] },
+      ],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: [trustedCollectionId("col-a"), trustedCollectionId("col-b")],
+    });
+
+    expect(result.valid).toBe(false);
+    if (!result.valid && result.reason === "multiple-parents") {
+      expect(result.collectionId).toBe("col-shared");
+      expect(result.parentCollectionIds).toEqual(["col-a", "col-b"]);
+    } else {
+      throw new Error(`Expected reason "multiple-parents", got: ${JSON.stringify(result)}`);
+    }
+  });
+
+  test("does not reject the same parent referencing the same child collection twice", () => {
+    // Two item cards in the SAME collection both pointing at col-shared is a
+    // (weird but) different concern from a second, distinct parent — only
+    // the latter violates the single-parent tree invariant.
+    const cardOne = makeCollectionItem("item-shared-1", "Shared (card 1)", "col-shared");
+    const cardTwo = makeCollectionItem("item-shared-2", "Shared (card 2)", "col-shared");
+
+    const collections = new Map<CollectionId, TimelineCollection>([
+      [
+        trustedCollectionId("col-root"),
+        { id: trustedCollectionId("col-root"), name: "Root", items: [cardOne, cardTwo] },
+      ],
+      [
+        trustedCollectionId("col-shared"),
+        { id: trustedCollectionId("col-shared"), name: "Shared Folder", items: [] },
+      ],
+    ]);
+
+    const result = validateProjectTimeline({
+      collectionsById: collections,
+      rootCollectionIds: [trustedCollectionId("col-root")],
+    });
+
+    expect(result.valid).toBe(true);
   });
 });

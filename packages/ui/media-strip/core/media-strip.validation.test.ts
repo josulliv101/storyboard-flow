@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
-  asTimelineItemId,
-  asCollectionId,
+  trustedTimelineItemId,
+  trustedCollectionId,
   type CollectionId,
   type TimelineCollection,
   type VideoTimelineItem,
@@ -29,7 +29,7 @@ import {
 describe("Timeline Items Base Validation", () => {
   test("validates correct base invariants", () => {
     const item = {
-      id: asTimelineItemId("item-1"),
+      id: trustedTimelineItemId("item-1"),
       name: "Item",
       startTimeSeconds: 0,
       durationSeconds: 10,
@@ -39,7 +39,7 @@ describe("Timeline Items Base Validation", () => {
 
   test("fails base validation for negative start time", () => {
     const item = {
-      id: asTimelineItemId("item-1"),
+      id: trustedTimelineItemId("item-1"),
       name: "Item",
       startTimeSeconds: -1,
       durationSeconds: 10,
@@ -52,7 +52,7 @@ describe("Timeline Items Base Validation", () => {
 
   test("fails base validation for negative duration", () => {
     const item = {
-      id: asTimelineItemId("item-1"),
+      id: trustedTimelineItemId("item-1"),
       name: "Item",
       startTimeSeconds: 0,
       durationSeconds: -5,
@@ -65,7 +65,7 @@ describe("Timeline Items Base Validation", () => {
 
   test("fails base validation for non-finite values", () => {
     const itemStartInfinity = {
-      id: asTimelineItemId("item-1"),
+      id: trustedTimelineItemId("item-1"),
       name: "Item",
       startTimeSeconds: Infinity,
       durationSeconds: 10,
@@ -76,7 +76,7 @@ describe("Timeline Items Base Validation", () => {
     });
 
     const itemDurationNaN = {
-      id: asTimelineItemId("item-1"),
+      id: trustedTimelineItemId("item-1"),
       name: "Item",
       startTimeSeconds: 0,
       durationSeconds: NaN,
@@ -89,7 +89,7 @@ describe("Timeline Items Base Validation", () => {
 
   test("fails base validation for empty or invalid name", () => {
     const itemEmptyName = {
-      id: asTimelineItemId("item-1"),
+      id: trustedTimelineItemId("item-1"),
       name: "",
       startTimeSeconds: 0,
       durationSeconds: 10,
@@ -100,7 +100,7 @@ describe("Timeline Items Base Validation", () => {
     });
 
     const itemWhitespaceName = {
-      id: asTimelineItemId("item-1"),
+      id: trustedTimelineItemId("item-1"),
       name: "   ",
       startTimeSeconds: 0,
       durationSeconds: 10,
@@ -113,7 +113,7 @@ describe("Timeline Items Base Validation", () => {
 
   test("tolerates tiny negative times within epsilon", () => {
     const itemTinyNegativeStart = {
-      id: asTimelineItemId("item-1"),
+      id: trustedTimelineItemId("item-1"),
       name: "Item",
       startTimeSeconds: -0.0000001,
       durationSeconds: 10,
@@ -189,10 +189,10 @@ describe("Media Items String Validation", () => {
 
 describe("Collection Timing and Integrity Validation", () => {
   const baseCollection = {
-    id: asTimelineItemId("col-1"),
+    id: trustedTimelineItemId("col-1"),
     name: "Col",
     kind: "collection" as const,
-    collectionId: asCollectionId("c-1"),
+    collectionId: trustedCollectionId("c-1"),
     startTimeSeconds: 0,
     durationSeconds: 10,
     itemCount: 5,
@@ -215,7 +215,7 @@ describe("Collection Timing and Integrity Validation", () => {
     expect(
       validateCollectionTimelineItem({
         ...baseCollection,
-        // Deliberate cast: an invalid ID can't be produced via asCollectionId,
+        // Deliberate cast: an invalid ID can't be produced via trustedCollectionId,
         // and rejecting it is exactly what this test exercises.
         collectionId: "" as CollectionId,
       })
@@ -248,7 +248,7 @@ describe("Collection Timing and Integrity Validation", () => {
 
 describe("Video Timing and Integrity Validation", () => {
   const baseVideo: VideoTimelineItem = {
-    id: asTimelineItemId("vid-1"),
+    id: trustedTimelineItemId("vid-1"),
     name: "Vid",
     kind: "video",
     src: "vid.mp4",
@@ -445,7 +445,7 @@ describe("Timeline Items Update Helpers", () => {
 describe("validateTimelineItem dynamic dispatcher", () => {
   test("correctly dispatches validation to image timeline items", () => {
     const image = {
-      id: asTimelineItemId("img-1"),
+      id: trustedTimelineItemId("img-1"),
       kind: "image",
       name: "Img",
       src: "img.jpg",
@@ -463,7 +463,7 @@ describe("validateTimelineItem dynamic dispatcher", () => {
 
   test("correctly dispatches validation to video timeline items", () => {
     const video = {
-      id: asTimelineItemId("vid-1"),
+      id: trustedTimelineItemId("vid-1"),
       kind: "video",
       name: "Vid",
       src: "vid.mp4",
@@ -484,12 +484,12 @@ describe("validateTimelineItem dynamic dispatcher", () => {
 
   test("correctly dispatches validation to collection timeline items", () => {
     const collection = {
-      id: asTimelineItemId("col-1"),
+      id: trustedTimelineItemId("col-1"),
       kind: "collection",
       name: "Col",
       startTimeSeconds: 0,
       durationSeconds: 10,
-      collectionId: asCollectionId("col-id"),
+      collectionId: trustedCollectionId("col-id"),
       itemCount: 5,
     } as any;
     expect(validateTimelineItem(collection)).toEqual({ valid: true });
@@ -499,6 +499,16 @@ describe("validateTimelineItem dynamic dispatcher", () => {
       valid: false,
       reason: "negative-item-count",
     });
+  });
+
+  test("throws a readable error for an unrecognized kind rather than a raw TypeError", () => {
+    // Only reachable when the input isn't really a TimelineItem — an invalid
+    // `kind` from a bad cast or `unknown` data that skipped the parse
+    // boundary. It's documented as throwing (parse* is the safe path), but
+    // the assertNever guard makes it a "Unexpected value" message instead of
+    // "validator is not a function".
+    const bogus = { id: "x", kind: "audio", name: "Nope", startTimeSeconds: 0, durationSeconds: 1 } as any;
+    expect(() => validateTimelineItem(bogus)).toThrow(/Unexpected value/);
   });
 });
 
@@ -522,7 +532,7 @@ describe("Video Constructor Failure Ordering & Trim Validation", () => {
 
   test("updateVideoTimelineItem rejects invalid trim updates", () => {
     const video = {
-      id: asTimelineItemId("vid-1"),
+      id: trustedTimelineItemId("vid-1"),
       name: "Video",
       kind: "video" as const,
       src: "vid.mp4",
@@ -591,10 +601,10 @@ describe("Tiny Negative Normalization for all constructors", () => {
 
 describe("updateCollectionTimelineItem failure cases", () => {
   const collection = {
-    id: asTimelineItemId("col-1"),
+    id: trustedTimelineItemId("col-1"),
     name: "Collection",
     kind: "collection" as const,
-    collectionId: asCollectionId("collection-col"),
+    collectionId: trustedCollectionId("collection-col"),
     itemCount: 5,
     startTimeSeconds: 0,
     durationSeconds: 10,
@@ -635,14 +645,14 @@ describe("updateCollectionTimelineItem failure cases", () => {
 
 describe("Cycle Detection for Nested Collections", () => {
   const colA: TimelineCollection = {
-    id: asCollectionId("col-a"),
+    id: trustedCollectionId("col-a"),
     name: "Collection A",
     items: [
       {
-        id: asTimelineItemId("item-a"),
+        id: trustedTimelineItemId("item-a"),
         name: "Pointer to B",
         kind: "collection",
-        collectionId: asCollectionId("col-b"),
+        collectionId: trustedCollectionId("col-b"),
         itemCount: 0,
         startTimeSeconds: 0,
         durationSeconds: 10,
@@ -651,29 +661,29 @@ describe("Cycle Detection for Nested Collections", () => {
   };
 
   const colB: TimelineCollection = {
-    id: asCollectionId("col-b"),
+    id: trustedCollectionId("col-b"),
     name: "Collection B",
     items: [],
   };
 
   const collections = new Map<CollectionId, TimelineCollection>([
-    [asCollectionId("col-a"), colA],
-    [asCollectionId("col-b"), colB],
+    [trustedCollectionId("col-a"), colA],
+    [trustedCollectionId("col-b"), colB],
   ]);
 
   test("detects when nesting creates a cycle", () => {
     expect(
       wouldCreateCollectionCycle({
-        movingCollectionId: asCollectionId("col-a"),
-        targetCollectionId: asCollectionId("col-b"),
+        movingCollectionId: trustedCollectionId("col-a"),
+        targetCollectionId: trustedCollectionId("col-b"),
         collectionsById: collections,
       })
     ).toBe(true);
 
     expect(
       wouldCreateCollectionCycle({
-        movingCollectionId: asCollectionId("col-b"),
-        targetCollectionId: asCollectionId("col-a"),
+        movingCollectionId: trustedCollectionId("col-b"),
+        targetCollectionId: trustedCollectionId("col-a"),
         collectionsById: collections,
       })
     ).toBe(false);
@@ -683,11 +693,11 @@ describe("Cycle Detection for Nested Collections", () => {
 describe("Timeline Collection Validation", () => {
   test("validates a collection correctly", () => {
     const validCol: TimelineCollection = {
-      id: asCollectionId("col-1"),
+      id: trustedCollectionId("col-1"),
       name: "Valid Collection",
       items: [
         {
-          id: asTimelineItemId("item-1"),
+          id: trustedTimelineItemId("item-1"),
           name: "Image Item",
           kind: "image",
           src: "image.jpg",
@@ -699,7 +709,7 @@ describe("Timeline Collection Validation", () => {
     expect(validateTimelineCollection(validCol).valid).toBe(true);
 
     const invalidCol: TimelineCollection = {
-      // Deliberate cast: an invalid ID can't be produced via asCollectionId,
+      // Deliberate cast: an invalid ID can't be produced via trustedCollectionId,
       // and rejecting it is exactly what this test exercises.
       id: "" as CollectionId,
       name: "",

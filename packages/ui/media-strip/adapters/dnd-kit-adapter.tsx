@@ -35,6 +35,7 @@ import {
   type MediaStripDndSortableItemProps,
   type MediaStripDndSortableItemsProps,
 } from "../media-strip-dnd.types";
+import { type MediaStripDndCollisionDetectionArgs } from "../core/media-strip.dnd-adapter";
 import { MediaStripDndRuntimeContext } from "../media-strip-dnd-runtime";
 
 type DndContextProps = ComponentProps<typeof DndContext>;
@@ -60,28 +61,44 @@ export function DndKitProvider({
     })
   );
 
+  // This adapter is the one boundary where dnd-kit's `UniqueIdentifier`
+  // (`string | number`) enters the package. Every id we ever register is an
+  // `encodeDndTarget` string, so `String(...)` here is a runtime no-op that
+  // just re-narrows the type — letting `MediaStripDndIdentifier` be `string`
+  // everywhere downstream.
   const handleDragStart = useCallback((event: DragStartEvent) => {
-    onDragStart?.({ active: { id: event.active.id } });
+    onDragStart?.({ active: { id: String(event.active.id) } });
   }, [onDragStart]);
 
+  // nestTargetId/placement are explicit nulls, not real resolutions: this
+  // adapter's capabilities declare supportsCollisionDetection, which tells
+  // the board's drag controller that placement resolution arrives
+  // out-of-band via the collisionDetection callback — it ignores these
+  // fields and keeps the collision results instead.
   const handleDragMove = useCallback((event: DragMoveEvent) => {
     onDragMove?.({
-      active: { id: event.active.id },
-      over: event.over ? { id: event.over.id } : null,
+      active: { id: String(event.active.id) },
+      over: event.over ? { id: String(event.over.id) } : null,
+      nestTargetId: null,
+      placement: null,
     });
   }, [onDragMove]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     onDragOver?.({
-      active: { id: event.active.id },
-      over: event.over ? { id: event.over.id } : null,
+      active: { id: String(event.active.id) },
+      over: event.over ? { id: String(event.over.id) } : null,
+      nestTargetId: null,
+      placement: null,
     });
   }, [onDragOver]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     onDragEnd?.({
-      active: { id: event.active.id },
-      over: event.over ? { id: event.over.id } : null,
+      active: { id: String(event.active.id) },
+      over: event.over ? { id: String(event.over.id) } : null,
+      nestTargetId: null,
+      placement: null,
     });
   }, [onDragEnd]);
 
@@ -91,13 +108,15 @@ export function DndKitProvider({
 
   const handleCollisionDetection = useCallback<CollisionDetection>((args) => {
     if (!collisionDetection) return [];
-    return collisionDetection(args) as Collision[];
+    // dnd-kit's collision args carry `string | number` ids; ours are always
+    // the encoded strings we registered. The structural cast bridges that
+    // (and dnd-kit's arg shape has a superset of the fields we read).
+    return collisionDetection(
+      args as unknown as MediaStripDndCollisionDetectionArgs
+    ) as Collision[];
   }, [collisionDetection]);
 
-  const contextValue = useMemo(() => ({
-    adapter,
-    overlayPosition: null,
-  }), [adapter]);
+  const contextValue = useMemo(() => ({ adapter }), [adapter]);
 
   return (
     <MediaStripDndRuntimeContext.Provider value={contextValue}>
@@ -176,4 +195,12 @@ export const dndKitMediaStripDndAdapter = {
   Provider: DndKitProvider,
   SortableItem: DndKitSortableItem,
   SortableItems: DndKitSortableItems,
+  capabilities: {
+    supportsSortableTransforms: true,
+    supportsCollisionDetection: true,
+    supportsCustomDragOverlay: true,
+    supportsKeyboardSensor: false,
+    requiresManualAutoScroll: false,
+    requiresManualOverlayPosition: false,
+  },
 } satisfies MediaStripDndAdapter;

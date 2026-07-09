@@ -1,6 +1,7 @@
 import { type RefObject, type ReactNode, useMemo } from "react";
 
 import { ScrollArea, ScrollBar } from "../core/scroll-area";
+import { STRIP_SCROLL_AREA_HEIGHT_REM } from "./core/media-strip.utils";
 import { useHorizontalDragScroll } from "./use-horizontal-drag-scroll";
 
 type DraggableScrollAreaProps = {
@@ -40,7 +41,8 @@ export function DraggableScrollArea({
     >
       <ScrollArea
         aria-label={label}
-        className="h-[11rem] w-full max-w-full overflow-hidden"
+        className="w-full max-w-full overflow-hidden"
+        style={{ height: `${STRIP_SCROLL_AREA_HEIGHT_REM}rem` }}
         viewportRef={viewportRef}
       >
         {children}

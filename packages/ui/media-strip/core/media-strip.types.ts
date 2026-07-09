@@ -55,7 +55,7 @@ export const parseCollectionId = (
 // the `parse*` variants instead when the input is genuinely untrusted and the
 // caller can handle failure.
 
-export const asTimelineItemId = (id: string): TimelineItemId => {
+export const trustedTimelineItemId = (id: string): TimelineItemId => {
   const result = parseTimelineItemId(id);
   if (!result.ok) {
     throw new Error(`Invalid TimelineItemId: ${JSON.stringify(id)} (${result.error})`);
@@ -63,7 +63,7 @@ export const asTimelineItemId = (id: string): TimelineItemId => {
   return result.value;
 };
 
-export const asCollectionId = (id: string): CollectionId => {
+export const trustedCollectionId = (id: string): CollectionId => {
   const result = parseCollectionId(id);
   if (!result.ok) {
     throw new Error(`Invalid CollectionId: ${JSON.stringify(id)} (${result.error})`);
@@ -225,6 +225,20 @@ export type DndTarget =
   | Readonly<{ type: "collection-container"; collectionId: CollectionId }>
   | Readonly<{ type: "collection-nest-target"; collectionId: CollectionId }>;
 
+/**
+ * Where a drop will land, resolved unambiguously from raw pointer/collision
+ * data during a drag. Every adapter funnels through this same union so a
+ * consumer (the command resolver today, a future "drop here" visual
+ * indicator eventually) never has to re-derive "before, after, or inside?"
+ * from an item id and a hotspot flag — the type itself rules out the
+ * confusion between "insert next to this item" and "nest into this item".
+ */
+export type DropPlacement =
+  | Readonly<{ kind: "before"; itemId: TimelineItemId }>
+  | Readonly<{ kind: "after"; itemId: TimelineItemId }>
+  | Readonly<{ kind: "inside"; collectionId: CollectionId }>
+  | Readonly<{ kind: "container-end"; collectionId: CollectionId }>;
+
 export type KeyboardReorderAction =
   | "move-left"
   | "move-right"
@@ -233,5 +247,6 @@ export type KeyboardReorderAction =
   | "move-home"
   | "move-end"
   | "nest"
+  | "move-to-parent"
   | "confirm"
   | "cancel";
