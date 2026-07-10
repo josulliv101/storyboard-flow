@@ -7,6 +7,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph";
 import { useCollectionsSelector } from "../react/collections-store";
 import { NodeCard } from "../react/node-views";
+import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
 import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "../react/virtual-droppable";
 
 // Horizontal virtualized strip (phase 2 of VIRTUALIZATION-PLAN.md):
@@ -124,6 +125,8 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       },
       [setDroppableRef]
     );
+
+    useEdgeAutoScroll(scrollRef, "x");
 
     const focusNode = useCallback(
       (id: NodeId) => {

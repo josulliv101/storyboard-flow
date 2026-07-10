@@ -30,6 +30,7 @@ function paletteGraph() {
 }
 
 let nextImageId = 0;
+let nextCollectionId = 0;
 
 function PaletteBoard() {
   return (
@@ -50,6 +51,19 @@ function PaletteBoard() {
             }}
           >
             + New image
+          </PaletteItem>
+          <PaletteItem
+            paletteId="new-collection"
+            createNode={() => {
+              nextCollectionId += 1;
+              return {
+                id: parseNodeId(`col-${nextCollectionId}`),
+                kind: "collection",
+                name: `Collection ${nextCollectionId}`,
+              };
+            }}
+          >
+            + New collection
           </PaletteItem>
         </div>
         {/* Trash is a root, but only panel-a renders as a panel — hidden collection. */}
@@ -73,6 +87,11 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+/** Play-less twin for e2e (real mouse must not race an auto-running play). */
+export const PalettePlayground: Story = {
+  render: () => <PaletteBoard />,
+};
 
 export const PaletteDropAddsNewNode: Story = {
   render: () => <PaletteBoard />,
@@ -104,6 +123,39 @@ export const PaletteDropAddsNewNode: Story = {
     await user.click(within(canvasElement).getByRole("button", { name: /undo/i }));
     await waitFor(() => {
       expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", firstId, "bravo", "charlie"]);
+    });
+  },
+};
+
+export const PaletteDropAddsNewCollection: Story = {
+  // §11: a brand-new COLLECTION dragged in from the palette becomes a
+  // sibling card — empty, and immediately a functional drop target (the
+  // add-nodes patch gives it a children entry from birth).
+  render: () => <PaletteBoard />,
+  play: async ({ canvasElement }) => {
+    const palette = canvasElement.querySelector<HTMLElement>(
+      '[data-palette-item="new-collection"]'
+    )!;
+    const charlie = nodeCard(canvasElement, "charlie");
+    await waitForLayout(charlie);
+    const newId = `col-${nextCollectionId + 1}`;
+
+    // Drop on charlie's right half: the new collection inserts after it.
+    await dragToPoint(palette, rectPoint(charlie, 0.85));
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie", newId]);
+      expect(nodeCard(canvasElement, newId).getAttribute("aria-label")).toMatch(
+        /collection, 0 items/i
+      );
+    });
+
+    // The just-added collection accepts drops right away: nest alpha into it.
+    await dragToPoint(nodeCard(canvasElement, "alpha"), rectCenter(nodeCard(canvasElement, newId)));
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")).toEqual(["bravo", "charlie", newId]);
+      expect(nodeCard(canvasElement, newId).getAttribute("aria-label")).toMatch(
+        /collection, 1 items/i
+      );
     });
   },
 };

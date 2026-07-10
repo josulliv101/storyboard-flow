@@ -14,6 +14,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { getChildren, type NodeId } from "../core/graph";
 import { useCollectionsSelector } from "../react/collections-store";
 import { NodeCard } from "../react/node-views";
+import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
 import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "../react/virtual-droppable";
 
 // Vertical virtualized grid (phase 5 of VIRTUALIZATION-PLAN.md). Cells are
@@ -113,6 +114,8 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       },
       [setDroppableRef]
     );
+
+    useEdgeAutoScroll(scrollRef, "y");
 
     const focusNode = useCallback(
       (id: NodeId) => {

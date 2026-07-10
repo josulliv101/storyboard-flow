@@ -110,10 +110,19 @@ touches `VirtualStrip` alone).
    auto-scroll) and renders the boundary indicator in content coords.
    Story `DragIntoGapUsesVirtualBoundary` passes; main suite 15/15.
    COMPLETED (2026-07-10): `CrossStripMove` story (two strips, one
-   provider); e2e VERIFIED that dnd-kit's built-in autoScroll drives the
-   virtualized container while the live-scrollLeft boundary resolver
-   tracks it (drop across scroll boundary at 1,000 items), plus
-   left-edge insert-at-start e2e. Phase 3 DONE.
+   provider); drop-across-scroll-boundary + left-edge insert-at-start
+   e2e. Phase 3 DONE.
+   CORRECTION (2026-07-10, post-server-restart): dnd-kit's built-in
+   autoScroll does NOT engage for these containers (e2e probe: drag
+   active, intent resolving, pointer parked in the edge zone, zero
+   scrollBy calls ever issued — earlier "verified" runs hit a stale dev
+   server). Replaced with our own `react/use-edge-autoscroll.ts`: while
+   a drag is live (node drags via activeIds, palette drags via a live
+   dropIntent), a rAF loop scrolls the container when the pointer sits
+   in a 48px edge band, speed ∝ proximity. Wired into VirtualStrip (x)
+   and VirtualGrid (y); intents keep tracking because the boundary
+   resolvers read scroll positions live. Auto-scroll e2e passes against
+   a fresh server.
 4. Variable widths: estimate/measure/cache/invalidate + scroll stability
    tests (width update after metadata load).
    MOSTLY DONE (2026-07-10): `itemWidthFor(node)` prop — metadata-driven
