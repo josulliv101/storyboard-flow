@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -40,6 +41,7 @@ import {
   type CollectionsChange,
   type CollectionsStore,
 } from "./collections-store";
+import { CollectionsContainerContext } from "./container-context";
 import { NodeCardGhost } from "./node-views";
 
 // Provider wiring: dnd-kit supplies the sensors, its own collision built-ins
@@ -58,10 +60,22 @@ export type DndCollectionsProps = Readonly<{
 }>;
 
 export function DndCollections({ initialGraph, onChange, children }: DndCollectionsProps) {
+  // The store captures its options once, but callback props must stay fresh
+  // — a parent passing an inline closure over its latest state expects that
+  // version to be called. Route through a ref, updated in an effect (never
+  // during render): every commit lands before the next event can dispatch,
+  // so the ref is current by the time onChange can fire.
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  });
+
   // One store per component lifetime; the graph prop is intentionally
   // initial-only (the store is the source of truth thereafter).
   const [store] = useState<CollectionsStore>(() =>
-    createCollectionsStore(initialGraph, { onChange })
+    createCollectionsStore(initialGraph, {
+      onChange: (change) => onChangeRef.current?.(change),
+    })
   );
 
   return (
@@ -296,9 +310,13 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div ref={containerRef} onKeyDownCapture={handleKeyDownCapture} style={{ display: "contents" }}>
-        {children}
-      </div>
+      {/* The wrapper doubles as the instance boundary: keyboard delegation
+          here, and (via context) the scope for the FLIP measurement sweep. */}
+      <CollectionsContainerContext.Provider value={containerRef}>
+        <div ref={containerRef} onKeyDownCapture={handleKeyDownCapture} style={{ display: "contents" }}>
+          {children}
+        </div>
+      </CollectionsContainerContext.Provider>
       <CollectionsDragOverlay />
       <div
         aria-live="polite"

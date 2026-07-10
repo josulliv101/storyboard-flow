@@ -155,6 +155,7 @@ Rejections (`CommandRejection.reason`):
 | `missing-node` | A dragged id or `toParentId` isn't in the graph (or is unindexed). |
 | `target-not-collection` | `toParentId` is a media node. |
 | `cannot-move-root` | A dragged id is a top-level collection — roots are structural anchors. |
+| `duplicate-node-id` | The same id appears twice in `nodeIds` — a caller bug, rejected rather than deduped. |
 | `would-create-cycle` | A node would move into itself or its own descendant. |
 | `nothing-to-move` | Every dragged id was pruned (all descendants of other dragged ids). |
 | `same-position` | The move would leave every children array identical — treated as a no-op, nothing is pushed to history. |
@@ -330,7 +331,9 @@ collision detection, drag lifecycle → intent → command dispatch, the
 keyboard bindings.
 
 `initialGraph` is intentionally initial-only — the store is the source of
-truth thereafter; later prop changes are ignored.
+truth thereafter; later prop changes are ignored. `onChange` is NOT frozen
+with it: the latest callback prop is always the one invoked, so closures
+over current parent state behave as expected.
 
 Built-in keyboard bindings (on a focused card; chosen to avoid dnd-kit's
 KeyboardSensor grammar, which coexists):

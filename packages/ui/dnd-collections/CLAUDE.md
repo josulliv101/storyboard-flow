@@ -44,7 +44,9 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
 - **Displaced siblings don't re-render**, so per-card effects never fire for
   the cards a commit moved — that's why FLIP is a single graph-identity
   sweep in `use-flip-graph-animation.ts`. Don't convert it to per-card
-  effects, and don't let animation code influence the reducer.
+  effects, and don't let animation code influence the reducer. The sweep is
+  scoped to the provider's container (via `container-context.ts`) so
+  multiple instances stay isolated — never widen it back to the document.
 - New public exports go through the curated `index.ts`.
 
 ## Testing rules

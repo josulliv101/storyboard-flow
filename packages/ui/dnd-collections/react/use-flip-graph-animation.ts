@@ -15,13 +15,19 @@ import { useCollectionsSelector } from "./collections-store";
 // package's core efficiency property), so a per-card effect would never fire
 // for exactly the cards that shifted. The sweep is driven by graph identity,
 // runs before paint (useLayoutEffect), and measures rarely — only on
-// commits, never during drag moves. The rect registry is container-global,
-// which is what makes CROSS-PANEL moves animate: the card's previous rect
-// is remembered from its old panel.
+// commits, never during drag moves. The rect registry spans the whole
+// container, which is what makes CROSS-PANEL moves animate: the card's
+// previous rect is remembered from its old panel.
+//
+// Scope: the container is ONE DndCollections instance's wrapper (the
+// default views pass it from context). Both the query and the id-keyed
+// registry stay inside it, so multiple boards on a page — even ones reusing
+// node ids — never measure or animate each other's cards.
 //
 // Known, accepted gap: a panel whose own children did not change can still
 // shift on screen (a panel above it grew/shrank); those cards animate too —
-// the sweep is global — but content OUTSIDE the container doesn't.
+// the sweep covers the instance — but content outside the container never
+// does.
 
 const FLIP_DURATION_MS = 180;
 const FLIP_EASING = "cubic-bezier(0.2, 0, 0, 1)";

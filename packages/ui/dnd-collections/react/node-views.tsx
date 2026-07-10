@@ -6,6 +6,7 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph";
 import { encodeDropTarget } from "../core/intents";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
+import { useCollectionsContainer } from "./container-context";
 import { useFlipGraphAnimation } from "./use-flip-graph-animation";
 
 // Default views. Each NodeCard receives ONLY its id — every dynamic value
@@ -38,15 +39,13 @@ export function CollectionPanels({ collectionIds, animateMoves = true }: Collect
 /**
  * Rendered as a child so the graph subscription that drives the FLIP sweep
  * re-renders THIS empty component per commit, not the panel list itself.
- * Measures across the whole document (cards may live in sibling panels).
+ * Measures within the provider's container (from context) — wide enough for
+ * cross-panel moves, narrow enough that multiple DndCollections instances
+ * on one page (even ones reusing node ids) never measure each other's cards.
  */
 function FlipAnimator() {
-  const documentRef = useRef<HTMLElement | null>(null);
-  const setProbe = useCallback((el: HTMLElement | null) => {
-    documentRef.current = el ? (el.ownerDocument.body as HTMLElement) : null;
-  }, []);
-  useFlipGraphAnimation(documentRef);
-  return <span ref={setProbe} hidden />;
+  useFlipGraphAnimation(useCollectionsContainer());
+  return null;
 }
 
 export function CollectionPanel({ collectionId }: { collectionId: NodeId }) {

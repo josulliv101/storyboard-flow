@@ -179,6 +179,41 @@ describe("applyCommand: move-nodes", () => {
     expect(childNames(graph, "root-a")).toEqual(["A", "B", "C", "D", "F"]);
   });
 
+  test("rejects duplicate node ids instead of corrupting", () => {
+    // Pre-fix, [A, A] produced two moves for A: applyPatch removed it once
+    // from root-a but inserted it TWICE into root-b — a duplicate child.
+    // The UI can't produce this (drag sets come from a Set), but the
+    // reducer is public and must defend itself.
+    const graph = fixture();
+    const result = applyCommand(graph, {
+      type: "move-nodes",
+      nodeIds: ids(["A", "A"]),
+      toParentId: parseNodeId("root-b"),
+      toIndex: 0,
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { reason: "duplicate-node-id", nodeId: "A" },
+    });
+    expect(findGraphInvariantViolation(graph)).toBeNull();
+  });
+
+  test("rejects duplicates hidden inside a larger multi-node selection", () => {
+    const graph = fixture();
+    const result = applyCommand(graph, {
+      type: "move-nodes",
+      nodeIds: ids(["A", "B", "C", "B"]),
+      toParentId: parseNodeId("root-b"),
+      toIndex: 0,
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { reason: "duplicate-node-id", nodeId: "B" },
+    });
+    // Atomic rejection: nothing moved.
+    expect(childNames(graph, "root-a")).toEqual(["A", "B", "C", "D", "F"]);
+  });
+
   test("rejects same-position no-ops", () => {
     const graph = fixture();
     const result = applyCommand(graph, {

@@ -168,6 +168,42 @@ describe("findGraphInvariantViolation", () => {
     expect(violation && "id" in violation ? violation.id : violation?.reason).toBe("root-b");
   });
 
+  test("catches a collection node with no childrenById entry", () => {
+    // buildGraph always creates the entry; this shape only appears in
+    // hand-constructed or corrupted graphs — which is what the checker is
+    // for. A childless collection with a missing entry used to pass because
+    // only parents referenced via parentById were checked.
+    const graph = build([collection("root", [collection("leaf", [])])]);
+    const prunedChildren = new Map(graph.childrenById);
+    prunedChildren.delete(parseNodeId("leaf"));
+    const corrupted = { ...graph, childrenById: prunedChildren };
+    expect(findGraphInvariantViolation(corrupted)).toEqual({
+      reason: "collection-missing-children-entry",
+      id: "leaf",
+    });
+  });
+
+  test("catches a root collection with no childrenById entry", () => {
+    const graph = build([collection("root", [])]);
+    const corrupted = { ...graph, childrenById: new Map() };
+    expect(findGraphInvariantViolation(corrupted)).toEqual({
+      reason: "collection-missing-children-entry",
+      id: "root",
+    });
+  });
+
+  test("catches a dangling parentById key for a node that does not exist", () => {
+    const graph = build([collection("root", [media("m1")])]);
+    const corrupted = {
+      ...graph,
+      parentById: new Map([...graph.parentById, [parseNodeId("ghost"), parseNodeId("root")]]),
+    };
+    expect(findGraphInvariantViolation(corrupted)).toEqual({
+      reason: "missing-node",
+      id: "ghost",
+    });
+  });
+
   test("catches a parent pointer at a media node", () => {
     const graph = build([collection("root", [media("m1"), media("m2")])]);
     const corrupted = {

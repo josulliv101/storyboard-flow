@@ -224,6 +224,16 @@ export function findGraphInvariantViolation(
     }
   }
 
+  // EVERY collection node must have a childrenById entry ("always present,
+  // possibly empty" is part of the CollectionsGraph contract) — not just the
+  // ones some child's parent pointer happens to reference. A childless leaf
+  // or root collection with a missing entry would otherwise pass.
+  for (const [id, node] of graph.nodesById) {
+    if (node.kind === "collection" && !graph.childrenById.has(id)) {
+      return { reason: "collection-missing-children-entry", id };
+    }
+  }
+
   const seenChildren = new Set<NodeId>();
   for (const [collectionId, children] of graph.childrenById) {
     const collection = graph.nodesById.get(collectionId);
@@ -245,6 +255,10 @@ export function findGraphInvariantViolation(
   // children entry (a dangling parent pointer would make ancestor walks and
   // patch application disagree about the tree).
   for (const [childId, parentId] of graph.parentById) {
+    // A dangling parentById key (no node behind it) is index garbage no
+    // other loop sees: it's not in nodesById and needn't be in any children
+    // list.
+    if (!graph.nodesById.has(childId)) return { reason: "missing-node", id: childId };
     if (parentId === null) continue;
     const parentNode = graph.nodesById.get(parentId);
     if (!parentNode) return { reason: "missing-node", id: parentId };

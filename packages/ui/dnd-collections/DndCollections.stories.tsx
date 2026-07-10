@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
@@ -426,6 +427,113 @@ export const FlipAnimatesCommits: Story = {
         "folder-f",
         "delta",
       ]);
+    });
+  },
+};
+
+export const TwoInstancesStayIsolated: Story = {
+  // Two boards with IDENTICAL node ids — the sharp case for instance
+  // scoping. Graph state is isolated by construction (separate stores);
+  // this guards the DOM layers: the FLIP sweep and its id-keyed rect
+  // registry must stay inside one provider's container. Pre-fix, a
+  // body-wide sweep recorded board two's rects under board one's ids, so
+  // board one's undo animated its card from board TWO's position (a huge
+  // vertical delta).
+  render: () => (
+    <div className="flex flex-col gap-8">
+      <div data-testid="board-one">
+        <StandardBoard />
+      </div>
+      <div data-testid="board-two">
+        <StandardBoard />
+      </div>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const boardOne = canvasElement.querySelector<HTMLElement>('[data-testid="board-one"]')!;
+    const boardTwo = canvasElement.querySelector<HTMLElement>('[data-testid="board-two"]')!;
+    const user = userEvent.setup();
+
+    const alpha = nodeCard(boardOne, "alpha");
+    const charlie = nodeCard(boardOne, "charlie");
+    await waitForLayout(nodeCard(boardTwo, "charlie"));
+
+    await dragToPoint(alpha, rectPoint(charlie, 0.85));
+    await waitFor(() => {
+      expect(panelOrder(boardOne, "panel-a")[2]).toBe("alpha");
+    });
+    // Graph isolation: board two never moved.
+    expect(panelOrder(boardTwo, "panel-a")).toEqual([
+      "alpha",
+      "bravo",
+      "charlie",
+      "folder-f",
+      "delta",
+    ]);
+
+    // Undo commits synchronously in the click handler; FLIP animations are
+    // live when the awaited click returns.
+    await user.click(within(boardOne).getByRole("button", { name: /undo/i }));
+
+    // getAnimations() also reports CSS transitions (the card has
+    // transition-all), so pick out FLIP by its translate keyframe.
+    const flipTransforms = (el: HTMLElement) =>
+      el.getAnimations().flatMap((a) => {
+        if (!(a.effect instanceof KeyframeEffect)) return [];
+        const t = a.effect.getKeyframes()[0]?.transform;
+        return typeof t === "string" && t.startsWith("translate") ? [t] : [];
+      });
+
+    // Board one's alpha slides home WITHIN ITS ROW: the inverted transform
+    // must have a zero vertical component. A cross-instance rect collision
+    // would produce a large dy (the distance between the boards).
+    const transforms = flipTransforms(nodeCard(boardOne, "alpha"));
+    expect(transforms.length).toBeGreaterThan(0);
+    expect(transforms[0]).toMatch(/,\s*0px\)/);
+
+    // And board two's same-id cards are untouched by board one's commit.
+    for (const id of ["alpha", "bravo", "charlie"]) {
+      expect(flipTransforms(nodeCard(boardTwo, id))).toHaveLength(0);
+    }
+  },
+};
+
+function FreshOnChangeHarness() {
+  const [label, setLabel] = useState("stale");
+  const [seen, setSeen] = useState("none");
+  return (
+    <DndCollections initialGraph={standardGraph()} onChange={() => setSeen(label)}>
+      <div className="flex flex-col gap-4">
+        <button type="button" onClick={() => setLabel("fresh")}>
+          relabel
+        </button>
+        <output data-testid="seen-label">{seen}</output>
+        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} />
+      </div>
+    </DndCollections>
+  );
+}
+
+export const OnChangeStaysFresh: Story = {
+  // The store is created once, but callback props must not freeze with it:
+  // onChange closes over the parent's CURRENT state. Pre-fix, the store
+  // kept the first render's closure forever, so this story saw "stale".
+  render: () => <FreshOnChangeHarness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const alpha = nodeCard(canvasElement, "alpha");
+    await waitForLayout(alpha);
+
+    // Re-render with a new onChange closure BEFORE the first commit.
+    await user.click(canvas.getByRole("button", { name: /relabel/i }));
+
+    // Commit a move (keyboard path: same dispatch pipeline as pointer).
+    await user.click(alpha);
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+
+    await waitFor(() => {
+      expect(canvas.getByTestId("seen-label")).toHaveTextContent("fresh");
     });
   },
 };
