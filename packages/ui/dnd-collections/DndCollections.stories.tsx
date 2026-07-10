@@ -285,6 +285,10 @@ export const MultiSelectDrag: Story = {
       expect(alpha).toHaveAttribute("data-selected", "true");
       expect(charlie).toHaveAttribute("data-selected", "true");
     });
+    // §20: selection changes are announced to the live region.
+    await waitFor(() => {
+      expect(canvasElement.ownerDocument.body.textContent).toMatch(/2 items selected/i);
+    });
 
     // Dragging a selected card drags the whole selection; ghost shows +1.
     await dragHoldAt(alpha, rectPoint(xray, 0.15));

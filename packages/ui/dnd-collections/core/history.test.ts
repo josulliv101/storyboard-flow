@@ -30,7 +30,9 @@ describe("createHistory", () => {
 
     const undone = history.undo();
     // Inverted: from/to swapped.
-    expect(undone?.moves[0]).toMatchObject({ fromParentId: "b", toParentId: "a", toIndex: 1 });
+    expect(undone?.type).toBe("nodes-moved");
+    const undoneMove = undone?.type === "nodes-moved" ? undone.moves[0] : undefined;
+    expect(undoneMove).toMatchObject({ fromParentId: "b", toParentId: "a", toIndex: 1 });
     expect(history.canUndo()).toBe(false);
     expect(history.canRedo()).toBe(true);
   });
@@ -41,7 +43,8 @@ describe("createHistory", () => {
     history.undo();
 
     const redone = history.redo();
-    expect(redone?.moves[0]).toMatchObject({ fromParentId: "a", toParentId: "b" });
+    const redoneMove = redone?.type === "nodes-moved" ? redone.moves[0] : undefined;
+    expect(redoneMove).toMatchObject({ fromParentId: "a", toParentId: "b" });
     expect(history.canUndo()).toBe(true);
     expect(history.canRedo()).toBe(false);
   });

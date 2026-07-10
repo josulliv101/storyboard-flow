@@ -230,6 +230,71 @@ describe("resolveCommandFromIntent (post-removal index math)", () => {
     });
   });
 
+  test("insert-at-index: cross-collection uses the boundary as-is", () => {
+    // root-a children: [A, B, F, C]; X comes from root-b, so no dragged
+    // nodes sit before the boundary.
+    const result = resolveCommandFromIntent(
+      graph,
+      { type: "insert-at-index", collectionId: parseNodeId("root-a"), index: 2 },
+      ids(["X"])
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { type: "move-nodes", nodeIds: ["X"], toParentId: "root-a", toIndex: 2 },
+    });
+  });
+
+  test("insert-at-index: visible boundary converts to post-removal index", () => {
+    // Dragging A within root-a to visible boundary 2 (between B and F):
+    // A sits before the boundary -> post-removal index 1.
+    const result = resolveCommandFromIntent(
+      graph,
+      { type: "insert-at-index", collectionId: parseNodeId("root-a"), index: 2 },
+      ids(["A"])
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { type: "move-nodes", nodeIds: ["A"], toParentId: "root-a", toIndex: 1 },
+    });
+  });
+
+  test("insert-at-index: multi-drag subtracts every dragged node before the boundary", () => {
+    // Dragging A and B to visible boundary 3 -> two dragged before -> 1.
+    const result = resolveCommandFromIntent(
+      graph,
+      { type: "insert-at-index", collectionId: parseNodeId("root-a"), index: 3 },
+      ids(["A", "B"])
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { type: "move-nodes", nodeIds: ["A", "B"], toParentId: "root-a", toIndex: 1 },
+    });
+  });
+
+  test("insert-at-index: clamps an out-of-range boundary to the end", () => {
+    const result = resolveCommandFromIntent(
+      graph,
+      { type: "insert-at-index", collectionId: parseNodeId("root-a"), index: 99 },
+      ids(["A"])
+    );
+    expect(result).toEqual({
+      ok: true,
+      value: { type: "move-nodes", nodeIds: ["A"], toParentId: "root-a", toIndex: 3 },
+    });
+  });
+
+  test("insert-at-index: destination and cycle preview match the reducer", () => {
+    const intent = {
+      type: "insert-at-index",
+      collectionId: parseNodeId("F"),
+      index: 0,
+    } as const;
+    // Dragging F "into itself at index 0" is a cycle — the preview must
+    // flag it exactly as applyCommand would reject it.
+    expect(isIntentInvalid(graph, intent, ids(["F"]))).toBe(true);
+    expect(isIntentInvalid(graph, intent, ids(["A"]))).toBe(false);
+  });
+
   test("fails cleanly when the adjacency target vanished", () => {
     const result = resolveCommandFromIntent(
       graph,

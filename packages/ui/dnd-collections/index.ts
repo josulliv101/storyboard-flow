@@ -34,6 +34,7 @@ export {
   applyPatch,
   invertPatch,
   type CollectionsPatch,
+  type NodeAdd,
   type NodeMove,
 } from "./core/patches";
 export {
@@ -41,6 +42,7 @@ export {
   encodeDropTarget,
   intentDestination,
   isIntentInvalid,
+  resolveAddCommandFromIntent,
   resolveCommandFromIntent,
   resolveDropIntent,
   type DropIntent,
@@ -69,3 +71,18 @@ export {
 export { DndCollections, type DndCollectionsProps } from "./react/DndCollections";
 export { CollectionPanel, CollectionPanels, NodeCard, NodeCardGhost } from "./react/node-views";
 export { HistoryLog, UndoRedoControls } from "./react/history-views";
+export { PaletteItem, type PaletteItemProps } from "./react/palette";
+export { TrashTarget } from "./react/trash-target";
+
+// Virtualized views (see VIRTUALIZATION-PLAN.md; strip is phase 2 —
+// read-only rendering + selection + offscreen focus; DnD lands in phase 3)
+export {
+  VirtualStrip,
+  type VirtualStripHandle,
+  type VirtualStripProps,
+} from "./virtual/VirtualStrip";
+export {
+  VirtualGrid,
+  type VirtualGridHandle,
+  type VirtualGridProps,
+} from "./virtual/VirtualGrid";

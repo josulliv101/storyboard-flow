@@ -47,6 +47,117 @@ async function mouseDrag(
 }
 
 test.describe('DndCollections E2E', () => {
+  test('virtual strip mounts/unmounts items under real wheel scroll', async ({ page }) => {
+    await page.goto(storyPath('ui-dndcollectionsvirtual--virtual-playground'));
+    const strip = page.locator('[data-virtual-strip="strip"]');
+    await strip.locator('[data-node-id="m0"]').waitFor({ state: 'visible' });
+
+    // 1,000 items exist in the graph; only a viewport's worth in the DOM.
+    expect(await strip.locator('[data-node-id]').count()).toBeLessThan(50);
+
+    await strip.hover();
+    for (let i = 0; i < 8; i++) await page.mouse.wheel(8000, 0);
+
+    // Far items mount, the start of the strip unmounts.
+    await expect(strip.locator('[data-node-id="m0"]')).toHaveCount(0);
+    await expect(async () => {
+      const ids = await strip
+        .locator('[data-node-id]')
+        .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ''));
+      expect(ids.length).toBeGreaterThan(0);
+      expect(ids.length).toBeLessThan(50);
+      expect(ids.some((id) => Number(id.slice(1)) > 300)).toBe(true);
+    }).toPass();
+  });
+
+  test('virtual grid mounts/unmounts rows under real wheel scroll', async ({ page }) => {
+    await page.goto(storyPath('ui-dndcollectionsvirtualgrid--grid-playground'));
+    const grid = page.locator('[data-virtual-grid="grid"]');
+    await grid.locator('[data-node-id="m0"]').waitFor({ state: 'visible' });
+
+    expect(await grid.locator('[data-node-id]').count()).toBeLessThan(60);
+
+    await grid.hover();
+    for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 5000);
+
+    await expect(grid.locator('[data-node-id="m0"]')).toHaveCount(0);
+    await expect(async () => {
+      const ids = await grid
+        .locator('[data-node-id]')
+        .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ''));
+      expect(ids.length).toBeGreaterThan(0);
+      expect(ids.length).toBeLessThan(60);
+      expect(ids.some((id) => Number(id.slice(1)) > 300)).toBe(true);
+    }).toPass();
+  });
+
+  test('virtual strip: auto-scroll carries a drag across the scroll boundary', async ({
+    page,
+  }) => {
+    await page.goto(storyPath('ui-dndcollectionsvirtual--virtual-playground'));
+    const strip = page.locator('[data-virtual-strip="strip"]');
+    const m2 = strip.locator('[data-node-id="m2"]');
+    await m2.waitFor({ state: 'visible' });
+    const stripBox = await strip.boundingBox();
+    const box = await m2.boundingBox();
+
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box!.x + box!.width / 2 + 10, box!.y + 5, { steps: 3 });
+
+    // Park inside the container's right edge: dnd-kit's auto-scroller takes
+    // over, and the strip's boundary resolver reads scrollLeft live, so the
+    // intent keeps tracking while content flies by.
+    const edgeX = stripBox!.x + stripBox!.width - 10;
+    const midY = stripBox!.y + stripBox!.height / 2;
+    await page.mouse.move(edgeX, midY, { steps: 10 });
+    for (let i = 0; i < 10; i++) {
+      await page.waitForTimeout(100);
+      await page.mouse.move(edgeX - (i % 2), midY); // keep events flowing
+    }
+    const scrolled = await strip.evaluate((el) => el.scrollLeft);
+    expect(scrolled).toBeGreaterThan(300);
+    await page.mouse.up();
+
+    // The drop committed deep in the strip: back at the start, m2 is gone
+    // from its old slot.
+    await strip.evaluate((el) => {
+      el.scrollLeft = 0;
+    });
+    await expect(async () => {
+      const ids = await strip
+        .locator('[data-node-id]')
+        .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ''));
+      expect(ids.slice(0, 3)).toEqual(['m0', 'm1', 'm3']);
+      expect(ids).not.toContain('m2');
+    }).toPass();
+  });
+
+  test('virtual strip: drop at the left edge inserts at the start', async ({ page }) => {
+    await page.goto(storyPath('ui-dndcollectionsvirtual--virtual-playground'));
+    const strip = page.locator('[data-virtual-strip="strip"]');
+    const m0 = strip.locator('[data-node-id="m0"]');
+    const m3 = strip.locator('[data-node-id="m3"]');
+    await m3.waitFor({ state: 'visible' });
+    const m0Box = await m0.boundingBox();
+    const m3Box = await m3.boundingBox();
+
+    await page.mouse.move(m3Box!.x + m3Box!.width / 2, m3Box!.y + m3Box!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(m3Box!.x + m3Box!.width / 2 + 10, m3Box!.y + 5, { steps: 3 });
+    // Container padding just left of the first card: boundary 0.
+    await page.mouse.move(m0Box!.x - 4, m0Box!.y + m0Box!.height / 2, { steps: 12 });
+    await page.waitForTimeout(150);
+    await page.mouse.up();
+
+    await expect(async () => {
+      const ids = await strip
+        .locator('[data-node-id]')
+        .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ''));
+      expect(ids.slice(0, 4)).toEqual(['m3', 'm0', 'm1', 'm2']);
+    }).toPass();
+  });
+
   test('reorders within a collection (drop on right half = after)', async ({ page }) => {
     await page.goto(storyPath(PLAYGROUND));
 

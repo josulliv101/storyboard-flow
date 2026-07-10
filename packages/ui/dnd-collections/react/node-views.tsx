@@ -234,7 +234,10 @@ export function NodeCardGhost({
   return (
     <div
       data-testid="drag-ghost"
-      className="relative flex h-24 w-32 cursor-grabbing flex-col items-stretch justify-between rounded-md border border-primary bg-card p-2 text-left text-xs opacity-90 shadow-2xl select-none"
+      // Fill the DragOverlay wrapper: dnd-kit sizes it to the dragged
+      // element's measured rect, so the ghost matches the card's real
+      // display width — fixed OR variable (virtual strips).
+      className="relative flex h-full w-full cursor-grabbing flex-col items-stretch justify-between rounded-md border border-primary bg-card p-2 text-left text-xs opacity-90 shadow-2xl select-none"
     >
       <span className="truncate font-medium text-foreground">{node.name}</span>
       <span className="text-[10px] text-muted-foreground">

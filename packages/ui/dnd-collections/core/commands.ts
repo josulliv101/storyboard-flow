@@ -1,4 +1,5 @@
 import {
+  type CollectionItemNode,
   type CollectionsGraph,
   type NodeId,
   type Result,
@@ -6,7 +7,7 @@ import {
   getDocumentOrder,
   isSameOrAncestor,
 } from "./graph";
-import { type CollectionsPatch, type NodeMove, applyPatch } from "./patches";
+import { type CollectionsPatch, type NodeAdd, type NodeMove, applyPatch } from "./patches";
 
 // Commands are the ONLY way graph state changes. `applyCommand` validates,
 // constructs a reversible patch, and applies it via `applyPatch` — the same
@@ -15,19 +16,27 @@ import { type CollectionsPatch, type NodeMove, applyPatch } from "./patches";
 // collection, move across collections, nest, and multi-node moves are all
 // `move-nodes` with different inputs.
 
-export type CollectionsCommand = Readonly<{
-  type: "move-nodes";
-  /** In any order; descendants of other dragged nodes are pruned (a subtree moves with its root). */
-  nodeIds: readonly NodeId[];
-  toParentId: NodeId;
-  /**
-   * Insertion index in the target's children AFTER the dragged nodes have
-   * been removed from it (post-removal index). `resolveCommandFromIntent`
-   * does that math from on-screen positions — callers constructing commands
-   * directly must apply the same convention.
-   */
-  toIndex: number;
-}>;
+export type CollectionsCommand =
+  | Readonly<{
+      type: "move-nodes";
+      /** In any order; descendants of other dragged nodes are pruned (a subtree moves with its root). */
+      nodeIds: readonly NodeId[];
+      toParentId: NodeId;
+      /**
+       * Insertion index in the target's children AFTER the dragged nodes have
+       * been removed from it (post-removal index). `resolveCommandFromIntent`
+       * does that math from on-screen positions — callers constructing commands
+       * directly must apply the same convention.
+       */
+      toIndex: number;
+    }>
+  | Readonly<{
+      type: "add-nodes";
+      /** Brand-new nodes (palette drops); ids must not exist in the graph. New collections start empty. */
+      nodes: readonly CollectionItemNode[];
+      toParentId: NodeId;
+      toIndex: number;
+    }>;
 
 export type CommandRejection =
   | Readonly<{ reason: "missing-node"; nodeId: NodeId }>
@@ -36,6 +45,7 @@ export type CommandRejection =
   | Readonly<{ reason: "cannot-move-root"; nodeId: NodeId }>
   | Readonly<{ reason: "duplicate-node-id"; nodeId: NodeId }>
   | Readonly<{ reason: "nothing-to-move" }>
+  | Readonly<{ reason: "nothing-to-add" }>
   | Readonly<{ reason: "same-position" }>;
 
 export type ApplyCommandSuccess = Readonly<{
@@ -53,6 +63,27 @@ export function applyCommand(
   if (!target) return { ok: false, error: { reason: "missing-node", nodeId: toParentId } };
   if (target.kind !== "collection") {
     return { ok: false, error: { reason: "target-not-collection", nodeId: toParentId } };
+  }
+
+  if (command.type === "add-nodes") {
+    if (command.nodes.length === 0) return { ok: false, error: { reason: "nothing-to-add" } };
+    const batchIds = new Set<NodeId>();
+    for (const node of command.nodes) {
+      // A colliding id — with the graph or within the batch — would corrupt
+      // every index; ids are the addressing scheme.
+      if (graph.nodesById.has(node.id) || batchIds.has(node.id)) {
+        return { ok: false, error: { reason: "duplicate-node-id", nodeId: node.id } };
+      }
+      batchIds.add(node.id);
+    }
+    const insertAt = Math.max(0, Math.min(toIndex, getChildren(graph, toParentId).length));
+    const adds: NodeAdd[] = command.nodes.map((node, k) => ({
+      node,
+      parentId: toParentId,
+      index: insertAt + k,
+    }));
+    const patch: CollectionsPatch = { type: "nodes-added", adds };
+    return { ok: true, value: { graph: applyPatch(graph, patch), patch } };
   }
 
   // Validate every dragged id AND capture its parent up front. Roots are

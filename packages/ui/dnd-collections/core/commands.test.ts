@@ -272,6 +272,88 @@ describe("applyCommand: move-nodes", () => {
   });
 });
 
+describe("applyCommand: add-nodes", () => {
+  const newMedia = { id: parseNodeId("new-1"), kind: "media", name: "New", durationSeconds: 3 } as const;
+  const newFolder = { id: parseNodeId("new-c"), kind: "collection", name: "New folder" } as const;
+
+  test("inserts brand-new nodes at the index; new collections get a children entry", () => {
+    const graph = fixture();
+    const result = applyCommand(graph, {
+      type: "add-nodes",
+      nodes: [newMedia, newFolder],
+      toParentId: parseNodeId("root-a"),
+      toIndex: 1,
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(findGraphInvariantViolation(result.value.graph)).toBeNull();
+    expect(childNames(result.value.graph, "root-a")).toEqual([
+      "A", "new-1", "new-c", "B", "C", "D", "F",
+    ]);
+    expect(result.value.graph.childrenById.get(newFolder.id)).toEqual([]);
+  });
+
+  test("rejects id collisions with the graph and within the batch", () => {
+    const graph = fixture();
+    expect(
+      applyCommand(graph, {
+        type: "add-nodes",
+        nodes: [{ ...newMedia, id: parseNodeId("A") }],
+        toParentId: parseNodeId("root-a"),
+        toIndex: 0,
+      })
+    ).toEqual({ ok: false, error: { reason: "duplicate-node-id", nodeId: "A" } });
+    expect(
+      applyCommand(graph, {
+        type: "add-nodes",
+        nodes: [newMedia, newMedia],
+        toParentId: parseNodeId("root-a"),
+        toIndex: 0,
+      })
+    ).toEqual({ ok: false, error: { reason: "duplicate-node-id", nodeId: "new-1" } });
+  });
+
+  test("rejects empty adds and non-collection targets", () => {
+    const graph = fixture();
+    expect(
+      applyCommand(graph, {
+        type: "add-nodes",
+        nodes: [],
+        toParentId: parseNodeId("root-a"),
+        toIndex: 0,
+      })
+    ).toEqual({ ok: false, error: { reason: "nothing-to-add" } });
+    expect(
+      applyCommand(graph, {
+        type: "add-nodes",
+        nodes: [newMedia],
+        toParentId: parseNodeId("A"),
+        toIndex: 0,
+      })
+    ).toEqual({ ok: false, error: { reason: "target-not-collection", nodeId: "A" } });
+  });
+
+  test("add inverts to a removal and back (undo/redo round-trip)", () => {
+    const graph = fixture();
+    const { graph: added, patch } = apply(graph, {
+      type: "add-nodes",
+      nodes: [newMedia],
+      toParentId: parseNodeId("F"),
+      toIndex: 1,
+    });
+    expect(childNames(added, "F")).toEqual(["f1", "new-1"]);
+
+    const undone = applyPatch(added, invertPatch(patch));
+    expect(findGraphInvariantViolation(undone)).toBeNull();
+    expect(childNames(undone, "F")).toEqual(["f1"]);
+    expect(undone.nodesById.has(newMedia.id)).toBe(false);
+
+    const redone = applyPatch(undone, patch);
+    expect(findGraphInvariantViolation(redone)).toBeNull();
+    expect(childNames(redone, "F")).toEqual(["f1", "new-1"]);
+    expect(redone.nodesById.get(newMedia.id)).toEqual(newMedia);
+  });
+});
+
 describe("patch inversion round-trips", () => {
   function roundTrip(graph: CollectionsGraph, command: CollectionsCommand) {
     const { graph: next, patch } = apply(graph, command);
