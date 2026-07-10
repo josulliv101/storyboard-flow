@@ -132,15 +132,97 @@ test.describe('DndCollections E2E', () => {
     }).toPass();
   });
 
+  test('strip pan: real-mouse flick on a card body scrolls with momentum, no drag/select', async ({
+    page,
+  }) => {
+    await page.goto(storyPath('ui-dndcollectionsvirtual--virtual-playground'));
+    const strip = page.locator('[data-virtual-strip="strip"]');
+    const m3 = strip.locator('[data-node-id="m3"]');
+    await m3.waitFor({ state: 'visible' });
+    const box = await m3.boundingBox();
+    const startX = box!.x + box!.width / 2;
+    const y = box!.y + box!.height / 2;
+
+    await page.mouse.move(startX, y);
+    await page.mouse.down();
+    for (let i = 1; i <= 4; i++) {
+      await page.mouse.move(startX - i * 30, y);
+      await page.waitForTimeout(16);
+    }
+    await page.mouse.up();
+
+    // Panned while held, then keeps gliding after release.
+    const atRelease = await strip.evaluate((el) => el.scrollLeft);
+    expect(atRelease).toBeGreaterThan(80);
+    await expect(async () => {
+      expect(await strip.evaluate((el) => el.scrollLeft)).toBeGreaterThan(atRelease + 30);
+    }).toPass();
+
+    // The pan neither started an item drag nor selected the card (the
+    // post-pan click is suppressed).
+    expect(await page.locator('[data-testid="drag-ghost"]').count()).toBe(0);
+    expect(await strip.locator('[data-selected]').count()).toBe(0);
+  });
+
+  test('strip hold-to-drag: real-mouse press-and-hold drags the item; fast flick pans', async ({
+    page,
+  }) => {
+    await page.goto(storyPath('ui-dndcollectionsvirtual--hold-playground'));
+    const strip = page.locator('[data-virtual-strip="strip"]');
+    const m0 = strip.locator('[data-node-id="m0"]');
+    await m0.waitFor({ state: 'visible' });
+
+    // Press and HOLD the body past the 250ms delay, then drag to the m1/m2
+    // gap: an item drag, not a pan.
+    const m0Box = await m0.boundingBox();
+    const m1Box = await strip.locator('[data-node-id="m1"]').boundingBox();
+    const m2Box = await strip.locator('[data-node-id="m2"]').boundingBox();
+    const gapX = (m1Box!.x + m1Box!.width + m2Box!.x) / 2;
+    const gapY = m1Box!.y + m1Box!.height / 2;
+
+    await page.mouse.move(m0Box!.x + m0Box!.width / 2, m0Box!.y + m0Box!.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(350); // past the hold delay — drag activates
+    await page.mouse.move(gapX, gapY, { steps: 10 });
+    await page.waitForTimeout(150);
+    await page.mouse.up();
+
+    await expect(async () => {
+      const ids = await panelIds(strip);
+      expect(ids.slice(0, 3)).toEqual(['m1', 'm0', 'm2']);
+      expect(await strip.evaluate((el) => el.scrollLeft)).toBe(0); // no pan happened
+    }).toPass();
+
+    // Fast flick (well under the delay): pans instead of dragging.
+    const box = await strip.locator('[data-node-id="m3"]').boundingBox();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 4; i++) {
+      await page.mouse.move(box!.x + box!.width / 2 - i * 30, box!.y + box!.height / 2);
+      await page.waitForTimeout(16);
+    }
+    await page.mouse.up();
+    await expect(async () => {
+      expect(await strip.evaluate((el) => el.scrollLeft)).toBeGreaterThan(80);
+    }).toPass();
+    expect(await page.locator('[data-testid="drag-ghost"]').count()).toBe(0);
+
+    async function panelIds(container: typeof strip) {
+      return container
+        .locator('[data-node-id]')
+        .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ''));
+    }
+  });
+
   test('virtual strip: auto-scroll carries a drag across the scroll boundary', async ({
     page,
   }) => {
     await page.goto(storyPath('ui-dndcollectionsvirtual--virtual-playground'));
     const strip = page.locator('[data-virtual-strip="strip"]');
-    const m2 = strip.locator('[data-node-id="m2"]');
-    await m2.waitFor({ state: 'visible' });
+    const m2Handle = strip.locator('[data-drag-handle="m2"]');
+    await m2Handle.waitFor({ state: 'visible' });
     const stripBox = await strip.boundingBox();
-    const box = await m2.boundingBox();
+    const box = await m2Handle.boundingBox();
 
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
     await page.mouse.down();
@@ -178,10 +260,10 @@ test.describe('DndCollections E2E', () => {
     await page.goto(storyPath('ui-dndcollectionsvirtual--virtual-playground'));
     const strip = page.locator('[data-virtual-strip="strip"]');
     const m0 = strip.locator('[data-node-id="m0"]');
-    const m3 = strip.locator('[data-node-id="m3"]');
-    await m3.waitFor({ state: 'visible' });
+    const m3Handle = strip.locator('[data-drag-handle="m3"]');
+    await m3Handle.waitFor({ state: 'visible' });
     const m0Box = await m0.boundingBox();
-    const m3Box = await m3.boundingBox();
+    const m3Box = await m3Handle.boundingBox();
 
     await page.mouse.move(m3Box!.x + m3Box!.width / 2, m3Box!.y + m3Box!.height / 2);
     await page.mouse.down();

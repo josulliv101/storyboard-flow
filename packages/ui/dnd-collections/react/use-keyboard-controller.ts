@@ -103,8 +103,13 @@ export function useCollectionsKeyboard(args: {
   const handleKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent) => {
       if (!event.altKey || event.ctrlKey || event.metaKey) return;
-      const card = (event.target as HTMLElement).closest?.("[data-node-id]");
-      const rawId = card?.getAttribute("data-node-id");
+      // The focused element is either the card button (data-node-id) or its
+      // grip bar — a sibling inside the data-node-wrapper host.
+      const card = (event.target as HTMLElement).closest?.(
+        "[data-node-id], [data-node-wrapper]"
+      );
+      const rawId =
+        card?.getAttribute("data-node-id") ?? card?.getAttribute("data-node-wrapper");
       if (!rawId) return;
       const nodeId = rawId as NodeId;
 

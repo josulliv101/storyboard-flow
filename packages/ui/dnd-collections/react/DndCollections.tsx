@@ -5,7 +5,6 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
   closestCenter,
   pointerWithin,
   useSensor,
@@ -34,6 +33,7 @@ import {
 } from "./collections-store";
 import { CollectionsContainerContext } from "./container-context";
 import { NodeCardGhost } from "./node-views";
+import { CollectionsPointerSensor } from "./pointer-sensors";
 import { useLiveAnnouncements } from "./use-announcements";
 import { useCollectionsKeyboard } from "./use-keyboard-controller";
 import { usePaletteDrag } from "./use-palette-drag";
@@ -86,8 +86,14 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
   const store = useCollectionsStore();
   const { announcement, announce } = useLiveAnnouncements(store);
 
+  // Pointer activation is per-TARGET (see react/pointer-sensors.ts):
+  // instant distance activation everywhere, press-and-hold on card bodies
+  // marked data-drag-activation="hold" — tolerance hands fast movements to
+  // pan-to-scroll instead of starting a drag. One sensor by necessity:
+  // dnd-kit keys synthetic listeners by event name, so a second pointer
+  // sensor would replace the first, not join it.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(CollectionsPointerSensor),
     useSensor(KeyboardSensor)
   );
 

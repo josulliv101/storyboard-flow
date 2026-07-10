@@ -7,7 +7,14 @@ import { DndCollections } from "./react/DndCollections";
 import { PaletteItem } from "./react/palette";
 import { VirtualGrid } from "./virtual/VirtualGrid";
 import { VirtualStrip } from "./virtual/VirtualStrip";
-import { dragToPoint, gapBetween, nodeCard, rectCenter, waitForLayout } from "./stories-helpers";
+import {
+  dragToPoint,
+  gapBetween,
+  nodeCard,
+  nodeHandle,
+  rectCenter,
+  waitForLayout,
+} from "./stories-helpers";
 
 // Phase 5 coverage: a fixed-cell, row-virtualized grid — 1,000 nodes with a
 // bounded DOM, and gap drops resolving through 2D boundary math into the
@@ -111,7 +118,8 @@ export const StripToGridMove: Story = {
     </DndCollections>
   ),
   play: async ({ canvasElement }) => {
-    const s0 = nodeCard(canvasElement, "s0");
+    // s0 lives in a strip: item drags start on its grip bar (the body pans).
+    const s0 = nodeHandle(canvasElement, "s0");
     const g1 = nodeCard(canvasElement, "g1");
     const g2 = nodeCard(canvasElement, "g2");
     await waitForLayout(g2);

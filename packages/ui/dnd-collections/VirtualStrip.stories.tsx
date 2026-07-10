@@ -7,11 +7,13 @@ import { useCollectionsStore } from "./react/collections-store";
 import { DndCollections } from "./react/DndCollections";
 import { VirtualStrip, type VirtualStripHandle } from "./virtual/VirtualStrip";
 import {
+  dispatchPointerSequence,
   dragHoldAt,
   dragToPoint,
   gapBetween,
   moveHeldPointer,
   nodeCard,
+  nodeHandle,
   rectCenter,
   releaseAt,
   waitForLayout,
@@ -33,7 +35,13 @@ function bigGraph() {
   return result.value;
 }
 
-function StripHarness({ focusTarget }: { focusTarget?: string }) {
+function StripHarness({
+  focusTarget,
+  activation = "handle",
+}: {
+  focusTarget?: string;
+  activation?: "handle" | "hold";
+}) {
   const handle = useRef<VirtualStripHandle>(null);
   return (
     <DndCollections initialGraph={bigGraph()}>
@@ -43,7 +51,11 @@ function StripHarness({ focusTarget }: { focusTarget?: string }) {
             focus target
           </button>
         )}
-        <VirtualStrip ref={handle} collectionId={parseNodeId("strip")} />
+        <VirtualStrip
+          ref={handle}
+          collectionId={parseNodeId("strip")}
+          itemDragActivation={activation}
+        />
       </div>
     </DndCollections>
   );
@@ -101,7 +113,7 @@ export const DragIntoGapUsesVirtualBoundary: Story = {
   // offset in content coordinates.
   render: () => <StripHarness />,
   play: async ({ canvasElement }) => {
-    const m5 = nodeCard(canvasElement, "m5");
+    const m5 = nodeHandle(canvasElement, "m5");
     const m1 = nodeCard(canvasElement, "m1");
     const m2 = nodeCard(canvasElement, "m2");
     await waitForLayout(m2);
@@ -171,7 +183,7 @@ export const VariableWidthItems: Story = {
     // Gap drop between two UNEQUAL cards resolves the measured boundary:
     // m0 into the m2/m3 gap -> visible boundary 3 -> lands after m2.
     const gap = gapBetween(nodeCard(canvasElement, "m2"), nodeCard(canvasElement, "m3"));
-    await dragHoldAt(m0, gap);
+    await dragHoldAt(nodeHandle(canvasElement, "m0"), gap);
 
     // The drag ghost matches the dragged card's DISPLAY width (48px for a
     // 2s item), not a fixed card size — dnd-kit sizes the overlay to the
@@ -223,7 +235,7 @@ export const NestIntoCollectionOnStrip: Story = {
     </DndCollections>
   ),
   play: async ({ canvasElement }) => {
-    const m0 = nodeCard(canvasElement, "m0");
+    const m0 = nodeHandle(canvasElement, "m0");
     const folder = nodeCard(canvasElement, "folder");
     await waitForLayout(folder);
 
@@ -248,6 +260,53 @@ export const NestIntoCollectionOnStrip: Story = {
       expect(nodeCard(canvasElement, "folder").getAttribute("aria-label")).toMatch(
         /collection, 2 items/i
       );
+    });
+  },
+};
+
+export const EmptyStripReceivesDrops: Story = {
+  // An EMPTY virtual strip shows a drop affordance and accepts drops — the
+  // container droppable resolves boundary 0 with no cards mounted at all.
+  render: () => (
+    <DndCollections
+      initialGraph={(() => {
+        const result = buildGraph([
+          {
+            kind: "collection",
+            id: "strip-a",
+            name: "Strip A",
+            children: [
+              { kind: "media", id: "a0", name: "A0", durationSeconds: 4 },
+              { kind: "media", id: "a1", name: "A1", durationSeconds: 4 },
+            ],
+          },
+          { kind: "collection", id: "strip-b", name: "Strip B", children: [] },
+        ]);
+        if (!result.ok) throw new Error(JSON.stringify(result.error));
+        return result.value;
+      })()}
+    >
+      <div className="flex w-[640px] flex-col gap-6">
+        <VirtualStrip collectionId={parseNodeId("strip-a")} />
+        <VirtualStrip collectionId={parseNodeId("strip-b")} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const emptyStrip = canvasElement.querySelector<HTMLElement>(
+      '[data-virtual-strip="strip-b"]'
+    )!;
+    await waitForLayout(nodeCard(canvasElement, "a0"));
+    expect(emptyStrip.textContent).toMatch(/drop items here/i);
+
+    await dragToPoint(nodeHandle(canvasElement, "a0"), rectCenter(emptyStrip));
+
+    await waitFor(() => {
+      const ids = [...emptyStrip.querySelectorAll<HTMLElement>("[data-node-id]")].map(
+        (el) => el.dataset.nodeId
+      );
+      expect(ids).toEqual(["a0"]);
+      expect(emptyStrip.textContent).not.toMatch(/drop items here/i);
     });
   },
 };
@@ -345,7 +404,7 @@ export const CrossStripMove: Story = {
     </DndCollections>
   ),
   play: async ({ canvasElement }) => {
-    const m0 = nodeCard(canvasElement, "m0");
+    const m0 = nodeHandle(canvasElement, "m0");
     const b0 = nodeCard(canvasElement, "b0");
     const b1 = nodeCard(canvasElement, "b1");
     await waitForLayout(b1);
@@ -403,11 +462,11 @@ export const MultiSelectWithOffscreenItem: Story = {
     // The other selected node is offscreen — genuinely not in the DOM.
     expect(canvasElement.querySelector('[data-node-id="m500"]')).toBeNull();
 
-    // Dragging the mounted member drags the whole selection: +1 badge.
+    // Dragging the mounted member (via its grip) drags the whole selection.
     const m3 = nodeCard(canvasElement, "m3");
     const m4 = nodeCard(canvasElement, "m4");
     const gap = gapBetween(m3, m4);
-    await dragHoldAt(m1, gap);
+    await dragHoldAt(nodeHandle(canvasElement, "m1"), gap);
     await waitFor(() => {
       expect(canvasElement.querySelector('[data-testid="drag-ghost-count"]')).toHaveTextContent(
         "+1"
@@ -426,6 +485,102 @@ export const MultiSelectWithOffscreenItem: Story = {
   },
 };
 
+export const PanToScrollWithMomentum: Story = {
+  // Phase 8: dragging the CARD BODY (item drags live on the grip bar now)
+  // pans the scroll position directly — no dnd-kit drag starts — and
+  // releasing with velocity keeps the strip gliding (inertia). Real-mouse
+  // click suppression after a pan is covered by the e2e flick test.
+  render: () => <StripHarness />,
+  play: async ({ canvasElement }) => {
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+    const m3 = nodeCard(canvasElement, "m3");
+    await waitForLayout(m3);
+    const body = rectCenter(m3);
+
+    // Fast leftward drag from a card BODY: 120px over ~3 frames.
+    await dispatchPointerSequence([
+      { element: m3, type: "pointerdown", clientX: body.x, clientY: body.y },
+      { element: m3, type: "pointermove", clientX: body.x - 40, clientY: body.y, delayAfterMs: 16 },
+      { element: m3, type: "pointermove", clientX: body.x - 80, clientY: body.y, delayAfterMs: 16 },
+      { element: m3, type: "pointermove", clientX: body.x - 120, clientY: body.y, delayAfterMs: 16 },
+    ]);
+
+    // Panning is not a drag: no ghost, and the pan tracked the pointer.
+    expect(canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')).toBeNull();
+    expect(strip.scrollLeft).toBeGreaterThan(100);
+
+    await dispatchPointerSequence([
+      { element: m3, type: "pointerup", clientX: body.x - 120, clientY: body.y, delayAfterMs: 30 },
+    ]);
+
+    // Momentum: the strip keeps gliding after release.
+    const atRelease = strip.scrollLeft;
+    await waitFor(() => {
+      expect(strip.scrollLeft).toBeGreaterThan(atRelease + 30);
+    });
+  },
+};
+
+/** Play-less twin (hold mode) for e2e. */
+export const HoldPlayground: Story = {
+  render: () => <StripHarness activation="hold" />,
+};
+
+export const HoldToDragActivation: Story = {
+  // itemDragActivation="hold": the card body serves BOTH gestures. Fast
+  // movement pans (the hold sensor's tolerance cancels activation); a
+  // still press past the 250ms delay starts an item drag, and the pan
+  // hook yields (isGestureClaimed).
+  render: () => <StripHarness activation="hold" />,
+  play: async ({ canvasElement }) => {
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+    // No grip bars in hold mode.
+    expect(canvasElement.querySelector("[data-drag-handle]")).toBeNull();
+
+    // Gesture 1 — fast body drag: pans, no item drag.
+    const m3 = nodeCard(canvasElement, "m3");
+    const body = rectCenter(m3);
+    await dispatchPointerSequence([
+      { element: m3, type: "pointerdown", clientX: body.x, clientY: body.y },
+      { element: m3, type: "pointermove", clientX: body.x - 60, clientY: body.y, delayAfterMs: 16 },
+      { element: m3, type: "pointermove", clientX: body.x - 120, clientY: body.y, delayAfterMs: 16 },
+      { element: m3, type: "pointerup", clientX: body.x - 120, clientY: body.y, delayAfterMs: 30 },
+    ]);
+    expect(canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')).toBeNull();
+    expect(strip.scrollLeft).toBeGreaterThan(80);
+
+    // Stop the glide (wheel cancels it) and rewind for gesture 2.
+    strip.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+    strip.scrollLeft = 0;
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+
+    // Gesture 2 — press and HOLD (past 250ms), then move: item drag, no pan.
+    const m0 = nodeCard(canvasElement, "m0");
+    const start = rectCenter(m0);
+    const target = gapBetween(nodeCard(canvasElement, "m1"), nodeCard(canvasElement, "m2"));
+    await dispatchPointerSequence([
+      { element: m0, type: "pointerdown", clientX: start.x, clientY: start.y, delayAfterMs: 320 },
+      { element: m0, type: "pointermove", clientX: target.x, clientY: target.y, delayAfterMs: 50 },
+      { element: m0, type: "pointermove", clientX: target.x, clientY: target.y, delayAfterMs: 150 },
+    ]);
+    expect(
+      canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')
+    ).not.toBeNull();
+    expect(strip.scrollLeft).toBe(0); // the pan yielded to the drag
+
+    await dispatchPointerSequence([
+      { element: m0, type: "pointerup", clientX: target.x, clientY: target.y, delayAfterMs: 50 },
+    ]);
+    await waitFor(() => {
+      const ids = [...strip.querySelectorAll<HTMLElement>("[data-node-id]")].map(
+        (el) => el.dataset.nodeId
+      );
+      expect(ids.slice(0, 3)).toEqual(["m1", "m0", "m2"]);
+    });
+  },
+};
+
 export const RenderEfficiencyAtThousandItems: Story = {
   // §18 at scale: with 1,000 nodes in the graph, dragging across DIFFERENT
   // insertion boundaries (each one a store intent change re-rendering the
@@ -436,8 +591,8 @@ export const RenderEfficiencyAtThousandItems: Story = {
     const m1 = nodeCard(canvasElement, "m1");
     const m2 = nodeCard(canvasElement, "m2");
     const m3 = nodeCard(canvasElement, "m3");
-    const m5 = nodeCard(canvasElement, "m5");
-    await waitForLayout(m5);
+    const m5 = nodeHandle(canvasElement, "m5");
+    await waitForLayout(m3);
 
     await dragHoldAt(m5, gapBetween(m1, m2));
     await waitFor(() => {

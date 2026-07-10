@@ -1,22 +1,36 @@
 "use client";
 
-import { forwardRef, useCallback, useImperativeHandle, useRef } from "react";
+import { forwardRef, useCallback, useImperativeHandle, useMemo, useRef } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph";
-import { useCollectionsSelector } from "../react/collections-store";
-import { NodeCard } from "../react/node-views";
+import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
+import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
+import {
+  usePanWithMomentum,
+  type PanWithMomentumOptions,
+} from "../react/use-pan-with-momentum";
 import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "../react/virtual-droppable";
 
-// Horizontal virtualized strip (phase 2 of VIRTUALIZATION-PLAN.md):
-// renders only visible cards + overscan out of arbitrarily large
-// collections. Cards ARE the standard NodeCard — virtualization changes
-// WHICH ids mount, never how a card works — so selection, drag-source
-// dimming, and store subscriptions come along unchanged. Fixed item width
-// for now; the variable-width measurement pipeline is phase 4. DnD over
-// unmounted regions (container-collision → insert-at-index) is phase 3.
+// Horizontal virtualized strip: renders only visible cards + overscan out
+// of arbitrarily large collections. Cards ARE the standard NodeCard —
+// virtualization changes WHICH ids mount, never how a card works — so
+// selection, drag-source dimming, and store subscriptions come along
+// unchanged. DnD over gaps and unmounted regions resolves through the
+// container droppable (pointer offset → insert-at-index); widths are fixed
+// or metadata-driven via itemWidthFor; the surface pans to scroll with
+// momentum, with item drags on grip bars or behind press-and-hold.
+
+// Only grip bars are exclusively item-drag territory — card BODIES, gaps,
+// and background all pan. (Hold-mode bodies pan too: a fast move cancels
+// the hold sensor's activation, and if the hold DOES fire first, the pan
+// yields via isGestureClaimed.) Module-level so option identities are
+// stable.
+const isPannableStripSurface = (target: Element): boolean =>
+  !target.closest("[data-drag-handle]");
+const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
 
 export type VirtualStripProps = Readonly<{
   collectionId: NodeId;
@@ -34,6 +48,14 @@ export type VirtualStripProps = Readonly<{
   gap?: number;
   /** Extra items rendered on each side of the viewport. */
   overscan?: number;
+  /** Drag the strip surface to scroll it, with momentum on release. Default on. */
+  panToScroll?: boolean;
+  /**
+   * How item drags start when panToScroll is on: from a grip bar
+   * ("handle", default) or by press-and-holding the card body ("hold").
+   * Ignored when panToScroll is off (bodies drag instantly).
+   */
+  itemDragActivation?: "handle" | "hold";
   className?: string;
 }>;
 
@@ -55,16 +77,24 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       itemHeight = 96,
       gap = 8,
       overscan = 4,
+      panToScroll = true,
+      itemDragActivation = "handle",
       className,
     },
     ref
   ) {
+    const store = useCollectionsStore();
+    const cardActivation: NodeCardDragActivation = panToScroll ? itemDragActivation : "body";
     // Stable array reference between commits — the virtualizer's item keys
     // and index math stay coherent across drags for free.
     const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
     // nodesById is never re-allocated by moves, so this subscription is inert.
     const nodesById = useCollectionsSelector((s) => s.graph.nodesById);
     const scrollRef = useRef<HTMLDivElement>(null);
+    // The content spacer: boundary math measures ITS live rect, so scroll
+    // position and container padding are accounted for without hardcoded
+    // assumptions (a consumer className can restyle padding freely).
+    const contentRef = useRef<HTMLDivElement>(null);
 
     const widthForIndex = (index: number): number => {
       const node = nodesById.get(childIds[index]);
@@ -97,12 +127,12 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
 
     // Pointer -> visible boundary index from the virtualizer's measurements
     // (O(log n), variable widths included) — never from card rects, since
-    // most cards aren't mounted. Reads scrollLeft live, so intents keep
-    // updating during (auto-)scroll.
+    // most cards aren't mounted. The spacer's rect shifts with scroll, so
+    // measuring against it keeps intents live during (auto-)scroll too.
     const resolveBoundary = (point: Readonly<{ x: number; y: number }>): number => {
-      const el = scrollRef.current;
-      if (!el) return childIds.length;
-      const contentX = point.x - el.getBoundingClientRect().left + el.scrollLeft - 8; // p-2
+      const content = contentRef.current;
+      if (!content || childIds.length === 0) return childIds.length;
+      const contentX = point.x - content.getBoundingClientRect().left;
       if (contentX <= 0) return 0;
       if (contentX >= virtualizer.getTotalSize()) return childIds.length;
       const item = virtualizer.getVirtualItemForOffset(contentX);
@@ -127,6 +157,18 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     );
 
     useEdgeAutoScroll(scrollRef, "x");
+    const panOptions = useMemo<PanWithMomentumOptions>(
+      () =>
+        panToScroll
+          ? {
+              shouldStartPan: isPannableStripSurface,
+              // Hold-to-drag can claim a press mid-slop; the pan stands down.
+              isGestureClaimed: () => store.getSnapshot().interaction.isDragging,
+            }
+          : STRIP_PAN_DISABLED,
+      [panToScroll, store]
+    );
+    usePanWithMomentum(scrollRef, "x", panOptions);
 
     const focusNode = useCallback(
       (id: NodeId) => {
@@ -182,11 +224,19 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         ref={setContainerRef}
         data-virtual-strip={collectionId}
         className={[
-          "overflow-x-auto rounded-md border border-dashed border-border p-2",
+          "relative overflow-x-auto rounded-md border border-dashed border-border p-2",
           className ?? "",
         ].join(" ")}
+        // Vertical touch scrolling stays native; horizontal is ours (pan hook).
+        style={{ touchAction: "pan-y" }}
       >
+        {childIds.length === 0 && (
+          <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-2 text-xs text-muted-foreground select-none">
+            Drop items here
+          </p>
+        )}
         <div
+          ref={contentRef}
           style={{ width: virtualizer.getTotalSize(), height: itemHeight, position: "relative" }}
         >
           {indicatorLeft !== null && (
@@ -210,8 +260,14 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                 transform: `translateX(${item.start}px)`,
               }}
             >
-              {/* Explicit sizing: the card fills its (possibly variable) slot. */}
-              <NodeCard id={childIds[item.index]} className="h-full w-full" />
+              {/* Explicit sizing: the card fills its (possibly variable) slot.
+                  With panToScroll, item drags move to the grip bar or behind
+                  a press-and-hold so the body is free to pan the strip. */}
+              <NodeCard
+                id={childIds[item.index]}
+                className="h-full w-full"
+                dragActivation={cardActivation}
+              />
             </div>
           ))}
         </div>

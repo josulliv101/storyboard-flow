@@ -58,6 +58,10 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
   ) {
     const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
     const scrollRef = useRef<HTMLDivElement>(null);
+    // The content spacer: boundary math and column measurement use ITS
+    // live rect/width, so scroll position and container padding are
+    // accounted for without hardcoded assumptions.
+    const contentRef = useRef<HTMLDivElement>(null);
 
     // Responsive column count from the container's content width, unless
     // pinned by the prop.
@@ -66,10 +70,10 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       if (columns !== undefined) return;
       const el = scrollRef.current;
       if (!el) return;
-      const compute = () =>
-        setMeasuredColumns(
-          Math.max(1, Math.floor((el.clientWidth - 16 + gap) / (cellWidth + gap)))
-        );
+      const compute = () => {
+        const width = contentRef.current?.clientWidth ?? el.clientWidth;
+        setMeasuredColumns(Math.max(1, Math.floor((width + gap) / (cellWidth + gap))));
+      };
       compute();
       const observer = new ResizeObserver(compute);
       observer.observe(el);
@@ -89,13 +93,14 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
 
     // Pointer -> visible boundary index: row from y (floor — the row under
     // the pointer), column boundary from x (round — nearest gap between
-    // cells). Reads scrollTop live, so intents track (auto-)scroll.
+    // cells). The spacer's rect shifts with scroll, so measuring against it
+    // keeps intents live during (auto-)scroll too.
     const resolveBoundary = (point: Readonly<{ x: number; y: number }>): number => {
-      const el = scrollRef.current;
-      if (!el || childIds.length === 0) return childIds.length;
-      const rect = el.getBoundingClientRect();
-      const contentX = point.x - rect.left - 8; // p-2
-      const contentY = point.y - rect.top + el.scrollTop - 8;
+      const content = contentRef.current;
+      if (!content || childIds.length === 0) return childIds.length;
+      const rect = content.getBoundingClientRect();
+      const contentX = point.x - rect.left;
+      const contentY = point.y - rect.top;
       const row = Math.max(0, Math.min(Math.floor(contentY / rowSize), rowCount - 1));
       const col = Math.max(0, Math.min(Math.round(contentX / (cellWidth + gap)), cols));
       return Math.min(row * cols + col, childIds.length);
@@ -177,12 +182,17 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         // row moves (± this many columns) for cards inside this container.
         data-grid-columns={cols}
         className={[
-          "overflow-y-auto rounded-md border border-dashed border-border p-2",
+          "relative overflow-y-auto rounded-md border border-dashed border-border p-2",
           className ?? "",
         ].join(" ")}
         style={{ height }}
       >
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        {childIds.length === 0 && (
+          <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-2 text-xs text-muted-foreground select-none">
+            Drop items here
+          </p>
+        )}
+        <div ref={contentRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {indicator && (
             <div
               aria-hidden="true"
