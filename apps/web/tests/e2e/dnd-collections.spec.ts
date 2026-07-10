@@ -70,6 +70,47 @@ test.describe('DndCollections E2E', () => {
     }).toPass();
   });
 
+  test('palette: real-mouse drag adds a new node into the panel', async ({ page }) => {
+    await page.goto(storyPath('ui-dndcollectionspalette--palette-playground'));
+    const palette = page.locator('[data-palette-item="new-image"]');
+    const bravo = page.locator('[data-node-id="bravo"]');
+    await bravo.waitFor({ state: 'visible' });
+
+    // Drop on bravo's left half: the new node inserts before it.
+    await mouseDrag(page, palette, bravo, 0.15);
+
+    await expect(async () => {
+      const ids = await panelOrder(page, 'panel-a');
+      expect(ids).toHaveLength(4);
+      expect(ids[1]).toMatch(/^img-/);
+      expect(ids[2]).toBe('bravo');
+    }).toPass();
+  });
+
+  test('palette: real-mouse drag adds a new collection that accepts drops', async ({ page }) => {
+    await page.goto(storyPath('ui-dndcollectionspalette--palette-playground'));
+    const palette = page.locator('[data-palette-item="new-collection"]');
+    const charlie = page.locator('[data-node-id="charlie"]');
+    await charlie.waitFor({ state: 'visible' });
+
+    await mouseDrag(page, palette, charlie, 0.85);
+
+    let newId = '';
+    await expect(async () => {
+      const ids = await panelOrder(page, 'panel-a');
+      expect(ids).toHaveLength(4);
+      expect(ids[3]).toMatch(/^col-/);
+      newId = ids[3];
+    }).toPass();
+
+    // The fresh collection is immediately droppable: nest alpha inside.
+    await mouseDrag(page, card(page, 'alpha'), card(page, newId), 0.5);
+    await expect(async () => {
+      expect(await panelOrder(page, 'panel-a')).toHaveLength(3);
+    }).toPass();
+    await expect(card(page, newId)).toHaveAttribute('aria-label', /collection, 1 items/i);
+  });
+
   test('virtual grid mounts/unmounts rows under real wheel scroll', async ({ page }) => {
     await page.goto(storyPath('ui-dndcollectionsvirtualgrid--grid-playground'));
     const grid = page.locator('[data-virtual-grid="grid"]');
