@@ -10,9 +10,11 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: 'npm run storybook -- --host 127.0.0.1',
+    // Runs with cwd = apps/web, which has no "storybook" script — target
+    // the storybook workspace directly.
+    command: 'npm --prefix ../storybook run storybook -- --host 127.0.0.1',
     reuseExistingServer: !process.env.CI,
-    timeout: 120000,
+    timeout: 180000,
     url: 'http://127.0.0.1:6006',
   },
   projects: [
