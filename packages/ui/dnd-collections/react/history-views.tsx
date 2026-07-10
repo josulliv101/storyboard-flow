@@ -43,8 +43,11 @@ export function HistoryLog() {
       {entries.map((entry, index) => (
         <li key={`${entry.at}-${index}`} data-history-entry={index}>
           <code>
-            move [{entry.command.nodeIds.join(", ")}] → {entry.command.toParentId}@
-            {entry.command.toIndex}
+            {entry.command.type === "move-nodes"
+              ? `move [${entry.command.nodeIds.join(", ")}]`
+              : `add [${entry.command.nodes.map((node) => node.id).join(", ")}]`}
+            {" → "}
+            {entry.command.toParentId}@{entry.command.toIndex}
           </code>
         </li>
       ))}

@@ -131,12 +131,19 @@ cross-collection move, nest, and multi-node moves are all `move-nodes` with
 different inputs.
 
 ```ts
-type CollectionsCommand = {
-  type: "move-nodes";
-  nodeIds: readonly NodeId[]; // any order; descendants of other dragged nodes are pruned
-  toParentId: NodeId;
-  toIndex: number;            // POST-REMOVAL index — see below
-};
+type CollectionsCommand =
+  | {
+      type: "move-nodes";
+      nodeIds: readonly NodeId[]; // any order; descendants of other dragged nodes are pruned
+      toParentId: NodeId;
+      toIndex: number;            // POST-REMOVAL index — see below
+    }
+  | {
+      type: "add-nodes";          // palette drops: brand-new nodes
+      nodes: readonly CollectionItemNode[]; // ids must not exist; new collections start empty
+      toParentId: NodeId;
+      toIndex: number;
+    };
 
 type ApplyCommandSuccess = { graph: CollectionsGraph; patch: CollectionsPatch };
 ```
@@ -155,7 +162,8 @@ Rejections (`CommandRejection.reason`):
 | `missing-node` | A dragged id or `toParentId` isn't in the graph (or is unindexed). |
 | `target-not-collection` | `toParentId` is a media node. |
 | `cannot-move-root` | A dragged id is a top-level collection — roots are structural anchors. |
-| `duplicate-node-id` | The same id appears twice in `nodeIds` — a caller bug, rejected rather than deduped. |
+| `duplicate-node-id` | An id appears twice in `nodeIds`, or (add-nodes) an added id already exists / repeats in the batch. |
+| `nothing-to-add` | `add-nodes` with an empty `nodes` array. |
 | `would-create-cycle` | A node would move into itself or its own descendant. |
 | `nothing-to-move` | Every dragged id was pruned (all descendants of other dragged ids). |
 | `same-position` | The move would leave every children array identical — treated as a no-op, nothing is pushed to history. |
@@ -173,7 +181,16 @@ type NodeMove = {
   fromParentId: NodeId; fromIndex: number; // index in the PRE-patch state
   toParentId: NodeId;   toIndex: number;   // index in the POST-patch state
 };
-type CollectionsPatch = { type: "nodes-moved"; moves: readonly NodeMove[] };
+type NodeAdd = {
+  node: CollectionItemNode; // the FULL node — what makes removal restorable
+  parentId: NodeId;
+  index: number;
+};
+
+type CollectionsPatch =
+  | { type: "nodes-moved"; moves: readonly NodeMove[] }
+  | { type: "nodes-added"; adds: readonly NodeAdd[] }
+  | { type: "nodes-removed"; removals: readonly NodeAdd[] }; // only from inverting adds
 ```
 
 ### `invertPatch(patch): CollectionsPatch`
@@ -202,7 +219,8 @@ type DropTarget =
 type DropIntent =
   | { type: "insert-adjacent"; side: "before" | "after"; targetId: NodeId }
   | { type: "nest-inside"; collectionId: NodeId }
-  | { type: "append-to-collection"; collectionId: NodeId };
+  | { type: "append-to-collection"; collectionId: NodeId }
+  | { type: "insert-at-index"; collectionId: NodeId; index: number };
 
 type RectLike = { left: number; top: number; width: number; height: number };
 type PanelChildRect = { id: NodeId; rect: RectLike };
@@ -241,6 +259,11 @@ Resolution rules:
   of a dragged collection DO resolve intents — flag them with
   `isIntentInvalid` for the "cannot drop" preview; the reducer rejects them
   at commit regardless.
+- **`insert-at-index`** is produced by virtualized views (not by
+  `resolveDropIntent`): pointer offset → index from virtualizer
+  measurements, since neighbor cards may be unmounted. `index` is a
+  VISIBLE boundary (0..children.length) over the full children list;
+  `resolveCommandFromIntent` converts it to the post-removal convention.
 
 ### `intentDestination(graph, intent): NodeId | null`
 
@@ -259,6 +282,11 @@ Intent → command, doing the post-removal index math (the off-by-one class
 lives here, nowhere else). `IntentRejection` is
 `{ reason: "missing-node"; nodeId: NodeId }` — the adjacency target
 vanished.
+
+### `resolveAddCommandFromIntent(graph, intent, nodes): Result<CollectionsCommand, IntentRejection>`
+
+Intent → `add-nodes` for BRAND-NEW nodes (palette drops). Placement math is
+a move with an empty drag set — palette drops land anywhere a move can.
 
 ---
 
@@ -426,6 +454,8 @@ ones (everything they do goes through the store API above).
 | `NodeCardGhost` | `node: CollectionItemNode`, `extraCount: number` | The drag-overlay ghost; renders a `+N` badge when `extraCount > 0`. |
 | `UndoRedoControls` | — | Buttons bound to `store.undo`/`store.redo`, disabled off `canUndo`/`canRedo`. |
 | `HistoryLog` | — | Human-readable command log over `historyEntries`. |
+| `PaletteItem` | `paletteId: string`, `createNode: () => CollectionItemNode`, `children?` | External drag source; the factory runs at drag START (fresh ids per drag), the drop commits `add-nodes` through the standard intent pipeline. |
+| `TrashTarget` | `trashId: NodeId` | Styled panel droppable for a (usually hidden) trash root; drops are ordinary moves — subtrees ride along, undo restores, nothing is deleted. |
 
 ### DOM/test hooks
 

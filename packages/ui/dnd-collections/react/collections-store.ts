@@ -248,6 +248,12 @@ function intentEqual(a: DropIntent | null, b: DropIntent | null): boolean {
       return b.type === "nest-inside" && a.collectionId === b.collectionId;
     case "append-to-collection":
       return b.type === "append-to-collection" && a.collectionId === b.collectionId;
+    case "insert-at-index":
+      return (
+        b.type === "insert-at-index" &&
+        a.collectionId === b.collectionId &&
+        a.index === b.index
+      );
   }
 }
 

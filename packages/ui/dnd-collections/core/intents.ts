@@ -1,4 +1,5 @@
 import {
+  type CollectionItemNode,
   type CollectionsGraph,
   type NodeId,
   type Result,
@@ -36,7 +37,16 @@ export function decodeDropTarget(id: string): DropTarget | null {
 export type DropIntent =
   | Readonly<{ type: "insert-adjacent"; side: "before" | "after"; targetId: NodeId }>
   | Readonly<{ type: "nest-inside"; collectionId: NodeId }>
-  | Readonly<{ type: "append-to-collection"; collectionId: NodeId }>;
+  | Readonly<{ type: "append-to-collection"; collectionId: NodeId }>
+  /**
+   * Insertion at a boundary index computed WITHOUT the neighbor cards —
+   * virtualized views resolve pointer offset -> index from virtualizer
+   * measurements, since most cards aren't mounted. `index` is a VISIBLE
+   * boundary (0..children.length) over the full children list: dragged
+   * cards still occupy their slots during a drag, and the post-removal
+   * conversion happens in `resolveCommandFromIntent`, nowhere else.
+   */
+  | Readonly<{ type: "insert-at-index"; collectionId: NodeId; index: number }>;
 
 export type RectLike = Readonly<{ left: number; top: number; width: number; height: number }>;
 
@@ -153,6 +163,8 @@ export function intentDestination(graph: CollectionsGraph, intent: DropIntent): 
       return intent.collectionId;
     case "append-to-collection":
       return intent.collectionId;
+    case "insert-at-index":
+      return intent.collectionId;
     case "insert-adjacent":
       return graph.parentById.get(intent.targetId) ?? null;
   }
@@ -207,10 +219,65 @@ export function resolveCommandFromIntent(
     };
   }
 
+  if (intent.type === "insert-at-index") {
+    // Visible boundary -> post-removal index: clamp against the full
+    // children list, then subtract dragged nodes sitting before the
+    // boundary in this same collection (same convention as the
+    // insert-adjacent branch below).
+    const siblings = getChildren(graph, intent.collectionId);
+    const boundary = Math.max(0, Math.min(intent.index, siblings.length));
+    let draggedBeforeBoundary = 0;
+    for (let i = 0; i < boundary; i++) {
+      if (draggedSet.has(siblings[i])) draggedBeforeBoundary++;
+    }
+    return {
+      ok: true,
+      value: {
+        type: "move-nodes",
+        nodeIds: draggedIds,
+        toParentId: intent.collectionId,
+        toIndex: boundary - draggedBeforeBoundary,
+      },
+    };
+  }
+
   const parentId = graph.parentById.get(intent.targetId);
   if (parentId === undefined || parentId === null) {
     return { ok: false, error: { reason: "missing-node", nodeId: intent.targetId } };
   }
+  return resolveMoveBoundary(graph, intent, draggedSet, draggedIds, parentId);
+}
+
+/**
+ * Intent -> add-nodes command for BRAND-NEW nodes (palette drops). The
+ * placement math is identical to a move with an empty drag set — nothing
+ * being inserted exists in the graph yet — so it delegates and rewraps.
+ */
+export function resolveAddCommandFromIntent(
+  graph: CollectionsGraph,
+  intent: DropIntent,
+  nodes: readonly CollectionItemNode[]
+): Result<CollectionsCommand, IntentRejection> {
+  const placed = resolveCommandFromIntent(graph, intent, []);
+  if (!placed.ok) return placed;
+  return {
+    ok: true,
+    value: {
+      type: "add-nodes",
+      nodes,
+      toParentId: placed.value.toParentId,
+      toIndex: placed.value.toIndex,
+    },
+  };
+}
+
+function resolveMoveBoundary(
+  graph: CollectionsGraph,
+  intent: Extract<DropIntent, { type: "insert-adjacent" }>,
+  draggedSet: ReadonlySet<NodeId>,
+  draggedIds: readonly NodeId[],
+  parentId: NodeId
+): Result<CollectionsCommand, IntentRejection> {
 
   const siblings = getChildren(graph, parentId);
   const targetVisibleIndex = siblings.indexOf(intent.targetId);
