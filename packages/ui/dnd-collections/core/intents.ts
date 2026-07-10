@@ -191,16 +191,19 @@ export function resolveCommandFromIntent(
   const draggedSet = new Set(draggedIds);
 
   if (intent.type === "nest-inside" || intent.type === "append-to-collection") {
-    const collectionId =
-      intent.type === "nest-inside" ? intent.collectionId : intent.collectionId;
-    const children = getChildren(graph, collectionId);
+    const children = getChildren(graph, intent.collectionId);
     const endIndex = children.reduce(
       (count, id) => (draggedSet.has(id) ? count : count + 1),
       0
     );
     return {
       ok: true,
-      value: { type: "move-nodes", nodeIds: draggedIds, toParentId: collectionId, toIndex: endIndex },
+      value: {
+        type: "move-nodes",
+        nodeIds: draggedIds,
+        toParentId: intent.collectionId,
+        toIndex: endIndex,
+      },
     };
   }
 

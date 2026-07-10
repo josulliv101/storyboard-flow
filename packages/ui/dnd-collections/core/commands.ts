@@ -34,6 +34,7 @@ export type CommandRejection =
   | Readonly<{ reason: "target-not-collection"; nodeId: NodeId }>
   | Readonly<{ reason: "would-create-cycle"; nodeId: NodeId }>
   | Readonly<{ reason: "cannot-move-root"; nodeId: NodeId }>
+  | Readonly<{ reason: "duplicate-node-id"; nodeId: NodeId }>
   | Readonly<{ reason: "nothing-to-move" }>
   | Readonly<{ reason: "same-position" }>;
 
@@ -62,6 +63,13 @@ export function applyCommand(
   // below read parents with no non-null assertions.
   const parentByMovingId = new Map<NodeId, NodeId>();
   for (const id of command.nodeIds) {
+    // A duplicated id would survive pruning and yield two moves for one
+    // node — applyPatch would remove it once but insert it twice, leaving a
+    // duplicate child. Duplicates mean the caller has a bug: reject loudly
+    // rather than silently deduping.
+    if (parentByMovingId.has(id)) {
+      return { ok: false, error: { reason: "duplicate-node-id", nodeId: id } };
+    }
     if (!graph.nodesById.has(id)) {
       return { ok: false, error: { reason: "missing-node", nodeId: id } };
     }

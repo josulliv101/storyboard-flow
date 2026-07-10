@@ -86,9 +86,9 @@ CollectionsCommand ("move-nodes")
       │
       ▼
 applyCommand (core/commands.ts)          ← the ONLY reducer
-      │  validates: missing-node, cannot-move-root, would-create-cycle,
-      │  same-position. Sorts multi-node sets into document order, prunes
-      │  descendants (a subtree moves with its root).
+      │  validates: missing-node, duplicate-node-id, cannot-move-root,
+      │  would-create-cycle, same-position. Sorts multi-node sets into
+      │  document order, prunes descendants (a subtree moves with its root).
       ▼
 { graph', patch }                        ← patch is reversible
       │
@@ -200,21 +200,28 @@ fire.
 `use-flip-graph-animation.ts` animates committed moves (drop/undo/redo). It
 visualizes graph changes; it never decides them.
 
-It has to be a **single global sweep** rather than per-card effects, and the
-reason is the efficiency story above: displaced sibling cards intentionally
-don't re-render, so a per-card effect would never fire for exactly the cards
-that shifted. Instead, one component (`FlipAnimator`) subscribes to graph
-identity, and a `useLayoutEffect` measures every `[data-node-id]` element
-before paint, compares against the previous sweep's rect registry, and plays
-inverted-transform WAAPI animations (`composite: "replace"` so a rapid
-undo/redo supersedes an in-flight animation instead of compounding). The
-registry being global is what makes cross-panel moves animate — a card's
-previous rect is remembered from its old panel. `prefers-reduced-motion`
-disables it; so does `animateMoves={false}` on `CollectionPanels`.
+It has to be a **single instance-wide sweep** rather than per-card effects,
+and the reason is the efficiency story above: displaced sibling cards
+intentionally don't re-render, so a per-card effect would never fire for
+exactly the cards that shifted. Instead, one component (`FlipAnimator`)
+subscribes to graph identity, and a `useLayoutEffect` measures every
+`[data-node-id]` element before paint, compares against the previous
+sweep's rect registry, and plays inverted-transform WAAPI animations
+(`composite: "replace"` so a rapid undo/redo supersedes an in-flight
+animation instead of compounding). The registry spanning the whole
+container is what makes cross-panel moves animate — a card's previous rect
+is remembered from its old panel. `prefers-reduced-motion` disables it; so
+does `animateMoves={false}` on `CollectionPanels`.
 
-Accepted gap: the sweep is scoped to the document body, so a panel that
-merely shifted because a sibling panel grew will animate its cards too —
-but content outside the container never does.
+The sweep is scoped to the provider's wrapper element, exposed through
+`container-context.ts` — both the DOM query and the id-keyed rect registry
+stay inside one `DndCollections` instance, so multiple boards on a page
+(even ones reusing node ids) never measure or animate each other's cards
+(`TwoInstancesStayIsolated` story).
+
+Accepted gap: within an instance, a panel that merely shifted because a
+sibling panel grew will animate its cards too — but content outside the
+container never does.
 
 ## Testing strategy
 
