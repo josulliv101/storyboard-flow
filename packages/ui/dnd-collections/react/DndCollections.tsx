@@ -1,14 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -23,22 +15,15 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 
-import {
-  getChildren,
-  type CollectionItemNode,
-  type CollectionsGraph,
-  type NodeId,
-} from "../core/graph";
+import { getChildren, type CollectionItemNode, type CollectionsGraph } from "../core/graph";
 import {
   decodeDropTarget,
   encodeDropTarget,
-  resolveAddCommandFromIntent,
   resolveCommandFromIntent,
   resolveDropIntent,
   type DropIntent,
   type PanelChildRect,
 } from "../core/intents";
-import { resolveKeyboardCommand, type KeyboardMoveAction } from "../core/keyboard";
 import {
   CollectionsStoreProvider,
   createCollectionsStore,
@@ -49,16 +34,20 @@ import {
 } from "./collections-store";
 import { CollectionsContainerContext } from "./container-context";
 import { NodeCardGhost } from "./node-views";
-import { PALETTE_DATA_KEY } from "./palette";
+import { useLiveAnnouncements } from "./use-announcements";
+import { useCollectionsKeyboard } from "./use-keyboard-controller";
+import { usePaletteDrag } from "./use-palette-drag";
 import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "./virtual-droppable";
 
-// Provider wiring: dnd-kit supplies the sensors, its own collision built-ins
-// (pointerWithin with a closestCenter fallback — pointer-priority first, so
-// hovering an empty panel can't lose to a nearer item somewhere else), and
-// the DragOverlay. Everything semantic — what a hover MEANS, whether a drop
-// is legal, what mutation results — happens in core/ pure functions. The
-// committed graph is never touched during a drag; the live preview is
-// interaction state in the store, applied as a command only on drop.
+// Provider wiring: dnd-kit supplies the sensors, collision built-ins, and
+// the DragOverlay; this file owns collision -> intent resolution and the
+// node-drag lifecycle. Everything else is delegated to focused controllers
+// (use-announcements, use-palette-drag, use-keyboard-controller,
+// use-edge-autoscroll lives with the virtual views). Everything semantic —
+// what a hover MEANS, whether a drop is legal, what mutation results —
+// happens in core/ pure functions. The committed graph is never touched
+// during a drag; the live preview is interaction state in the store,
+// applied as a command only on drop.
 
 export type DndCollectionsProps = Readonly<{
   initialGraph: CollectionsGraph;
@@ -95,12 +84,7 @@ export function DndCollections({ initialGraph, onChange, children }: DndCollecti
 
 function DndCollectionsContext({ children }: { children: ReactNode }) {
   const store = useCollectionsStore();
-  const [announcement, setAnnouncement] = useState("");
-  const announce = useCallback((message: string) => {
-    // Toggle a trailing zero-width space so repeating the same message still
-    // re-announces (aria-live only fires on content changes).
-    setAnnouncement((prev) => (prev === message ? `${message}​` : message));
-  }, []);
+  const { announcement, announce } = useLiveAnnouncements(store);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -112,25 +96,10 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
   // from onDragMove/onDragOver.
   const intentRef = useRef<DropIntent | null>(null);
 
-  // §20: selection changes are announced. Set identity only changes on real
-  // selection changes (the store no-ops same-set updates), so this effect
-  // is quiet during drags and reorders.
-  const selectedIds = useCollectionsSelector((s) => s.interaction.selectedIds);
-  const previousSelectionRef = useRef<ReadonlySet<NodeId> | null>(null);
-  useEffect(() => {
-    const previous = previousSelectionRef.current;
-    previousSelectionRef.current = selectedIds;
-    if (previous === null || previous === selectedIds) return; // mount / no change
-    if (selectedIds.size === 0) {
-      announce("Selection cleared.");
-    } else if (selectedIds.size === 1) {
-      const [onlyId] = selectedIds;
-      const name = store.getSnapshot().graph.nodesById.get(onlyId)?.name ?? "item";
-      announce(`"${name}" selected.`);
-    } else {
-      announce(`${selectedIds.size} items selected.`);
-    }
-  }, [selectedIds, announce, store]);
+  const palette = usePaletteDrag({ store, intentRef, announce });
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { handleKeyDownCapture } = useCollectionsKeyboard({ store, announce, containerRef });
 
   const collisionDetection = useCallback<CollisionDetection>(
     (args) => {
@@ -242,23 +211,9 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
     [store]
   );
 
-  // Live palette drag: brand-new nodes created at pick-up, committed as an
-  // add-nodes command on drop. State (not a ref) so the overlay ghost renders.
-  const [paletteDragNodes, setPaletteDragNodes] =
-    useState<readonly CollectionItemNode[] | null>(null);
-
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
-      const createPaletteNode = event.active.data.current?.[PALETTE_DATA_KEY] as
-        | (() => CollectionItemNode)
-        | undefined;
-      if (createPaletteNode) {
-        intentRef.current = null;
-        const node = createPaletteNode();
-        setPaletteDragNodes([node]);
-        announce(`Picked up new "${node.name}".`);
-        return;
-      }
+      if (palette.startPaletteDrag(event)) return;
 
       const target = decodeDropTarget(String(event.active.id));
       if (!target || target.type !== "node") return;
@@ -269,7 +224,7 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
       const name = graph.nodesById.get(target.nodeId)?.name ?? "item";
       announce(count > 1 ? `Picked up ${count} items.` : `Picked up "${name}".`);
     },
-    [store, announce]
+    [store, announce, palette]
   );
 
   const publishIntent = useCallback(() => {
@@ -278,25 +233,7 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      if (paletteDragNodes) {
-        const intent = intentRef.current;
-        intentRef.current = null;
-        setPaletteDragNodes(null);
-        void event;
-        if (!intent) {
-          announce("Cancelled drag.");
-          return;
-        }
-        const { graph } = store.getSnapshot();
-        const resolved = resolveAddCommandFromIntent(graph, intent, paletteDragNodes);
-        if (!resolved.ok || !store.dispatch(resolved.value).ok) {
-          announce("Cannot add here.");
-          return;
-        }
-        const targetName = graph.nodesById.get(resolved.value.toParentId)?.name ?? "collection";
-        announce(`Added "${paletteDragNodes[0].name}" to "${targetName}".`);
-        return;
-      }
+      if (palette.endPaletteDrag()) return;
 
       const intent = intentRef.current;
       intentRef.current = null;
@@ -338,125 +275,15 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
       // same-position and friends: a quiet settle, mirroring pointer UX.
       announce("Dropped in place.");
     },
-    [store, announce, paletteDragNodes]
+    [store, announce, palette]
   );
 
   const handleDragCancel = useCallback(() => {
     intentRef.current = null;
-    setPaletteDragNodes(null);
+    palette.clearPaletteDrag();
     store.endDrag();
     announce("Cancelled drag.");
-  }, [store, announce]);
-
-  // Semantic keyboard moves (Alt+Arrows/Home/End on a focused card), by
-  // event delegation on the wrapper so no per-card wiring is needed. Alt
-  // combos deliberately avoid dnd-kit's KeyboardSensor grammar (Enter/Space
-  // to grab, bare arrows while grabbed) — the two coexist. Each action
-  // resolves through core/keyboard.ts into the SAME move-nodes command the
-  // pointer path dispatches, so validation/undo/announcements are shared.
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const restoreFocus = useCallback((nodeId: NodeId) => {
-    // A move can unmount/remount the card (different React parent or
-    // virtual slot), dropping focus — restore it on the next frame.
-    requestAnimationFrame(() => {
-      containerRef.current
-        ?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(nodeId)}"]`)
-        ?.focus();
-    });
-  }, []);
-
-  const handleGridRowMove = useCallback(
-    (nodeId: NodeId, key: "ArrowUp" | "ArrowDown", columns: number) => {
-      if (!Number.isFinite(columns) || columns < 1) return;
-      const { graph } = store.getSnapshot();
-      const parentId = graph.parentById.get(nodeId);
-      if (parentId === undefined || parentId === null) return;
-      const siblings = graph.childrenById.get(parentId) ?? [];
-      const index = siblings.indexOf(nodeId);
-      if (index === -1) return;
-
-      if (key === "ArrowUp" && index < columns) {
-        announce("Already in the first row.");
-        return;
-      }
-      const lastRowStart = Math.floor((siblings.length - 1) / columns) * columns;
-      if (key === "ArrowDown" && index >= lastRowStart) {
-        announce("Already in the last row.");
-        return;
-      }
-
-      // Visible boundary that lands the card one row away in the SAME
-      // column (post-removal conversion happens in the intent resolver);
-      // a shorter last row clamps to the end.
-      const boundary =
-        key === "ArrowUp" ? index - columns : Math.min(index + columns + 1, siblings.length);
-      const resolved = resolveCommandFromIntent(
-        graph,
-        { type: "insert-at-index", collectionId: parentId, index: boundary },
-        [nodeId]
-      );
-      if (!resolved.ok) return;
-      const dispatched = store.dispatch(resolved.value);
-      if (!dispatched.ok) return;
-
-      const name = graph.nodesById.get(nodeId)?.name ?? "item";
-      announce(`Moved "${name}" ${key === "ArrowUp" ? "up" : "down"} one row.`);
-      restoreFocus(nodeId);
-    },
-    [store, announce, restoreFocus]
-  );
-
-  const handleKeyDownCapture = useCallback(
-    (event: ReactKeyboardEvent) => {
-      if (!event.altKey || event.ctrlKey || event.metaKey) return;
-      const card = (event.target as HTMLElement).closest?.("[data-node-id]");
-      const rawId = card?.getAttribute("data-node-id");
-      if (!rawId) return;
-      const nodeId = rawId as NodeId;
-
-      // Inside a grid container, Alt+ArrowUp/Down mean ROW moves (± the
-      // grid's column count) instead of the global nest/move-out — the
-      // grid declares its scope (and live column count) on the container.
-      const gridEl = card?.closest?.("[data-grid-columns]");
-      if (gridEl && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-        event.preventDefault();
-        event.stopPropagation();
-        handleGridRowMove(nodeId, event.key, Number(gridEl.getAttribute("data-grid-columns")));
-        return;
-      }
-
-      const action = KEYBOARD_ACTION_BY_KEY[event.key];
-      if (!action) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      const { graph } = store.getSnapshot();
-      const name = graph.nodesById.get(nodeId)?.name ?? "item";
-      const resolved = resolveKeyboardCommand(graph, nodeId, action);
-      if (!resolved.ok) {
-        announce(KEYBOARD_BOUNDARY_MESSAGES[resolved.error.reason]);
-        return;
-      }
-
-      const dispatched = store.dispatch(resolved.value);
-      if (!dispatched.ok) {
-        if (dispatched.error.reason === "would-create-cycle") {
-          store.flashRejection([nodeId]);
-          announce("Cannot move a collection into itself or one of its nested collections.");
-        }
-        return;
-      }
-
-      const targetName =
-        graph.nodesById.get(resolved.value.toParentId)?.name ?? "collection";
-      announce(`Moved "${name}" in "${targetName}".`);
-
-      restoreFocus(nodeId);
-    },
-    [store, announce, handleGridRowMove, restoreFocus]
-  );
+  }, [store, announce, palette]);
 
   return (
     <DndContext
@@ -475,7 +302,7 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
           {children}
         </div>
       </CollectionsContainerContext.Provider>
-      <CollectionsDragOverlay paletteNodes={paletteDragNodes} />
+      <CollectionsDragOverlay paletteNodes={palette.paletteNodes} />
       <div
         aria-live="polite"
         role="status"
@@ -496,28 +323,6 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
     </DndContext>
   );
 }
-
-const KEYBOARD_ACTION_BY_KEY: Readonly<Record<string, KeyboardMoveAction | undefined>> = {
-  ArrowLeft: "move-prev",
-  ArrowRight: "move-next",
-  Home: "move-home",
-  End: "move-end",
-  ArrowDown: "nest-in-neighbor",
-  ArrowUp: "move-out",
-  // Arrow-free synonyms — the only nest/move-out bindings available inside
-  // grids, where Alt+Arrows are row moves.
-  Enter: "nest-in-neighbor",
-  Backspace: "move-out",
-};
-
-const KEYBOARD_BOUNDARY_MESSAGES: Readonly<Record<string, string>> = {
-  "missing-node": "Nothing to move.",
-  "cannot-move-root": "Top-level collections cannot be moved.",
-  "no-previous-sibling": "Already first in its collection.",
-  "no-next-sibling": "Already last in its collection.",
-  "no-neighbor-collection": "No adjacent collection to nest into.",
-  "no-parent-to-move-out-to": "Already at the top level.",
-};
 
 function CollectionsDragOverlay({
   paletteNodes,

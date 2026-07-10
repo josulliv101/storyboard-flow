@@ -201,8 +201,6 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
             <div
               key={item.key}
               data-virtual-index={item.index}
-              // Cards fill their (possibly variable-width) slot.
-              className="[&_[data-node-id]]:w-full"
               style={{
                 position: "absolute",
                 top: 0,
@@ -212,7 +210,8 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                 transform: `translateX(${item.start}px)`,
               }}
             >
-              <NodeCard id={childIds[item.index]} />
+              {/* Explicit sizing: the card fills its (possibly variable) slot. */}
+              <NodeCard id={childIds[item.index]} className="h-full w-full" />
             </div>
           ))}
         </div>

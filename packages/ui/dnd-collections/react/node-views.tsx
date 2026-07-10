@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useRef, type CSSProperties, type MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { twMerge } from "tailwind-merge";
 
 import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph";
 import { encodeDropTarget } from "../core/intents";
@@ -97,7 +98,18 @@ export function CollectionPanel({ collectionId }: { collectionId: NodeId }) {
   );
 }
 
-export const NodeCard = memo(function NodeCard({ id }: { id: NodeId }) {
+export const NodeCard = memo(function NodeCard({
+  id,
+  className,
+}: {
+  id: NodeId;
+  /**
+   * Merged (tailwind-merge) onto BOTH the wrapper and the card button, so
+   * sizing overrides beat the h-24/w-32 defaults — virtualized views pass
+   * "h-full w-full" to make cards fill their (possibly variable) slot.
+   */
+  className?: string;
+}) {
   const store = useCollectionsStore();
 
   // nodesById is never re-allocated by move patches, so this reference is
@@ -156,7 +168,7 @@ export const NodeCard = memo(function NodeCard({ id }: { id: NodeId }) {
     isDragging || isDragSource ? { opacity: 0.4 } : undefined;
 
   return (
-    <div className="relative" data-node-wrapper={id}>
+    <div className={twMerge("relative", className)} data-node-wrapper={id}>
       <button
         type="button"
         ref={setRefs}
@@ -168,12 +180,15 @@ export const NodeCard = memo(function NodeCard({ id }: { id: NodeId }) {
         {...(isRejected ? { "data-rejected": "true" } : {})}
         aria-label={`${node.name}${isCollection ? ` (collection, ${childCount} items)` : ""}`}
         onClick={handleClick}
-        className={[
-          "flex h-24 w-32 cursor-grab flex-col items-stretch justify-between rounded-md border p-2 text-left text-xs transition-all select-none active:cursor-grabbing",
-          isCollection ? "bg-muted/60" : "bg-background",
-          isSelected ? "border-primary ring-2 ring-primary" : "border-border",
-          isRejected ? "border-destructive ring-2 ring-destructive animate-pulse" : "",
-        ].join(" ")}
+        className={twMerge(
+          [
+            "flex h-24 w-32 cursor-grab flex-col items-stretch justify-between rounded-md border p-2 text-left text-xs transition-all select-none active:cursor-grabbing",
+            isCollection ? "bg-muted/60" : "bg-background",
+            isSelected ? "border-primary ring-2 ring-primary" : "border-border",
+            isRejected ? "border-destructive ring-2 ring-destructive animate-pulse" : "",
+          ].join(" "),
+          className
+        )}
         {...attributes}
         {...listeners}
         // After dnd-kit's attribute spread: dnd-kit sets aria-pressed for its

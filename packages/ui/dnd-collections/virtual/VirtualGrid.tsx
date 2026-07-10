@@ -195,7 +195,6 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
             <div
               key={row.key}
               data-virtual-row={row.index}
-              className="[&_[data-node-id]]:w-full"
               style={{
                 position: "absolute",
                 top: 0,
@@ -210,7 +209,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                 .slice(row.index * cols, Math.min(childIds.length, (row.index + 1) * cols))
                 .map((id) => (
                   <div key={id} style={{ width: cellWidth, height: cellHeight }}>
-                    <NodeCard id={id} />
+                    <NodeCard id={id} className="h-full w-full" />
                   </div>
                 ))}
             </div>
