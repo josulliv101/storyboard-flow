@@ -12,6 +12,15 @@ import { useCollectionsSelector } from "./collections-store";
 // straight back into the pipeline — the boundary resolvers read
 // scrollLeft/scrollTop live, and dnd-kit recomputes collisions on scroll —
 // so the drop intent keeps tracking the content flying underneath.
+//
+// This coexists with dnd-kit's own autoScroll (left enabled): the two never
+// fight because they scroll DIFFERENT elements — dnd-kit handles the window
+// and ancestor scroll containers (which our hook never touches), this hook
+// handles the virtual container's own axis (which dnd-kit never engaged for).
+//
+// The container's viewport rect is cached, not measured per frame: scrolling
+// the container itself does not move its box (only its content), so the rect
+// changes only on ancestor scroll or resize — refresh it there.
 
 export function useEdgeAutoScroll(
   containerRef: RefObject<HTMLElement | null>,
@@ -36,10 +45,19 @@ export function useEdgeAutoScroll(
       pointer = { x: event.clientX, y: event.clientY };
     };
 
+    // Cached container rect. The container scrolling itself (which this loop
+    // does every frame) does NOT move its box, so remeasure only when an
+    // ancestor scrolls or the window resizes — skip the container's own
+    // scroll events, which are the frequent ones.
+    let rect = el.getBoundingClientRect();
+    const remeasure = (event: Event) => {
+      if (event.target === el) return;
+      rect = el.getBoundingClientRect();
+    };
+
     let frame = 0;
     const step = () => {
       if (pointer) {
-        const rect = el.getBoundingClientRect();
         const inCrossAxis =
           axis === "x"
             ? pointer.y >= rect.top && pointer.y <= rect.bottom
@@ -64,9 +82,13 @@ export function useEdgeAutoScroll(
     };
 
     window.addEventListener("pointermove", handleMove, { passive: true });
+    window.addEventListener("scroll", remeasure, { passive: true, capture: true });
+    window.addEventListener("resize", remeasure, { passive: true });
     frame = requestAnimationFrame(step);
     return () => {
       window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("scroll", remeasure, { capture: true });
+      window.removeEventListener("resize", remeasure);
       cancelAnimationFrame(frame);
     };
   }, [dragging, containerRef, axis, edge, maxSpeed]);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
 import { useDroppable } from "@dnd-kit/core";
 
 import { type NodeId } from "../core/graph";
@@ -50,12 +50,18 @@ export function useVirtualInsertContainer(
   return { scrollRef, contentRef, resolveBoundaryRef, setContainerRef };
 }
 
-/** Publish the view's per-render layout math into the droppable's stable resolver. */
+/**
+ * Publish the view's per-render layout math into the droppable's stable
+ * resolver. useLayoutEffect (not useEffect) so the resolver is current before
+ * paint — a drag frame landing in the gap between a commit's paint and a
+ * passive effect would otherwise resolve the boundary against the PREVIOUS
+ * render's math (stale offsets during e.g. an autoscroll-driven relayout).
+ */
 export function usePublishBoundary(
   resolveBoundaryRef: RefObject<(point: VirtualViewPoint) => number>,
   resolveBoundary: (point: VirtualViewPoint) => number
 ): void {
-  useEffect(() => {
+  useLayoutEffect(() => {
     resolveBoundaryRef.current = resolveBoundary;
   });
 }

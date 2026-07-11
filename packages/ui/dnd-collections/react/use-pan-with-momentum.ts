@@ -55,6 +55,10 @@ export function usePanWithMomentum(
       glideFrame = 0;
     };
 
+    // Teardown for a pending post-pan click squash (see endPan). Tracked at
+    // effect scope so it's removed on unmount too, not just when it fires.
+    let squashCleanup: (() => void) | null = null;
+
     const scrollPosition = () => (axis === "x" ? el.scrollLeft : el.scrollTop);
     const scrollBy = (delta: number) => {
       if (axis === "x") el.scrollLeft += delta;
@@ -126,16 +130,29 @@ export function usePanWithMomentum(
       if (!panning) return;
       panning = false;
 
+      // A pointercancel (browser/OS took over the gesture) fires no click and
+      // shouldn't fling — only a real release does either.
+      if (event.type !== "pointerup") return;
+
       // A pan is not a click: swallow the click the browser fires after
-      // pointerup, so a body-pan can't select the card it started on.
+      // pointerup so a body-pan can't select the card it started on — but
+      // only clicks INSIDE this container, so an unrelated click elsewhere on
+      // the page within the window isn't eaten.
+      squashCleanup?.();
       const squashClick = (clickEvent: MouseEvent) => {
+        const target = clickEvent.target;
+        if (!(target instanceof Node) || !el.contains(target)) return;
         clickEvent.stopPropagation();
         clickEvent.preventDefault();
+        squashCleanup?.();
       };
-      window.addEventListener("click", squashClick, { capture: true, once: true });
-      setTimeout(() => {
+      window.addEventListener("click", squashClick, { capture: true });
+      const timer = window.setTimeout(() => squashCleanup?.(), 120);
+      squashCleanup = () => {
         window.removeEventListener("click", squashClick, { capture: true });
-      }, 120);
+        clearTimeout(timer);
+        squashCleanup = null;
+      };
 
       const last = samples[samples.length - 1];
       const first = samples[0];
@@ -180,6 +197,7 @@ export function usePanWithMomentum(
       window.removeEventListener("pointerup", endPan);
       window.removeEventListener("pointercancel", endPan);
       stopGlide();
+      squashCleanup?.();
     };
   }, [
     containerRef,

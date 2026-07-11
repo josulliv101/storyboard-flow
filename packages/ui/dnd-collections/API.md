@@ -513,6 +513,79 @@ key off these):
 
 ---
 
+## React: virtualized views (`virtual/`)
+
+TanStack-Virtual projections of a single collection: only the visible cards
+(plus overscan) mount, so a collection of thousands stays a bounded DOM. Cards
+are the standard `NodeCard` — virtualization changes WHICH ids render, not how
+a card works, so selection, drag-source dimming, and store subscriptions come
+along unchanged. Drops over gaps and unmounted regions resolve through the
+container droppable (`insert-at-index`), not neighbor rects. Both drive their
+own edge auto-scroll (dnd-kit's never engaged for these containers).
+
+### `<VirtualStrip>` — horizontal, variable width
+
+```ts
+type VirtualStripProps = {
+  collectionId: NodeId;
+  itemWidth?: number;                                    // default 128; fallback when itemWidthFor is absent
+  itemWidthFor?: (node: CollectionItemNode) => number | undefined; // per-node width from metadata; memoized by node id
+  itemHeight?: number;                                   // default 96
+  gap?: number;                                          // default 8
+  overscan?: number;                                     // default 4
+  panToScroll?: boolean;                                 // default true — drag the surface to scroll, with momentum
+  itemDragActivation?: "handle" | "hold";                // default "handle" (grip bar); "hold" = press-and-hold the body. Ignored when panToScroll is off (bodies drag instantly)
+  className?: string;
+};
+type VirtualStripHandle = {
+  scrollToNode: (id: NodeId) => void;  // scrolls the slot into view (works for unmounted nodes)
+  focusNode: (id: NodeId) => void;     // scroll to, then focus once the virtualizer mounts it
+  remeasure: () => void;               // drop cached widths and re-run itemWidthFor (metadata/zoom changed)
+};
+```
+
+`itemWidthFor` is evaluated lazily per index (never by rendering the node) and
+the virtualizer memoizes its measurements, so it runs once per layout, not per
+render. With `panToScroll` on, item drags move to a grip bar or behind a
+press-and-hold so the body is free to pan; with it off, `touchAction` stays
+`auto` so native horizontal touch scrolling still works.
+
+### `<VirtualGrid>` — vertical, fixed cells
+
+```ts
+type VirtualGridProps = {
+  collectionId: NodeId;
+  cellWidth?: number;   // default 128
+  cellHeight?: number;  // default 96
+  gap?: number;         // default 8
+  columns?: number;     // fixed count; omit to derive responsively from width. Non-positive-integer values fall back to responsive
+  overscan?: number;    // default 2 (rows)
+  height?: number;      // default 480 — scroll viewport height
+  className?: string;
+};
+type VirtualGridHandle = {
+  scrollToNode: (id: NodeId) => void;
+  focusNode: (id: NodeId) => void;
+};
+```
+
+Row-virtualized (one virtual item per row; columns are index arithmetic).
+Inside a grid, Alt+ArrowUp/Down are row moves (± the column count) — the grid
+publishes its live column count on `data-grid-columns` for the keyboard layer.
+Cross-row moves recreate the card's DOM element (rows are keyed by index), so
+FLIP and held focus don't survive that hop.
+
+### Virtual DOM/test hooks
+
+| Attribute | Element | Meaning |
+| --- | --- | --- |
+| `data-virtual-strip` / `data-virtual-grid` | scroll container | Collection identity. |
+| `data-grid-columns` | grid container | Live column count (keyboard row-move scope). |
+| `data-virtual-index` / `data-virtual-row` | slot / row wrapper | Virtualizer index. |
+| `data-drop-indicator="virtual"` / `"virtual-grid"` | indicator line | The resolved insert boundary, in content coordinates. |
+
+---
+
 ## Extension seams
 
 For building custom cards, panels, or virtualized containers that plug into

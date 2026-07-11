@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -130,11 +131,12 @@ export function DndCollections({
 }: DndCollectionsProps) {
   // The store captures its options once, but callback props must stay fresh
   // — a parent passing an inline closure over its latest state expects that
-  // version to be called. Route through a ref, updated in an effect (never
-  // during render): every commit lands before the next event can dispatch,
-  // so the ref is current by the time onChange can fire.
+  // version to be called. Route through a ref, updated in a layout effect
+  // (never during render): a layout effect lands before paint, so the ref is
+  // current even for a dispatch fired from a descendant's own layout effect,
+  // not just for user-event dispatches that come after paint.
   const onChangeRef = useRef(onChange);
-  useEffect(() => {
+  useLayoutEffect(() => {
     onChangeRef.current = onChange;
   });
 
