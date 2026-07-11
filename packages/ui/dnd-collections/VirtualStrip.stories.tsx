@@ -204,6 +204,59 @@ export const VariableWidthItems: Story = {
   },
 };
 
+export const WidthCallbackStableDuringDrag: Story = {
+  // Regression guard for TanStack measurement thrash: the virtualizer
+  // memoizes its measurements on getItemKey's IDENTITY. An inline getItemKey
+  // closure rebuilt all measurements — re-running itemWidthFor for every
+  // item — on every render, including once per indicator move during a drag.
+  // With a stable getItemKey, a drag that only changes the drop boundary
+  // must not re-invoke itemWidthFor at all.
+  render: () => {
+    const calls = { n: 0 };
+    return (
+      <DndCollections initialGraph={variableGraph()}>
+        <div className="w-[640px]">
+          <VirtualStrip
+            collectionId={parseNodeId("strip")}
+            itemWidthFor={(node) => {
+              calls.n += 1;
+              // Stash the live count where the play function can read it.
+              (window as unknown as { __widthCalls: number }).__widthCalls = calls.n;
+              return node.kind === "media" ? node.durationSeconds * WIDTH_PER_SECOND : undefined;
+            }}
+          />
+        </div>
+      </DndCollections>
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const m0 = nodeHandle(canvasElement, "m0");
+    const m1 = nodeCard(canvasElement, "m1");
+    const m2 = nodeCard(canvasElement, "m2");
+    const m3 = nodeCard(canvasElement, "m3");
+    await waitForLayout(m3);
+
+    // Establish the drag and settle on a boundary.
+    await dragHoldAt(m0, gapBetween(m1, m2));
+    await waitFor(() => {
+      expect(canvasElement.querySelector('[data-drop-indicator="virtual"]')).not.toBeNull();
+    });
+
+    const win = window as unknown as { __widthCalls: number };
+    const before = win.__widthCalls;
+    // Bounce the pointer across boundaries: each move is an intent change
+    // that re-renders the strip for its indicator.
+    await moveHeldPointer(gapBetween(m2, m3));
+    await moveHeldPointer(gapBetween(m1, m2));
+    await moveHeldPointer(gapBetween(m2, m3));
+
+    // Zero extra width evaluations across those re-renders.
+    expect(win.__widthCalls).toBe(before);
+
+    await releaseAt(gapBetween(m2, m3));
+  },
+};
+
 /** Media strip with a collection card ("folder", 1 child) at index 5. */
 function mixedGraph() {
   const children: GraphNodeSpec[] = [];

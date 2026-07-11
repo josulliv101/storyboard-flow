@@ -84,7 +84,13 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       observer.observe(el);
       return () => observer.disconnect();
     }, [columns, cellWidth, gap, scrollRef, contentRef]);
-    const cols = columns ?? measuredColumns;
+    // Guard the derived geometry against a nonsense `columns` prop: 0 would
+    // make rowCount Infinity (Math.ceil(n / 0)), and a fraction/NaN would
+    // corrupt every row/column calculation downstream. A pinned column count
+    // must be a positive integer; otherwise fall back to the measured value.
+    const requestedCols = columns ?? measuredColumns;
+    const cols =
+      Number.isInteger(requestedCols) && requestedCols >= 1 ? requestedCols : 1;
 
     const rowCount = Math.ceil(childIds.length / cols);
     const rowSize = cellHeight + gap;

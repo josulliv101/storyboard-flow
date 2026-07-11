@@ -43,10 +43,10 @@ export type VirtualStripProps = Readonly<{
   itemWidth?: number;
   /**
    * Per-node width from metadata (aspect ratio, duration, user data...).
-   * Evaluated lazily per index — never by rendering the node — and cached
-   * by node id inside the virtualizer (stable `getItemKey`), so widths
-   * survive unmount/remount. After metadata loads or zoom/scale changes,
-   * call `remeasure()` on the handle to invalidate.
+   * Evaluated lazily per index — never by rendering the node. The
+   * virtualizer memoizes its measurements (keyed by the stable `getItemKey`),
+   * so this runs once per layout, not once per render. After metadata loads
+   * or zoom/scale changes, call `remeasure()` on the handle to recompute.
    */
   itemWidthFor?: (node: CollectionItemNode) => number | undefined;
   itemHeight?: number;
@@ -105,17 +105,23 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       return (node && itemWidthFor?.(node)) ?? itemWidth;
     };
 
+    // Stable keys by node id (reorders move DOM nodes instead of repainting
+    // every slot's contents) AND a stable callback identity: TanStack
+    // memoizes its measurements array on getItemKey's IDENTITY, so an inline
+    // closure here would rebuild all N measurements — re-running
+    // itemWidthFor for every item — on every render, e.g. once per indicator
+    // move during a drag (WidthCallbackColdDuringDrag pins this).
+    const getItemKey = useCallback((index: number) => childIds[index], [childIds]);
+
     const virtualizer = useVirtualizer({
       count: childIds.length,
       getScrollElement: () => scrollRef.current,
-      // Lazy per-index width — cached by item key, so no DOM render is ever
+      // Lazy per-index width from graph metadata — no DOM render is ever
       // needed to know the strip's layout.
       estimateSize: (index) => widthForIndex(index) + gap,
       horizontal: true,
       overscan,
-      // Stable keys by node id: reorders move DOM nodes instead of
-      // repainting every slot's contents, and width caches follow the node.
-      getItemKey: (index) => childIds[index],
+      getItemKey,
     });
 
     // Pointer -> visible boundary index from the virtualizer's measurements
@@ -203,8 +209,12 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
           "relative overflow-x-auto rounded-md border border-dashed border-border p-2",
           className ?? "",
         ].join(" ")}
-        // Vertical touch scrolling stays native; horizontal is ours (pan hook).
-        style={{ touchAction: "pan-y" }}
+        // When WE own horizontal scrolling (pan hook), reserve horizontal
+        // touch gestures for it and leave vertical native ("pan-y"). With
+        // panToScroll off there is no pan hook, so the browser must keep
+        // native horizontal touch scrolling ("auto") or the strip can't be
+        // scrolled by touch at all.
+        style={{ touchAction: panToScroll ? "pan-y" : "auto" }}
       >
         <VirtualEmptyHint visible={childIds.length === 0} />
         <div

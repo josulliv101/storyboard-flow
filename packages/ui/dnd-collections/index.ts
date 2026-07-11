@@ -63,6 +63,7 @@ export {
 // React bindings (store + provider + default views)
 export {
   createCollectionsStore,
+  CollectionsStoreProvider,
   useCollectionsSelector,
   useCollectionsStore,
   type CollectionsChange,
@@ -85,6 +86,22 @@ export {
   usePanWithMomentum,
   type PanWithMomentumOptions,
 } from "./react/use-pan-with-momentum";
+
+// Extension seams for custom views (cards, panels, virtualized containers)
+// that plug into the same store, FLIP scope, and collision pipeline as the
+// built-ins. `applyPatch` (exported under Core above) is the only unchecked
+// primitive here — apply patches only to the graph state they were produced
+// against.
+export {
+  CollectionsContainerContext,
+  useCollectionsContainer,
+  type CollectionsContainerValue,
+} from "./react/container-context";
+export {
+  VIRTUAL_INSERT_DATA_KEY,
+  type VirtualInsertTarget,
+} from "./react/virtual-droppable";
+export { useEdgeAutoScroll } from "./react/use-edge-autoscroll";
 
 // Virtualized views (TanStack Virtual): full DnD via insert-at-index
 // container collision, variable widths + pan-to-scroll (strip), fixed

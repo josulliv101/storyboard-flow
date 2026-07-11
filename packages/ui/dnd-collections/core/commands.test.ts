@@ -245,9 +245,9 @@ describe("applyCommand: move-nodes", () => {
     ).toEqual({ ok: false, error: { reason: "target-not-collection", nodeId: "B" } });
   });
 
-  test("rejects non-finite indexes (NaN would silently splice at 0)", () => {
+  test("rejects non-integer indexes (NaN splices at 0; a fraction desyncs from its patch)", () => {
     const graph = fixture();
-    for (const toIndex of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    for (const toIndex of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1.5, -0.5]) {
       expect(
         applyCommand(graph, {
           type: "move-nodes",
@@ -257,6 +257,26 @@ describe("applyCommand: move-nodes", () => {
         })
       ).toEqual({ ok: false, error: { reason: "invalid-index" } });
     }
+  });
+
+  test("does not hang on a corrupt cyclic parentById chain", () => {
+    // Hand-build a graph whose parent pointers form a cycle (A -> B -> A):
+    // the descendant-pruning walk must terminate, not spin forever.
+    const graph = fixture();
+    const cyclicParents = new Map(graph.parentById);
+    cyclicParents.set(parseNodeId("A"), parseNodeId("B"));
+    cyclicParents.set(parseNodeId("B"), parseNodeId("A"));
+    const corrupt: CollectionsGraph = { ...graph, parentById: cyclicParents };
+
+    // Whatever it decides, it must RETURN (the assertion is that this call
+    // completes at all rather than timing out).
+    const result = applyCommand(corrupt, {
+      type: "move-nodes",
+      nodeIds: ids(["A"]),
+      toParentId: parseNodeId("root-b"),
+      toIndex: 0,
+    });
+    expect(result).toBeDefined();
   });
 
   test("clamps out-of-range indexes instead of corrupting", () => {
@@ -324,6 +344,22 @@ describe("applyCommand: add-nodes", () => {
         toIndex: 0,
       })
     ).toEqual({ ok: false, error: { reason: "duplicate-node-id", nodeId: "new-1" } });
+  });
+
+  test("rejects added nodes with an empty or whitespace id", () => {
+    const graph = fixture();
+    // parseNodeId would throw on these, but the reducer is public and a
+    // consumer can forge a branded id past the type system.
+    for (const badId of ["", "   "]) {
+      expect(
+        applyCommand(graph, {
+          type: "add-nodes",
+          nodes: [{ ...newMedia, id: badId as unknown as typeof newMedia.id }],
+          toParentId: parseNodeId("root-a"),
+          toIndex: 0,
+        })
+      ).toEqual({ ok: false, error: { reason: "invalid-node-id", nodeId: badId } });
+    }
   });
 
   test("rejects empty adds and non-collection targets", () => {

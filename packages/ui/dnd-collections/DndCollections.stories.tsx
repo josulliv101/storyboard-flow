@@ -134,6 +134,39 @@ export const MoveAcrossCollections: Story = {
   },
 };
 
+export const ReleaseOutsideBoardCancels: Story = {
+  // Releasing where nothing is under the pointer must CANCEL, not commit.
+  // pointerWithin returns nothing out there; the pointer-drag path no longer
+  // falls back to unbounded closestCenter (which would always find "some
+  // card, somewhere" and move the item next to it). Nothing changes.
+  render: () => <StandardBoard />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const alpha = nodeCard(canvasElement, "alpha");
+    const panelA = canvasElement.querySelector(
+      '[data-panel-droppable="panel-a"]'
+    ) as HTMLElement;
+    await waitForLayout(panelA);
+
+    // Release far to the right of every panel — background, no droppable.
+    const rect = panelA.getBoundingClientRect();
+    await dragToPoint(alpha, { x: rect.right + 400, y: rect.top + 20 });
+
+    // No move: both panels are exactly as they started.
+    expect(panelOrder(canvasElement, "panel-a")).toEqual([
+      "alpha",
+      "bravo",
+      "charlie",
+      "folder-f",
+      "delta",
+    ]);
+    expect(panelOrder(canvasElement, "panel-b")).toEqual(["xray", "yankee"]);
+    // The gesture is announced as a cancel, and no history entry is recorded.
+    await expect(await canvas.findByText(/cancelled drag/i)).toBeInTheDocument();
+    expect(canvasElement.querySelector("[data-history-entry='0']")).toBeNull();
+  },
+};
+
 export const DropInGapInsertsBetween: Story = {
   // The pointer in the GAP between two cards is inside the panel droppable
   // but over neither card — without gap resolution that reads as
@@ -307,6 +340,55 @@ export const MultiSelectDrag: Story = {
       expect(panelOrder(canvasElement, "panel-a")).toEqual(["bravo", "folder-f", "delta"]);
     });
     await expect(await canvas.findByText(/moved 2 items to "panel b"/i)).toBeInTheDocument();
+  },
+};
+
+export const KeyboardSelectAndGrab: Story = {
+  // The keyboard grammar split: Space SELECTS the focused card, Enter GRABS
+  // it for a drag. Before this, dnd-kit's KeyboardSensor claimed Space/Enter
+  // for grabbing, so keyboard users could not select at all.
+  render: () => <StandardBoard />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const alpha = nodeCard(canvasElement, "alpha");
+    const charlie = nodeCard(canvasElement, "charlie");
+    await waitForLayout(charlie);
+
+    // Focus WITHOUT clicking (a click would select via the mouse path), then
+    // Space to select via the keyboard.
+    alpha.focus();
+    await user.keyboard("[Space]");
+    await waitFor(() => {
+      expect(nodeCard(canvasElement, "alpha")).toHaveAttribute("data-selected", "true");
+    });
+
+    // Ctrl+Space adds to the selection — multi-select with no mouse.
+    charlie.focus();
+    await user.keyboard("{Control>}[Space]{/Control}");
+    await waitFor(() => {
+      expect(nodeCard(canvasElement, "alpha")).toHaveAttribute("data-selected", "true");
+      expect(nodeCard(canvasElement, "charlie")).toHaveAttribute("data-selected", "true");
+    });
+    await expect(await canvas.findByText(/2 items selected/i)).toBeInTheDocument();
+
+    // Enter GRABS (does not select): a drag ghost appears; Escape cancels.
+    const bravo = nodeCard(canvasElement, "bravo");
+    bravo.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(
+        canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')
+      ).not.toBeNull();
+    });
+    expect(nodeCard(canvasElement, "bravo")).not.toHaveAttribute("data-selected", "true");
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(
+        canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')
+      ).toBeNull();
+    });
   },
 };
 
@@ -505,6 +587,74 @@ export const TwoInstancesStayIsolated: Story = {
   },
 };
 
+// FLIP keyframe transforms of an element, excluding CSS transitions (the
+// card has transition-all) — picked out by the translate keyframe.
+function flipTransforms(el: HTMLElement): string[] {
+  return el.getAnimations().flatMap((a) => {
+    if (!(a.effect instanceof KeyframeEffect)) return [];
+    const t = a.effect.getKeyframes()[0]?.transform;
+    return typeof t === "string" && t.startsWith("translate") ? [t] : [];
+  });
+}
+
+function ScrollBetweenCommitsBoard() {
+  return (
+    <div data-testid="flip-scroller" style={{ height: 200, overflowY: "auto" }}>
+      <div style={{ paddingBottom: 400 }}>
+        <DndCollections initialGraph={standardGraph()}>
+          <CollectionPanels collectionIds={[parseNodeId("panel-a"), parseNodeId("panel-b")]} />
+        </DndCollections>
+      </div>
+    </div>
+  );
+}
+
+export const FlipSurvivesScrollBetweenCommits: Story = {
+  // The FLIP sweep must measure FIRST and LAST in the same scroll frame.
+  // Scrolling the container between two commits shifts every card's viewport
+  // position; a version that stashed FIRST at the PREVIOUS commit would read
+  // that scroll delta as movement and slide the whole board by the scroll
+  // amount. Here: commit, scroll, commit again — the moved card animates only
+  // its real (horizontal) delta and the untouched panel does not animate.
+  render: () => <ScrollBetweenCommitsBoard />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const scroller = canvasElement.querySelector<HTMLElement>('[data-testid="flip-scroller"]')!;
+    await waitForLayout(nodeCard(canvasElement, "alpha"));
+
+    // Commit 1: nudge alpha one step right.
+    nodeCard(canvasElement, "alpha").focus();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")[1]).toBe("alpha");
+    });
+
+    // Scroll the container between the two commits.
+    scroller.scrollTop = 100;
+    expect(scroller.scrollTop).toBeGreaterThan(0); // the scroll really took
+
+    // Commit 2 (post-scroll): move alpha back. FLIP plays synchronously in
+    // the layout effect, so read the animations before they finish.
+    nodeCard(canvasElement, "alpha").focus();
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+
+    const alphaFlip = flipTransforms(nodeCard(canvasElement, "alpha"));
+    const bystanderFlip = flipTransforms(nodeCard(canvasElement, "xray"));
+
+    // alpha slid horizontally within its row — the 100px scroll must NOT
+    // appear as a vertical component.
+    expect(alphaFlip.length).toBeGreaterThan(0);
+    expect(alphaFlip[0]).toMatch(/,\s*0px\)/);
+    // The untouched panel-b never moved in the graph — pre-fix it would have
+    // animated by the scroll delta.
+    expect(bystanderFlip).toHaveLength(0);
+
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")[0]).toBe("alpha");
+    });
+  },
+};
+
 function FreshOnChangeHarness() {
   const [label, setLabel] = useState("stale");
   const [seen, setSeen] = useState("none");
@@ -571,9 +721,13 @@ export const RenderEfficiencyDuringDrag: Story = {
     const bystander = nodeCard(canvasElement, "w20");
     await waitForLayout(target);
 
-    // Establish the drag and settle on the target's left half.
+    // Establish the drag, THEN re-aim at the target's LIVE left half:
+    // starting a drag can shift layout (here the wide panel reflows and t1
+    // rises), so a hold point computed from the pre-drag rect would strand
+    // the pointer off the card. Read the rect after the drag has settled.
+    await dragHoldAt(source, rectPoint(target, 0.15));
     const holdPoint = rectPoint(target, 0.15);
-    await dragHoldAt(source, holdPoint);
+    await moveHeldPointer(holdPoint);
     await waitFor(() => {
       expect(target.parentElement?.querySelector('[data-drop-indicator="before"]')).toBeTruthy();
     });

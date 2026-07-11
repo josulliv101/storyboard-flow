@@ -83,7 +83,11 @@ const EMPTY_SELECTION: ReadonlySet<NodeId> = new Set();
 
 export function createCollectionsStore(
   initialGraph: CollectionsGraph,
-  options?: Readonly<{ onChange?: (change: CollectionsChange) => void }>
+  options?: Readonly<{
+    onChange?: (change: CollectionsChange) => void;
+    /** Cap the undo stack (oldest entries fall off). Positive integer; default unbounded. */
+    maxHistoryEntries?: number;
+  }>
 ): CollectionsStore {
   let graph = initialGraph;
   let interaction: CollectionsInteraction = {
@@ -95,7 +99,7 @@ export function createCollectionsStore(
     selectedIds: EMPTY_SELECTION,
     rejectedIdSet: EMPTY_SELECTION,
   };
-  const history = createHistory();
+  const history = createHistory({ maxEntries: options?.maxHistoryEntries });
   const listeners = new Set<() => void>();
   let rejectionTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -135,6 +139,23 @@ export function createCollectionsStore(
     notify();
   }
 
+  // Nodes can leave the graph (undoing a palette add inverts to a removal);
+  // ephemeral ids must not outlive them. A stale selected id would poison
+  // the next multi-drag: the reducer rejects the whole command with
+  // missing-node and the drop does nothing. Identity contract holds: the
+  // selection set keeps its reference when nothing was pruned.
+  function pruneMissingSelection() {
+    const selected = interaction.selectedIds;
+    if (selected.size === 0) return;
+    let next: Set<NodeId> | null = null;
+    for (const id of selected) {
+      if (!graph.nodesById.has(id)) {
+        (next ??= new Set(selected)).delete(id);
+      }
+    }
+    if (next) interaction = { ...interaction, selectedIds: next };
+  }
+
   function dispatch(
     command: CollectionsCommand
   ): Result<CollectionsPatch, CommandRejection> {
@@ -144,6 +165,7 @@ export function createCollectionsStore(
     graph = result.value.graph;
     history.push({ command, patch: result.value.patch, at: Date.now() });
     refreshHistoryEntries();
+    pruneMissingSelection();
     notify();
     options?.onChange?.({ graph, command, patch: result.value.patch, origin: "command" });
     return { ok: true, value: result.value.patch };
@@ -154,6 +176,7 @@ export function createCollectionsStore(
     if (!inverse) return false;
     graph = applyPatch(graph, inverse);
     refreshHistoryEntries();
+    pruneMissingSelection();
     notify();
     options?.onChange?.({ graph, patch: inverse, origin: "undo" });
     return true;
@@ -164,6 +187,7 @@ export function createCollectionsStore(
     if (!patch) return false;
     graph = applyPatch(graph, patch);
     refreshHistoryEntries();
+    pruneMissingSelection();
     notify();
     options?.onChange?.({ graph, patch, origin: "redo" });
     return true;

@@ -79,4 +79,13 @@ describe("createHistory maxEntries", () => {
     history.undo();
     expect(history.canUndo()).toBe(false); // entry 1 is gone for good
   });
+
+  test("invalid caps (0, negative, fractional, NaN) fall back to unbounded", () => {
+    for (const maxEntries of [0, -3, 2.5, Number.NaN]) {
+      const history = createHistory({ maxEntries });
+      for (let i = 1; i <= 5; i++) history.push(entry(i));
+      // Nothing was dropped: all five remain and stay undoable.
+      expect(history.entries().map((e) => e.at)).toEqual([1, 2, 3, 4, 5]);
+    }
+  });
 });

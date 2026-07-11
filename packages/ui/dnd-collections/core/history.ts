@@ -27,11 +27,19 @@ export type CollectionsHistory = Readonly<{
 
 export function createHistory(
   options?: Readonly<{
-    /** Oldest entries fall off past this count (they stop being undoable). Default: unbounded. */
+    /**
+     * Oldest entries fall off past this count (they stop being undoable).
+     * Must be a positive integer; any other value (0, negative, fractional,
+     * NaN, omitted) is treated as unbounded — the default.
+     */
     maxEntries?: number;
   }>
 ): CollectionsHistory {
-  const maxEntries = options?.maxEntries ?? Number.POSITIVE_INFINITY;
+  const requested = options?.maxEntries;
+  const maxEntries =
+    requested !== undefined && Number.isInteger(requested) && requested > 0
+      ? requested
+      : Number.POSITIVE_INFINITY;
   const past: HistoryEntry[] = [];
   const future: HistoryEntry[] = [];
 

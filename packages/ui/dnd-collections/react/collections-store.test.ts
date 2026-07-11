@@ -130,6 +130,57 @@ describe("createCollectionsStore", () => {
     expect(store.undo()).toBe(false); // stack exhausted
   });
 
+  test("undoing an add prunes the removed node from the selection", () => {
+    const store = createCollectionsStore(graphFixture());
+    const added = store.dispatch({
+      type: "add-nodes",
+      nodes: [{ id: id("new-1"), kind: "media", name: "New", durationSeconds: 2 }],
+      toParentId: id("root-b"),
+      toIndex: 0,
+    });
+    expect(added.ok).toBe(true);
+    store.setSelection([id("x"), id("new-1")]);
+
+    expect(store.undo()).toBe(true);
+
+    const { graph, interaction } = store.getSnapshot();
+    expect(graph.nodesById.has(id("new-1"))).toBe(false);
+    // The removed id must not survive in the selection — a stale id would
+    // poison the next multi-drag (the reducer rejects the whole command
+    // with missing-node, so the drop silently does nothing).
+    expect(interaction.selectedIds.has(id("new-1"))).toBe(false);
+    expect(interaction.selectedIds.has(id("x"))).toBe(true);
+  });
+
+  test("graph changes that remove nothing keep selection identity", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("y")]);
+    const before = store.getSnapshot().interaction.selectedIds;
+
+    store.dispatch(moveX);
+    store.undo();
+    store.redo();
+
+    // Moves never remove nodes: pruning must not touch (or re-allocate)
+    // the selection set — field identity is the selector contract.
+    expect(store.getSnapshot().interaction.selectedIds).toBe(before);
+  });
+
+  test("maxHistoryEntries caps the undo stack", () => {
+    const store = createCollectionsStore(graphFixture(), { maxHistoryEntries: 1 });
+    // Two commits, cap of 1: the first falls off and only one undo is possible.
+    store.dispatch(moveX);
+    store.dispatch({
+      type: "move-nodes",
+      nodeIds: [id("y")],
+      toParentId: id("root-b"),
+      toIndex: 0,
+    });
+    expect(store.getSnapshot().historyEntries).toHaveLength(1);
+    expect(store.undo()).toBe(true);
+    expect(store.undo()).toBe(false); // the older commit is no longer undoable
+  });
+
   test("flashRejection sets, auto-clears, and re-flash resets the timer", () => {
     const store = createCollectionsStore(graphFixture());
     store.flashRejection([id("x")]);

@@ -200,15 +200,24 @@ Everything semantic happens in `core/`.
 
 ## Keyboard: two coexisting systems
 
-- dnd-kit's `KeyboardSensor` keeps its own grammar (Enter/Space to grab,
-  arrows while grabbed) — the collision code path even synthesizes a pointer
-  from the moving rect's center so intents still resolve without a pointer.
+- dnd-kit's `KeyboardSensor` is restricted to **Enter** to grab/drop (arrows
+  move while grabbed) — narrowed from its Enter/Space default so **Space**
+  stays free for selection (native `<button>` activation → the card's
+  `onClick`), which is how keyboard users select and multi-select. The
+  collision code path synthesizes a pointer from the moving rect's center so
+  intents still resolve without a pointer.
 - The semantic layer (`core/keyboard.ts`) binds **Alt+Arrow/Home/End** on a
   focused card — deliberately outside the sensor's grammar so the two never
   clash. It's wired by event delegation on one wrapper div (no per-card
   handlers), resolves to the same `move-nodes` command as pointer drags
   (shared validation, history, announcements), and restores focus after
-  cross-parent moves (the card unmounts/remounts under a new React parent).
+  cross-parent moves — retried across frames, with the destination collection
+  as a fallback when the card lands somewhere this view doesn't render.
+- The card button is always a tab stop (even in handle mode, where the grip
+  is a second stop for pointer/grab drag) so the selection control is always
+  reachable. dnd-kit's own announcer and screen-reader instructions are
+  disabled at the provider; this package speaks through one `aria-live`
+  channel with human node names.
 
 Boundary cases (already first, no adjacent collection, …) come back as
 typed rejections and are announced via the aria-live region — which nudges
@@ -224,14 +233,25 @@ It has to be a **single instance-wide sweep** rather than per-card effects,
 and the reason is the efficiency story above: displaced sibling cards
 intentionally don't re-render, so a per-card effect would never fire for
 exactly the cards that shifted. Instead, one component (`FlipAnimator`)
-subscribes to graph identity, and a `useLayoutEffect` measures every
-`[data-node-id]` element before paint, compares against the previous
-sweep's rect registry, and plays inverted-transform WAAPI animations
+measures the DOM directly and plays inverted-transform WAAPI animations
 (`composite: "replace"` so a rapid undo/redo supersedes an in-flight
-animation instead of compounding). The registry spanning the whole
-container is what makes cross-panel moves animate — a card's previous rect
-is remembered from its old panel. `prefers-reduced-motion` disables it; so
+animation instead of compounding). The id-keyed rects span the whole
+container, which is what makes cross-panel moves animate — a card's FIRST
+rect is taken from its old panel. `prefers-reduced-motion` disables it; so
 does `animateMoves={false}` on `CollectionPanels`.
+
+**FIRST and LAST are measured in the same scroll frame.** FIRST is captured
+synchronously the instant the graph changes — inside a `store.subscribe`
+callback that runs during dispatch/undo/redo, before React re-renders, while
+the DOM still shows the pre-commit layout — and LAST is measured in the
+`useLayoutEffect` after the re-render. Both reads happen within one
+synchronous task, so no scroll can interleave. (An earlier version stashed
+FIRST at the *previous* commit's layout effect in viewport coordinates; any
+page or container scroll between two commits then leaked its delta into every
+card, sliding the whole board by the scroll amount on the next commit —
+`FlipSurvivesScrollBetweenCommits` guards against the regression.) The
+subscription is gated on graph identity, so the flood of interaction-only
+notifies during a drag never triggers a measurement.
 
 The sweep is scoped to the provider's wrapper element, exposed through
 `container-context.ts` — both the DOM query and the id-keyed rect registry

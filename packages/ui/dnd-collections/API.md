@@ -163,8 +163,9 @@ Rejections (`CommandRejection.reason`):
 | `target-not-collection` | `toParentId` is a media node. |
 | `cannot-move-root` | A dragged id is a top-level collection — roots are structural anchors. |
 | `duplicate-node-id` | An id appears twice in `nodeIds`, or (add-nodes) an added id already exists / repeats in the batch. |
+| `invalid-node-id` | (add-nodes) An added node's id is empty or whitespace-only — it can't be addressed or encoded as a droppable. |
 | `nothing-to-add` | `add-nodes` with an empty `nodes` array. |
-| `invalid-index` | Non-finite `toIndex` (NaN would silently splice at 0). |
+| `invalid-index` | `toIndex` is not an integer (NaN/±Infinity splice at 0; a fraction desyncs forward apply from patch replay). |
 | `would-create-cycle` | A node would move into itself or its own descendant. |
 | `nothing-to-move` | Every dragged id was pruned (all descendants of other dragged ids). |
 | `same-position` | The move would leave every children array identical — treated as a no-op, nothing is pushed to history. |
@@ -358,9 +359,14 @@ view supplies its live column count. Rejections: `missing-node`,
 type DndCollectionsProps = {
   initialGraph: CollectionsGraph;
   onChange?: (change: CollectionsChange) => void;
+  maxHistoryEntries?: number; // cap the undo stack; positive integer, default unbounded
   children: ReactNode;
 };
 ```
+
+`maxHistoryEntries` is initial-only (like `initialGraph`): the oldest undo
+entries fall off past the cap. Any non-positive-integer value is treated as
+unbounded.
 
 Creates one store per component lifetime and wires the full dnd-kit stack:
 PointerSensor (4px activation distance) + KeyboardSensor, pointer-priority
@@ -368,20 +374,34 @@ collision detection, drag lifecycle → intent → command dispatch, the
 `DragOverlay` ghost, an `aria-live` announcer, and the Alt-key semantic
 keyboard bindings.
 
+The provider owns the whole accessibility surface: it silences dnd-kit's
+built-in announcer (whose defaults would speak raw droppable ids like
+`node:alpha` alongside this package's human-named channel) and blanks its
+screen-reader instructions in favour of one description element referenced by
+every card.
+
 `initialGraph` is intentionally initial-only — the store is the source of
 truth thereafter; later prop changes are ignored. `onChange` is NOT frozen
 with it: the latest callback prop is always the one invoked, so closures
 over current parent state behave as expected.
 
-Built-in keyboard bindings (on a focused card; chosen to avoid dnd-kit's
-KeyboardSensor grammar, which coexists):
+Keyboard grammar (on a focused card). dnd-kit's KeyboardSensor is restricted
+to **Enter** (grab/drop) so **Space** stays free for selection; the Alt-key
+layer is a separate, always-available set of quick semantic moves:
 
 | Keys | Action |
 | --- | --- |
+| Space | Select this card (replaces the selection) |
+| Ctrl/Cmd + Space | Toggle this card in a multi-selection |
+| Enter | Grab for a free-form drag (Arrow keys move, Enter drops, Escape cancels) |
 | Alt+ArrowLeft / Alt+ArrowRight | `move-prev` / `move-next` |
 | Alt+Home / Alt+End | `move-home` / `move-end` |
 | Alt+ArrowDown | `nest-in-neighbor` |
 | Alt+ArrowUp | `move-out` |
+
+Inside a `VirtualGrid`, Alt+ArrowUp / Alt+ArrowDown become row moves (± the
+column count); Alt+Enter / Alt+Backspace are the grid-safe synonyms for
+`nest-in-neighbor` / `move-out`.
 
 ---
 
@@ -389,7 +409,8 @@ KeyboardSensor grammar, which coexists):
 
 ### `createCollectionsStore(initialGraph, options?): CollectionsStore`
 
-`options.onChange` receives every committed change. `<DndCollections>`
+`options.onChange` receives every committed change; `options.maxHistoryEntries`
+(positive integer, default unbounded) caps the undo stack. `<DndCollections>`
 calls this for you; create a store directly only for headless/test use.
 
 ```ts
@@ -485,3 +506,21 @@ key off these):
 | `data-drop-indicator` | indicator bar | `"before"` or `"after"` on the adjacency target. |
 | `data-testid="drag-ghost"` / `"drag-ghost-count"` | overlay | The ghost and its `+N` badge. |
 | `data-testid="history-log"` / `"history-empty"`, `data-history-entry` | history log | Log container / empty marker / entries. |
+
+---
+
+## Extension seams
+
+For building custom cards, panels, or virtualized containers that plug into
+the same store, FLIP scope, and collision pipeline as the built-ins:
+
+| Export | From | Use |
+| --- | --- | --- |
+| `CollectionsStoreProvider` | `react/collections-store` | Wrap a subtree in a store you created with `createCollectionsStore` (headless/custom hosting). |
+| `useCollectionsContainer` / `CollectionsContainerContext` / `CollectionsContainerValue` | `react/container-context` | Read the instance's wrapper ref (FLIP scope) and the `aria-describedby` instructions id. |
+| `VIRTUAL_INSERT_DATA_KEY` / `VirtualInsertTarget` | `react/virtual-droppable` | The droppable-`data` contract a custom virtualized container carries so collision detection resolves pointer → boundary index through its own layout math. |
+| `useEdgeAutoScroll` | `react/use-edge-autoscroll` | Deterministic edge auto-scroll for a custom virtualized scroll container (pairs with `usePanWithMomentum`). |
+
+`applyPatch` (Core) is the one deliberately unchecked primitive: it rewrites
+indexes without validation, so apply patches only to the graph state they
+were produced against (or its inverse-adjacent state).

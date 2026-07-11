@@ -7,7 +7,16 @@ import { CollectionPanels } from "./react/node-views";
 import { UndoRedoControls } from "./react/history-views";
 import { PaletteItem } from "./react/palette";
 import { TrashTarget } from "./react/trash-target";
-import { dragToPoint, nodeCard, panelOrder, rectCenter, rectPoint, waitForLayout } from "./stories-helpers";
+import {
+  dragHoldAt,
+  dragToPoint,
+  nodeCard,
+  panelOrder,
+  rectCenter,
+  rectPoint,
+  releaseAt,
+  waitForLayout,
+} from "./stories-helpers";
 
 // Phase 6 coverage: external palette sources (brand-new nodes committed as
 // add-nodes) and trash (a hidden root collection fed by the ordinary move
@@ -161,6 +170,50 @@ export const PaletteDropAddsNewCollection: Story = {
       expect(nodeCard(canvasElement, newId).getAttribute("aria-label")).toMatch(
         /collection, 1 items/i
       );
+    });
+  },
+};
+
+export const PaletteFactoryErrorIsContained: Story = {
+  // A palette factory is consumer code run inside dnd-kit's drag start. If it
+  // throws, the gesture must not strand the board — the throw is contained,
+  // announced, and the board keeps working.
+  render: () => (
+    <DndCollections initialGraph={paletteGraph()}>
+      <div className="flex w-[640px] flex-col gap-4">
+        <PaletteItem
+          paletteId="boom"
+          createNode={() => {
+            throw new Error("factory boom");
+          }}
+        >
+          + Broken
+        </PaletteItem>
+        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const palette = canvasElement.querySelector<HTMLElement>('[data-palette-item="boom"]')!;
+    const bravo = nodeCard(canvasElement, "bravo");
+    await waitForLayout(bravo);
+
+    // Grab the broken item: the factory throws at drag start. Check the
+    // announcement while the gesture is held (the live region is last-write,
+    // and releasing announces a cancel over it).
+    await dragHoldAt(palette, rectPoint(bravo, 0.15));
+    await expect(await canvas.findByText(/could not create item/i)).toBeInTheDocument();
+    await releaseAt(rectPoint(bravo, 0.15));
+
+    // Nothing was added, and the board still works: a normal reorder commits.
+    expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie"]);
+    await dragToPoint(
+      nodeCard(canvasElement, "alpha"),
+      rectPoint(nodeCard(canvasElement, "charlie"), 0.85)
+    );
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")).toEqual(["bravo", "charlie", "alpha"]);
     });
   },
 };

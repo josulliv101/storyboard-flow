@@ -17,8 +17,12 @@ import {
   pointerWithin,
   useSensor,
   useSensors,
+  type Announcements,
+  type ClientRect,
   type CollisionDetection,
   type DragStartEvent,
+  type ScreenReaderInstructions,
+  type UniqueIdentifier,
 } from "@dnd-kit/core";
 
 import { getChildren, type CollectionItemNode, type CollectionsGraph } from "../core/graph";
@@ -60,10 +64,70 @@ export type DndCollectionsProps = Readonly<{
   initialGraph: CollectionsGraph;
   /** Patch-based change feed: fires on every committed command, undo, and redo. */
   onChange?: (change: CollectionsChange) => void;
+  /** Cap the undo stack (oldest entries fall off). Positive integer; default unbounded. */
+  maxHistoryEntries?: number;
   children: ReactNode;
 }>;
 
-export function DndCollections({ initialGraph, onChange, children }: DndCollectionsProps) {
+// The package owns ONE aria-live channel (useLiveAnnouncements) that speaks
+// human node names and covers selection, drags, keyboard moves, and
+// rejections. dnd-kit ships its own competing announcer whose defaults emit
+// raw droppable ids ("Picked up draggable item node:alpha."), so a screen
+// reader would hear every event twice, once in gibberish. Silence dnd-kit's
+// by returning undefined from every handler — its announce() no-ops on a
+// nullish value — leaving our channel as the single source of truth.
+const SILENCED_ANNOUNCEMENTS: Announcements = {
+  onDragStart: () => undefined,
+  onDragOver: () => undefined,
+  onDragEnd: () => undefined,
+  onDragCancel: () => undefined,
+};
+
+// dnd-kit's default draggable instructions say "press the space bar" to pick
+// up — which contradicts our grammar (Space selects, Enter grabs). Blank
+// them; our own instructions element (referenced by cards via
+// aria-describedby) is the single, accurate description.
+const NO_SCREEN_READER_INSTRUCTIONS: ScreenReaderInstructions = { draggable: "" };
+
+// dnd-kit's KeyboardSensor defaults to Space OR Enter for grab/drop. We
+// reserve Space for SELECTION (native <button> activation → onClick) and use
+// Enter alone to grab, so keyboard users can both select and drag a card.
+const KEYBOARD_CODES = {
+  start: ["Enter"],
+  cancel: ["Escape"],
+  end: ["Enter"],
+};
+
+// Max distance (px) from the pointer to any droppable's rect for the
+// nearest-center fallback to still engage. Within it the pointer is "near the
+// board" and a near-miss (gap, rect-edge rounding) resolves to the nearest
+// target; beyond it the pointer is off the board and the drop cancels rather
+// than snapping to some far-away card. One card-gap of tolerance.
+const FALLBACK_MAX_DISTANCE = 48;
+
+/** Whether the pointer is within FALLBACK_MAX_DISTANCE of some droppable's rect. */
+function pointerNearAnyDroppable(
+  point: Readonly<{ x: number; y: number }>,
+  containers: readonly Readonly<{ id: UniqueIdentifier }>[],
+  rects: ReadonlyMap<UniqueIdentifier, ClientRect>
+): boolean {
+  for (const container of containers) {
+    const rect: ClientRect | undefined = rects.get(container.id);
+    if (!rect) continue;
+    // Distance from the point to the rect (0 while inside it).
+    const dx = Math.max(rect.left - point.x, 0, point.x - (rect.left + rect.width));
+    const dy = Math.max(rect.top - point.y, 0, point.y - (rect.top + rect.height));
+    if (Math.hypot(dx, dy) <= FALLBACK_MAX_DISTANCE) return true;
+  }
+  return false;
+}
+
+export function DndCollections({
+  initialGraph,
+  onChange,
+  maxHistoryEntries,
+  children,
+}: DndCollectionsProps) {
   // The store captures its options once, but callback props must stay fresh
   // — a parent passing an inline closure over its latest state expects that
   // version to be called. Route through a ref, updated in an effect (never
@@ -74,11 +138,12 @@ export function DndCollections({ initialGraph, onChange, children }: DndCollecti
     onChangeRef.current = onChange;
   });
 
-  // One store per component lifetime; the graph prop is intentionally
-  // initial-only (the store is the source of truth thereafter).
+  // One store per component lifetime; the graph prop and history cap are
+  // intentionally initial-only (the store is the source of truth thereafter).
   const [store] = useState<CollectionsStore>(() =>
     createCollectionsStore(initialGraph, {
       onChange: (change) => onChangeRef.current?.(change),
+      maxHistoryEntries,
     })
   );
   useEffect(() => () => store.destroy(), [store]);
@@ -102,7 +167,7 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
   // sensor would replace the first, not join it.
   const sensors = useSensors(
     useSensor(CollectionsPointerSensor),
-    useSensor(KeyboardSensor)
+    useSensor(KeyboardSensor, { keyboardCodes: KEYBOARD_CODES })
   );
 
   // Latest resolved intent, written during collision detection (the one
@@ -142,22 +207,39 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
         return !draggedIds.has(targetNode);
       });
 
-      // Pointer-priority: only trust nearest-center once nothing is under
-      // the pointer (closestCenter has no distance cutoff — unbounded, it
-      // would always find "some item, somewhere").
+      // Pointer-priority: for pointer drags, nothing under the pointer means
+      // NO target. closestCenter has no distance cutoff — unbounded, it
+      // always finds "some item, somewhere", which would let a release far
+      // outside the board commit a move to whatever card happened to be
+      // nearest (drag-to-nowhere must cancel, not act — see
+      // ReleaseOutsideBoardCancels). Only keyboard drags, which have no
+      // pointer to test containment with, fall back to nearest-center.
       const withinPointer = pointerWithin({ ...args, droppableContainers });
-      let collisions = withinPointer.length
-        ? withinPointer
-        : closestCenter({ ...args, droppableContainers });
+      let collisions = withinPointer;
+      if (!withinPointer.length) {
+        const point = args.pointerCoordinates;
+        // Keyboard drags have no pointer — fall back to nearest-center so an
+        // intent still resolves. Pointer drags fall back ONLY while the
+        // pointer is still near some droppable: releasing out in open space
+        // (far from every target) must CANCEL, not snap to "some card,
+        // somewhere" — unbounded closestCenter's failure mode, which let a
+        // release well outside the board commit a move (see
+        // ReleaseOutsideBoardCancels).
+        collisions =
+          !point ||
+          pointerNearAnyDroppable(point, droppableContainers, args.droppableRects)
+            ? closestCenter({ ...args, droppableContainers })
+            : [];
+      }
 
       // Cards sit visually ON TOP of their containers (panels, virtual
       // strips), but pointerWithin ranks by distance-to-center with no
       // notion of z-order — a wide container's center can be nearer than
       // the hovered card's. Among pointer hits, a node card always beats a
       // container, so container-level intents (append, insert-at-index)
-      // apply only where no card is under the pointer. The closestCenter
-      // fallback is left alone: with nothing under the pointer, nearest
-      // really is the best guess.
+      // apply only where no card is under the pointer. The keyboard-only
+      // closestCenter fallback is left alone: with no pointer at all,
+      // nearest really is the best guess.
       if (withinPointer.length > 1) {
         const nodeHit = collisions.find(
           (collision) => decodeDropTarget(String(collision.id))?.type === "node"
@@ -290,8 +372,14 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
         announce("Cannot move a collection into itself or one of its nested collections.");
         return;
       }
-      // same-position and friends: a quiet settle, mirroring pointer UX.
-      announce("Dropped in place.");
+      if (dispatched.error.reason === "same-position") {
+        // A quiet settle, mirroring pointer UX: the drop landed where it started.
+        announce("Dropped in place.");
+        return;
+      }
+      // missing-node and friends: the command was REJECTED — announcing
+      // "dropped in place" would claim success for a refused move.
+      announce("Could not move.");
     },
     [store, announce, palette]
   );
@@ -307,6 +395,10 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
     <DndContext
       sensors={sensors}
       collisionDetection={collisionDetection}
+      accessibility={{
+        announcements: SILENCED_ANNOUNCEMENTS,
+        screenReaderInstructions: NO_SCREEN_READER_INSTRUCTIONS,
+      }}
       onDragStart={handleDragStart}
       onDragMove={publishIntent}
       onDragOver={publishIntent}
@@ -320,10 +412,16 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
           {children}
         </div>
       </CollectionsContainerContext.Provider>
-      {/* Keyboard-usage instructions, referenced by cards via aria-describedby. */}
+      {/* The single keyboard-usage description, referenced by cards via
+          aria-describedby (dnd-kit's own instructions are blanked above). It
+          must match the real grammar: Space selects, Enter grabs for a
+          free-form drag, and Alt+keys are the quick semantic moves. */}
       <p id={instructionsId} className="sr-only">
-        Alt plus Arrow keys move the focused item. Alt plus Enter nests it into a neighboring
-        collection; Alt plus Backspace moves it out.
+        Press Space to select this item, or Control plus Space to add it to a multi-selection.
+        Press Enter to pick it up, then use the Arrow keys to move it and Enter to drop, or
+        Escape to cancel. Alt plus Arrow keys move it one step at a time; Alt plus Down nests it
+        into a neighboring collection and Alt plus Up moves it out. Inside a grid, Alt plus Up and
+        Down move between rows.
       </p>
       <CollectionsDragOverlay paletteNodes={palette.paletteNodes} />
       <div

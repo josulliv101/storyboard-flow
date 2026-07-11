@@ -44,6 +44,8 @@ export type CommandRejection =
   | Readonly<{ reason: "would-create-cycle"; nodeId: NodeId }>
   | Readonly<{ reason: "cannot-move-root"; nodeId: NodeId }>
   | Readonly<{ reason: "duplicate-node-id"; nodeId: NodeId }>
+  /** An added node's id is empty or whitespace-only — ids are the addressing scheme. */
+  | Readonly<{ reason: "invalid-node-id"; nodeId: NodeId }>
   | Readonly<{ reason: "nothing-to-move" }>
   | Readonly<{ reason: "nothing-to-add" }>
   | Readonly<{ reason: "invalid-index" }>
@@ -65,8 +67,10 @@ export function applyCommand(
   if (target.kind !== "collection") {
     return { ok: false, error: { reason: "target-not-collection", nodeId: toParentId } };
   }
-  // NaN survives Math.min/Math.max and splices at 0 — reject it loudly.
-  if (!Number.isFinite(toIndex)) {
+  // Only whole numbers index an array. NaN/±Infinity survive Math.min/max and
+  // splice at 0; a fraction is recorded verbatim in the patch but truncated
+  // by splice, so forward apply and replay would disagree. Reject all three.
+  if (!Number.isInteger(toIndex)) {
     return { ok: false, error: { reason: "invalid-index" } };
   }
 
@@ -74,6 +78,13 @@ export function applyCommand(
     if (command.nodes.length === 0) return { ok: false, error: { reason: "nothing-to-add" } };
     const batchIds = new Set<NodeId>();
     for (const node of command.nodes) {
+      // An empty/whitespace id can't be addressed or encoded as a droppable
+      // ("node:" decodes to null), so the card could never be a drop target.
+      // buildGraph rejects these; the reducer must too — added nodes are
+      // consumer-supplied (palette factories).
+      if (!node.id || !node.id.trim()) {
+        return { ok: false, error: { reason: "invalid-node-id", nodeId: node.id } };
+      }
       // A colliding id — with the graph or within the batch — would corrupt
       // every index; ids are the addressing scheme.
       if (graph.nodesById.has(node.id) || batchIds.has(node.id)) {
@@ -125,9 +136,15 @@ export function applyCommand(
   // otherwise be ripped out of its (also moving) parent.
   const draggedSet = new Set(command.nodeIds);
   const pruned = command.nodeIds.filter((id) => {
+    // Cycle-guarded like isSameOrAncestor: a corrupt parentById chain would
+    // otherwise spin this loop forever. A detected cycle degrades to "keep"
+    // (the reducer's other guards reject the resulting move).
+    const seen = new Set<NodeId>();
     let parent = graph.parentById.get(id) ?? null;
     while (parent !== null) {
       if (draggedSet.has(parent)) return false;
+      if (seen.has(parent)) return true;
+      seen.add(parent);
       parent = graph.parentById.get(parent) ?? null;
     }
     return true;
