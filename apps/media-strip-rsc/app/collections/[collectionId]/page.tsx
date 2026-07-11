@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 
-import { DemoMediaStrip } from "../../../components/demo-media-strip";
+import { ClientDemoMediaStrip } from "../../../components/client-demo-media-strip";
 import {
   MEDIA_COLLECTIONS,
   getCollection,
@@ -94,6 +94,12 @@ export default async function CollectionPage({ params }: CollectionPageProps) {
               </Link>
             );
           })}
+          <Link
+            href="/dnd-collections"
+            className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            DnD Collections Lab
+          </Link>
         </nav>
       </header>
 
@@ -118,7 +124,7 @@ export default async function CollectionPage({ params }: CollectionPageProps) {
           </div>
         </aside>
 
-        <DemoMediaStrip
+        <ClientDemoMediaStrip
           key={collection.id}
           activeCollectionId={collection.id}
           collections={MEDIA_COLLECTIONS}

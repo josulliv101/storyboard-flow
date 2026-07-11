@@ -22,7 +22,7 @@ import type {
   RoutedMediaStripItem,
 } from "../lib/collections";
 
-type DemoMediaStripProps = Readonly<{
+export type DemoMediaStripProps = Readonly<{
   activeCollectionId: string;
   collections: readonly RoutedMediaCollection[];
 }>;
