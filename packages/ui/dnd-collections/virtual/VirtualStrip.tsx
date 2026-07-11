@@ -1,7 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useImperativeHandle, useMemo, useRef } from "react";
-import { useDroppable } from "@dnd-kit/core";
+import { forwardRef, useCallback, useImperativeHandle, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph";
@@ -12,7 +11,13 @@ import {
   usePanWithMomentum,
   type PanWithMomentumOptions,
 } from "../react/use-pan-with-momentum";
-import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "../react/virtual-droppable";
+import {
+  useFocusNode,
+  usePublishBoundary,
+  useVirtualInsertContainer,
+  VirtualEmptyHint,
+  type VirtualViewPoint,
+} from "./use-virtual-collection-view";
 
 // Horizontal virtualized strip: renders only visible cards + overscan out
 // of arbitrarily large collections. Cards ARE the standard NodeCard —
@@ -85,32 +90,20 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
   ) {
     const store = useCollectionsStore();
     const cardActivation: NodeCardDragActivation = panToScroll ? itemDragActivation : "body";
+
     // Stable array reference between commits — the virtualizer's item keys
     // and index math stay coherent across drags for free.
     const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
     // nodesById is never re-allocated by moves, so this subscription is inert.
     const nodesById = useCollectionsSelector((s) => s.graph.nodesById);
-    const scrollRef = useRef<HTMLDivElement>(null);
-    // The content spacer: boundary math measures ITS live rect, so scroll
-    // position and container padding are accounted for without hardcoded
-    // assumptions (a consumer className can restyle padding freely).
-    const contentRef = useRef<HTMLDivElement>(null);
+
+    const { scrollRef, contentRef, resolveBoundaryRef, setContainerRef } =
+      useVirtualInsertContainer(collectionId, "vstrip");
 
     const widthForIndex = (index: number): number => {
       const node = nodesById.get(childIds[index]);
       return (node && itemWidthFor?.(node)) ?? itemWidth;
     };
-
-    // Indicator boundary for a live insert-at-index intent aimed at THIS
-    // collection (positioned in content coordinates, so it scrolls along).
-    const indicatorIndex = useCollectionsSelector((s) => {
-      const intent = s.interaction.dropIntent;
-      return intent?.type === "insert-at-index" &&
-        intent.collectionId === collectionId &&
-        !s.interaction.dropIntentInvalid
-        ? intent.index
-        : null;
-    });
 
     const virtualizer = useVirtualizer({
       count: childIds.length,
@@ -129,7 +122,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // (O(log n), variable widths included) — never from card rects, since
     // most cards aren't mounted. The spacer's rect shifts with scroll, so
     // measuring against it keeps intents live during (auto-)scroll too.
-    const resolveBoundary = (point: Readonly<{ x: number; y: number }>): number => {
+    const resolveBoundary = (point: VirtualViewPoint): number => {
       const content = contentRef.current;
       if (!content || childIds.length === 0) return childIds.length;
       const contentX = point.x - content.getBoundingClientRect().left;
@@ -139,22 +132,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       if (!item) return childIds.length;
       return contentX < item.start + item.size / 2 ? item.index : item.index + 1;
     };
-
-    // The container is the droppable; the provider's collision detection
-    // reads this data and emits an insert-at-index intent.
-    const { setNodeRef: setDroppableRef } = useDroppable({
-      id: `vstrip:${collectionId}`,
-      data: {
-        [VIRTUAL_INSERT_DATA_KEY]: { collectionId, resolveBoundary } satisfies VirtualInsertTarget,
-      },
-    });
-    const setContainerRef = useCallback(
-      (el: HTMLDivElement | null) => {
-        scrollRef.current = el;
-        setDroppableRef(el);
-      },
-      [setDroppableRef]
-    );
+    usePublishBoundary(resolveBoundaryRef, resolveBoundary);
 
     useEdgeAutoScroll(scrollRef, "x");
     const panOptions = useMemo<PanWithMomentumOptions>(
@@ -170,41 +148,39 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     );
     usePanWithMomentum(scrollRef, "x", panOptions);
 
-    const focusNode = useCallback(
-      (id: NodeId) => {
+    const scrollToNode = useCallback(
+      (id: NodeId): boolean => {
         const index = childIds.indexOf(id);
-        if (index === -1) return;
+        if (index === -1) return false;
         virtualizer.scrollToIndex(index);
-        // The card may not exist until the virtualizer re-renders after the
-        // scroll — retry across a few frames, then give up quietly.
-        let attempts = 12;
-        const tryFocus = () => {
-          const card = scrollRef.current?.querySelector<HTMLElement>(
-            `[data-node-id="${CSS.escape(id)}"]`
-          );
-          if (card) {
-            card.focus();
-            return;
-          }
-          if (--attempts > 0) requestAnimationFrame(tryFocus);
-        };
-        requestAnimationFrame(tryFocus);
+        return true;
       },
       [childIds, virtualizer]
     );
+    const focusNode = useFocusNode(scrollRef, scrollToNode);
 
     useImperativeHandle(
       ref,
       () => ({
         scrollToNode: (id) => {
-          const index = childIds.indexOf(id);
-          if (index !== -1) virtualizer.scrollToIndex(index);
+          scrollToNode(id);
         },
         focusNode,
         remeasure: () => virtualizer.measure(),
       }),
-      [childIds, virtualizer, focusNode]
+      [scrollToNode, focusNode, virtualizer]
     );
+
+    // Indicator boundary for a live insert-at-index intent aimed at THIS
+    // collection (positioned in content coordinates, so it scrolls along).
+    const indicatorIndex = useCollectionsSelector((s) => {
+      const intent = s.interaction.dropIntent;
+      return intent?.type === "insert-at-index" &&
+        intent.collectionId === collectionId &&
+        !s.interaction.dropIntentInvalid
+        ? intent.index
+        : null;
+    });
 
     // Boundary k's line sits in the gap before item k (measured offsets, so
     // variable widths align). Boundaries under the pointer are always near
@@ -230,11 +206,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         // Vertical touch scrolling stays native; horizontal is ours (pan hook).
         style={{ touchAction: "pan-y" }}
       >
-        {childIds.length === 0 && (
-          <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-2 text-xs text-muted-foreground select-none">
-            Drop items here
-          </p>
-        )}
+        <VirtualEmptyHint visible={childIds.length === 0} />
         <div
           ref={contentRef}
           style={{ width: virtualizer.getTotalSize(), height: itemHeight, position: "relative" }}

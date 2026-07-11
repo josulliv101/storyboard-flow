@@ -5,6 +5,7 @@ import {
   getChildren,
 } from "./graph";
 import { type CollectionsCommand } from "./commands";
+import { resolveCommandFromIntent } from "./intents";
 
 // Semantic keyboard layer: keys mean OPERATIONS on the graph (move before
 // my previous sibling, nest into my neighboring collection, move out to my
@@ -104,6 +105,64 @@ export function resolveKeyboardCommand(
       return move(grandparentId, toIndex);
     }
   }
+}
+
+export type GridRowMoveRejection =
+  | Readonly<{ reason: "missing-node"; nodeId: NodeId }>
+  | Readonly<{ reason: "cannot-move-root"; nodeId: NodeId }>
+  | Readonly<{ reason: "invalid-columns" }>
+  | Readonly<{ reason: "already-first-row" }>
+  | Readonly<{ reason: "already-last-row" }>;
+
+/**
+ * Grid keyboard semantics: move one row up/down (± `columns`), landing in
+ * the SAME column; a shorter last row clamps to the end. Pure graph math —
+ * the view only supplies its live column count. Delegates the visible-
+ * boundary -> post-removal conversion to `resolveCommandFromIntent`, the
+ * single place that math lives.
+ */
+export function resolveGridRowMoveCommand(
+  graph: CollectionsGraph,
+  nodeId: NodeId,
+  direction: "up" | "down",
+  columns: number
+): Result<CollectionsCommand, GridRowMoveRejection> {
+  if (!Number.isFinite(columns) || columns < 1 || Math.floor(columns) !== columns) {
+    return { ok: false, error: { reason: "invalid-columns" } };
+  }
+  if (!graph.nodesById.has(nodeId)) {
+    return { ok: false, error: { reason: "missing-node", nodeId } };
+  }
+  const parentId = graph.parentById.get(nodeId);
+  if (parentId === undefined) {
+    return { ok: false, error: { reason: "missing-node", nodeId } };
+  }
+  if (parentId === null) {
+    return { ok: false, error: { reason: "cannot-move-root", nodeId } };
+  }
+  const siblings = getChildren(graph, parentId);
+  const index = siblings.indexOf(nodeId);
+  if (index === -1) return { ok: false, error: { reason: "missing-node", nodeId } };
+
+  if (direction === "up" && index < columns) {
+    return { ok: false, error: { reason: "already-first-row" } };
+  }
+  const lastRowStart = Math.floor((siblings.length - 1) / columns) * columns;
+  if (direction === "down" && index >= lastRowStart) {
+    return { ok: false, error: { reason: "already-last-row" } };
+  }
+
+  const boundary =
+    direction === "up" ? index - columns : Math.min(index + columns + 1, siblings.length);
+  const resolved = resolveCommandFromIntent(
+    graph,
+    { type: "insert-at-index", collectionId: parentId, index: boundary },
+    [nodeId]
+  );
+  // Unreachable in practice (node and parent were just validated), but keep
+  // the rejection typed rather than asserting.
+  if (!resolved.ok) return { ok: false, error: { reason: "missing-node", nodeId } };
+  return resolved;
 }
 
 function findSiblingCollection(

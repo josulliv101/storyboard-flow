@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { type DragStartEvent } from "@dnd-kit/core";
 
 import { type CollectionItemNode } from "../core/graph";
@@ -73,5 +73,10 @@ export function usePaletteDrag(args: {
     setPaletteNodes(null);
   }, []);
 
-  return { paletteNodes, startPaletteDrag, endPaletteDrag, clearPaletteDrag };
+  // Stable identity: the provider's drag handlers depend on this object, so
+  // a fresh literal per render would rebuild them on every announcement.
+  return useMemo(
+    () => ({ paletteNodes, startPaletteDrag, endPaletteDrag, clearPaletteDrag }),
+    [paletteNodes, startPaletteDrag, endPaletteDrag, clearPaletteDrag]
+  );
 }

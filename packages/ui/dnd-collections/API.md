@@ -164,6 +164,7 @@ Rejections (`CommandRejection.reason`):
 | `cannot-move-root` | A dragged id is a top-level collection — roots are structural anchors. |
 | `duplicate-node-id` | An id appears twice in `nodeIds`, or (add-nodes) an added id already exists / repeats in the batch. |
 | `nothing-to-add` | `add-nodes` with an empty `nodes` array. |
+| `invalid-index` | Non-finite `toIndex` (NaN would silently splice at 0). |
 | `would-create-cycle` | A node would move into itself or its own descendant. |
 | `nothing-to-move` | Every dragged id was pruned (all descendants of other dragged ids). |
 | `same-position` | The move would leave every children array identical — treated as a no-op, nothing is pushed to history. |
@@ -292,10 +293,11 @@ a move with an empty drag set — palette drops land anywhere a move can.
 
 ## Core: history (`core/history.ts`)
 
-### `createHistory(): CollectionsHistory`
+### `createHistory(options?): CollectionsHistory`
 
 Linear undo/redo as a pair of patch stacks. A new `push` clears the redo
-branch.
+branch. `options.maxEntries` caps the undo stack (oldest entries fall off
+and stop being undoable); default unbounded.
 
 ```ts
 type HistoryEntry = {
@@ -337,6 +339,14 @@ type KeyboardMoveAction =
 `KeyboardRejection.reason`: `missing-node`, `cannot-move-root`, and the
 boundary no-ops `no-previous-sibling`, `no-next-sibling`,
 `no-neighbor-collection`, `no-parent-to-move-out-to`.
+
+### `resolveGridRowMoveCommand(graph, nodeId, direction, columns): Result<CollectionsCommand, GridRowMoveRejection>`
+
+Grid keyboard semantics: one row up/down (± `columns`), landing in the
+same column; a shorter last row clamps to the end. Pure graph math — the
+view supplies its live column count. Rejections: `missing-node`,
+`cannot-move-root`, `invalid-columns`, `already-first-row`,
+`already-last-row`.
 
 ---
 
@@ -407,6 +417,7 @@ type CollectionsChange = {
 | `setDropIntent` | `(intent: DropIntent \| null) => void` | Deduplicates equal intents; computes `dropIntentInvalid` once per change. |
 | `endDrag` | `() => void` | Clears drag state; never mutates the graph. |
 | `flashRejection` | `(ids: readonly NodeId[]) => void` | Sets `rejectedIdSet` for 600ms (re-flash resets the timer). |
+| `destroy` | `() => void` | Clears listeners and any pending flash timer; the provider calls it on unmount. |
 
 ```ts
 type CollectionsSnapshot = {

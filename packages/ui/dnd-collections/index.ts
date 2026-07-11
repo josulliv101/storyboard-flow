@@ -53,7 +53,9 @@ export {
 } from "./core/intents";
 export { createHistory, type CollectionsHistory, type HistoryEntry } from "./core/history";
 export {
+  resolveGridRowMoveCommand,
   resolveKeyboardCommand,
+  type GridRowMoveRejection,
   type KeyboardMoveAction,
   type KeyboardRejection,
 } from "./core/keyboard";

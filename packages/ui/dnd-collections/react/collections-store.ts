@@ -72,6 +72,8 @@ export type CollectionsStore = Readonly<{
   setDropIntent: (intent: DropIntent | null) => void;
   endDrag: () => void;
   flashRejection: (ids: readonly NodeId[]) => void;
+  /** Clears listeners and any pending rejection-flash timer. The provider calls this on unmount. */
+  destroy: () => void;
 }>;
 
 const REJECTION_FLASH_MS = 600;
@@ -241,6 +243,12 @@ export function createCollectionsStore(
         rejectionTimer = null;
         setInteraction({ rejectedIdSet: EMPTY_SELECTION });
       }, REJECTION_FLASH_MS);
+    },
+
+    destroy: () => {
+      if (rejectionTimer !== null) clearTimeout(rejectionTimer);
+      rejectionTimer = null;
+      listeners.clear();
     },
   };
 }

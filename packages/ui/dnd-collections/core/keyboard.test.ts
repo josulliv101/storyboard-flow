@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { buildGraph, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "./graph";
-import { resolveKeyboardCommand } from "./keyboard";
+import { resolveGridRowMoveCommand, resolveKeyboardCommand } from "./keyboard";
 
 const media = (id: string): GraphNodeSpec => ({ kind: "media", id, name: id });
 const collection = (id: string, children: readonly GraphNodeSpec[] = []): GraphNodeSpec => ({
@@ -114,6 +114,70 @@ describe("resolveKeyboardCommand", () => {
       error: { reason: "cannot-move-root", nodeId: "root" },
     });
     expect(resolveKeyboardCommand(graph, id("ghost"), "move-next")).toEqual({
+      ok: false,
+      error: { reason: "missing-node", nodeId: "ghost" },
+    });
+  });
+});
+
+describe("resolveGridRowMoveCommand", () => {
+  // grid: [g0..g9] in a 4-column grid -> rows [g0-g3], [g4-g7], [g8, g9].
+  const gridGraph = build([
+    collection(
+      "grid",
+      Array.from({ length: 10 }, (_, i) => media(`g${i}`))
+    ),
+  ]);
+
+  test("down lands one row later in the same column", () => {
+    // g1 (row 0, col 1) -> visible boundary 6 -> post-removal index 5 (row 1, col 1).
+    expect(resolveGridRowMoveCommand(gridGraph, id("g1"), "down", 4)).toEqual({
+      ok: true,
+      value: { type: "move-nodes", nodeIds: ["g1"], toParentId: "grid", toIndex: 5 },
+    });
+  });
+
+  test("up lands one row earlier in the same column", () => {
+    expect(resolveGridRowMoveCommand(gridGraph, id("g5"), "up", 4)).toEqual({
+      ok: true,
+      value: { type: "move-nodes", nodeIds: ["g5"], toParentId: "grid", toIndex: 1 },
+    });
+  });
+
+  test("down into a shorter last row clamps to the end", () => {
+    // g6 (row 1, col 2): row 2 has only [g8, g9] -> boundary clamps to 10 -> index 9.
+    expect(resolveGridRowMoveCommand(gridGraph, id("g6"), "down", 4)).toEqual({
+      ok: true,
+      value: { type: "move-nodes", nodeIds: ["g6"], toParentId: "grid", toIndex: 9 },
+    });
+  });
+
+  test("boundary rejections: first row up, last row down", () => {
+    expect(resolveGridRowMoveCommand(gridGraph, id("g2"), "up", 4)).toEqual({
+      ok: false,
+      error: { reason: "already-first-row" },
+    });
+    expect(resolveGridRowMoveCommand(gridGraph, id("g9"), "down", 4)).toEqual({
+      ok: false,
+      error: { reason: "already-last-row" },
+    });
+  });
+
+  test("rejects non-finite, zero, and fractional column counts", () => {
+    for (const columns of [0, -1, 2.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(resolveGridRowMoveCommand(gridGraph, id("g5"), "down", columns)).toEqual({
+        ok: false,
+        error: { reason: "invalid-columns" },
+      });
+    }
+  });
+
+  test("rejects roots and unknown nodes", () => {
+    expect(resolveGridRowMoveCommand(gridGraph, id("grid"), "down", 4)).toEqual({
+      ok: false,
+      error: { reason: "cannot-move-root", nodeId: "grid" },
+    });
+    expect(resolveGridRowMoveCommand(gridGraph, id("ghost"), "down", 4)).toEqual({
       ok: false,
       error: { reason: "missing-node", nodeId: "ghost" },
     });

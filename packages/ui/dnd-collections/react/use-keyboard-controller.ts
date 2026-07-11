@@ -3,8 +3,11 @@
 import { useCallback, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 
 import { type NodeId } from "../core/graph";
-import { resolveCommandFromIntent } from "../core/intents";
-import { resolveKeyboardCommand, type KeyboardMoveAction } from "../core/keyboard";
+import {
+  resolveGridRowMoveCommand,
+  resolveKeyboardCommand,
+  type KeyboardMoveAction,
+} from "../core/keyboard";
 import { type CollectionsStore } from "./collections-store";
 
 // Semantic keyboard moves (Alt+key on a focused card), by event delegation
@@ -26,6 +29,11 @@ const KEYBOARD_ACTION_BY_KEY: Readonly<Record<string, KeyboardMoveAction | undef
   // grids, where Alt+Arrows are row moves.
   Enter: "nest-in-neighbor",
   Backspace: "move-out",
+};
+
+const GRID_BOUNDARY_MESSAGES: Readonly<Record<string, string | undefined>> = {
+  "already-first-row": "Already in the first row.",
+  "already-last-row": "Already in the last row.",
 };
 
 const KEYBOARD_BOUNDARY_MESSAGES: Readonly<Record<string, string>> = {
@@ -61,37 +69,19 @@ export function useCollectionsKeyboard(args: {
 
   const handleGridRowMove = useCallback(
     (nodeId: NodeId, key: "ArrowUp" | "ArrowDown", columns: number) => {
-      if (!Number.isFinite(columns) || columns < 1) return;
       const { graph } = store.getSnapshot();
-      const parentId = graph.parentById.get(nodeId);
-      if (parentId === undefined || parentId === null) return;
-      const siblings = graph.childrenById.get(parentId) ?? [];
-      const index = siblings.indexOf(nodeId);
-      if (index === -1) return;
-
-      if (key === "ArrowUp" && index < columns) {
-        announce("Already in the first row.");
-        return;
-      }
-      const lastRowStart = Math.floor((siblings.length - 1) / columns) * columns;
-      if (key === "ArrowDown" && index >= lastRowStart) {
-        announce("Already in the last row.");
-        return;
-      }
-
-      // Visible boundary that lands the card one row away in the SAME
-      // column (post-removal conversion happens in the intent resolver);
-      // a shorter last row clamps to the end.
-      const boundary =
-        key === "ArrowUp" ? index - columns : Math.min(index + columns + 1, siblings.length);
-      const resolved = resolveCommandFromIntent(
+      const resolved = resolveGridRowMoveCommand(
         graph,
-        { type: "insert-at-index", collectionId: parentId, index: boundary },
-        [nodeId]
+        nodeId,
+        key === "ArrowUp" ? "up" : "down",
+        columns
       );
-      if (!resolved.ok) return;
-      const dispatched = store.dispatch(resolved.value);
-      if (!dispatched.ok) return;
+      if (!resolved.ok) {
+        const message = GRID_BOUNDARY_MESSAGES[resolved.error.reason];
+        if (message) announce(message);
+        return;
+      }
+      if (!store.dispatch(resolved.value).ok) return;
 
       const name = graph.nodesById.get(nodeId)?.name ?? "item";
       announce(`Moved "${name}" ${key === "ArrowUp" ? "up" : "down"} one row.`);

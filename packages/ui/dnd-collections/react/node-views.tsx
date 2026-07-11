@@ -45,7 +45,7 @@ export function CollectionPanels({ collectionIds, animateMoves = true }: Collect
  * on one page (even ones reusing node ids) never measure each other's cards.
  */
 function FlipAnimator() {
-  useFlipGraphAnimation(useCollectionsContainer());
+  useFlipGraphAnimation(useCollectionsContainer().containerRef);
   return null;
 }
 
@@ -126,6 +126,7 @@ export const NodeCard = memo(function NodeCard({
 }) {
   const dragHandle = dragActivation === "handle";
   const store = useCollectionsStore();
+  const { instructionsId } = useCollectionsContainer();
 
   // nodesById is never re-allocated by move patches, so this reference is
   // stable across drags — the selector only "changes" if the node itself does.
@@ -212,6 +213,14 @@ export const NodeCard = memo(function NodeCard({
         // grabbed state; here the pressed semantic is SELECTION (and the drag
         // state is conveyed by the overlay + dimming instead).
         aria-pressed={isSelected}
+        // In handle mode the GRIP is the card's tab stop (drag grammar and
+        // Alt-moves both work from it) — one stop per card, not two.
+        tabIndex={dragHandle ? -1 : undefined}
+        aria-describedby={
+          dragHandle
+            ? instructionsId
+            : `${attributes["aria-describedby"]} ${instructionsId}`
+        }
       >
         <span className="truncate font-medium text-foreground">{node.name}</span>
         <span className="text-[10px] text-muted-foreground">
@@ -230,11 +239,27 @@ export const NodeCard = memo(function NodeCard({
           {...attributes}
           {...listeners}
           aria-label={`Drag ${node.name}`}
+          aria-describedby={`${attributes["aria-describedby"]} ${instructionsId}`}
         >
           ⠿
         </div>
       )}
 
+      <NodeCardIndicators nestState={nestState} dropSide={dropSide} />
+    </div>
+  );
+});
+
+/** Presentational drop-preview overlays: nest highlight + before/after bars. */
+function NodeCardIndicators({
+  nestState,
+  dropSide,
+}: {
+  nestState: "none" | "valid" | "invalid";
+  dropSide: "before" | "after" | null;
+}) {
+  return (
+    <>
       {/* Nest highlight: full-card overlay while this collection is the live nest target. */}
       {nestState !== "none" && (
         <div
@@ -267,9 +292,9 @@ export const NodeCard = memo(function NodeCard({
           className="pointer-events-none absolute inset-y-0 -right-1.5 z-20 w-1 rounded-full bg-primary"
         />
       )}
-    </div>
+    </>
   );
-});
+}
 
 /** Drag-overlay ghost: the primary card plus a "+N" badge for multi-drag. */
 export function NodeCardGhost({

@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   DndContext,
   DragOverlay,
@@ -10,7 +18,6 @@ import {
   useSensor,
   useSensors,
   type CollisionDetection,
-  type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 
@@ -74,6 +81,7 @@ export function DndCollections({ initialGraph, onChange, children }: DndCollecti
       onChange: (change) => onChangeRef.current?.(change),
     })
   );
+  useEffect(() => () => store.destroy(), [store]);
 
   return (
     <CollectionsStoreProvider value={store}>
@@ -106,6 +114,11 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const { handleKeyDownCapture } = useCollectionsKeyboard({ store, announce, containerRef });
+  const instructionsId = useId();
+  const containerValue = useMemo(
+    () => ({ containerRef, instructionsId }),
+    [instructionsId]
+  );
 
   const collisionDetection = useCallback<CollisionDetection>(
     (args) => {
@@ -238,14 +251,13 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
   }, [store]);
 
   const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
+    () => {
       if (palette.endPaletteDrag()) return;
 
       const intent = intentRef.current;
       intentRef.current = null;
       const { graph, interaction } = store.getSnapshot();
       const activeIds = interaction.activeIds;
-      void event;
 
       if (!intent || activeIds.length === 0) {
         store.endDrag();
@@ -303,11 +315,16 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
     >
       {/* The wrapper doubles as the instance boundary: keyboard delegation
           here, and (via context) the scope for the FLIP measurement sweep. */}
-      <CollectionsContainerContext.Provider value={containerRef}>
+      <CollectionsContainerContext.Provider value={containerValue}>
         <div ref={containerRef} onKeyDownCapture={handleKeyDownCapture} style={{ display: "contents" }}>
           {children}
         </div>
       </CollectionsContainerContext.Provider>
+      {/* Keyboard-usage instructions, referenced by cards via aria-describedby. */}
+      <p id={instructionsId} className="sr-only">
+        Alt plus Arrow keys move the focused item. Alt plus Enter nests it into a neighboring
+        collection; Alt plus Backspace moves it out.
+      </p>
       <CollectionsDragOverlay paletteNodes={palette.paletteNodes} />
       <div
         aria-live="polite"

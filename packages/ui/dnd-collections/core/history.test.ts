@@ -67,3 +67,16 @@ describe("createHistory", () => {
     expect(history.redo()).toBeNull();
   });
 });
+
+describe("createHistory maxEntries", () => {
+  test("oldest entries fall off past the cap and stop being undoable", () => {
+    const history = createHistory({ maxEntries: 2 });
+    history.push(entry(1));
+    history.push(entry(2));
+    history.push(entry(3));
+    expect(history.entries().map((e) => e.at)).toEqual([2, 3]);
+    history.undo();
+    history.undo();
+    expect(history.canUndo()).toBe(false); // entry 1 is gone for good
+  });
+});

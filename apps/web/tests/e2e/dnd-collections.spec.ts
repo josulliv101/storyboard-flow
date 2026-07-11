@@ -192,6 +192,9 @@ test.describe('DndCollections E2E', () => {
       expect(ids.slice(0, 3)).toEqual(['m1', 'm0', 'm2']);
       expect(await strip.evaluate((el) => el.scrollLeft)).toBe(0); // no pan happened
     }).toPass();
+    // Let dnd-kit's ~250ms DROP ANIMATION finish — the overlay ghost stays
+    // mounted while it settles, and gesture 2 asserts on ghost count.
+    await expect(page.locator('[data-testid="drag-ghost"]')).toHaveCount(0);
 
     // Fast flick (well under the delay): pans instead of dragging.
     const box = await strip.locator('[data-node-id="m3"]').boundingBox();

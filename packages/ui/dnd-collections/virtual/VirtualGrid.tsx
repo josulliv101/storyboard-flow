@@ -5,23 +5,30 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useRef,
   useState,
 } from "react";
-import { useDroppable } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, type NodeId } from "../core/graph";
 import { useCollectionsSelector } from "../react/collections-store";
 import { NodeCard } from "../react/node-views";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
-import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "../react/virtual-droppable";
+import {
+  useFocusNode,
+  usePublishBoundary,
+  useVirtualInsertContainer,
+  VirtualEmptyHint,
+  type VirtualViewPoint,
+} from "./use-virtual-collection-view";
 
-// Vertical virtualized grid (phase 5 of VIRTUALIZATION-PLAN.md). Cells are
-// FIXED-SIZE by decision (media letterboxes inside its card), which keeps
-// the virtualizer purely row-based: one virtual item per row, columns are
-// index arithmetic. Cards are the standard NodeCard; the droppable contract
-// is the same virtualInsert used by VirtualStrip, with 2D boundary math.
+// Vertical virtualized grid. Cells are FIXED-SIZE by decision (media
+// letterboxes inside its card), which keeps the virtualizer purely
+// row-based: one virtual item per row, columns are index arithmetic.
+// Cards are the standard NodeCard; the droppable contract is the same
+// virtualInsert used by VirtualStrip, with 2D boundary math. NOTE: cards
+// moving BETWEEN rows re-parent (rows are keyed by index), so cross-row
+// moves recreate the card's DOM element — FLIP and held focus don't
+// survive that hop.
 
 export type VirtualGridProps = Readonly<{
   collectionId: NodeId;
@@ -57,14 +64,12 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
     ref
   ) {
     const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
-    const scrollRef = useRef<HTMLDivElement>(null);
-    // The content spacer: boundary math and column measurement use ITS
-    // live rect/width, so scroll position and container padding are
-    // accounted for without hardcoded assumptions.
-    const contentRef = useRef<HTMLDivElement>(null);
 
-    // Responsive column count from the container's content width, unless
-    // pinned by the prop.
+    const { scrollRef, contentRef, resolveBoundaryRef, setContainerRef } =
+      useVirtualInsertContainer(collectionId, "vgrid");
+
+    // Responsive column count from the content width, unless pinned by the
+    // prop. The spacer's clientWidth already excludes container padding.
     const [measuredColumns, setMeasuredColumns] = useState(1);
     useEffect(() => {
       if (columns !== undefined) return;
@@ -78,7 +83,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       const observer = new ResizeObserver(compute);
       observer.observe(el);
       return () => observer.disconnect();
-    }, [columns, cellWidth, gap]);
+    }, [columns, cellWidth, gap, scrollRef, contentRef]);
     const cols = columns ?? measuredColumns;
 
     const rowCount = Math.ceil(childIds.length / cols);
@@ -95,7 +100,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
     // the pointer), column boundary from x (round — nearest gap between
     // cells). The spacer's rect shifts with scroll, so measuring against it
     // keeps intents live during (auto-)scroll too.
-    const resolveBoundary = (point: Readonly<{ x: number; y: number }>): number => {
+    const resolveBoundary = (point: VirtualViewPoint): number => {
       const content = contentRef.current;
       if (!content || childIds.length === 0) return childIds.length;
       const rect = content.getBoundingClientRect();
@@ -105,54 +110,30 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       const col = Math.max(0, Math.min(Math.round(contentX / (cellWidth + gap)), cols));
       return Math.min(row * cols + col, childIds.length);
     };
-
-    const { setNodeRef: setDroppableRef } = useDroppable({
-      id: `vgrid:${collectionId}`,
-      data: {
-        [VIRTUAL_INSERT_DATA_KEY]: { collectionId, resolveBoundary } satisfies VirtualInsertTarget,
-      },
-    });
-    const setContainerRef = useCallback(
-      (el: HTMLDivElement | null) => {
-        scrollRef.current = el;
-        setDroppableRef(el);
-      },
-      [setDroppableRef]
-    );
+    usePublishBoundary(resolveBoundaryRef, resolveBoundary);
 
     useEdgeAutoScroll(scrollRef, "y");
 
-    const focusNode = useCallback(
-      (id: NodeId) => {
+    const scrollToNode = useCallback(
+      (id: NodeId): boolean => {
         const index = childIds.indexOf(id);
-        if (index === -1) return;
+        if (index === -1) return false;
         virtualizer.scrollToIndex(Math.floor(index / cols));
-        let attempts = 12;
-        const tryFocus = () => {
-          const card = scrollRef.current?.querySelector<HTMLElement>(
-            `[data-node-id="${CSS.escape(id)}"]`
-          );
-          if (card) {
-            card.focus();
-            return;
-          }
-          if (--attempts > 0) requestAnimationFrame(tryFocus);
-        };
-        requestAnimationFrame(tryFocus);
+        return true;
       },
       [childIds, virtualizer, cols]
     );
+    const focusNode = useFocusNode(scrollRef, scrollToNode);
 
     useImperativeHandle(
       ref,
       () => ({
         scrollToNode: (id) => {
-          const index = childIds.indexOf(id);
-          if (index !== -1) virtualizer.scrollToIndex(Math.floor(index / cols));
+          scrollToNode(id);
         },
         focusNode,
       }),
-      [childIds, virtualizer, cols, focusNode]
+      [scrollToNode, focusNode]
     );
 
     const indicatorIndex = useCollectionsSelector((s) => {
@@ -187,11 +168,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         ].join(" ")}
         style={{ height }}
       >
-        {childIds.length === 0 && (
-          <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-2 text-xs text-muted-foreground select-none">
-            Drop items here
-          </p>
-        )}
+        <VirtualEmptyHint visible={childIds.length === 0} />
         <div ref={contentRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {indicator && (
             <div

@@ -245,39 +245,6 @@ export function resolveCommandFromIntent(
   if (parentId === undefined || parentId === null) {
     return { ok: false, error: { reason: "missing-node", nodeId: intent.targetId } };
   }
-  return resolveMoveBoundary(graph, intent, draggedSet, draggedIds, parentId);
-}
-
-/**
- * Intent -> add-nodes command for BRAND-NEW nodes (palette drops). The
- * placement math is identical to a move with an empty drag set — nothing
- * being inserted exists in the graph yet — so it delegates and rewraps.
- */
-export function resolveAddCommandFromIntent(
-  graph: CollectionsGraph,
-  intent: DropIntent,
-  nodes: readonly CollectionItemNode[]
-): Result<CollectionsCommand, IntentRejection> {
-  const placed = resolveCommandFromIntent(graph, intent, []);
-  if (!placed.ok) return placed;
-  return {
-    ok: true,
-    value: {
-      type: "add-nodes",
-      nodes,
-      toParentId: placed.value.toParentId,
-      toIndex: placed.value.toIndex,
-    },
-  };
-}
-
-function resolveMoveBoundary(
-  graph: CollectionsGraph,
-  intent: Extract<DropIntent, { type: "insert-adjacent" }>,
-  draggedSet: ReadonlySet<NodeId>,
-  draggedIds: readonly NodeId[],
-  parentId: NodeId
-): Result<CollectionsCommand, IntentRejection> {
 
   const siblings = getChildren(graph, parentId);
   const targetVisibleIndex = siblings.indexOf(intent.targetId);
@@ -303,3 +270,27 @@ function resolveMoveBoundary(
     },
   };
 }
+
+/**
+ * Intent -> add-nodes command for BRAND-NEW nodes (palette drops). The
+ * placement math is identical to a move with an empty drag set — nothing
+ * being inserted exists in the graph yet — so it delegates and rewraps.
+ */
+export function resolveAddCommandFromIntent(
+  graph: CollectionsGraph,
+  intent: DropIntent,
+  nodes: readonly CollectionItemNode[]
+): Result<CollectionsCommand, IntentRejection> {
+  const placed = resolveCommandFromIntent(graph, intent, []);
+  if (!placed.ok) return placed;
+  return {
+    ok: true,
+    value: {
+      type: "add-nodes",
+      nodes,
+      toParentId: placed.value.toParentId,
+      toIndex: placed.value.toIndex,
+    },
+  };
+}
+

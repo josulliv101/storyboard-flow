@@ -46,6 +46,7 @@ export type CommandRejection =
   | Readonly<{ reason: "duplicate-node-id"; nodeId: NodeId }>
   | Readonly<{ reason: "nothing-to-move" }>
   | Readonly<{ reason: "nothing-to-add" }>
+  | Readonly<{ reason: "invalid-index" }>
   | Readonly<{ reason: "same-position" }>;
 
 export type ApplyCommandSuccess = Readonly<{
@@ -63,6 +64,10 @@ export function applyCommand(
   if (!target) return { ok: false, error: { reason: "missing-node", nodeId: toParentId } };
   if (target.kind !== "collection") {
     return { ok: false, error: { reason: "target-not-collection", nodeId: toParentId } };
+  }
+  // NaN survives Math.min/Math.max and splices at 0 — reject it loudly.
+  if (!Number.isFinite(toIndex)) {
+    return { ok: false, error: { reason: "invalid-index" } };
   }
 
   if (command.type === "add-nodes") {
