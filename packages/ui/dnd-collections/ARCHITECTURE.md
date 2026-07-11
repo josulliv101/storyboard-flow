@@ -40,17 +40,37 @@ react/
   collections-store.ts      External selector store (useSyncExternalStore).
                             Owns the committed graph + ephemeral interaction
                             state; see "The efficiency story" below.
-  DndCollections.tsx        Provider wiring: dnd-kit sensors, custom
-                            collision detection, drag lifecycle handlers,
-                            Alt+Arrow keyboard delegation, aria-live
-                            announcer, DragOverlay.
+  DndCollections.tsx        Provider wiring: dnd-kit sensors, collision ->
+                            intent resolution, node-drag lifecycle,
+                            DragOverlay, live region. Everything else is
+                            delegated to the focused controllers below.
+  use-announcements.ts      aria-live announce channel + selection-change
+                            announcements.
+  use-palette-drag.ts       Palette drag controller (factory at pick-up,
+                            add-nodes commit, cleanup).
+  use-keyboard-controller.ts Alt+key semantic moves, grid row moves
+                            (data-grid-columns scope), focus restoration.
+  use-edge-autoscroll.ts    Deterministic edge auto-scroll for virtualized
+                            containers (dnd-kit's built-in never engaged
+                            for them — probed e2e).
+  container-context.ts      The provider wrapper ref, for instance-scoped
+                            DOM work (FLIP sweep).
+  virtual-droppable.ts      Droppable-data contract virtualized containers
+                            use to resolve pointer -> boundary index.
   node-views.tsx            Default views: CollectionPanels / -Panel /
                             NodeCard / NodeCardGhost. Cards receive ONLY an
                             id; everything else arrives via selectors.
+  palette.tsx               PaletteItem external drag source.
+  trash-target.tsx          TrashTarget droppable over a hidden trash root.
   use-flip-graph-animation.ts Post-commit FLIP movement animation — a layer
                             ABOVE the reducer (see below).
   history-views.tsx         UndoRedoControls + HistoryLog debug/devtools
                             views over historyEntries.
+virtual/
+  VirtualStrip.tsx          Horizontal virtualized strip (TanStack Virtual):
+                            fixed or metadata-driven variable widths.
+  VirtualGrid.tsx           Vertical fixed-cell grid: fixed or responsive
+                            column count, row-based virtualizer.
 DndCollections.stories.tsx  Storybook stories; their play functions are the
                             interaction test suite (see "Testing strategy").
 stories-helpers.ts          Pointer-event simulation for play functions.

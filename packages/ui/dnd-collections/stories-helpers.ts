@@ -112,6 +112,13 @@ export function gapBetween(left: HTMLElement, right: HTMLElement): Point {
   return { x: (a.right + b.left) / 2, y: a.top + a.height / 2 };
 }
 
+/** The grip bar that starts item drags when NodeCard renders with dragHandle. */
+export function nodeHandle(canvasElement: HTMLElement, id: string): HTMLElement {
+  const el = canvasElement.querySelector<HTMLElement>(`[data-drag-handle="${id}"]`);
+  if (!el) throw new Error(`drag handle not found: ${id}`);
+  return el;
+}
+
 export function nodeCard(canvasElement: HTMLElement, id: string): HTMLElement {
   const el = canvasElement.querySelector<HTMLElement>(`[data-node-id="${id}"]`);
   if (!el) throw new Error(`node card not found: ${id}`);

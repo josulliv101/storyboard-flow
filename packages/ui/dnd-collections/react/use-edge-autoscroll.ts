@@ -21,11 +21,10 @@ export function useEdgeAutoScroll(
   const edge = options?.edge ?? 48;
   const maxSpeed = options?.maxSpeed ?? 14;
 
-  // Node drags set activeIds; palette drags have no active ids but publish
-  // intents while hovering — either signal means "a drag is live".
-  const dragging = useCollectionsSelector(
-    (s) => s.interaction.activeIds.length > 0 || s.interaction.dropIntent !== null
-  );
+  // Explicit drag-live flag: set by beginDrag/beginPaletteDrag, cleared by
+  // endDrag — never inferred from intents, which can be null mid-drag over
+  // dead zones (and, inversely, must never leak past a drop).
+  const dragging = useCollectionsSelector((s) => s.interaction.isDragging);
 
   useEffect(() => {
     if (!dragging) return;

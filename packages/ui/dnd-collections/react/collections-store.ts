@@ -22,7 +22,9 @@ import { isIntentInvalid, type DropIntent } from "../core/intents";
 // every uninvolved node's render untouched — that's the efficiency story.
 
 export type CollectionsInteraction = Readonly<{
-  /** Ids being dragged, in pick-up order (empty when idle). Multi-drag = the selection, pruned by the reducer. */
+  /** True while ANY drag is live — node drags and palette drags alike. */
+  isDragging: boolean;
+  /** Ids being dragged, pressed id first (empty when idle; empty during palette drags). Multi-drag = the selection, pruned by the reducer. */
   activeIds: readonly NodeId[];
   /** Same ids as `activeIds`, as a Set — O(1) membership for per-card selectors. */
   activeIdSet: ReadonlySet<NodeId>;
@@ -65,9 +67,13 @@ export type CollectionsStore = Readonly<{
 
   /** Computes the drag set: the selection if the pressed node is in it, else just the pressed node. */
   beginDrag: (pressedId: NodeId) => void;
+  /** Marks a palette (brand-new-node) drag live — no activeIds, but isDragging and intents flow. */
+  beginPaletteDrag: () => void;
   setDropIntent: (intent: DropIntent | null) => void;
   endDrag: () => void;
   flashRejection: (ids: readonly NodeId[]) => void;
+  /** Clears listeners and any pending rejection-flash timer. The provider calls this on unmount. */
+  destroy: () => void;
 }>;
 
 const REJECTION_FLASH_MS = 600;
@@ -81,6 +87,7 @@ export function createCollectionsStore(
 ): CollectionsStore {
   let graph = initialGraph;
   let interaction: CollectionsInteraction = {
+    isDragging: false,
     activeIds: EMPTY_IDS,
     activeIdSet: EMPTY_SELECTION,
     dropIntent: null,
@@ -195,16 +202,23 @@ export function createCollectionsStore(
     },
 
     beginDrag: (pressedId) => {
+      // Pressed id FIRST: it is the primary drag-overlay item. (Set spread
+      // would put the earliest-selected node first — dragging B from a
+      // selection made A-then-B would ghost A.) The reducer re-sorts into
+      // document order at commit, so this only affects the preview.
       const activeIds = interaction.selectedIds.has(pressedId)
-        ? [...interaction.selectedIds]
+        ? [pressedId, ...[...interaction.selectedIds].filter((id) => id !== pressedId)]
         : [pressedId];
       setInteraction({
+        isDragging: true,
         activeIds,
         activeIdSet: new Set(activeIds),
         dropIntent: null,
         dropIntentInvalid: false,
       });
     },
+    beginPaletteDrag: () =>
+      setInteraction({ isDragging: true, dropIntent: null, dropIntentInvalid: false }),
     setDropIntent: (intent) => {
       if (intentEqual(interaction.dropIntent, intent)) return; // per-move noise gate
       // Validity is computed ONCE per intent change (not per card per
@@ -215,6 +229,7 @@ export function createCollectionsStore(
     },
     endDrag: () =>
       setInteraction({
+        isDragging: false,
         activeIds: EMPTY_IDS,
         activeIdSet: EMPTY_SELECTION,
         dropIntent: null,
@@ -228,6 +243,12 @@ export function createCollectionsStore(
         rejectionTimer = null;
         setInteraction({ rejectedIdSet: EMPTY_SELECTION });
       }, REJECTION_FLASH_MS);
+    },
+
+    destroy: () => {
+      if (rejectionTimer !== null) clearTimeout(rejectionTimer);
+      rejectionTimer = null;
+      listeners.clear();
     },
   };
 }

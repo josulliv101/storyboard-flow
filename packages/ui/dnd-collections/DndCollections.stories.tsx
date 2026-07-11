@@ -290,9 +290,12 @@ export const MultiSelectDrag: Story = {
       expect(canvasElement.ownerDocument.body.textContent).toMatch(/2 items selected/i);
     });
 
-    // Dragging a selected card drags the whole selection; ghost shows +1.
-    await dragHoldAt(alpha, rectPoint(xray, 0.15));
+    // Dragging a selected card drags the whole selection; the PRESSED card
+    // is the primary ghost (not the earliest-selected one), with a +1 badge.
+    await dragHoldAt(charlie, rectPoint(xray, 0.15));
     await waitFor(() => {
+      const ghost = canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]');
+      expect(ghost?.textContent).toContain("CHARLIE");
       const badge = canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost-count"]');
       expect(badge?.textContent).toBe("+1");
     });

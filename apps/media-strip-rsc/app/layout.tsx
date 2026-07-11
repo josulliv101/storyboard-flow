@@ -4,8 +4,9 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Media Strip RSC Starter",
-  description: "A Next.js React Server Components starter using @storyboard/ui MediaStrip.",
+  title: "StoryboardFlow UI Labs",
+  description:
+    "Next.js React Server Components showcases for the StoryboardFlow media strip and DnD collections packages.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

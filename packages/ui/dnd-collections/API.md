@@ -164,6 +164,7 @@ Rejections (`CommandRejection.reason`):
 | `cannot-move-root` | A dragged id is a top-level collection — roots are structural anchors. |
 | `duplicate-node-id` | An id appears twice in `nodeIds`, or (add-nodes) an added id already exists / repeats in the batch. |
 | `nothing-to-add` | `add-nodes` with an empty `nodes` array. |
+| `invalid-index` | Non-finite `toIndex` (NaN would silently splice at 0). |
 | `would-create-cycle` | A node would move into itself or its own descendant. |
 | `nothing-to-move` | Every dragged id was pruned (all descendants of other dragged ids). |
 | `same-position` | The move would leave every children array identical — treated as a no-op, nothing is pushed to history. |
@@ -292,10 +293,11 @@ a move with an empty drag set — palette drops land anywhere a move can.
 
 ## Core: history (`core/history.ts`)
 
-### `createHistory(): CollectionsHistory`
+### `createHistory(options?): CollectionsHistory`
 
 Linear undo/redo as a pair of patch stacks. A new `push` clears the redo
-branch.
+branch. `options.maxEntries` caps the undo stack (oldest entries fall off
+and stop being undoable); default unbounded.
 
 ```ts
 type HistoryEntry = {
@@ -337,6 +339,14 @@ type KeyboardMoveAction =
 `KeyboardRejection.reason`: `missing-node`, `cannot-move-root`, and the
 boundary no-ops `no-previous-sibling`, `no-next-sibling`,
 `no-neighbor-collection`, `no-parent-to-move-out-to`.
+
+### `resolveGridRowMoveCommand(graph, nodeId, direction, columns): Result<CollectionsCommand, GridRowMoveRejection>`
+
+Grid keyboard semantics: one row up/down (± `columns`), landing in the
+same column; a shorter last row clamps to the end. Pure graph math — the
+view supplies its live column count. Rejections: `missing-node`,
+`cannot-move-root`, `invalid-columns`, `already-first-row`,
+`already-last-row`.
 
 ---
 
@@ -402,10 +412,12 @@ type CollectionsChange = {
 | `setSelection` | `(ids: readonly NodeId[]) => void` | No-op (no notify) when the set is unchanged. |
 | `toggleSelected` | `(id: NodeId) => void` | |
 | `clearSelection` | `() => void` | No-op when already empty. |
-| `beginDrag` | `(pressedId: NodeId) => void` | Drag set = the selection if it contains `pressedId`, else just `pressedId`. |
+| `beginDrag` | `(pressedId: NodeId) => void` | Drag set = the selection if it contains `pressedId` (pressed id first — it's the overlay primary), else just `pressedId`. Sets `isDragging`. |
+| `beginPaletteDrag` | `() => void` | Marks a palette drag live (`isDragging` without `activeIds`). Ends via `endDrag`. |
 | `setDropIntent` | `(intent: DropIntent \| null) => void` | Deduplicates equal intents; computes `dropIntentInvalid` once per change. |
 | `endDrag` | `() => void` | Clears drag state; never mutates the graph. |
 | `flashRejection` | `(ids: readonly NodeId[]) => void` | Sets `rejectedIdSet` for 600ms (re-flash resets the timer). |
+| `destroy` | `() => void` | Clears listeners and any pending flash timer; the provider calls it on unmount. |
 
 ```ts
 type CollectionsSnapshot = {
@@ -417,7 +429,8 @@ type CollectionsSnapshot = {
 };
 
 type CollectionsInteraction = {
-  activeIds: readonly NodeId[];        // pick-up order; empty when idle
+  isDragging: boolean;                 // any live drag — node or palette
+  activeIds: readonly NodeId[];        // pressed id first; empty when idle and during palette drags
   activeIdSet: ReadonlySet<NodeId>;    // same ids, O(1) membership
   dropIntent: DropIntent | null;       // live preview of a release right now
   dropIntentInvalid: boolean;          // would that preview be a cycle rejection
@@ -450,7 +463,7 @@ ones (everything they do goes through the store API above).
 | --- | --- | --- |
 | `CollectionPanels` | `collectionIds?: readonly NodeId[]`, `animateMoves?: boolean` | One panel per id (default: the graph's roots). `animateMoves` (default `true`) enables the post-commit FLIP sweep; honors `prefers-reduced-motion`. |
 | `CollectionPanel` | `collectionId: NodeId` | One droppable panel with its cards. |
-| `NodeCard` | `id: NodeId` | Memoized; id-only by design — all state arrives via selectors. Click selects, Ctrl/Cmd-click toggles. Draggable + droppable. |
+| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
 | `NodeCardGhost` | `node: CollectionItemNode`, `extraCount: number` | The drag-overlay ghost; renders a `+N` badge when `extraCount > 0`. |
 | `UndoRedoControls` | — | Buttons bound to `store.undo`/`store.redo`, disabled off `canUndo`/`canRedo`. |
 | `HistoryLog` | — | Human-readable command log over `historyEntries`. |

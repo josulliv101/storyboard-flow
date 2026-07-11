@@ -5,23 +5,30 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useRef,
   useState,
 } from "react";
-import { useDroppable } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, type NodeId } from "../core/graph";
 import { useCollectionsSelector } from "../react/collections-store";
 import { NodeCard } from "../react/node-views";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
-import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "../react/virtual-droppable";
+import {
+  useFocusNode,
+  usePublishBoundary,
+  useVirtualInsertContainer,
+  VirtualEmptyHint,
+  type VirtualViewPoint,
+} from "./use-virtual-collection-view";
 
-// Vertical virtualized grid (phase 5 of VIRTUALIZATION-PLAN.md). Cells are
-// FIXED-SIZE by decision (media letterboxes inside its card), which keeps
-// the virtualizer purely row-based: one virtual item per row, columns are
-// index arithmetic. Cards are the standard NodeCard; the droppable contract
-// is the same virtualInsert used by VirtualStrip, with 2D boundary math.
+// Vertical virtualized grid. Cells are FIXED-SIZE by decision (media
+// letterboxes inside its card), which keeps the virtualizer purely
+// row-based: one virtual item per row, columns are index arithmetic.
+// Cards are the standard NodeCard; the droppable contract is the same
+// virtualInsert used by VirtualStrip, with 2D boundary math. NOTE: cards
+// moving BETWEEN rows re-parent (rows are keyed by index), so cross-row
+// moves recreate the card's DOM element — FLIP and held focus don't
+// survive that hop.
 
 export type VirtualGridProps = Readonly<{
   collectionId: NodeId;
@@ -57,24 +64,26 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
     ref
   ) {
     const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
-    const scrollRef = useRef<HTMLDivElement>(null);
 
-    // Responsive column count from the container's content width, unless
-    // pinned by the prop.
+    const { scrollRef, contentRef, resolveBoundaryRef, setContainerRef } =
+      useVirtualInsertContainer(collectionId, "vgrid");
+
+    // Responsive column count from the content width, unless pinned by the
+    // prop. The spacer's clientWidth already excludes container padding.
     const [measuredColumns, setMeasuredColumns] = useState(1);
     useEffect(() => {
       if (columns !== undefined) return;
       const el = scrollRef.current;
       if (!el) return;
-      const compute = () =>
-        setMeasuredColumns(
-          Math.max(1, Math.floor((el.clientWidth - 16 + gap) / (cellWidth + gap)))
-        );
+      const compute = () => {
+        const width = contentRef.current?.clientWidth ?? el.clientWidth;
+        setMeasuredColumns(Math.max(1, Math.floor((width + gap) / (cellWidth + gap))));
+      };
       compute();
       const observer = new ResizeObserver(compute);
       observer.observe(el);
       return () => observer.disconnect();
-    }, [columns, cellWidth, gap]);
+    }, [columns, cellWidth, gap, scrollRef, contentRef]);
     const cols = columns ?? measuredColumns;
 
     const rowCount = Math.ceil(childIds.length / cols);
@@ -89,65 +98,42 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
 
     // Pointer -> visible boundary index: row from y (floor — the row under
     // the pointer), column boundary from x (round — nearest gap between
-    // cells). Reads scrollTop live, so intents track (auto-)scroll.
-    const resolveBoundary = (point: Readonly<{ x: number; y: number }>): number => {
-      const el = scrollRef.current;
-      if (!el || childIds.length === 0) return childIds.length;
-      const rect = el.getBoundingClientRect();
-      const contentX = point.x - rect.left - 8; // p-2
-      const contentY = point.y - rect.top + el.scrollTop - 8;
+    // cells). The spacer's rect shifts with scroll, so measuring against it
+    // keeps intents live during (auto-)scroll too.
+    const resolveBoundary = (point: VirtualViewPoint): number => {
+      const content = contentRef.current;
+      if (!content || childIds.length === 0) return childIds.length;
+      const rect = content.getBoundingClientRect();
+      const contentX = point.x - rect.left;
+      const contentY = point.y - rect.top;
       const row = Math.max(0, Math.min(Math.floor(contentY / rowSize), rowCount - 1));
       const col = Math.max(0, Math.min(Math.round(contentX / (cellWidth + gap)), cols));
       return Math.min(row * cols + col, childIds.length);
     };
-
-    const { setNodeRef: setDroppableRef } = useDroppable({
-      id: `vgrid:${collectionId}`,
-      data: {
-        [VIRTUAL_INSERT_DATA_KEY]: { collectionId, resolveBoundary } satisfies VirtualInsertTarget,
-      },
-    });
-    const setContainerRef = useCallback(
-      (el: HTMLDivElement | null) => {
-        scrollRef.current = el;
-        setDroppableRef(el);
-      },
-      [setDroppableRef]
-    );
+    usePublishBoundary(resolveBoundaryRef, resolveBoundary);
 
     useEdgeAutoScroll(scrollRef, "y");
 
-    const focusNode = useCallback(
-      (id: NodeId) => {
+    const scrollToNode = useCallback(
+      (id: NodeId): boolean => {
         const index = childIds.indexOf(id);
-        if (index === -1) return;
+        if (index === -1) return false;
         virtualizer.scrollToIndex(Math.floor(index / cols));
-        let attempts = 12;
-        const tryFocus = () => {
-          const card = scrollRef.current?.querySelector<HTMLElement>(
-            `[data-node-id="${CSS.escape(id)}"]`
-          );
-          if (card) {
-            card.focus();
-            return;
-          }
-          if (--attempts > 0) requestAnimationFrame(tryFocus);
-        };
-        requestAnimationFrame(tryFocus);
+        return true;
       },
       [childIds, virtualizer, cols]
     );
+    const focusNode = useFocusNode(scrollRef, scrollToNode);
 
     useImperativeHandle(
       ref,
       () => ({
         scrollToNode: (id) => {
-          const index = childIds.indexOf(id);
-          if (index !== -1) virtualizer.scrollToIndex(Math.floor(index / cols));
+          scrollToNode(id);
         },
         focusNode,
       }),
-      [childIds, virtualizer, cols, focusNode]
+      [scrollToNode, focusNode]
     );
 
     const indicatorIndex = useCollectionsSelector((s) => {
@@ -177,12 +163,13 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         // row moves (± this many columns) for cards inside this container.
         data-grid-columns={cols}
         className={[
-          "overflow-y-auto rounded-md border border-dashed border-border p-2",
+          "relative overflow-y-auto rounded-md border border-dashed border-border p-2",
           className ?? "",
         ].join(" ")}
         style={{ height }}
       >
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        <VirtualEmptyHint visible={childIds.length === 0} />
+        <div ref={contentRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {indicator && (
             <div
               aria-hidden="true"
@@ -195,7 +182,6 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
             <div
               key={row.key}
               data-virtual-row={row.index}
-              className="[&_[data-node-id]]:w-full"
               style={{
                 position: "absolute",
                 top: 0,
@@ -210,7 +196,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                 .slice(row.index * cols, Math.min(childIds.length, (row.index + 1) * cols))
                 .map((id) => (
                   <div key={id} style={{ width: cellWidth, height: cellHeight }}>
-                    <NodeCard id={id} />
+                    <NodeCard id={id} className="h-full w-full" />
                   </div>
                 ))}
             </div>

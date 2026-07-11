@@ -108,6 +108,11 @@ export const PaletteDropAddsNewNode: Story = {
     await waitFor(() => {
       expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", firstId, "bravo", "charlie"]);
     });
+    // Drop cleanup: the palette path ends the drag in the store, so no
+    // indicator/highlight lingers and drag-gated behaviors are disarmed.
+    expect(
+      canvasElement.querySelectorAll("[data-drop-indicator],[data-nest-state]").length
+    ).toBe(0);
 
     // A second drag mints a FRESH id (factory runs per pick-up).
     await dragToPoint(palette, rectPoint(nodeCard(canvasElement, "charlie"), 0.85));

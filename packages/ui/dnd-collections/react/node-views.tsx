@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useRef, type CSSProperties, type MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { twMerge } from "tailwind-merge";
 
 import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph";
 import { encodeDropTarget } from "../core/intents";
@@ -44,7 +45,7 @@ export function CollectionPanels({ collectionIds, animateMoves = true }: Collect
  * on one page (even ones reusing node ids) never measure each other's cards.
  */
 function FlipAnimator() {
-  useFlipGraphAnimation(useCollectionsContainer());
+  useFlipGraphAnimation(useCollectionsContainer().containerRef);
   return null;
 }
 
@@ -97,8 +98,35 @@ export function CollectionPanel({ collectionId }: { collectionId: NodeId }) {
   );
 }
 
-export const NodeCard = memo(function NodeCard({ id }: { id: NodeId }) {
+export type NodeCardDragActivation = "body" | "handle" | "hold";
+
+export const NodeCard = memo(function NodeCard({
+  id,
+  className,
+  dragActivation = "body",
+}: {
+  id: NodeId;
+  /**
+   * Merged (tailwind-merge) onto BOTH the wrapper and the card button, so
+   * sizing overrides beat the h-24/w-32 defaults — virtualized views pass
+   * "h-full w-full" to make cards fill their (possibly variable) slot.
+   */
+  className?: string;
+  /**
+   * How item drags start on this card:
+   * - "body" (default): instant drag from anywhere on the card.
+   * - "handle": a full-width grip bar across the top is the only drag
+   *   activator; the body is free for surface gestures (strip panning).
+   * - "hold": press-and-hold the body to drag (HoldPointerSensor); fast
+   *   movement is handed to surface gestures instead.
+   * In every mode the draggable NODE stays the card button, so drag
+   * ghosts remain card-sized, and body clicks still select.
+   */
+  dragActivation?: NodeCardDragActivation;
+}) {
+  const dragHandle = dragActivation === "handle";
   const store = useCollectionsStore();
+  const { instructionsId } = useCollectionsContainer();
 
   // nodesById is never re-allocated by move patches, so this reference is
   // stable across drags — the selector only "changes" if the node itself does.
@@ -156,7 +184,7 @@ export const NodeCard = memo(function NodeCard({ id }: { id: NodeId }) {
     isDragging || isDragSource ? { opacity: 0.4 } : undefined;
 
   return (
-    <div className="relative" data-node-wrapper={id}>
+    <div className={twMerge("relative", className)} data-node-wrapper={id}>
       <button
         type="button"
         ref={setRefs}
@@ -168,18 +196,31 @@ export const NodeCard = memo(function NodeCard({ id }: { id: NodeId }) {
         {...(isRejected ? { "data-rejected": "true" } : {})}
         aria-label={`${node.name}${isCollection ? ` (collection, ${childCount} items)` : ""}`}
         onClick={handleClick}
-        className={[
-          "flex h-24 w-32 cursor-grab flex-col items-stretch justify-between rounded-md border p-2 text-left text-xs transition-all select-none active:cursor-grabbing",
-          isCollection ? "bg-muted/60" : "bg-background",
-          isSelected ? "border-primary ring-2 ring-primary" : "border-border",
-          isRejected ? "border-destructive ring-2 ring-destructive animate-pulse" : "",
-        ].join(" ")}
-        {...attributes}
-        {...listeners}
+        className={twMerge(
+          [
+            "flex h-24 w-32 flex-col items-stretch justify-between rounded-md border p-2 text-left text-xs transition-all select-none",
+            dragHandle ? "pt-6" : "cursor-grab active:cursor-grabbing",
+            isCollection ? "bg-muted/60" : "bg-background",
+            isSelected ? "border-primary ring-2 ring-primary" : "border-border",
+            isRejected ? "border-destructive ring-2 ring-destructive animate-pulse" : "",
+          ].join(" "),
+          className
+        )}
+        {...(dragActivation === "hold" ? { "data-drag-activation": "hold" } : {})}
+        {...(dragHandle ? {} : attributes)}
+        {...(dragHandle ? {} : listeners)}
         // After dnd-kit's attribute spread: dnd-kit sets aria-pressed for its
         // grabbed state; here the pressed semantic is SELECTION (and the drag
         // state is conveyed by the overlay + dimming instead).
         aria-pressed={isSelected}
+        // In handle mode the GRIP is the card's tab stop (drag grammar and
+        // Alt-moves both work from it) — one stop per card, not two.
+        tabIndex={dragHandle ? -1 : undefined}
+        aria-describedby={
+          dragHandle
+            ? instructionsId
+            : `${attributes["aria-describedby"]} ${instructionsId}`
+        }
       >
         <span className="truncate font-medium text-foreground">{node.name}</span>
         <span className="text-[10px] text-muted-foreground">
@@ -187,6 +228,38 @@ export const NodeCard = memo(function NodeCard({ id }: { id: NodeId }) {
         </span>
       </button>
 
+      {/* Grip bar: THE drag activator when dragHandle is on — listeners and
+          dnd-kit's aria attributes live here (keyboard grab included; the
+          Alt-key layer resolves the id via the data-node-wrapper host). */}
+      {dragHandle && (
+        <div
+          data-drag-handle={id}
+          className="absolute inset-x-0 top-0 z-10 flex h-[18px] cursor-grab items-center justify-center rounded-t-md border-b border-border bg-muted/70 text-[10px] leading-none text-muted-foreground select-none active:cursor-grabbing"
+          style={{ touchAction: "none" }}
+          {...attributes}
+          {...listeners}
+          aria-label={`Drag ${node.name}`}
+          aria-describedby={`${attributes["aria-describedby"]} ${instructionsId}`}
+        >
+          ⠿
+        </div>
+      )}
+
+      <NodeCardIndicators nestState={nestState} dropSide={dropSide} />
+    </div>
+  );
+});
+
+/** Presentational drop-preview overlays: nest highlight + before/after bars. */
+function NodeCardIndicators({
+  nestState,
+  dropSide,
+}: {
+  nestState: "none" | "valid" | "invalid";
+  dropSide: "before" | "after" | null;
+}) {
+  return (
+    <>
       {/* Nest highlight: full-card overlay while this collection is the live nest target. */}
       {nestState !== "none" && (
         <div
@@ -219,9 +292,9 @@ export const NodeCard = memo(function NodeCard({ id }: { id: NodeId }) {
           className="pointer-events-none absolute inset-y-0 -right-1.5 z-20 w-1 rounded-full bg-primary"
         />
       )}
-    </div>
+    </>
   );
-});
+}
 
 /** Drag-overlay ghost: the primary card plus a "+N" badge for multi-drag. */
 export function NodeCardGhost({

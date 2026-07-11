@@ -53,7 +53,9 @@ export {
 } from "./core/intents";
 export { createHistory, type CollectionsHistory, type HistoryEntry } from "./core/history";
 export {
+  resolveGridRowMoveCommand,
   resolveKeyboardCommand,
+  type GridRowMoveRejection,
   type KeyboardMoveAction,
   type KeyboardRejection,
 } from "./core/keyboard";
@@ -69,13 +71,24 @@ export {
   type CollectionsStore,
 } from "./react/collections-store";
 export { DndCollections, type DndCollectionsProps } from "./react/DndCollections";
-export { CollectionPanel, CollectionPanels, NodeCard, NodeCardGhost } from "./react/node-views";
+export {
+  CollectionPanel,
+  CollectionPanels,
+  NodeCard,
+  NodeCardGhost,
+  type NodeCardDragActivation,
+} from "./react/node-views";
 export { HistoryLog, UndoRedoControls } from "./react/history-views";
 export { PaletteItem, type PaletteItemProps } from "./react/palette";
 export { TrashTarget } from "./react/trash-target";
+export {
+  usePanWithMomentum,
+  type PanWithMomentumOptions,
+} from "./react/use-pan-with-momentum";
 
-// Virtualized views (see VIRTUALIZATION-PLAN.md; strip is phase 2 —
-// read-only rendering + selection + offscreen focus; DnD lands in phase 3)
+// Virtualized views (TanStack Virtual): full DnD via insert-at-index
+// container collision, variable widths + pan-to-scroll (strip), fixed
+// cells + responsive columns (grid). VIRTUALIZATION-PLAN.md is the build log.
 export {
   VirtualStrip,
   type VirtualStripHandle,

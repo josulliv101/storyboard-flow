@@ -25,13 +25,20 @@ export type CollectionsHistory = Readonly<{
   entries: () => readonly HistoryEntry[];
 }>;
 
-export function createHistory(): CollectionsHistory {
+export function createHistory(
+  options?: Readonly<{
+    /** Oldest entries fall off past this count (they stop being undoable). Default: unbounded. */
+    maxEntries?: number;
+  }>
+): CollectionsHistory {
+  const maxEntries = options?.maxEntries ?? Number.POSITIVE_INFINITY;
   const past: HistoryEntry[] = [];
   const future: HistoryEntry[] = [];
 
   return {
     push: (entry) => {
       past.push(entry);
+      if (past.length > maxEntries) past.shift();
       // A new action invalidates the redo branch — standard linear history.
       future.length = 0;
     },

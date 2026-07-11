@@ -245,6 +245,20 @@ describe("applyCommand: move-nodes", () => {
     ).toEqual({ ok: false, error: { reason: "target-not-collection", nodeId: "B" } });
   });
 
+  test("rejects non-finite indexes (NaN would silently splice at 0)", () => {
+    const graph = fixture();
+    for (const toIndex of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(
+        applyCommand(graph, {
+          type: "move-nodes",
+          nodeIds: ids(["A"]),
+          toParentId: parseNodeId("root-b"),
+          toIndex,
+        })
+      ).toEqual({ ok: false, error: { reason: "invalid-index" } });
+    }
+  });
+
   test("clamps out-of-range indexes instead of corrupting", () => {
     const graph = fixture();
     const { graph: next } = apply(graph, {

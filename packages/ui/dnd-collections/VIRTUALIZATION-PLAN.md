@@ -202,6 +202,74 @@ touches `VirtualStrip` alone).
 
 ALL SEVEN PHASES COMPLETE (2026-07-10).
 
+Post-completion hardening (2026-07-10, review round 4): stale phase
+comments corrected (index.ts, VirtualStrip header); boundary resolvers and
+grid column measurement now measure the content SPACER's live rect instead
+of hardcoding container padding/scroll offsets (consumer className padding
+is safe); empty VirtualStrip/VirtualGrid show a "Drop items here"
+affordance, with `EmptyStripReceivesDrops` proving a drop into a fully
+empty virtual container resolves boundary 0. (The same review claimed a
+duplicate style prop "compile blocker" — verified false: one occurrence,
+typecheck clean.)
+
+## Phase 8 (added 2026-07-10): strip pan-to-scroll with momentum
+
+Feature request: the horizontal strip supports BOTH item drag-drop and
+dragging the strip itself to scroll, with momentum/inertia on release.
+
+Design (decided with user):
+- Explicit affordance split, no gesture guessing: each card gets a
+  full-width GRIP BAR across its top (~20px, grip dots) that carries the
+  dnd-kit listeners+attributes — item drags start ONLY there. The card
+  body and strip background pan the strip. Body clicks still select
+  (pan engages only after a small slop).
+- Rejected alternatives: hold-to-drag (hidden affordance, taxes power
+  users; keep in mind as a future config variant — same wiring), modifier
+  panning (desktop-only), background-only panning (no background in dense
+  strips), direction-guessing (item drags are also horizontal).
+- Momentum: pointer velocity sampled over a ~120ms window; on release, a
+  rAF loop applies exponential decay (friction^dt) until below a
+  threshold or a scroll bound; cancelled by pointerdown/wheel/drag start.
+  prefers-reduced-motion skips inertia. The strip stays a native scroll
+  container (virtualizer/wheel/focusNode untouched); edge-autoscroll is
+  isDragging-gated so the two never fight.
+
+Sub-phases:
+- 8a: `react/use-pan-with-momentum.ts` + VirtualStrip wiring for
+  non-card surfaces (background/gaps) + stories.
+  DONE (2026-07-10): generic hook (slop-gated pan, 120ms velocity
+  window, exponential-decay glide with bound/wheel/press cancellation,
+  reduced-motion skip, setPointerCapture try/catch for synthetic
+  pointers); `panToScroll` prop (default on) with a module-stable
+  predicate excluding [data-node-id]/[data-drag-handle]; touch-action
+  pan-y on the container. `PanToScrollWithMomentum` story asserts
+  pan-without-ghost + post-release glide; all strip drag stories + e2e
+  still green (dual behavior verified).
+- 8c: hold-to-drag as a SECOND activation mode (grip handles stay the
+  default). DONE (2026-07-10): NodeCard `dragActivation` prop
+  ("body" | "handle" | "hold") replaced the 8b `dragHandle` boolean;
+  VirtualStrip `itemDragActivation="hold"` marks bodies with
+  data-drag-activation="hold"; ONE `CollectionsPointerSensor` picks its
+  constraint per pressed target at construction (distance 4 vs delay
+  250/tolerance 8) — two pointer sensors CANNOT coexist because dnd-kit's
+  useSyntheticListeners keys handlers by eventName and the second
+  silently replaces the first (cost a full red suite to learn); the pan
+  hook yields via isGestureClaimed when the hold fires. Story
+  `HoldToDragActivation` (fast body drag pans; still hold drags, pan
+  yields) + real-mouse e2e (hold-drag commits; flick pans).
+- 8b: NodeCard `dragHandle` grip bar (listeners move off the body),
+  VirtualStrip `panToScroll` covers card bodies, click-suppression after
+  a pan, real-mouse flick e2e.
+  DONE (2026-07-10): grip bar carries dnd-kit listeners+attributes
+  (keyboard grab included; drag ghosts stay card-sized because the
+  draggable NODE ref stays on the button); body clicks still select;
+  Alt-key layer resolves ids via the data-node-wrapper host so it works
+  from grip focus; strip pan predicate now excludes only
+  [data-drag-handle]; post-pan click suppression in the hook. All strip
+  drag stories/e2e retargeted to handles (incl. StripToGridMove). Suites:
+  stories 38/38, e2e 14/14 (flick test: body pan + glide + no
+  drag/select). Panels and grid are unchanged (dragHandle defaults off).
+
 Public API (§21) falls out of phases 2–6; expose config
 (overscan/gaps/columns/sizing/autoscroll) as props on the virtual views,
 custom rendering via the same slot pattern the repo already prefers.
