@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import { buildGraph, parseNodeId, type GraphNodeSpec } from "./core/graph";
+import { useCollectionsStore } from "./react/collections-store";
 import { DndCollections } from "./react/DndCollections";
 import { CollectionPanels } from "./react/node-views";
 import { HistoryLog, UndoRedoControls } from "./react/history-views";
@@ -692,6 +693,65 @@ export const OnChangeStaysFresh: Story = {
     await waitFor(() => {
       expect(canvas.getByTestId("seen-label")).toHaveTextContent("fresh");
     });
+  },
+};
+
+function ReplaceGraphButton() {
+  const store = useCollectionsStore();
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        store.replaceGraph(
+          graphOrThrow([
+            collection("panel-a", "Panel A", [media("neo"), media("trinity")]),
+            collection("panel-b", "Panel B", []),
+          ])
+        )
+      }
+    >
+      replace graph
+    </button>
+  );
+}
+
+export const ReplaceGraphResetsBoard: Story = {
+  // replaceGraph is the escape hatch for async/server-loaded data that the
+  // initial-only initialGraph can't handle: it swaps the committed graph,
+  // clears undo history (old patches can't replay on a new graph), and prunes
+  // interaction — without a remount.
+  render: () => (
+    <DndCollections initialGraph={standardGraph()}>
+      <div className="flex flex-col gap-4">
+        <UndoRedoControls />
+        <ReplaceGraphButton />
+        <CollectionPanels collectionIds={[parseNodeId("panel-a"), parseNodeId("panel-b")]} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const alpha = nodeCard(canvasElement, "alpha");
+    const charlie = nodeCard(canvasElement, "charlie");
+    await waitForLayout(charlie);
+
+    // A move builds history, so undo is enabled.
+    await dragToPoint(alpha, rectPoint(charlie, 0.85));
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")[2]).toBe("alpha");
+    });
+    expect(canvas.getByRole("button", { name: /undo/i })).toBeEnabled();
+
+    // Replace the whole graph: new cards render, old ones are gone...
+    await user.click(canvas.getByRole("button", { name: /replace graph/i }));
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")).toEqual(["neo", "trinity"]);
+    });
+    expect(canvasElement.querySelector('[data-node-id="alpha"]')).toBeNull();
+
+    // ...and history is cleared — the pre-replace move is no longer undoable.
+    expect(canvas.getByRole("button", { name: /undo/i })).toBeDisabled();
   },
 };
 

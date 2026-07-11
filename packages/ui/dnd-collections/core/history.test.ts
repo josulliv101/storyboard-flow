@@ -66,6 +66,22 @@ describe("createHistory", () => {
     expect(history.undo()).toBeNull();
     expect(history.redo()).toBeNull();
   });
+
+  test("clear empties both stacks", () => {
+    const history = createHistory();
+    history.push(entry(1));
+    history.push(entry(2));
+    history.undo(); // one entry now on the redo branch
+    expect(history.canUndo()).toBe(true);
+    expect(history.canRedo()).toBe(true);
+
+    history.clear();
+    expect(history.canUndo()).toBe(false);
+    expect(history.canRedo()).toBe(false);
+    expect(history.entries()).toEqual([]);
+    expect(history.undo()).toBeNull();
+    expect(history.redo()).toBeNull();
+  });
 });
 
 describe("createHistory maxEntries", () => {
