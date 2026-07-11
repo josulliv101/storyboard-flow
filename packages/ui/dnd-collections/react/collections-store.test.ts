@@ -166,6 +166,21 @@ describe("createCollectionsStore", () => {
     expect(store.getSnapshot().interaction.selectedIds).toBe(before);
   });
 
+  test("maxHistoryEntries caps the undo stack", () => {
+    const store = createCollectionsStore(graphFixture(), { maxHistoryEntries: 1 });
+    // Two commits, cap of 1: the first falls off and only one undo is possible.
+    store.dispatch(moveX);
+    store.dispatch({
+      type: "move-nodes",
+      nodeIds: [id("y")],
+      toParentId: id("root-b"),
+      toIndex: 0,
+    });
+    expect(store.getSnapshot().historyEntries).toHaveLength(1);
+    expect(store.undo()).toBe(true);
+    expect(store.undo()).toBe(false); // the older commit is no longer undoable
+  });
+
   test("flashRejection sets, auto-clears, and re-flash resets the timer", () => {
     const store = createCollectionsStore(graphFixture());
     store.flashRejection([id("x")]);

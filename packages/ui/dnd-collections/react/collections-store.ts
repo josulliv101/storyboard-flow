@@ -83,7 +83,11 @@ const EMPTY_SELECTION: ReadonlySet<NodeId> = new Set();
 
 export function createCollectionsStore(
   initialGraph: CollectionsGraph,
-  options?: Readonly<{ onChange?: (change: CollectionsChange) => void }>
+  options?: Readonly<{
+    onChange?: (change: CollectionsChange) => void;
+    /** Cap the undo stack (oldest entries fall off). Positive integer; default unbounded. */
+    maxHistoryEntries?: number;
+  }>
 ): CollectionsStore {
   let graph = initialGraph;
   let interaction: CollectionsInteraction = {
@@ -95,7 +99,7 @@ export function createCollectionsStore(
     selectedIds: EMPTY_SELECTION,
     rejectedIdSet: EMPTY_SELECTION,
   };
-  const history = createHistory();
+  const history = createHistory({ maxEntries: options?.maxHistoryEntries });
   const listeners = new Set<() => void>();
   let rejectionTimer: ReturnType<typeof setTimeout> | null = null;
 

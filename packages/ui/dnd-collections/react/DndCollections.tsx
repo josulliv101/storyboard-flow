@@ -64,6 +64,8 @@ export type DndCollectionsProps = Readonly<{
   initialGraph: CollectionsGraph;
   /** Patch-based change feed: fires on every committed command, undo, and redo. */
   onChange?: (change: CollectionsChange) => void;
+  /** Cap the undo stack (oldest entries fall off). Positive integer; default unbounded. */
+  maxHistoryEntries?: number;
   children: ReactNode;
 }>;
 
@@ -120,7 +122,12 @@ function pointerNearAnyDroppable(
   return false;
 }
 
-export function DndCollections({ initialGraph, onChange, children }: DndCollectionsProps) {
+export function DndCollections({
+  initialGraph,
+  onChange,
+  maxHistoryEntries,
+  children,
+}: DndCollectionsProps) {
   // The store captures its options once, but callback props must stay fresh
   // — a parent passing an inline closure over its latest state expects that
   // version to be called. Route through a ref, updated in an effect (never
@@ -131,11 +138,12 @@ export function DndCollections({ initialGraph, onChange, children }: DndCollecti
     onChangeRef.current = onChange;
   });
 
-  // One store per component lifetime; the graph prop is intentionally
-  // initial-only (the store is the source of truth thereafter).
+  // One store per component lifetime; the graph prop and history cap are
+  // intentionally initial-only (the store is the source of truth thereafter).
   const [store] = useState<CollectionsStore>(() =>
     createCollectionsStore(initialGraph, {
       onChange: (change) => onChangeRef.current?.(change),
+      maxHistoryEntries,
     })
   );
   useEffect(() => () => store.destroy(), [store]);

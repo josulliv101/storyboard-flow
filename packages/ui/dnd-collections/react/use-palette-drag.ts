@@ -36,7 +36,17 @@ export function usePaletteDrag(args: {
         | undefined;
       if (!createPaletteNode) return false;
       intentRef.current = null;
-      const node = createPaletteNode();
+      // The factory is consumer code running inside dnd-kit's onDragStart; a
+      // throw here would strand the whole gesture with the sensor still armed.
+      // Contain it: announce, start nothing, but report the gesture as handled
+      // (it WAS a palette drag) so the node-drag path doesn't also claim it.
+      let node: CollectionItemNode;
+      try {
+        node = createPaletteNode();
+      } catch {
+        announce("Could not create item.");
+        return true;
+      }
       setPaletteNodes([node]);
       store.beginPaletteDrag();
       announce(`Picked up new "${node.name}".`);
