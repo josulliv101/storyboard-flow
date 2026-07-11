@@ -1,5 +1,13 @@
 # Virtualized collections — gap analysis and build plan
 
+> **Status: historical build log.** The virtual view layer (`VirtualStrip`,
+> `VirtualGrid`) shipped; this document is kept for the decisions and gap
+> analysis behind it, not as current-state docs — see ARCHITECTURE.md and
+> API.md for those. Still open: **range selection** (§17) is not implemented,
+> and full **virtual keyboard traversal** (roving-tabindex / grid navigation)
+> remains a gap.
+
+
 Target: the "Virtualized Collections Requirements" spec (horizontal strip +
 vertical grid over TanStack Virtual, 1,000+ nodes, variable widths, external
 palette, trash). Reference: TanStack `react-virtual`
