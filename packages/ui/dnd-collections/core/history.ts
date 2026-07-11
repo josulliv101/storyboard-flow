@@ -23,6 +23,8 @@ export type CollectionsHistory = Readonly<{
   canRedo: () => boolean;
   /** Oldest-first log of applied entries (undone entries excluded). */
   entries: () => readonly HistoryEntry[];
+  /** Drop both stacks — nothing is undoable or redoable afterward. Used when the graph is replaced wholesale (old patches no longer apply). */
+  clear: () => void;
 }>;
 
 export function createHistory(
@@ -65,5 +67,9 @@ export function createHistory(
     canUndo: () => past.length > 0,
     canRedo: () => future.length > 0,
     entries: () => [...past],
+    clear: () => {
+      past.length = 0;
+      future.length = 0;
+    },
   };
 }

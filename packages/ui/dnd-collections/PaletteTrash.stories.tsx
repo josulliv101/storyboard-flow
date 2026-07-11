@@ -75,8 +75,11 @@ function PaletteBoard() {
             + New collection
           </PaletteItem>
         </div>
-        {/* Trash is a root, but only panel-a renders as a panel — hidden collection. */}
-        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} />
+        {/* Trash is a root, but only panel-a renders as a panel — hidden collection.
+            animateMoves off: these stories fire back-to-back drops, and a card
+            still mid-FLIP would report an animated rect that disagrees with its
+            droppable rect, landing a follow-up drop on the wrong side. */}
+        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} animateMoves={false} />
         <TrashTarget trashId={parseNodeId("trash")} />
       </div>
     </DndCollections>
@@ -108,15 +111,20 @@ export const PaletteDropAddsNewNode: Story = {
     const palette = canvasElement.querySelector<HTMLElement>('[data-palette-item="new-image"]')!;
     const bravo = nodeCard(canvasElement, "bravo");
     await waitForLayout(bravo);
-    const startCount = nextImageId;
 
     // Drop on bravo's left half: the new node inserts BEFORE bravo — the
-    // full intent pipeline applies to palette drags, not just append.
+    // full intent pipeline applies to palette drags, not just append. Read
+    // the minted id from the DOM rather than predicting the factory counter
+    // (which drifts across retries/prior stories).
     await dragToPoint(palette, rectPoint(bravo, 0.15));
-    const firstId = `img-${startCount + 1}`;
     await waitFor(() => {
-      expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", firstId, "bravo", "charlie"]);
+      const order = panelOrder(canvasElement, "panel-a");
+      expect(order).toHaveLength(4);
+      expect(order[0]).toBe("alpha");
+      expect(order[1]).toMatch(/^img-/);
+      expect(order.slice(2)).toEqual(["bravo", "charlie"]);
     });
+    const firstId = panelOrder(canvasElement, "panel-a")[1];
     // Drop cleanup: the palette path ends the drag in the store, so no
     // indicator/highlight lingers and drag-gated behaviors are disarmed.
     expect(
@@ -125,12 +133,14 @@ export const PaletteDropAddsNewNode: Story = {
 
     // A second drag mints a FRESH id (factory runs per pick-up).
     await dragToPoint(palette, rectPoint(nodeCard(canvasElement, "charlie"), 0.85));
-    const secondId = `img-${startCount + 2}`;
     await waitFor(() => {
-      expect(panelOrder(canvasElement, "panel-a")).toEqual([
-        "alpha", firstId, "bravo", "charlie", secondId,
-      ]);
+      const order = panelOrder(canvasElement, "panel-a");
+      expect(order).toHaveLength(5);
+      expect(order.slice(0, 4)).toEqual(["alpha", firstId, "bravo", "charlie"]);
+      expect(order[4]).toMatch(/^img-/);
     });
+    const secondId = panelOrder(canvasElement, "panel-a")[4];
+    expect(secondId).not.toBe(firstId);
 
     // Adds are first-class history: undo removes the newest node.
     const user = userEvent.setup();
@@ -152,16 +162,19 @@ export const PaletteDropAddsNewCollection: Story = {
     )!;
     const charlie = nodeCard(canvasElement, "charlie");
     await waitForLayout(charlie);
-    const newId = `col-${nextCollectionId + 1}`;
 
     // Drop on charlie's right half: the new collection inserts after it.
+    // Read the minted id from the DOM (not the factory counter).
     await dragToPoint(palette, rectPoint(charlie, 0.85));
     await waitFor(() => {
-      expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie", newId]);
-      expect(nodeCard(canvasElement, newId).getAttribute("aria-label")).toMatch(
-        /collection, 0 items/i
-      );
+      const order = panelOrder(canvasElement, "panel-a");
+      expect(order.slice(0, 3)).toEqual(["alpha", "bravo", "charlie"]);
+      expect(order[3]).toMatch(/^col-/);
     });
+    const newId = panelOrder(canvasElement, "panel-a")[3];
+    expect(nodeCard(canvasElement, newId).getAttribute("aria-label")).toMatch(
+      /collection, 0 items/i
+    );
 
     // The just-added collection accepts drops right away: nest alpha into it.
     await dragToPoint(nodeCard(canvasElement, "alpha"), rectCenter(nodeCard(canvasElement, newId)));
@@ -189,7 +202,7 @@ export const PaletteFactoryErrorIsContained: Story = {
         >
           + Broken
         </PaletteItem>
-        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} />
+        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} animateMoves={false} />
       </div>
     </DndCollections>
   ),
@@ -250,7 +263,10 @@ export const NestedCollectionMoveAndTrashSubtree: Story = {
     <DndCollections initialGraph={nestedGraph()}>
       <div className="flex w-[640px] flex-col gap-4">
         <UndoRedoControls />
-        <CollectionPanels collectionIds={[parseNodeId("panel-a"), parseNodeId("folder-f")]} />
+        <CollectionPanels
+          collectionIds={[parseNodeId("panel-a"), parseNodeId("folder-f")]}
+          animateMoves={false}
+        />
         <TrashTarget trashId={parseNodeId("trash")} />
       </div>
     </DndCollections>

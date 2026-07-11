@@ -314,6 +314,7 @@ type CollectionsHistory = {
   canUndo(): boolean;
   canRedo(): boolean;
   entries(): readonly HistoryEntry[]; // oldest-first, undone entries excluded; fresh array per call
+  clear(): void;                      // drop both stacks (used by store.replaceGraph)
 };
 ```
 
@@ -381,9 +382,11 @@ screen-reader instructions in favour of one description element referenced by
 every card.
 
 `initialGraph` is intentionally initial-only — the store is the source of
-truth thereafter; later prop changes are ignored. `onChange` is NOT frozen
-with it: the latest callback prop is always the one invoked, so closures
-over current parent state behave as expected.
+truth thereafter; later prop changes are ignored. To push a new graph in
+later (async/server load), call `store.replaceGraph(next)` (grab the store
+via `useCollectionsStore`). `onChange` is NOT frozen with it: the latest
+callback prop is always the one invoked, so closures over current parent
+state behave as expected.
 
 Keyboard grammar (on a focused card). dnd-kit's KeyboardSensor is restricted
 to **Enter** (grab/drop) so **Space** stays free for selection; the Alt-key
@@ -430,6 +433,7 @@ type CollectionsChange = {
 | `subscribe` | `(listener: () => void) => () => void` | Returns unsubscribe. |
 | `dispatch` | `(command) => Result<CollectionsPatch, CommandRejection>` | Reduce + push history + notify + `onChange`. |
 | `undo` / `redo` | `() => boolean` | False when the respective stack is empty. |
+| `replaceGraph` | `(graph: CollectionsGraph) => void` | Swap the committed graph wholesale — the escape hatch for async/server-loaded data (`initialGraph` is initial-only). Clears undo/redo history (old patches can't replay on a new graph) and any in-progress drag/preview, prunes the selection to surviving ids, and — deliberately — does NOT fire `onChange` (the caller supplied this state; echoing it risks feedback loops). |
 | `setSelection` | `(ids: readonly NodeId[]) => void` | No-op (no notify) when the set is unchanged. |
 | `toggleSelected` | `(id: NodeId) => void` | |
 | `clearSelection` | `() => void` | No-op when already empty. |

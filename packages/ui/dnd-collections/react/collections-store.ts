@@ -60,6 +60,16 @@ export type CollectionsStore = Readonly<{
   dispatch: (command: CollectionsCommand) => Result<CollectionsPatch, CommandRejection>;
   undo: () => boolean;
   redo: () => boolean;
+  /**
+   * Swap in a new committed graph wholesale — the escape hatch for
+   * async/server-loaded data that `initialGraph` (initial-only) can't handle.
+   * Clears undo/redo history (patches were built against the old graph and
+   * can't be replayed on this one) and any in-progress drag/preview, and
+   * prunes the selection to ids that still exist. Does NOT fire `onChange`:
+   * the caller pushed this state in, so echoing it back invites feedback
+   * loops — this is a reset, not a recorded mutation.
+   */
+  replaceGraph: (graph: CollectionsGraph) => void;
 
   setSelection: (ids: readonly NodeId[]) => void;
   toggleSelected: (id: NodeId) => void;
@@ -193,6 +203,36 @@ export function createCollectionsStore(
     return true;
   }
 
+  function replaceGraph(nextGraph: CollectionsGraph): void {
+    graph = nextGraph;
+    // Old patches were built against the old graph — they can't be replayed
+    // on this one, so undo/redo starts fresh.
+    history.clear();
+    refreshHistoryEntries();
+    // A wholesale swap invalidates every transient interaction. Reset drag,
+    // preview, and any pending rejection flash; keep the selection but prune
+    // it to ids the new graph still contains (pruneMissingSelection reads the
+    // current `interaction`, so seed it first).
+    if (rejectionTimer !== null) {
+      clearTimeout(rejectionTimer);
+      rejectionTimer = null;
+    }
+    interaction = {
+      isDragging: false,
+      activeIds: EMPTY_IDS,
+      activeIdSet: EMPTY_SELECTION,
+      dropIntent: null,
+      dropIntentInvalid: false,
+      selectedIds: interaction.selectedIds,
+      rejectedIdSet: EMPTY_SELECTION,
+    };
+    pruneMissingSelection();
+    notify();
+    // Deliberately no onChange: the caller supplied this graph, so echoing it
+    // back would invite feedback loops. replaceGraph is a reset, not a
+    // recorded mutation, and carries no patch.
+  }
+
   return {
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
@@ -205,6 +245,7 @@ export function createCollectionsStore(
     dispatch,
     undo,
     redo,
+    replaceGraph,
 
     setSelection: (ids) => {
       const next = new Set(ids);

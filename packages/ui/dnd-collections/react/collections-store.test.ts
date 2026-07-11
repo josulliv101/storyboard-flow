@@ -130,6 +130,33 @@ describe("createCollectionsStore", () => {
     expect(store.undo()).toBe(false); // stack exhausted
   });
 
+  test("replaceGraph swaps the graph, clears history, prunes selection, resets drag, and is silent", () => {
+    const changes: CollectionsChange[] = [];
+    const store = createCollectionsStore(graphFixture(), { onChange: (c) => changes.push(c) });
+    store.dispatch(moveX); // some history + a change on the feed
+    store.setSelection([id("x"), id("y")]); // x moved to root-b above, y stays
+    store.beginDrag(id("y")); // an in-progress drag
+    changes.length = 0; // ignore the dispatch's change; watch the replace
+
+    const next = buildGraph([
+      { kind: "collection", id: "root-a", name: "A", children: [media("y"), media("w")] },
+    ]);
+    if (!next.ok) throw new Error(JSON.stringify(next.error));
+    store.replaceGraph(next.value);
+
+    const snap = store.getSnapshot();
+    expect(snap.graph).toBe(next.value); // the new graph is committed
+    expect(snap.canUndo).toBe(false); // history cleared — old patches don't apply
+    expect(snap.historyEntries).toEqual([]);
+    expect(snap.interaction.isDragging).toBe(false); // drag reset
+    expect(snap.interaction.activeIds).toHaveLength(0);
+    // Selection pruned to ids the new graph still has: y survives, x is gone.
+    expect(snap.interaction.selectedIds.has(id("y"))).toBe(true);
+    expect(snap.interaction.selectedIds.has(id("x"))).toBe(false);
+    // No onChange for a caller-supplied reset.
+    expect(changes).toHaveLength(0);
+  });
+
   test("undoing an add prunes the removed node from the selection", () => {
     const store = createCollectionsStore(graphFixture());
     const added = store.dispatch({
