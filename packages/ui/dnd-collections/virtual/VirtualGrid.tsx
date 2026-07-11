@@ -3,8 +3,8 @@
 import {
   forwardRef,
   useCallback,
-  useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useState,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -70,8 +70,12 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
 
     // Responsive column count from the content width, unless pinned by the
     // prop. The spacer's clientWidth already excludes container padding.
+    // useLayoutEffect (not useEffect) so the FIRST measurement lands before
+    // paint — otherwise the initial render lays out at the `measuredColumns`
+    // default of 1 (a single tall column of every row) and visibly reflows to
+    // the real count a frame later.
     const [measuredColumns, setMeasuredColumns] = useState(1);
-    useEffect(() => {
+    useLayoutEffect(() => {
       if (columns !== undefined) return;
       const el = scrollRef.current;
       if (!el) return;
