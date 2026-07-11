@@ -587,6 +587,74 @@ export const TwoInstancesStayIsolated: Story = {
   },
 };
 
+// FLIP keyframe transforms of an element, excluding CSS transitions (the
+// card has transition-all) — picked out by the translate keyframe.
+function flipTransforms(el: HTMLElement): string[] {
+  return el.getAnimations().flatMap((a) => {
+    if (!(a.effect instanceof KeyframeEffect)) return [];
+    const t = a.effect.getKeyframes()[0]?.transform;
+    return typeof t === "string" && t.startsWith("translate") ? [t] : [];
+  });
+}
+
+function ScrollBetweenCommitsBoard() {
+  return (
+    <div data-testid="flip-scroller" style={{ height: 200, overflowY: "auto" }}>
+      <div style={{ paddingBottom: 400 }}>
+        <DndCollections initialGraph={standardGraph()}>
+          <CollectionPanels collectionIds={[parseNodeId("panel-a"), parseNodeId("panel-b")]} />
+        </DndCollections>
+      </div>
+    </div>
+  );
+}
+
+export const FlipSurvivesScrollBetweenCommits: Story = {
+  // The FLIP sweep must measure FIRST and LAST in the same scroll frame.
+  // Scrolling the container between two commits shifts every card's viewport
+  // position; a version that stashed FIRST at the PREVIOUS commit would read
+  // that scroll delta as movement and slide the whole board by the scroll
+  // amount. Here: commit, scroll, commit again — the moved card animates only
+  // its real (horizontal) delta and the untouched panel does not animate.
+  render: () => <ScrollBetweenCommitsBoard />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const scroller = canvasElement.querySelector<HTMLElement>('[data-testid="flip-scroller"]')!;
+    await waitForLayout(nodeCard(canvasElement, "alpha"));
+
+    // Commit 1: nudge alpha one step right.
+    nodeCard(canvasElement, "alpha").focus();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")[1]).toBe("alpha");
+    });
+
+    // Scroll the container between the two commits.
+    scroller.scrollTop = 100;
+    expect(scroller.scrollTop).toBeGreaterThan(0); // the scroll really took
+
+    // Commit 2 (post-scroll): move alpha back. FLIP plays synchronously in
+    // the layout effect, so read the animations before they finish.
+    nodeCard(canvasElement, "alpha").focus();
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+
+    const alphaFlip = flipTransforms(nodeCard(canvasElement, "alpha"));
+    const bystanderFlip = flipTransforms(nodeCard(canvasElement, "xray"));
+
+    // alpha slid horizontally within its row — the 100px scroll must NOT
+    // appear as a vertical component.
+    expect(alphaFlip.length).toBeGreaterThan(0);
+    expect(alphaFlip[0]).toMatch(/,\s*0px\)/);
+    // The untouched panel-b never moved in the graph — pre-fix it would have
+    // animated by the scroll delta.
+    expect(bystanderFlip).toHaveLength(0);
+
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")[0]).toBe("alpha");
+    });
+  },
+};
+
 function FreshOnChangeHarness() {
   const [label, setLabel] = useState("stale");
   const [seen, setSeen] = useState("none");
