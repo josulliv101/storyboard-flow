@@ -458,10 +458,7 @@ function CollectionsDragOverlay({
     primaryId ? s.graph.nodesById.get(primaryId) ?? null : null
   );
   const node = paletteNodes?.[0] ?? primaryNode;
-  const extraCount = useMemo(
-    () => Math.max(0, (paletteNodes ? paletteNodes.length : activeIds.length) - 1),
-    [paletteNodes, activeIds]
-  );
+  const extraCount = Math.max(0, (paletteNodes ? paletteNodes.length : activeIds.length) - 1);
 
   return (
     <DragOverlay>{node ? <NodeCardGhost node={node} extraCount={extraCount} /> : null}</DragOverlay>

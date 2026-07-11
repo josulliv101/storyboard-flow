@@ -12,7 +12,7 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
 | Task | Where | Command |
 | --- | --- | --- |
 | Unit tests | `apps/storybook` | `npx vitest run --project=unit` (filter: append `intents`, `commands`, …) |
-| Story interaction tests | `apps/storybook` | `npx vitest run --project=storybook DndCollections.stories.tsx` |
+| Story interaction tests | `apps/storybook` | `npx vitest run --project=storybook` (name a file to narrow: `DndCollections.stories.tsx`, `PaletteTrash.stories.tsx`, `VirtualStrip.stories.tsx`, `VirtualGrid.stories.tsx`) |
 | Typecheck | `packages/ui` | `npx tsc --noEmit -p tsconfig.json` |
 | E2E (real mouse) | `apps/web` | `npx playwright test dnd-collections` |
 

@@ -16,7 +16,13 @@ export type Result<T, E> =
   | Readonly<{ ok: true; value: T }>
   | Readonly<{ ok: false; error: E }>;
 
-/** Parse-or-throw for authoring-time-trusted ids (literals in stories/tests). */
+/**
+ * Parse-or-throw for authoring-time-trusted ids (literals in stories/tests).
+ * The only rule is non-empty/non-whitespace: an id may contain ANY other
+ * character, including ":" — the droppable-id protocol (`node:<id>` etc.)
+ * splits on the FIRST colon and consumers key selectors with `CSS.escape`,
+ * so arbitrary characters stay safe downstream.
+ */
 export function parseNodeId(id: string): NodeId {
   if (!id || !id.trim()) {
     throw new Error(`Invalid NodeId: ${JSON.stringify(id)}`);

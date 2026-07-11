@@ -6,7 +6,9 @@ import { type NodeId } from "../core/graph";
 import {
   resolveGridRowMoveCommand,
   resolveKeyboardCommand,
+  type GridRowMoveRejection,
   type KeyboardMoveAction,
+  type KeyboardRejection,
 } from "../core/keyboard";
 import { type CollectionsStore } from "./collections-store";
 
@@ -31,12 +33,21 @@ const KEYBOARD_ACTION_BY_KEY: Readonly<Record<string, KeyboardMoveAction | undef
   Backspace: "move-out",
 };
 
-const GRID_BOUNDARY_MESSAGES: Readonly<Record<string, string | undefined>> = {
+// Keyed by the rejection unions (not `string`) so adding a reason to
+// core/keyboard forces a decision here at compile time instead of silently
+// announcing `undefined`. `undefined` = intentionally silent (a corrupt-input
+// or out-of-scope reason with no user-facing message).
+const GRID_BOUNDARY_MESSAGES: Readonly<
+  Record<GridRowMoveRejection["reason"], string | undefined>
+> = {
   "already-first-row": "Already in the first row.",
   "already-last-row": "Already in the last row.",
+  "missing-node": undefined,
+  "cannot-move-root": undefined,
+  "invalid-columns": undefined,
 };
 
-const KEYBOARD_BOUNDARY_MESSAGES: Readonly<Record<string, string>> = {
+const KEYBOARD_BOUNDARY_MESSAGES: Readonly<Record<KeyboardRejection["reason"], string>> = {
   "missing-node": "Nothing to move.",
   "cannot-move-root": "Top-level collections cannot be moved.",
   "no-previous-sibling": "Already first in its collection.",
