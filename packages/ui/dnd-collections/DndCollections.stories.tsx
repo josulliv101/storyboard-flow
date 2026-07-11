@@ -134,6 +134,39 @@ export const MoveAcrossCollections: Story = {
   },
 };
 
+export const ReleaseOutsideBoardCancels: Story = {
+  // Releasing where nothing is under the pointer must CANCEL, not commit.
+  // pointerWithin returns nothing out there; the pointer-drag path no longer
+  // falls back to unbounded closestCenter (which would always find "some
+  // card, somewhere" and move the item next to it). Nothing changes.
+  render: () => <StandardBoard />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const alpha = nodeCard(canvasElement, "alpha");
+    const panelA = canvasElement.querySelector(
+      '[data-panel-droppable="panel-a"]'
+    ) as HTMLElement;
+    await waitForLayout(panelA);
+
+    // Release far to the right of every panel — background, no droppable.
+    const rect = panelA.getBoundingClientRect();
+    await dragToPoint(alpha, { x: rect.right + 400, y: rect.top + 20 });
+
+    // No move: both panels are exactly as they started.
+    expect(panelOrder(canvasElement, "panel-a")).toEqual([
+      "alpha",
+      "bravo",
+      "charlie",
+      "folder-f",
+      "delta",
+    ]);
+    expect(panelOrder(canvasElement, "panel-b")).toEqual(["xray", "yankee"]);
+    // The gesture is announced as a cancel, and no history entry is recorded.
+    await expect(await canvas.findByText(/cancelled drag/i)).toBeInTheDocument();
+    expect(canvasElement.querySelector("[data-history-entry='0']")).toBeNull();
+  },
+};
+
 export const DropInGapInsertsBetween: Story = {
   // The pointer in the GAP between two cards is inside the panel droppable
   // but over neither card — without gap resolution that reads as
@@ -571,9 +604,13 @@ export const RenderEfficiencyDuringDrag: Story = {
     const bystander = nodeCard(canvasElement, "w20");
     await waitForLayout(target);
 
-    // Establish the drag and settle on the target's left half.
+    // Establish the drag, THEN re-aim at the target's LIVE left half:
+    // starting a drag can shift layout (here the wide panel reflows and t1
+    // rises), so a hold point computed from the pre-drag rect would strand
+    // the pointer off the card. Read the rect after the drag has settled.
+    await dragHoldAt(source, rectPoint(target, 0.15));
     const holdPoint = rectPoint(target, 0.15);
-    await dragHoldAt(source, holdPoint);
+    await moveHeldPointer(holdPoint);
     await waitFor(() => {
       expect(target.parentElement?.querySelector('[data-drop-indicator="before"]')).toBeTruthy();
     });

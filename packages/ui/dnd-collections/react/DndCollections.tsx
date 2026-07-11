@@ -17,8 +17,10 @@ import {
   pointerWithin,
   useSensor,
   useSensors,
+  type ClientRect,
   type CollisionDetection,
   type DragStartEvent,
+  type UniqueIdentifier,
 } from "@dnd-kit/core";
 
 import { getChildren, type CollectionItemNode, type CollectionsGraph } from "../core/graph";
@@ -62,6 +64,30 @@ export type DndCollectionsProps = Readonly<{
   onChange?: (change: CollectionsChange) => void;
   children: ReactNode;
 }>;
+
+// Max distance (px) from the pointer to any droppable's rect for the
+// nearest-center fallback to still engage. Within it the pointer is "near the
+// board" and a near-miss (gap, rect-edge rounding) resolves to the nearest
+// target; beyond it the pointer is off the board and the drop cancels rather
+// than snapping to some far-away card. One card-gap of tolerance.
+const FALLBACK_MAX_DISTANCE = 48;
+
+/** Whether the pointer is within FALLBACK_MAX_DISTANCE of some droppable's rect. */
+function pointerNearAnyDroppable(
+  point: Readonly<{ x: number; y: number }>,
+  containers: readonly Readonly<{ id: UniqueIdentifier }>[],
+  rects: ReadonlyMap<UniqueIdentifier, ClientRect>
+): boolean {
+  for (const container of containers) {
+    const rect: ClientRect | undefined = rects.get(container.id);
+    if (!rect) continue;
+    // Distance from the point to the rect (0 while inside it).
+    const dx = Math.max(rect.left - point.x, 0, point.x - (rect.left + rect.width));
+    const dy = Math.max(rect.top - point.y, 0, point.y - (rect.top + rect.height));
+    if (Math.hypot(dx, dy) <= FALLBACK_MAX_DISTANCE) return true;
+  }
+  return false;
+}
 
 export function DndCollections({ initialGraph, onChange, children }: DndCollectionsProps) {
   // The store captures its options once, but callback props must stay fresh
@@ -142,22 +168,39 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
         return !draggedIds.has(targetNode);
       });
 
-      // Pointer-priority: only trust nearest-center once nothing is under
-      // the pointer (closestCenter has no distance cutoff — unbounded, it
-      // would always find "some item, somewhere").
+      // Pointer-priority: for pointer drags, nothing under the pointer means
+      // NO target. closestCenter has no distance cutoff — unbounded, it
+      // always finds "some item, somewhere", which would let a release far
+      // outside the board commit a move to whatever card happened to be
+      // nearest (drag-to-nowhere must cancel, not act — see
+      // ReleaseOutsideBoardCancels). Only keyboard drags, which have no
+      // pointer to test containment with, fall back to nearest-center.
       const withinPointer = pointerWithin({ ...args, droppableContainers });
-      let collisions = withinPointer.length
-        ? withinPointer
-        : closestCenter({ ...args, droppableContainers });
+      let collisions = withinPointer;
+      if (!withinPointer.length) {
+        const point = args.pointerCoordinates;
+        // Keyboard drags have no pointer — fall back to nearest-center so an
+        // intent still resolves. Pointer drags fall back ONLY while the
+        // pointer is still near some droppable: releasing out in open space
+        // (far from every target) must CANCEL, not snap to "some card,
+        // somewhere" — unbounded closestCenter's failure mode, which let a
+        // release well outside the board commit a move (see
+        // ReleaseOutsideBoardCancels).
+        collisions =
+          !point ||
+          pointerNearAnyDroppable(point, droppableContainers, args.droppableRects)
+            ? closestCenter({ ...args, droppableContainers })
+            : [];
+      }
 
       // Cards sit visually ON TOP of their containers (panels, virtual
       // strips), but pointerWithin ranks by distance-to-center with no
       // notion of z-order — a wide container's center can be nearer than
       // the hovered card's. Among pointer hits, a node card always beats a
       // container, so container-level intents (append, insert-at-index)
-      // apply only where no card is under the pointer. The closestCenter
-      // fallback is left alone: with nothing under the pointer, nearest
-      // really is the best guess.
+      // apply only where no card is under the pointer. The keyboard-only
+      // closestCenter fallback is left alone: with no pointer at all,
+      // nearest really is the best guess.
       if (withinPointer.length > 1) {
         const nodeHit = collisions.find(
           (collision) => decodeDropTarget(String(collision.id))?.type === "node"
@@ -290,8 +333,14 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
         announce("Cannot move a collection into itself or one of its nested collections.");
         return;
       }
-      // same-position and friends: a quiet settle, mirroring pointer UX.
-      announce("Dropped in place.");
+      if (dispatched.error.reason === "same-position") {
+        // A quiet settle, mirroring pointer UX: the drop landed where it started.
+        announce("Dropped in place.");
+        return;
+      }
+      // missing-node and friends: the command was REJECTED — announcing
+      // "dropped in place" would claim success for a refused move.
+      announce("Could not move.");
     },
     [store, announce, palette]
   );
