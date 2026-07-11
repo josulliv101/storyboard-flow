@@ -200,15 +200,24 @@ Everything semantic happens in `core/`.
 
 ## Keyboard: two coexisting systems
 
-- dnd-kit's `KeyboardSensor` keeps its own grammar (Enter/Space to grab,
-  arrows while grabbed) — the collision code path even synthesizes a pointer
-  from the moving rect's center so intents still resolve without a pointer.
+- dnd-kit's `KeyboardSensor` is restricted to **Enter** to grab/drop (arrows
+  move while grabbed) — narrowed from its Enter/Space default so **Space**
+  stays free for selection (native `<button>` activation → the card's
+  `onClick`), which is how keyboard users select and multi-select. The
+  collision code path synthesizes a pointer from the moving rect's center so
+  intents still resolve without a pointer.
 - The semantic layer (`core/keyboard.ts`) binds **Alt+Arrow/Home/End** on a
   focused card — deliberately outside the sensor's grammar so the two never
   clash. It's wired by event delegation on one wrapper div (no per-card
   handlers), resolves to the same `move-nodes` command as pointer drags
   (shared validation, history, announcements), and restores focus after
-  cross-parent moves (the card unmounts/remounts under a new React parent).
+  cross-parent moves — retried across frames, with the destination collection
+  as a fallback when the card lands somewhere this view doesn't render.
+- The card button is always a tab stop (even in handle mode, where the grip
+  is a second stop for pointer/grab drag) so the selection control is always
+  reachable. dnd-kit's own announcer and screen-reader instructions are
+  disabled at the provider; this package speaks through one `aria-live`
+  channel with human node names.
 
 Boundary cases (already first, no adjacent collection, …) come back as
 typed rejections and are announced via the aria-live region — which nudges

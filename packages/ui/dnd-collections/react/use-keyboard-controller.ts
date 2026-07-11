@@ -52,17 +52,38 @@ export function useCollectionsKeyboard(args: {
 }): Readonly<{
   handleKeyDownCapture: (event: ReactKeyboardEvent) => void;
   /** Re-focus a card after a move unmounts/remounts it (new parent or virtual slot). */
-  restoreFocus: (nodeId: NodeId) => void;
+  restoreFocus: (nodeId: NodeId, fallbackId?: NodeId) => void;
 }> {
   const { store, announce, containerRef } = args;
 
+  // A cross-parent move unmounts the card and remounts it under a new React
+  // parent; a cross-row grid move recreates its DOM element. Either can lag a
+  // frame or two, so a single rAF often misses and focus drops to <body>.
+  // Retry across a short window, and if the card genuinely never reappears
+  // (it moved into a collection this view doesn't render as a panel), fall
+  // back to the destination's own card so focus lands somewhere sensible.
   const restoreFocus = useCallback(
-    (nodeId: NodeId) => {
-      requestAnimationFrame(() => {
-        containerRef.current
-          ?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(nodeId)}"]`)
-          ?.focus();
-      });
+    (nodeId: NodeId, fallbackId?: NodeId) => {
+      let attempts = 12;
+      const tryFocus = () => {
+        const root = containerRef.current;
+        if (!root) return;
+        const card = root.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(nodeId)}"]`);
+        if (card) {
+          card.focus();
+          return;
+        }
+        if (--attempts > 0) {
+          requestAnimationFrame(tryFocus);
+          return;
+        }
+        if (fallbackId) {
+          root
+            .querySelector<HTMLElement>(`[data-node-id="${CSS.escape(fallbackId)}"]`)
+            ?.focus();
+        }
+      };
+      requestAnimationFrame(tryFocus);
     },
     [containerRef]
   );
@@ -140,7 +161,9 @@ export function useCollectionsKeyboard(args: {
       const targetName = graph.nodesById.get(resolved.value.toParentId)?.name ?? "collection";
       announce(`Moved "${name}" in "${targetName}".`);
 
-      restoreFocus(nodeId);
+      // nest-in-neighbor/move-out can land the card in a collection this view
+      // doesn't render — fall back to the destination collection's own card.
+      restoreFocus(nodeId, resolved.value.toParentId);
     },
     [store, announce, handleGridRowMove, restoreFocus]
   );

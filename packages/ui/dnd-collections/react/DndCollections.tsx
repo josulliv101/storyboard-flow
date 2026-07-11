@@ -17,9 +17,11 @@ import {
   pointerWithin,
   useSensor,
   useSensors,
+  type Announcements,
   type ClientRect,
   type CollisionDetection,
   type DragStartEvent,
+  type ScreenReaderInstructions,
   type UniqueIdentifier,
 } from "@dnd-kit/core";
 
@@ -64,6 +66,35 @@ export type DndCollectionsProps = Readonly<{
   onChange?: (change: CollectionsChange) => void;
   children: ReactNode;
 }>;
+
+// The package owns ONE aria-live channel (useLiveAnnouncements) that speaks
+// human node names and covers selection, drags, keyboard moves, and
+// rejections. dnd-kit ships its own competing announcer whose defaults emit
+// raw droppable ids ("Picked up draggable item node:alpha."), so a screen
+// reader would hear every event twice, once in gibberish. Silence dnd-kit's
+// by returning undefined from every handler — its announce() no-ops on a
+// nullish value — leaving our channel as the single source of truth.
+const SILENCED_ANNOUNCEMENTS: Announcements = {
+  onDragStart: () => undefined,
+  onDragOver: () => undefined,
+  onDragEnd: () => undefined,
+  onDragCancel: () => undefined,
+};
+
+// dnd-kit's default draggable instructions say "press the space bar" to pick
+// up — which contradicts our grammar (Space selects, Enter grabs). Blank
+// them; our own instructions element (referenced by cards via
+// aria-describedby) is the single, accurate description.
+const NO_SCREEN_READER_INSTRUCTIONS: ScreenReaderInstructions = { draggable: "" };
+
+// dnd-kit's KeyboardSensor defaults to Space OR Enter for grab/drop. We
+// reserve Space for SELECTION (native <button> activation → onClick) and use
+// Enter alone to grab, so keyboard users can both select and drag a card.
+const KEYBOARD_CODES = {
+  start: ["Enter"],
+  cancel: ["Escape"],
+  end: ["Enter"],
+};
 
 // Max distance (px) from the pointer to any droppable's rect for the
 // nearest-center fallback to still engage. Within it the pointer is "near the
@@ -128,7 +159,7 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
   // sensor would replace the first, not join it.
   const sensors = useSensors(
     useSensor(CollectionsPointerSensor),
-    useSensor(KeyboardSensor)
+    useSensor(KeyboardSensor, { keyboardCodes: KEYBOARD_CODES })
   );
 
   // Latest resolved intent, written during collision detection (the one
@@ -356,6 +387,10 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
     <DndContext
       sensors={sensors}
       collisionDetection={collisionDetection}
+      accessibility={{
+        announcements: SILENCED_ANNOUNCEMENTS,
+        screenReaderInstructions: NO_SCREEN_READER_INSTRUCTIONS,
+      }}
       onDragStart={handleDragStart}
       onDragMove={publishIntent}
       onDragOver={publishIntent}
@@ -369,10 +404,16 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
           {children}
         </div>
       </CollectionsContainerContext.Provider>
-      {/* Keyboard-usage instructions, referenced by cards via aria-describedby. */}
+      {/* The single keyboard-usage description, referenced by cards via
+          aria-describedby (dnd-kit's own instructions are blanked above). It
+          must match the real grammar: Space selects, Enter grabs for a
+          free-form drag, and Alt+keys are the quick semantic moves. */}
       <p id={instructionsId} className="sr-only">
-        Alt plus Arrow keys move the focused item. Alt plus Enter nests it into a neighboring
-        collection; Alt plus Backspace moves it out.
+        Press Space to select this item, or Control plus Space to add it to a multi-selection.
+        Press Enter to pick it up, then use the Arrow keys to move it and Enter to drop, or
+        Escape to cancel. Alt plus Arrow keys move it one step at a time; Alt plus Down nests it
+        into a neighboring collection and Alt plus Up moves it out. Inside a grid, Alt plus Up and
+        Down move between rows.
       </p>
       <CollectionsDragOverlay paletteNodes={palette.paletteNodes} />
       <div

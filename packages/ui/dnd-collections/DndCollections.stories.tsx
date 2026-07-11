@@ -343,6 +343,55 @@ export const MultiSelectDrag: Story = {
   },
 };
 
+export const KeyboardSelectAndGrab: Story = {
+  // The keyboard grammar split: Space SELECTS the focused card, Enter GRABS
+  // it for a drag. Before this, dnd-kit's KeyboardSensor claimed Space/Enter
+  // for grabbing, so keyboard users could not select at all.
+  render: () => <StandardBoard />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const alpha = nodeCard(canvasElement, "alpha");
+    const charlie = nodeCard(canvasElement, "charlie");
+    await waitForLayout(charlie);
+
+    // Focus WITHOUT clicking (a click would select via the mouse path), then
+    // Space to select via the keyboard.
+    alpha.focus();
+    await user.keyboard("[Space]");
+    await waitFor(() => {
+      expect(nodeCard(canvasElement, "alpha")).toHaveAttribute("data-selected", "true");
+    });
+
+    // Ctrl+Space adds to the selection — multi-select with no mouse.
+    charlie.focus();
+    await user.keyboard("{Control>}[Space]{/Control}");
+    await waitFor(() => {
+      expect(nodeCard(canvasElement, "alpha")).toHaveAttribute("data-selected", "true");
+      expect(nodeCard(canvasElement, "charlie")).toHaveAttribute("data-selected", "true");
+    });
+    await expect(await canvas.findByText(/2 items selected/i)).toBeInTheDocument();
+
+    // Enter GRABS (does not select): a drag ghost appears; Escape cancels.
+    const bravo = nodeCard(canvasElement, "bravo");
+    bravo.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(
+        canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')
+      ).not.toBeNull();
+    });
+    expect(nodeCard(canvasElement, "bravo")).not.toHaveAttribute("data-selected", "true");
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(
+        canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')
+      ).toBeNull();
+    });
+  },
+};
+
 export const UndoRedo: Story = {
   render: () => <StandardBoard />,
   play: async ({ canvasElement }) => {

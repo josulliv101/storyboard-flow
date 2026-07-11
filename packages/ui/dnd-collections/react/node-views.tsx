@@ -213,9 +213,12 @@ export const NodeCard = memo(function NodeCard({
         // grabbed state; here the pressed semantic is SELECTION (and the drag
         // state is conveyed by the overlay + dimming instead).
         aria-pressed={isSelected}
-        // In handle mode the GRIP is the card's tab stop (drag grammar and
-        // Alt-moves both work from it) — one stop per card, not two.
-        tabIndex={dragHandle ? -1 : undefined}
+        // The card button is ALWAYS a keyboard tab stop, even in handle mode:
+        // it is the selection control (Space) and the anchor for Alt-key
+        // moves, so keyboard users must be able to reach it. (Previously
+        // handle mode gave it tabIndex -1 to keep a single stop per card,
+        // which left keyboard users unable to select at all.) In handle mode
+        // the grip is a second stop that carries the dnd-kit grab-drag.
         aria-describedby={
           dragHandle
             ? instructionsId

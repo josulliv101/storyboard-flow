@@ -368,20 +368,34 @@ collision detection, drag lifecycle → intent → command dispatch, the
 `DragOverlay` ghost, an `aria-live` announcer, and the Alt-key semantic
 keyboard bindings.
 
+The provider owns the whole accessibility surface: it silences dnd-kit's
+built-in announcer (whose defaults would speak raw droppable ids like
+`node:alpha` alongside this package's human-named channel) and blanks its
+screen-reader instructions in favour of one description element referenced by
+every card.
+
 `initialGraph` is intentionally initial-only — the store is the source of
 truth thereafter; later prop changes are ignored. `onChange` is NOT frozen
 with it: the latest callback prop is always the one invoked, so closures
 over current parent state behave as expected.
 
-Built-in keyboard bindings (on a focused card; chosen to avoid dnd-kit's
-KeyboardSensor grammar, which coexists):
+Keyboard grammar (on a focused card). dnd-kit's KeyboardSensor is restricted
+to **Enter** (grab/drop) so **Space** stays free for selection; the Alt-key
+layer is a separate, always-available set of quick semantic moves:
 
 | Keys | Action |
 | --- | --- |
+| Space | Select this card (replaces the selection) |
+| Ctrl/Cmd + Space | Toggle this card in a multi-selection |
+| Enter | Grab for a free-form drag (Arrow keys move, Enter drops, Escape cancels) |
 | Alt+ArrowLeft / Alt+ArrowRight | `move-prev` / `move-next` |
 | Alt+Home / Alt+End | `move-home` / `move-end` |
 | Alt+ArrowDown | `nest-in-neighbor` |
 | Alt+ArrowUp | `move-out` |
+
+Inside a `VirtualGrid`, Alt+ArrowUp / Alt+ArrowDown become row moves (± the
+column count); Alt+Enter / Alt+Backspace are the grid-safe synonyms for
+`nest-in-neighbor` / `move-out`.
 
 ---
 
