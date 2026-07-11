@@ -1,6 +1,7 @@
 "use client";
 
 import { useDraggable } from "@dnd-kit/core";
+import { twMerge } from "tailwind-merge";
 import { type CollectionItemNode } from "../core/graph";
 
 // External palette drag source: a draggable that creates a BRAND-NEW node
@@ -17,10 +18,12 @@ export type PaletteItemProps = Readonly<{
   paletteId: string;
   /** Runs at drag start; must return a node whose id is new to the graph. */
   createNode: () => CollectionItemNode;
+  /** Tailwind-merged onto the button, so overrides beat the defaults. */
+  className?: string;
   children?: React.ReactNode;
 }>;
 
-export function PaletteItem({ paletteId, createNode, children }: PaletteItemProps) {
+export function PaletteItem({ paletteId, createNode, className, children }: PaletteItemProps) {
   const { attributes, listeners, setNodeRef } = useDraggable({
     id: `palette:${paletteId}`,
     data: { [PALETTE_DATA_KEY]: createNode },
@@ -30,7 +33,10 @@ export function PaletteItem({ paletteId, createNode, children }: PaletteItemProp
       type="button"
       ref={setNodeRef}
       data-palette-item={paletteId}
-      className="flex h-24 w-32 cursor-grab flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/40 p-2 text-xs font-medium text-muted-foreground select-none active:cursor-grabbing"
+      className={twMerge(
+        "flex h-24 w-32 cursor-grab flex-col items-center justify-center rounded-md border border-dashed border-border bg-muted/40 p-2 text-xs font-medium text-muted-foreground select-none active:cursor-grabbing",
+        className
+      )}
       {...attributes}
       {...listeners}
     >
