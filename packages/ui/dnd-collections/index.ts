@@ -99,6 +99,7 @@ export {
 } from "./react/container-context";
 export {
   VIRTUAL_INSERT_DATA_KEY,
+  isVirtualInsertTarget,
   type VirtualInsertTarget,
 } from "./react/virtual-droppable";
 export { useEdgeAutoScroll } from "./react/use-edge-autoscroll";

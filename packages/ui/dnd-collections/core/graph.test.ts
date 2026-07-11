@@ -6,6 +6,7 @@ import {
   getDocumentOrder,
   isSameOrAncestor,
   parseNodeId,
+  EMPTY_GRAPH,
   type GraphNodeSpec,
 } from "./graph";
 
@@ -21,6 +22,38 @@ function build(roots: readonly GraphNodeSpec[]) {
   if (!result.ok) throw new Error(`buildGraph failed: ${JSON.stringify(result.error)}`);
   return result.value;
 }
+
+describe("parseNodeId", () => {
+  test("returns the id for non-empty strings", () => {
+    expect(parseNodeId("a")).toBe("a");
+    expect(parseNodeId(" a ")).toBe(" a "); // trimmed only for the emptiness check
+  });
+
+  test("throws on empty or whitespace-only ids", () => {
+    expect(() => parseNodeId("")).toThrow(/Invalid NodeId/);
+    expect(() => parseNodeId("   ")).toThrow(/Invalid NodeId/);
+  });
+});
+
+describe("getChildren", () => {
+  const graph = build([collection("root", [media("m1"), collection("f", [media("m2")])])]);
+
+  test("returns [] for unknown and media ids", () => {
+    expect(getChildren(graph, parseNodeId("nope"))).toEqual([]);
+    expect(getChildren(graph, parseNodeId("m1"))).toEqual([]); // media has no children entry
+  });
+
+  test("returns the ordered children of a collection", () => {
+    expect(getChildren(graph, parseNodeId("root"))).toEqual(["m1", "f"]);
+  });
+});
+
+describe("EMPTY_GRAPH", () => {
+  test("passes the invariant checker and has no roots", () => {
+    expect(findGraphInvariantViolation(EMPTY_GRAPH)).toBeNull();
+    expect(EMPTY_GRAPH.rootIds).toEqual([]);
+  });
+});
 
 describe("buildGraph", () => {
   test("denormalizes a nested spec into consistent indexes", () => {

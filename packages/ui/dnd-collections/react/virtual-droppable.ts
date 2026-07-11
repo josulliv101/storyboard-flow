@@ -16,3 +16,16 @@ export type VirtualInsertTarget = Readonly<{
 
 /** Key under which the target sits in a droppable's `data`. */
 export const VIRTUAL_INSERT_DATA_KEY = "virtualInsert";
+
+/**
+ * Runtime guard for the payload above. dnd-kit's `data` bag is untyped, so a
+ * value read back out of it is `unknown` — narrow it here instead of casting,
+ * to reject a malformed or foreign entry at the seam.
+ */
+export function isVirtualInsertTarget(value: unknown): value is VirtualInsertTarget {
+  if (typeof value !== "object" || value === null) return false;
+  const target = value as Record<string, unknown>;
+  return (
+    typeof target.collectionId === "string" && typeof target.resolveBoundary === "function"
+  );
+}

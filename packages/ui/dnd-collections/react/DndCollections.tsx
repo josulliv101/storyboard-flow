@@ -49,7 +49,7 @@ import { CollectionsPointerSensor } from "./pointer-sensors";
 import { useLiveAnnouncements } from "./use-announcements";
 import { useCollectionsKeyboard } from "./use-keyboard-controller";
 import { usePaletteDrag } from "./use-palette-drag";
-import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "./virtual-droppable";
+import { VIRTUAL_INSERT_DATA_KEY, isVirtualInsertTarget } from "./virtual-droppable";
 
 // Provider wiring: dnd-kit supplies the sensors, collision built-ins, and
 // the DragOverlay; this file owns collision -> intent resolution and the
@@ -267,10 +267,8 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
       // A virtualized container resolves by its own layout math — most of
       // its cards aren't mounted, so card rects can't decide the boundary.
       const winnerContainer = droppableContainers.find((c) => c.id === winner.id);
-      const virtualInsert = winnerContainer?.data.current?.[VIRTUAL_INSERT_DATA_KEY] as
-        | VirtualInsertTarget
-        | undefined;
-      if (virtualInsert) {
+      const virtualInsert = winnerContainer?.data.current?.[VIRTUAL_INSERT_DATA_KEY];
+      if (isVirtualInsertTarget(virtualInsert)) {
         intentRef.current = {
           type: "insert-at-index",
           collectionId: virtualInsert.collectionId,
