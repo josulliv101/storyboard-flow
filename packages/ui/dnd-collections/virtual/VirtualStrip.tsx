@@ -1,11 +1,12 @@
 "use client";
 
-import { forwardRef, useCallback, useImperativeHandle, useMemo } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
+import { TrimPreviewContext, type TrimPreview } from "../react/trim-preview-context";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
 import {
   usePanWithMomentum,
@@ -51,7 +52,7 @@ function resolveStripIndex(key: string, current: number, count: number): number 
 // yields via isGestureClaimed.) Module-level so option identities are
 // stable.
 const isPannableStripSurface = (target: Element): boolean =>
-  !target.closest("[data-drag-handle]");
+  !target.closest("[data-drag-handle], [data-trim-handle]");
 const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
 
 export type VirtualStripProps = Readonly<{
@@ -78,6 +79,12 @@ export type VirtualStripProps = Readonly<{
    * Ignored when panToScroll is off (bodies drag instantly).
    */
   itemDragActivation?: "handle" | "hold";
+  /**
+   * Enable media trim handles at card edges, converting the drag at this many
+   * pixels per second. Set it to the SAME scale your `itemWidthFor` uses so a
+   * trim resizes the card by the amount dragged.
+   */
+  trimPixelsPerSecond?: number;
   className?: string;
 }>;
 
@@ -101,6 +108,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       overscan = 4,
       panToScroll = true,
       itemDragActivation = "handle",
+      trimPixelsPerSecond,
       className,
     },
     ref
@@ -140,6 +148,43 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       overscan,
       getItemKey,
     });
+
+    // Variable widths come from node DATA, so a data change (a trim commit,
+    // a palette add) must re-run the cached measurements. `nodesById` only
+    // gets a new identity on such a commit — never on a move or a drag — so
+    // this stays at commit cadence, not per frame. Fixed-width strips
+    // (no itemWidthFor) never need it.
+    useEffect(() => {
+      if (itemWidthFor) virtualizer.measure();
+    }, [nodesById, itemWidthFor, virtualizer]);
+
+    // Live trim preview: a trim handle calls this per pointer-move to resize
+    // ONE card without a graph commit. `resizeItem` updates that item's cached
+    // size and shifts the offsets after it — no full re-measure, no per-frame
+    // graph churn (the commit lands once, on release). The callback must stay
+    // reference-stable so trim handles, which read it via context, don't
+    // re-render on every strip render — so it reads live values from a ref.
+    const trimStateRef = useRef({ childIds, virtualizer, gap, trimPixelsPerSecond, widthForIndex });
+    trimStateRef.current = { childIds, virtualizer, gap, trimPixelsPerSecond, widthForIndex };
+    const previewDurationSeconds = useCallback<TrimPreview["previewDurationSeconds"]>(
+      (nodeId, effectiveSeconds) => {
+        const s = trimStateRef.current;
+        const index = s.childIds.indexOf(nodeId);
+        if (index === -1) return;
+        // null resets to the item's data-derived size; otherwise mirror
+        // estimateSize (width + gap) at the caller's px-per-second scale.
+        const size =
+          effectiveSeconds === null
+            ? s.widthForIndex(index) + s.gap
+            : effectiveSeconds * (s.trimPixelsPerSecond ?? 0) + s.gap;
+        s.virtualizer.resizeItem(index, size);
+      },
+      []
+    );
+    const trimPreview = useMemo<TrimPreview>(
+      () => ({ previewDurationSeconds }),
+      [previewDurationSeconds]
+    );
 
     // Pointer -> visible boundary index from the virtualizer's measurements
     // (O(log n), variable widths included) — never from card rects, since
@@ -242,74 +287,77 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const indicatorLeft = indicatorIndex !== null ? boundaryLeft(indicatorIndex) : null;
 
     return (
-      <div
-        ref={setContainerRef}
-        data-virtual-strip={collectionId}
-        // One-row grid: arrow keys rove across columns, and aria-colcount /
-        // aria-colindex expose the true position ("column 500 of 1000") even
-        // though only a handful of cells are mounted.
-        role="grid"
-        aria-label={`${name}, ${childIds.length} items`}
-        aria-rowcount={1}
-        aria-colcount={childIds.length}
-        onKeyDown={onKeyDown}
-        className={[
-          "relative overflow-x-auto rounded-md border border-dashed border-border p-2",
-          className ?? "",
-        ].join(" ")}
-        // When WE own horizontal scrolling (pan hook), reserve horizontal
-        // touch gestures for it and leave vertical native ("pan-y"). With
-        // panToScroll off there is no pan hook, so the browser must keep
-        // native horizontal touch scrolling ("auto") or the strip can't be
-        // scrolled by touch at all.
-        style={{ touchAction: panToScroll ? "pan-y" : "auto" }}
-      >
-        <VirtualEmptyHint visible={childIds.length === 0} />
+      <TrimPreviewContext.Provider value={trimPreview}>
         <div
-          ref={contentRef}
-          role="row"
-          aria-rowindex={1}
-          style={{ width: virtualizer.getTotalSize(), height: itemHeight, position: "relative" }}
+          ref={setContainerRef}
+          data-virtual-strip={collectionId}
+          // One-row grid: arrow keys rove across columns, and aria-colcount /
+          // aria-colindex expose the true position ("column 500 of 1000") even
+          // though only a handful of cells are mounted.
+          role="grid"
+          aria-label={`${name}, ${childIds.length} items`}
+          aria-rowcount={1}
+          aria-colcount={childIds.length}
+          onKeyDown={onKeyDown}
+          className={[
+            "relative overflow-x-auto rounded-md border border-dashed border-border p-2",
+            className ?? "",
+          ].join(" ")}
+          // When WE own horizontal scrolling (pan hook), reserve horizontal
+          // touch gestures for it and leave vertical native ("pan-y"). With
+          // panToScroll off there is no pan hook, so the browser must keep
+          // native horizontal touch scrolling ("auto") or the strip can't be
+          // scrolled by touch at all.
+          style={{ touchAction: panToScroll ? "pan-y" : "auto" }}
         >
-          {indicatorLeft !== null && (
-            <div
-              aria-hidden="true"
-              data-drop-indicator="virtual"
-              className="pointer-events-none absolute inset-y-0 z-20 w-1 rounded-full bg-primary"
-              style={{ left: indicatorLeft }}
-            />
-          )}
-          {virtualizer.getVirtualItems().map((item) => (
-            <div
-              key={item.key}
-              data-virtual-index={item.index}
-              role="gridcell"
-              aria-colindex={item.index + 1}
-              // Sync the roving index to whatever card actually gains focus
-              // (click, programmatic focus), not just keyboard navigation.
-              onFocus={() => onItemFocus(item.index)}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: item.size - gap,
-                height: itemHeight,
-                transform: `translateX(${item.start}px)`,
-              }}
-            >
-              {/* Explicit sizing: the card fills its (possibly variable) slot.
-                  With panToScroll, item drags move to the grip bar or behind
-                  a press-and-hold so the body is free to pan the strip. */}
-              <NodeCard
-                id={childIds[item.index]}
-                className="h-full w-full"
-                dragActivation={cardActivation}
-                rovingTabIndex={item.index === rovingIndex ? 0 : -1}
+          <VirtualEmptyHint visible={childIds.length === 0} />
+          <div
+            ref={contentRef}
+            role="row"
+            aria-rowindex={1}
+            style={{ width: virtualizer.getTotalSize(), height: itemHeight, position: "relative" }}
+          >
+            {indicatorLeft !== null && (
+              <div
+                aria-hidden="true"
+                data-drop-indicator="virtual"
+                className="pointer-events-none absolute inset-y-0 z-20 w-1 rounded-full bg-primary"
+                style={{ left: indicatorLeft }}
               />
-            </div>
-          ))}
+            )}
+            {virtualizer.getVirtualItems().map((item) => (
+              <div
+                key={item.key}
+                data-virtual-index={item.index}
+                role="gridcell"
+                aria-colindex={item.index + 1}
+                // Sync the roving index to whatever card actually gains focus
+                // (click, programmatic focus), not just keyboard navigation.
+                onFocus={() => onItemFocus(item.index)}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: item.size - gap,
+                  height: itemHeight,
+                  transform: `translateX(${item.start}px)`,
+                }}
+              >
+                {/* Explicit sizing: the card fills its (possibly variable) slot.
+                    With panToScroll, item drags move to the grip bar or behind
+                    a press-and-hold so the body is free to pan the strip. */}
+                <NodeCard
+                  id={childIds[item.index]}
+                  className="h-full w-full"
+                  dragActivation={cardActivation}
+                  rovingTabIndex={item.index === rovingIndex ? 0 : -1}
+                  trimPixelsPerSecond={trimPixelsPerSecond}
+                />
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      </TrimPreviewContext.Provider>
     );
   }
 );

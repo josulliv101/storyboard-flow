@@ -5,6 +5,7 @@ import { expect, userEvent, waitFor, within } from "storybook/test";
 import { buildGraph, mediaDurationSeconds, parseNodeId, type GraphNodeSpec } from "./core/graph";
 import { useCollectionsStore } from "./react/collections-store";
 import { DndCollections } from "./react/DndCollections";
+import { UndoRedoControls } from "./react/history-views";
 import { VirtualStrip, type VirtualStripHandle } from "./virtual/VirtualStrip";
 import {
   dispatchPointerSequence,
@@ -790,5 +791,128 @@ export const FlipAnimatesStripReorder: Story = {
       );
       expect(ids.slice(0, 2)).toEqual(["m1", "m0"]);
     });
+  },
+};
+
+const TRIM_PPS = 24;
+
+function trimGraph() {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "strip",
+      name: "Strip",
+      children: [
+        { kind: "media", id: "img", name: "Img", durationSeconds: 4 },
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "Vid",
+          fullDurationSeconds: 10,
+          trimInSeconds: 0,
+          trimOutSeconds: 0,
+        },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+export const TrimMediaWithHandles: Story = {
+  // Edge trim handles dispatch update-media: image right = duration, video
+  // right = trim-out, video left = trim-in. At TRIM_PPS the card width IS the
+  // duration. The card resizes LIVE as the handle drags (targeted resizeItem,
+  // no commit), and the graph commits once on release.
+  render: () => (
+    <DndCollections initialGraph={trimGraph()} animateMoves={false}>
+      <div className="flex w-[640px] flex-col gap-2">
+        <UndoRedoControls />
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+          }
+          trimPixelsPerSecond={TRIM_PPS}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const width = (id: string) =>
+      Math.round(nodeCard(canvasElement, id).getBoundingClientRect().width);
+    const handle = (id: string, side: "left" | "right") =>
+      nodeCard(canvasElement, id)
+        .closest("[data-node-wrapper]")!
+        .querySelector<HTMLElement>(`[data-trim-handle="${side}"]`);
+    const left = (id: string) =>
+      Math.round(nodeCard(canvasElement, id).getBoundingClientRect().left);
+    // Hold a handle down and move it, WITHOUT releasing — leaves the live
+    // trim in flight so the card size can be inspected pre-commit.
+    const holdHandleBy = async (el: HTMLElement, dx: number) => {
+      const r = el.getBoundingClientRect();
+      const y = r.top + r.height / 2;
+      const x = r.left + r.width / 2;
+      await dispatchPointerSequence([
+        { element: el, type: "pointerdown", clientX: x, clientY: y },
+        { element: document, type: "pointermove", clientX: x + dx, clientY: y, delayAfterMs: 30 },
+      ]);
+    };
+    const release = async () => {
+      await dispatchPointerSequence([
+        { element: document, type: "pointerup", clientX: 0, clientY: 0, delayAfterMs: 30 },
+      ]);
+    };
+    const dragHandleBy = async (el: HTMLElement, dx: number) => {
+      await holdHandleBy(el, dx);
+      await release();
+    };
+    const undoButton = () => within(canvasElement).getByRole("button", { name: /undo/i });
+
+    await waitFor(() => nodeCard(canvasElement, "vid"));
+    // Widths ARE the durations: img 4s -> 96px, vid 10s -> 240px.
+    expect(width("img")).toBe(96);
+    expect(width("vid")).toBe(240);
+
+    // Image: right handle only. Video: both.
+    expect(handle("img", "right")).not.toBeNull();
+    expect(handle("img", "left")).toBeNull();
+    expect(handle("vid", "left")).not.toBeNull();
+    expect(handle("vid", "right")).not.toBeNull();
+
+    // LIVE preview: hold the image's right edge OUT +48px and assert the card
+    // ALREADY reads 6s -> 144px BEFORE release. The video after it shifts
+    // right by the same +48px, and nothing is committed yet (undo disabled).
+    const vidLeft0 = left("vid");
+    await holdHandleBy(handle("img", "right")!, 48);
+    await waitFor(() => expect(width("img")).toBe(144));
+    expect(left("vid") - vidLeft0).toBe(48);
+    expect(undoButton()).toBeDisabled();
+    // Release commits it; the card stays put (no resize flash on commit).
+    await release();
+    await waitFor(() => expect(undoButton()).toBeEnabled());
+    expect(width("img")).toBe(144);
+
+    // Undo restores it (trims are ordinary undoable commands).
+    const user = userEvent.setup();
+    await user.click(undoButton());
+    await waitFor(() => expect(width("img")).toBe(96));
+
+    // Trim the video's END: drag its right edge IN (left) 72px -> trimOut +3s
+    // -> effective 7s -> 168px.
+    await dragHandleBy(handle("vid", "right")!, -72);
+    await waitFor(() => expect(width("vid")).toBe(168));
+
+    // Trim the video's START: left edge in (right) 48px -> trimIn +2s ->
+    // effective 5s -> 120px.
+    await dragHandleBy(handle("vid", "left")!, 48);
+    await waitFor(() => expect(width("vid")).toBe(120));
+
+    // Over-drag the end: effective duration clamps at 0 (slot width 0, so the
+    // card bottoms out at its ~18px chrome — never negative, never huge).
+    await dragHandleBy(handle("vid", "right")!, -600);
+    await waitFor(() => expect(width("vid")).toBeLessThanOrEqual(20));
+    expect(nodeCard(canvasElement, "vid").textContent).toMatch(/(?:^|\D)0s$/);
   },
 };
