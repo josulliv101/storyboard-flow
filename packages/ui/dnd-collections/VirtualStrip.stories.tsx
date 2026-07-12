@@ -732,3 +732,31 @@ export const KeyboardRovingNavigation: Story = {
     });
   },
 };
+
+export const RovingFocusFollowsClick: Story = {
+  // Regression: the roving index must track the card that ACTUALLY has focus,
+  // not just the hook's own key handler. Clicking a mid-list card then pressing
+  // an arrow must move relative to THAT card — earlier the internal index
+  // stayed at 0, so ArrowRight after clicking m5 wrongly went to m1.
+  render: () => <StripHarness />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const m5 = nodeCard(canvasElement, "m5");
+    await waitForLayout(m5);
+
+    // Click m5 (which focuses it), then ArrowRight -> m6, NOT m1.
+    await user.click(m5);
+    await waitFor(() => {
+      const c = nodeCard(canvasElement, "m5");
+      expect(c.ownerDocument.activeElement).toBe(c);
+    });
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => {
+      const m6 = nodeCard(canvasElement, "m6");
+      expect(m6.ownerDocument.activeElement).toBe(m6);
+      expect(m6.tabIndex).toBe(0);
+    });
+    // The stale-index bug would have landed on m1.
+    expect(nodeCard(canvasElement, "m1").tabIndex).toBe(-1);
+  },
+};
