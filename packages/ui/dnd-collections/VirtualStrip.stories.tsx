@@ -760,3 +760,35 @@ export const RovingFocusFollowsClick: Story = {
     expect(nodeCard(canvasElement, "m1").tabIndex).toBe(-1);
   },
 };
+
+export const FlipAnimatesStripReorder: Story = {
+  // Provider-level FLIP reaches virtualized views: a reorder inside the strip
+  // animates the moved card. Before ownership moved to the provider, FLIP was
+  // mounted only in CollectionPanels, so virtual views never animated.
+  render: () => <StripHarness />, // animateMoves defaults on at the provider
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const m0 = nodeCard(canvasElement, "m0");
+    await waitForLayout(m0);
+
+    // Alt+ArrowRight = move-next: m0 swaps with m1. The commit triggers a FLIP
+    // sweep, which plays synchronously in the layout effect.
+    m0.focus();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+
+    const flip = m0.getAnimations().flatMap((a) => {
+      if (!(a.effect instanceof KeyframeEffect)) return [];
+      const t = a.effect.getKeyframes()[0]?.transform;
+      return typeof t === "string" && t.startsWith("translate") ? [t] : [];
+    });
+    expect(flip.length).toBeGreaterThan(0);
+
+    await waitFor(() => {
+      const strip = canvasElement.querySelector('[data-virtual-strip="strip"]')!;
+      const ids = [...strip.querySelectorAll<HTMLElement>("[data-node-id]")].map(
+        (el) => el.dataset.nodeId
+      );
+      expect(ids.slice(0, 2)).toEqual(["m1", "m0"]);
+    });
+  },
+};

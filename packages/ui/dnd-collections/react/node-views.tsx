@@ -8,7 +8,6 @@ import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph
 import { encodeDropTarget } from "../core/intents";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
-import { useFlipGraphAnimation } from "./use-flip-graph-animation";
 
 // Default views. Each NodeCard receives ONLY its id — every dynamic value
 // arrives through selector subscriptions returning primitives (or stable
@@ -16,37 +15,26 @@ import { useFlipGraphAnimation } from "./use-flip-graph-animation";
 // `memo` + constant props means parents mapping stable children arrays
 // don't re-render cards either. The data-render-count attribute makes this
 // efficiency claim assertable in tests instead of aspirational.
+//
+// FLIP movement animation is NOT owned here — it is a provider-level sweep
+// (see DndCollections `animateMoves`) so one pass animates panels, virtual,
+// and custom views together.
 
 export type CollectionPanelsProps = Readonly<{
   /** Which collections to render as top-level panels. Defaults to the graph's roots. */
   collectionIds?: readonly NodeId[];
-  /** Post-commit FLIP movement animation (drop/undo/redo). Default on; honors prefers-reduced-motion. */
-  animateMoves?: boolean;
 }>;
 
-export function CollectionPanels({ collectionIds, animateMoves = true }: CollectionPanelsProps) {
+export function CollectionPanels({ collectionIds }: CollectionPanelsProps) {
   const rootIds = useCollectionsSelector((s) => s.graph.rootIds);
   const panelIds = collectionIds ?? rootIds;
   return (
     <div className="flex flex-col gap-6">
-      {animateMoves && <FlipAnimator />}
       {panelIds.map((id) => (
         <CollectionPanel key={id} collectionId={id} />
       ))}
     </div>
   );
-}
-
-/**
- * Rendered as a child so the graph subscription that drives the FLIP sweep
- * re-renders THIS empty component per commit, not the panel list itself.
- * Measures within the provider's container (from context) — wide enough for
- * cross-panel moves, narrow enough that multiple DndCollections instances
- * on one page (even ones reusing node ids) never measure each other's cards.
- */
-function FlipAnimator() {
-  useFlipGraphAnimation(useCollectionsContainer().containerRef);
-  return null;
 }
 
 export function CollectionPanel({ collectionId }: { collectionId: NodeId }) {

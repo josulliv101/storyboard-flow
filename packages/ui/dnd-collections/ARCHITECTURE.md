@@ -242,13 +242,22 @@ visualizes graph changes; it never decides them.
 It has to be a **single instance-wide sweep** rather than per-card effects,
 and the reason is the efficiency story above: displaced sibling cards
 intentionally don't re-render, so a per-card effect would never fire for
-exactly the cards that shifted. Instead, one component (`FlipAnimator`)
-measures the DOM directly and plays inverted-transform WAAPI animations
-(`composite: "replace"` so a rapid undo/redo supersedes an in-flight
-animation instead of compounding). The id-keyed rects span the whole
-container, which is what makes cross-panel moves animate — a card's FIRST
-rect is taken from its old panel. `prefers-reduced-motion` disables it; so
-does `animateMoves={false}` on `CollectionPanels`.
+exactly the cards that shifted. Instead, one component (`FlipAnimator`,
+mounted by the **provider**) measures the DOM directly and plays
+inverted-transform WAAPI animations (`composite: "replace"` so a rapid
+undo/redo supersedes an in-flight animation instead of compounding). The
+id-keyed rects span the whole container, which is what makes cross-panel
+moves animate — a card's FIRST rect is taken from its old panel.
+`prefers-reduced-motion` disables it; so does `animateMoves={false}` on
+`<DndCollections>`.
+
+Ownership sits at the **provider**, not on any one view (`animateMoves` is a
+`<DndCollections>` prop). That is what makes it a true system layer: one sweep
+per commit animates panels, virtualized views (strip reorders keep stable DOM
+by node-id key, so they animate; grid cross-row moves recreate the element and
+so don't — an accepted gap), and custom views alike, and two views in one
+instance never each run their own sweep. Any `[data-node-id]` under the
+provider container is measured.
 
 **FIRST and LAST are measured in the same scroll frame.** FIRST is captured
 synchronously the instant the graph changes — inside a `store.subscribe`

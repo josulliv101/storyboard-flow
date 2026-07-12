@@ -204,9 +204,10 @@ function mixedGridGraph() {
 
 export const PaletteIntoGridAndNestIntoCollection: Story = {
   // §11/§22: palette drops land in a virtualized grid (gap -> insert) and
-  // nest into a collection card (center hotspot -> add inside).
+  // nest into a collection card (center hotspot -> add inside). animateMoves
+  // off: back-to-back pointer drops must not target a card mid-FLIP.
   render: () => (
-    <DndCollections initialGraph={mixedGridGraph()}>
+    <DndCollections initialGraph={mixedGridGraph()} animateMoves={false}>
       <div className="flex w-[600px] flex-col gap-3">
         <div className="flex gap-2">
           <PaletteItem

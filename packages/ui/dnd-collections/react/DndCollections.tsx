@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import {
   DndContext,
@@ -44,6 +45,7 @@ import {
   type CollectionsStore,
 } from "./collections-store";
 import { CollectionsContainerContext } from "./container-context";
+import { useFlipGraphAnimation } from "./use-flip-graph-animation";
 import { NodeCardGhost } from "./node-views";
 import { CollectionsPointerSensor } from "./pointer-sensors";
 import { useLiveAnnouncements } from "./use-announcements";
@@ -67,6 +69,12 @@ export type DndCollectionsProps = Readonly<{
   onChange?: (change: CollectionsChange) => void;
   /** Cap the undo stack (oldest entries fall off). Positive integer; default unbounded. */
   maxHistoryEntries?: number;
+  /**
+   * Post-commit FLIP movement animation (drop/undo/redo), default `true`. Owned
+   * here at the provider so ONE sweep animates every card under the instance —
+   * panels, virtual, and custom views. Honors `prefers-reduced-motion`.
+   */
+  animateMoves?: boolean;
   children: ReactNode;
 }>;
 
@@ -127,6 +135,7 @@ export function DndCollections({
   initialGraph,
   onChange,
   maxHistoryEntries,
+  animateMoves = true,
   children,
 }: DndCollectionsProps) {
   // The store captures its options once, but callback props must stay fresh
@@ -152,12 +161,29 @@ export function DndCollections({
 
   return (
     <CollectionsStoreProvider value={store}>
-      <DndCollectionsContext>{children}</DndCollectionsContext>
+      <DndCollectionsContext animateMoves={animateMoves}>{children}</DndCollectionsContext>
     </CollectionsStoreProvider>
   );
 }
 
-function DndCollectionsContext({ children }: { children: ReactNode }) {
+// Drives the post-commit FLIP sweep at the PROVIDER level (not per view), so a
+// single sweep animates every card under the instance — panels, virtual
+// views, and custom views alike — and multiple views never each run their own.
+// A dedicated child so its graph subscription re-renders ONLY this null
+// component per commit, never the provider subtree (which would re-render
+// every view and defeat the efficiency model).
+function FlipAnimator({ containerRef }: { containerRef: RefObject<HTMLElement | null> }) {
+  useFlipGraphAnimation(containerRef);
+  return null;
+}
+
+function DndCollectionsContext({
+  children,
+  animateMoves,
+}: {
+  children: ReactNode;
+  animateMoves: boolean;
+}) {
   const store = useCollectionsStore();
   const { announcement, announce } = useLiveAnnouncements(store);
 
@@ -412,6 +438,8 @@ function DndCollectionsContext({ children }: { children: ReactNode }) {
           {children}
         </div>
       </CollectionsContainerContext.Provider>
+      {/* Instance-wide FLIP sweep (opt out with animateMoves={false}). */}
+      {animateMoves && <FlipAnimator containerRef={containerRef} />}
       {/* The single keyboard-usage description, referenced by cards via
           aria-describedby (dnd-kit's own instructions are blanked above). It
           must match the real grammar: Space selects, Enter grabs for a
