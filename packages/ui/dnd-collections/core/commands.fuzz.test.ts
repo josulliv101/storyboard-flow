@@ -87,10 +87,12 @@ describe("fuzz: command -> patch -> inverse round-trips", () => {
         const collections = allIds.filter(
           (id) => graph.nodesById.get(id)?.kind === "collection"
         );
+        const mediaIds = allIds.filter((id) => graph.nodesById.get(id)?.kind === "media");
         const nonRoots = allIds.filter((id) => graph.parentById.get(id) !== null);
 
+        const roll = rand();
         let command: CollectionsCommand;
-        if (rand() < 0.2) {
+        if (roll < 0.2) {
           command = {
             type: "add-nodes",
             nodes: [
@@ -103,6 +105,14 @@ describe("fuzz: command -> patch -> inverse round-trips", () => {
             ],
             toParentId: pick(rand, collections),
             toIndex: Math.floor(rand() * 8),
+          };
+        } else if (roll < 0.35 && mediaIds.length > 0) {
+          // Data mutation: retrim a random image (all fuzz media are images).
+          // Exercises the nodes-updated patch's invert round-trip.
+          command = {
+            type: "update-media",
+            nodeId: pick(rand, mediaIds),
+            update: { mediaKind: "image", durationSeconds: 1 + Math.floor(rand() * 9) },
           };
         } else {
           // Duplicates, descendants-of-dragged, and cycle targets all occur
@@ -129,6 +139,12 @@ describe("fuzz: command -> patch -> inverse round-trips", () => {
         expect(findGraphInvariantViolation(undone)).toBeNull();
         expect(childrenEqual(undone, graph)).toBe(true);
         expect(undone.nodesById.size).toBe(graph.nodesById.size);
+        // Node DATA is restored too: undo re-inserts the original node objects
+        // (a patch stores the pre-state node), so every id maps to the same
+        // reference — catches a broken update/add/remove that leaves stale data.
+        for (const [id, node] of graph.nodesById) {
+          expect(undone.nodesById.get(id)).toBe(node);
+        }
 
         const redone = applyPatch(undone, result.value.patch);
         expect(findGraphInvariantViolation(redone)).toBeNull();

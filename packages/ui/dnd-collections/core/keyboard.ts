@@ -4,7 +4,7 @@ import {
   type Result,
   getChildren,
 } from "./graph";
-import { type CollectionsCommand } from "./commands";
+import { type MoveNodesCommand } from "./commands";
 import { resolveCommandFromIntent } from "./intents";
 
 // Semantic keyboard layer: keys mean OPERATIONS on the graph (move before
@@ -39,7 +39,7 @@ export function resolveKeyboardCommand(
   graph: CollectionsGraph,
   nodeId: NodeId,
   action: KeyboardMoveAction
-): Result<CollectionsCommand, KeyboardRejection> {
+): Result<MoveNodesCommand, KeyboardRejection> {
   if (!graph.nodesById.has(nodeId)) {
     return { ok: false, error: { reason: "missing-node", nodeId } };
   }
@@ -56,7 +56,7 @@ export function resolveKeyboardCommand(
   // Post-removal note: with exactly one dragged node removed from its own
   // collection, "insert at index - 1" and "insert at index + 1" are already
   // post-removal indexes (the base array is siblings minus self).
-  const move = (toParentId: NodeId, toIndex: number): Result<CollectionsCommand, KeyboardRejection> => ({
+  const move = (toParentId: NodeId, toIndex: number): Result<MoveNodesCommand, KeyboardRejection> => ({
     ok: true,
     value: { type: "move-nodes", nodeIds: [nodeId], toParentId, toIndex },
   });
@@ -126,7 +126,7 @@ export function resolveGridRowMoveCommand(
   nodeId: NodeId,
   direction: "up" | "down",
   columns: number
-): Result<CollectionsCommand, GridRowMoveRejection> {
+): Result<MoveNodesCommand, GridRowMoveRejection> {
   if (!Number.isFinite(columns) || columns < 1 || Math.floor(columns) !== columns) {
     return { ok: false, error: { reason: "invalid-columns" } };
   }

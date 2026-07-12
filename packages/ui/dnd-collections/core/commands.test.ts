@@ -3,6 +3,7 @@ import {
   buildGraph,
   findGraphInvariantViolation,
   getChildren,
+  mediaDurationSeconds,
   parseNodeId,
   type CollectionsGraph,
   type GraphNodeSpec,
@@ -401,6 +402,130 @@ describe("applyCommand: add-nodes", () => {
     expect(findGraphInvariantViolation(redone)).toBeNull();
     expect(childNames(redone, "F")).toEqual(["f1", "new-1"]);
     expect(redone.nodesById.get(newMedia.id)).toEqual(newMedia);
+  });
+});
+
+describe("applyCommand: update-media", () => {
+  // root-a: [A (image), V (video, full 10, untrimmed)].
+  function withVideo(): CollectionsGraph {
+    return build([
+      collection("root-a", [
+        media("A"),
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "V",
+          name: "V",
+          fullDurationSeconds: 10,
+          trimInSeconds: 0,
+          trimOutSeconds: 0,
+        },
+      ]),
+    ]);
+  }
+  const dur = (graph: CollectionsGraph, id: string): number => {
+    const n = graph.nodesById.get(parseNodeId(id));
+    return n && n.kind === "media" ? mediaDurationSeconds(n) : -1;
+  };
+
+  test("image: sets durationSeconds directly", () => {
+    const { graph: next } = apply(withVideo(), {
+      type: "update-media",
+      nodeId: parseNodeId("A"),
+      update: { mediaKind: "image", durationSeconds: 9 },
+    });
+    expect(dur(next, "A")).toBe(9);
+  });
+
+  test("video: trimming in and out derives the effective duration", () => {
+    const { graph: next } = apply(withVideo(), {
+      type: "update-media",
+      nodeId: parseNodeId("V"),
+      update: { mediaKind: "video", trimInSeconds: 2, trimOutSeconds: 3 },
+    });
+    expect(dur(next, "V")).toBe(5); // 10 - 2 - 3
+  });
+
+  test("video: an omitted end keeps the current trim (change one handle at a time)", () => {
+    let graph = withVideo();
+    ({ graph } = apply(graph, {
+      type: "update-media",
+      nodeId: parseNodeId("V"),
+      update: { mediaKind: "video", trimOutSeconds: 4 },
+    }));
+    ({ graph } = apply(graph, {
+      type: "update-media",
+      nodeId: parseNodeId("V"),
+      update: { mediaKind: "video", trimInSeconds: 1 },
+    }));
+    expect(dur(graph, "V")).toBe(5); // 10 - 1 - 4
+  });
+
+  test("video: clamps trim so the effective duration never goes negative", () => {
+    const { graph: next } = apply(withVideo(), {
+      type: "update-media",
+      nodeId: parseNodeId("V"),
+      update: { mediaKind: "video", trimInSeconds: 8, trimOutSeconds: 8 },
+    });
+    expect(dur(next, "V")).toBe(0); // trimIn -> 10, trimOut -> 0
+  });
+
+  test("rejects non-media targets, kind mismatch, non-finite values, and no-ops", () => {
+    const graph = withVideo();
+    expect(
+      applyCommand(graph, {
+        type: "update-media",
+        nodeId: parseNodeId("root-a"),
+        update: { mediaKind: "image", durationSeconds: 3 },
+      })
+    ).toEqual({ ok: false, error: { reason: "not-media-node", nodeId: "root-a" } });
+    expect(
+      applyCommand(graph, {
+        type: "update-media",
+        nodeId: parseNodeId("V"), // video
+        update: { mediaKind: "image", durationSeconds: 3 }, // image update
+      })
+    ).toEqual({ ok: false, error: { reason: "invalid-media-update", nodeId: "V" } });
+    expect(
+      applyCommand(graph, {
+        type: "update-media",
+        nodeId: parseNodeId("A"),
+        update: { mediaKind: "image", durationSeconds: Number.NaN },
+      })
+    ).toEqual({ ok: false, error: { reason: "invalid-media-update", nodeId: "A" } });
+    expect(
+      applyCommand(graph, {
+        type: "update-media",
+        nodeId: parseNodeId("V"),
+        update: { mediaKind: "video" }, // no fields -> no change
+      })
+    ).toEqual({ ok: false, error: { reason: "same-position" } });
+    expect(
+      applyCommand(graph, {
+        type: "update-media",
+        nodeId: parseNodeId("nope"),
+        update: { mediaKind: "image", durationSeconds: 1 },
+      })
+    ).toEqual({ ok: false, error: { reason: "missing-node", nodeId: "nope" } });
+  });
+
+  test("round-trips through invert (structure untouched, node data restored)", () => {
+    const graph = withVideo();
+    const { graph: next, patch } = apply(graph, {
+      type: "update-media",
+      nodeId: parseNodeId("V"),
+      update: { mediaKind: "video", trimInSeconds: 2, trimOutSeconds: 1 },
+    });
+    expect(dur(next, "V")).toBe(7);
+
+    const undone = applyPatch(next, invertPatch(patch));
+    expect(findGraphInvariantViolation(undone)).toBeNull();
+    expect(dur(undone, "V")).toBe(10); // back to untrimmed
+    // Untouched sibling keeps its identity (structural sharing).
+    expect(undone.nodesById.get(parseNodeId("A"))).toBe(graph.nodesById.get(parseNodeId("A")));
+
+    const redone = applyPatch(undone, patch);
+    expect(dur(redone, "V")).toBe(7);
   });
 });
 

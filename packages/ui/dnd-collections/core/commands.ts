@@ -12,9 +12,17 @@ import { type CollectionsPatch, type NodeAdd, type NodeMove, applyPatch } from "
 // Commands are the ONLY way graph state changes. `applyCommand` validates,
 // constructs a reversible patch, and applies it via `applyPatch` — the same
 // code path undo/redo replays, so forward and inverse application can't
-// drift apart. One command covers every drag-drop mutation: reorder within a
-// collection, move across collections, nest, and multi-node moves are all
-// `move-nodes` with different inputs.
+// drift apart. `move-nodes` covers every structural mutation (reorder, cross-
+// collection move, nest, multi-node); `add-nodes` inserts brand-new nodes;
+// `update-media` is the one DATA mutation (image duration / video trim).
+
+/**
+ * A media node's new trim/duration, discriminated to match the node's kind.
+ * For video, omitted `trim*` fields keep the current value (change one end).
+ */
+export type MediaUpdate =
+  | Readonly<{ mediaKind: "image"; durationSeconds: number }>
+  | Readonly<{ mediaKind: "video"; trimInSeconds?: number; trimOutSeconds?: number }>;
 
 export type CollectionsCommand =
   | Readonly<{
@@ -36,6 +44,12 @@ export type CollectionsCommand =
       nodes: readonly CollectionItemNode[];
       toParentId: NodeId;
       toIndex: number;
+    }>
+  | Readonly<{
+      type: "update-media";
+      /** A media node to re-trim; structure is untouched. */
+      nodeId: NodeId;
+      update: MediaUpdate;
     }>;
 
 export type CommandRejection =
@@ -46,10 +60,20 @@ export type CommandRejection =
   | Readonly<{ reason: "duplicate-node-id"; nodeId: NodeId }>
   /** An added node's id is empty or whitespace-only — ids are the addressing scheme. */
   | Readonly<{ reason: "invalid-node-id"; nodeId: NodeId }>
+  /** `update-media` targeted a collection (not a media node). */
+  | Readonly<{ reason: "not-media-node"; nodeId: NodeId }>
+  /** `update-media`'s payload doesn't match the node's mediaKind, or carries non-finite values. */
+  | Readonly<{ reason: "invalid-media-update"; nodeId: NodeId }>
   | Readonly<{ reason: "nothing-to-move" }>
   | Readonly<{ reason: "nothing-to-add" }>
   | Readonly<{ reason: "invalid-index" }>
+  /** The command would leave the graph identical — a no-op, nothing pushed to history. */
   | Readonly<{ reason: "same-position" }>;
+
+/** The `move-nodes` variant — what the intent/keyboard resolvers always produce. */
+export type MoveNodesCommand = Extract<CollectionsCommand, { type: "move-nodes" }>;
+/** The `add-nodes` variant — what the palette resolver produces. */
+export type AddNodesCommand = Extract<CollectionsCommand, { type: "add-nodes" }>;
 
 export type ApplyCommandSuccess = Readonly<{
   graph: CollectionsGraph;
@@ -60,6 +84,11 @@ export function applyCommand(
   graph: CollectionsGraph,
   command: CollectionsCommand
 ): Result<ApplyCommandSuccess, CommandRejection> {
+  // Data mutation (media trim) — no target parent/index, so handle it first.
+  if (command.type === "update-media") {
+    return applyMediaUpdate(graph, command.nodeId, command.update);
+  }
+
   const { toParentId, toIndex } = command;
 
   const target = graph.nodesById.get(toParentId);
@@ -211,4 +240,56 @@ function graphChildrenEqual(a: CollectionsGraph, b: CollectionsGraph): boolean {
     }
   }
   return true;
+}
+
+function applyMediaUpdate(
+  graph: CollectionsGraph,
+  nodeId: NodeId,
+  update: MediaUpdate
+): Result<ApplyCommandSuccess, CommandRejection> {
+  const node = graph.nodesById.get(nodeId);
+  if (!node) return { ok: false, error: { reason: "missing-node", nodeId } };
+  if (node.kind !== "media") {
+    return { ok: false, error: { reason: "not-media-node", nodeId } };
+  }
+
+  let after: CollectionItemNode;
+  if (update.mediaKind === "video") {
+    // The update must match the node's kind — an image can't be trimmed as a video.
+    if (node.mediaKind !== "video") {
+      return { ok: false, error: { reason: "invalid-media-update", nodeId } };
+    }
+    const nextIn = update.trimInSeconds ?? node.trimInSeconds;
+    const nextOut = update.trimOutSeconds ?? node.trimOutSeconds;
+    if (!Number.isFinite(nextIn) || !Number.isFinite(nextOut)) {
+      return { ok: false, error: { reason: "invalid-media-update", nodeId } };
+    }
+    // Clamp so both ends are >= 0 and together never exceed the source length
+    // (effective duration stays >= 0) — a drag past the limit lands at it.
+    const trimInSeconds = Math.max(0, Math.min(nextIn, node.fullDurationSeconds));
+    const trimOutSeconds = Math.max(0, Math.min(nextOut, node.fullDurationSeconds - trimInSeconds));
+    if (trimInSeconds === node.trimInSeconds && trimOutSeconds === node.trimOutSeconds) {
+      return { ok: false, error: { reason: "same-position" } };
+    }
+    after = { ...node, trimInSeconds, trimOutSeconds };
+  } else {
+    // update.mediaKind === "image"
+    if (node.mediaKind === "video") {
+      return { ok: false, error: { reason: "invalid-media-update", nodeId } };
+    }
+    if (!Number.isFinite(update.durationSeconds)) {
+      return { ok: false, error: { reason: "invalid-media-update", nodeId } };
+    }
+    const durationSeconds = Math.max(0, update.durationSeconds);
+    if (durationSeconds === node.durationSeconds) {
+      return { ok: false, error: { reason: "same-position" } };
+    }
+    after = { ...node, durationSeconds };
+  }
+
+  const patch: CollectionsPatch = {
+    type: "nodes-updated",
+    updates: [{ nodeId, before: node, after }],
+  };
+  return { ok: true, value: { graph: applyPatch(graph, patch), patch } };
 }

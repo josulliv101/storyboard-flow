@@ -30,14 +30,42 @@ export function parseNodeId(id: string): NodeId {
   return id as NodeId;
 }
 
-export type MediaNode = Readonly<{
+// Media leaves come in two flavors, discriminated by `mediaKind`. The ENGINE
+// treats them identically (both are childless media, moved/added/trimmed the
+// same way) — the divergence is domain/UI: an image has a single duration a
+// trim handle sets directly, while a video carries its source `full` duration
+// plus how much has been trimmed off each end; its timeline duration is
+// derived (`mediaDurationSeconds`). `mediaKind` is OPTIONAL on the image
+// variant so a plain `{ kind: "media", durationSeconds }` node stays a valid
+// image (backward compatible).
+
+export type ImageMediaNode = Readonly<{
   id: NodeId;
   kind: "media";
+  mediaKind?: "image";
   name: string;
   /** Optional thumbnail/source url — display-only, the graph doesn't care. */
   src?: string;
+  /** The item's timeline duration. Trimming an image sets this directly. */
   durationSeconds: number;
 }>;
+
+export type VideoMediaNode = Readonly<{
+  id: NodeId;
+  kind: "media";
+  mediaKind: "video";
+  name: string;
+  /** Optional thumbnail/source url — display-only, the graph doesn't care. */
+  src?: string;
+  /** The source clip's full length. */
+  fullDurationSeconds: number;
+  /** Seconds trimmed off the START (left handle). 0 = untrimmed. */
+  trimInSeconds: number;
+  /** Seconds trimmed off the END (right handle). 0 = untrimmed. */
+  trimOutSeconds: number;
+}>;
+
+export type MediaNode = ImageMediaNode | VideoMediaNode;
 
 export type CollectionNode = Readonly<{
   id: NodeId;
@@ -46,6 +74,21 @@ export type CollectionNode = Readonly<{
 }>;
 
 export type CollectionItemNode = MediaNode | CollectionNode;
+
+/** True for video media (image is the default when `mediaKind` is absent). */
+export function isVideoMedia(node: CollectionItemNode): node is VideoMediaNode {
+  return node.kind === "media" && node.mediaKind === "video";
+}
+
+/**
+ * The item's effective timeline duration: an image's `durationSeconds`, or a
+ * video's source length minus what's trimmed off each end (never below 0).
+ */
+export function mediaDurationSeconds(node: MediaNode): number {
+  return node.mediaKind === "video"
+    ? Math.max(0, node.fullDurationSeconds - node.trimInSeconds - node.trimOutSeconds)
+    : node.durationSeconds;
+}
 
 export type CollectionsGraph = Readonly<{
   nodesById: ReadonlyMap<NodeId, CollectionItemNode>;
@@ -68,7 +111,24 @@ export const EMPTY_GRAPH: CollectionsGraph = {
 
 /** Author-friendly nested spec, denormalized into the graph by buildGraph. */
 export type GraphNodeSpec =
-  | Readonly<{ kind: "media"; id: string; name: string; src?: string; durationSeconds?: number }>
+  | Readonly<{
+      kind: "media";
+      mediaKind?: "image";
+      id: string;
+      name: string;
+      src?: string;
+      durationSeconds?: number; // default 4
+    }>
+  | Readonly<{
+      kind: "media";
+      mediaKind: "video";
+      id: string;
+      name: string;
+      src?: string;
+      fullDurationSeconds: number;
+      trimInSeconds?: number; // default 0
+      trimOutSeconds?: number; // default 0
+    }>
   | Readonly<{ kind: "collection"; id: string; name: string; children?: readonly GraphNodeSpec[] }>;
 
 export type BuildGraphError =
@@ -111,13 +171,28 @@ export function buildGraph(
     }
 
     if (spec.kind === "media") {
-      nodesById.set(id, {
+      nodesById.set(
         id,
-        kind: "media",
-        name: spec.name,
-        src: spec.src,
-        durationSeconds: spec.durationSeconds ?? 4,
-      });
+        spec.mediaKind === "video"
+          ? {
+              id,
+              kind: "media",
+              mediaKind: "video",
+              name: spec.name,
+              src: spec.src,
+              fullDurationSeconds: spec.fullDurationSeconds,
+              trimInSeconds: spec.trimInSeconds ?? 0,
+              trimOutSeconds: spec.trimOutSeconds ?? 0,
+            }
+          : {
+              id,
+              kind: "media",
+              mediaKind: "image",
+              name: spec.name,
+              src: spec.src,
+              durationSeconds: spec.durationSeconds ?? 4,
+            }
+      );
     } else {
       nodesById.set(id, { id, kind: "collection", name: spec.name });
       const children = spec.children ?? [];

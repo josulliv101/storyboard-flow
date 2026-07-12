@@ -5,9 +5,12 @@ import {
   getChildren,
   getDocumentOrder,
   isSameOrAncestor,
+  isVideoMedia,
+  mediaDurationSeconds,
   parseNodeId,
   EMPTY_GRAPH,
   type GraphNodeSpec,
+  type MediaNode,
 } from "./graph";
 
 const media = (id: string, name = id): GraphNodeSpec => ({ kind: "media", id, name });
@@ -22,6 +25,61 @@ function build(roots: readonly GraphNodeSpec[]) {
   if (!result.ok) throw new Error(`buildGraph failed: ${JSON.stringify(result.error)}`);
   return result.value;
 }
+
+describe("media image/video model", () => {
+  const nodeOf = (g: ReturnType<typeof build>, id: string): MediaNode => {
+    const n = g.nodesById.get(parseNodeId(id));
+    if (!n || n.kind !== "media") throw new Error(`not a media node: ${id}`);
+    return n;
+  };
+
+  test("a plain media spec builds an image with the default duration", () => {
+    const g = build([collection("root", [media("img")])]);
+    const node = nodeOf(g, "img");
+    expect(node.mediaKind).toBe("image");
+    expect(mediaDurationSeconds(node)).toBe(4);
+    expect(isVideoMedia(node)).toBe(false);
+  });
+
+  test("a video spec builds a video; effective duration = full - in - out", () => {
+    const g = build([
+      collection("root", [
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "Vid",
+          fullDurationSeconds: 10,
+          trimInSeconds: 2,
+          trimOutSeconds: 3,
+        },
+      ]),
+    ]);
+    const node = nodeOf(g, "vid");
+    expect(isVideoMedia(node)).toBe(true);
+    expect(mediaDurationSeconds(node)).toBe(5);
+  });
+
+  test("video trim defaults to 0 (untrimmed) and effective duration clamps at 0", () => {
+    const g = build([
+      collection("root", [
+        { kind: "media", mediaKind: "video", id: "v", name: "V", fullDurationSeconds: 8 },
+      ]),
+    ]);
+    expect(mediaDurationSeconds(nodeOf(g, "v"))).toBe(8);
+    // Over-trimmed hand-built node: never negative.
+    const overTrimmed: MediaNode = {
+      id: parseNodeId("x"),
+      kind: "media",
+      mediaKind: "video",
+      name: "X",
+      fullDurationSeconds: 5,
+      trimInSeconds: 4,
+      trimOutSeconds: 4,
+    };
+    expect(mediaDurationSeconds(overTrimmed)).toBe(0);
+  });
+});
 
 describe("parseNodeId", () => {
   test("returns the id for non-empty strings", () => {

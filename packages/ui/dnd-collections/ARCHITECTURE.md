@@ -118,6 +118,16 @@ applyCommand (core/commands.ts)          ← the ONLY reducer
 store.notify() → selector re-runs → only affected cards re-render
 ```
 
+`move-nodes` and `add-nodes` are the STRUCTURAL commands above. There is also
+one DATA command, `update-media`, for media trim/duration — media leaves
+diverge into image (a single `durationSeconds`) and video (source
+`fullDurationSeconds` plus `trimIn`/`trimOut`, timeline length derived by
+`mediaDurationSeconds`). It flows through the exact same path: one reducer, a
+reversible patch (`nodes-updated`, before/after node), undo/redo, and the
+`onChange` feed — it just re-allocates `nodesById` (with structural sharing)
+instead of the children arrays. The engine stays structure-only; image/video
+is a leaf concern nothing else in the pipeline branches on.
+
 Two properties fall out of this shape and everything else depends on them:
 
 - **The committed graph is never touched during a drag.** The live preview
