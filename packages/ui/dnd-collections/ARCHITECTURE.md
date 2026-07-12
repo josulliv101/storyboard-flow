@@ -131,11 +131,25 @@ is a leaf concern nothing else in the pipeline branches on.
 The trim UI is edge handles on the card (`NodeCard trimPixelsPerSecond`),
 rendered as SIBLINGS of the draggable button so a handle press never reaches
 the item-drag sensor or the strip's pan. A handle drag converts pixels to
-seconds, previews a clamped value LOCALLY (no store state — a trim touches one
-node), and dispatches `update-media` once on release. The card resizes only on
-commit: the strip re-measures the virtualizer when node data changes
-(`nodesById` gets a new identity on a commit but never on a move/drag, so it
-stays at commit cadence), which the width cache would otherwise miss.
+seconds, clamps, and dispatches `update-media` once on release — the committed
+graph is untouched until then, exactly like a node drag.
+
+The card resizes LIVE as the handle drags, and it does so without a graph
+commit OR a full re-measure. The view (VirtualStrip) provides a `TrimPreview`
+(`trim-preview-context.ts`) that the handle calls per pointer-move; the strip
+implements it with the virtualizer's targeted `resizeItem`, which updates that
+one item's cached size and shifts the offsets after it — O(items after the
+trimmed one), not O(all). Only the ~20 mounted slot `<div>`s reconcile
+(the memoized cards don't), so a live trim costs the same as a drop-indicator
+move. Two constraints make it fit the render model: the provided callback is
+reference-stable (ref-backed), so trim handles — which read it via context,
+bypassing NodeCard's memo — don't re-render on every strip render; and the
+preview never touches the store, so no bystander card re-renders. On release
+the commit changes `nodesById`; the strip re-measures then (identity changes
+on a commit, never on a move/drag, so it stays at commit cadence), which also
+covers non-drag trims (keyboard, direct dispatch) the resizeItem path misses.
+The last preview size already matches the committed size, so there is no
+resize flash. An aborted drag (pointercancel, or a no-op) resets the preview.
 
 Two properties fall out of this shape and everything else depends on them:
 

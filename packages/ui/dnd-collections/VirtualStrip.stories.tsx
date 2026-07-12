@@ -823,7 +823,8 @@ function trimGraph() {
 export const TrimMediaWithHandles: Story = {
   // Edge trim handles dispatch update-media: image right = duration, video
   // right = trim-out, video left = trim-in. At TRIM_PPS the card width IS the
-  // duration, so a trim resizes the card (the strip re-measures on commit).
+  // duration. The card resizes LIVE as the handle drags (targeted resizeItem,
+  // no commit), and the graph commits once on release.
   render: () => (
     <DndCollections initialGraph={trimGraph()} animateMoves={false}>
       <div className="flex w-[640px] flex-col gap-2">
@@ -845,16 +846,29 @@ export const TrimMediaWithHandles: Story = {
       nodeCard(canvasElement, id)
         .closest("[data-node-wrapper]")!
         .querySelector<HTMLElement>(`[data-trim-handle="${side}"]`);
-    const dragHandleBy = async (el: HTMLElement, dx: number) => {
+    const left = (id: string) =>
+      Math.round(nodeCard(canvasElement, id).getBoundingClientRect().left);
+    // Hold a handle down and move it, WITHOUT releasing — leaves the live
+    // trim in flight so the card size can be inspected pre-commit.
+    const holdHandleBy = async (el: HTMLElement, dx: number) => {
       const r = el.getBoundingClientRect();
       const y = r.top + r.height / 2;
       const x = r.left + r.width / 2;
       await dispatchPointerSequence([
         { element: el, type: "pointerdown", clientX: x, clientY: y },
         { element: document, type: "pointermove", clientX: x + dx, clientY: y, delayAfterMs: 30 },
-        { element: document, type: "pointerup", clientX: x + dx, clientY: y, delayAfterMs: 30 },
       ]);
     };
+    const release = async () => {
+      await dispatchPointerSequence([
+        { element: document, type: "pointerup", clientX: 0, clientY: 0, delayAfterMs: 30 },
+      ]);
+    };
+    const dragHandleBy = async (el: HTMLElement, dx: number) => {
+      await holdHandleBy(el, dx);
+      await release();
+    };
+    const undoButton = () => within(canvasElement).getByRole("button", { name: /undo/i });
 
     await waitFor(() => nodeCard(canvasElement, "vid"));
     // Widths ARE the durations: img 4s -> 96px, vid 10s -> 240px.
@@ -867,13 +881,22 @@ export const TrimMediaWithHandles: Story = {
     expect(handle("vid", "left")).not.toBeNull();
     expect(handle("vid", "right")).not.toBeNull();
 
-    // Drag the image's right edge OUT +48px -> +2s -> 6s -> 144px.
-    await dragHandleBy(handle("img", "right")!, 48);
+    // LIVE preview: hold the image's right edge OUT +48px and assert the card
+    // ALREADY reads 6s -> 144px BEFORE release. The video after it shifts
+    // right by the same +48px, and nothing is committed yet (undo disabled).
+    const vidLeft0 = left("vid");
+    await holdHandleBy(handle("img", "right")!, 48);
     await waitFor(() => expect(width("img")).toBe(144));
+    expect(left("vid") - vidLeft0).toBe(48);
+    expect(undoButton()).toBeDisabled();
+    // Release commits it; the card stays put (no resize flash on commit).
+    await release();
+    await waitFor(() => expect(undoButton()).toBeEnabled());
+    expect(width("img")).toBe(144);
 
     // Undo restores it (trims are ordinary undoable commands).
     const user = userEvent.setup();
-    await user.click(within(canvasElement).getByRole("button", { name: /undo/i }));
+    await user.click(undoButton());
     await waitFor(() => expect(width("img")).toBe(96));
 
     // Trim the video's END: drag its right edge IN (left) 72px -> trimOut +3s

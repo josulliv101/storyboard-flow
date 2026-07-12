@@ -5,15 +5,16 @@ import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent }
 import { type MediaNode } from "../core/graph";
 import { type MediaUpdate } from "../core/commands";
 import { useCollectionsStore } from "./collections-store";
+import { useTrimPreview } from "./trim-preview-context";
 
 // Edge drag-handles that TRIM a media item: a right handle on every media
 // card, plus a left handle on video (which can trim its start too). The
 // gesture converts pointer pixels to seconds via `pixelsPerSecond` (the
-// caller's timeline scale — the same one its `itemWidthFor` uses), previews a
-// clamped value while dragging, and commits ONE `update-media` on release
-// (undoable). The card resizes on commit, not during the drag — live-resize
-// would force the virtualizer to re-measure every frame, which the package
-// deliberately avoids.
+// caller's timeline scale — the same one its `itemWidthFor` uses) and commits
+// ONE `update-media` on release (undoable). The card resizes LIVE as the
+// handle drags, via the view's `TrimPreview` — a targeted single-item resize
+// (no full re-measure, no per-frame graph churn). The commit lands only on
+// release; an aborted drag snaps back.
 //
 // The handles are SIBLINGS of the draggable card button (not children), so a
 // pointerdown on a handle never reaches dnd-kit's item-drag sensor. They also
@@ -71,6 +72,7 @@ export function TrimHandles({
   pixelsPerSecond: number;
 }) {
   const store = useCollectionsStore();
+  const trimPreview = useTrimPreview();
   const [preview, setPreview] = useState<number | null>(null);
   // Holds the latest resolved update across pointermove callbacks, committed
   // once on pointerup.
@@ -96,21 +98,31 @@ export function TrimHandles({
         const { update, effectiveSeconds } = resolveTrim(startNode, side, deltaSeconds);
         pendingRef.current = update;
         setPreview(effectiveSeconds);
+        // Live-resize the card (view state only; the graph commits on release).
+        trimPreview.previewDurationSeconds(node.id, effectiveSeconds);
       };
-      const onUp = () => {
+      const onUp = (upEvent: PointerEvent) => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onUp);
         setPreview(null);
         const update = pendingRef.current;
         pendingRef.current = null;
-        if (update) store.dispatch({ type: "update-media", nodeId: node.id, update });
+        if (upEvent.type === "pointercancel" || !update) {
+          // Aborted (or a no-op): drop the live preview, snapping the card
+          // back to its committed size — nothing is dispatched.
+          trimPreview.previewDurationSeconds(node.id, null);
+          return;
+        }
+        // Commit. The view reconciles the card to the new data (its last
+        // preview size already matches), so there is no resize flash.
+        store.dispatch({ type: "update-media", nodeId: node.id, update });
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onUp);
     },
-    [node, pixelsPerSecond, store]
+    [node, pixelsPerSecond, store, trimPreview]
   );
 
   const showLeft = node.mediaKind === "video";

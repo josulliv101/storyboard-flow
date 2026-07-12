@@ -537,7 +537,7 @@ ones (everything they do goes through the store API above).
 | --- | --- | --- |
 | `CollectionPanels` | `collectionIds?: readonly NodeId[]` | One panel per id (default: the graph's roots). FLIP animation is owned by `<DndCollections animateMoves>`, not here. |
 | `CollectionPanel` | `collectionId: NodeId` | One droppable panel with its cards. |
-| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"`, `trimPixelsPerSecond?: number` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in), converting the drag at that scale and committing `update-media` on release. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
+| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"`, `trimPixelsPerSecond?: number` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in), converting the drag at that scale and committing `update-media` on release. The card resizes LIVE during the drag when the view provides a `TrimPreview` (VirtualStrip does, via targeted `resizeItem`); without one it still trims, just without live resize. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
 | `NodeCardGhost` | `node: CollectionItemNode`, `extraCount: number` | The drag-overlay ghost; renders a `+N` badge when `extraCount > 0`. |
 | `UndoRedoControls` | — | Buttons bound to `store.undo`/`store.redo`, disabled off `canUndo`/`canRedo`. |
 | `HistoryLog` | — | Human-readable command log over `historyEntries`. |
@@ -596,7 +596,7 @@ type VirtualStripProps = {
   overscan?: number;                                     // default 4
   panToScroll?: boolean;                                 // default true — drag the surface to scroll, with momentum
   itemDragActivation?: "handle" | "hold";                // default "handle" (grip bar); "hold" = press-and-hold the body. Ignored when panToScroll is off (bodies drag instantly)
-  trimPixelsPerSecond?: number;                          // enable media trim handles; set to your itemWidthFor scale so a trim resizes the card. Strip auto-remeasures on the commit
+  trimPixelsPerSecond?: number;                          // enable media trim handles; set to your itemWidthFor scale. The card resizes LIVE during the drag (targeted resizeItem, no re-measure) and commits update-media on release
   className?: string;
 };
 type VirtualStripHandle = {
