@@ -8,11 +8,13 @@ import { PaletteItem } from "./react/palette";
 import { VirtualGrid } from "./virtual/VirtualGrid";
 import { VirtualStrip } from "./virtual/VirtualStrip";
 import {
+  dragHoldAt,
   dragToPoint,
   gapBetween,
   nodeCard,
   nodeHandle,
   rectCenter,
+  releaseAt,
   waitForLayout,
 } from "./stories-helpers";
 
@@ -324,6 +326,49 @@ export const GridGapDropInsertsAtBoundary: Story = {
       );
       expect(ids.slice(0, 7)).toEqual(["m1", "m2", "m3", "m4", "m5", "m0", "m6"]);
     });
+  },
+};
+
+function fullRowGridGraph() {
+  // 8 items in 4 columns = two EXACTLY full rows (the edge case).
+  const children: GraphNodeSpec[] = [];
+  for (let i = 0; i < 8; i++) {
+    children.push({ kind: "media", id: `m${i}`, name: `M${i}`, durationSeconds: 4 });
+  }
+  const result = buildGraph([{ kind: "collection", id: "grid", name: "Grid", children }]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+export const AppendAfterFullLastRowIndicator: Story = {
+  // Appending after a FULL last row (index === count, count % cols === 0) must
+  // draw the indicator at the right edge of the last row — not at row `rowCount`,
+  // which is the bottom edge of the spacer, outside the content.
+  render: () => (
+    <DndCollections initialGraph={fullRowGridGraph()}>
+      <div className="w-[600px]">
+        <VirtualGrid collectionId={parseNodeId("grid")} columns={COLUMNS} height={300} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const m7 = nodeCard(canvasElement, "m7");
+    await waitForLayout(m7);
+    const rect = m7.getBoundingClientRect();
+    const appendPoint = { x: rect.right + 30, y: rect.top + rect.height / 2 };
+
+    // Hold m0 just past the last cell -> append at index 8 (after the full row).
+    await dragHoldAt(nodeCard(canvasElement, "m0"), appendPoint);
+    await waitFor(() => {
+      const indicator = canvasElement.querySelector<HTMLElement>(
+        '[data-drop-indicator="virtual-grid"]'
+      );
+      expect(indicator).not.toBeNull();
+      // Two full rows -> the last row's top is ROW_SIZE (104), NOT 2*ROW_SIZE
+      // (208, the spacer's bottom edge) which the pre-fix formula produced.
+      expect(parseFloat(indicator!.style.top)).toBe(ROW_SIZE);
+    });
+    await releaseAt(appendPoint);
   },
 };
 

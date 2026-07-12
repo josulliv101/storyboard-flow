@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
-import { buildGraph, parseNodeId, type GraphNodeSpec } from "./core/graph";
+import { buildGraph, parseNodeId, type CollectionItemNode, type GraphNodeSpec } from "./core/graph";
 import { DndCollections } from "./react/DndCollections";
 import { CollectionPanels } from "./react/node-views";
 import { UndoRedoControls } from "./react/history-views";
@@ -188,9 +188,10 @@ export const PaletteDropAddsNewCollection: Story = {
 };
 
 export const PaletteFactoryErrorIsContained: Story = {
-  // A palette factory is consumer code run inside dnd-kit's drag start. If it
-  // throws, the gesture must not strand the board — the throw is contained,
-  // announced, and the board keeps working.
+  // A palette factory is consumer code run inside dnd-kit's drag start. A
+  // throwing OR malformed-returning factory must be contained, announced ONCE
+  // (not followed by a contradictory "cancelled drag"), and leave the board
+  // working.
   render: () => (
     <DndCollections initialGraph={paletteGraph()}>
       <div className="flex w-[640px] flex-col gap-4">
@@ -200,7 +201,13 @@ export const PaletteFactoryErrorIsContained: Story = {
             throw new Error("factory boom");
           }}
         >
-          + Broken
+          + Throws
+        </PaletteItem>
+        <PaletteItem
+          paletteId="nullish"
+          createNode={(() => null) as unknown as () => CollectionItemNode}
+        >
+          + Returns null
         </PaletteItem>
         <CollectionPanels collectionIds={[parseNodeId("panel-a")]} animateMoves={false} />
       </div>
@@ -208,19 +215,27 @@ export const PaletteFactoryErrorIsContained: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const palette = canvasElement.querySelector<HTMLElement>('[data-palette-item="boom"]')!;
     const bravo = nodeCard(canvasElement, "bravo");
     await waitForLayout(bravo);
 
-    // Grab the broken item: the factory throws at drag start. Check the
-    // announcement while the gesture is held (the live region is last-write,
-    // and releasing announces a cancel over it).
-    await dragHoldAt(palette, rectPoint(bravo, 0.15));
+    // 1. Throwing factory: contained + announced while held...
+    const boom = canvasElement.querySelector<HTMLElement>('[data-palette-item="boom"]')!;
+    await dragHoldAt(boom, rectPoint(bravo, 0.15));
     await expect(await canvas.findByText(/could not create item/i)).toBeInTheDocument();
     await releaseAt(rectPoint(bravo, 0.15));
-
-    // Nothing was added, and the board still works: a normal reorder commits.
+    // ...and releasing does NOT emit a second, contradictory cancel.
+    expect(canvas.queryByText(/cancelled drag/i)).toBeNull();
     expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie"]);
+
+    // 2. Factory returning a malformed value (null) is contained the same way
+    //    — no crash reading node.name.
+    const nullish = canvasElement.querySelector<HTMLElement>('[data-palette-item="nullish"]')!;
+    await dragHoldAt(nullish, rectPoint(nodeCard(canvasElement, "charlie"), 0.85));
+    await expect(await canvas.findByText(/could not create item/i)).toBeInTheDocument();
+    await releaseAt(rectPoint(nodeCard(canvasElement, "charlie"), 0.85));
+    expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie"]);
+
+    // 3. The board still works: a normal reorder commits.
     await dragToPoint(
       nodeCard(canvasElement, "alpha"),
       rectPoint(nodeCard(canvasElement, "charlie"), 0.85)

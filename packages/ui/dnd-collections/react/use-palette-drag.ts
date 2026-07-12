@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { type DragStartEvent } from "@dnd-kit/core";
 
 import { type CollectionItemNode } from "../core/graph";
@@ -28,6 +28,12 @@ export function usePaletteDrag(args: {
   const { store, intentRef, announce } = args;
   // State (not a ref) so the overlay ghost renders.
   const [paletteNodes, setPaletteNodes] = useState<readonly CollectionItemNode[] | null>(null);
+  // Whether the LIVE drag is a palette drag — tracked independently of
+  // paletteNodes, which stays null when the factory fails. Without this, a
+  // failed factory would leave endPaletteDrag unable to tell the gesture was a
+  // palette drag, so the provider's node-drag path would also "cancel" it
+  // (a second, contradictory announcement).
+  const paletteSessionRef = useRef(false);
 
   const startPaletteDrag = useCallback(
     (event: DragStartEvent): boolean => {
@@ -35,16 +41,27 @@ export function usePaletteDrag(args: {
         | (() => CollectionItemNode)
         | undefined;
       if (!createPaletteNode) return false;
+      // From here it IS a palette drag, even if creation fails.
+      paletteSessionRef.current = true;
       intentRef.current = null;
-      // The factory is consumer code running inside dnd-kit's onDragStart; a
-      // throw here would strand the whole gesture with the sensor still armed.
-      // Contain it: announce, start nothing, but report the gesture as handled
-      // (it WAS a palette drag) so the node-drag path doesn't also claim it.
-      let node: CollectionItemNode;
+      // The factory is consumer code running inside dnd-kit's onDragStart: a
+      // throw would strand the gesture with the sensor armed, and a malformed
+      // return would crash the `node.name` read below. Contain both, announce
+      // once, and let endPaletteDrag clean up the session silently.
+      let node: CollectionItemNode | undefined;
       try {
         node = createPaletteNode();
       } catch {
+        node = undefined;
+      }
+      if (
+        !node ||
+        typeof node !== "object" ||
+        typeof node.id !== "string" ||
+        typeof node.name !== "string"
+      ) {
         announce("Could not create item.");
+        setPaletteNodes(null);
         return true;
       }
       setPaletteNodes([node]);
@@ -56,7 +73,9 @@ export function usePaletteDrag(args: {
   );
 
   const endPaletteDrag = useCallback((): boolean => {
-    if (!paletteNodes) return false;
+    if (!paletteSessionRef.current) return false; // not a palette drag
+    paletteSessionRef.current = false;
+    const nodes = paletteNodes;
     const intent = intentRef.current;
     intentRef.current = null;
     setPaletteNodes(null);
@@ -64,22 +83,27 @@ export function usePaletteDrag(args: {
     // linger after the drop and drag-gated behaviors stay armed.
     store.endDrag();
 
+    // Factory failed at pick-up: already announced, nothing to add. Consume the
+    // gesture silently — no second "Cancelled drag".
+    if (!nodes) return true;
+
     if (!intent) {
       announce("Cancelled drag.");
       return true;
     }
     const { graph } = store.getSnapshot();
-    const resolved = resolveAddCommandFromIntent(graph, intent, paletteNodes);
+    const resolved = resolveAddCommandFromIntent(graph, intent, nodes);
     if (!resolved.ok || !store.dispatch(resolved.value).ok) {
       announce("Cannot add here.");
       return true;
     }
     const targetName = graph.nodesById.get(resolved.value.toParentId)?.name ?? "collection";
-    announce(`Added "${paletteNodes[0].name}" to "${targetName}".`);
+    announce(`Added "${nodes[0].name}" to "${targetName}".`);
     return true;
   }, [paletteNodes, store, intentRef, announce]);
 
   const clearPaletteDrag = useCallback(() => {
+    paletteSessionRef.current = false;
     setPaletteNodes(null);
   }, []);
 

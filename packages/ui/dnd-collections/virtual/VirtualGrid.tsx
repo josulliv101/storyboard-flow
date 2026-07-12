@@ -168,7 +168,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       },
       [cols]
     );
-    const { focusedIndex, onKeyDown } = useVirtualRovingFocus({
+    const { focusedIndex, onKeyDown, onItemFocus } = useVirtualRovingFocus({
       count: childIds.length,
       isDragging: () => store.getSnapshot().interaction.isDragging,
       focusByIndex,
@@ -203,14 +203,23 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
     });
     // Boundary k -> a vertical line in row floor(k/cols) at column k%cols
     // (k at a row's end renders at the next row's left edge — the same
-    // insertion point).
-    const indicator =
-      indicatorIndex === null
-        ? null
-        : {
-            left: Math.max(0, (indicatorIndex % cols) * (cellWidth + gap) - gap / 2 - 2),
-            top: Math.floor(indicatorIndex / cols) * rowSize,
-          };
+    // insertion point). SPECIAL CASE: appending after a FULL last row
+    // (k === count and count % cols === 0) would otherwise land at row
+    // `rowCount`, i.e. exactly the bottom edge of the spacer — outside the
+    // content. Render it at the right edge of the last cell of the last row.
+    const indicator = (() => {
+      if (indicatorIndex === null) return null;
+      const appendAfterFullRow =
+        indicatorIndex === childIds.length && indicatorIndex > 0 && indicatorIndex % cols === 0;
+      const row = appendAfterFullRow
+        ? Math.floor((indicatorIndex - 1) / cols)
+        : Math.floor(indicatorIndex / cols);
+      const col = appendAfterFullRow ? cols : indicatorIndex % cols;
+      return {
+        left: Math.max(0, col * (cellWidth + gap) - gap / 2 - 2),
+        top: row * rowSize,
+      };
+    })();
 
     return (
       <div
@@ -267,6 +276,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                       key={id}
                       role="gridcell"
                       aria-colindex={colInRow + 1}
+                      onFocus={() => onItemFocus(absoluteIndex)}
                       style={{ width: cellWidth, height: cellHeight }}
                     >
                       <NodeCard
