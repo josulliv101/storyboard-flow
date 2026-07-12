@@ -3,9 +3,9 @@
 > **Status: historical build log.** The virtual view layer (`VirtualStrip`,
 > `VirtualGrid`) shipped; this document is kept for the decisions and gap
 > analysis behind it, not as current-state docs — see ARCHITECTURE.md and
-> API.md for those. Still open: **range selection** (§17) is not implemented,
-> and full **virtual keyboard traversal** (roving-tabindex / grid navigation)
-> remains a gap.
+> API.md for those. Virtual keyboard traversal (roving-tabindex + `role="grid"`
+> arrow navigation that scrolls offscreen items in) has since shipped. Still
+> open: **range selection** (§17).
 
 
 Target: the "Virtualized Collections Requirements" spec (horizontal strip +

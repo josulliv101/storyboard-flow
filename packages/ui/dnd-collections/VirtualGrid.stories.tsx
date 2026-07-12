@@ -326,3 +326,48 @@ export const GridGapDropInsertsAtBoundary: Story = {
     });
   },
 };
+
+export const KeyboardRovingNavigation: Story = {
+  // §17/§20: a keyboard user traverses the 1,000-item grid in 2D with arrows —
+  // the grid is one roving tab stop, Down/Right move by row/column, and
+  // navigating to the end pulls an unmounted row into view. role="grid" +
+  // aria-rowcount expose the true size under virtualization. Bare arrows
+  // NAVIGATE; Alt+arrows still MOVE (GridKeyboardRowMoves covers that).
+  render: () => <GridHarness />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const m0 = nodeCard(canvasElement, "m0");
+    await waitForLayout(m0);
+
+    const grid = canvasElement.querySelector('[data-virtual-grid="grid"]')!;
+    expect(grid.getAttribute("role")).toBe("grid");
+    expect(grid.getAttribute("aria-rowcount")).toBe(String(ITEM_COUNT / COLUMNS));
+    expect(m0.tabIndex).toBe(0);
+
+    // Down = one row (= column count); Right = one column.
+    m0.focus();
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() => {
+      const m4 = nodeCard(canvasElement, "m4");
+      expect(m4.ownerDocument.activeElement).toBe(m4);
+      expect(m4.tabIndex).toBe(0);
+    });
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => {
+      const m5 = nodeCard(canvasElement, "m5");
+      expect(m5.ownerDocument.activeElement).toBe(m5);
+    });
+
+    // Navigation must NOT reorder the collection.
+    expect(gridOrder(canvasElement, "grid").slice(0, 4)).toEqual(["m0", "m1", "m2", "m3"]);
+
+    // End jumps to the last item — an unmounted, offscreen row — scrolled in.
+    expect(canvasElement.querySelector('[data-node-id="m999"]')).toBeNull();
+    await user.keyboard("{End}");
+    await waitFor(() => {
+      const last = canvasElement.querySelector<HTMLElement>('[data-node-id="m999"]');
+      expect(last).not.toBeNull();
+      expect(last!.ownerDocument.activeElement).toBe(last);
+    });
+  },
+};

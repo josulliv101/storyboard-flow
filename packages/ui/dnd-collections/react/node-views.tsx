@@ -104,6 +104,7 @@ export const NodeCard = memo(function NodeCard({
   id,
   className,
   dragActivation = "body",
+  rovingTabIndex,
 }: {
   id: NodeId;
   /**
@@ -123,6 +124,15 @@ export const NodeCard = memo(function NodeCard({
    * ghosts remain card-sized, and body clicks still select.
    */
   dragActivation?: NodeCardDragActivation;
+  /**
+   * Roving-tabindex value (0 or -1) for virtualized views: the container is
+   * ONE tab stop and arrow keys rove between items, so exactly one mounted
+   * card is `0` at a time and the rest are `-1`. When set, the grip (handle
+   * mode) is also demoted to `-1` so the card button is the sole keyboard
+   * stop — pointer grip-drag still works; keyboard drag uses the Alt-key
+   * moves. Undefined (panels) keeps each card an independent tab stop.
+   */
+  rovingTabIndex?: number;
 }) {
   const dragHandle = dragActivation === "handle";
   const store = useCollectionsStore();
@@ -224,6 +234,9 @@ export const NodeCard = memo(function NodeCard({
             ? instructionsId
             : `${attributes["aria-describedby"]} ${instructionsId}`
         }
+        // Roving tabindex (virtual views) overrides dnd-kit's tabIndex from
+        // the attribute spread above — must come after it.
+        {...(rovingTabIndex !== undefined ? { tabIndex: rovingTabIndex } : {})}
       >
         <span className="truncate font-medium text-foreground">{node.name}</span>
         <span className="text-[10px] text-muted-foreground">
@@ -243,6 +256,9 @@ export const NodeCard = memo(function NodeCard({
           {...listeners}
           aria-label={`Drag ${node.name}`}
           aria-describedby={`${attributes["aria-describedby"]} ${instructionsId}`}
+          // In a roving (virtual) view the card button is the sole tab stop;
+          // keep the grip a pointer-only drag surface.
+          {...(rovingTabIndex !== undefined ? { tabIndex: -1 } : {})}
         >
           ⠿
         </div>

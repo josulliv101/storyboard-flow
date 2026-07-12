@@ -224,6 +224,16 @@ typed rejections and are announced via the aria-live region — which nudges
 repeat messages with a zero-width space so identical announcements still
 fire.
 
+Inside the virtualized views there is a THIRD arrow-key role, and the three
+stay disjoint by design: **bare arrows NAVIGATE** (roving focus, in
+`useVirtualRovingFocus`), **Alt+arrows MOVE**, and dnd-kit's grabbed-arrows
+fire only after Enter. Navigation makes the container one `role="grid"` tab
+stop and moves a focused index through the whole collection — scrolling
+offscreen items in and focusing them (only the roving card is `tabIndex=0`),
+with `aria-row/colcount` + per-cell indexes exposing the real position under
+virtualization. It stands down while a drag is live (`isDragging`) or Alt/
+Ctrl/Meta are held, so it never collides with the other two.
+
 ## FLIP animation: a layer above the reducer
 
 `use-flip-graph-animation.ts` animates committed moves (drop/undo/redo). It
