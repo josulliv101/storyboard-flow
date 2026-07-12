@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 import { useDroppable } from "@dnd-kit/core";
 
 import { type NodeId } from "../core/graph";
@@ -93,6 +100,54 @@ export function useFocusNode(
     },
     [scrollRef, scrollToNode]
   );
+}
+
+/**
+ * Roving-focus keyboard navigation for a virtualized view: the container is a
+ * single tab stop, and bare arrow keys move a "focused index" through the
+ * WHOLE collection — scrolling offscreen items into view and focusing them —
+ * so a keyboard user can reach item 500 of 1000 that was never in the DOM.
+ *
+ * Deliberately separate from the two existing arrow uses: Alt+arrow MOVES the
+ * item (keyboard controller), and dnd-kit's grabbed-arrows fire only after
+ * Enter — so navigation stands down while a drag is live and while Alt/Ctrl/
+ * Meta are held. Each view supplies `resolveNextIndex` for its own geometry
+ * (1D for the strip, 2D for the grid).
+ */
+export function useVirtualRovingFocus(args: {
+  count: number;
+  isDragging: () => boolean;
+  /** Scroll the index into view and focus its card once the virtualizer mounts it. */
+  focusByIndex: (index: number) => void;
+  /** Map a key + current index to the next index, or null to ignore the key. */
+  resolveNextIndex: (key: string, current: number, count: number) => number | null;
+}): Readonly<{
+  focusedIndex: number;
+  onKeyDown: (event: ReactKeyboardEvent) => void;
+}> {
+  const { count, isDragging, focusByIndex, resolveNextIndex } = args;
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const focusedRef = useRef(0);
+
+  const onKeyDown = useCallback(
+    (event: ReactKeyboardEvent) => {
+      // Alt = item move; Ctrl/Meta reserved; during a keyboard drag the sensor
+      // owns the arrows.
+      if (event.altKey || event.ctrlKey || event.metaKey || isDragging()) return;
+      const next = resolveNextIndex(event.key, focusedRef.current, count);
+      if (next === null) return;
+      event.preventDefault();
+      const clamped = Math.max(0, Math.min(next, count - 1));
+      focusedRef.current = clamped;
+      setFocusedIndex(clamped);
+      focusByIndex(clamped);
+    },
+    [count, isDragging, focusByIndex, resolveNextIndex]
+  );
+
+  // A shrinking collection can leave the focused index past the end; clamp for
+  // the roving-tabindex computation without disturbing the stored value.
+  return { focusedIndex: Math.min(focusedIndex, Math.max(0, count - 1)), onKeyDown };
 }
 
 /** The empty-collection affordance shared by strip and grid. */

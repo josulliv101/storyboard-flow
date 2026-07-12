@@ -10,13 +10,14 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, type NodeId } from "../core/graph";
-import { useCollectionsSelector } from "../react/collections-store";
+import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { NodeCard } from "../react/node-views";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
 import {
   useFocusNode,
   usePublishBoundary,
   useVirtualInsertContainer,
+  useVirtualRovingFocus,
   VirtualEmptyHint,
   type VirtualViewPoint,
 } from "./use-virtual-collection-view";
@@ -135,6 +136,52 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
     );
     const focusNode = useFocusNode(scrollRef, scrollToNode);
 
+    // Roving keyboard navigation: bare arrows move focus in 2D (±1 across a
+    // row, ±cols between rows), scrolling offscreen rows into view. Alt+arrows
+    // stay item MOVES (handled by the keyboard controller via data-grid-columns).
+    const store = useCollectionsStore();
+    const name = useCollectionsSelector(
+      (s) => s.graph.nodesById.get(collectionId)?.name ?? String(collectionId)
+    );
+    const focusByIndex = useCallback(
+      (index: number) => focusNode(childIds[index]),
+      [focusNode, childIds]
+    );
+    const resolveGridIndex = useCallback(
+      (key: string, current: number, count: number): number | null => {
+        switch (key) {
+          case "ArrowRight":
+            return current + 1;
+          case "ArrowLeft":
+            return current - 1;
+          case "ArrowDown":
+            return current + cols;
+          case "ArrowUp":
+            return current - cols;
+          case "Home":
+            return 0;
+          case "End":
+            return count - 1;
+          default:
+            return null;
+        }
+      },
+      [cols]
+    );
+    const { focusedIndex, onKeyDown } = useVirtualRovingFocus({
+      count: childIds.length,
+      isDragging: () => store.getSnapshot().interaction.isDragging,
+      focusByIndex,
+      resolveNextIndex: resolveGridIndex,
+    });
+    // Keep the roving tab stop on a MOUNTED card: rows virtualize, so if the
+    // focused card's row scrolled out, fall back to the first mounted row.
+    const mountedRows = virtualizer.getVirtualItems();
+    const focusedRow = Math.floor(focusedIndex / cols);
+    const rovingIndex = mountedRows.some((r) => r.index === focusedRow)
+      ? focusedIndex
+      : (mountedRows[0]?.index ?? 0) * cols;
+
     useImperativeHandle(
       ref,
       () => ({
@@ -172,6 +219,13 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         // Keyboard scope marker: the provider remaps Alt+ArrowUp/Down to
         // row moves (± this many columns) for cards inside this container.
         data-grid-columns={cols}
+        // 2D grid: bare arrows rove; aria-rowcount/colcount + per-row/cell
+        // indexes expose the true position ("row 200 of 250") under virtualization.
+        role="grid"
+        aria-label={`${name}, ${childIds.length} items`}
+        aria-rowcount={rowCount}
+        aria-colcount={cols}
+        onKeyDown={onKeyDown}
         className={[
           "relative overflow-y-auto rounded-md border border-dashed border-border p-2",
           className ?? "",
@@ -192,6 +246,8 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
             <div
               key={row.key}
               data-virtual-row={row.index}
+              role="row"
+              aria-rowindex={row.index + 1}
               style={{
                 position: "absolute",
                 top: 0,
@@ -204,11 +260,23 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
             >
               {childIds
                 .slice(row.index * cols, Math.min(childIds.length, (row.index + 1) * cols))
-                .map((id) => (
-                  <div key={id} style={{ width: cellWidth, height: cellHeight }}>
-                    <NodeCard id={id} className="h-full w-full" />
-                  </div>
-                ))}
+                .map((id, colInRow) => {
+                  const absoluteIndex = row.index * cols + colInRow;
+                  return (
+                    <div
+                      key={id}
+                      role="gridcell"
+                      aria-colindex={colInRow + 1}
+                      style={{ width: cellWidth, height: cellHeight }}
+                    >
+                      <NodeCard
+                        id={id}
+                        className="h-full w-full"
+                        rovingTabIndex={absoluteIndex === rovingIndex ? 0 : -1}
+                      />
+                    </div>
+                  );
+                })}
             </div>
           ))}
         </div>

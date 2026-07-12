@@ -523,6 +523,16 @@ along unchanged. Drops over gaps and unmounted regions resolve through the
 container droppable (`insert-at-index`), not neighbor rects. Both drive their
 own edge auto-scroll (dnd-kit's never engaged for these containers).
 
+**Keyboard navigation.** Each view is `role="grid"` and a single roving tab
+stop: bare **arrow keys** move a focused index through the WHOLE collection —
+strip is 1D (Left/Right/Home/End), grid is 2D (arrows + Home/End) — scrolling
+offscreen items into view and focusing them, so a keyboard user reaches item
+500 of 1000 that was never in the DOM. `aria-rowcount`/`aria-colcount` and
+per-cell `aria-rowindex`/`aria-colindex` report the true position under
+virtualization. This is distinct from the two other arrow uses: **Alt+arrow**
+still MOVES the item (§ keyboard grammar) and dnd-kit's grabbed-arrows fire
+only after Enter — navigation stands down while a drag is live.
+
 ### `<VirtualStrip>` — horizontal, variable width
 
 ```ts

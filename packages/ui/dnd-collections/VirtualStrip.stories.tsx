@@ -691,3 +691,44 @@ export const OffscreenFocusScrollsIntoView: Story = {
     });
   },
 };
+
+export const KeyboardRovingNavigation: Story = {
+  // §17/§20: a keyboard user traverses the WHOLE 1,000-item collection with
+  // arrows — the strip is one roving tab stop, and navigation pulls offscreen
+  // items into view. Grid semantics (role + aria-colcount/colindex) expose the
+  // true position under virtualization.
+  render: () => <StripHarness />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const m0 = nodeCard(canvasElement, "m0");
+    await waitForLayout(m0);
+
+    // Roving tabindex: the first card is the single tab stop; neighbors are -1.
+    expect(m0.tabIndex).toBe(0);
+    expect(nodeCard(canvasElement, "m1").tabIndex).toBe(-1);
+    const strip = canvasElement.querySelector('[data-virtual-strip="strip"]')!;
+    expect(strip.getAttribute("role")).toBe("grid");
+    expect(strip.getAttribute("aria-colcount")).toBe("1000");
+
+    // ArrowRight roves one item and follows focus; the roving stop moves with it.
+    m0.focus();
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => {
+      const m1 = nodeCard(canvasElement, "m1");
+      expect(m1.ownerDocument.activeElement).toBe(m1);
+      expect(m1.tabIndex).toBe(0);
+      expect(nodeCard(canvasElement, "m0").tabIndex).toBe(-1);
+    });
+
+    // End jumps to the last item — unmounted and far offscreen — scrolling it
+    // into view and focusing it. This is the whole point: no Tab could reach it.
+    expect(canvasElement.querySelector('[data-node-id="m999"]')).toBeNull();
+    await user.keyboard("{End}");
+    await waitFor(() => {
+      const last = canvasElement.querySelector<HTMLElement>('[data-node-id="m999"]');
+      expect(last).not.toBeNull();
+      expect(last!.ownerDocument.activeElement).toBe(last);
+      expect(last!.tabIndex).toBe(0);
+    });
+  },
+};

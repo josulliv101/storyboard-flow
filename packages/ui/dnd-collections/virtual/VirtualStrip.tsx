@@ -15,9 +15,26 @@ import {
   useFocusNode,
   usePublishBoundary,
   useVirtualInsertContainer,
+  useVirtualRovingFocus,
   VirtualEmptyHint,
   type VirtualViewPoint,
 } from "./use-virtual-collection-view";
+
+// 1D roving navigation: Left/Right step one item, Home/End jump to the ends.
+function resolveStripIndex(key: string, current: number, count: number): number | null {
+  switch (key) {
+    case "ArrowRight":
+      return current + 1;
+    case "ArrowLeft":
+      return current - 1;
+    case "Home":
+      return 0;
+    case "End":
+      return count - 1;
+    default:
+      return null;
+  }
+}
 
 // Horizontal virtualized strip: renders only visible cards + overscan out
 // of arbitrarily large collections. Cards ARE the standard NodeCard —
@@ -165,6 +182,29 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     );
     const focusNode = useFocusNode(scrollRef, scrollToNode);
 
+    // Roving keyboard navigation (bare Left/Right/Home/End). The collection
+    // name gives the grid an accessible name.
+    const name = useCollectionsSelector(
+      (s) => s.graph.nodesById.get(collectionId)?.name ?? String(collectionId)
+    );
+    const focusByIndex = useCallback(
+      (index: number) => focusNode(childIds[index]),
+      [focusNode, childIds]
+    );
+    const { focusedIndex, onKeyDown } = useVirtualRovingFocus({
+      count: childIds.length,
+      isDragging: () => store.getSnapshot().interaction.isDragging,
+      focusByIndex,
+      resolveNextIndex: resolveStripIndex,
+    });
+    // Keep the roving tab stop on a MOUNTED card: if the focused index scrolled
+    // out of view (mouse/pan), fall back to the first mounted item so the strip
+    // stays tabbable.
+    const mountedItems = virtualizer.getVirtualItems();
+    const rovingIndex = mountedItems.some((v) => v.index === focusedIndex)
+      ? focusedIndex
+      : mountedItems[0]?.index ?? 0;
+
     useImperativeHandle(
       ref,
       () => ({
@@ -205,6 +245,14 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       <div
         ref={setContainerRef}
         data-virtual-strip={collectionId}
+        // One-row grid: arrow keys rove across columns, and aria-colcount /
+        // aria-colindex expose the true position ("column 500 of 1000") even
+        // though only a handful of cells are mounted.
+        role="grid"
+        aria-label={`${name}, ${childIds.length} items`}
+        aria-rowcount={1}
+        aria-colcount={childIds.length}
+        onKeyDown={onKeyDown}
         className={[
           "relative overflow-x-auto rounded-md border border-dashed border-border p-2",
           className ?? "",
@@ -219,6 +267,8 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         <VirtualEmptyHint visible={childIds.length === 0} />
         <div
           ref={contentRef}
+          role="row"
+          aria-rowindex={1}
           style={{ width: virtualizer.getTotalSize(), height: itemHeight, position: "relative" }}
         >
           {indicatorLeft !== null && (
@@ -233,6 +283,8 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
             <div
               key={item.key}
               data-virtual-index={item.index}
+              role="gridcell"
+              aria-colindex={item.index + 1}
               style={{
                 position: "absolute",
                 top: 0,
@@ -249,6 +301,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                 id={childIds[item.index]}
                 className="h-full w-full"
                 dragActivation={cardActivation}
+                rovingTabIndex={item.index === rovingIndex ? 0 : -1}
               />
             </div>
           ))}
