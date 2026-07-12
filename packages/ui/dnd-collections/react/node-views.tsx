@@ -13,6 +13,7 @@ import {
 import { encodeDropTarget } from "../core/intents";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
+import { TrimHandles } from "./trim-handles";
 
 // Default views. Each NodeCard receives ONLY its id — every dynamic value
 // arrives through selector subscriptions returning primitives (or stable
@@ -98,6 +99,7 @@ export const NodeCard = memo(function NodeCard({
   className,
   dragActivation = "body",
   rovingTabIndex,
+  trimPixelsPerSecond,
 }: {
   id: NodeId;
   /**
@@ -126,6 +128,14 @@ export const NodeCard = memo(function NodeCard({
    * moves. Undefined (panels) keeps each card an independent tab stop.
    */
   rovingTabIndex?: number;
+  /**
+   * Enable media trim handles at the card edges, using this many pixels per
+   * second to convert the drag (match the view's timeline scale — the same
+   * `pixelsPerSecond` its `itemWidthFor` uses). Right handle on all media
+   * (sets image duration / video trim-out); left handle on video (trim-in).
+   * Omitted = no handles.
+   */
+  trimPixelsPerSecond?: number;
 }) {
   const dragHandle = dragActivation === "handle";
   const store = useCollectionsStore();
@@ -187,7 +197,7 @@ export const NodeCard = memo(function NodeCard({
     isDragging || isDragSource ? { opacity: 0.4 } : undefined;
 
   return (
-    <div className={twMerge("relative", className)} data-node-wrapper={id}>
+    <div className={twMerge("group relative", className)} data-node-wrapper={id}>
       <button
         type="button"
         ref={setRefs}
@@ -255,6 +265,10 @@ export const NodeCard = memo(function NodeCard({
         >
           ⠿
         </div>
+      )}
+
+      {trimPixelsPerSecond !== undefined && node.kind === "media" && (
+        <TrimHandles node={node} pixelsPerSecond={trimPixelsPerSecond} />
       )}
 
       <NodeCardIndicators nestState={nestState} dropSide={dropSide} />

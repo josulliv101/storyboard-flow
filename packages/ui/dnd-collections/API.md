@@ -537,7 +537,7 @@ ones (everything they do goes through the store API above).
 | --- | --- | --- |
 | `CollectionPanels` | `collectionIds?: readonly NodeId[]` | One panel per id (default: the graph's roots). FLIP animation is owned by `<DndCollections animateMoves>`, not here. |
 | `CollectionPanel` | `collectionId: NodeId` | One droppable panel with its cards. |
-| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
+| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"`, `trimPixelsPerSecond?: number` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in), converting the drag at that scale and committing `update-media` on release. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
 | `NodeCardGhost` | `node: CollectionItemNode`, `extraCount: number` | The drag-overlay ghost; renders a `+N` badge when `extraCount > 0`. |
 | `UndoRedoControls` | — | Buttons bound to `store.undo`/`store.redo`, disabled off `canUndo`/`canRedo`. |
 | `HistoryLog` | — | Human-readable command log over `historyEntries`. |
@@ -557,6 +557,8 @@ key off these):
 | `data-panel-id` / `data-panel-droppable` | panel section / its drop zone | Collection identity. |
 | `data-nest-state` | overlay on a collection card | `"valid"` or `"invalid"` while it's the live nest target. |
 | `data-drop-indicator` | indicator bar | `"before"` or `"after"` on the adjacency target. |
+| `data-trim-handle` | media edge handle | `"left"` or `"right"` (left is video-only). |
+| `data-trim-preview` | trim readout | The previewed effective duration (seconds) while a handle is dragged. |
 | `data-testid="drag-ghost"` / `"drag-ghost-count"` | overlay | The ghost and its `+N` badge. |
 | `data-testid="history-log"` / `"history-empty"`, `data-history-entry` | history log | Log container / empty marker / entries. |
 
@@ -594,6 +596,7 @@ type VirtualStripProps = {
   overscan?: number;                                     // default 4
   panToScroll?: boolean;                                 // default true — drag the surface to scroll, with momentum
   itemDragActivation?: "handle" | "hold";                // default "handle" (grip bar); "hold" = press-and-hold the body. Ignored when panToScroll is off (bodies drag instantly)
+  trimPixelsPerSecond?: number;                          // enable media trim handles; set to your itemWidthFor scale so a trim resizes the card. Strip auto-remeasures on the commit
   className?: string;
 };
 type VirtualStripHandle = {

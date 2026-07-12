@@ -128,6 +128,15 @@ reversible patch (`nodes-updated`, before/after node), undo/redo, and the
 instead of the children arrays. The engine stays structure-only; image/video
 is a leaf concern nothing else in the pipeline branches on.
 
+The trim UI is edge handles on the card (`NodeCard trimPixelsPerSecond`),
+rendered as SIBLINGS of the draggable button so a handle press never reaches
+the item-drag sensor or the strip's pan. A handle drag converts pixels to
+seconds, previews a clamped value LOCALLY (no store state — a trim touches one
+node), and dispatches `update-media` once on release. The card resizes only on
+commit: the strip re-measures the virtualizer when node data changes
+(`nodesById` gets a new identity on a commit but never on a move/drag, so it
+stays at commit cadence), which the width cache would otherwise miss.
+
 Two properties fall out of this shape and everything else depends on them:
 
 - **The committed graph is never touched during a drag.** The live preview

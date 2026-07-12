@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useImperativeHandle, useMemo } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph";
@@ -51,7 +51,7 @@ function resolveStripIndex(key: string, current: number, count: number): number 
 // yields via isGestureClaimed.) Module-level so option identities are
 // stable.
 const isPannableStripSurface = (target: Element): boolean =>
-  !target.closest("[data-drag-handle]");
+  !target.closest("[data-drag-handle], [data-trim-handle]");
 const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
 
 export type VirtualStripProps = Readonly<{
@@ -78,6 +78,12 @@ export type VirtualStripProps = Readonly<{
    * Ignored when panToScroll is off (bodies drag instantly).
    */
   itemDragActivation?: "handle" | "hold";
+  /**
+   * Enable media trim handles at card edges, converting the drag at this many
+   * pixels per second. Set it to the SAME scale your `itemWidthFor` uses so a
+   * trim resizes the card by the amount dragged.
+   */
+  trimPixelsPerSecond?: number;
   className?: string;
 }>;
 
@@ -101,6 +107,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       overscan = 4,
       panToScroll = true,
       itemDragActivation = "handle",
+      trimPixelsPerSecond,
       className,
     },
     ref
@@ -140,6 +147,15 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       overscan,
       getItemKey,
     });
+
+    // Variable widths come from node DATA, so a data change (a trim commit,
+    // a palette add) must re-run the cached measurements. `nodesById` only
+    // gets a new identity on such a commit — never on a move or a drag — so
+    // this stays at commit cadence, not per frame. Fixed-width strips
+    // (no itemWidthFor) never need it.
+    useEffect(() => {
+      if (itemWidthFor) virtualizer.measure();
+    }, [nodesById, itemWidthFor, virtualizer]);
 
     // Pointer -> visible boundary index from the virtualizer's measurements
     // (O(log n), variable widths included) — never from card rects, since
@@ -305,6 +321,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                 className="h-full w-full"
                 dragActivation={cardActivation}
                 rovingTabIndex={item.index === rovingIndex ? 0 : -1}
+                trimPixelsPerSecond={trimPixelsPerSecond}
               />
             </div>
           ))}
