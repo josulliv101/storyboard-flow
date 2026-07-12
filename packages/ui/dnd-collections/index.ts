@@ -12,6 +12,8 @@ export {
   getDocumentOrder,
   isCollection,
   isSameOrAncestor,
+  isVideoMedia,
+  mediaDurationSeconds,
   parseNodeId,
   EMPTY_GRAPH,
   type BuildGraphError,
@@ -20,15 +22,20 @@ export {
   type CollectionItemNode,
   type GraphInvariantViolation,
   type GraphNodeSpec,
+  type ImageMediaNode,
   type MediaNode,
   type NodeId,
   type Result,
+  type VideoMediaNode,
 } from "./core/graph";
 export {
   applyCommand,
+  type AddNodesCommand,
   type ApplyCommandSuccess,
   type CollectionsCommand,
   type CommandRejection,
+  type MediaUpdate,
+  type MoveNodesCommand,
 } from "./core/commands";
 export {
   applyPatch,
@@ -36,6 +43,7 @@ export {
   type CollectionsPatch,
   type NodeAdd,
   type NodeMove,
+  type NodeUpdate,
 } from "./core/patches";
 export {
   decodeDropTarget,

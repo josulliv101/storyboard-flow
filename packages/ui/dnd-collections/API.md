@@ -60,11 +60,22 @@ Pure model. No React, no DOM.
 ```ts
 type NodeId = string & { readonly [brand]: true };
 
-type MediaNode = {
-  id: NodeId; kind: "media"; name: string;
-  src?: string;            // display-only; the graph doesn't care
-  durationSeconds: number;
+// Media diverges by `mediaKind`; the ENGINE treats both as childless media.
+// The distinction is domain/UI (trimming). `mediaKind` is OPTIONAL on image,
+// so a plain `{ kind: "media", durationSeconds }` node is a valid image.
+type ImageMediaNode = {
+  id: NodeId; kind: "media"; mediaKind?: "image"; name: string;
+  src?: string;                 // display-only
+  durationSeconds: number;      // trimming an image sets this directly
 };
+type VideoMediaNode = {
+  id: NodeId; kind: "media"; mediaKind: "video"; name: string;
+  src?: string;
+  fullDurationSeconds: number;  // the source clip's length
+  trimInSeconds: number;        // trimmed off the START (0 = untrimmed)
+  trimOutSeconds: number;       // trimmed off the END
+};
+type MediaNode = ImageMediaNode | VideoMediaNode;
 type CollectionNode = { id: NodeId; kind: "collection"; name: string };
 type CollectionItemNode = MediaNode | CollectionNode;
 
@@ -75,6 +86,13 @@ type CollectionsGraph = {
   rootIds: readonly NodeId[];                           // ordered top-level collections
 };
 ```
+
+### `mediaDurationSeconds(node: MediaNode): number`
+
+The item's effective timeline duration: an image's `durationSeconds`, or a
+video's `fullDurationSeconds - trimInSeconds - trimOutSeconds` (never below 0).
+Use this everywhere a media item's on-timeline length is needed (card display,
+`itemWidthFor`). `isVideoMedia(node)` narrows to `VideoMediaNode`.
 
 ### `parseNodeId(id: string): NodeId`
 
@@ -88,7 +106,9 @@ pathological depth can't blow the call stack.
 
 ```ts
 type GraphNodeSpec =
-  | { kind: "media"; id: string; name: string; src?: string; durationSeconds?: number } // default 4
+  | { kind: "media"; mediaKind?: "image"; id: string; name: string; src?: string; durationSeconds?: number } // default 4
+  | { kind: "media"; mediaKind: "video"; id: string; name: string; src?: string;
+      fullDurationSeconds: number; trimInSeconds?: number; trimOutSeconds?: number } // trims default 0
   | { kind: "collection"; id: string; name: string; children?: readonly GraphNodeSpec[] };
 
 type BuildGraphError =
@@ -143,10 +163,26 @@ type CollectionsCommand =
       nodes: readonly CollectionItemNode[]; // ids must not exist; new collections start empty
       toParentId: NodeId;
       toIndex: number;
+    }
+  | {
+      type: "update-media";        // the one DATA mutation: image duration / video trim
+      nodeId: NodeId;
+      update: MediaUpdate;
     };
+
+// Discriminated to match the node. Video omitted trim fields keep their value
+// (drag one handle at a time); trims are clamped so effective duration >= 0.
+type MediaUpdate =
+  | { mediaKind: "image"; durationSeconds: number }
+  | { mediaKind: "video"; trimInSeconds?: number; trimOutSeconds?: number };
 
 type ApplyCommandSuccess = { graph: CollectionsGraph; patch: CollectionsPatch };
 ```
+
+`move-nodes` and `add-nodes` change STRUCTURE; `update-media` changes node
+DATA only (structure untouched, `nodesById` re-allocated with structural
+sharing). It's reversible like the rest — its patch is `nodes-updated`
+(carries before/after; invert swaps them).
 
 `toIndex` is the insertion index in the target's children **after the moved
 nodes have been removed from it**. `resolveCommandFromIntent` and
@@ -164,11 +200,13 @@ Rejections (`CommandRejection.reason`):
 | `cannot-move-root` | A dragged id is a top-level collection — roots are structural anchors. |
 | `duplicate-node-id` | An id appears twice in `nodeIds`, or (add-nodes) an added id already exists / repeats in the batch. |
 | `invalid-node-id` | (add-nodes) An added node's id is empty or whitespace-only — it can't be addressed or encoded as a droppable. |
+| `not-media-node` | (update-media) `nodeId` is a collection, not a media node. |
+| `invalid-media-update` | (update-media) The payload's `mediaKind` doesn't match the node, or it carries non-finite values. |
 | `nothing-to-add` | `add-nodes` with an empty `nodes` array. |
 | `invalid-index` | `toIndex` is not an integer (NaN/±Infinity splice at 0; a fraction desyncs forward apply from patch replay). |
 | `would-create-cycle` | A node would move into itself or its own descendant. |
 | `nothing-to-move` | Every dragged id was pruned (all descendants of other dragged ids). |
-| `same-position` | The move would leave every children array identical — treated as a no-op, nothing is pushed to history. |
+| `same-position` | The command would leave the graph identical (a move that lands where it started, or a trim to the current value) — a no-op, nothing pushed to history. |
 
 ---
 
@@ -188,11 +226,17 @@ type NodeAdd = {
   parentId: NodeId;
   index: number;
 };
+type NodeUpdate = {
+  nodeId: NodeId;
+  before: CollectionItemNode; // full node before/after — invert swaps them
+  after: CollectionItemNode;
+};
 
 type CollectionsPatch =
   | { type: "nodes-moved"; moves: readonly NodeMove[] }
   | { type: "nodes-added"; adds: readonly NodeAdd[] }
-  | { type: "nodes-removed"; removals: readonly NodeAdd[] }; // only from inverting adds
+  | { type: "nodes-removed"; removals: readonly NodeAdd[] } // only from inverting adds
+  | { type: "nodes-updated"; updates: readonly NodeUpdate[] }; // media trim/duration
 ```
 
 ### `invertPatch(patch): CollectionsPatch`

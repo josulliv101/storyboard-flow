@@ -33,6 +33,16 @@ export type NodeAdd = Readonly<{
   index: number;
 }>;
 
+/**
+ * One node's DATA change (media trim/duration) — structure untouched. Carrying
+ * the full before/after node makes it trivially invertible: swap the two.
+ */
+export type NodeUpdate = Readonly<{
+  nodeId: NodeId;
+  before: CollectionItemNode;
+  after: CollectionItemNode;
+}>;
+
 export type CollectionsPatch =
   | Readonly<{ type: "nodes-moved"; moves: readonly NodeMove[] }>
   | Readonly<{ type: "nodes-added"; adds: readonly NodeAdd[] }>
@@ -41,7 +51,8 @@ export type CollectionsPatch =
    * childless — linear history guarantees it: any command that filled an
    * added collection came later and is undone first.
    */
-  | Readonly<{ type: "nodes-removed"; removals: readonly NodeAdd[] }>;
+  | Readonly<{ type: "nodes-removed"; removals: readonly NodeAdd[] }>
+  | Readonly<{ type: "nodes-updated"; updates: readonly NodeUpdate[] }>;
 
 /** Swap each entry's endpoints/direction — applying the result undoes the original. */
 export function invertPatch(patch: CollectionsPatch): CollectionsPatch {
@@ -61,6 +72,15 @@ export function invertPatch(patch: CollectionsPatch): CollectionsPatch {
       return { type: "nodes-removed", removals: patch.adds };
     case "nodes-removed":
       return { type: "nodes-added", adds: patch.removals };
+    case "nodes-updated":
+      return {
+        type: "nodes-updated",
+        updates: patch.updates.map((u) => ({
+          nodeId: u.nodeId,
+          before: u.after,
+          after: u.before,
+        })),
+      };
   }
 }
 
@@ -83,7 +103,23 @@ export function applyPatch(
       return applyAdds(graph, patch.adds);
     case "nodes-removed":
       return applyRemovals(graph, patch.removals);
+    case "nodes-updated":
+      return applyUpdates(graph, patch.updates);
   }
+}
+
+// Node DATA changes only: re-allocate `nodesById` with the new node objects;
+// childrenById/parentById/rootIds are structurally reused (untouched).
+function applyUpdates(graph: CollectionsGraph, updates: readonly NodeUpdate[]): CollectionsGraph {
+  if (updates.length === 0) return graph;
+  const nextNodes = new Map(graph.nodesById);
+  for (const update of updates) nextNodes.set(update.nodeId, update.after);
+  return {
+    nodesById: nextNodes,
+    childrenById: graph.childrenById,
+    parentById: graph.parentById,
+    rootIds: graph.rootIds,
+  };
 }
 
 function applyMoves(graph: CollectionsGraph, moves: readonly NodeMove[]): CollectionsGraph {

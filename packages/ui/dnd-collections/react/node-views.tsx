@@ -4,7 +4,12 @@ import { memo, useCallback, useRef, type CSSProperties, type MouseEvent } from "
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { twMerge } from "tailwind-merge";
 
-import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph";
+import {
+  getChildren,
+  mediaDurationSeconds,
+  type CollectionItemNode,
+  type NodeId,
+} from "../core/graph";
 import { encodeDropTarget } from "../core/intents";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
@@ -228,7 +233,7 @@ export const NodeCard = memo(function NodeCard({
       >
         <span className="truncate font-medium text-foreground">{node.name}</span>
         <span className="text-[10px] text-muted-foreground">
-          {isCollection ? `Collection · ${childCount} items` : `${node.durationSeconds}s`}
+          {isCollection ? `Collection · ${childCount} items` : `${mediaDurationSeconds(node)}s`}
         </span>
       </button>
 
@@ -321,7 +326,7 @@ export function NodeCardGhost({
     >
       <span className="truncate font-medium text-foreground">{node.name}</span>
       <span className="text-[10px] text-muted-foreground">
-        {node.kind === "collection" ? "Collection" : `${node.durationSeconds}s`}
+        {node.kind === "collection" ? "Collection" : `${mediaDurationSeconds(node)}s`}
       </span>
       {extraCount > 0 && (
         <span

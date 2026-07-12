@@ -6,7 +6,7 @@ import {
   getChildren,
   isSameOrAncestor,
 } from "./graph";
-import { type CollectionsCommand } from "./commands";
+import { type AddNodesCommand, type MoveNodesCommand } from "./commands";
 
 // The intent layer answers "what did the user seem to mean?" from raw
 // geometry (which droppable, where in its rect), completely separately from
@@ -199,7 +199,7 @@ export function resolveCommandFromIntent(
   graph: CollectionsGraph,
   intent: DropIntent,
   draggedIds: readonly NodeId[]
-): Result<CollectionsCommand, IntentRejection> {
+): Result<MoveNodesCommand, IntentRejection> {
   const draggedSet = new Set(draggedIds);
 
   if (intent.type === "nest-inside" || intent.type === "append-to-collection") {
@@ -280,7 +280,7 @@ export function resolveAddCommandFromIntent(
   graph: CollectionsGraph,
   intent: DropIntent,
   nodes: readonly CollectionItemNode[]
-): Result<CollectionsCommand, IntentRejection> {
+): Result<AddNodesCommand, IntentRejection> {
   const placed = resolveCommandFromIntent(graph, intent, []);
   if (!placed.ok) return placed;
   return {

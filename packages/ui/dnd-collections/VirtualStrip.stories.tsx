@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
-import { buildGraph, parseNodeId, type GraphNodeSpec } from "./core/graph";
+import { buildGraph, mediaDurationSeconds, parseNodeId, type GraphNodeSpec } from "./core/graph";
 import { useCollectionsStore } from "./react/collections-store";
 import { DndCollections } from "./react/DndCollections";
 import { VirtualStrip, type VirtualStripHandle } from "./virtual/VirtualStrip";
@@ -160,7 +160,7 @@ export const VariableWidthItems: Story = {
         <VirtualStrip
           collectionId={parseNodeId("strip")}
           itemWidthFor={(node) =>
-            node.kind === "media" ? node.durationSeconds * WIDTH_PER_SECOND : undefined
+            node.kind === "media" ? mediaDurationSeconds(node) * WIDTH_PER_SECOND : undefined
           }
         />
       </div>
@@ -222,7 +222,7 @@ export const WidthCallbackStableDuringDrag: Story = {
               calls.n += 1;
               // Stash the live count where the play function can read it.
               (window as unknown as { __widthCalls: number }).__widthCalls = calls.n;
-              return node.kind === "media" ? node.durationSeconds * WIDTH_PER_SECOND : undefined;
+              return node.kind === "media" ? mediaDurationSeconds(node) * WIDTH_PER_SECOND : undefined;
             }}
           />
         </div>
@@ -383,7 +383,7 @@ function RemeasureHarness() {
           collectionId={parseNodeId("strip")}
           itemWidthFor={(node) =>
             loaded && node.kind === "media"
-              ? node.durationSeconds * WIDTH_PER_SECOND
+              ? mediaDurationSeconds(node) * WIDTH_PER_SECOND
               : undefined
           }
         />
