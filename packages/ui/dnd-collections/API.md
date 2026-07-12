@@ -361,9 +361,14 @@ type DndCollectionsProps = {
   initialGraph: CollectionsGraph;
   onChange?: (change: CollectionsChange) => void;
   maxHistoryEntries?: number; // cap the undo stack; positive integer, default unbounded
+  animateMoves?: boolean;     // post-commit FLIP sweep, default true; one sweep for ALL views
   children: ReactNode;
 };
 ```
+
+`animateMoves` is owned here at the provider (not per view), so a single FLIP
+sweep animates every card under the instance — panels, virtual, and custom
+views — on each commit (drop/undo/redo). It honors `prefers-reduced-motion`.
 
 `maxHistoryEntries` is initial-only (like `initialGraph`): the oldest undo
 entries fall off past the cap. Any non-positive-integer value is treated as
@@ -486,7 +491,7 @@ ones (everything they do goes through the store API above).
 
 | Component | Props | Notes |
 | --- | --- | --- |
-| `CollectionPanels` | `collectionIds?: readonly NodeId[]`, `animateMoves?: boolean` | One panel per id (default: the graph's roots). `animateMoves` (default `true`) enables the post-commit FLIP sweep; honors `prefers-reduced-motion`. |
+| `CollectionPanels` | `collectionIds?: readonly NodeId[]` | One panel per id (default: the graph's roots). FLIP animation is owned by `<DndCollections animateMoves>`, not here. |
 | `CollectionPanel` | `collectionId: NodeId` | One droppable panel with its cards. |
 | `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
 | `NodeCardGhost` | `node: CollectionItemNode`, `extraCount: number` | The drag-overlay ghost; renders a `+N` badge when `extraCount > 0`. |

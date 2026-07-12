@@ -43,7 +43,10 @@ let nextCollectionId = 0;
 
 function PaletteBoard() {
   return (
-    <DndCollections initialGraph={paletteGraph()}>
+    // animateMoves off: these stories fire back-to-back drops, and a card
+    // still mid-FLIP would report an animated rect that disagrees with its
+    // droppable rect, landing a follow-up drop on the wrong side.
+    <DndCollections initialGraph={paletteGraph()} animateMoves={false}>
       <div className="flex w-[640px] flex-col gap-4">
         <UndoRedoControls />
         <div className="flex gap-2" data-testid="palette">
@@ -75,11 +78,8 @@ function PaletteBoard() {
             + New collection
           </PaletteItem>
         </div>
-        {/* Trash is a root, but only panel-a renders as a panel — hidden collection.
-            animateMoves off: these stories fire back-to-back drops, and a card
-            still mid-FLIP would report an animated rect that disagrees with its
-            droppable rect, landing a follow-up drop on the wrong side. */}
-        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} animateMoves={false} />
+        {/* Trash is a root, but only panel-a renders as a panel — hidden collection. */}
+        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} />
         <TrashTarget trashId={parseNodeId("trash")} />
       </div>
     </DndCollections>
@@ -193,7 +193,7 @@ export const PaletteFactoryErrorIsContained: Story = {
   // (not followed by a contradictory "cancelled drag"), and leave the board
   // working.
   render: () => (
-    <DndCollections initialGraph={paletteGraph()}>
+    <DndCollections initialGraph={paletteGraph()} animateMoves={false}>
       <div className="flex w-[640px] flex-col gap-4">
         <PaletteItem
           paletteId="boom"
@@ -209,7 +209,7 @@ export const PaletteFactoryErrorIsContained: Story = {
         >
           + Returns null
         </PaletteItem>
-        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} animateMoves={false} />
+        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} />
       </div>
     </DndCollections>
   ),
@@ -275,12 +275,11 @@ export const NestedCollectionMoveAndTrashSubtree: Story = {
   // §22: moving a NESTED collection (its subtree rides along), then
   // trashing a collection subtree — preserved in trash, undo restores.
   render: () => (
-    <DndCollections initialGraph={nestedGraph()}>
+    <DndCollections initialGraph={nestedGraph()} animateMoves={false}>
       <div className="flex w-[640px] flex-col gap-4">
         <UndoRedoControls />
         <CollectionPanels
           collectionIds={[parseNodeId("panel-a"), parseNodeId("folder-f")]}
-          animateMoves={false}
         />
         <TrashTarget trashId={parseNodeId("trash")} />
       </div>
