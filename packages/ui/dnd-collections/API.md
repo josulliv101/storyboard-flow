@@ -126,6 +126,23 @@ type BuildGraphError =
   | { reason: "root-not-collection"; id: string };
 ```
 
+### Runtime validation
+
+Use these pure boundaries for JavaScript values, parsed JSON, palette output,
+or normalized graphs received from outside the package:
+
+```ts
+parseCollectionItemNode(value: unknown): Result<CollectionItemNode, CollectionsValidationError>;
+parseGraphSpec(value: unknown): Result<readonly GraphNodeSpec[], CollectionsValidationError>;
+validateGraph(value: unknown): Result<void, GraphValidationError>;
+```
+
+Node and spec parsing rejects invalid discriminants, IDs, field types,
+non-finite or negative durations/trims, invalid poster arrays, and video trims
+whose total exceeds the full duration. `validateGraph` checks those runtime
+fields plus every normalized index invariant. Validation errors include a
+JSONPath-like `path` to the rejected value.
+
 ### `EMPTY_GRAPH: CollectionsGraph`
 
 The empty graph constant.

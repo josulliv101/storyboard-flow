@@ -383,3 +383,344 @@ export function findGraphInvariantViolation(
 
   return null;
 }
+
+// --- Runtime validation -----------------------------------------------------
+
+export type CollectionsValidationError = Readonly<{
+  reason: "invalid-type" | "invalid-value";
+  /** JSONPath-like location of the invalid value. */
+  path: string;
+  message: string;
+}>;
+
+export type GraphValidationError =
+  | CollectionsValidationError
+  | Readonly<{
+      reason: "graph-invariant";
+      path: "$";
+      violation: GraphInvariantViolation;
+    }>;
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function invalidType(path: string, message: string): CollectionsValidationError {
+  return { reason: "invalid-type", path, message };
+}
+
+function invalidValue(path: string, message: string): CollectionsValidationError {
+  return { reason: "invalid-value", path, message };
+}
+
+function validateNodeIdentity(
+  value: Readonly<Record<string, unknown>>,
+  path: string
+): CollectionsValidationError | null {
+  if (typeof value.id !== "string") return invalidType(`${path}.id`, "Expected a string.");
+  if (!value.id.trim()) return invalidValue(`${path}.id`, "Expected a non-empty id.");
+  if (typeof value.name !== "string") {
+    return invalidType(`${path}.name`, "Expected a string.");
+  }
+  if (value.kind !== "media" && value.kind !== "collection") {
+    return invalidValue(`${path}.kind`, 'Expected "media" or "collection".');
+  }
+  return null;
+}
+
+function validateOptionalString(
+  value: Readonly<Record<string, unknown>>,
+  field: string,
+  path: string
+): CollectionsValidationError | null {
+  const candidate = value[field];
+  return candidate === undefined || typeof candidate === "string"
+    ? null
+    : invalidType(`${path}.${field}`, "Expected a string when provided.");
+}
+
+function validateNonNegativeNumber(
+  value: Readonly<Record<string, unknown>>,
+  field: string,
+  path: string,
+  required: boolean
+): CollectionsValidationError | null {
+  const candidate = value[field];
+  if (candidate === undefined) {
+    return required ? invalidType(`${path}.${field}`, "Expected a number.") : null;
+  }
+  if (typeof candidate !== "number") {
+    return invalidType(`${path}.${field}`, "Expected a number.");
+  }
+  if (!Number.isFinite(candidate) || candidate < 0) {
+    return invalidValue(`${path}.${field}`, "Expected a finite, non-negative number.");
+  }
+  return null;
+}
+
+function validateMediaRecord(
+  value: Readonly<Record<string, unknown>>,
+  path: string,
+  requireResolvedFields: boolean
+): CollectionsValidationError | null {
+  if (
+    value.mediaKind !== undefined &&
+    value.mediaKind !== "image" &&
+    value.mediaKind !== "video"
+  ) {
+    return invalidValue(`${path}.mediaKind`, 'Expected "image" or "video".');
+  }
+  const srcError = validateOptionalString(value, "src", path);
+  if (srcError) return srcError;
+
+  if (value.mediaKind !== "video") {
+    return validateNonNegativeNumber(
+      value,
+      "durationSeconds",
+      path,
+      requireResolvedFields
+    );
+  }
+
+  const fullError = validateNonNegativeNumber(value, "fullDurationSeconds", path, true);
+  if (fullError) return fullError;
+  const trimInError = validateNonNegativeNumber(
+    value,
+    "trimInSeconds",
+    path,
+    requireResolvedFields
+  );
+  if (trimInError) return trimInError;
+  const trimOutError = validateNonNegativeNumber(
+    value,
+    "trimOutSeconds",
+    path,
+    requireResolvedFields
+  );
+  if (trimOutError) return trimOutError;
+
+  if (value.posterSrcs !== undefined) {
+    if (!Array.isArray(value.posterSrcs)) {
+      return invalidType(`${path}.posterSrcs`, "Expected an array of strings.");
+    }
+    const invalidPoster = value.posterSrcs.findIndex((poster) => typeof poster !== "string");
+    if (invalidPoster !== -1) {
+      return invalidType(`${path}.posterSrcs[${invalidPoster}]`, "Expected a string.");
+    }
+  }
+
+  const full = value.fullDurationSeconds as number;
+  const trimIn = (value.trimInSeconds as number | undefined) ?? 0;
+  const trimOut = (value.trimOutSeconds as number | undefined) ?? 0;
+  if (trimIn + trimOut > full) {
+    return invalidValue(path, "Video trim cannot exceed the full duration.");
+  }
+  return null;
+}
+
+/** Parse an untrusted normalized node into a fresh, runtime-safe node value. */
+export function parseCollectionItemNode(
+  value: unknown
+): Result<CollectionItemNode, CollectionsValidationError> {
+  const path = "$";
+  if (!isRecord(value)) {
+    return { ok: false, error: invalidType(path, "Expected a node object.") };
+  }
+  const identityError = validateNodeIdentity(value, path);
+  if (identityError) return { ok: false, error: identityError };
+
+  const id = parseNodeId(value.id as string);
+  const name = value.name as string;
+  if (value.kind === "collection") {
+    return { ok: true, value: { id, kind: "collection", name } };
+  }
+
+  const mediaError = validateMediaRecord(value, path, true);
+  if (mediaError) return { ok: false, error: mediaError };
+  if (value.mediaKind === "video") {
+    return {
+      ok: true,
+      value: {
+        id,
+        kind: "media",
+        mediaKind: "video",
+        name,
+        src: value.src as string | undefined,
+        posterSrcs:
+          value.posterSrcs === undefined
+            ? undefined
+            : [...(value.posterSrcs as readonly string[])],
+        fullDurationSeconds: value.fullDurationSeconds as number,
+        trimInSeconds: value.trimInSeconds as number,
+        trimOutSeconds: value.trimOutSeconds as number,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      id,
+      kind: "media",
+      mediaKind: "image",
+      name,
+      src: value.src as string | undefined,
+      durationSeconds: value.durationSeconds as number,
+    },
+  };
+}
+
+/** Validate an untrusted nested graph specification without recursive calls. */
+export function parseGraphSpec(
+  value: unknown
+): Result<readonly GraphNodeSpec[], CollectionsValidationError> {
+  if (!Array.isArray(value)) {
+    return { ok: false, error: invalidType("$", "Expected an array of root nodes.") };
+  }
+
+  type PendingSpec = Readonly<{ value: unknown; path: string; root: boolean }>;
+  const pending: PendingSpec[] = [];
+  for (let index = value.length - 1; index >= 0; index--) {
+    pending.push({ value: value[index], path: `$[${index}]`, root: true });
+  }
+
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (!isRecord(current.value)) {
+      return {
+        ok: false,
+        error: invalidType(current.path, "Expected a node object."),
+      };
+    }
+    const identityError = validateNodeIdentity(current.value, current.path);
+    if (identityError) return { ok: false, error: identityError };
+    if (current.root && current.value.kind !== "collection") {
+      return {
+        ok: false,
+        error: invalidValue(`${current.path}.kind`, "Root nodes must be collections."),
+      };
+    }
+
+    if (current.value.kind === "collection") {
+      const children = current.value.children;
+      if (children === undefined) continue;
+      if (!Array.isArray(children)) {
+        return {
+          ok: false,
+          error: invalidType(`${current.path}.children`, "Expected an array."),
+        };
+      }
+      for (let index = children.length - 1; index >= 0; index--) {
+        pending.push({
+          value: children[index],
+          path: `${current.path}.children[${index}]`,
+          root: false,
+        });
+      }
+      continue;
+    }
+
+    const mediaError = validateMediaRecord(current.value, current.path, false);
+    if (mediaError) return { ok: false, error: mediaError };
+  }
+
+  return { ok: true, value: value as readonly GraphNodeSpec[] };
+}
+
+/** Validate both runtime field shapes and all normalized graph indexes. */
+export function validateGraph(value: unknown): Result<void, GraphValidationError> {
+  if (!isRecord(value)) {
+    return { ok: false, error: invalidType("$", "Expected a graph object.") };
+  }
+  if (!(value.nodesById instanceof Map)) {
+    return { ok: false, error: invalidType("$.nodesById", "Expected a Map.") };
+  }
+  if (!(value.childrenById instanceof Map)) {
+    return { ok: false, error: invalidType("$.childrenById", "Expected a Map.") };
+  }
+  if (!(value.parentById instanceof Map)) {
+    return { ok: false, error: invalidType("$.parentById", "Expected a Map.") };
+  }
+  if (!Array.isArray(value.rootIds)) {
+    return { ok: false, error: invalidType("$.rootIds", "Expected an array.") };
+  }
+
+  for (const [key, node] of value.nodesById as Map<unknown, unknown>) {
+    if (typeof key !== "string" || !key.trim()) {
+      return { ok: false, error: invalidValue("$.nodesById", "Expected valid node-id keys.") };
+    }
+    const parsed = parseCollectionItemNode(node);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        error: { ...parsed.error, path: `$.nodesById[${JSON.stringify(key)}]${parsed.error.path.slice(1)}` },
+      };
+    }
+    if (parsed.value.id !== key) {
+      return {
+        ok: false,
+        error: invalidValue(
+          `$.nodesById[${JSON.stringify(key)}].id`,
+          "Map key and node id must match."
+        ),
+      };
+    }
+  }
+
+  for (const [key, children] of value.childrenById as Map<unknown, unknown>) {
+    if (typeof key !== "string" || !key.trim()) {
+      return {
+        ok: false,
+        error: invalidValue("$.childrenById", "Expected valid collection-id keys."),
+      };
+    }
+    if (!Array.isArray(children)) {
+      return {
+        ok: false,
+        error: invalidType(`$.childrenById[${JSON.stringify(key)}]`, "Expected an array."),
+      };
+    }
+    const invalidChild = children.findIndex(
+      (child) => typeof child !== "string" || !child.trim()
+    );
+    if (invalidChild !== -1) {
+      return {
+        ok: false,
+        error: invalidValue(
+          `$.childrenById[${JSON.stringify(key)}][${invalidChild}]`,
+          "Expected a valid node id."
+        ),
+      };
+    }
+  }
+
+  for (const [key, parent] of value.parentById as Map<unknown, unknown>) {
+    if (typeof key !== "string" || !key.trim()) {
+      return { ok: false, error: invalidValue("$.parentById", "Expected valid node-id keys.") };
+    }
+    if (parent !== null && (typeof parent !== "string" || !parent.trim())) {
+      return {
+        ok: false,
+        error: invalidValue(
+          `$.parentById[${JSON.stringify(key)}]`,
+          "Expected a valid parent id or null."
+        ),
+      };
+    }
+  }
+
+  const invalidRoot = value.rootIds.findIndex(
+    (root) => typeof root !== "string" || !root.trim()
+  );
+  if (invalidRoot !== -1) {
+    return {
+      ok: false,
+      error: invalidValue(`$.rootIds[${invalidRoot}]`, "Expected a valid node id."),
+    };
+  }
+
+  const violation = findGraphInvariantViolation(value as CollectionsGraph);
+  return violation
+    ? { ok: false, error: { reason: "graph-invariant", path: "$", violation } }
+    : { ok: true, value: undefined };
+}
