@@ -113,6 +113,10 @@ export function createCollectionsStore(
   };
   const history = createHistory({ maxEntries: options?.maxHistoryEntries });
   const listeners = new Set<() => void>();
+  const onChange = options?.onChange;
+  const pendingChanges: CollectionsChange[] = [];
+  let notificationDepth = 0;
+  let emittingChanges = false;
   let rejectionTimer: ReturnType<typeof setTimeout> | null = null;
 
   // history.entries() allocates a fresh array per call, so it must NOT be
@@ -141,9 +145,33 @@ export function createCollectionsStore(
     };
   }
 
-  function notify() {
+  function flushPendingChanges() {
+    if (!onChange || emittingChanges) return;
+    emittingChanges = true;
+    try {
+      let change = pendingChanges.shift();
+      while (change) {
+        onChange(change);
+        change = pendingChanges.shift();
+      }
+    } finally {
+      emittingChanges = false;
+    }
+  }
+
+  function notify(change?: CollectionsChange) {
+    if (change && onChange) pendingChanges.push(change);
     snapshot = buildSnapshot();
-    listeners.forEach((listener) => listener());
+    notificationDepth += 1;
+    try {
+      listeners.forEach((listener) => listener());
+    } finally {
+      notificationDepth -= 1;
+      // A listener may dispatch synchronously. Defer the change feed until
+      // the outermost notification completes so nested commits are emitted
+      // in commit order, each with the graph captured for its own patch.
+      if (notificationDepth === 0) flushPendingChanges();
+    }
   }
 
   function setInteraction(next: Partial<CollectionsInteraction>) {
@@ -178,8 +206,7 @@ export function createCollectionsStore(
     history.push({ command, patch: result.value.patch, at: Date.now() });
     refreshHistoryEntries();
     pruneMissingSelection();
-    notify();
-    options?.onChange?.({ graph, command, patch: result.value.patch, origin: "command" });
+    notify({ graph, command, patch: result.value.patch, origin: "command" });
     return { ok: true, value: result.value.patch };
   }
 
@@ -189,8 +216,7 @@ export function createCollectionsStore(
     graph = applyPatch(graph, inverse);
     refreshHistoryEntries();
     pruneMissingSelection();
-    notify();
-    options?.onChange?.({ graph, patch: inverse, origin: "undo" });
+    notify({ graph, patch: inverse, origin: "undo" });
     return true;
   }
 
@@ -200,8 +226,7 @@ export function createCollectionsStore(
     graph = applyPatch(graph, patch);
     refreshHistoryEntries();
     pruneMissingSelection();
-    notify();
-    options?.onChange?.({ graph, patch, origin: "redo" });
+    notify({ graph, patch, origin: "redo" });
     return true;
   }
 

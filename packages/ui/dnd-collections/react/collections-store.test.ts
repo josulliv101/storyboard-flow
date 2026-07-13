@@ -49,6 +49,65 @@ describe("createCollectionsStore", () => {
     expect(changes[0].origin).toBe("command");
   });
 
+  test("reentrant listeners preserve onChange order and graph-patch pairing", () => {
+    const changes: CollectionsChange[] = [];
+    const store = createCollectionsStore(graphFixture(), {
+      onChange: (change) => changes.push(change),
+    });
+    let dispatchedNested = false;
+    store.subscribe(() => {
+      if (dispatchedNested) return;
+      dispatchedNested = true;
+      store.dispatch({
+        type: "move-nodes",
+        nodeIds: [id("y")],
+        toParentId: id("root-b"),
+        toIndex: 0,
+      });
+    });
+
+    expect(store.dispatch(moveX).ok).toBe(true);
+
+    expect(
+      changes.map((change) =>
+        change.command?.type === "move-nodes" ? change.command.nodeIds[0] : null
+      )
+    ).toEqual(["x", "y"]);
+    expect([...(changes[0].graph.childrenById.get(id("root-b")) ?? [])]).toEqual(["x"]);
+    expect([...(changes[1].graph.childrenById.get(id("root-b")) ?? [])]).toEqual([
+      "y",
+      "x",
+    ]);
+  });
+
+  test("onChange can dispatch reentrantly without reversing queued events", () => {
+    const changes: CollectionsChange[] = [];
+    let store: ReturnType<typeof createCollectionsStore> | null = null;
+    store = createCollectionsStore(graphFixture(), {
+      onChange: (change) => {
+        if (
+          change.command?.type === "move-nodes" &&
+          change.command.nodeIds[0] === id("x")
+        ) {
+          store?.dispatch({
+            type: "move-nodes",
+            nodeIds: [id("y")],
+            toParentId: id("root-b"),
+            toIndex: 0,
+          });
+        }
+        changes.push(change);
+      },
+    });
+
+    expect(store.dispatch(moveX).ok).toBe(true);
+    expect(
+      changes.map((change) =>
+        change.command?.type === "move-nodes" ? change.command.nodeIds[0] : null
+      )
+    ).toEqual(["x", "y"]);
+  });
+
   test("interaction-only updates preserve graph and historyEntries identity", () => {
     const store = createCollectionsStore(graphFixture());
     store.dispatch(moveX);
