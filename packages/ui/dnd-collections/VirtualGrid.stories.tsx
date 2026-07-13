@@ -60,6 +60,34 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+export const InvalidNumericOptionsUseSafeDefaults: Story = {
+  render: () => (
+    <DndCollections initialGraph={gridGraph()}>
+      <div className="w-[600px]">
+        <VirtualGrid
+          collectionId={parseNodeId("grid")}
+          cellWidth={Number.NaN}
+          cellHeight={Number.POSITIVE_INFINITY}
+          gap={-1}
+          columns={1.5}
+          overscan={-1}
+          height={Number.NaN}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+    const grid = canvasElement.querySelector<HTMLElement>('[data-virtual-grid="grid"]')!;
+    const columns = Number(grid.dataset.gridColumns);
+    expect(Number.isInteger(columns) && columns > 0).toBe(true);
+    expect(parseFloat(grid.style.height)).toBe(480);
+    const cell = nodeCard(canvasElement, "m0").closest<HTMLElement>('[role="gridcell"]')!;
+    expect(parseFloat(cell.style.width)).toBe(128);
+    expect(parseFloat(cell.style.height)).toBe(96);
+  },
+};
+
 /** Play-less twin for e2e. */
 export const GridPlayground: Story = {
   render: () => <GridHarness />,

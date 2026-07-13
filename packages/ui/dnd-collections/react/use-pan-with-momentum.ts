@@ -2,6 +2,13 @@
 
 import { useEffect, type RefObject } from "react";
 
+import {
+  finiteNonNegativeOr,
+  finitePositiveOr,
+  openUnitIntervalOr,
+} from "../core/numeric";
+import { PAN_START_SLOP_PX } from "./gesture-thresholds";
+
 // Pan-to-scroll with momentum for a scroll container: drag the surface to
 // scroll it directly; on release, velocity (sampled over a trailing window)
 // keeps the scroll gliding under exponential decay. Store-agnostic and
@@ -39,10 +46,10 @@ export function usePanWithMomentum(
 ): void {
   const shouldStartPan = options?.shouldStartPan;
   const isGestureClaimed = options?.isGestureClaimed;
-  const slop = options?.slop ?? 5;
-  const friction = options?.friction ?? 0.995;
-  const minVelocity = options?.minVelocity ?? 0.02;
-  const maxVelocity = options?.maxVelocity ?? 5;
+  const slop = finiteNonNegativeOr(options?.slop, PAN_START_SLOP_PX);
+  const friction = openUnitIntervalOr(options?.friction, 0.995);
+  const minVelocity = finiteNonNegativeOr(options?.minVelocity, 0.02);
+  const maxVelocity = Math.max(finitePositiveOr(options?.maxVelocity, 5), minVelocity);
   const disabled = options?.disabled ?? false;
 
   useEffect(() => {

@@ -13,7 +13,14 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, isVideoMedia, type CollectionItemNode, type NodeId } from "../core/graph";
+import {
+  finiteNonNegativeOr,
+  finitePositiveOr,
+  finitePositiveOrUndefined,
+  nonNegativeIntegerOr,
+} from "../core/numeric";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
+import { findNodeElement } from "../react/node-dom";
 import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
 import { TrimOverviewStrip } from "../react/trim-overview";
 import { TrimPreviewContext, type LiveTrim, type TrimPreview } from "../react/trim-preview-context";
@@ -114,24 +121,33 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
   function VirtualStrip(
     {
       collectionId,
-      itemWidth = 128,
+      itemWidth: itemWidthOption,
       itemWidthFor,
-      itemHeight = 96,
-      gap = 8,
-      overscan = 4,
+      itemHeight: itemHeightOption,
+      gap: gapOption,
+      overscan: overscanOption,
       panToScroll = true,
       itemDragActivation = "handle",
-      trimPixelsPerSecond,
+      trimPixelsPerSecond: trimPixelsPerSecondOption,
       className,
     },
     ref
   ) {
+    const itemWidth = finitePositiveOr(itemWidthOption, 128);
+    const itemHeight = finitePositiveOr(itemHeightOption, 96);
+    const gap = finiteNonNegativeOr(gapOption, 8);
+    const overscan = nonNegativeIntegerOr(overscanOption, 4);
+    const trimPixelsPerSecond = finitePositiveOrUndefined(trimPixelsPerSecondOption);
     const store = useCollectionsStore();
     const cardActivation: NodeCardDragActivation = panToScroll ? itemDragActivation : "body";
 
     // Stable array reference between commits — the virtualizer's item keys
     // and index math stay coherent across drags for free.
     const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
+    const indexById = useMemo(
+      () => new Map(childIds.map((id, index) => [id, index])),
+      [childIds]
+    );
     // nodesById is never re-allocated by moves, so this subscription is inert.
     const nodesById = useCollectionsSelector((s) => s.graph.nodesById);
     // The selected video (if any) drives the TrimOverview band above the row.
@@ -148,7 +164,9 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
 
     const widthForIndex = (index: number): number => {
       const node = nodesById.get(childIds[index]);
-      return (node && itemWidthFor?.(node)) ?? itemWidth;
+      // A zero derived width is meaningful for a fully trimmed clip (the
+      // card's own chrome still supplies its minimum visual hit area).
+      return finiteNonNegativeOr(node ? itemWidthFor?.(node) : undefined, itemWidth);
     };
 
     // Stable keys by node id (reorders move DOM nodes instead of repainting
@@ -212,8 +230,8 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // memoized cards still don't re-render. The callback must stay
     // reference-stable (trim handles read it via context) — it is, reading
     // mutable inputs from a ref and calling the stable setState.
-    const trimStateRef = useRef({ childIds, virtualizer, gap, trimPixelsPerSecond, widthForIndex });
-    trimStateRef.current = { childIds, virtualizer, gap, trimPixelsPerSecond, widthForIndex };
+    const trimStateRef = useRef({ indexById, virtualizer, gap, trimPixelsPerSecond, widthForIndex });
+    trimStateRef.current = { indexById, virtualizer, gap, trimPixelsPerSecond, widthForIndex };
     const [liveTrim, setLiveTrim] = useState<{ nodeId: NodeId; trim: LiveTrim } | null>(null);
     // Pre-drag slot size of the item being left-trimmed, captured once per
     // gesture. The anchor transform is measured against THIS, not the live
@@ -227,7 +245,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const dragShiftRef = useRef(0);
     const previewTrim = useCallback<TrimPreview["previewTrim"]>((nodeId, live) => {
       const s = trimStateRef.current;
-      const index = s.childIds.indexOf(nodeId);
+      const index = s.indexById.get(nodeId) ?? -1;
 
       if (live === null || index === -1) {
         // Abort/no-op: snap the item back to its committed size; clearing the
@@ -274,7 +292,14 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // measuring against it keeps intents live during (auto-)scroll too.
     const resolveBoundary = (point: VirtualViewPoint): number => {
       const content = contentRef.current;
-      if (!content || childIds.length === 0) return childIds.length;
+      if (
+        !content ||
+        childIds.length === 0 ||
+        !Number.isFinite(point.x) ||
+        !Number.isFinite(point.y)
+      ) {
+        return childIds.length;
+      }
       const contentX = point.x - content.getBoundingClientRect().left;
       if (contentX <= 0) return 0;
       if (contentX >= virtualizer.getTotalSize()) return childIds.length;
@@ -300,12 +325,12 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
 
     const scrollToNode = useCallback(
       (id: NodeId): boolean => {
-        const index = childIds.indexOf(id);
-        if (index === -1) return false;
+        const index = indexById.get(id);
+        if (index === undefined) return false;
         virtualizer.scrollToIndex(index);
         return true;
       },
-      [childIds, virtualizer]
+      [indexById, virtualizer]
     );
     const focusNode = useFocusNode(scrollRef, scrollToNode);
 
@@ -319,7 +344,8 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       [focusNode, childIds]
     );
     const { focusedIndex, onKeyDown, onItemFocus } = useVirtualRovingFocus({
-      count: childIds.length,
+      itemIds: childIds,
+      indexById,
       isDragging: () => store.getSnapshot().interaction.isDragging,
       focusByIndex,
       resolveNextIndex: resolveStripIndex,
@@ -337,7 +363,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // float above without being clipped (the scroll container's overflow-x
     // clips y too), it's rendered OUTSIDE that container and positioned to
     // track the clip. Only render it while the clip is actually mounted.
-    const selectedVideoIndex = selectedVideo ? childIds.indexOf(selectedVideo.id) : -1;
+    const selectedVideoIndex = selectedVideo ? (indexById.get(selectedVideo.id) ?? -1) : -1;
     const selectedVideoItem =
       selectedVideoIndex === -1
         ? undefined
@@ -374,7 +400,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       const sc = scrollRef.current;
       const info = overviewPosRef.current;
       if (!el || !wrap || !sc || !info) return;
-      const clip = sc.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(info.id)}"]`);
+      const clip = findNodeElement(sc, info.id);
       if (!clip) return;
       const x = clip.getBoundingClientRect().left - wrap.getBoundingClientRect().left - info.trimInPx;
       el.style.transform = `translateX(${x}px)`;
@@ -531,7 +557,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   aria-colindex={item.index + 1}
                   // Sync the roving index to whatever card actually gains focus
                   // (click, programmatic focus), not just keyboard navigation.
-                  onFocus={() => onItemFocus(item.index)}
+                  onFocus={() => onItemFocus(childIds[item.index])}
                   style={{
                     position: "absolute",
                     top: 0,

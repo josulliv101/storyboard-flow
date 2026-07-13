@@ -228,10 +228,15 @@ function DndCollectionsContext({
       const droppableContainers = args.droppableContainers.filter((container) => {
         // Virtualized containers carry their own resolver (see
         // react/virtual-droppable.ts) instead of an encoded target id.
-        if (container.data.current?.[VIRTUAL_INSERT_DATA_KEY]) return true;
+        const virtualInsert = container.data.current?.[VIRTUAL_INSERT_DATA_KEY];
+        if (isVirtualInsertTarget(virtualInsert)) {
+          return graph.nodesById.get(virtualInsert.collectionId)?.kind === "collection";
+        }
         const target = decodeDropTarget(String(container.id));
         if (!target) return false; // unknown droppables are never winners
         const targetNode = target.type === "node" ? target.nodeId : target.collectionId;
+        const node = graph.nodesById.get(targetNode);
+        if (!node || (target.type === "panel" && node.kind !== "collection")) return false;
         return !draggedIds.has(targetNode);
       });
 
@@ -295,10 +300,21 @@ function DndCollectionsContext({
       const winnerContainer = droppableContainers.find((c) => c.id === winner.id);
       const virtualInsert = winnerContainer?.data.current?.[VIRTUAL_INSERT_DATA_KEY];
       if (isVirtualInsertTarget(virtualInsert)) {
+        let index: number;
+        try {
+          index = virtualInsert.resolveBoundary(point);
+        } catch {
+          intentRef.current = null;
+          return collisions;
+        }
+        if (!Number.isInteger(index)) {
+          intentRef.current = null;
+          return collisions;
+        }
         intentRef.current = {
           type: "insert-at-index",
           collectionId: virtualInsert.collectionId,
-          index: virtualInsert.resolveBoundary(point),
+          index,
         };
         return collisions;
       }

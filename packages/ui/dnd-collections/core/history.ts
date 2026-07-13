@@ -3,8 +3,8 @@ import { type CollectionsPatch, invertPatch } from "./patches";
 
 // Undo/redo as a pair of patch stacks. Entries keep the originating command
 // alongside the patch so devtools/history views can show WHAT the user did,
-// not just which indexes shuffled. Patches are serializable, so this same
-// log doubles as a persistence journal.
+// not just which indexes shuffled. Entries are in-memory history records;
+// durable persistence wraps their patches in checked, versioned envelopes.
 
 export type HistoryEntry = Readonly<{
   command: CollectionsCommand;

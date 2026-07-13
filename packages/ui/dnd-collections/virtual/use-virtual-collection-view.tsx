@@ -12,6 +12,7 @@ import {
 import { useDroppable } from "@dnd-kit/core";
 
 import { type NodeId } from "../core/graph";
+import { focusNodeWhenMounted } from "../react/node-dom";
 import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "../react/virtual-droppable";
 
 // Shared plumbing for virtualized collection views (strip + grid): the
@@ -83,21 +84,22 @@ export function useFocusNode(
   scrollRef: RefObject<HTMLElement | null>,
   scrollToNode: (id: NodeId) => boolean
 ): (id: NodeId) => void {
+  const pendingFocusRef = useRef<(() => void) | null>(null);
+  useEffect(
+    () => () => {
+      pendingFocusRef.current?.();
+    },
+    []
+  );
+
   return useCallback(
     (id: NodeId) => {
+      pendingFocusRef.current?.();
+      pendingFocusRef.current = null;
       if (!scrollToNode(id)) return;
-      let attempts = 12;
-      const tryFocus = () => {
-        const card = scrollRef.current?.querySelector<HTMLElement>(
-          `[data-node-id="${CSS.escape(id)}"]`
-        );
-        if (card) {
-          card.focus();
-          return;
-        }
-        if (--attempts > 0) requestAnimationFrame(tryFocus);
-      };
-      requestAnimationFrame(tryFocus);
+      const root = scrollRef.current;
+      if (!root) return;
+      pendingFocusRef.current = focusNodeWhenMounted(root, id);
     },
     [scrollRef, scrollToNode]
   );
@@ -105,7 +107,7 @@ export function useFocusNode(
 
 /**
  * Roving-focus keyboard navigation for a virtualized view: the container is a
- * single tab stop, and bare arrow keys move a "focused index" through the
+ * single tab stop, and bare arrow keys move focus through the
  * WHOLE collection — scrolling offscreen items into view and focusing them —
  * so a keyboard user can reach item 500 of 1000 that was never in the DOM.
  *
@@ -115,13 +117,14 @@ export function useFocusNode(
  * Meta are held. Each view supplies `resolveNextIndex` for its own geometry
  * (1D for the strip, 2D for the grid).
  *
- * The focused index must track whatever card ACTUALLY has focus, not just the
+ * The focused node id must track whatever card ACTUALLY has focus, not just the
  * hook's own key handler — otherwise clicking or programmatically focusing a
- * card would leave the internal index stale, and the next arrow would navigate
- * from the wrong place. Views wire `onItemFocus(index)` to each card's focus.
+ * card would leave the internal id stale, and the next arrow would navigate
+ * from the wrong place. Views wire `onItemFocus(id)` to each card's focus.
  */
 export function useVirtualRovingFocus(args: {
-  count: number;
+  itemIds: readonly NodeId[];
+  indexById: ReadonlyMap<NodeId, number>;
   isDragging: () => boolean;
   /** Scroll the index into view and focus its card once the virtualizer mounts it. */
   focusByIndex: (index: number) => void;
@@ -130,46 +133,54 @@ export function useVirtualRovingFocus(args: {
 }): Readonly<{
   focusedIndex: number;
   onKeyDown: (event: ReactKeyboardEvent) => void;
-  /** Wire to each card's onFocus so click / programmatic focus updates the roving index. */
-  onItemFocus: (index: number) => void;
+  /** Wire to each card's onFocus so click / programmatic focus updates the roving item. */
+  onItemFocus: (id: NodeId) => void;
 }> {
-  const { count, isDragging, focusByIndex, resolveNextIndex } = args;
-  const [focusedIndex, setFocusedIndex] = useState(0);
-  const focusedRef = useRef(0);
+  const { itemIds, indexById, isDragging, focusByIndex, resolveNextIndex } = args;
+  const [focusedId, setFocusedId] = useState<NodeId | null>(() => itemIds[0] ?? null);
+  const focusedIdRef = useRef<NodeId | null>(itemIds[0] ?? null);
 
-  // Single writer for the index: keep the ref (read by the key handler) and the
-  // state (drives roving tabindex) in lockstep, always clamped in range.
-  const setFocused = useCallback(
-    (index: number) => {
-      const clamped = Math.max(0, Math.min(index, Math.max(0, count - 1)));
-      focusedRef.current = clamped;
-      setFocusedIndex(clamped);
-    },
-    [count]
-  );
+  // Single writer for the id: keep the ref (read by the key handler) and the
+  // state (drives roving tabindex) in lockstep.
+  const setFocused = useCallback((id: NodeId | null) => {
+    focusedIdRef.current = id;
+    setFocusedId(id);
+  }, []);
 
-  // A shrinking collection can leave the stored index past the end — clamp it
-  // so the next arrow navigates from a valid base, not a stale one.
+  // A removal can invalidate the stored id; fall back to a remaining item so
+  // the next arrow navigates from a valid base.
   useEffect(() => {
-    if (focusedRef.current > count - 1) setFocused(count - 1);
-  }, [count, setFocused]);
+    const current = focusedIdRef.current;
+    if (current !== null && indexById.has(current)) return;
+    setFocused(itemIds[0] ?? null);
+  }, [itemIds, indexById, setFocused]);
+
+  const storedIndex = focusedId === null ? -1 : (indexById.get(focusedId) ?? -1);
+  const focusedIndex = storedIndex === -1 ? 0 : storedIndex;
 
   const onKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
       // Alt = item move; Ctrl/Meta reserved; during a keyboard drag the sensor
       // owns the arrows.
       if (event.altKey || event.ctrlKey || event.metaKey || isDragging()) return;
-      const next = resolveNextIndex(event.key, focusedRef.current, count);
+      const count = itemIds.length;
+      if (count === 0) return;
+      const currentId = focusedIdRef.current;
+      const currentIndex = currentId === null ? -1 : (indexById.get(currentId) ?? -1);
+      const next = resolveNextIndex(event.key, currentIndex === -1 ? 0 : currentIndex, count);
       if (next === null) return;
       event.preventDefault();
-      setFocused(next);
-      focusByIndex(Math.max(0, Math.min(next, count - 1)));
+      const clamped = Math.max(0, Math.min(next, count - 1));
+      const nextId = itemIds[clamped];
+      if (!nextId) return;
+      setFocused(nextId);
+      focusByIndex(clamped);
     },
-    [count, isDragging, focusByIndex, resolveNextIndex, setFocused]
+    [itemIds, indexById, isDragging, focusByIndex, resolveNextIndex, setFocused]
   );
 
   return {
-    focusedIndex: Math.min(focusedIndex, Math.max(0, count - 1)),
+    focusedIndex,
     onKeyDown,
     onItemFocus: setFocused,
   };

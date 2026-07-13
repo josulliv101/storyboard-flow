@@ -1,11 +1,13 @@
 import {
   type CollectionItemNode,
+  type CollectionsValidationError,
   type CollectionsGraph,
   type NodeId,
   type Result,
   getChildren,
   getDocumentOrder,
   isSameOrAncestor,
+  parseCollectionItemNode,
 } from "./graph";
 import { type CollectionsPatch, type NodeAdd, type NodeMove, applyPatch } from "./patches";
 
@@ -60,6 +62,12 @@ export type CommandRejection =
   | Readonly<{ reason: "duplicate-node-id"; nodeId: NodeId }>
   /** An added node's id is empty or whitespace-only — ids are the addressing scheme. */
   | Readonly<{ reason: "invalid-node-id"; nodeId: NodeId }>
+  /** An added node failed runtime shape/value validation. */
+  | Readonly<{
+      reason: "invalid-node";
+      index: number;
+      validationError: CollectionsValidationError;
+    }>
   /** `update-media` targeted a collection (not a media node). */
   | Readonly<{ reason: "not-media-node"; nodeId: NodeId }>
   /** `update-media`'s payload doesn't match the node's mediaKind, or carries non-finite values. */
@@ -108,23 +116,38 @@ export function applyCommand(
   if (command.type === "add-nodes") {
     if (command.nodes.length === 0) return { ok: false, error: { reason: "nothing-to-add" } };
     const batchIds = new Set<NodeId>();
-    for (const node of command.nodes) {
-      // An empty/whitespace id can't be addressed or encoded as a droppable
-      // ("node:" decodes to null), so the card could never be a drop target.
-      // buildGraph rejects these; the reducer must too — added nodes are
-      // consumer-supplied (palette factories).
-      if (!node.id || !node.id.trim()) {
-        return { ok: false, error: { reason: "invalid-node-id", nodeId: node.id } };
+    const validatedNodes: CollectionItemNode[] = [];
+    for (let index = 0; index < command.nodes.length; index++) {
+      const candidate = command.nodes[index];
+      const parsed = parseCollectionItemNode(candidate);
+      if (!parsed.ok) {
+        // Keep the established, more specific rejection for empty string ids.
+        // All other malformed runtime values include their batch index and
+        // validator path so consumers can identify the faulty palette item.
+        const candidateId = getRuntimeNodeId(candidate);
+        if (
+          candidateId !== null &&
+          parsed.error.reason === "invalid-value" &&
+          parsed.error.path === "$.id"
+        ) {
+          return { ok: false, error: { reason: "invalid-node-id", nodeId: candidateId } };
+        }
+        return {
+          ok: false,
+          error: { reason: "invalid-node", index, validationError: parsed.error },
+        };
       }
+      const node = parsed.value;
       // A colliding id — with the graph or within the batch — would corrupt
       // every index; ids are the addressing scheme.
       if (graph.nodesById.has(node.id) || batchIds.has(node.id)) {
         return { ok: false, error: { reason: "duplicate-node-id", nodeId: node.id } };
       }
       batchIds.add(node.id);
+      validatedNodes.push(node);
     }
     const insertAt = Math.max(0, Math.min(toIndex, getChildren(graph, toParentId).length));
-    const adds: NodeAdd[] = command.nodes.map((node, k) => ({
+    const adds: NodeAdd[] = validatedNodes.map((node, k) => ({
       node,
       parentId: toParentId,
       index: insertAt + k,
@@ -204,6 +227,18 @@ export function applyCommand(
   );
   const insertAt = Math.max(0, Math.min(toIndex, baseLength));
 
+  // Index each affected source collection once. Calling `indexOf` per moved
+  // node turns a large same-parent selection into O(m Ã— n); this stays
+  // O(total children in affected parents + m).
+  const sourceIndexById = new Map<NodeId, number>();
+  const indexedParents = new Set(parentByMovingId.values());
+  for (const parentId of indexedParents) {
+    const children = getChildren(graph, parentId);
+    for (let index = 0; index < children.length; index++) {
+      sourceIndexById.set(children[index], index);
+    }
+  }
+
   const moves: NodeMove[] = moving.map((id, k) => {
     // Non-null by construction: `moving` ⊆ `command.nodeIds`, and every one
     // of those was validated (and its parent captured) in the loop above —
@@ -212,7 +247,7 @@ export function applyCommand(
     return {
       nodeId: id,
       fromParentId,
-      fromIndex: getChildren(graph, fromParentId).indexOf(id),
+      fromIndex: sourceIndexById.get(id)!,
       toParentId,
       toIndex: insertAt + k,
     };
@@ -229,6 +264,11 @@ export function applyCommand(
   }
 
   return { ok: true, value: { graph: nextGraph, patch: { type: "nodes-moved", moves } } };
+}
+
+function getRuntimeNodeId(value: unknown): NodeId | null {
+  if (typeof value !== "object" || value === null || !("id" in value)) return null;
+  return typeof value.id === "string" ? (value.id as NodeId) : null;
 }
 
 function graphChildrenEqual(a: CollectionsGraph, b: CollectionsGraph): boolean {

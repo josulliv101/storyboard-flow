@@ -242,12 +242,15 @@ Two properties fall out of this shape and everything else depends on them:
   use dnd-kit's `useSortable`: its multi-container pattern mutates list
   state inside `onDragOver`, which would put preview churn into the source
   of truth and make "cancel" a restore operation instead of a no-op.
-- **Patches are the persistence and history currency.** A `NodeMove` records
+- **Patches are the history and change-feed currency.** A `NodeMove` records
   pre-state `fromIndex` and post-state `toIndex`; inversion just swaps
-  endpoints. `applyPatch` is the single index-rewriting implementation —
+  endpoints. The internal `applyPatch` is the single index-rewriting implementation —
   forward apply, undo, and redo all run through it, so they cannot drift
   apart. The `onChange` feed emits `{ graph, patch, origin }` per commit,
-  which is what makes persistent partial updates possible downstream.
+  which supports persistent partial updates downstream. Durable/external
+  replay wraps a patch in a schema-versioned revision envelope and goes
+  through `replayPatchEnvelope`, which validates payload, adjacency, and the
+  resulting graph before advancing the caller's revision.
 
 Roots are structural anchors: `rootIds` is not part of the patch model, and
 `applyCommand` rejects any attempt to move a root (`cannot-move-root`)
@@ -347,9 +350,10 @@ Everything semantic happens in `core/`.
   channel with human node names.
 
 Boundary cases (already first, no adjacent collection, …) come back as
-typed rejections and are announced via the aria-live region — which nudges
-repeat messages with a zero-width space so identical announcements still
-fire.
+typed rejections and are announced via the aria-live region. It repeats the
+same message by clearing the region and reinserting the exact text in a later
+task. Assistive technology observes a real DOM change without an invisible
+character becoming part of the spoken content.
 
 Inside the virtualized views there is a THIRD arrow-key role, and the three
 stay disjoint by design: **bare arrows NAVIGATE** (roving focus, in
@@ -371,20 +375,22 @@ and the reason is the efficiency story above: displaced sibling cards
 intentionally don't re-render, so a per-card effect would never fire for
 exactly the cards that shifted. Instead, one component (`FlipAnimator`,
 mounted by the **provider**) measures the DOM directly and plays
-inverted-transform WAAPI animations (`composite: "replace"` so a rapid
-undo/redo supersedes an in-flight animation instead of compounding). The
-id-keyed rects span the whole container, which is what makes cross-panel
-moves animate — a card's FIRST rect is taken from its old panel.
+inverted-transform WAAPI animations. Each graph commit explicitly cancels the
+instance's in-flight FLIP animations before starting replacements. Rects
+match by DOM-element identity first; when React recreates a card during a
+cross-parent move, node identity is used only if one unmatched instance
+exists on each side. This preserves cross-panel animation without conflating
+two views that render the same node.
 `prefers-reduced-motion` disables it; so does `animateMoves={false}` on
 `<DndCollections>`.
 
 Ownership sits at the **provider**, not on any one view (`animateMoves` is a
 `<DndCollections>` prop). That is what makes it a true system layer: one sweep
-per commit animates panels, virtualized views (strip reorders keep stable DOM
-by node-id key, so they animate; grid cross-row moves recreate the element and
-so don't — an accepted gap), and custom views alike, and two views in one
-instance never each run their own sweep. Any `[data-node-id]` under the
-provider container is measured.
+per commit animates panels, virtualized views, and custom views alike, and two
+views in one instance never each run their own sweep. Grid cross-row moves do
+recreate the element, but the unambiguous node fallback still animates the new
+card from the old rect. Any `[data-node-id]` under the provider container is
+measured.
 
 **FIRST and LAST are measured in the same scroll frame.** FIRST is captured
 synchronously the instant the graph changes — inside a `store.subscribe`
@@ -400,8 +406,8 @@ subscription is gated on graph identity, so the flood of interaction-only
 notifies during a drag never triggers a measurement.
 
 The sweep is scoped to the provider's wrapper element, exposed through
-`container-context.ts` — both the DOM query and the id-keyed rect registry
-stay inside one `DndCollections` instance, so multiple boards on a page
+`container-context.ts` — both the DOM query and the rect registry stay inside
+one `DndCollections` instance, so multiple boards on a page
 (even ones reusing node ids) never measure or animate each other's cards
 (`TwoInstancesStayIsolated` story).
 

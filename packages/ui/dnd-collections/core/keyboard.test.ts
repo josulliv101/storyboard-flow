@@ -257,6 +257,15 @@ describe("resolveTrimCommand", () => {
     });
   });
 
+  test("rejects non-positive and non-finite trim steps", () => {
+    for (const stepSeconds of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(resolveTrimCommand(trimGraph, id("img"), "trim-end-extend", stepSeconds)).toEqual({
+        ok: false,
+        error: { reason: "invalid-step", stepSeconds },
+      });
+    }
+  });
+
   test("the resolver steps the RAW value; the reducer owns the clamp", () => {
     // vid trim-out is 1s -> extend by 2s overshoots to -1s (raw), which the
     // reducer clamps to 0 (a full-length, untrimmed end).

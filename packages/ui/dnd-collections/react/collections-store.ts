@@ -1,7 +1,13 @@
 "use client";
 
 import { createContext, useContext, useSyncExternalStore } from "react";
-import { type CollectionsGraph, type NodeId, type Result } from "../core/graph";
+import {
+  type CollectionsGraph,
+  type GraphValidationError,
+  type NodeId,
+  type Result,
+  validateGraph,
+} from "../core/graph";
 import {
   applyCommand,
   type CollectionsCommand,
@@ -53,6 +59,21 @@ export type CollectionsChange = Readonly<{
   origin: "command" | "undo" | "redo";
 }>;
 
+/** Thrown when store construction receives a malformed normalized graph. */
+export class InvalidInitialGraphError extends Error {
+  readonly validationError: GraphValidationError;
+
+  constructor(validationError: GraphValidationError) {
+    const detail =
+      validationError.reason === "graph-invariant"
+        ? `Graph invariant violation: ${JSON.stringify(validationError.violation)}`
+        : validationError.message;
+    super(`Invalid initial collections graph at ${validationError.path}: ${detail}`);
+    this.name = "InvalidInitialGraphError";
+    this.validationError = validationError;
+  }
+}
+
 export type CollectionsStore = Readonly<{
   getSnapshot: () => CollectionsSnapshot;
   subscribe: (listener: () => void) => () => void;
@@ -69,9 +90,11 @@ export type CollectionsStore = Readonly<{
    * the caller pushed this state in, so echoing it back invites feedback
    * loops — this is a reset, not a recorded mutation.
    */
-  replaceGraph: (graph: CollectionsGraph) => void;
+  replaceGraph: (graph: CollectionsGraph) => Result<void, GraphValidationError>;
 
+  /** Replace selection with the supplied ids that exist in the current graph. */
   setSelection: (ids: readonly NodeId[]) => void;
+  /** Toggle an existing graph node; missing ids are ignored. */
   toggleSelected: (id: NodeId) => void;
   clearSelection: () => void;
 
@@ -99,6 +122,10 @@ export function createCollectionsStore(
     maxHistoryEntries?: number;
   }>
 ): CollectionsStore {
+  const initialValidation = validateGraph(initialGraph);
+  if (!initialValidation.ok) {
+    throw new InvalidInitialGraphError(initialValidation.error);
+  }
   let graph = initialGraph;
   let interaction: CollectionsInteraction = {
     isDragging: false,
@@ -111,6 +138,10 @@ export function createCollectionsStore(
   };
   const history = createHistory({ maxEntries: options?.maxHistoryEntries });
   const listeners = new Set<() => void>();
+  const onChange = options?.onChange;
+  const pendingChanges: CollectionsChange[] = [];
+  let notificationDepth = 0;
+  let emittingChanges = false;
   let rejectionTimer: ReturnType<typeof setTimeout> | null = null;
 
   // history.entries() allocates a fresh array per call, so it must NOT be
@@ -139,9 +170,33 @@ export function createCollectionsStore(
     };
   }
 
-  function notify() {
+  function flushPendingChanges() {
+    if (!onChange || emittingChanges) return;
+    emittingChanges = true;
+    try {
+      let change = pendingChanges.shift();
+      while (change) {
+        onChange(change);
+        change = pendingChanges.shift();
+      }
+    } finally {
+      emittingChanges = false;
+    }
+  }
+
+  function notify(change?: CollectionsChange) {
+    if (change && onChange) pendingChanges.push(change);
     snapshot = buildSnapshot();
-    listeners.forEach((listener) => listener());
+    notificationDepth += 1;
+    try {
+      listeners.forEach((listener) => listener());
+    } finally {
+      notificationDepth -= 1;
+      // A listener may dispatch synchronously. Defer the change feed until
+      // the outermost notification completes so nested commits are emitted
+      // in commit order, each with the graph captured for its own patch.
+      if (notificationDepth === 0) flushPendingChanges();
+    }
   }
 
   function setInteraction(next: Partial<CollectionsInteraction>) {
@@ -176,8 +231,7 @@ export function createCollectionsStore(
     history.push({ command, patch: result.value.patch, at: Date.now() });
     refreshHistoryEntries();
     pruneMissingSelection();
-    notify();
-    options?.onChange?.({ graph, command, patch: result.value.patch, origin: "command" });
+    notify({ graph, command, patch: result.value.patch, origin: "command" });
     return { ok: true, value: result.value.patch };
   }
 
@@ -187,8 +241,7 @@ export function createCollectionsStore(
     graph = applyPatch(graph, inverse);
     refreshHistoryEntries();
     pruneMissingSelection();
-    notify();
-    options?.onChange?.({ graph, patch: inverse, origin: "undo" });
+    notify({ graph, patch: inverse, origin: "undo" });
     return true;
   }
 
@@ -198,12 +251,16 @@ export function createCollectionsStore(
     graph = applyPatch(graph, patch);
     refreshHistoryEntries();
     pruneMissingSelection();
-    notify();
-    options?.onChange?.({ graph, patch, origin: "redo" });
+    notify({ graph, patch, origin: "redo" });
     return true;
   }
 
-  function replaceGraph(nextGraph: CollectionsGraph): void {
+  function replaceGraph(
+    nextGraph: CollectionsGraph
+  ): Result<void, GraphValidationError> {
+    const validation = validateGraph(nextGraph);
+    if (!validation.ok) return validation;
+
     graph = nextGraph;
     // Old patches were built against the old graph — they can't be replayed
     // on this one, so undo/redo starts fresh.
@@ -231,6 +288,7 @@ export function createCollectionsStore(
     // Deliberately no onChange: the caller supplied this graph, so echoing it
     // back would invite feedback loops. replaceGraph is a reset, not a
     // recorded mutation, and carries no patch.
+    return { ok: true, value: undefined };
   }
 
   return {
@@ -248,7 +306,10 @@ export function createCollectionsStore(
     replaceGraph,
 
     setSelection: (ids) => {
-      const next = new Set(ids);
+      const next = new Set<NodeId>();
+      for (const id of ids) {
+        if (graph.nodesById.has(id)) next.add(id);
+      }
       // Re-selecting the exact same set (e.g. clicking an already-selected
       // node) must not notify — a no-op state "change" would force every
       // subscriber to re-run its selector for nothing.
@@ -256,6 +317,7 @@ export function createCollectionsStore(
       setInteraction({ selectedIds: next });
     },
     toggleSelected: (id) => {
+      if (!graph.nodesById.has(id)) return;
       const next = new Set(interaction.selectedIds);
       if (next.has(id)) next.delete(id);
       else next.add(id);

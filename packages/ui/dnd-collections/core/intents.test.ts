@@ -101,6 +101,24 @@ describe("resolveDropIntent", () => {
     expect(intent).toEqual({ type: "append-to-collection", collectionId: "root-b" });
   });
 
+  test("malformed pointer geometry resolves no intent", () => {
+    const base = {
+      graph,
+      target: { type: "node", nodeId: parseNodeId("B") } as const,
+      targetRect: rect,
+      point: { x: 120, y: 50 },
+      activeIds: ids(["A"]),
+    };
+    expect(resolveDropIntent({ ...base, point: { x: Number.NaN, y: 50 } })).toBeNull();
+    expect(
+      resolveDropIntent({
+        ...base,
+        targetRect: { ...rect, width: Number.POSITIVE_INFINITY },
+      })
+    ).toBeNull();
+    expect(resolveDropIntent({ ...base, targetRect: { ...rect, height: -1 } })).toBeNull();
+  });
+
   test("dragged node itself is never a target (self-drop guard)", () => {
     const intent = resolveDropIntent({
       graph,
@@ -281,6 +299,18 @@ describe("resolveCommandFromIntent (post-removal index math)", () => {
       ok: true,
       value: { type: "move-nodes", nodeIds: ["A"], toParentId: "root-a", toIndex: 3 },
     });
+  });
+
+  test("insert-at-index: rejects fractional and non-finite boundaries", () => {
+    for (const index of [1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        resolveCommandFromIntent(
+          graph,
+          { type: "insert-at-index", collectionId: parseNodeId("root-a"), index },
+          ids(["A"])
+        )
+      ).toEqual({ ok: false, error: { reason: "invalid-index", index } });
+    }
   });
 
   test("insert-at-index: destination and cycle preview match the reducer", () => {

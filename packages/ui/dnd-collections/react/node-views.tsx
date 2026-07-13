@@ -11,6 +11,7 @@ import {
   type NodeId,
 } from "../core/graph";
 import { encodeDropTarget } from "../core/intents";
+import { finitePositiveOrUndefined } from "../core/numeric";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
 import { NodeThumbnail } from "./node-thumbnail";
@@ -95,6 +96,11 @@ export function CollectionPanel({ collectionId }: { collectionId: NodeId }) {
 
 export type NodeCardDragActivation = "body" | "handle" | "hold";
 
+function joinAriaIds(...ids: readonly (string | undefined)[]): string | undefined {
+  const joined = ids.filter((id): id is string => !!id).join(" ");
+  return joined || undefined;
+}
+
 export const NodeCard = memo(function NodeCard({
   id,
   className,
@@ -139,6 +145,7 @@ export const NodeCard = memo(function NodeCard({
   trimPixelsPerSecond?: number;
 }) {
   const dragHandle = dragActivation === "handle";
+  const trimScale = finitePositiveOrUndefined(trimPixelsPerSecond);
   const store = useCollectionsStore();
   const { instructionsId } = useCollectionsContainer();
 
@@ -234,9 +241,7 @@ export const NodeCard = memo(function NodeCard({
         // which left keyboard users unable to select at all.) In handle mode
         // the grip is a second stop that carries the dnd-kit grab-drag.
         aria-describedby={
-          dragHandle
-            ? instructionsId
-            : `${attributes["aria-describedby"]} ${instructionsId}`
+          joinAriaIds(dragHandle ? undefined : attributes["aria-describedby"], instructionsId)
         }
         // Roving tabindex (virtual views) overrides dnd-kit's tabIndex from
         // the attribute spread above — must come after it.
@@ -266,24 +271,25 @@ export const NodeCard = memo(function NodeCard({
           dnd-kit's aria attributes live here (keyboard grab included; the
           Alt-key layer resolves the id via the data-node-wrapper host). */}
       {dragHandle && (
-        <div
+        <button
+          type="button"
           data-drag-handle={id}
           className="absolute inset-x-0 top-0 z-10 flex h-[18px] cursor-grab items-center justify-center rounded-t-md border-b border-border bg-muted/70 text-[10px] leading-none text-muted-foreground select-none active:cursor-grabbing"
           style={{ touchAction: "none" }}
           {...attributes}
           {...listeners}
           aria-label={`Drag ${node.name}`}
-          aria-describedby={`${attributes["aria-describedby"]} ${instructionsId}`}
+          aria-describedby={joinAriaIds(attributes["aria-describedby"], instructionsId)}
           // In a roving (virtual) view the card button is the sole tab stop;
           // keep the grip a pointer-only drag surface.
           {...(rovingTabIndex !== undefined ? { tabIndex: -1 } : {})}
         >
           ⠿
-        </div>
+        </button>
       )}
 
-      {trimPixelsPerSecond !== undefined && node.kind === "media" && (
-        <TrimHandles node={node} pixelsPerSecond={trimPixelsPerSecond} />
+      {trimScale !== undefined && node.kind === "media" && (
+        <TrimHandles node={node} pixelsPerSecond={trimScale} />
       )}
 
       <NodeCardIndicators nestState={nestState} dropSide={dropSide} />

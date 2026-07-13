@@ -6,6 +6,8 @@ import {
   type PointerSensorProps,
 } from "@dnd-kit/core";
 
+import { HOLD_DRAG_TOLERANCE_PX } from "./gesture-thresholds";
+
 // Per-target activation constraints in ONE sensor. dnd-kit configures the
 // constraint per sensor and — critically — collapses synthetic listeners
 // into an object keyed by eventName (useSyntheticListeners), so a second
@@ -24,7 +26,10 @@ import {
 const HOLD_MARKER = '[data-drag-activation="hold"]';
 
 const DISTANCE_ACTIVATION: PointerActivationConstraint = { distance: 4 };
-const HOLD_ACTIVATION: PointerActivationConstraint = { delay: 250, tolerance: 8 };
+const HOLD_ACTIVATION: PointerActivationConstraint = {
+  delay: 250,
+  tolerance: HOLD_DRAG_TOLERANCE_PX,
+};
 
 export class CollectionsPointerSensor extends PointerSensor {
   constructor(props: PointerSensorProps) {

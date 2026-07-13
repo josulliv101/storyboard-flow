@@ -57,6 +57,21 @@ export type PanelChildRect = Readonly<{ id: NodeId; rect: RectLike }>;
 export const NEST_HOTSPOT_MIN = 0.25;
 export const NEST_HOTSPOT_MAX = 0.75;
 
+function isFinitePoint(point: Readonly<{ x: number; y: number }>): boolean {
+  return Number.isFinite(point.x) && Number.isFinite(point.y);
+}
+
+function isFiniteRect(rect: RectLike): boolean {
+  return (
+    Number.isFinite(rect.left) &&
+    Number.isFinite(rect.top) &&
+    Number.isFinite(rect.width) &&
+    Number.isFinite(rect.height) &&
+    rect.width >= 0 &&
+    rect.height >= 0
+  );
+}
+
 /**
  * Pure geometry -> intent. Returns null only when there's nothing
  * meaningful to do: hovering a dragged node's own card. Descendants of a
@@ -80,6 +95,7 @@ export function resolveDropIntent(args: {
   panelChildRects?: readonly PanelChildRect[];
 }): DropIntent | null {
   const { graph, target, targetRect, point, activeIds } = args;
+  if (!isFinitePoint(point) || !isFiniteRect(targetRect)) return null;
 
   if (target.type === "panel") {
     const between = resolveGapIntent(point, args.panelChildRects ?? [], activeIds);
@@ -133,6 +149,7 @@ function resolveGapIntent(
     // are not anchors — the nearest REAL neighbor should win the gap.
     if (dragged.has(child.id)) continue;
     const { rect } = child;
+    if (!isFiniteRect(rect)) continue;
     if (point.y < rect.top || point.y > rect.top + rect.height) continue; // not this row
     const distance =
       point.x < rect.left
@@ -186,7 +203,9 @@ export function isIntentInvalid(
   return activeIds.some((id) => isSameOrAncestor(graph, id, destination));
 }
 
-export type IntentRejection = Readonly<{ reason: "missing-node"; nodeId: NodeId }>;
+export type IntentRejection =
+  | Readonly<{ reason: "missing-node"; nodeId: NodeId }>
+  | Readonly<{ reason: "invalid-index"; index: number }>;
 
 /**
  * Intent -> command, translating on-screen positions into the reducer's
@@ -220,6 +239,9 @@ export function resolveCommandFromIntent(
   }
 
   if (intent.type === "insert-at-index") {
+    if (!Number.isInteger(intent.index)) {
+      return { ok: false, error: { reason: "invalid-index", index: intent.index } };
+    }
     // Visible boundary -> post-removal index: clamp against the full
     // children list, then subtract dragged nodes sitting before the
     // boundary in this same collection (same convention as the

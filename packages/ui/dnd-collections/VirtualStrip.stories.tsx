@@ -62,6 +62,26 @@ function StripHarness({
   );
 }
 
+function LatestFocusRequestHarness() {
+  const handle = useRef<VirtualStripHandle>(null);
+  return (
+    <DndCollections initialGraph={bigGraph()}>
+      <div className="flex w-[640px] flex-col gap-3">
+        <button
+          type="button"
+          onClick={() => {
+            handle.current?.focusNode(parseNodeId("m900"));
+            handle.current?.focusNode(parseNodeId("m100"));
+          }}
+        >
+          focus latest target
+        </button>
+        <VirtualStrip ref={handle} collectionId={parseNodeId("strip")} />
+      </div>
+    </DndCollections>
+  );
+}
+
 const meta = {
   title: "UI/DndCollectionsVirtual",
   decorators: [
@@ -75,6 +95,31 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+export const InvalidNumericOptionsUseSafeDefaults: Story = {
+  render: () => (
+    <DndCollections initialGraph={bigGraph()}>
+      <div className="w-[640px]">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidth={Number.NaN}
+          itemWidthFor={() => Number.POSITIVE_INFINITY}
+          itemHeight={-1}
+          gap={Number.NaN}
+          overscan={-1}
+          trimPixelsPerSecond={Number.NaN}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+    const slot = canvasElement.querySelector<HTMLElement>('[data-virtual-index="0"]')!;
+    expect(parseFloat(slot.style.width)).toBe(128);
+    expect(parseFloat(slot.style.height)).toBe(96);
+    expect(slot.querySelector("[data-trim-handle]")).toBeNull();
+  },
+};
 
 /** Play-less twin for e2e (real-mouse scroll/drag must not race a play()). */
 export const VirtualPlayground: Story = {
@@ -549,6 +594,12 @@ export const PanToScrollWithMomentum: Story = {
     const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
     const m3 = nodeCard(canvasElement, "m3");
     await waitForLayout(m3);
+    const grip = m3
+      .closest("[data-node-wrapper]")!
+      .querySelector<HTMLElement>('[data-drag-handle="m3"]')!;
+    expect(grip.tagName).toBe("BUTTON");
+    expect(grip.getAttribute("aria-describedby")).not.toMatch(/undefined|null/);
+    expect(m3.getAttribute("aria-describedby")).not.toMatch(/undefined|null/);
     const body = rectCenter(m3);
 
     // Fast leftward drag from a card BODY: 120px over ~3 frames.
@@ -572,6 +623,43 @@ export const PanToScrollWithMomentum: Story = {
     await waitFor(() => {
       expect(strip.scrollLeft).toBeGreaterThan(atRelease + 30);
     });
+  },
+};
+
+export const ActivationPointerSeedsEdgeAutoScroll: Story = {
+  render: () => <StripHarness />,
+  play: async ({ canvasElement }) => {
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+    const handle = nodeHandle(canvasElement, "m3");
+    await waitForLayout(handle);
+    const start = rectCenter(handle);
+    const stripRect = strip.getBoundingClientRect();
+
+    // The one move both activates dnd-kit and parks the pointer in the edge
+    // band. No further pointermove is sent: auto-scroll must use the position
+    // observed before the store published `isDragging`.
+    await dispatchPointerSequence([
+      { element: handle, type: "pointerdown", clientX: start.x, clientY: start.y },
+      {
+        element: document,
+        type: "pointermove",
+        clientX: stripRect.right - 2,
+        clientY: start.y,
+        delayAfterMs: 30,
+      },
+    ]);
+    await waitFor(() => {
+      expect(canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')).not.toBeNull();
+      expect(strip.scrollLeft).toBeGreaterThan(5);
+    });
+    await dispatchPointerSequence([
+      {
+        element: document,
+        type: "pointercancel",
+        clientX: stripRect.right - 2,
+        clientY: start.y,
+      },
+    ]);
   },
 };
 
@@ -690,6 +778,23 @@ export const OffscreenFocusScrollsIntoView: Story = {
       expect(card).not.toBeNull();
       expect(card!.ownerDocument.activeElement).toBe(card);
     });
+  },
+};
+
+export const LatestOffscreenFocusRequestWins: Story = {
+  render: () => <LatestFocusRequestHarness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+
+    const user = userEvent.setup();
+    await user.click(canvas.getByRole("button", { name: /focus latest target/i }));
+    await waitFor(() => {
+      const card = canvasElement.querySelector<HTMLElement>('[data-node-id="m100"]');
+      expect(card).not.toBeNull();
+      expect(card!.ownerDocument.activeElement).toBe(card);
+    });
+    expect(canvasElement.querySelector('[data-node-id="m900"]')).toBeNull();
   },
 };
 

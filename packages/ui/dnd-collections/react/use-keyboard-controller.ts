@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 
 import { mediaDurationSeconds, type NodeId } from "../core/graph";
 import {
@@ -14,6 +20,7 @@ import {
   type KeyboardTrimRejection,
 } from "../core/keyboard";
 import { type CollectionsStore } from "./collections-store";
+import { focusNodeWhenMounted } from "./node-dom";
 
 // Semantic keyboard moves (Alt+key on a focused card), by event delegation
 // on the provider wrapper so no per-card wiring is needed. Alt combos
@@ -81,6 +88,7 @@ const TRIM_REJECTION_MESSAGES: Readonly<
   "no-start-edge": "Images can only be trimmed at the end.",
   "not-media-node": undefined,
   "missing-node": undefined,
+  "invalid-step": undefined,
 };
 
 export function useCollectionsKeyboard(args: {
@@ -93,6 +101,14 @@ export function useCollectionsKeyboard(args: {
   restoreFocus: (nodeId: NodeId, fallbackId?: NodeId) => void;
 }> {
   const { store, announce, containerRef } = args;
+  const pendingFocusRef = useRef<(() => void) | null>(null);
+
+  useEffect(
+    () => () => {
+      pendingFocusRef.current?.();
+    },
+    []
+  );
 
   // A cross-parent move unmounts the card and remounts it under a new React
   // parent; a cross-row grid move recreates its DOM element. Either can lag a
@@ -102,26 +118,15 @@ export function useCollectionsKeyboard(args: {
   // back to the destination's own card so focus lands somewhere sensible.
   const restoreFocus = useCallback(
     (nodeId: NodeId, fallbackId?: NodeId) => {
-      let attempts = 12;
-      const tryFocus = () => {
-        const root = containerRef.current;
-        if (!root) return;
-        const card = root.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(nodeId)}"]`);
-        if (card) {
-          card.focus();
-          return;
-        }
-        if (--attempts > 0) {
-          requestAnimationFrame(tryFocus);
-          return;
-        }
-        if (fallbackId) {
-          root
-            .querySelector<HTMLElement>(`[data-node-id="${CSS.escape(fallbackId)}"]`)
-            ?.focus();
-        }
-      };
-      requestAnimationFrame(tryFocus);
+      pendingFocusRef.current?.();
+      pendingFocusRef.current = null;
+      const root = containerRef.current;
+      if (!root) return;
+      pendingFocusRef.current = focusNodeWhenMounted(
+        root,
+        nodeId,
+        fallbackId === undefined ? {} : { fallbackId }
+      );
     },
     [containerRef]
   );
@@ -191,6 +196,19 @@ export function useCollectionsKeyboard(args: {
         card?.getAttribute("data-node-id") ?? card?.getAttribute("data-node-wrapper");
       if (!rawId) return;
       const nodeId = rawId as NodeId;
+
+      const isCollectionsCommand = event.shiftKey
+        ? TRIM_ACTION_BY_KEY[event.key] !== undefined
+        : KEYBOARD_ACTION_BY_KEY[event.key] !== undefined;
+      if (isCollectionsCommand && store.getSnapshot().interaction.isDragging) {
+        // A live dnd-kit drag owns movement until it commits or cancels. Do
+        // not let the direct Alt grammar mutate the graph underneath it.
+        // Consume only recognized commands; bare arrows and Escape still
+        // reach dnd-kit's keyboard sensor.
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
 
       // Alt+SHIFT+Arrows TRIM the media card — checked before the move/grid
       // logic so a held Shift never falls through to a move. (A non-arrow

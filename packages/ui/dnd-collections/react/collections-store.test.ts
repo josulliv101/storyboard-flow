@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { buildGraph, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "../core/graph";
-import { createCollectionsStore, type CollectionsChange } from "./collections-store";
+import {
+  InvalidInitialGraphError,
+  createCollectionsStore,
+  type CollectionsChange,
+} from "./collections-store";
 
 // Direct tests for the store's CONTRACTS — the invariants every selector
 // depends on and a refactor can silently break: snapshot fields keep their
@@ -19,6 +23,17 @@ function graphFixture(): CollectionsGraph {
   return result.value;
 }
 
+function graphWithInvalidDuration(): CollectionsGraph {
+  const graph = graphFixture();
+  const node = graph.nodesById.get(parseNodeId("x"));
+  if (!node || node.kind !== "media" || node.mediaKind === "video") {
+    throw new Error("Expected image fixture node x.");
+  }
+  const nodesById = new Map(graph.nodesById);
+  nodesById.set(node.id, { ...node, durationSeconds: Number.NaN });
+  return { ...graph, nodesById };
+}
+
 const id = parseNodeId;
 const moveX = {
   type: "move-nodes",
@@ -35,6 +50,15 @@ describe("createCollectionsStore", () => {
     vi.useRealTimers();
   });
 
+  test("rejects a malformed initial graph before creating the store", () => {
+    expect(() => createCollectionsStore(graphWithInvalidDuration())).toThrowError(
+      InvalidInitialGraphError
+    );
+    expect(() => createCollectionsStore(graphWithInvalidDuration())).toThrowError(
+      /nodesById\["x"\]\.durationSeconds/
+    );
+  });
+
   test("dispatch commits the graph, records history, and emits onChange", () => {
     const changes: CollectionsChange[] = [];
     const store = createCollectionsStore(graphFixture(), { onChange: (c) => changes.push(c) });
@@ -47,6 +71,65 @@ describe("createCollectionsStore", () => {
     expect(historyEntries).toHaveLength(1);
     expect(changes).toHaveLength(1);
     expect(changes[0].origin).toBe("command");
+  });
+
+  test("reentrant listeners preserve onChange order and graph-patch pairing", () => {
+    const changes: CollectionsChange[] = [];
+    const store = createCollectionsStore(graphFixture(), {
+      onChange: (change) => changes.push(change),
+    });
+    let dispatchedNested = false;
+    store.subscribe(() => {
+      if (dispatchedNested) return;
+      dispatchedNested = true;
+      store.dispatch({
+        type: "move-nodes",
+        nodeIds: [id("y")],
+        toParentId: id("root-b"),
+        toIndex: 0,
+      });
+    });
+
+    expect(store.dispatch(moveX).ok).toBe(true);
+
+    expect(
+      changes.map((change) =>
+        change.command?.type === "move-nodes" ? change.command.nodeIds[0] : null
+      )
+    ).toEqual(["x", "y"]);
+    expect([...(changes[0].graph.childrenById.get(id("root-b")) ?? [])]).toEqual(["x"]);
+    expect([...(changes[1].graph.childrenById.get(id("root-b")) ?? [])]).toEqual([
+      "y",
+      "x",
+    ]);
+  });
+
+  test("onChange can dispatch reentrantly without reversing queued events", () => {
+    const changes: CollectionsChange[] = [];
+    let store: ReturnType<typeof createCollectionsStore> | null = null;
+    store = createCollectionsStore(graphFixture(), {
+      onChange: (change) => {
+        if (
+          change.command?.type === "move-nodes" &&
+          change.command.nodeIds[0] === id("x")
+        ) {
+          store?.dispatch({
+            type: "move-nodes",
+            nodeIds: [id("y")],
+            toParentId: id("root-b"),
+            toIndex: 0,
+          });
+        }
+        changes.push(change);
+      },
+    });
+
+    expect(store.dispatch(moveX).ok).toBe(true);
+    expect(
+      changes.map((change) =>
+        change.command?.type === "move-nodes" ? change.command.nodeIds[0] : null
+      )
+    ).toEqual(["x", "y"]);
   });
 
   test("interaction-only updates preserve graph and historyEntries identity", () => {
@@ -80,6 +163,24 @@ describe("createCollectionsStore", () => {
     expect(listener).toHaveBeenCalledTimes(2);
     store.clearSelection(); // already empty
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  test("selection APIs ignore node ids that are missing from the graph", () => {
+    const store = createCollectionsStore(graphFixture());
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.setSelection([id("x"), id("missing")]);
+    expect([...store.getSnapshot().interaction.selectedIds]).toEqual(["x"]);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    listener.mockClear();
+    store.toggleSelected(id("missing"));
+    expect([...store.getSnapshot().interaction.selectedIds]).toEqual(["x"]);
+    expect(listener).not.toHaveBeenCalled();
+
+    store.setSelection([id("x"), id("still-missing")]);
+    expect(listener).not.toHaveBeenCalled();
   });
 
   test("beginDrag puts the PRESSED id first and sets isDragging", () => {
@@ -142,7 +243,7 @@ describe("createCollectionsStore", () => {
       { kind: "collection", id: "root-a", name: "A", children: [media("y"), media("w")] },
     ]);
     if (!next.ok) throw new Error(JSON.stringify(next.error));
-    store.replaceGraph(next.value);
+    expect(store.replaceGraph(next.value)).toEqual({ ok: true, value: undefined });
 
     const snap = store.getSnapshot();
     expect(snap.graph).toBe(next.value); // the new graph is committed
@@ -155,6 +256,35 @@ describe("createCollectionsStore", () => {
     expect(snap.interaction.selectedIds.has(id("x"))).toBe(false);
     // No onChange for a caller-supplied reset.
     expect(changes).toHaveLength(0);
+  });
+
+  test("rejects a malformed replacement graph without changing store state", () => {
+    const changes: CollectionsChange[] = [];
+    const store = createCollectionsStore(graphFixture(), { onChange: (change) => changes.push(change) });
+    store.dispatch(moveX);
+    store.setSelection([id("y")]);
+    store.beginDrag(id("y"));
+    changes.length = 0;
+    let notifications = 0;
+    store.subscribe(() => {
+      notifications += 1;
+    });
+    const before = store.getSnapshot();
+
+    expect(store.replaceGraph(graphWithInvalidDuration())).toEqual({
+      ok: false,
+      error: {
+        reason: "invalid-value",
+        path: '$.nodesById["x"].durationSeconds',
+        message: "Expected a finite, non-negative number.",
+      },
+    });
+    expect(store.getSnapshot()).toBe(before);
+    expect(store.getSnapshot().canUndo).toBe(true);
+    expect(store.getSnapshot().interaction.isDragging).toBe(true);
+    expect(store.getSnapshot().interaction.selectedIds.has(id("y"))).toBe(true);
+    expect(notifications).toBe(0);
+    expect(changes).toEqual([]);
   });
 
   test("undoing an add prunes the removed node from the selection", () => {

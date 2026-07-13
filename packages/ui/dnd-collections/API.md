@@ -100,7 +100,8 @@ Use this everywhere a media item's on-timeline length is needed (card display,
 How many poster frames a video card shows: `~durationSeconds / SECONDS_PER_VIDEO_FRAME`,
 at least 1, capped at `max` (default `MAX_VIDEO_FRAMES`). Longer clips show
 more frames; a view can pass a tighter `max` (e.g. how many fit the card
-width). The card cycles the node's `posterSrcs` to fill this count — a video
+width). Non-finite `max` values fall back to `MAX_VIDEO_FRAMES`; values below
+1 clamp to 1. The card cycles the node's `posterSrcs` to fill this count — a video
 card is a frame SEQUENCE, never a `<video>` element.
 
 ### `parseNodeId(id: string): NodeId`
@@ -123,8 +124,30 @@ type GraphNodeSpec =
 type BuildGraphError =
   | { reason: "duplicate-id"; id: string }   // anywhere in the tree — ids are the addressing scheme
   | { reason: "empty-id" }
-  | { reason: "root-not-collection"; id: string };
+  | { reason: "root-not-collection"; id: string }
+  | { reason: "invalid-spec"; error: CollectionsValidationError };
 ```
+
+`buildGraph` validates the complete runtime spec before normalization, so
+malformed JavaScript or parsed data returns `invalid-spec` instead of placing
+invalid fields into the graph.
+
+### Runtime validation
+
+Use these pure boundaries for JavaScript values, parsed JSON, palette output,
+or normalized graphs received from outside the package:
+
+```ts
+parseCollectionItemNode(value: unknown): Result<CollectionItemNode, CollectionsValidationError>;
+parseGraphSpec(value: unknown): Result<readonly GraphNodeSpec[], CollectionsValidationError>;
+validateGraph(value: unknown): Result<void, GraphValidationError>;
+```
+
+Node and spec parsing rejects invalid discriminants, IDs, field types,
+non-finite or negative durations/trims, invalid poster arrays, and video trims
+whose total exceeds the full duration. `validateGraph` checks those runtime
+fields plus every normalized index invariant. Validation errors include a
+JSONPath-like `path` to the rejected value.
 
 ### `EMPTY_GRAPH: CollectionsGraph`
 
@@ -209,6 +232,7 @@ Rejections (`CommandRejection.reason`):
 | `cannot-move-root` | A dragged id is a top-level collection — roots are structural anchors. |
 | `duplicate-node-id` | An id appears twice in `nodeIds`, or (add-nodes) an added id already exists / repeats in the batch. |
 | `invalid-node-id` | (add-nodes) An added node's id is empty or whitespace-only — it can't be addressed or encoded as a droppable. |
+| `invalid-node` | (add-nodes) A node failed runtime validation. Includes its batch `index` and a `validationError` with the precise value path. |
 | `not-media-node` | (update-media) `nodeId` is a collection, not a media node. |
 | `invalid-media-update` | (update-media) The payload's `mediaKind` doesn't match the node, or it carries non-finite values. |
 | `nothing-to-add` | `add-nodes` with an empty `nodes` array. |
@@ -221,8 +245,9 @@ Rejections (`CommandRejection.reason`):
 
 ## Core: patches (`core/patches.ts`)
 
-Patches are the reversible, serializable record of every mutation — the
-same primitive backs undo/redo, the `onChange` feed, and persistence.
+Patches are the reversible, serializable record of every mutation. The raw
+shape backs internal undo/redo and the `onChange` feed; persistence wraps it
+in a checked, versioned `PatchEnvelope`.
 
 ```ts
 type NodeMove = {
@@ -252,13 +277,28 @@ type CollectionsPatch =
 
 Swaps each move's endpoints; applying the result undoes the original.
 
-### `applyPatch(graph, patch): CollectionsGraph`
+### `replayPatchEnvelope(graph, currentRevision, value): Result<PatchReplaySuccess, PatchReplayError>`
 
-The only code that rewrites graph indexes (forward apply, undo, and redo all
-run through it). Structural sharing: only affected parents' children arrays
-are re-allocated; `nodesById` and `rootIds` are reused untouched. Does not
-validate — apply patches only to the graph state they were produced against
-(or its inverse-adjacent state).
+The public persistence/replay boundary. `value` is `unknown` and must be a
+schema-versioned `PatchEnvelope` with a non-empty `baseRevision`, advancing
+`revision`, and a runtime-valid patch. Replay verifies that `baseRevision`
+matches `currentRevision`, checks every recorded source slot/value and
+destination precondition, applies the patch, then validates the resulting
+graph. Failures leave the caller's graph and revision unchanged.
+
+```ts
+type PatchEnvelope = {
+  schemaVersion: 1;
+  baseRevision: string;
+  revision: string;
+  patch: CollectionsPatch;
+};
+```
+
+`createPatchEnvelope(patch, baseRevision, revision)` creates an envelope for
+a trusted in-memory patch. The unchecked adjacent-state primitive used by
+the reducer and undo/redo is intentionally absent from the main entry point;
+advanced internal tooling can import it from `dnd-collections/unsafe`.
 
 ---
 
@@ -310,7 +350,7 @@ Resolution rules:
   a horizontal row with a card, resolves insert-adjacent against the nearest
   card in that row (gap drops land between cards; dragged cards are not
   anchors). Otherwise `append-to-collection`.
-- Returns `null` only when hovering a dragged node's own card. Descendants
+- Returns `null` when geometry is malformed or when hovering a dragged node's own card. Descendants
   of a dragged collection DO resolve intents — flag them with
   `isIntentInvalid` for the "cannot drop" preview; the reducer rejects them
   at commit regardless.
@@ -334,9 +374,9 @@ enforces, so a preview built on this can never disagree with the outcome.
 ### `resolveCommandFromIntent(graph, intent, draggedIds): Result<CollectionsCommand, IntentRejection>`
 
 Intent → command, doing the post-removal index math (the off-by-one class
-lives here, nowhere else). `IntentRejection` is
-`{ reason: "missing-node"; nodeId: NodeId }` — the adjacency target
-vanished.
+lives here, nowhere else). `IntentRejection` is `missing-node` when the
+adjacency target vanished, or `invalid-index` when a virtual boundary is
+fractional or non-finite.
 
 ### `resolveAddCommandFromIntent(graph, intent, nodes): Result<CollectionsCommand, IntentRejection>`
 
@@ -417,8 +457,9 @@ type KeyboardTrimAction =
   | "trim-start-extend" | "trim-start-reduce"; // the video START edge: trim-in (image rejects)
 ```
 
-`KeyboardTrimRejection.reason`: `missing-node`, `not-media-node`, and
-`no-start-edge` (a start-edge action on an image). Wired in the default views
+`stepSeconds` must be finite and greater than zero. `KeyboardTrimRejection.reason`:
+`missing-node`, `not-media-node`, `invalid-step`, and `no-start-edge` (a
+start-edge action on an image). Wired in the default views
 as **Alt+Shift+Arrow** (horizontal = end edge, vertical = video start edge).
 
 ---
@@ -491,6 +532,9 @@ column count); Alt+Enter / Alt+Backspace are the grid-safe synonyms for
 `options.onChange` receives every committed change; `options.maxHistoryEntries`
 (positive integer, default unbounded) caps the undo stack. `<DndCollections>`
 calls this for you; create a store directly only for headless/test use.
+The initial graph is runtime-validated before any store state is created;
+malformed input throws `InvalidInitialGraphError`, whose `validationError`
+identifies the failing path or graph invariant.
 
 ```ts
 type CollectionsChange = {
@@ -509,7 +553,7 @@ type CollectionsChange = {
 | `subscribe` | `(listener: () => void) => () => void` | Returns unsubscribe. |
 | `dispatch` | `(command) => Result<CollectionsPatch, CommandRejection>` | Reduce + push history + notify + `onChange`. |
 | `undo` / `redo` | `() => boolean` | False when the respective stack is empty. |
-| `replaceGraph` | `(graph: CollectionsGraph) => void` | Swap the committed graph wholesale — the escape hatch for async/server-loaded data (`initialGraph` is initial-only). Clears undo/redo history (old patches can't replay on a new graph) and any in-progress drag/preview, prunes the selection to surviving ids, and — deliberately — does NOT fire `onChange` (the caller supplied this state; echoing it risks feedback loops). |
+| `replaceGraph` | `(graph: CollectionsGraph) => Result<void, GraphValidationError>` | Runtime-validates then swaps the committed graph wholesale — the escape hatch for async/server-loaded data (`initialGraph` is initial-only). Invalid input is rejected without changing or notifying the store. A successful swap clears undo/redo history (old patches can't replay on a new graph) and any in-progress drag/preview, prunes the selection to surviving ids, and — deliberately — does NOT fire `onChange` (the caller supplied this state; echoing it risks feedback loops). |
 | `setSelection` | `(ids: readonly NodeId[]) => void` | No-op (no notify) when the set is unchanged. |
 | `toggleSelected` | `(id: NodeId) => void` | |
 | `clearSelection` | `() => void` | No-op when already empty. |
@@ -564,12 +608,12 @@ ones (everything they do goes through the store API above).
 | --- | --- | --- |
 | `CollectionPanels` | `collectionIds?: readonly NodeId[]` | One panel per id (default: the graph's roots). FLIP animation is owned by `<DndCollections animateMoves>`, not here. |
 | `CollectionPanel` | `collectionId: NodeId` | One droppable panel with its cards. |
-| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"`, `trimPixelsPerSecond?: number` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in), converting the drag at that scale and committing `update-media` on release. The card resizes LIVE during the drag when the view provides a `TrimPreview` (VirtualStrip does, via targeted `resizeItem`); without one it still trims, just without live resize. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
+| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"`, `trimPixelsPerSecond?: number` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). A finite, positive `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in); invalid scales are treated as omitted. The card resizes LIVE during the drag when the view provides a `TrimPreview` (VirtualStrip does, via targeted `resizeItem`); without one it still trims, just without live resize. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
 | `NodeCardGhost` | `node: CollectionItemNode`, `extraCount: number` | The drag-overlay ghost; renders a `+N` badge when `extraCount > 0`. |
 | `UndoRedoControls` | — | Buttons bound to `store.undo`/`store.redo`, disabled off `canUndo`/`canRedo`. |
 | `HistoryLog` | — | Human-readable command log over `historyEntries`. |
-| `PaletteItem` | `paletteId: string`, `createNode: () => CollectionItemNode`, `children?` | External drag source; the factory runs at drag START (fresh ids per drag), the drop commits `add-nodes` through the standard intent pipeline. |
-| `TrashTarget` | `trashId: NodeId` | Styled panel droppable for a (usually hidden) trash root; drops are ordinary moves — subtrees ride along, undo restores, nothing is deleted. |
+| `PaletteItem` | `paletteId: string`, `createNode: () => CollectionItemNode`, `children?` | External drag source; the factory runs at drag START (fresh ids per drag). Its runtime result is validated and copied before drag state is published; throws or malformed values cancel with one announcement. The drop commits `add-nodes` through the standard intent pipeline. |
+| `TrashTarget` | `trashId: NodeId` | Styled panel droppable for a (usually hidden) trash root; drops are ordinary moves — subtrees ride along, undo restores, nothing is deleted. The id must resolve to a live collection; invalid targets stay disabled. |
 
 ### DOM/test hooks
 
@@ -636,15 +680,18 @@ type VirtualStripHandle = {
 };
 ```
 
-When `trimPixelsPerSecond` is set and a video is selected, `VirtualStrip`
-automatically reserves a band above the row and renders the source-window
-overview (`TrimOverviewStrip`) directly above that video's clip — there is no
-separate component to mount. The overview's amber window is pixel-aligned to
-the clip's own rendered edges (at rest and live, mid-drag), because it's
-positioned in the same scrolled coordinate space as the clip itself. This
-band only appears for a SELECTED video whose clip is currently mounted (the
-band is reserved as soon as a video is selected, even if scrolled off-screen,
-so scrolling doesn't repeatedly resize the row).
+Numeric layout options are normalized before reaching the virtualizer:
+base widths/heights and trim scale must be finite and positive, `gap` is
+finite and non-negative, and `overscan` is a non-negative integer. Invalid
+values use the documented defaults; `itemWidthFor` may return zero for a
+fully trimmed clip, while negative/non-finite results use `itemWidth`.
+
+When `trimPixelsPerSecond` is set and a mounted video is selected,
+`VirtualStrip` renders the source-window overview (`TrimOverviewStrip`) as a
+floating tooltip directly above that clip — there is no separate component
+to mount and no layout band that displaces the row. The overview's amber
+window is pixel-aligned to the clip's rendered edges at rest and during a live
+trim because its position is derived from the mounted clip rect.
 
 `itemWidthFor` is evaluated lazily per index (never by rendering the node) and
 the virtualizer memoizes its measurements, so it runs once per layout, not per
@@ -671,11 +718,19 @@ type VirtualGridHandle = {
 };
 ```
 
+Grid sizes and viewport height must be finite and positive; `gap` is finite
+and non-negative; `overscan` is a non-negative integer. Invalid values use
+the documented defaults, while an invalid fixed `columns` value falls back
+to responsive measurement.
+
 Row-virtualized (one virtual item per row; columns are index arithmetic).
 Inside a grid, Alt+ArrowUp/Down are row moves (± the column count) — the grid
 publishes its live column count on `data-grid-columns` for the keyboard layer.
-Cross-row moves recreate the card's DOM element (rows are keyed by index), so
-FLIP and held focus don't survive that hop.
+Cross-row moves recreate the card's DOM element because rows own their cells.
+The provider's unambiguous node fallback preserves the visual FLIP and the
+keyboard layer restores focus after the new card mounts, but DOM/component
+state local to the old card does not survive that hop; reusable cards should
+keep durable state in the collection store.
 
 ### Virtual DOM/test hooks
 
@@ -697,9 +752,14 @@ the same store, FLIP scope, and collision pipeline as the built-ins:
 | --- | --- | --- |
 | `CollectionsStoreProvider` | `react/collections-store` | Wrap a subtree in a store you created with `createCollectionsStore` (headless/custom hosting). |
 | `useCollectionsContainer` / `CollectionsContainerContext` / `CollectionsContainerValue` | `react/container-context` | Read the instance's wrapper ref (FLIP scope) and the `aria-describedby` instructions id. |
-| `VIRTUAL_INSERT_DATA_KEY` / `VirtualInsertTarget` | `react/virtual-droppable` | The droppable-`data` contract a custom virtualized container carries so collision detection resolves pointer → boundary index through its own layout math. |
+| `VIRTUAL_INSERT_DATA_KEY` / `VirtualInsertTarget` | `react/virtual-droppable` | The droppable-`data` contract a custom virtualized container carries so collision detection resolves pointer → boundary index through its own layout math. The collection must exist and the resolver must return an integer; thrown errors and invalid results reject the target. |
 | `useEdgeAutoScroll` | `react/use-edge-autoscroll` | Deterministic edge auto-scroll for a custom virtualized scroll container (pairs with `usePanWithMomentum`). |
+| `usePanWithMomentum` / `PanWithMomentumOptions` | `react/use-pan-with-momentum` | Surface pan with optional inertial glide. Invalid slop/velocity/friction values use safe defaults; friction is constrained to the open interval `(0, 1)` and max velocity never falls below the stop threshold. |
 
-`applyPatch` (Core) is the one deliberately unchecked primitive: it rewrites
-indexes without validation, so apply patches only to the graph state they
-were produced against (or its inverse-adjacent state).
+`useEdgeAutoScroll` likewise normalizes its edge band to a finite positive
+value and its maximum speed to a finite non-negative value before starting
+the animation loop.
+
+Use `replayPatchEnvelope` for external or persisted patch data. Unchecked
+adjacent-state application is available only from the explicit
+`dnd-collections/unsafe` entry point for internal tooling.

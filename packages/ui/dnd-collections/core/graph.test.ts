@@ -7,6 +7,9 @@ import {
   isSameOrAncestor,
   isVideoMedia,
   mediaDurationSeconds,
+  parseCollectionItemNode,
+  parseGraphSpec,
+  validateGraph,
   videoFrameCount,
   MAX_VIDEO_FRAMES,
   parseNodeId,
@@ -97,6 +100,12 @@ describe("videoFrameCount", () => {
     expect(videoFrameCount(4, 1)).toBe(1);
   });
 
+  test("malformed per-view caps fall back to a safe finite cap", () => {
+    expect(videoFrameCount(100, Number.NaN)).toBe(MAX_VIDEO_FRAMES);
+    expect(videoFrameCount(100, Number.POSITIVE_INFINITY)).toBe(MAX_VIDEO_FRAMES);
+    expect(videoFrameCount(100, -4)).toBe(1);
+  });
+
   test("non-finite durations degrade to a single frame", () => {
     expect(videoFrameCount(Number.NaN)).toBe(1);
     expect(videoFrameCount(Number.POSITIVE_INFINITY)).toBe(1);
@@ -113,6 +122,118 @@ describe("parseNodeId", () => {
   test("throws on empty or whitespace-only ids", () => {
     expect(() => parseNodeId("")).toThrow(/Invalid NodeId/);
     expect(() => parseNodeId("   ")).toThrow(/Invalid NodeId/);
+  });
+});
+
+describe("runtime graph validation", () => {
+  test("parses normalized nodes into fresh, safe values", () => {
+    const source = {
+      id: "video",
+      kind: "media",
+      mediaKind: "video",
+      name: "Video",
+      posterSrcs: ["one.jpg", "two.jpg"],
+      fullDurationSeconds: 10,
+      trimInSeconds: 2,
+      trimOutSeconds: 1,
+    };
+    const parsed = parseCollectionItemNode(source);
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok || parsed.value.kind !== "media" || !isVideoMedia(parsed.value)) return;
+    expect(parsed.value).not.toBe(source);
+    expect(parsed.value.posterSrcs).not.toBe(source.posterSrcs);
+    expect(mediaDurationSeconds(parsed.value)).toBe(7);
+  });
+
+  test("rejects malformed node kinds, numeric media, posters, and over-trimming", () => {
+    expect(parseCollectionItemNode({ id: "x", kind: "wat", name: "X" })).toMatchObject({
+      ok: false,
+      error: { path: "$.kind" },
+    });
+    expect(
+      parseCollectionItemNode({
+        id: "x",
+        kind: "media",
+        name: "X",
+        durationSeconds: Number.NaN,
+      })
+    ).toMatchObject({ ok: false, error: { path: "$.durationSeconds" } });
+    expect(
+      parseCollectionItemNode({
+        id: "x",
+        kind: "media",
+        mediaKind: "video",
+        name: "X",
+        posterSrcs: ["valid.jpg", 42],
+        fullDurationSeconds: 10,
+        trimInSeconds: 1,
+        trimOutSeconds: 1,
+      })
+    ).toMatchObject({ ok: false, error: { path: "$.posterSrcs[1]" } });
+    expect(
+      parseCollectionItemNode({
+        id: "x",
+        kind: "media",
+        mediaKind: "video",
+        name: "X",
+        fullDurationSeconds: 5,
+        trimInSeconds: 3,
+        trimOutSeconds: 3,
+      })
+    ).toMatchObject({ ok: false, error: { path: "$" } });
+  });
+
+  test("validates deeply nested graph specs iteratively and reports a precise path", () => {
+    const valid = parseGraphSpec([
+      collection("root", [
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "video",
+          name: "Video",
+          fullDurationSeconds: 10,
+        },
+      ]),
+    ]);
+    expect(valid.ok).toBe(true);
+
+    const invalid = parseGraphSpec([
+      {
+        kind: "collection",
+        id: "root",
+        name: "Root",
+        children: [
+          {
+            kind: "media",
+            id: "bad",
+            name: "Bad",
+            durationSeconds: Number.POSITIVE_INFINITY,
+          },
+        ],
+      },
+    ]);
+    expect(invalid).toMatchObject({
+      ok: false,
+      error: { path: "$[0].children[0].durationSeconds" },
+    });
+  });
+
+  test("validates normalized node fields before structural graph invariants", () => {
+    const graph = build([collection("root", [media("image")])]);
+    expect(validateGraph(graph)).toEqual({ ok: true, value: undefined });
+
+    const image = graph.nodesById.get(parseNodeId("image"));
+    if (!image || image.kind !== "media" || isVideoMedia(image)) {
+      throw new Error("expected image fixture");
+    }
+    const nodesById = new Map(graph.nodesById);
+    nodesById.set(image.id, { ...image, durationSeconds: Number.NaN });
+    const invalid = validateGraph({ ...graph, nodesById });
+    expect(invalid).toMatchObject({
+      ok: false,
+      error: { path: '$.nodesById["image"].durationSeconds' },
+    });
   });
 });
 
@@ -166,6 +287,31 @@ describe("buildGraph", () => {
   test("rejects empty ids", () => {
     const result = buildGraph([collection("root", [media("")])]);
     expect(result).toEqual({ ok: false, error: { reason: "empty-id" } });
+  });
+
+  test("rejects malformed runtime node fields before normalizing them", () => {
+    const result = buildGraph([
+      {
+        kind: "collection",
+        id: "root",
+        name: "Root",
+        children: [
+          {
+            kind: "media",
+            id: "bad",
+            name: "Bad",
+            durationSeconds: Number.NaN,
+          },
+        ],
+      },
+    ]);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "invalid-spec",
+        error: { path: "$[0].children[0].durationSeconds" },
+      },
+    });
   });
 
   test("survives pathological depth without recursion", () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useState } from "react";
 
 import { mediaDurationSeconds, videoFrameCount, type MediaNode } from "../core/graph";
 
@@ -16,43 +16,85 @@ export const NodeThumbnail = memo(function NodeThumbnail({ node }: { node: Media
   if (node.mediaKind === "video") {
     const posters = node.posterSrcs ?? [];
     if (posters.length === 0) return <ThumbnailFallback label="No preview" />;
-    const count = videoFrameCount(mediaDurationSeconds(node));
-    return (
-      <span
-        data-node-thumbnail="video"
-        data-frame-count={count}
-        className="flex min-h-0 flex-1 overflow-hidden rounded-sm bg-muted"
-      >
-        {Array.from({ length: count }).map((_, index) => (
-          <img
-            key={index}
-            src={posters[index % posters.length]}
-            alt=""
-            draggable={false}
-            loading="lazy"
-            className="h-full min-w-0 flex-1 border-r border-background object-cover last:border-r-0"
-          />
-        ))}
-      </span>
-    );
+    return <VideoThumbnail key={JSON.stringify(posters)} node={node} posters={posters} />;
   }
 
   if (!node.src) return <ThumbnailFallback label="No image" />;
+  return <ImageThumbnail key={node.src} src={node.src} />;
+});
+
+function ImageThumbnail({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <ThumbnailFallback label="Image unavailable" />;
   return (
     <span
       data-node-thumbnail="image"
       className="flex min-h-0 flex-1 overflow-hidden rounded-sm bg-muted"
     >
       <img
-        src={node.src}
+        src={src}
         alt=""
         draggable={false}
         loading="lazy"
+        onError={() => setFailed(true)}
         className="h-full w-full object-cover"
       />
     </span>
   );
-});
+}
+
+function VideoThumbnail({
+  node,
+  posters,
+}: {
+  node: MediaNode & { mediaKind: "video" };
+  posters: readonly string[];
+}) {
+  const [failedSources, setFailedSources] = useState<ReadonlySet<string>>(() => new Set());
+  if (posters.every((src) => failedSources.has(src))) {
+    return <ThumbnailFallback label="Preview unavailable" />;
+  }
+  const count = videoFrameCount(mediaDurationSeconds(node));
+  const markFailed = (src: string) => {
+    setFailedSources((current) => {
+      if (current.has(src)) return current;
+      const next = new Set(current);
+      next.add(src);
+      return next;
+    });
+  };
+  return (
+    <span
+      data-node-thumbnail="video"
+      data-frame-count={count}
+      className="flex min-h-0 flex-1 overflow-hidden rounded-sm bg-muted"
+    >
+      {Array.from({ length: count }).map((_, index) => {
+        const src = posters[index % posters.length];
+        const frameClass =
+          "h-full min-w-0 flex-1 border-r border-background object-cover last:border-r-0";
+        return failedSources.has(src) ? (
+          <span
+            key={index}
+            aria-hidden="true"
+            data-thumbnail-frame-fallback
+            className={`${frameClass} bg-muted-foreground/15`}
+          />
+        ) : (
+          <img
+            key={index}
+            src={src}
+            alt=""
+            draggable={false}
+            loading="lazy"
+            onError={() => markFailed(src)}
+            className={frameClass}
+          />
+        );
+      })}
+    </span>
+  );
+}
 
 function ThumbnailFallback({ label }: { label: string }) {
   return (
