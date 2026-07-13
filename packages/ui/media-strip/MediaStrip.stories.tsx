@@ -49,9 +49,11 @@ type StoryMediaItem = {
     }
   );
 
-// No local fixture video ships with this package (only the poster PNGs
-// do) — this is a small public demo clip, not project media.
-const storyVideoSrc = "https://res.cloudinary.com/demo/video/upload//dog.mp4";
+// Real local fixture video — keeps stories deterministic and offline (no
+// Cloudinary/live calls, per the Storybook rules). The strip renders video
+// items from their poster PNGs, so this src is the underlying clip, not what
+// the thumbnail loads.
+const storyVideoSrc = new URL("./fixtures/dog.mp4", import.meta.url).href;
 const dogVideoThumbnails = {
   "00:02": new URL("./fixtures/dog-tracking-2s.png", import.meta.url).href,
   "00:04": new URL("./fixtures/dog-exit-4s.png", import.meta.url).href,

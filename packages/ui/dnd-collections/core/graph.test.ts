@@ -7,6 +7,8 @@ import {
   isSameOrAncestor,
   isVideoMedia,
   mediaDurationSeconds,
+  videoFrameCount,
+  MAX_VIDEO_FRAMES,
   parseNodeId,
   EMPTY_GRAPH,
   type GraphNodeSpec,
@@ -78,6 +80,27 @@ describe("media image/video model", () => {
       trimOutSeconds: 4,
     };
     expect(mediaDurationSeconds(overTrimmed)).toBe(0);
+  });
+});
+
+describe("videoFrameCount", () => {
+  test("scales with length: ~1 frame per 2s, at least 1, capped", () => {
+    expect(videoFrameCount(0)).toBe(1); // zero/degenerate -> a single frame
+    expect(videoFrameCount(1)).toBe(1); // round(0.5) = 1 (min applies)
+    expect(videoFrameCount(4)).toBe(2);
+    expect(videoFrameCount(6)).toBe(3);
+    expect(videoFrameCount(100)).toBe(MAX_VIDEO_FRAMES); // capped
+  });
+
+  test("a tighter per-view max caps it further", () => {
+    expect(videoFrameCount(100, 3)).toBe(3);
+    expect(videoFrameCount(4, 1)).toBe(1);
+  });
+
+  test("non-finite durations degrade to a single frame", () => {
+    expect(videoFrameCount(Number.NaN)).toBe(1);
+    expect(videoFrameCount(Number.POSITIVE_INFINITY)).toBe(1);
+    expect(videoFrameCount(-5)).toBe(1);
   });
 });
 

@@ -2,10 +2,10 @@
 
 import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
-import { type MediaNode } from "../core/graph";
+import { mediaDurationSeconds, type MediaNode } from "../core/graph";
 import { type MediaUpdate } from "../core/commands";
 import { useCollectionsStore } from "./collections-store";
-import { useTrimPreview } from "./trim-preview-context";
+import { useTrimPreview, type LiveTrim } from "./trim-preview-context";
 
 // Edge drag-handles that TRIM a media item: a right handle on every media
 // card, plus a left handle on video (which can trim its start too). The
@@ -22,12 +22,20 @@ import { useTrimPreview } from "./trim-preview-context";
 
 type TrimSide = "left" | "right";
 
-/** The clamped result of dragging a handle by `deltaSeconds`. */
+/** The clamped result of dragging a handle by `deltaSeconds`. `trimInSeconds`/
+ *  `trimOutSeconds` are the full pair (video only; 0 for images) — needed so a
+ *  view can position trim-in-dependent UI (the overview window) live, not
+ *  just react to the resulting effective duration. */
 function resolveTrim(
   node: MediaNode,
   side: TrimSide,
   deltaSeconds: number
-): { update: MediaUpdate; effectiveSeconds: number } {
+): {
+  update: MediaUpdate;
+  effectiveSeconds: number;
+  trimInSeconds: number;
+  trimOutSeconds: number;
+} {
   if (node.mediaKind === "video") {
     if (side === "left") {
       // Left edge inward (right, +delta) trims MORE off the start.
@@ -39,6 +47,8 @@ function resolveTrim(
       return {
         update: { mediaKind: "video", trimInSeconds },
         effectiveSeconds: node.fullDurationSeconds - trimInSeconds - node.trimOutSeconds,
+        trimInSeconds,
+        trimOutSeconds: node.trimOutSeconds,
       };
     }
     // Right edge inward (left, -delta) trims MORE off the end.
@@ -50,19 +60,28 @@ function resolveTrim(
     return {
       update: { mediaKind: "video", trimOutSeconds },
       effectiveSeconds: node.fullDurationSeconds - node.trimInSeconds - trimOutSeconds,
+      trimInSeconds: node.trimInSeconds,
+      trimOutSeconds,
     };
   }
   // Image: the right edge sets the duration directly (outward = longer).
   const durationSeconds = Math.max(0, node.durationSeconds + deltaSeconds);
-  return { update: { mediaKind: "image", durationSeconds }, effectiveSeconds: durationSeconds };
+  return {
+    update: { mediaKind: "image", durationSeconds },
+    effectiveSeconds: durationSeconds,
+    trimInSeconds: 0,
+    trimOutSeconds: 0,
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max));
 }
 
+// Amber edge handles (matching the app's source-window handles): thicker,
+// with a grip line, visible-on-hover so the card stays clean at rest.
 const HANDLE_CLASS =
-  "absolute inset-y-0 z-20 w-1.5 cursor-ew-resize bg-primary/70 opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100";
+  "absolute inset-y-0 z-20 flex w-2 cursor-ew-resize items-center justify-center bg-amber-300 opacity-70 transition-opacity hover:opacity-100 group-hover:opacity-100";
 
 export function TrimHandles({
   node,
@@ -95,11 +114,16 @@ export function TrimHandles({
 
       const onMove = (moveEvent: PointerEvent) => {
         const deltaSeconds = (moveEvent.clientX - startX) / pixelsPerSecond;
-        const { update, effectiveSeconds } = resolveTrim(startNode, side, deltaSeconds);
+        const { update, effectiveSeconds, trimInSeconds, trimOutSeconds } = resolveTrim(
+          startNode,
+          side,
+          deltaSeconds
+        );
         pendingRef.current = update;
         setPreview(effectiveSeconds);
-        // Live-resize the card (view state only; the graph commits on release).
-        trimPreview.previewDurationSeconds(node.id, effectiveSeconds);
+        // Live-resize the card AND publish the live trim split (view state
+        // only; the graph commits on release).
+        trimPreview.previewTrim(node.id, { trimInSeconds, trimOutSeconds, effectiveSeconds });
       };
       const onUp = (upEvent: PointerEvent) => {
         window.removeEventListener("pointermove", onMove);
@@ -111,7 +135,7 @@ export function TrimHandles({
         if (upEvent.type === "pointercancel" || !update) {
           // Aborted (or a no-op): drop the live preview, snapping the card
           // back to its committed size — nothing is dispatched.
-          trimPreview.previewDurationSeconds(node.id, null);
+          trimPreview.previewTrim(node.id, null);
           return;
         }
         // Commit. The view reconciles the card to the new data (its last
@@ -126,6 +150,10 @@ export function TrimHandles({
   );
 
   const showLeft = node.mediaKind === "video";
+  const durationPill =
+    node.mediaKind === "video"
+      ? `${mediaDurationSeconds(node).toFixed(2)}s / ${node.fullDurationSeconds.toFixed(2)}s`
+      : `${node.durationSeconds.toFixed(2)}s`;
 
   return (
     <>
@@ -134,17 +162,30 @@ export function TrimHandles({
           data-trim-handle="left"
           className={`${HANDLE_CLASS} left-0 rounded-l-md`}
           onPointerDown={(event) => startTrim("left", event)}
-        />
+        >
+          <span className="h-4 w-0.5 rounded bg-black/45" />
+        </div>
       )}
       <div
         data-trim-handle="right"
         className={`${HANDLE_CLASS} right-0 rounded-r-md`}
         onPointerDown={(event) => startTrim("right", event)}
-      />
+      >
+        <span className="h-4 w-0.5 rounded bg-black/45" />
+      </div>
+
+      {/* Showing/full readout pill (bottom-right), matching the app. */}
+      <span
+        data-trim-pill
+        className="pointer-events-none absolute right-1 bottom-1 z-20 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[9px] text-zinc-100 tabular-nums select-none"
+      >
+        {durationPill}
+      </span>
+
       {preview !== null && (
         <div
           data-trim-preview={preview}
-          className="pointer-events-none absolute -top-5 left-1/2 z-30 -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground shadow"
+          className="pointer-events-none absolute -top-5 left-1/2 z-30 -translate-x-1/2 rounded bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-black shadow"
         >
           {round1(preview)}s
         </div>

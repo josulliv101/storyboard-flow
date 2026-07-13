@@ -74,6 +74,8 @@ export type CommandRejection =
 export type MoveNodesCommand = Extract<CollectionsCommand, { type: "move-nodes" }>;
 /** The `add-nodes` variant — what the palette resolver produces. */
 export type AddNodesCommand = Extract<CollectionsCommand, { type: "add-nodes" }>;
+/** The `update-media` variant — what the pointer trim handles and keyboard trim produce. */
+export type UpdateMediaCommand = Extract<CollectionsCommand, { type: "update-media" }>;
 
 export type ApplyCommandSuccess = Readonly<{
   graph: CollectionsGraph;

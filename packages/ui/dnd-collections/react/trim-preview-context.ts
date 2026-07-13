@@ -14,12 +14,22 @@ import { type NodeId } from "../core/graph";
 // directly, bypassing NodeCard's memo. The default is a no-op, so a card in a
 // fixed-width view (panels) still trims, it just doesn't live-resize.
 
-export type TrimPreview = Readonly<{
-  /** Live-resize the item to `effectiveSeconds`; `null` resets it to its data-derived size. */
-  previewDurationSeconds: (nodeId: NodeId, effectiveSeconds: number | null) => void;
+/** Live trim split during a drag — carries the in/out values (not just the
+ *  resulting duration) so a view can position UI that depends on trimIn
+ *  itself, e.g. the overview window's left edge. */
+export type LiveTrim = Readonly<{
+  trimInSeconds: number;
+  trimOutSeconds: number;
+  effectiveSeconds: number;
 }>;
 
-const NOOP: TrimPreview = { previewDurationSeconds: () => {} };
+export type TrimPreview = Readonly<{
+  /** Live-resize the item to the drag's current trim split; `null` resets it
+   *  to its data-derived size. */
+  previewTrim: (nodeId: NodeId, live: LiveTrim | null) => void;
+}>;
+
+const NOOP: TrimPreview = { previewTrim: () => {} };
 
 export const TrimPreviewContext = createContext<TrimPreview>(NOOP);
 

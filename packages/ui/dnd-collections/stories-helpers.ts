@@ -8,7 +8,7 @@ import { expect, waitFor } from "storybook/test";
 
 type PointerStep = Readonly<{
   element: EventTarget;
-  type: "pointerdown" | "pointermove" | "pointerup";
+  type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel";
   clientX: number;
   clientY: number;
   delayAfterMs?: number;

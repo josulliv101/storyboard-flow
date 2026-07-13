@@ -71,6 +71,7 @@ type ImageMediaNode = {
 type VideoMediaNode = {
   id: NodeId; kind: "media"; mediaKind: "video"; name: string;
   src?: string;
+  posterSrcs?: readonly string[]; // display-only frames; cards show a few as a sequence
   fullDurationSeconds: number;  // the source clip's length
   trimInSeconds: number;        // trimmed off the START (0 = untrimmed)
   trimOutSeconds: number;       // trimmed off the END
@@ -94,6 +95,14 @@ video's `fullDurationSeconds - trimInSeconds - trimOutSeconds` (never below 0).
 Use this everywhere a media item's on-timeline length is needed (card display,
 `itemWidthFor`). `isVideoMedia(node)` narrows to `VideoMediaNode`.
 
+### `videoFrameCount(durationSeconds: number, max?: number): number`
+
+How many poster frames a video card shows: `~durationSeconds / SECONDS_PER_VIDEO_FRAME`,
+at least 1, capped at `max` (default `MAX_VIDEO_FRAMES`). Longer clips show
+more frames; a view can pass a tighter `max` (e.g. how many fit the card
+width). The card cycles the node's `posterSrcs` to fill this count — a video
+card is a frame SEQUENCE, never a `<video>` element.
+
 ### `parseNodeId(id: string): NodeId`
 
 Parse-or-throw for authoring-time-trusted ids (literals in stories, tests,
@@ -107,7 +116,7 @@ pathological depth can't blow the call stack.
 ```ts
 type GraphNodeSpec =
   | { kind: "media"; mediaKind?: "image"; id: string; name: string; src?: string; durationSeconds?: number } // default 4
-  | { kind: "media"; mediaKind: "video"; id: string; name: string; src?: string;
+  | { kind: "media"; mediaKind: "video"; id: string; name: string; src?: string; posterSrcs?: readonly string[];
       fullDurationSeconds: number; trimInSeconds?: number; trimOutSeconds?: number } // trims default 0
   | { kind: "collection"; id: string; name: string; children?: readonly GraphNodeSpec[] };
 
@@ -394,6 +403,24 @@ view supplies its live column count. Rejections: `missing-node`,
 `cannot-move-root`, `invalid-columns`, `already-first-row`,
 `already-last-row`.
 
+### `resolveTrimCommand(graph, nodeId, action, stepSeconds): Result<UpdateMediaCommand, KeyboardTrimRejection>`
+
+Keyboard trim for a focused media node, resolving to the same `update-media`
+command the pointer trim handles dispatch. `extend` lengthens the clip at
+that edge, `reduce` shortens it; the resolver steps the RAW value by
+`stepSeconds` and the reducer owns the clamp (a boundary comes back from
+`applyCommand`/`dispatch` as `same-position`).
+
+```ts
+type KeyboardTrimAction =
+  | "trim-end-extend" | "trim-end-reduce"     // the END edge every media has: image duration / video trim-out
+  | "trim-start-extend" | "trim-start-reduce"; // the video START edge: trim-in (image rejects)
+```
+
+`KeyboardTrimRejection.reason`: `missing-node`, `not-media-node`, and
+`no-start-edge` (a start-edge action on an image). Wired in the default views
+as **Alt+Shift+Arrow** (horizontal = end edge, vertical = video start edge).
+
 ---
 
 ## React: provider (`react/DndCollections.tsx`)
@@ -559,6 +586,8 @@ key off these):
 | `data-drop-indicator` | indicator bar | `"before"` or `"after"` on the adjacency target. |
 | `data-trim-handle` | media edge handle | `"left"` or `"right"` (left is video-only). |
 | `data-trim-preview` | trim readout | The previewed effective duration (seconds) while a handle is dragged. |
+| `data-trim-overview` | overview filmstrip (`VirtualStrip` only) | The selected video's node id. Renders directly above its clip; absent unless a video is selected AND mounted. |
+| `data-trim-overview-window` | amber "showing" window | Its left/right edges are pixel-aligned with the clip's own rendered edges (see the trim overview section below). |
 | `data-testid="drag-ghost"` / `"drag-ghost-count"` | overlay | The ghost and its `+N` badge. |
 | `data-testid="history-log"` / `"history-empty"`, `data-history-entry` | history log | Log container / empty marker / entries. |
 
@@ -605,6 +634,16 @@ type VirtualStripHandle = {
   remeasure: () => void;               // drop cached widths and re-run itemWidthFor (metadata/zoom changed)
 };
 ```
+
+When `trimPixelsPerSecond` is set and a video is selected, `VirtualStrip`
+automatically reserves a band above the row and renders the source-window
+overview (`TrimOverviewStrip`) directly above that video's clip — there is no
+separate component to mount. The overview's amber window is pixel-aligned to
+the clip's own rendered edges (at rest and live, mid-drag), because it's
+positioned in the same scrolled coordinate space as the clip itself. This
+band only appears for a SELECTED video whose clip is currently mounted (the
+band is reserved as soon as a video is selected, even if scrolled off-screen,
+so scrolling doesn't repeatedly resize the row).
 
 `itemWidthFor` is evaluated lazily per index (never by rendering the node) and
 the virtualizer memoizes its measurements, so it runs once per layout, not per

@@ -3,10 +3,11 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
-import { getChildren, type CollectionItemNode, type NodeId } from "../core/graph";
+import { getChildren, isVideoMedia, type CollectionItemNode, type NodeId } from "../core/graph";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
-import { TrimPreviewContext, type TrimPreview } from "../react/trim-preview-context";
+import { TrimOverviewStrip } from "../react/trim-overview";
+import { TrimPreviewContext, type LiveTrim, type TrimPreview } from "../react/trim-preview-context";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
 import {
   usePanWithMomentum,
@@ -54,6 +55,11 @@ function resolveStripIndex(key: string, current: number, count: number): number 
 const isPannableStripSurface = (target: Element): boolean =>
   !target.closest("[data-drag-handle], [data-trim-handle]");
 const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
+
+// Vertical band reserved above the row for the selected video's TrimOverview
+// (matches TrimOverviewStrip's own h-11 = 44px).
+const OVERVIEW_HEIGHT = 44;
+const OVERVIEW_GAP = 8;
 
 export type VirtualStripProps = Readonly<{
   collectionId: NodeId;
@@ -121,6 +127,14 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
     // nodesById is never re-allocated by moves, so this subscription is inert.
     const nodesById = useCollectionsSelector((s) => s.graph.nodesById);
+    // The selected video (if any) drives the TrimOverview band above the row.
+    const selectedVideo = useCollectionsSelector((s) => {
+      for (const id of s.interaction.selectedIds) {
+        const n = s.graph.nodesById.get(id);
+        if (n && isVideoMedia(n)) return n;
+      }
+      return null;
+    });
 
     const { scrollRef, contentRef, resolveBoundaryRef, setContainerRef } =
       useVirtualInsertContainer(collectionId, "vstrip");
@@ -159,32 +173,39 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     }, [nodesById, itemWidthFor, virtualizer]);
 
     // Live trim preview: a trim handle calls this per pointer-move to resize
-    // ONE card without a graph commit. `resizeItem` updates that item's cached
-    // size and shifts the offsets after it — no full re-measure, no per-frame
-    // graph churn (the commit lands once, on release). The callback must stay
-    // reference-stable so trim handles, which read it via context, don't
-    // re-render on every strip render — so it reads live values from a ref.
+    // ONE card without a graph commit, AND to publish the drag's current
+    // trimIn/trimOut split — the overview needs the LIVE split (not just the
+    // resulting duration) to keep its window aligned with the clip's
+    // rendered edges while the drag is in flight. `resizeItem` updates the
+    // item's cached size and shifts the offsets after it — no full
+    // re-measure, no per-frame graph churn (the commit lands once, on
+    // release). The callback must stay reference-stable so trim handles,
+    // which read it via context, don't re-render on every strip render — so
+    // it reads/writes live values via refs instead of state.
     const trimStateRef = useRef({ childIds, virtualizer, gap, trimPixelsPerSecond, widthForIndex });
     trimStateRef.current = { childIds, virtualizer, gap, trimPixelsPerSecond, widthForIndex };
-    const previewDurationSeconds = useCallback<TrimPreview["previewDurationSeconds"]>(
-      (nodeId, effectiveSeconds) => {
-        const s = trimStateRef.current;
-        const index = s.childIds.indexOf(nodeId);
-        if (index === -1) return;
-        // null resets to the item's data-derived size; otherwise mirror
-        // estimateSize (width + gap) at the caller's px-per-second scale.
-        const size =
-          effectiveSeconds === null
-            ? s.widthForIndex(index) + s.gap
-            : effectiveSeconds * (s.trimPixelsPerSecond ?? 0) + s.gap;
-        s.virtualizer.resizeItem(index, size);
-      },
-      []
-    );
-    const trimPreview = useMemo<TrimPreview>(
-      () => ({ previewDurationSeconds }),
-      [previewDurationSeconds]
-    );
+    const liveTrimRef = useRef<{ nodeId: NodeId; trim: LiveTrim } | null>(null);
+    const previewTrim = useCallback<TrimPreview["previewTrim"]>((nodeId, live) => {
+      const s = trimStateRef.current;
+      const index = s.childIds.indexOf(nodeId);
+      liveTrimRef.current = live && index !== -1 ? { nodeId, trim: live } : null;
+      if (index === -1) return;
+      // null resets to the item's data-derived size; otherwise mirror
+      // estimateSize (width + gap) at the caller's px-per-second scale.
+      const size =
+        live === null
+          ? s.widthForIndex(index) + s.gap
+          : live.effectiveSeconds * (s.trimPixelsPerSecond ?? 0) + s.gap;
+      s.virtualizer.resizeItem(index, size);
+    }, []);
+    const trimPreview = useMemo<TrimPreview>(() => ({ previewTrim }), [previewTrim]);
+
+    // A graph commit (trim release, undo/redo, any edit) invalidates any
+    // leftover live trim override — `nodesById` only gets a new identity on a
+    // commit, never on a move or a drag, so this can't fire mid-drag.
+    useEffect(() => {
+      liveTrimRef.current = null;
+    }, [nodesById]);
 
     // Pointer -> visible boundary index from the virtualizer's measurements
     // (O(log n), variable widths included) — never from card rects, since
@@ -249,6 +270,32 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const rovingIndex = mountedItems.some((v) => v.index === focusedIndex)
       ? focusedIndex
       : mountedItems[0]?.index ?? 0;
+
+    // Reserve the band whenever a video is selected (not only while its item
+    // is mounted) — otherwise scrolling the selected clip on/off screen would
+    // repeatedly grow/shrink the row height. The overview itself only renders
+    // once its clip is actually mounted (there's nothing to be "above" of
+    // when it's off-screen).
+    const hasOverviewBand = trimPixelsPerSecond !== undefined && selectedVideo !== null;
+    const itemsTop = hasOverviewBand ? OVERVIEW_HEIGHT + OVERVIEW_GAP : 0;
+    const contentHeight = itemHeight + (hasOverviewBand ? OVERVIEW_HEIGHT + OVERVIEW_GAP : 0);
+
+    const selectedVideoIndex = selectedVideo ? childIds.indexOf(selectedVideo.id) : -1;
+    const selectedVideoItem =
+      selectedVideoIndex === -1
+        ? undefined
+        : mountedItems.find((v) => v.index === selectedVideoIndex);
+    // Live values (mid-drag) win over the node's committed trim so the
+    // window's position/width track the drag frame-for-frame.
+    const overviewTrim =
+      selectedVideo &&
+      (liveTrimRef.current?.nodeId === selectedVideo.id
+        ? liveTrimRef.current.trim
+        : { trimInSeconds: selectedVideo.trimInSeconds, trimOutSeconds: selectedVideo.trimOutSeconds });
+    const overviewAnchorLeft =
+      selectedVideoItem && overviewTrim
+        ? selectedVideoItem.start - overviewTrim.trimInSeconds * (trimPixelsPerSecond ?? 0)
+        : 0;
 
     useImperativeHandle(
       ref,
@@ -315,14 +362,23 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
             ref={contentRef}
             role="row"
             aria-rowindex={1}
-            style={{ width: virtualizer.getTotalSize(), height: itemHeight, position: "relative" }}
+            style={{ width: virtualizer.getTotalSize(), height: contentHeight, position: "relative" }}
           >
+            {selectedVideo && selectedVideoItem && overviewTrim && trimPixelsPerSecond !== undefined && (
+              <TrimOverviewStrip
+                node={selectedVideo}
+                pixelsPerSecond={trimPixelsPerSecond}
+                anchorLeft={overviewAnchorLeft}
+                trimInSeconds={overviewTrim.trimInSeconds}
+                trimOutSeconds={overviewTrim.trimOutSeconds}
+              />
+            )}
             {indicatorLeft !== null && (
               <div
                 aria-hidden="true"
                 data-drop-indicator="virtual"
-                className="pointer-events-none absolute inset-y-0 z-20 w-1 rounded-full bg-primary"
-                style={{ left: indicatorLeft }}
+                className="pointer-events-none absolute z-20 w-1 rounded-full bg-primary"
+                style={{ left: indicatorLeft, top: itemsTop, height: itemHeight }}
               />
             )}
             {virtualizer.getVirtualItems().map((item) => (
@@ -336,7 +392,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                 onFocus={() => onItemFocus(item.index)}
                 style={{
                   position: "absolute",
-                  top: 0,
+                  top: itemsTop,
                   left: 0,
                   width: item.size - gap,
                   height: itemHeight,

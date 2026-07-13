@@ -14,8 +14,11 @@ export {
   isSameOrAncestor,
   isVideoMedia,
   mediaDurationSeconds,
+  videoFrameCount,
   parseNodeId,
   EMPTY_GRAPH,
+  MAX_VIDEO_FRAMES,
+  SECONDS_PER_VIDEO_FRAME,
   type BuildGraphError,
   type CollectionNode,
   type CollectionsGraph,
@@ -36,6 +39,7 @@ export {
   type CommandRejection,
   type MediaUpdate,
   type MoveNodesCommand,
+  type UpdateMediaCommand,
 } from "./core/commands";
 export {
   applyPatch,
@@ -63,9 +67,12 @@ export { createHistory, type CollectionsHistory, type HistoryEntry } from "./cor
 export {
   resolveGridRowMoveCommand,
   resolveKeyboardCommand,
+  resolveTrimCommand,
   type GridRowMoveRejection,
   type KeyboardMoveAction,
   type KeyboardRejection,
+  type KeyboardTrimAction,
+  type KeyboardTrimRejection,
 } from "./core/keyboard";
 
 // React bindings (store + provider + default views)
