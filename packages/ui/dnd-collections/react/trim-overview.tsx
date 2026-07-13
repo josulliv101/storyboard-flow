@@ -72,6 +72,12 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   return (
     <div
       data-trim-overview={node.id}
+      // Pointer-only source-window visualization: aria-hidden so assistive
+      // tech isn't led into an unlabeled filmstrip. Trimming is available to
+      // the keyboard via the focused card + Alt+Shift+Arrows. (Sliding the
+      // source window without changing duration is still pointer-only — a
+      // keyboard equivalent is a known gap, tracked for a follow-up.)
+      aria-hidden="true"
       // Dragging the filmstrip (anywhere but the amber grips, which
       // stopPropagation) MOVES the source window.
       onPointerDown={startMove}

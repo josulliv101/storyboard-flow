@@ -27,7 +27,7 @@ import {
   type UniqueIdentifier,
 } from "@dnd-kit/core";
 
-import { getChildren, type CollectionItemNode, type CollectionsGraph } from "../core/graph";
+import { getChildren, type CollectionItemNode, type CollectionsGraph, type NodeId } from "../core/graph";
 import {
   decodeDropTarget,
   encodeDropTarget,
@@ -206,10 +206,18 @@ function DndCollectionsContext({
   const palette = usePaletteDrag({ store, intentRef, announce });
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const { handleKeyDownCapture } = useCollectionsKeyboard({ store, announce, containerRef });
+  // A mounted <TrashTarget> registers its collection id here (see
+  // container-context) so Alt+Delete can move the focused card to trash.
+  const trashRef = useRef<NodeId | null>(null);
+  const { handleKeyDownCapture } = useCollectionsKeyboard({
+    store,
+    announce,
+    containerRef,
+    trashRef,
+  });
   const instructionsId = useId();
   const containerValue = useMemo(
-    () => ({ containerRef, instructionsId }),
+    () => ({ containerRef, instructionsId, trashRef }),
     [instructionsId]
   );
 
@@ -465,7 +473,9 @@ function DndCollectionsContext({
         Press Enter to pick it up, then use the Arrow keys to move it and Enter to drop, or
         Escape to cancel. Alt plus Arrow keys move it one step at a time; Alt plus Down nests it
         into a neighboring collection and Alt plus Up moves it out. Inside a grid, Alt plus Up and
-        Down move between rows.
+        Down move between rows. For media, Alt plus Shift plus Left or Right trims the end and Alt
+        plus Shift plus Up or Down trims the start of a video. Press Alt plus Delete to move it to
+        trash.
       </p>
       <CollectionsDragOverlay paletteNodes={palette.paletteNodes} />
       <div

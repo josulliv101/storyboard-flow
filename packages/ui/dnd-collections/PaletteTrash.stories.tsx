@@ -378,3 +378,38 @@ export const TrashMoveAndRestore: Story = {
     });
   },
 };
+
+export const TrashViaKeyboard: Story = {
+  // Keyboard equivalent of TrashMoveAndRestore: Alt+Delete on the focused card
+  // moves it to trash with no pointer — announces, lands focus on the neighbor
+  // that took its slot, and undo restores it.
+  render: () => <PaletteBoard />,
+  play: async ({ canvasElement }) => {
+    const trash = canvasElement.querySelector<HTMLElement>("[data-trash-target]")!;
+    await waitForLayout(nodeCard(canvasElement, "bravo"));
+
+    const user = userEvent.setup();
+    nodeCard(canvasElement, "bravo").focus();
+    await user.keyboard("{Alt>}{Delete}{/Alt}");
+
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "charlie"]);
+      expect(trash.textContent).toMatch(/trash \(1\)/i);
+    });
+    // Announced to the polite live region.
+    await expect(
+      await within(canvasElement).findByText(/moved "bravo" to trash/i)
+    ).toBeInTheDocument();
+    // Focus followed to the sibling that took the vacated slot (charlie).
+    await waitFor(() => {
+      expect(document.activeElement?.getAttribute("data-node-id")).toBe("charlie");
+    });
+
+    // Undo restores it — nothing was deleted.
+    await user.click(within(canvasElement).getByRole("button", { name: /undo/i }));
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie"]);
+      expect(trash.textContent).toMatch(/^trash$/i);
+    });
+  },
+};

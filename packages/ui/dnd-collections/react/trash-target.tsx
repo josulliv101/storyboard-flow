@@ -1,16 +1,31 @@
 "use client";
 
+import { useEffect } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { getChildren, type NodeId } from "../core/graph";
 import { encodeDropTarget } from "../core/intents";
 import { useCollectionsSelector } from "./collections-store";
+import { useCollectionsContainer } from "./container-context";
 
 // Trash is MODELING, not machinery: a designated (usually hidden) root
 // collection. This target is nothing but a styled panel droppable for it —
 // dropping resolves append-to-collection, the standard move-nodes command
 // runs (subtrees ride along, undo restores), and nothing is ever deleted.
+// Mounting it also registers the id for the keyboard path (Alt+Delete on a
+// focused card), so trash works without a pointer.
 
 export function TrashTarget({ trashId }: { trashId: NodeId }) {
+  const { trashRef } = useCollectionsContainer();
+  // Register this instance's trash id for the keyboard controller; clear it on
+  // unmount (only if we still own the slot — a later TrashTarget may have
+  // replaced us).
+  useEffect(() => {
+    trashRef.current = trashId;
+    return () => {
+      if (trashRef.current === trashId) trashRef.current = null;
+    };
+  }, [trashRef, trashId]);
+
   const isCollection = useCollectionsSelector(
     (s) => s.graph.nodesById.get(trashId)?.kind === "collection"
   );
@@ -35,7 +50,7 @@ export function TrashTarget({ trashId }: { trashId: NodeId }) {
       ref={setNodeRef}
       role="region"
       aria-disabled={!isCollection}
-      aria-label={`Trash${count > 0 ? `, ${count} items` : ""}. Drop items here to move them to trash.`}
+      aria-label={`Trash${count > 0 ? `, ${count} items` : ""}. Drop items here, or press Alt+Delete on a focused item, to move it to trash.`}
       data-trash-target={trashId}
       data-trash-valid={isCollection}
       data-trash-state={state}

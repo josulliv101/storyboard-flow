@@ -446,6 +446,18 @@ type KeyboardTrimAction =
 start-edge action on an image). Wired in the default views
 as **Alt+Shift+Arrow** (horizontal = end edge, vertical = video start edge).
 
+### `resolveTrashCommand(graph, nodeId, trashId): Result<MoveNodesCommand, KeyboardTrashRejection>`
+
+Keyboard "move to trash" for a focused node, resolving to the same
+`move-nodes` (append-to-trash) command a pointer drop on `<TrashTarget>`
+produces — subtrees ride along, undo restores, nothing is deleted.
+`KeyboardTrashRejection.reason`: `missing-node`, `cannot-move-root`,
+`no-trash-collection` (the id is absent or not a collection), and
+`already-in-trash`. Trashing a collection that contains trash resolves to a
+command the reducer then rejects as `would-create-cycle`. Wired in the default
+views as **Alt+Delete**, active only while a `<TrashTarget>` is mounted (it
+registers its id for the controller).
+
 ---
 
 ## React: provider (`react/DndCollections.tsx`)
@@ -502,10 +514,18 @@ layer is a separate, always-available set of quick semantic moves:
 | Alt+Home / Alt+End | `move-home` / `move-end` |
 | Alt+ArrowDown | `nest-in-neighbor` |
 | Alt+ArrowUp | `move-out` |
+| Alt+Shift+ArrowLeft / Alt+Shift+ArrowRight | Trim the end edge shorter / longer (image duration / video trim-out) |
+| Alt+Shift+ArrowUp / Alt+Shift+ArrowDown | Trim the video start edge (trim-in); images reject |
+| Alt+Delete | Move to trash (only while a `<TrashTarget>` is mounted) |
 
 Inside a `VirtualGrid`, Alt+ArrowUp / Alt+ArrowDown become row moves (± the
 column count); Alt+Enter / Alt+Backspace are the grid-safe synonyms for
 `nest-in-neighbor` / `move-out`.
+
+The pointer trim handles and the source-window overview are `aria-hidden`
+visual affordances — the accessible way to trim is a focused card plus the
+Alt+Shift bindings above. (Sliding a video's source window without changing
+its duration remains pointer-only; a keyboard equivalent is a known gap.)
 
 ---
 
