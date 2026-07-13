@@ -630,6 +630,62 @@ function flipTransforms(el: HTMLElement): string[] {
   });
 }
 
+function DuplicateViewsBoard() {
+  return (
+    <DndCollections initialGraph={standardGraph()}>
+      <div className="flex flex-col gap-8">
+        <div data-testid="duplicate-view-a">
+          <CollectionPanels collectionIds={[parseNodeId("panel-a")]} />
+        </div>
+        <div data-testid="duplicate-view-b">
+          <CollectionPanels collectionIds={[parseNodeId("panel-a")]} />
+        </div>
+      </div>
+    </DndCollections>
+  );
+}
+
+export const FlipSeparatesDuplicateRenderedNodeIds: Story = {
+  render: () => <DuplicateViewsBoard />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const viewA = canvasElement.querySelector<HTMLElement>('[data-testid="duplicate-view-a"]')!;
+    const viewB = canvasElement.querySelector<HTMLElement>('[data-testid="duplicate-view-b"]')!;
+    await waitForLayout(nodeCard(viewB, "alpha"));
+
+    nodeCard(viewA, "alpha").focus();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+
+    for (const view of [viewA, viewB]) {
+      const transforms = flipTransforms(nodeCard(view, "alpha"));
+      expect(transforms).toHaveLength(1);
+      expect(transforms[0]).toMatch(/,\s*0px\)/);
+    }
+  },
+};
+
+export const FlipCancelsSupersededAnimations: Story = {
+  render: () => <StandardBoard />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const alpha = nodeCard(canvasElement, "alpha");
+    await waitForLayout(alpha);
+
+    alpha.focus();
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    const firstFlip = alpha.getAnimations().find((animation) => {
+      if (!(animation.effect instanceof KeyframeEffect)) return false;
+      return String(animation.effect.getKeyframes()[0]?.transform).startsWith("translate");
+    });
+    expect(firstFlip).toBeDefined();
+
+    alpha.focus();
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+    expect(firstFlip!.playState).toBe("idle");
+    expect(flipTransforms(alpha).length).toBeGreaterThan(0);
+  },
+};
+
 function ScrollBetweenCommitsBoard() {
   return (
     <div data-testid="flip-scroller" style={{ height: 200, overflowY: "auto" }}>

@@ -3,72 +3,97 @@
 import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 
-// Post-commit FLIP animation, as its own layer ABOVE the reducer: it
-// visualizes graph changes, it never decides them (the command model stays
-// the single truth). One sweep per committed graph change (drop/undo/redo)
-// plays inverted-transform animations for whatever moved.
-//
-// Why a single sweep instead of per-card effects: displaced sibling cards
-// intentionally DON'T re-render (their selector slices are unchanged — the
-// package's core efficiency property), so a per-card effect would never fire
-// for exactly the cards that shifted. The sweep measures the DOM directly.
-// The rect registry spans the whole container, which is what makes
-// CROSS-PANEL moves animate: a card's FIRST rect is taken from its old panel.
-//
-// Measuring FIRST and LAST in the same scroll frame is what keeps this
-// correct. "First" is captured synchronously the moment the graph changes —
-// inside a store subscription, before React re-renders, while the DOM still
-// shows the pre-commit layout — and "Last" is measured in the layout effect
-// after the re-render. Both reads happen within one synchronous task, so no
-// scroll can occur between them. (An earlier version stashed "first" at the
-// PREVIOUS commit in viewport coordinates; any page/container scroll between
-// two commits then leaked its delta into every card, sliding the whole board
-// by the scroll amount on the next commit.)
-//
-// Scope: the container is ONE DndCollections instance's wrapper (the default
-// views pass it from context). Both the query and the id-keyed registry stay
-// inside it, so multiple boards on a page — even ones reusing node ids —
-// never measure or animate each other's cards.
-//
-// Known, accepted gap: a panel whose own children did not change can still
-// shift on screen (a panel above it grew/shrank); those cards animate too —
-// the sweep covers the instance — but content outside the container never
-// does.
+// Post-commit FLIP animation, as its own layer above the reducer: it
+// visualizes graph changes and never decides them. A provider-level DOM sweep
+// also catches displaced siblings whose selector slices did not change.
 
 const FLIP_DURATION_MS = 180;
 const FLIP_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 
 type Point = Readonly<{ x: number; y: number }>;
+type CardRect = Readonly<{ card: HTMLElement; nodeId: string; point: Point }>;
 
-function measureCards(container: HTMLElement): Map<string, Point> {
-  const rects = new Map<string, Point>();
+function measureCards(container: HTMLElement): CardRect[] {
+  const rects: CardRect[] = [];
   for (const card of container.querySelectorAll<HTMLElement>("[data-node-id]")) {
-    const id = card.dataset.nodeId;
-    if (!id) continue;
+    const nodeId = card.dataset.nodeId;
+    if (!nodeId) continue;
     const rect = card.getBoundingClientRect();
-    rects.set(id, { x: rect.left, y: rect.top });
+    rects.push({ card, nodeId, point: { x: rect.left, y: rect.top } });
   }
   return rects;
 }
 
+/**
+ * Pair current cards with their pre-commit positions without conflating two
+ * views that render the same node. A surviving element is always
+ * unambiguous. If React recreated an element during a cross-parent move, use
+ * node identity only when exactly one unmatched instance exists on each side.
+ */
+function matchBeforeRects(
+  before: readonly CardRect[],
+  after: readonly CardRect[]
+): ReadonlyMap<HTMLElement, Point> {
+  const beforeByElement = new Map(before.map((rect) => [rect.card, rect]));
+  const matchedBefore = new Set<HTMLElement>();
+  const matches = new Map<HTMLElement, Point>();
+  const unmatchedAfterById = new Map<string, CardRect[]>();
+
+  for (const rect of after) {
+    const exact = beforeByElement.get(rect.card);
+    if (exact) {
+      matchedBefore.add(exact.card);
+      matches.set(rect.card, exact.point);
+      continue;
+    }
+    const candidates = unmatchedAfterById.get(rect.nodeId) ?? [];
+    candidates.push(rect);
+    unmatchedAfterById.set(rect.nodeId, candidates);
+  }
+
+  const unmatchedBeforeById = new Map<string, CardRect[]>();
+  for (const rect of before) {
+    if (matchedBefore.has(rect.card)) continue;
+    const candidates = unmatchedBeforeById.get(rect.nodeId) ?? [];
+    candidates.push(rect);
+    unmatchedBeforeById.set(rect.nodeId, candidates);
+  }
+
+  for (const [nodeId, afterCandidates] of unmatchedAfterById) {
+    const beforeCandidates = unmatchedBeforeById.get(nodeId);
+    if (beforeCandidates?.length === 1 && afterCandidates.length === 1) {
+      matches.set(afterCandidates[0].card, beforeCandidates[0].point);
+    }
+  }
+
+  return matches;
+}
+
+function cancelAnimations(animations: Set<Animation>): void {
+  for (const animation of animations) animation.cancel();
+  animations.clear();
+}
+
 export function useFlipGraphAnimation(containerRef: RefObject<HTMLElement | null>): void {
   const store = useCollectionsStore();
-  // Subscribing to graph identity re-renders the caller once per commit —
-  // that render is what schedules the LAST measurement (layout effect) below.
-  const graph = useCollectionsSelector((s) => s.graph);
-  const firstRects = useRef<Map<string, Point> | null>(null);
+  const graph = useCollectionsSelector((state) => state.graph);
+  const firstRects = useRef<readonly CardRect[] | null>(null);
+  const animationsRef = useRef(new Set<Animation>());
 
-  // Capture FIRST rects the instant the graph changes, before React paints
-  // the new layout. This runs inside store.notify() — synchronously during
-  // dispatch/undo/redo, while the DOM still shows the pre-commit positions.
-  // Gated on graph identity so the flood of interaction-only notifies during
-  // a drag (pointer moves, drop-intent changes) never triggers a measurement
-  // — the render-efficiency contract depends on this staying quiet mid-drag.
+  useEffect(
+    () => () => {
+      cancelAnimations(animationsRef.current);
+    },
+    []
+  );
+
+  // Capture FIRST synchronously from the store notification, before React
+  // renders the committed graph. Interaction-only notifications are ignored.
   useEffect(() => {
     let lastGraph = store.getSnapshot().graph;
     return store.subscribe(() => {
       const nextGraph = store.getSnapshot().graph;
-      if (nextGraph === lastGraph) return; // interaction-only notify — ignore
+      if (nextGraph === lastGraph) return;
       lastGraph = nextGraph;
       const container = containerRef.current;
       firstRects.current = container ? measureCards(container) : null;
@@ -76,11 +101,11 @@ export function useFlipGraphAnimation(containerRef: RefObject<HTMLElement | null
   }, [store, containerRef]);
 
   useLayoutEffect(() => {
+    cancelAnimations(animationsRef.current);
+
     const container = containerRef.current;
     if (!container) return;
 
-    // Consume the first-rects captured for THIS commit (null on mount, or if
-    // the container was unavailable when the graph changed).
     const first = firstRects.current;
     firstRects.current = null;
     if (!first) return;
@@ -90,24 +115,24 @@ export function useFlipGraphAnimation(containerRef: RefObject<HTMLElement | null
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     if (reduceMotion) return;
 
-    for (const card of container.querySelectorAll<HTMLElement>("[data-node-id]")) {
-      const id = card.dataset.nodeId;
-      if (!id) continue;
-      const before = first.get(id);
-      if (!before) continue; // newly visible — nothing to invert from
+    const after = measureCards(container);
+    const matches = matchBeforeRects(first, after);
+    for (const { card, point } of after) {
+      const before = matches.get(card);
+      if (!before) continue;
 
-      const rect = card.getBoundingClientRect();
-      const dx = before.x - rect.left;
-      const dy = before.y - rect.top;
+      const dx = before.x - point.x;
+      const dy = before.y - point.y;
       if (dx === 0 && dy === 0) continue;
 
-      // Invert & play. WAAPI cleans up after itself (no lingering styles),
-      // and `composite: "replace"` supersedes any in-flight FLIP from a
-      // rapid undo/redo instead of compounding with it.
-      card.animate(
+      const animation = card.animate(
         [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }],
         { duration: FLIP_DURATION_MS, easing: FLIP_EASING, composite: "replace" }
       );
+      animationsRef.current.add(animation);
+      const forget = () => animationsRef.current.delete(animation);
+      animation.addEventListener("finish", forget, { once: true });
+      animation.addEventListener("cancel", forget, { once: true });
     }
   }, [graph, containerRef]);
 }
