@@ -35,7 +35,8 @@ core/                       Pure, framework- and DOM-independent domain
   keyboard.ts               Semantic keyboard actions (move-prev/next/
                             home/end, nest-in-neighbor, move-out) resolved
                             into the same move-nodes command pointer drags
-                            produce.
+                            produce; plus resolveTrimCommand (Alt+Shift trim
+                            -> the same update-media command the handles use).
 react/
   collections-store.ts      External selector store (useSyncExternalStore).
                             Owns the committed graph + ephemeral interaction
@@ -48,8 +49,9 @@ react/
                             announcements.
   use-palette-drag.ts       Palette drag controller (factory at pick-up,
                             add-nodes commit, cleanup).
-  use-keyboard-controller.ts Alt+key semantic moves, grid row moves
-                            (data-grid-columns scope), focus restoration.
+  use-keyboard-controller.ts Alt+key semantic moves, Alt+Shift+key media
+                            trims, grid row moves (data-grid-columns scope),
+                            focus restoration.
   use-edge-autoscroll.ts    Deterministic edge auto-scroll for virtualized
                             containers (dnd-kit's built-in never engaged
                             for them — probed e2e).
@@ -60,6 +62,9 @@ react/
   node-views.tsx            Default views: CollectionPanels / -Panel /
                             NodeCard / NodeCardGhost. Cards receive ONLY an
                             id; everything else arrives via selectors.
+  node-thumbnail.tsx        NodeThumbnail: image = one <img> from src; video =
+                            a sequence of poster frames (never a <video>),
+                            count scaling with clip length. Memoized on node.
   palette.tsx               PaletteItem external drag source.
   trash-target.tsx          TrashTarget droppable over a hidden trash root.
   use-flip-graph-animation.ts Post-commit FLIP movement animation — a layer
@@ -128,6 +133,15 @@ reversible patch (`nodes-updated`, before/after node), undo/redo, and the
 instead of the children arrays. The engine stays structure-only; image/video
 is a leaf concern nothing else in the pipeline branches on.
 
+That same leaf-only divergence drives how cards PREVIEW media (`NodeThumbnail`):
+an image renders its single `src`; a video renders a SEQUENCE of `posterSrcs`
+frames — never a `<video>` element — with the frame count scaling to clip
+length (`videoFrameCount`, ~one frame per couple of seconds, capped) and the
+posters cycled to fill. Missing media (image without `src`, video without
+`posterSrcs`) shows a labeled fallback. `posterSrcs` is display-only metadata
+like `src` — the reducer and patches never read it, so it rides through
+`update-media` untouched.
+
 The trim UI is edge handles on the card (`NodeCard trimPixelsPerSecond`),
 rendered as SIBLINGS of the draggable button so a handle press never reaches
 the item-drag sensor or the strip's pan. A handle drag converts pixels to
@@ -150,6 +164,25 @@ on a commit, never on a move/drag, so it stays at commit cadence), which also
 covers non-drag trims (keyboard, direct dispatch) the resizeItem path misses.
 The last preview size already matches the committed size, so there is no
 resize flash. An aborted drag (pointercancel, or a no-op) resets the preview.
+
+For a selected video, `VirtualStrip` also renders a `TrimOverviewStrip`
+(`trim-overview.tsx`) — the full source as a poster filmstrip with an amber
+window marking what's showing — directly above that clip's row, and reserves
+a fixed-height band for it (so the row shifts down while a video is
+selected). It is NOT a standalone component the app mounts: only `VirtualStrip`
+has the virtualizer measurements needed to align it, so it lives in the same
+scrolled `contentRef` coordinate space as the clips themselves and is
+positioned via `anchorLeft = item.start - trimInSeconds * pixelsPerSecond`.
+That single formula, combined with the overview's existing internal geometry
+(window left = `trimInSeconds * pixelsPerSecond`, width = showing seconds *
+pixelsPerSecond), makes the amber window's left/right edges land EXACTLY on
+the clip's own rendered edges for any trim value — no rect measuring, no
+scroll listeners, because it's a real DOM child of the same natively-scrolled
+container the clip lives in. `TrimPreview` (widened to `previewTrim`) carries
+the drag's live `trimInSeconds`/`trimOutSeconds` split (not just the
+resulting duration) so this alignment holds mid-drag, not only after commit;
+`VirtualStrip` keeps that live override in a ref (not the store) and clears it
+whenever `nodesById` changes identity (any commit — trim, undo, redo).
 
 Two properties fall out of this shape and everything else depends on them:
 
@@ -246,6 +279,18 @@ Everything semantic happens in `core/`.
   (shared validation, history, announcements), and restores focus after
   cross-parent moves — retried across frames, with the destination collection
   as a fallback when the card lands somewhere this view doesn't render.
+- Adding **Shift** to that chord TRIMS instead of moving: **Alt+Shift+Arrow**
+  on a focused media card is the pointer trim handles' semantics without a
+  drag (`resolveTrimCommand` → the same `update-media` command). Horizontal
+  arrows work the END edge every media has (→ lengthens, ← shortens: image
+  duration, or video trim-out); vertical arrows work the video START edge (↑
+  trims more off the start, ↓ gives it back — trim-in). One keypress steps 1s,
+  clamped by the reducer exactly like a drag; a step the reducer clamps to no
+  change comes back as `same-position` and is announced as a boundary. The
+  trim branch is checked before the move/grid logic so a held Shift never
+  falls through to a move, and a trim keeps the card mounted, so focus stays
+  put (no restore needed). Alt+Shift+↑/↓ on an image announces "trimmed at the
+  end only" (images have no start edge).
 - The card button is always a tab stop (even in handle mode, where the grip
   is a second stop for pointer/grab drag) so the selection control is always
   reachable. dnd-kit's own announcer and screen-reader instructions are

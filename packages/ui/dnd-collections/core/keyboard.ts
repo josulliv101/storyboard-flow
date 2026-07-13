@@ -4,7 +4,11 @@ import {
   type Result,
   getChildren,
 } from "./graph";
-import { type MoveNodesCommand } from "./commands";
+import {
+  type MediaUpdate,
+  type MoveNodesCommand,
+  type UpdateMediaCommand,
+} from "./commands";
 import { resolveCommandFromIntent } from "./intents";
 
 // Semantic keyboard layer: keys mean OPERATIONS on the graph (move before
@@ -175,4 +179,64 @@ function findSiblingCollection(
     if (graph.nodesById.get(siblings[i])?.kind === "collection") return siblings[i];
   }
   return null;
+}
+
+// Keyboard trim: nudge a media leaf's length by one step, the pointer trim
+// handles' semantics without the drag. Every media card has an END edge
+// (image duration / video trim-out); video also has a START edge (trim-in).
+// "extend" lengthens the clip at that edge, "reduce" shortens it. Resolves to
+// the SAME `update-media` command the pointer handles dispatch, so clamping,
+// undo, and the reducer's guards apply identically — the resolver only steps
+// the raw value; the reducer owns the clamp (and rejects `same-position` at a
+// boundary, which the controller turns into an announcement).
+export type KeyboardTrimAction =
+  | "trim-end-extend"
+  | "trim-end-reduce"
+  | "trim-start-extend"
+  | "trim-start-reduce";
+
+export type KeyboardTrimRejection =
+  | Readonly<{ reason: "missing-node"; nodeId: NodeId }>
+  | Readonly<{ reason: "not-media-node"; nodeId: NodeId }>
+  /** A start-edge action on an image — images have no start trim. */
+  | Readonly<{ reason: "no-start-edge"; nodeId: NodeId }>;
+
+export function resolveTrimCommand(
+  graph: CollectionsGraph,
+  nodeId: NodeId,
+  action: KeyboardTrimAction,
+  stepSeconds: number
+): Result<UpdateMediaCommand, KeyboardTrimRejection> {
+  const node = graph.nodesById.get(nodeId);
+  if (!node) return { ok: false, error: { reason: "missing-node", nodeId } };
+  if (node.kind !== "media") return { ok: false, error: { reason: "not-media-node", nodeId } };
+
+  const isStart = action === "trim-start-extend" || action === "trim-start-reduce";
+  if (isStart && node.mediaKind !== "video") {
+    return { ok: false, error: { reason: "no-start-edge", nodeId } };
+  }
+
+  let update: MediaUpdate;
+  if (node.mediaKind === "video") {
+    // extend = less trimmed off that edge (longer); reduce = more trimmed.
+    switch (action) {
+      case "trim-end-extend":
+        update = { mediaKind: "video", trimOutSeconds: node.trimOutSeconds - stepSeconds };
+        break;
+      case "trim-end-reduce":
+        update = { mediaKind: "video", trimOutSeconds: node.trimOutSeconds + stepSeconds };
+        break;
+      case "trim-start-extend":
+        update = { mediaKind: "video", trimInSeconds: node.trimInSeconds - stepSeconds };
+        break;
+      case "trim-start-reduce":
+        update = { mediaKind: "video", trimInSeconds: node.trimInSeconds + stepSeconds };
+        break;
+    }
+  } else {
+    // Image: only the end edge exists — it sets the duration directly.
+    const delta = action === "trim-end-extend" ? stepSeconds : -stepSeconds;
+    update = { mediaKind: "image", durationSeconds: node.durationSeconds + delta };
+  }
+  return { ok: true, value: { type: "update-media", nodeId, update } };
 }

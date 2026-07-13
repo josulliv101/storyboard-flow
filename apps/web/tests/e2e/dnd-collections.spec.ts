@@ -284,6 +284,137 @@ test.describe('DndCollections E2E', () => {
     }).toPass();
   });
 
+  test('trim handle: real-mouse drag resizes live and commits on release', async ({ page }) => {
+    // TrimPlayground is the play-less twin of TrimMediaWithHandles: same
+    // graph/scale, but no play() to race a real-mouse drag on the handle.
+    await page.goto(storyPath('ui-dndcollectionsvirtual--trim-playground'));
+
+    const img = card(page, 'img');
+    await img.waitFor({ state: 'visible' });
+    const rightHandle = page.locator('[data-node-wrapper="img"] [data-trim-handle="right"]');
+    await rightHandle.waitFor({ state: 'attached' });
+
+    // 4s at 24px/s -> 96px.
+    const initialBox = await img.boundingBox();
+    expect(Math.round(initialBox!.width)).toBe(96);
+
+    const handleBox = await rightHandle.boundingBox();
+    const startX = handleBox!.x + handleBox!.width / 2;
+    const startY = handleBox!.y + handleBox!.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + 48, startY, { steps: 12 });
+    await page.waitForTimeout(150); // dwell: let the live preview settle
+
+    // Live resize BEFORE release: +48px -> +2s -> 6s -> 144px, uncommitted.
+    await expect(async () => {
+      const box = await img.boundingBox();
+      expect(Math.round(box!.width)).toBe(144);
+    }).toPass();
+    await expect(page.getByRole('button', { name: /undo/i })).toBeDisabled();
+
+    await page.mouse.up();
+
+    // Release commits it (no resize flash: same 144px as the live preview).
+    await expect(page.getByRole('button', { name: /undo/i })).toBeEnabled();
+    const committedBox = await img.boundingBox();
+    expect(Math.round(committedBox!.width)).toBe(144);
+
+    // Trims are ordinary undoable commands.
+    await page.getByRole('button', { name: /undo/i }).click();
+    await expect(async () => {
+      const box = await img.boundingBox();
+      expect(Math.round(box!.width)).toBe(96);
+    }).toPass();
+  });
+
+  test('trim keyboard: real Alt+Shift+Arrow keys trim the focused card', async ({ page }) => {
+    // Same play-less TrimPlayground fixture; here the trimming is real key
+    // input (Alt+Shift+Arrow), the trusted-input twin of the KeyboardTrim
+    // story. img 4s and vid 10s at 24px/s -> 96px / 240px.
+    await page.goto(storyPath('ui-dndcollectionsvirtual--trim-playground'));
+
+    const img = card(page, 'img');
+    const vid = card(page, 'vid');
+    await img.waitFor({ state: 'visible' });
+    expect(Math.round((await img.boundingBox())!.width)).toBe(96);
+
+    const widthOf = async (locator: Locator): Promise<number> =>
+      Math.round((await locator.boundingBox())!.width);
+    // Hold Alt+Shift, press an arrow, release — a real modifier chord.
+    const trim = async (key: string): Promise<void> => {
+      await page.keyboard.down('Alt');
+      await page.keyboard.down('Shift');
+      await page.keyboard.press(key);
+      await page.keyboard.up('Shift');
+      await page.keyboard.up('Alt');
+    };
+
+    // Focus the image card, then step its END edge: right lengthens (+1s ->
+    // 120px), left shortens back.
+    await img.click();
+    await expect(img).toBeFocused();
+    await trim('ArrowRight');
+    await expect(async () => expect(await widthOf(img)).toBe(120)).toPass();
+    await expect(page.getByRole('button', { name: /undo/i })).toBeEnabled();
+    await trim('ArrowLeft');
+    await expect(async () => expect(await widthOf(img)).toBe(96)).toPass();
+
+    // Video END edge: left shortens (trim-out +1s -> 9s -> 216px). START edge:
+    // up trims the start (trim-in +1s -> 8s -> 192px), down gives it back.
+    await vid.click();
+    await expect(vid).toBeFocused();
+    await trim('ArrowLeft');
+    await expect(async () => expect(await widthOf(vid)).toBe(216)).toPass();
+    await trim('ArrowUp');
+    await expect(async () => expect(await widthOf(vid)).toBe(192)).toPass();
+    await trim('ArrowDown');
+    await expect(async () => expect(await widthOf(vid)).toBe(216)).toPass();
+
+    // Undo reverts the last trim (ordinary undoable command).
+    await page.getByRole('button', { name: /undo/i }).click();
+    await expect(async () => expect(await widthOf(vid)).toBe(192)).toPass();
+  });
+
+  test('trim overview: amber window stays aligned to the clip during a real drag', async ({
+    page,
+  }) => {
+    // TrimPlayground pre-selects "vid" (SelectOnMount), so the overview band
+    // renders on load, directly above the video card. Its window's left/right
+    // edges must pixel-match the card's own edges at rest AND live, mid-drag
+    // — not just after the commit.
+    await page.goto(storyPath('ui-dndcollectionsvirtual--trim-playground'));
+
+    const vid = card(page, 'vid');
+    const overviewWindow = page.locator('[data-trim-overview-window]');
+    await vid.waitFor({ state: 'visible' });
+    await overviewWindow.waitFor({ state: 'visible' });
+
+    const expectAligned = async () => {
+      const clipBox = (await vid.boundingBox())!;
+      const windowBox = (await overviewWindow.boundingBox())!;
+      expect(Math.round(windowBox.x)).toBe(Math.round(clipBox.x));
+      expect(Math.round(windowBox.x + windowBox.width)).toBe(Math.round(clipBox.x + clipBox.width));
+    };
+    await expectAligned();
+
+    const leftHandle = page.locator('[data-node-wrapper="vid"] [data-trim-handle="left"]');
+    await leftHandle.waitFor({ state: 'attached' });
+    const handleBox = (await leftHandle.boundingBox())!;
+    const startX = handleBox.x + handleBox.width / 2;
+    const startY = handleBox.y + handleBox.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + 24, startY, { steps: 12 }); // trimIn +1s, live
+    await page.waitForTimeout(150); // dwell: let the live preview settle
+    await expectAligned();
+
+    await page.mouse.up();
+    await expectAligned();
+  });
+
   test('reorders within a collection (drop on right half = after)', async ({ page }) => {
     await page.goto(storyPath(PLAYGROUND));
 

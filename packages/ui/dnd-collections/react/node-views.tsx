@@ -13,6 +13,7 @@ import {
 import { encodeDropTarget } from "../core/intents";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
+import { NodeThumbnail } from "./node-thumbnail";
 import { TrimHandles } from "./trim-handles";
 
 // Default views. Each NodeCard receives ONLY its id — every dynamic value
@@ -241,10 +242,24 @@ export const NodeCard = memo(function NodeCard({
         // the attribute spread above — must come after it.
         {...(rovingTabIndex !== undefined ? { tabIndex: rovingTabIndex } : {})}
       >
-        <span className="truncate font-medium text-foreground">{node.name}</span>
-        <span className="text-[10px] text-muted-foreground">
-          {isCollection ? `Collection · ${childCount} items` : `${mediaDurationSeconds(node)}s`}
-        </span>
+        {node.kind === "media" ? (
+          <>
+            <NodeThumbnail node={node} />
+            <span className="mt-1 flex items-center justify-between gap-1">
+              <span className="truncate font-medium text-foreground">{node.name}</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {mediaDurationSeconds(node)}s
+              </span>
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="truncate font-medium text-foreground">{node.name}</span>
+            <span className="text-[10px] text-muted-foreground">
+              Collection · {childCount} items
+            </span>
+          </>
+        )}
       </button>
 
       {/* Grip bar: THE drag activator when dragHandle is on — listeners and

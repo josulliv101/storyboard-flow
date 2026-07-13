@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { buildGraph, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "./graph";
-import { resolveGridRowMoveCommand, resolveKeyboardCommand } from "./keyboard";
+import { applyCommand } from "./commands";
+import { resolveGridRowMoveCommand, resolveKeyboardCommand, resolveTrimCommand } from "./keyboard";
 
 const media = (id: string): GraphNodeSpec => ({ kind: "media", id, name: id });
 const collection = (id: string, children: readonly GraphNodeSpec[] = []): GraphNodeSpec => ({
@@ -180,6 +181,114 @@ describe("resolveGridRowMoveCommand", () => {
     expect(resolveGridRowMoveCommand(gridGraph, id("ghost"), "down", 4)).toEqual({
       ok: false,
       error: { reason: "missing-node", nodeId: "ghost" },
+    });
+  });
+});
+
+describe("resolveTrimCommand", () => {
+  // root: [img (4s image), vid (10s source, trimmed 2s in / 1s out -> 7s)]
+  const trimGraph = build([
+    collection("root", [
+      { kind: "media", id: "img", name: "img", durationSeconds: 4 },
+      {
+        kind: "media",
+        mediaKind: "video",
+        id: "vid",
+        name: "vid",
+        fullDurationSeconds: 10,
+        trimInSeconds: 2,
+        trimOutSeconds: 1,
+      },
+    ]),
+  ]);
+
+  test("image end edge steps the duration up/down", () => {
+    expect(resolveTrimCommand(trimGraph, id("img"), "trim-end-extend", 1)).toEqual({
+      ok: true,
+      value: { type: "update-media", nodeId: "img", update: { mediaKind: "image", durationSeconds: 5 } },
+    });
+    expect(resolveTrimCommand(trimGraph, id("img"), "trim-end-reduce", 1)).toEqual({
+      ok: true,
+      value: { type: "update-media", nodeId: "img", update: { mediaKind: "image", durationSeconds: 3 } },
+    });
+  });
+
+  test("image has no start edge", () => {
+    expect(resolveTrimCommand(trimGraph, id("img"), "trim-start-extend", 1)).toEqual({
+      ok: false,
+      error: { reason: "no-start-edge", nodeId: "img" },
+    });
+    expect(resolveTrimCommand(trimGraph, id("img"), "trim-start-reduce", 1)).toEqual({
+      ok: false,
+      error: { reason: "no-start-edge", nodeId: "img" },
+    });
+  });
+
+  test("video end edge steps trim-out (extend = less trimmed)", () => {
+    expect(resolveTrimCommand(trimGraph, id("vid"), "trim-end-extend", 1)).toEqual({
+      ok: true,
+      value: { type: "update-media", nodeId: "vid", update: { mediaKind: "video", trimOutSeconds: 0 } },
+    });
+    expect(resolveTrimCommand(trimGraph, id("vid"), "trim-end-reduce", 1)).toEqual({
+      ok: true,
+      value: { type: "update-media", nodeId: "vid", update: { mediaKind: "video", trimOutSeconds: 2 } },
+    });
+  });
+
+  test("video start edge steps trim-in (reduce = more trimmed)", () => {
+    expect(resolveTrimCommand(trimGraph, id("vid"), "trim-start-reduce", 1)).toEqual({
+      ok: true,
+      value: { type: "update-media", nodeId: "vid", update: { mediaKind: "video", trimInSeconds: 3 } },
+    });
+    expect(resolveTrimCommand(trimGraph, id("vid"), "trim-start-extend", 1)).toEqual({
+      ok: true,
+      value: { type: "update-media", nodeId: "vid", update: { mediaKind: "video", trimInSeconds: 1 } },
+    });
+  });
+
+  test("rejects collections and unknown nodes", () => {
+    expect(resolveTrimCommand(trimGraph, id("root"), "trim-end-extend", 1)).toEqual({
+      ok: false,
+      error: { reason: "not-media-node", nodeId: "root" },
+    });
+    expect(resolveTrimCommand(trimGraph, id("ghost"), "trim-end-extend", 1)).toEqual({
+      ok: false,
+      error: { reason: "missing-node", nodeId: "ghost" },
+    });
+  });
+
+  test("the resolver steps the RAW value; the reducer owns the clamp", () => {
+    // vid trim-out is 1s -> extend by 2s overshoots to -1s (raw), which the
+    // reducer clamps to 0 (a full-length, untrimmed end).
+    const resolved = resolveTrimCommand(trimGraph, id("vid"), "trim-end-extend", 2);
+    expect(resolved).toEqual({
+      ok: true,
+      value: { type: "update-media", nodeId: "vid", update: { mediaKind: "video", trimOutSeconds: -1 } },
+    });
+    const applied = applyCommand(trimGraph, resolved.ok ? resolved.value : { type: "update-media", nodeId: id("vid"), update: { mediaKind: "video" } });
+    expect(applied.ok).toBe(true);
+    if (applied.ok) {
+      const vid = applied.value.graph.nodesById.get(id("vid"));
+      expect(vid).toMatchObject({ mediaKind: "video", trimOutSeconds: 0 });
+    }
+  });
+
+  test("a boundary step the reducer clamps to no change is a same-position no-op", () => {
+    // vid trim-out already 1s; extend by 1 -> 0. Extend AGAIN from a 0-out
+    // graph would clamp back to 0 -> the reducer rejects same-position.
+    const extended = applyCommand(trimGraph, {
+      type: "update-media",
+      nodeId: id("vid"),
+      update: { mediaKind: "video", trimOutSeconds: 0 },
+    });
+    expect(extended.ok).toBe(true);
+    if (!extended.ok) return;
+    const resolved = resolveTrimCommand(extended.value.graph, id("vid"), "trim-end-extend", 1);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(applyCommand(extended.value.graph, resolved.value)).toEqual({
+      ok: false,
+      error: { reason: "same-position" },
     });
   });
 });

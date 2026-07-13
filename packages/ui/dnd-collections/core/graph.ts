@@ -57,6 +57,13 @@ export type VideoMediaNode = Readonly<{
   name: string;
   /** Optional thumbnail/source url — display-only, the graph doesn't care. */
   src?: string;
+  /**
+   * Optional poster frames sampled across the clip. Cards render a few of
+   * these as an image sequence (a video card is NEVER a <video> element —
+   * it shows frames), cycling if fewer posters than frames are needed.
+   * Display-only; the engine ignores it.
+   */
+  posterSrcs?: readonly string[];
   /** The source clip's full length. */
   fullDurationSeconds: number;
   /** Seconds trimmed off the START (left handle). 0 = untrimmed. */
@@ -88,6 +95,22 @@ export function mediaDurationSeconds(node: MediaNode): number {
   return node.mediaKind === "video"
     ? Math.max(0, node.fullDurationSeconds - node.trimInSeconds - node.trimOutSeconds)
     : node.durationSeconds;
+}
+
+/** Seconds of clip each poster frame stands for, and the frame ceiling. */
+export const SECONDS_PER_VIDEO_FRAME = 2;
+export const MAX_VIDEO_FRAMES = 5;
+
+/**
+ * How many poster frames a video card shows: more for a longer clip, at least
+ * one, capped at `MAX_VIDEO_FRAMES`. A view can pass its own `max` (e.g. how
+ * many frames fit the card width) to cap it tighter. Pure length math — the
+ * card cycles the available `posterSrcs` to fill this count.
+ */
+export function videoFrameCount(durationSeconds: number, max: number = MAX_VIDEO_FRAMES): number {
+  const ceiling = Math.max(1, Math.floor(max));
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 1;
+  return Math.max(1, Math.min(ceiling, Math.round(durationSeconds / SECONDS_PER_VIDEO_FRAME)));
 }
 
 export type CollectionsGraph = Readonly<{
@@ -125,6 +148,7 @@ export type GraphNodeSpec =
       id: string;
       name: string;
       src?: string;
+      posterSrcs?: readonly string[];
       fullDurationSeconds: number;
       trimInSeconds?: number; // default 0
       trimOutSeconds?: number; // default 0
@@ -180,6 +204,7 @@ export function buildGraph(
               mediaKind: "video",
               name: spec.name,
               src: spec.src,
+              posterSrcs: spec.posterSrcs,
               fullDurationSeconds: spec.fullDurationSeconds,
               trimInSeconds: spec.trimInSeconds ?? 0,
               trimOutSeconds: spec.trimOutSeconds ?? 0,

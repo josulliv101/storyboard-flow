@@ -795,6 +795,24 @@ export const FlipAnimatesStripReorder: Story = {
 };
 
 const TRIM_PPS = 24;
+// The overview MUST use the strip's pixels-per-second so the amber "showing"
+// window is the exact same pixel width as the clip below it (always in sync).
+
+/** Pre-select a node so selection-driven UI (the overview strip) shows. */
+function SelectOnMount({ id }: { id: string }) {
+  const store = useCollectionsStore();
+  useEffect(() => {
+    store.setSelection([parseNodeId(id)]);
+  }, [store, id]);
+  return null;
+}
+
+// Real local dog frames (deterministic, offline) so trimming shows actual
+// media resize: the image its poster, the video a frame sequence.
+const trimDogFrames = [
+  new URL("./fixtures/dog-tracking-2s.png", import.meta.url).href,
+  new URL("./fixtures/dog-exit-4s.png", import.meta.url).href,
+] as const;
 
 function trimGraph() {
   const result = buildGraph([
@@ -803,12 +821,13 @@ function trimGraph() {
       id: "strip",
       name: "Strip",
       children: [
-        { kind: "media", id: "img", name: "Img", durationSeconds: 4 },
+        { kind: "media", id: "img", name: "Img", src: trimDogFrames[0], durationSeconds: 4 },
         {
           kind: "media",
           mediaKind: "video",
           id: "vid",
           name: "Vid",
+          posterSrcs: trimDogFrames,
           fullDurationSeconds: 10,
           trimInSeconds: 0,
           trimOutSeconds: 0,
@@ -840,6 +859,7 @@ export const TrimMediaWithHandles: Story = {
     </DndCollections>
   ),
   play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
     const width = (id: string) =>
       Math.round(nodeCard(canvasElement, id).getBoundingClientRect().width);
     const handle = (id: string, side: "left" | "right") =>
@@ -848,6 +868,14 @@ export const TrimMediaWithHandles: Story = {
         .querySelector<HTMLElement>(`[data-trim-handle="${side}"]`);
     const left = (id: string) =>
       Math.round(nodeCard(canvasElement, id).getBoundingClientRect().left);
+    const overviewWindow = () =>
+      canvasElement.querySelector<HTMLElement>("[data-trim-overview-window]");
+    const expectOverviewAlignedTo = (id: string) => {
+      const w = overviewWindow()!.getBoundingClientRect();
+      const v = nodeCard(canvasElement, id).getBoundingClientRect();
+      expect(Math.round(w.left)).toBe(Math.round(v.left));
+      expect(Math.round(w.right)).toBe(Math.round(v.right));
+    };
     // Hold a handle down and move it, WITHOUT releasing — leaves the live
     // trim in flight so the card size can be inspected pre-commit.
     const holdHandleBy = async (el: HTMLElement, dx: number) => {
@@ -881,6 +909,28 @@ export const TrimMediaWithHandles: Story = {
     expect(handle("vid", "left")).not.toBeNull();
     expect(handle("vid", "right")).not.toBeNull();
 
+    // Alignment: selecting the video shows the overview DIRECTLY above it
+    // (VirtualStrip renders it automatically — no separate component to
+    // mount), with the amber window's edges pixel-matched to the clip's own
+    // rendered edges.
+    await user.click(nodeCard(canvasElement, "vid"));
+    await waitFor(() => {
+      expect(overviewWindow()).not.toBeNull();
+      expectOverviewAlignedTo("vid");
+    });
+
+    // Mid-drag: hold the left handle in (trimIn +1s) and confirm alignment
+    // holds LIVE (not just after commit) — the overview reads the drag's
+    // live trim split, not the stale committed value. Abort (pointercancel,
+    // not release) so this probe leaves vid's trim at 0/0 for the rest of
+    // the test.
+    await holdHandleBy(handle("vid", "left")!, 24);
+    await waitFor(() => expectOverviewAlignedTo("vid"));
+    await dispatchPointerSequence([
+      { element: document, type: "pointercancel", clientX: 0, clientY: 0, delayAfterMs: 30 },
+    ]);
+    await waitFor(() => expectOverviewAlignedTo("vid"));
+
     // LIVE preview: hold the image's right edge OUT +48px and assert the card
     // ALREADY reads 6s -> 144px BEFORE release. The video after it shifts
     // right by the same +48px, and nothing is committed yet (undo disabled).
@@ -895,7 +945,6 @@ export const TrimMediaWithHandles: Story = {
     expect(width("img")).toBe(144);
 
     // Undo restores it (trims are ordinary undoable commands).
-    const user = userEvent.setup();
     await user.click(undoButton());
     await waitFor(() => expect(width("img")).toBe(96));
 
@@ -914,5 +963,135 @@ export const TrimMediaWithHandles: Story = {
     await dragHandleBy(handle("vid", "right")!, -600);
     await waitFor(() => expect(width("vid")).toBeLessThanOrEqual(20));
     expect(nodeCard(canvasElement, "vid").textContent).toMatch(/(?:^|\D)0s$/);
+  },
+};
+
+/** Play-less twin of TrimMediaWithHandles for e2e (real-mouse drag must not
+ * race a play()). Same graph/scale so pixel-for-pixel assertions carry over. */
+export const TrimPlayground: Story = {
+  render: () => (
+    <DndCollections initialGraph={trimGraph()} animateMoves={false}>
+      <SelectOnMount id="vid" />
+      <div className="flex w-[640px] flex-col gap-3">
+        <UndoRedoControls />
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+          }
+          trimPixelsPerSecond={TRIM_PPS}
+        />
+      </div>
+    </DndCollections>
+  ),
+};
+
+function trimmedGraph() {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "strip",
+      name: "Strip",
+      children: [
+        { kind: "media", id: "img", name: "Img", src: trimDogFrames[0], durationSeconds: 4 },
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "Vid",
+          posterSrcs: trimDogFrames,
+          fullDurationSeconds: 10,
+          trimInSeconds: 2,
+          trimOutSeconds: 1.5,
+        },
+        { kind: "media", id: "img2", name: "Img2", src: trimDogFrames[1], durationSeconds: 3 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+/** Shows the amber source-window offset by an existing trim (2s in / 1.5s out),
+ *  with the trimmed room dimmed on each side. Play-less. */
+export const TrimOverviewShowcase: Story = {
+  render: () => (
+    <DndCollections initialGraph={trimmedGraph()} animateMoves={false}>
+      <SelectOnMount id="vid" />
+      <div className="flex w-[640px] flex-col gap-3">
+        <UndoRedoControls />
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+          }
+          trimPixelsPerSecond={TRIM_PPS}
+        />
+      </div>
+    </DndCollections>
+  ),
+};
+
+export const KeyboardTrim: Story = {
+  // Alt+Shift+Arrows trim the focused media card without a drag, resolving to
+  // the SAME update-media command the pointer handles dispatch. At TRIM_PPS
+  // the card width IS the effective duration, so a resize proves the commit.
+  // Horizontal = the end edge (all media); vertical = the video start edge.
+  render: () => (
+    <DndCollections initialGraph={trimGraph()} animateMoves={false}>
+      <div className="flex w-[640px] flex-col gap-2">
+        <UndoRedoControls />
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+          }
+          trimPixelsPerSecond={TRIM_PPS}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const width = (id: string) =>
+      Math.round(nodeCard(canvasElement, id).getBoundingClientRect().width);
+    const undoButton = () => canvas.getByRole("button", { name: /undo/i });
+
+    const img = nodeCard(canvasElement, "img");
+    await waitForLayout(img);
+    // img 4s -> 96px, vid 10s -> 240px.
+    expect(width("img")).toBe(96);
+    expect(width("vid")).toBe(240);
+
+    // END edge on the image: right lengthens (+1s -> 120px), left shortens.
+    await user.click(img);
+    await user.keyboard("{Alt>}{Shift>}{ArrowRight}{/Shift}{/Alt}");
+    await waitFor(() => expect(width("img")).toBe(120));
+    await user.keyboard("{Alt>}{Shift>}{ArrowLeft}{/Shift}{/Alt}");
+    await waitFor(() => expect(width("img")).toBe(96));
+
+    // Trims are ordinary undoable commands.
+    await user.click(undoButton());
+    await waitFor(() => expect(width("img")).toBe(120));
+
+    // Images have no START edge — Alt+Shift+ArrowUp announces, doesn't resize.
+    await user.click(img);
+    await user.keyboard("{Alt>}{Shift>}{ArrowUp}{/Shift}{/Alt}");
+    expect(await canvas.findByText(/images can only be trimmed at the end/i)).toBeInTheDocument();
+    expect(width("img")).toBe(120);
+
+    // END edge on the video: left shortens (trim-out +1s -> 9s -> 216px).
+    const vid = nodeCard(canvasElement, "vid");
+    await user.click(vid);
+    await user.keyboard("{Alt>}{Shift>}{ArrowLeft}{/Shift}{/Alt}");
+    await waitFor(() => expect(width("vid")).toBe(216));
+
+    // START edge on the video: up trims the start (trim-in +1s -> 8s -> 192px);
+    // down gives it back (-> 9s -> 216px).
+    await user.keyboard("{Alt>}{Shift>}{ArrowUp}{/Shift}{/Alt}");
+    await waitFor(() => expect(width("vid")).toBe(192));
+    await user.keyboard("{Alt>}{Shift>}{ArrowDown}{/Shift}{/Alt}");
+    await waitFor(() => expect(width("vid")).toBe(216));
   },
 };

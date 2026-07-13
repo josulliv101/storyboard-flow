@@ -2,13 +2,16 @@
 
 import { useCallback, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 
-import { type NodeId } from "../core/graph";
+import { mediaDurationSeconds, type NodeId } from "../core/graph";
 import {
   resolveGridRowMoveCommand,
   resolveKeyboardCommand,
+  resolveTrimCommand,
   type GridRowMoveRejection,
   type KeyboardMoveAction,
   type KeyboardRejection,
+  type KeyboardTrimAction,
+  type KeyboardTrimRejection,
 } from "../core/keyboard";
 import { type CollectionsStore } from "./collections-store";
 
@@ -54,6 +57,30 @@ const KEYBOARD_BOUNDARY_MESSAGES: Readonly<Record<KeyboardRejection["reason"], s
   "no-next-sibling": "Already last in its collection.",
   "no-neighbor-collection": "No adjacent collection to nest into.",
   "no-parent-to-move-out-to": "Already at the top level.",
+};
+
+// Alt+SHIFT+Arrows trim the focused media card (the pointer handles' semantics
+// without a drag): horizontal = the END edge every media has, vertical = the
+// video START edge. Held Shift is what tells the handler apart from a bare
+// Alt+Arrow move — the trim branch runs first and returns.
+const TRIM_ACTION_BY_KEY: Readonly<Record<string, KeyboardTrimAction | undefined>> = {
+  ArrowRight: "trim-end-extend", // end edge out -> longer
+  ArrowLeft: "trim-end-reduce", // end edge in  -> shorter
+  ArrowUp: "trim-start-reduce", // video: trim more off the start
+  ArrowDown: "trim-start-extend", // video: give the start back
+};
+
+/** One keypress = one second, clamped by the reducer exactly like a drag. */
+const TRIM_STEP_SECONDS = 1;
+
+// `undefined` = intentionally silent (corrupt/out-of-scope input). Keyed by the
+// rejection union so a new reason forces a decision here at compile time.
+const TRIM_REJECTION_MESSAGES: Readonly<
+  Record<KeyboardTrimRejection["reason"], string | undefined>
+> = {
+  "no-start-edge": "Images can only be trimmed at the end.",
+  "not-media-node": undefined,
+  "missing-node": undefined,
 };
 
 export function useCollectionsKeyboard(args: {
@@ -122,6 +149,36 @@ export function useCollectionsKeyboard(args: {
     [store, announce, restoreFocus]
   );
 
+  const handleTrim = useCallback(
+    (nodeId: NodeId, action: KeyboardTrimAction) => {
+      const { graph } = store.getSnapshot();
+      const name = graph.nodesById.get(nodeId)?.name ?? "item";
+      const resolved = resolveTrimCommand(graph, nodeId, action, TRIM_STEP_SECONDS);
+      if (!resolved.ok) {
+        const message = TRIM_REJECTION_MESSAGES[resolved.error.reason];
+        if (message) announce(message);
+        return;
+      }
+      const dispatched = store.dispatch(resolved.value);
+      if (!dispatched.ok) {
+        // The reducer clamped the step to no change — the edge is at its limit.
+        if (dispatched.error.reason === "same-position") {
+          const extend = action === "trim-end-extend" || action === "trim-start-extend";
+          announce(
+            extend ? `"${name}" is already at its full length.` : `"${name}" is already trimmed all the way.`
+          );
+        }
+        return;
+      }
+      // A trim keeps the card mounted (structure is untouched), so focus stays
+      // put — just announce the new length.
+      const after = store.getSnapshot().graph.nodesById.get(nodeId);
+      const seconds = after && after.kind === "media" ? mediaDurationSeconds(after) : 0;
+      announce(`Trimmed "${name}" to ${seconds}s.`);
+    },
+    [store, announce]
+  );
+
   const handleKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent) => {
       if (!event.altKey || event.ctrlKey || event.metaKey) return;
@@ -134,6 +191,18 @@ export function useCollectionsKeyboard(args: {
         card?.getAttribute("data-node-id") ?? card?.getAttribute("data-node-wrapper");
       if (!rawId) return;
       const nodeId = rawId as NodeId;
+
+      // Alt+SHIFT+Arrows TRIM the media card — checked before the move/grid
+      // logic so a held Shift never falls through to a move. (A non-arrow
+      // Shift combo is left alone: return without consuming the event.)
+      if (event.shiftKey) {
+        const trimAction = TRIM_ACTION_BY_KEY[event.key];
+        if (!trimAction) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handleTrim(nodeId, trimAction);
+        return;
+      }
 
       // Inside a grid container, Alt+ArrowUp/Down mean ROW moves (± the
       // grid's column count) instead of the global nest/move-out — the
@@ -176,7 +245,7 @@ export function useCollectionsKeyboard(args: {
       // doesn't render — fall back to the destination collection's own card.
       restoreFocus(nodeId, resolved.value.toParentId);
     },
-    [store, announce, handleGridRowMove, restoreFocus]
+    [store, announce, handleGridRowMove, handleTrim, restoreFocus]
   );
 
   return { handleKeyDownCapture, restoreFocus };
