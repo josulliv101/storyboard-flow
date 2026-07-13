@@ -630,6 +630,27 @@ function flipTransforms(el: HTMLElement): string[] {
   });
 }
 
+// The in-flight FLIP animation on an element (its translate keyframe effect),
+// or undefined once it has finished/cancelled.
+function flipAnimation(el: HTMLElement): Animation | undefined {
+  return el.getAnimations().find((a) => {
+    if (!(a.effect instanceof KeyframeEffect)) return false;
+    const t = a.effect.getKeyframes()[0]?.transform;
+    return typeof t === "string" && t.startsWith("translate");
+  });
+}
+
+// Wait for an element's FLIP animation to advance past its start. A commit
+// that supersedes another within the SAME animation-timeline tick sees the
+// card still pinned at the prior animation's start position — which, for a
+// reverse move, equals the new target — so the delta is a genuine zero and
+// the FLIP layer correctly animates nothing. A real user's next keypress
+// always lands a frame later, where the move has real distance to cover;
+// these tests reproduce that by letting the first animation tick first.
+async function waitForFlipToAdvance(el: HTMLElement): Promise<void> {
+  await waitFor(() => expect(Number(flipAnimation(el)?.currentTime ?? 0)).toBeGreaterThan(0));
+}
+
 function DuplicateViewsBoard() {
   return (
     <DndCollections initialGraph={standardGraph()}>
@@ -673,11 +694,12 @@ export const FlipCancelsSupersededAnimations: Story = {
 
     alpha.focus();
     await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
-    const firstFlip = alpha.getAnimations().find((animation) => {
-      if (!(animation.effect instanceof KeyframeEffect)) return false;
-      return String(animation.effect.getKeyframes()[0]?.transform).startsWith("translate");
-    });
+    const firstFlip = flipAnimation(alpha);
     expect(firstFlip).toBeDefined();
+
+    // Let the first animation tick before superseding it (see
+    // waitForFlipToAdvance) so the reverse move has a real delta to animate.
+    await waitForFlipToAdvance(alpha);
 
     alpha.focus();
     await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
@@ -717,6 +739,10 @@ export const FlipSurvivesScrollBetweenCommits: Story = {
     await waitFor(() => {
       expect(panelOrder(canvasElement, "panel-a")[1]).toBe("alpha");
     });
+
+    // Let commit 1's FLIP advance a frame so the post-scroll reverse below has
+    // a real delta to animate (see waitForFlipToAdvance).
+    await waitForFlipToAdvance(nodeCard(canvasElement, "alpha"));
 
     // Scroll the container between the two commits.
     scroller.scrollTop = 100;
