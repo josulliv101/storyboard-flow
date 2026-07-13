@@ -142,7 +142,11 @@ export function useTrimPointerDrag(
         }
         // Commit. The view reconciles to the new data (its last preview
         // already matches), so there is no flash.
-        store.dispatch({ type: "update-media", nodeId: node.id, update });
+        const dispatched = store.dispatch({ type: "update-media", nodeId: node.id, update });
+        // A no-op (for example, moving away and returning to the committed
+        // value before release) does not change graph identity, so views
+        // cannot rely on their commit effect to clear the live preview.
+        if (!dispatched.ok) trimPreview.previewTrim(node.id, null);
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
