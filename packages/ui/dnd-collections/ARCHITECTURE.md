@@ -350,9 +350,10 @@ Everything semantic happens in `core/`.
   channel with human node names.
 
 Boundary cases (already first, no adjacent collection, …) come back as
-typed rejections and are announced via the aria-live region — which nudges
-repeat messages with a zero-width space so identical announcements still
-fire.
+typed rejections and are announced via the aria-live region. It repeats the
+same message by clearing the region and reinserting the exact text in a later
+task. Assistive technology observes a real DOM change without an invisible
+character becoming part of the spoken content.
 
 Inside the virtualized views there is a THIRD arrow-key role, and the three
 stay disjoint by design: **bare arrows NAVIGATE** (roving focus, in
@@ -374,20 +375,22 @@ and the reason is the efficiency story above: displaced sibling cards
 intentionally don't re-render, so a per-card effect would never fire for
 exactly the cards that shifted. Instead, one component (`FlipAnimator`,
 mounted by the **provider**) measures the DOM directly and plays
-inverted-transform WAAPI animations (`composite: "replace"` so a rapid
-undo/redo supersedes an in-flight animation instead of compounding). The
-id-keyed rects span the whole container, which is what makes cross-panel
-moves animate — a card's FIRST rect is taken from its old panel.
+inverted-transform WAAPI animations. Each graph commit explicitly cancels the
+instance's in-flight FLIP animations before starting replacements. Rects
+match by DOM-element identity first; when React recreates a card during a
+cross-parent move, node identity is used only if one unmatched instance
+exists on each side. This preserves cross-panel animation without conflating
+two views that render the same node.
 `prefers-reduced-motion` disables it; so does `animateMoves={false}` on
 `<DndCollections>`.
 
 Ownership sits at the **provider**, not on any one view (`animateMoves` is a
 `<DndCollections>` prop). That is what makes it a true system layer: one sweep
-per commit animates panels, virtualized views (strip reorders keep stable DOM
-by node-id key, so they animate; grid cross-row moves recreate the element and
-so don't — an accepted gap), and custom views alike, and two views in one
-instance never each run their own sweep. Any `[data-node-id]` under the
-provider container is measured.
+per commit animates panels, virtualized views, and custom views alike, and two
+views in one instance never each run their own sweep. Grid cross-row moves do
+recreate the element, but the unambiguous node fallback still animates the new
+card from the old rect. Any `[data-node-id]` under the provider container is
+measured.
 
 **FIRST and LAST are measured in the same scroll frame.** FIRST is captured
 synchronously the instant the graph changes — inside a `store.subscribe`
@@ -403,8 +406,8 @@ subscription is gated on graph identity, so the flood of interaction-only
 notifies during a drag never triggers a measurement.
 
 The sweep is scoped to the provider's wrapper element, exposed through
-`container-context.ts` — both the DOM query and the id-keyed rect registry
-stay inside one `DndCollections` instance, so multiple boards on a page
+`container-context.ts` — both the DOM query and the rect registry stay inside
+one `DndCollections` instance, so multiple boards on a page
 (even ones reusing node ids) never measure or animate each other's cards
 (`TwoInstancesStayIsolated` story).
 

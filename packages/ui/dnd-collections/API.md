@@ -686,15 +686,12 @@ finite and non-negative, and `overscan` is a non-negative integer. Invalid
 values use the documented defaults; `itemWidthFor` may return zero for a
 fully trimmed clip, while negative/non-finite results use `itemWidth`.
 
-When `trimPixelsPerSecond` is set and a video is selected, `VirtualStrip`
-automatically reserves a band above the row and renders the source-window
-overview (`TrimOverviewStrip`) directly above that video's clip — there is no
-separate component to mount. The overview's amber window is pixel-aligned to
-the clip's own rendered edges (at rest and live, mid-drag), because it's
-positioned in the same scrolled coordinate space as the clip itself. This
-band only appears for a SELECTED video whose clip is currently mounted (the
-band is reserved as soon as a video is selected, even if scrolled off-screen,
-so scrolling doesn't repeatedly resize the row).
+When `trimPixelsPerSecond` is set and a mounted video is selected,
+`VirtualStrip` renders the source-window overview (`TrimOverviewStrip`) as a
+floating tooltip directly above that clip — there is no separate component
+to mount and no layout band that displaces the row. The overview's amber
+window is pixel-aligned to the clip's rendered edges at rest and during a live
+trim because its position is derived from the mounted clip rect.
 
 `itemWidthFor` is evaluated lazily per index (never by rendering the node) and
 the virtualizer memoizes its measurements, so it runs once per layout, not per
@@ -729,8 +726,11 @@ to responsive measurement.
 Row-virtualized (one virtual item per row; columns are index arithmetic).
 Inside a grid, Alt+ArrowUp/Down are row moves (± the column count) — the grid
 publishes its live column count on `data-grid-columns` for the keyboard layer.
-Cross-row moves recreate the card's DOM element (rows are keyed by index), so
-FLIP and held focus don't survive that hop.
+Cross-row moves recreate the card's DOM element because rows own their cells.
+The provider's unambiguous node fallback preserves the visual FLIP and the
+keyboard layer restores focus after the new card mounts, but DOM/component
+state local to the old card does not survive that hop; reusable cards should
+keep durable state in the collection store.
 
 ### Virtual DOM/test hooks
 
