@@ -158,7 +158,8 @@ export type GraphNodeSpec =
 export type BuildGraphError =
   | Readonly<{ reason: "duplicate-id"; id: string }>
   | Readonly<{ reason: "empty-id" }>
-  | Readonly<{ reason: "root-not-collection"; id: string }>;
+  | Readonly<{ reason: "root-not-collection"; id: string }>
+  | Readonly<{ reason: "invalid-spec"; error: CollectionsValidationError }>;
 
 /**
  * Denormalizes a nested spec into a `CollectionsGraph`. Fails (rather than
@@ -168,6 +169,18 @@ export type BuildGraphError =
 export function buildGraph(
   roots: readonly GraphNodeSpec[]
 ): Result<CollectionsGraph, BuildGraphError> {
+  const parsed = parseGraphSpec(roots);
+  if (!parsed.ok) {
+    if (
+      parsed.error.reason === "invalid-value" &&
+      parsed.error.path.endsWith(".id") &&
+      parsed.error.message === "Expected a non-empty id."
+    ) {
+      return { ok: false, error: { reason: "empty-id" } };
+    }
+    return { ok: false, error: { reason: "invalid-spec", error: parsed.error } };
+  }
+  const validatedRoots = parsed.value;
   const nodesById = new Map<NodeId, CollectionItemNode>();
   const childrenById = new Map<NodeId, readonly NodeId[]>();
   const parentById = new Map<NodeId, NodeId | null>();
@@ -177,7 +190,7 @@ export function buildGraph(
   type Frame = Readonly<{ spec: GraphNodeSpec; parentId: NodeId | null }>;
   const stack: Frame[] = [];
 
-  for (const root of roots) {
+  for (const root of validatedRoots) {
     if (root.kind !== "collection") {
       return { ok: false, error: { reason: "root-not-collection", id: root.id } };
     }
@@ -238,7 +251,7 @@ export function buildGraph(
       nodesById,
       childrenById,
       parentById,
-      rootIds: roots.map((root) => root.id as NodeId),
+      rootIds: validatedRoots.map((root) => root.id as NodeId),
     },
   };
 }
@@ -578,10 +591,10 @@ export function parseGraphSpec(
     return { ok: false, error: invalidType("$", "Expected an array of root nodes.") };
   }
 
-  type PendingSpec = Readonly<{ value: unknown; path: string; root: boolean }>;
+  type PendingSpec = Readonly<{ value: unknown; path: string }>;
   const pending: PendingSpec[] = [];
   for (let index = value.length - 1; index >= 0; index--) {
-    pending.push({ value: value[index], path: `$[${index}]`, root: true });
+    pending.push({ value: value[index], path: `$[${index}]` });
   }
 
   while (pending.length > 0) {
@@ -594,13 +607,6 @@ export function parseGraphSpec(
     }
     const identityError = validateNodeIdentity(current.value, current.path);
     if (identityError) return { ok: false, error: identityError };
-    if (current.root && current.value.kind !== "collection") {
-      return {
-        ok: false,
-        error: invalidValue(`${current.path}.kind`, "Root nodes must be collections."),
-      };
-    }
-
     if (current.value.kind === "collection") {
       const children = current.value.children;
       if (children === undefined) continue;
@@ -614,7 +620,6 @@ export function parseGraphSpec(
         pending.push({
           value: children[index],
           path: `${current.path}.children[${index}]`,
-          root: false,
         });
       }
       continue;

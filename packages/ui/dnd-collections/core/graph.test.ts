@@ -283,6 +283,31 @@ describe("buildGraph", () => {
     expect(result).toEqual({ ok: false, error: { reason: "empty-id" } });
   });
 
+  test("rejects malformed runtime node fields before normalizing them", () => {
+    const result = buildGraph([
+      {
+        kind: "collection",
+        id: "root",
+        name: "Root",
+        children: [
+          {
+            kind: "media",
+            id: "bad",
+            name: "Bad",
+            durationSeconds: Number.NaN,
+          },
+        ],
+      },
+    ]);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "invalid-spec",
+        error: { path: "$[0].children[0].durationSeconds" },
+      },
+    });
+  });
+
   test("survives pathological depth without recursion", () => {
     let spec: GraphNodeSpec = media("leaf");
     for (let i = 0; i < 20_000; i++) {

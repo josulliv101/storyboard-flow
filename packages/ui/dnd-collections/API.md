@@ -123,8 +123,13 @@ type GraphNodeSpec =
 type BuildGraphError =
   | { reason: "duplicate-id"; id: string }   // anywhere in the tree — ids are the addressing scheme
   | { reason: "empty-id" }
-  | { reason: "root-not-collection"; id: string };
+  | { reason: "root-not-collection"; id: string }
+  | { reason: "invalid-spec"; error: CollectionsValidationError };
 ```
+
+`buildGraph` validates the complete runtime spec before normalization, so
+malformed JavaScript or parsed data returns `invalid-spec` instead of placing
+invalid fields into the graph.
 
 ### Runtime validation
 
