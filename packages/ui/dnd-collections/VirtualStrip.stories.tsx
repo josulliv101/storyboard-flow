@@ -848,13 +848,16 @@ export const TrimMediaWithHandles: Story = {
     <DndCollections initialGraph={trimGraph()} animateMoves={false}>
       <div className="flex w-[640px] flex-col gap-2">
         <UndoRedoControls />
-        <VirtualStrip
-          collectionId={parseNodeId("strip")}
-          itemWidthFor={(node) =>
-            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
-          }
-          trimPixelsPerSecond={TRIM_PPS}
-        />
+        {/* Headroom for the floating overview tooltip (shown once vid is selected). */}
+        <div className="pt-16">
+          <VirtualStrip
+            collectionId={parseNodeId("strip")}
+            itemWidthFor={(node) =>
+              node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+            }
+            trimPixelsPerSecond={TRIM_PPS}
+          />
+        </div>
       </div>
     </DndCollections>
   ),
@@ -974,13 +977,16 @@ export const TrimPlayground: Story = {
       <SelectOnMount id="vid" />
       <div className="flex w-[640px] flex-col gap-3">
         <UndoRedoControls />
-        <VirtualStrip
-          collectionId={parseNodeId("strip")}
-          itemWidthFor={(node) =>
-            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
-          }
-          trimPixelsPerSecond={TRIM_PPS}
-        />
+        {/* Headroom for the floating overview tooltip. */}
+        <div className="pt-16">
+          <VirtualStrip
+            collectionId={parseNodeId("strip")}
+            itemWidthFor={(node) =>
+              node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+            }
+            trimPixelsPerSecond={TRIM_PPS}
+          />
+        </div>
       </div>
     </DndCollections>
   ),
@@ -1020,13 +1026,16 @@ export const TrimOverviewShowcase: Story = {
       <SelectOnMount id="vid" />
       <div className="flex w-[640px] flex-col gap-3">
         <UndoRedoControls />
-        <VirtualStrip
-          collectionId={parseNodeId("strip")}
-          itemWidthFor={(node) =>
-            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
-          }
-          trimPixelsPerSecond={TRIM_PPS}
-        />
+        {/* Headroom for the floating overview tooltip. */}
+        <div className="pt-16">
+          <VirtualStrip
+            collectionId={parseNodeId("strip")}
+            itemWidthFor={(node) =>
+              node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+            }
+            trimPixelsPerSecond={TRIM_PPS}
+          />
+        </div>
       </div>
     </DndCollections>
   ),
@@ -1130,13 +1139,16 @@ function PhaseBHarness() {
       <SelectOnMount id="vid" />
       <div className="flex w-[640px] flex-col gap-3">
         <UndoRedoControls />
-        <VirtualStrip
-          collectionId={parseNodeId("strip")}
-          itemWidthFor={(node) =>
-            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
-          }
-          trimPixelsPerSecond={TRIM_PPS}
-        />
+        {/* Headroom for the floating overview tooltip. */}
+        <div className="pt-16">
+          <VirtualStrip
+            collectionId={parseNodeId("strip")}
+            itemWidthFor={(node) =>
+              node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+            }
+            trimPixelsPerSecond={TRIM_PPS}
+          />
+        </div>
       </div>
     </DndCollections>
   );
@@ -1287,13 +1299,16 @@ function OverviewHarness() {
       <SelectOnMount id="vid" />
       <div className="flex w-[640px] flex-col gap-3">
         <UndoRedoControls />
-        <VirtualStrip
-          collectionId={parseNodeId("strip")}
-          itemWidthFor={(node) =>
-            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
-          }
-          trimPixelsPerSecond={TRIM_PPS}
-        />
+        {/* Headroom for the floating overview tooltip. */}
+        <div className="pt-16">
+          <VirtualStrip
+            collectionId={parseNodeId("strip")}
+            itemWidthFor={(node) =>
+              node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+            }
+            trimPixelsPerSecond={TRIM_PPS}
+          />
+        </div>
       </div>
     </DndCollections>
   );
@@ -1373,4 +1388,134 @@ export const OverviewHandlesAndMove: Story = {
 /** Play-less twin of OverviewHandlesAndMove for the real-mouse e2e. */
 export const OverviewPlayground: Story = {
   render: () => <OverviewHarness />,
+};
+
+// Edge case: a video trimmed from the START is the FIRST item (index 0).
+function firstItemTrimmedGraph() {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "strip",
+      name: "Strip",
+      children: [
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "Vid",
+          posterSrcs: trimDogFrames,
+          fullDurationSeconds: 10,
+          trimInSeconds: 3,
+          trimOutSeconds: 1,
+        },
+        { kind: "media", id: "img", name: "Img", src: trimDogFrames[0], durationSeconds: 4 },
+        { kind: "media", id: "img2", name: "Img2", src: trimDogFrames[1], durationSeconds: 3 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+export const FirstItemTrimmedFromStart: Story = {
+  // EDGE CASE (play-less, visual). A video trimmed 3s off the start (full 10s,
+  // trim-in 3s, trim-out 1s -> showing 6s -> 144px) is the FIRST item, and is
+  // selected — so the strip reserves a LEADING GUTTER (trim-in * pps = 72px)
+  // that insets the first clip and gives the overview's trimmed-in room a place
+  // to render INSIDE the scrollable area. Without the gutter the overview would
+  // anchor at `item.start - trimIn*pps = -72px` and the room would be clipped
+  // left of the origin. The gutter is transient — it's only present while this
+  // first item is selected (see FirstItemGutterOnSelect for that behavior).
+  render: () => (
+    <DndCollections initialGraph={firstItemTrimmedGraph()} animateMoves={false}>
+      <SelectOnMount id="vid" />
+      <div className="flex w-[640px] flex-col gap-3">
+        <UndoRedoControls />
+        {/* Headroom for the floating overview tooltip. */}
+        <div className="pt-16">
+          <VirtualStrip
+            collectionId={parseNodeId("strip")}
+            itemWidthFor={(node) =>
+              node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+            }
+            trimPixelsPerSecond={TRIM_PPS}
+          />
+        </div>
+      </div>
+    </DndCollections>
+  ),
+};
+
+function FirstItemGutterControls() {
+  const store = useCollectionsStore();
+  return (
+    <div className="flex gap-2">
+      <button type="button" onClick={() => store.setSelection([parseNodeId("vid")])}>
+        select
+      </button>
+      <button type="button" onClick={() => store.setSelection([])}>
+        unselect
+      </button>
+    </div>
+  );
+}
+
+export const FirstItemGutterOnSelect: Story = {
+  // The leading gutter for a trimmed first item appears ONLY while that item is
+  // selected, and vanishes when it isn't — matching the overview's own
+  // selection-gating. Selecting insets the first clip by trim-in (3s*24=72px)
+  // and un-clips the overview's room; unselecting restores the origin. The
+  // overview is a floating tooltip, so showing it never displaces the row.
+  render: () => (
+    <DndCollections initialGraph={firstItemTrimmedGraph()} animateMoves={false}>
+      <div className="flex w-[640px] flex-col gap-3">
+        <FirstItemGutterControls />
+        {/* Headroom for the floating overview tooltip. */}
+        <div className="pt-16">
+          <VirtualStrip
+            collectionId={parseNodeId("strip")}
+            itemWidthFor={(node) =>
+              node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+            }
+            trimPixelsPerSecond={TRIM_PPS}
+          />
+        </div>
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const vidLeft = () => Math.round(nodeCard(canvasElement, "vid").getBoundingClientRect().left);
+    const overview = () => canvasElement.querySelector<HTMLElement>("[data-trim-overview]");
+    const contentLeft = () =>
+      Math.round(
+        canvasElement
+          .querySelector<HTMLElement>('[data-virtual-strip="strip"] [role="row"]')!
+          .getBoundingClientRect().left
+      );
+
+    await waitForLayout(nodeCard(canvasElement, "vid"));
+    // Deselected: no overview, no gutter — the first clip sits at the origin.
+    expect(overview()).toBeNull();
+    const originLeft = vidLeft();
+
+    // Select the first item: the overview appears AND the clip insets by the
+    // gutter (trim-in 3s * 24 = 72px).
+    await user.click(canvas.getByRole("button", { name: /^select$/i }));
+    await waitFor(() => {
+      expect(overview()).not.toBeNull();
+      expect(vidLeft()).toBe(originLeft + 72);
+    });
+    // The room is no longer clipped: the overview's left edge is at/after the
+    // strip's content origin (it was 72px left of it before).
+    expect(overview()!.getBoundingClientRect().left).toBeGreaterThanOrEqual(contentLeft() - 1);
+
+    // Unselect: gutter gone, first clip back at the origin.
+    await user.click(canvas.getByRole("button", { name: /^unselect$/i }));
+    await waitFor(() => {
+      expect(overview()).toBeNull();
+      expect(vidLeft()).toBe(originLeft);
+    });
+  },
 };

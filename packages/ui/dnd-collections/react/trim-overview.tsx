@@ -10,15 +10,13 @@ import { resolveMove, resolveTrim, useTrimPointerDrag, type TrimSide } from "./t
 // (positioned by the trim-in offset, sized to the showing duration) and the
 // trimmed room dimmed on each side. Mirrors the app's video-source-filmstrip.
 //
-// Positioned entirely by its caller (VirtualStrip) via `anchorLeft` — the
-// clip's own content-space left edge minus `trimInSeconds * pixelsPerSecond`
-// — rendered as a DOM child of the SAME scrolled content container the clip
-// lives in. That makes the amber window's left/right edges land EXACTLY on
-// the clip's rendered edges, for any trim value, and keeps them aligned
-// through scroll and live drags for free (no rect tracking, no scroll
-// listeners) — see ARCHITECTURE.md's trim section. `trimInSeconds`/
-// `trimOutSeconds` are passed in (not read from the node) so a live drag can
-// override the committed values before they land.
+// It renders its content at its own origin (width = full source); the caller
+// (VirtualStrip) positions it — as a floating tooltip above the clip — so its
+// amber window's left/right edges land on the clip's rendered edges. The
+// window sits `trimInSeconds * pixelsPerSecond` in from this component's left,
+// so the caller places the left edge at `clipLeft - trimInSeconds * pps`.
+// `trimInSeconds`/`trimOutSeconds` are passed in (not read from the node) so a
+// live drag can override the committed values before they land.
 //
 // It's interactive: the window's amber grips TRIM (left = trim-in, right =
 // trim-out — the same `update-media` the card handles dispatch, via the same
@@ -37,20 +35,14 @@ const FRAME_SIZE = 44;
 export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   node,
   pixelsPerSecond,
-  anchorLeft,
   trimInSeconds,
   trimOutSeconds,
-  top = 0,
 }: {
   node: VideoMediaNode;
   pixelsPerSecond: number;
-  /** Content-space left edge to render at: `clipLeft - trimInSeconds * pixelsPerSecond`. */
-  anchorLeft: number;
   /** Live values during a drag override the node's committed trim. */
   trimInSeconds: number;
   trimOutSeconds: number;
-  /** Content-space top offset (the reserved band above the clip row). */
-  top?: number;
 }) {
   const full = Math.max(0, node.fullDurationSeconds);
   const trimIn = Math.max(0, trimInSeconds);
@@ -81,11 +73,10 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
     <div
       data-trim-overview={node.id}
       // Dragging the filmstrip (anywhere but the amber grips, which
-      // stopPropagation) MOVES the source window. `data-trim-overview` also
-      // opts the whole band out of the strip's pan gesture.
+      // stopPropagation) MOVES the source window.
       onPointerDown={startMove}
-      className="absolute h-11 cursor-grab touch-none overflow-hidden rounded-md select-none active:cursor-grabbing"
-      style={{ width: fullWidth, top, transform: `translateX(${anchorLeft}px)` }}
+      className="relative h-11 cursor-grab touch-none overflow-hidden rounded-md select-none active:cursor-grabbing"
+      style={{ width: fullWidth }}
     >
       {/* Full-source filmstrip. */}
       <div className="flex h-full w-full">

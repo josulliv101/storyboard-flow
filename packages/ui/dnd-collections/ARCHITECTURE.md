@@ -191,23 +191,33 @@ anchored, pure `resizeItem`).
 
 For a selected video, `VirtualStrip` also renders a `TrimOverviewStrip`
 (`trim-overview.tsx`) — the full source as a poster filmstrip with an amber
-window marking what's showing — directly above that clip's row, and reserves
-a fixed-height band for it (so the row shifts down while a video is
-selected). It is NOT a standalone component the app mounts: only `VirtualStrip`
-has the virtualizer measurements needed to align it, so it lives in the same
-scrolled `contentRef` coordinate space as the clips themselves and is
-positioned via `anchorLeft = item.start - trimInSeconds * pixelsPerSecond`.
-That single formula, combined with the overview's existing internal geometry
-(window left = `trimInSeconds * pixelsPerSecond`, width = showing seconds *
-pixelsPerSecond), makes the amber window's left/right edges land EXACTLY on
-the clip's own rendered edges for any trim value — no rect measuring, no
-scroll listeners, because it's a real DOM child of the same natively-scrolled
-container the clip lives in. `TrimPreview` (widened to `previewTrim`) carries
-the drag's live `trimInSeconds`/`trimOutSeconds` split (not just the
-resulting duration) so this alignment holds mid-drag, not only after commit;
-`VirtualStrip` keeps that live override in interaction state local to the view
-(not the store, so bystander cards don't subscribe) and clears it whenever
-`nodesById` changes identity (any commit — trim, undo, redo).
+window marking what's showing — as a floating TOOLTIP directly above that
+clip. It's an OVERLAY, not part of the row: it reserves no vertical band, so
+showing it never displaces the clips. To float above the row without being
+clipped it's rendered OUTSIDE the scroll container (an `overflow-x: auto`
+element also clips vertically, so a child above the row would be cut off),
+in a `relative` wrapper. `VirtualStrip` positions it imperatively — a layout
+effect (each render) and an rAF-coalesced scroll listener read the selected
+clip's live `getBoundingClientRect()` and set the overlay's `translateX` to
+`clipLeft − trimInSeconds * pixelsPerSecond`. Reading the clip's actual rect
+(which already reflects scroll, padding, and the live-drag transform) makes
+the amber window's left/right edges land EXACTLY on the clip's rendered edges
+for any trim value, with no coordinate math to keep in sync. `TrimPreview`
+(widened to `previewTrim`) carries the drag's live `trimInSeconds`/
+`trimOutSeconds` split (not just the resulting duration) so this holds mid-drag,
+not only after commit; `VirtualStrip` keeps that live override in interaction
+state local to the view (not the store, so bystander cards don't subscribe)
+and clears it whenever `nodesById` changes identity (any commit — trim, undo,
+redo).
+
+A trimmed video at index 0 is the one case the overview can't reveal by
+scrolling: its offset is 0 with no content (and no scroll room) to its left,
+so the trimmed-in room would sit left of the origin. When such a clip is
+selected, the virtualizer's `paddingStart` reserves a leading gutter (its
+committed `trimIn * pps`) that insets the first clip so the room fits — a
+horizontal fix orthogonal to the tooltip's vertical float. It's transient
+(present only while that first item is selected) and uses the COMMITTED
+trim-in, so it changes at selection/commit cadence, never per drag frame.
 
 The overview is itself interactive, sharing the card handles' gesture core
 (`trim-gesture.ts`: `resolveTrim`, `resolveMove`, `useTrimPointerDrag` — one
@@ -215,13 +225,13 @@ pointer lifecycle → live `previewTrim` → one `update-media` on release). Its
 amber grips TRIM (left = trim-in, right = trim-out) exactly like the card
 edges. Dragging the filmstrip body instead MOVES the source window:
 `resolveMove` shifts trim-in and trim-out together, keeping showing (and so the
-clip width) constant. Because the window sits at `anchorLeft + trimInWidth ==
-clipLeft` for ANY trim-in, a move leaves the window locked on the clip while
-the filmstrip — drawn from `anchorLeft`, which changes with trim-in — slides
-under it, so you scrub which part of the source the clip plays. A move carries
-`side: "move"`, which the left-grow anchor ignores (effective is unchanged, so
-its transform is 0 anyway). The band opts out of the strip's pan via
-`data-trim-overview`.
+clip width) constant. Because the overlay is placed at `clipLeft − trimIn*pps`,
+the window (which sits `trimIn*pps` in from the overlay's left) stays on the
+clip's left edge for any trim-in, while the filmstrip around it slides — so a
+move scrubs which part of the source the clip plays without moving the window
+or the clip. A move carries `side: "move"`, which the left-grow anchor ignores
+(effective is unchanged, so its transform is 0 anyway). The overview lives
+outside the scroll container, so its drags never reach the strip's pan gesture.
 
 Two properties fall out of this shape and everything else depends on them:
 

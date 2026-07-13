@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -64,9 +65,7 @@ const isPannableStripSurface = (target: Element): boolean =>
   !target.closest("[data-drag-handle], [data-trim-handle], [data-trim-overview]");
 const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
 
-// Vertical band reserved above the row for the selected video's TrimOverview
-// (matches TrimOverviewStrip's own h-11 = 44px).
-const OVERVIEW_HEIGHT = 44;
+// Gap between the floating overview tooltip and the top of the strip.
 const OVERVIEW_GAP = 8;
 
 export type VirtualStripProps = Readonly<{
@@ -160,6 +159,23 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // move during a drag (WidthCallbackColdDuringDrag pins this).
     const getItemKey = useCallback((index: number) => childIds[index], [childIds]);
 
+    // The FIRST item is the one case that can't reveal its overview's
+    // trimmed-in room by scrolling: its offset is 0 with no content (and no
+    // scroll room) to its left, so the room would render left of the origin
+    // and be clipped. When a trimmed video is selected AT index 0, reserve a
+    // leading gutter (its committed trim-in, in px) so the room fits inside
+    // the scrollable area — the first clip insets by that much and the room
+    // fills the space above it. It's transient: present only while that first
+    // item is selected (the overview is selection-gated too), so the strip is
+    // undisturbed at rest. Uses the COMMITTED trim-in (not the live drag
+    // value) so it changes at selection/commit cadence, never per frame.
+    const firstItemGutter =
+      trimPixelsPerSecond !== undefined &&
+      selectedVideo !== null &&
+      childIds[0] === selectedVideo.id
+        ? Math.max(0, selectedVideo.trimInSeconds * trimPixelsPerSecond)
+        : 0;
+
     const virtualizer = useVirtualizer({
       count: childIds.length,
       getScrollElement: () => scrollRef.current,
@@ -169,6 +185,9 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       horizontal: true,
       overscan,
       getItemKey,
+      // Space before the first item; item offsets, total size, boundary math,
+      // and the overview anchor (all keyed off `item.start`) shift with it.
+      paddingStart: firstItemGutter,
     });
 
     // Variable widths come from node DATA, so a data change (a trim commit,
@@ -313,15 +332,11 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       ? focusedIndex
       : mountedItems[0]?.index ?? 0;
 
-    // Reserve the band whenever a video is selected (not only while its item
-    // is mounted) — otherwise scrolling the selected clip on/off screen would
-    // repeatedly grow/shrink the row height. The overview itself only renders
-    // once its clip is actually mounted (there's nothing to be "above" of
-    // when it's off-screen).
-    const hasOverviewBand = trimPixelsPerSecond !== undefined && selectedVideo !== null;
-    const itemsTop = hasOverviewBand ? OVERVIEW_HEIGHT + OVERVIEW_GAP : 0;
-    const contentHeight = itemHeight + (hasOverviewBand ? OVERVIEW_HEIGHT + OVERVIEW_GAP : 0);
-
+    // The overview is a floating TOOLTIP above the selected clip — it does NOT
+    // reserve a band in the row, so showing it never displaces the clips. To
+    // float above without being clipped (the scroll container's overflow-x
+    // clips y too), it's rendered OUTSIDE that container and positioned to
+    // track the clip. Only render it while the clip is actually mounted.
     const selectedVideoIndex = selectedVideo ? childIds.indexOf(selectedVideo.id) : -1;
     const selectedVideoItem =
       selectedVideoIndex === -1
@@ -334,10 +349,58 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       (liveTrim?.nodeId === selectedVideo.id
         ? liveTrim.trim
         : { trimInSeconds: selectedVideo.trimInSeconds, trimOutSeconds: selectedVideo.trimOutSeconds });
-    const overviewAnchorLeft =
-      selectedVideoItem && overviewTrim
-        ? selectedVideoItem.start - overviewTrim.trimInSeconds * (trimPixelsPerSecond ?? 0)
-        : 0;
+    const showOverview =
+      selectedVideo !== null &&
+      selectedVideoItem !== undefined &&
+      !!overviewTrim &&
+      trimPixelsPerSecond !== undefined;
+
+    // Imperative positioner for the tooltip overlay. It reads the SELECTED
+    // clip's live rect (which already reflects scroll + the live-drag
+    // transform) and offsets left by the trim-in width, so the amber window
+    // lands exactly on the clip's left edge — no coordinate math to keep in
+    // sync. Kept in refs and driven from a layout effect (each render) and a
+    // scroll listener, so it never needs a React re-render on scroll.
+    const overlayRef = useRef<HTMLDivElement>(null);
+    const stripWrapperRef = useRef<HTMLDivElement>(null);
+    const overviewPosRef = useRef<{ id: NodeId; trimInPx: number } | null>(null);
+    overviewPosRef.current =
+      showOverview && selectedVideo && overviewTrim && trimPixelsPerSecond !== undefined
+        ? { id: selectedVideo.id, trimInPx: overviewTrim.trimInSeconds * trimPixelsPerSecond }
+        : null;
+    const positionOverlay = useCallback(() => {
+      const el = overlayRef.current;
+      const wrap = stripWrapperRef.current;
+      const sc = scrollRef.current;
+      const info = overviewPosRef.current;
+      if (!el || !wrap || !sc || !info) return;
+      const clip = sc.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(info.id)}"]`);
+      if (!clip) return;
+      const x = clip.getBoundingClientRect().left - wrap.getBoundingClientRect().left - info.trimInPx;
+      el.style.transform = `translateX(${x}px)`;
+    }, [scrollRef]);
+    // Reposition after every render (selection / trim / relayout), before paint.
+    useLayoutEffect(() => {
+      positionOverlay();
+    });
+    // Follow horizontal scroll without re-rendering (rAF-coalesced).
+    useEffect(() => {
+      const sc = scrollRef.current;
+      if (!sc) return;
+      let raf = 0;
+      const onScroll = () => {
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          positionOverlay();
+        });
+      };
+      sc.addEventListener("scroll", onScroll, { passive: true });
+      return () => {
+        sc.removeEventListener("scroll", onScroll);
+        if (raf) cancelAnimationFrame(raf);
+      };
+    }, [scrollRef, positionOverlay]);
 
     // Right-edge anchor for a left-handle drag ("grows left"): resizeItem
     // grew the item rightward, so translate the whole content layer by the
@@ -394,90 +457,103 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
 
     return (
       <TrimPreviewContext.Provider value={trimPreview}>
-        <div
-          ref={setContainerRef}
-          data-virtual-strip={collectionId}
-          // One-row grid: arrow keys rove across columns, and aria-colcount /
-          // aria-colindex expose the true position ("column 500 of 1000") even
-          // though only a handful of cells are mounted.
-          role="grid"
-          aria-label={`${name}, ${childIds.length} items`}
-          aria-rowcount={1}
-          aria-colcount={childIds.length}
-          onKeyDown={onKeyDown}
-          className={[
-            "relative overflow-x-auto rounded-md border border-dashed border-border p-2",
-            className ?? "",
-          ].join(" ")}
-          // When WE own horizontal scrolling (pan hook), reserve horizontal
-          // touch gestures for it and leave vertical native ("pan-y"). With
-          // panToScroll off there is no pan hook, so the browser must keep
-          // native horizontal touch scrolling ("auto") or the strip can't be
-          // scrolled by touch at all.
-          style={{ touchAction: panToScroll ? "pan-y" : "auto" }}
-        >
-          <VirtualEmptyHint visible={childIds.length === 0} />
-          <div
-            ref={contentRef}
-            role="row"
-            aria-rowindex={1}
-            style={{
-              width: virtualizer.getTotalSize(),
-              height: contentHeight,
-              position: "relative",
-              // The left-handle "grows left" anchor (0 unless a left trim is
-              // in flight). Shifts the whole content layer — clips AND the
-              // overview — so they move together and stay aligned.
-              transform: dragShiftX ? `translateX(${dragShiftX}px)` : undefined,
-            }}
-          >
-            {selectedVideo && selectedVideoItem && overviewTrim && trimPixelsPerSecond !== undefined && (
+        {/* Wrapper so the overview tooltip can float ABOVE the strip without
+            being clipped by the scroll container's overflow. */}
+        <div ref={stripWrapperRef} className="relative">
+          {showOverview && selectedVideo && overviewTrim && trimPixelsPerSecond !== undefined && (
+            <div
+              ref={overlayRef}
+              // Floats above the strip; positioned horizontally by
+              // positionOverlay (transform set imperatively). An overlay, so
+              // it never displaces the clip row.
+              className="absolute left-0 z-30"
+              style={{ bottom: `calc(100% + ${OVERVIEW_GAP}px)` }}
+            >
               <TrimOverviewStrip
                 node={selectedVideo}
                 pixelsPerSecond={trimPixelsPerSecond}
-                anchorLeft={overviewAnchorLeft}
                 trimInSeconds={overviewTrim.trimInSeconds}
                 trimOutSeconds={overviewTrim.trimOutSeconds}
               />
-            )}
-            {indicatorLeft !== null && (
-              <div
-                aria-hidden="true"
-                data-drop-indicator="virtual"
-                className="pointer-events-none absolute z-20 w-1 rounded-full bg-primary"
-                style={{ left: indicatorLeft, top: itemsTop, height: itemHeight }}
-              />
-            )}
-            {virtualizer.getVirtualItems().map((item) => (
-              <div
-                key={item.key}
-                data-virtual-index={item.index}
-                role="gridcell"
-                aria-colindex={item.index + 1}
-                // Sync the roving index to whatever card actually gains focus
-                // (click, programmatic focus), not just keyboard navigation.
-                onFocus={() => onItemFocus(item.index)}
-                style={{
-                  position: "absolute",
-                  top: itemsTop,
-                  left: 0,
-                  width: item.size - gap,
-                  height: itemHeight,
-                  transform: `translateX(${item.start}px)`,
-                }}
-              >
-                {/* Explicit sizing: the card fills its (possibly variable) slot.
-                    With panToScroll, item drags move to the grip bar or behind
-                    a press-and-hold so the body is free to pan the strip. */}
-                <NodeCard
-                  id={childIds[item.index]}
-                  className="h-full w-full"
-                  dragActivation={cardActivation}
-                  rovingTabIndex={item.index === rovingIndex ? 0 : -1}
-                  trimPixelsPerSecond={trimPixelsPerSecond}
+            </div>
+          )}
+          <div
+            ref={setContainerRef}
+            data-virtual-strip={collectionId}
+            // One-row grid: arrow keys rove across columns, and aria-colcount /
+            // aria-colindex expose the true position ("column 500 of 1000") even
+            // though only a handful of cells are mounted.
+            role="grid"
+            aria-label={`${name}, ${childIds.length} items`}
+            aria-rowcount={1}
+            aria-colcount={childIds.length}
+            onKeyDown={onKeyDown}
+            className={[
+              "relative overflow-x-auto rounded-md border border-dashed border-border p-2",
+              className ?? "",
+            ].join(" ")}
+            // When WE own horizontal scrolling (pan hook), reserve horizontal
+            // touch gestures for it and leave vertical native ("pan-y"). With
+            // panToScroll off there is no pan hook, so the browser must keep
+            // native horizontal touch scrolling ("auto") or the strip can't be
+            // scrolled by touch at all.
+            style={{ touchAction: panToScroll ? "pan-y" : "auto" }}
+          >
+            <VirtualEmptyHint visible={childIds.length === 0} />
+            <div
+              ref={contentRef}
+              role="row"
+              aria-rowindex={1}
+              style={{
+                width: virtualizer.getTotalSize(),
+                height: itemHeight,
+                position: "relative",
+                // The left-handle "grows left" anchor (0 unless a left trim is
+                // in flight). Shifts the whole content layer so clips move
+                // together; the overview tooltip tracks the clip's rect, so it
+                // follows for free.
+                transform: dragShiftX ? `translateX(${dragShiftX}px)` : undefined,
+              }}
+            >
+              {indicatorLeft !== null && (
+                <div
+                  aria-hidden="true"
+                  data-drop-indicator="virtual"
+                  className="pointer-events-none absolute inset-y-0 z-20 w-1 rounded-full bg-primary"
+                  style={{ left: indicatorLeft }}
                 />
-              </div>
-            ))}
+              )}
+              {virtualizer.getVirtualItems().map((item) => (
+                <div
+                  key={item.key}
+                  data-virtual-index={item.index}
+                  role="gridcell"
+                  aria-colindex={item.index + 1}
+                  // Sync the roving index to whatever card actually gains focus
+                  // (click, programmatic focus), not just keyboard navigation.
+                  onFocus={() => onItemFocus(item.index)}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: item.size - gap,
+                    height: itemHeight,
+                    transform: `translateX(${item.start}px)`,
+                  }}
+                >
+                  {/* Explicit sizing: the card fills its (possibly variable) slot.
+                      With panToScroll, item drags move to the grip bar or behind
+                      a press-and-hold so the body is free to pan the strip. */}
+                  <NodeCard
+                    id={childIds[item.index]}
+                    className="h-full w-full"
+                    dragActivation={cardActivation}
+                    rovingTabIndex={item.index === rovingIndex ? 0 : -1}
+                    trimPixelsPerSecond={trimPixelsPerSecond}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </TrimPreviewContext.Provider>
