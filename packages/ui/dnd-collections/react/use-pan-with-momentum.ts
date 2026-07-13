@@ -2,6 +2,8 @@
 
 import { useEffect, type RefObject } from "react";
 
+import { PAN_START_SLOP_PX } from "./gesture-thresholds";
+
 // Pan-to-scroll with momentum for a scroll container: drag the surface to
 // scroll it directly; on release, velocity (sampled over a trailing window)
 // keeps the scroll gliding under exponential decay. Store-agnostic and
@@ -39,7 +41,7 @@ export function usePanWithMomentum(
 ): void {
   const shouldStartPan = options?.shouldStartPan;
   const isGestureClaimed = options?.isGestureClaimed;
-  const slop = options?.slop ?? 5;
+  const slop = options?.slop ?? PAN_START_SLOP_PX;
   const friction = options?.friction ?? 0.995;
   const minVelocity = options?.minVelocity ?? 0.02;
   const maxVelocity = options?.maxVelocity ?? 5;
