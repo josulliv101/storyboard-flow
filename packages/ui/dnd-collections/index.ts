@@ -47,13 +47,20 @@ export {
   type UpdateMediaCommand,
 } from "./core/commands";
 export {
-  applyPatch,
   invertPatch,
   type CollectionsPatch,
   type NodeAdd,
   type NodeMove,
   type NodeUpdate,
 } from "./core/patches";
+export {
+  createPatchEnvelope,
+  replayPatchEnvelope,
+  PATCH_ENVELOPE_SCHEMA_VERSION,
+  type PatchEnvelope,
+  type PatchReplayError,
+  type PatchReplaySuccess,
+} from "./core/patch-replay";
 export {
   decodeDropTarget,
   encodeDropTarget,
@@ -110,9 +117,9 @@ export {
 
 // Extension seams for custom views (cards, panels, virtualized containers)
 // that plug into the same store, FLIP scope, and collision pipeline as the
-// built-ins. `applyPatch` (exported under Core above) is the only unchecked
-// primitive here — apply patches only to the graph state they were produced
-// against.
+// built-ins. External patch data goes through `replayPatchEnvelope`; the
+// unchecked adjacent-state primitive lives only in the explicit `unsafe`
+// entry point.
 export {
   CollectionsContainerContext,
   useCollectionsContainer,

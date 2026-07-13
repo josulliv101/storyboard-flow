@@ -245,8 +245,9 @@ Rejections (`CommandRejection.reason`):
 
 ## Core: patches (`core/patches.ts`)
 
-Patches are the reversible, serializable record of every mutation — the
-same primitive backs undo/redo, the `onChange` feed, and persistence.
+Patches are the reversible, serializable record of every mutation. The raw
+shape backs internal undo/redo and the `onChange` feed; persistence wraps it
+in a checked, versioned `PatchEnvelope`.
 
 ```ts
 type NodeMove = {
@@ -276,13 +277,28 @@ type CollectionsPatch =
 
 Swaps each move's endpoints; applying the result undoes the original.
 
-### `applyPatch(graph, patch): CollectionsGraph`
+### `replayPatchEnvelope(graph, currentRevision, value): Result<PatchReplaySuccess, PatchReplayError>`
 
-The only code that rewrites graph indexes (forward apply, undo, and redo all
-run through it). Structural sharing: only affected parents' children arrays
-are re-allocated; `nodesById` and `rootIds` are reused untouched. Does not
-validate — apply patches only to the graph state they were produced against
-(or its inverse-adjacent state).
+The public persistence/replay boundary. `value` is `unknown` and must be a
+schema-versioned `PatchEnvelope` with a non-empty `baseRevision`, advancing
+`revision`, and a runtime-valid patch. Replay verifies that `baseRevision`
+matches `currentRevision`, checks every recorded source slot/value and
+destination precondition, applies the patch, then validates the resulting
+graph. Failures leave the caller's graph and revision unchanged.
+
+```ts
+type PatchEnvelope = {
+  schemaVersion: 1;
+  baseRevision: string;
+  revision: string;
+  patch: CollectionsPatch;
+};
+```
+
+`createPatchEnvelope(patch, baseRevision, revision)` creates an envelope for
+a trusted in-memory patch. The unchecked adjacent-state primitive used by
+the reducer and undo/redo is intentionally absent from the main entry point;
+advanced internal tooling can import it from `dnd-collections/unsafe`.
 
 ---
 
@@ -728,6 +744,6 @@ the same store, FLIP scope, and collision pipeline as the built-ins:
 | `VIRTUAL_INSERT_DATA_KEY` / `VirtualInsertTarget` | `react/virtual-droppable` | The droppable-`data` contract a custom virtualized container carries so collision detection resolves pointer → boundary index through its own layout math. |
 | `useEdgeAutoScroll` | `react/use-edge-autoscroll` | Deterministic edge auto-scroll for a custom virtualized scroll container (pairs with `usePanWithMomentum`). |
 
-`applyPatch` (Core) is the one deliberately unchecked primitive: it rewrites
-indexes without validation, so apply patches only to the graph state they
-were produced against (or its inverse-adjacent state).
+Use `replayPatchEnvelope` for external or persisted patch data. Unchecked
+adjacent-state application is available only from the explicit
+`dnd-collections/unsafe` entry point for internal tooling.

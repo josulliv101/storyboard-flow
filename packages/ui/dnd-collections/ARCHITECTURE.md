@@ -242,12 +242,15 @@ Two properties fall out of this shape and everything else depends on them:
   use dnd-kit's `useSortable`: its multi-container pattern mutates list
   state inside `onDragOver`, which would put preview churn into the source
   of truth and make "cancel" a restore operation instead of a no-op.
-- **Patches are the persistence and history currency.** A `NodeMove` records
+- **Patches are the history and change-feed currency.** A `NodeMove` records
   pre-state `fromIndex` and post-state `toIndex`; inversion just swaps
-  endpoints. `applyPatch` is the single index-rewriting implementation —
+  endpoints. The internal `applyPatch` is the single index-rewriting implementation —
   forward apply, undo, and redo all run through it, so they cannot drift
   apart. The `onChange` feed emits `{ graph, patch, origin }` per commit,
-  which is what makes persistent partial updates possible downstream.
+  which supports persistent partial updates downstream. Durable/external
+  replay wraps a patch in a schema-versioned revision envelope and goes
+  through `replayPatchEnvelope`, which validates payload, adjacency, and the
+  resulting graph before advancing the caller's revision.
 
 Roots are structural anchors: `rootIds` is not part of the patch model, and
 `applyCommand` rejects any attempt to move a root (`cannot-move-root`)

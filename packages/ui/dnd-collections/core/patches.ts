@@ -1,9 +1,10 @@
 import { type CollectionItemNode, type CollectionsGraph, type NodeId } from "./graph";
 
 // Patches are the reversible, serializable record of every graph mutation:
-// the same primitive backs undo/redo (apply the inverse), persistence
-// (replay the log), the consumer onChange payload, and devtools/history
-// inspection. `applyCommand` VALIDATES and constructs a patch;
+// the same primitive backs undo/redo (apply the inverse), the consumer
+// onChange payload, and devtools/history inspection. Durable/external replay
+// goes through the checked versioned envelope in patch-replay.ts.
+// `applyCommand` VALIDATES and constructs a patch;
 // `applyPatch` is the only code that actually rewrites graph indexes —
 // so undo/redo can't drift from forward application.
 
@@ -85,12 +86,12 @@ export function invertPatch(patch: CollectionsPatch): CollectionsPatch {
 }
 
 /**
- * Applies a patch to the graph — the single index-rewriting code path
+ * Unchecked adjacent-state patch application — the single index-rewriting code path
  * (forward apply, undo, and redo all run through it). Structural sharing:
  * moves never re-allocate `nodesById`; adds/removals touch it but leave
- * unaffected children arrays alone. Does not validate — apply patches only
- * to the graph state they were produced against (or its inverse-adjacent
- * state).
+ * unaffected children arrays alone. Does not validate: internal undo/redo
+ * applies only patches produced for the adjacent state. External callers
+ * must use `replayPatchEnvelope`.
  */
 export function applyPatch(
   graph: CollectionsGraph,
