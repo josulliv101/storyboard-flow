@@ -11,6 +11,12 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, type NodeId } from "../core/graph";
+import {
+  finiteNonNegativeOr,
+  finitePositiveOr,
+  nonNegativeIntegerOr,
+  positiveIntegerOrUndefined,
+} from "../core/numeric";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { NodeCard } from "../react/node-views";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
@@ -55,16 +61,22 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
   function VirtualGrid(
     {
       collectionId,
-      cellWidth = 128,
-      cellHeight = 96,
-      gap = 8,
-      columns,
-      overscan = 2,
-      height = 480,
+      cellWidth: cellWidthOption,
+      cellHeight: cellHeightOption,
+      gap: gapOption,
+      columns: columnsOption,
+      overscan: overscanOption,
+      height: heightOption,
       className,
     },
     ref
   ) {
+    const cellWidth = finitePositiveOr(cellWidthOption, 128);
+    const cellHeight = finitePositiveOr(cellHeightOption, 96);
+    const gap = finiteNonNegativeOr(gapOption, 8);
+    const columns = positiveIntegerOrUndefined(columnsOption);
+    const overscan = nonNegativeIntegerOr(overscanOption, 2);
+    const height = finitePositiveOr(heightOption, 480);
     const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
     const indexById = useMemo(
       () => new Map(childIds.map((id, index) => [id, index])),
@@ -94,13 +106,9 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       observer.observe(el);
       return () => observer.disconnect();
     }, [columns, cellWidth, gap, scrollRef, contentRef]);
-    // Guard the derived geometry against a nonsense `columns` prop: 0 would
-    // make rowCount Infinity (Math.ceil(n / 0)), and a fraction/NaN would
-    // corrupt every row/column calculation downstream. A pinned column count
-    // must be a positive integer; otherwise fall back to the measured value.
-    const requestedCols = columns ?? measuredColumns;
-    const cols =
-      Number.isInteger(requestedCols) && requestedCols >= 1 ? requestedCols : 1;
+    // Invalid pinned values normalize to responsive measurement; both paths
+    // guarantee a positive integer before row/column arithmetic.
+    const cols = columns ?? measuredColumns;
 
     const rowCount = Math.ceil(childIds.length / cols);
     const rowSize = cellHeight + gap;
@@ -118,7 +126,14 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
     // keeps intents live during (auto-)scroll too.
     const resolveBoundary = (point: VirtualViewPoint): number => {
       const content = contentRef.current;
-      if (!content || childIds.length === 0) return childIds.length;
+      if (
+        !content ||
+        childIds.length === 0 ||
+        !Number.isFinite(point.x) ||
+        !Number.isFinite(point.y)
+      ) {
+        return childIds.length;
+      }
       const rect = content.getBoundingClientRect();
       const contentX = point.x - rect.left;
       const contentY = point.y - rect.top;

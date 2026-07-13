@@ -13,6 +13,12 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, isVideoMedia, type CollectionItemNode, type NodeId } from "../core/graph";
+import {
+  finiteNonNegativeOr,
+  finitePositiveOr,
+  finitePositiveOrUndefined,
+  nonNegativeIntegerOr,
+} from "../core/numeric";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
 import { TrimOverviewStrip } from "../react/trim-overview";
@@ -114,18 +120,23 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
   function VirtualStrip(
     {
       collectionId,
-      itemWidth = 128,
+      itemWidth: itemWidthOption,
       itemWidthFor,
-      itemHeight = 96,
-      gap = 8,
-      overscan = 4,
+      itemHeight: itemHeightOption,
+      gap: gapOption,
+      overscan: overscanOption,
       panToScroll = true,
       itemDragActivation = "handle",
-      trimPixelsPerSecond,
+      trimPixelsPerSecond: trimPixelsPerSecondOption,
       className,
     },
     ref
   ) {
+    const itemWidth = finitePositiveOr(itemWidthOption, 128);
+    const itemHeight = finitePositiveOr(itemHeightOption, 96);
+    const gap = finiteNonNegativeOr(gapOption, 8);
+    const overscan = nonNegativeIntegerOr(overscanOption, 4);
+    const trimPixelsPerSecond = finitePositiveOrUndefined(trimPixelsPerSecondOption);
     const store = useCollectionsStore();
     const cardActivation: NodeCardDragActivation = panToScroll ? itemDragActivation : "body";
 
@@ -152,7 +163,9 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
 
     const widthForIndex = (index: number): number => {
       const node = nodesById.get(childIds[index]);
-      return (node && itemWidthFor?.(node)) ?? itemWidth;
+      // A zero derived width is meaningful for a fully trimmed clip (the
+      // card's own chrome still supplies its minimum visual hit area).
+      return finiteNonNegativeOr(node ? itemWidthFor?.(node) : undefined, itemWidth);
     };
 
     // Stable keys by node id (reorders move DOM nodes instead of repainting
@@ -278,7 +291,14 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // measuring against it keeps intents live during (auto-)scroll too.
     const resolveBoundary = (point: VirtualViewPoint): number => {
       const content = contentRef.current;
-      if (!content || childIds.length === 0) return childIds.length;
+      if (
+        !content ||
+        childIds.length === 0 ||
+        !Number.isFinite(point.x) ||
+        !Number.isFinite(point.y)
+      ) {
+        return childIds.length;
+      }
       const contentX = point.x - content.getBoundingClientRect().left;
       if (contentX <= 0) return 0;
       if (contentX >= virtualizer.getTotalSize()) return childIds.length;

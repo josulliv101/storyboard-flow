@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, type RefObject } from "react";
+import { finiteNonNegativeOr, finitePositiveOr } from "../core/numeric";
 import { useCollectionsSelector } from "./collections-store";
 
 // Deterministic edge auto-scroll for the virtualized containers. dnd-kit's
@@ -27,8 +28,8 @@ export function useEdgeAutoScroll(
   axis: "x" | "y",
   options?: Readonly<{ edge?: number; maxSpeed?: number }>
 ): void {
-  const edge = options?.edge ?? 48;
-  const maxSpeed = options?.maxSpeed ?? 14;
+  const edge = finitePositiveOr(options?.edge, 48);
+  const maxSpeed = finiteNonNegativeOr(options?.maxSpeed, 14);
 
   // Explicit drag-live flag: set by beginDrag/beginPaletteDrag, cleared by
   // endDrag — never inferred from intents, which can be null mid-drag over

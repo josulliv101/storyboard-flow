@@ -123,7 +123,7 @@ export function useTrimPointerDrag(
 
   return useCallback(
     (event, pixelsPerSecond, resolve, onLive) => {
-      if (event.button !== 0 || pixelsPerSecond <= 0) return;
+      if (event.button !== 0 || !Number.isFinite(pixelsPerSecond) || pixelsPerSecond <= 0) return;
       activeCleanupRef.current?.();
       // Keep the gesture off dnd-kit's item drag, the strip's pan, and (for
       // an overview grip) the overview's own move handler.

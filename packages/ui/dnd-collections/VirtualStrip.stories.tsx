@@ -76,6 +76,31 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+export const InvalidNumericOptionsUseSafeDefaults: Story = {
+  render: () => (
+    <DndCollections initialGraph={bigGraph()}>
+      <div className="w-[640px]">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidth={Number.NaN}
+          itemWidthFor={() => Number.POSITIVE_INFINITY}
+          itemHeight={-1}
+          gap={Number.NaN}
+          overscan={-1}
+          trimPixelsPerSecond={Number.NaN}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+    const slot = canvasElement.querySelector<HTMLElement>('[data-virtual-index="0"]')!;
+    expect(parseFloat(slot.style.width)).toBe(128);
+    expect(parseFloat(slot.style.height)).toBe(96);
+    expect(slot.querySelector("[data-trim-handle]")).toBeNull();
+  },
+};
+
 /** Play-less twin for e2e (real-mouse scroll/drag must not race a play()). */
 export const VirtualPlayground: Story = {
   render: () => <StripHarness />,

@@ -608,7 +608,7 @@ ones (everything they do goes through the store API above).
 | --- | --- | --- |
 | `CollectionPanels` | `collectionIds?: readonly NodeId[]` | One panel per id (default: the graph's roots). FLIP animation is owned by `<DndCollections animateMoves>`, not here. |
 | `CollectionPanel` | `collectionId: NodeId` | One droppable panel with its cards. |
-| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"`, `trimPixelsPerSecond?: number` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in), converting the drag at that scale and committing `update-media` on release. The card resizes LIVE during the drag when the view provides a `TrimPreview` (VirtualStrip does, via targeted `resizeItem`); without one it still trims, just without live resize. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
+| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"`, `trimPixelsPerSecond?: number` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). A finite, positive `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in); invalid scales are treated as omitted. The card resizes LIVE during the drag when the view provides a `TrimPreview` (VirtualStrip does, via targeted `resizeItem`); without one it still trims, just without live resize. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
 | `NodeCardGhost` | `node: CollectionItemNode`, `extraCount: number` | The drag-overlay ghost; renders a `+N` badge when `extraCount > 0`. |
 | `UndoRedoControls` | — | Buttons bound to `store.undo`/`store.redo`, disabled off `canUndo`/`canRedo`. |
 | `HistoryLog` | — | Human-readable command log over `historyEntries`. |
@@ -680,6 +680,12 @@ type VirtualStripHandle = {
 };
 ```
 
+Numeric layout options are normalized before reaching the virtualizer:
+base widths/heights and trim scale must be finite and positive, `gap` is
+finite and non-negative, and `overscan` is a non-negative integer. Invalid
+values use the documented defaults; `itemWidthFor` may return zero for a
+fully trimmed clip, while negative/non-finite results use `itemWidth`.
+
 When `trimPixelsPerSecond` is set and a video is selected, `VirtualStrip`
 automatically reserves a band above the row and renders the source-window
 overview (`TrimOverviewStrip`) directly above that video's clip — there is no
@@ -715,6 +721,11 @@ type VirtualGridHandle = {
 };
 ```
 
+Grid sizes and viewport height must be finite and positive; `gap` is finite
+and non-negative; `overscan` is a non-negative integer. Invalid values use
+the documented defaults, while an invalid fixed `columns` value falls back
+to responsive measurement.
+
 Row-virtualized (one virtual item per row; columns are index arithmetic).
 Inside a grid, Alt+ArrowUp/Down are row moves (± the column count) — the grid
 publishes its live column count on `data-grid-columns` for the keyboard layer.
@@ -743,6 +754,11 @@ the same store, FLIP scope, and collision pipeline as the built-ins:
 | `useCollectionsContainer` / `CollectionsContainerContext` / `CollectionsContainerValue` | `react/container-context` | Read the instance's wrapper ref (FLIP scope) and the `aria-describedby` instructions id. |
 | `VIRTUAL_INSERT_DATA_KEY` / `VirtualInsertTarget` | `react/virtual-droppable` | The droppable-`data` contract a custom virtualized container carries so collision detection resolves pointer → boundary index through its own layout math. |
 | `useEdgeAutoScroll` | `react/use-edge-autoscroll` | Deterministic edge auto-scroll for a custom virtualized scroll container (pairs with `usePanWithMomentum`). |
+| `usePanWithMomentum` / `PanWithMomentumOptions` | `react/use-pan-with-momentum` | Surface pan with optional inertial glide. Invalid slop/velocity/friction values use safe defaults; friction is constrained to the open interval `(0, 1)` and max velocity never falls below the stop threshold. |
+
+`useEdgeAutoScroll` likewise normalizes its edge band to a finite positive
+value and its maximum speed to a finite non-negative value before starting
+the animation loop.
 
 Use `replayPatchEnvelope` for external or persisted patch data. Unchecked
 adjacent-state application is available only from the explicit

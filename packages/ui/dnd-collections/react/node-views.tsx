@@ -11,6 +11,7 @@ import {
   type NodeId,
 } from "../core/graph";
 import { encodeDropTarget } from "../core/intents";
+import { finitePositiveOrUndefined } from "../core/numeric";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
 import { NodeThumbnail } from "./node-thumbnail";
@@ -139,6 +140,7 @@ export const NodeCard = memo(function NodeCard({
   trimPixelsPerSecond?: number;
 }) {
   const dragHandle = dragActivation === "handle";
+  const trimScale = finitePositiveOrUndefined(trimPixelsPerSecond);
   const store = useCollectionsStore();
   const { instructionsId } = useCollectionsContainer();
 
@@ -282,8 +284,8 @@ export const NodeCard = memo(function NodeCard({
         </div>
       )}
 
-      {trimPixelsPerSecond !== undefined && node.kind === "media" && (
-        <TrimHandles node={node} pixelsPerSecond={trimPixelsPerSecond} />
+      {trimScale !== undefined && node.kind === "media" && (
+        <TrimHandles node={node} pixelsPerSecond={trimScale} />
       )}
 
       <NodeCardIndicators nestState={nestState} dropSide={dropSide} />
