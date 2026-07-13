@@ -305,6 +305,31 @@ describe("applyCommand: move-nodes", () => {
     expect(getChildren(next, parseNodeId("F"))).toBe(before);
     expect(next.nodesById).toBe(graph.nodesById);
   });
+
+  test("indexes an affected source collection once for multi-node moves", () => {
+    const base = fixture();
+    const sourceChildren = [...getChildren(base, parseNodeId("root-a"))];
+    Object.defineProperty(sourceChildren, "indexOf", {
+      value: () => {
+        throw new Error("per-node linear source lookup");
+      },
+    });
+    const childrenById = new Map(base.childrenById);
+    childrenById.set(parseNodeId("root-a"), sourceChildren);
+    const graph: CollectionsGraph = { ...base, childrenById };
+
+    const { graph: next, patch } = apply(graph, {
+      type: "move-nodes",
+      nodeIds: ids(["A", "C"]),
+      toParentId: parseNodeId("root-b"),
+      toIndex: 1,
+    });
+    expect(patch).toMatchObject({
+      type: "nodes-moved",
+      moves: [{ nodeId: "A", fromIndex: 0 }, { nodeId: "C", fromIndex: 2 }],
+    });
+    expect(childNames(next, "root-b")).toEqual(["X", "A", "C", "Y"]);
+  });
 });
 
 describe("applyCommand: add-nodes", () => {

@@ -227,6 +227,18 @@ export function applyCommand(
   );
   const insertAt = Math.max(0, Math.min(toIndex, baseLength));
 
+  // Index each affected source collection once. Calling `indexOf` per moved
+  // node turns a large same-parent selection into O(m Ã— n); this stays
+  // O(total children in affected parents + m).
+  const sourceIndexById = new Map<NodeId, number>();
+  const indexedParents = new Set(parentByMovingId.values());
+  for (const parentId of indexedParents) {
+    const children = getChildren(graph, parentId);
+    for (let index = 0; index < children.length; index++) {
+      sourceIndexById.set(children[index], index);
+    }
+  }
+
   const moves: NodeMove[] = moving.map((id, k) => {
     // Non-null by construction: `moving` ⊆ `command.nodeIds`, and every one
     // of those was validated (and its parent captured) in the loop above —
@@ -235,7 +247,7 @@ export function applyCommand(
     return {
       nodeId: id,
       fromParentId,
-      fromIndex: getChildren(graph, fromParentId).indexOf(id),
+      fromIndex: sourceIndexById.get(id)!,
       toParentId,
       toIndex: insertAt + k,
     };
