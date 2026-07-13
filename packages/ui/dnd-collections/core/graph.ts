@@ -20,8 +20,8 @@ export type Result<T, E> =
  * Parse-or-throw for authoring-time-trusted ids (literals in stories/tests).
  * The only rule is non-empty/non-whitespace: an id may contain ANY other
  * character, including ":" — the droppable-id protocol (`node:<id>` etc.)
- * splits on the FIRST colon and consumers key selectors with `CSS.escape`,
- * so arbitrary characters stay safe downstream.
+ * splits on the FIRST colon and DOM lookups use the shared escaped-or-exact
+ * node helper, so arbitrary characters stay safe downstream.
  */
 export function parseNodeId(id: string): NodeId {
   if (!id || !id.trim()) {

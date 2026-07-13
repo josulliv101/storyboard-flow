@@ -20,6 +20,7 @@ import {
   nonNegativeIntegerOr,
 } from "../core/numeric";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
+import { findNodeElement } from "../react/node-dom";
 import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
 import { TrimOverviewStrip } from "../react/trim-overview";
 import { TrimPreviewContext, type LiveTrim, type TrimPreview } from "../react/trim-preview-context";
@@ -399,7 +400,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       const sc = scrollRef.current;
       const info = overviewPosRef.current;
       if (!el || !wrap || !sc || !info) return;
-      const clip = sc.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(info.id)}"]`);
+      const clip = findNodeElement(sc, info.id);
       if (!clip) return;
       const x = clip.getBoundingClientRect().left - wrap.getBoundingClientRect().left - info.trimInPx;
       el.style.transform = `translateX(${x}px)`;

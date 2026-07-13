@@ -62,6 +62,26 @@ function StripHarness({
   );
 }
 
+function LatestFocusRequestHarness() {
+  const handle = useRef<VirtualStripHandle>(null);
+  return (
+    <DndCollections initialGraph={bigGraph()}>
+      <div className="flex w-[640px] flex-col gap-3">
+        <button
+          type="button"
+          onClick={() => {
+            handle.current?.focusNode(parseNodeId("m900"));
+            handle.current?.focusNode(parseNodeId("m100"));
+          }}
+        >
+          focus latest target
+        </button>
+        <VirtualStrip ref={handle} collectionId={parseNodeId("strip")} />
+      </div>
+    </DndCollections>
+  );
+}
+
 const meta = {
   title: "UI/DndCollectionsVirtual",
   decorators: [
@@ -758,6 +778,23 @@ export const OffscreenFocusScrollsIntoView: Story = {
       expect(card).not.toBeNull();
       expect(card!.ownerDocument.activeElement).toBe(card);
     });
+  },
+};
+
+export const LatestOffscreenFocusRequestWins: Story = {
+  render: () => <LatestFocusRequestHarness />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+
+    const user = userEvent.setup();
+    await user.click(canvas.getByRole("button", { name: /focus latest target/i }));
+    await waitFor(() => {
+      const card = canvasElement.querySelector<HTMLElement>('[data-node-id="m100"]');
+      expect(card).not.toBeNull();
+      expect(card!.ownerDocument.activeElement).toBe(card);
+    });
+    expect(canvasElement.querySelector('[data-node-id="m900"]')).toBeNull();
   },
 };
 

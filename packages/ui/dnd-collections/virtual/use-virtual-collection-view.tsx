@@ -12,6 +12,7 @@ import {
 import { useDroppable } from "@dnd-kit/core";
 
 import { type NodeId } from "../core/graph";
+import { focusNodeWhenMounted } from "../react/node-dom";
 import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "../react/virtual-droppable";
 
 // Shared plumbing for virtualized collection views (strip + grid): the
@@ -83,21 +84,22 @@ export function useFocusNode(
   scrollRef: RefObject<HTMLElement | null>,
   scrollToNode: (id: NodeId) => boolean
 ): (id: NodeId) => void {
+  const pendingFocusRef = useRef<(() => void) | null>(null);
+  useEffect(
+    () => () => {
+      pendingFocusRef.current?.();
+    },
+    []
+  );
+
   return useCallback(
     (id: NodeId) => {
+      pendingFocusRef.current?.();
+      pendingFocusRef.current = null;
       if (!scrollToNode(id)) return;
-      let attempts = 12;
-      const tryFocus = () => {
-        const card = scrollRef.current?.querySelector<HTMLElement>(
-          `[data-node-id="${CSS.escape(id)}"]`
-        );
-        if (card) {
-          card.focus();
-          return;
-        }
-        if (--attempts > 0) requestAnimationFrame(tryFocus);
-      };
-      requestAnimationFrame(tryFocus);
+      const root = scrollRef.current;
+      if (!root) return;
+      pendingFocusRef.current = focusNodeWhenMounted(root, id);
     },
     [scrollRef, scrollToNode]
   );
