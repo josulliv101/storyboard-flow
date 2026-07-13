@@ -18,6 +18,7 @@ const dogFrames = [
   new URL("./fixtures/dog-tracking-2s.png", import.meta.url).href,
   new URL("./fixtures/dog-exit-4s.png", import.meta.url).href,
 ] as const;
+const missingFrame = "/__dnd-collections-missing-frame__.png";
 
 const graph = () => {
   const result = buildGraph([
@@ -62,6 +63,28 @@ const graph = () => {
         },
         // Image with no src -> fallback.
         { kind: "media", id: "still-bare", name: "No Image", durationSeconds: 3 },
+        // Failed URLs -> runtime fallback states.
+        { kind: "media", id: "still-broken", name: "Broken Image", src: missingFrame, durationSeconds: 3 },
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "clip-broken",
+          name: "Broken Clip",
+          posterSrcs: [missingFrame],
+          fullDurationSeconds: 4,
+          trimInSeconds: 0,
+          trimOutSeconds: 0,
+        },
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "clip-mixed",
+          name: "Mixed Clip",
+          posterSrcs: [missingFrame, dogFrames[0]],
+          fullDurationSeconds: 4,
+          trimInSeconds: 0,
+          trimOutSeconds: 0,
+        },
       ],
     },
   ] satisfies GraphNodeSpec[]);
@@ -125,5 +148,14 @@ export const RealImageAndVideoSequences: Story = {
       expect(t?.dataset.nodeThumbnail).toBe("fallback");
       expect(t?.querySelectorAll("img")).toHaveLength(0);
     }
+
+    await waitFor(() => {
+      expect(thumb("still-broken")?.dataset.nodeThumbnail).toBe("fallback");
+      expect(thumb("still-broken")?.textContent).toMatch(/image unavailable/i);
+      expect(thumb("clip-broken")?.dataset.nodeThumbnail).toBe("fallback");
+      expect(thumb("clip-broken")?.textContent).toMatch(/preview unavailable/i);
+      expect(thumb("clip-mixed")?.querySelectorAll("[data-thumbnail-frame-fallback]")).toHaveLength(1);
+      expect(thumb("clip-mixed")?.querySelectorAll("img")).toHaveLength(1);
+    });
   },
 };
