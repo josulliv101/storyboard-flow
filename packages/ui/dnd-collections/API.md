@@ -613,7 +613,7 @@ ones (everything they do goes through the store API above).
 | `UndoRedoControls` | — | Buttons bound to `store.undo`/`store.redo`, disabled off `canUndo`/`canRedo`. |
 | `HistoryLog` | — | Human-readable command log over `historyEntries`. |
 | `PaletteItem` | `paletteId: string`, `createNode: () => CollectionItemNode`, `children?` | External drag source; the factory runs at drag START (fresh ids per drag). Its runtime result is validated and copied before drag state is published; throws or malformed values cancel with one announcement. The drop commits `add-nodes` through the standard intent pipeline. |
-| `TrashTarget` | `trashId: NodeId` | Styled panel droppable for a (usually hidden) trash root; drops are ordinary moves — subtrees ride along, undo restores, nothing is deleted. |
+| `TrashTarget` | `trashId: NodeId` | Styled panel droppable for a (usually hidden) trash root; drops are ordinary moves — subtrees ride along, undo restores, nothing is deleted. The id must resolve to a live collection; invalid targets stay disabled. |
 
 ### DOM/test hooks
 
@@ -752,7 +752,7 @@ the same store, FLIP scope, and collision pipeline as the built-ins:
 | --- | --- | --- |
 | `CollectionsStoreProvider` | `react/collections-store` | Wrap a subtree in a store you created with `createCollectionsStore` (headless/custom hosting). |
 | `useCollectionsContainer` / `CollectionsContainerContext` / `CollectionsContainerValue` | `react/container-context` | Read the instance's wrapper ref (FLIP scope) and the `aria-describedby` instructions id. |
-| `VIRTUAL_INSERT_DATA_KEY` / `VirtualInsertTarget` | `react/virtual-droppable` | The droppable-`data` contract a custom virtualized container carries so collision detection resolves pointer → boundary index through its own layout math. |
+| `VIRTUAL_INSERT_DATA_KEY` / `VirtualInsertTarget` | `react/virtual-droppable` | The droppable-`data` contract a custom virtualized container carries so collision detection resolves pointer → boundary index through its own layout math. The collection must exist and the resolver must return an integer; thrown errors and invalid results reject the target. |
 | `useEdgeAutoScroll` | `react/use-edge-autoscroll` | Deterministic edge auto-scroll for a custom virtualized scroll container (pairs with `usePanWithMomentum`). |
 | `usePanWithMomentum` / `PanWithMomentumOptions` | `react/use-pan-with-momentum` | Surface pan with optional inertial glide. Invalid slop/velocity/friction values use safe defaults; friction is constrained to the open interval `(0, 1)` and max velocity never falls below the stop threshold. |
 

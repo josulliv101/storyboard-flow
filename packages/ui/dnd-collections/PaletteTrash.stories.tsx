@@ -100,6 +100,19 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+export const InvalidTrashIdIsDisabled: Story = {
+  render: () => (
+    <DndCollections initialGraph={paletteGraph()} animateMoves={false}>
+      <TrashTarget trashId={parseNodeId("alpha")} />
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const target = canvasElement.querySelector<HTMLElement>('[data-trash-target="alpha"]')!;
+    expect(target.dataset.trashValid).toBe("false");
+    expect(target.getAttribute("aria-disabled")).toBe("true");
+  },
+};
+
 /** Play-less twin for e2e (real mouse must not race an auto-running play). */
 export const PalettePlayground: Story = {
   render: () => <PaletteBoard />,
