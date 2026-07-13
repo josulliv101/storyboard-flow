@@ -82,6 +82,7 @@ export {
 
 // React bindings (store + provider + default views)
 export {
+  InvalidInitialGraphError,
   createCollectionsStore,
   CollectionsStoreProvider,
   useCollectionsSelector,

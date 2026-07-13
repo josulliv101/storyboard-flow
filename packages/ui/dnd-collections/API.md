@@ -514,6 +514,9 @@ column count); Alt+Enter / Alt+Backspace are the grid-safe synonyms for
 `options.onChange` receives every committed change; `options.maxHistoryEntries`
 (positive integer, default unbounded) caps the undo stack. `<DndCollections>`
 calls this for you; create a store directly only for headless/test use.
+The initial graph is runtime-validated before any store state is created;
+malformed input throws `InvalidInitialGraphError`, whose `validationError`
+identifies the failing path or graph invariant.
 
 ```ts
 type CollectionsChange = {
@@ -532,7 +535,7 @@ type CollectionsChange = {
 | `subscribe` | `(listener: () => void) => () => void` | Returns unsubscribe. |
 | `dispatch` | `(command) => Result<CollectionsPatch, CommandRejection>` | Reduce + push history + notify + `onChange`. |
 | `undo` / `redo` | `() => boolean` | False when the respective stack is empty. |
-| `replaceGraph` | `(graph: CollectionsGraph) => void` | Swap the committed graph wholesale — the escape hatch for async/server-loaded data (`initialGraph` is initial-only). Clears undo/redo history (old patches can't replay on a new graph) and any in-progress drag/preview, prunes the selection to surviving ids, and — deliberately — does NOT fire `onChange` (the caller supplied this state; echoing it risks feedback loops). |
+| `replaceGraph` | `(graph: CollectionsGraph) => Result<void, GraphValidationError>` | Runtime-validates then swaps the committed graph wholesale — the escape hatch for async/server-loaded data (`initialGraph` is initial-only). Invalid input is rejected without changing or notifying the store. A successful swap clears undo/redo history (old patches can't replay on a new graph) and any in-progress drag/preview, prunes the selection to surviving ids, and — deliberately — does NOT fire `onChange` (the caller supplied this state; echoing it risks feedback loops). |
 | `setSelection` | `(ids: readonly NodeId[]) => void` | No-op (no notify) when the set is unchanged. |
 | `toggleSelected` | `(id: NodeId) => void` | |
 | `clearSelection` | `() => void` | No-op when already empty. |

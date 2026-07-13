@@ -1,7 +1,13 @@
 "use client";
 
 import { createContext, useContext, useSyncExternalStore } from "react";
-import { type CollectionsGraph, type NodeId, type Result } from "../core/graph";
+import {
+  type CollectionsGraph,
+  type GraphValidationError,
+  type NodeId,
+  type Result,
+  validateGraph,
+} from "../core/graph";
 import {
   applyCommand,
   type CollectionsCommand,
@@ -53,6 +59,21 @@ export type CollectionsChange = Readonly<{
   origin: "command" | "undo" | "redo";
 }>;
 
+/** Thrown when store construction receives a malformed normalized graph. */
+export class InvalidInitialGraphError extends Error {
+  readonly validationError: GraphValidationError;
+
+  constructor(validationError: GraphValidationError) {
+    const detail =
+      validationError.reason === "graph-invariant"
+        ? `Graph invariant violation: ${JSON.stringify(validationError.violation)}`
+        : validationError.message;
+    super(`Invalid initial collections graph at ${validationError.path}: ${detail}`);
+    this.name = "InvalidInitialGraphError";
+    this.validationError = validationError;
+  }
+}
+
 export type CollectionsStore = Readonly<{
   getSnapshot: () => CollectionsSnapshot;
   subscribe: (listener: () => void) => () => void;
@@ -69,7 +90,7 @@ export type CollectionsStore = Readonly<{
    * the caller pushed this state in, so echoing it back invites feedback
    * loops — this is a reset, not a recorded mutation.
    */
-  replaceGraph: (graph: CollectionsGraph) => void;
+  replaceGraph: (graph: CollectionsGraph) => Result<void, GraphValidationError>;
 
   /** Replace selection with the supplied ids that exist in the current graph. */
   setSelection: (ids: readonly NodeId[]) => void;
@@ -101,6 +122,10 @@ export function createCollectionsStore(
     maxHistoryEntries?: number;
   }>
 ): CollectionsStore {
+  const initialValidation = validateGraph(initialGraph);
+  if (!initialValidation.ok) {
+    throw new InvalidInitialGraphError(initialValidation.error);
+  }
   let graph = initialGraph;
   let interaction: CollectionsInteraction = {
     isDragging: false,
@@ -230,7 +255,12 @@ export function createCollectionsStore(
     return true;
   }
 
-  function replaceGraph(nextGraph: CollectionsGraph): void {
+  function replaceGraph(
+    nextGraph: CollectionsGraph
+  ): Result<void, GraphValidationError> {
+    const validation = validateGraph(nextGraph);
+    if (!validation.ok) return validation;
+
     graph = nextGraph;
     // Old patches were built against the old graph — they can't be replayed
     // on this one, so undo/redo starts fresh.
@@ -258,6 +288,7 @@ export function createCollectionsStore(
     // Deliberately no onChange: the caller supplied this graph, so echoing it
     // back would invite feedback loops. replaceGraph is a reset, not a
     // recorded mutation, and carries no patch.
+    return { ok: true, value: undefined };
   }
 
   return {
