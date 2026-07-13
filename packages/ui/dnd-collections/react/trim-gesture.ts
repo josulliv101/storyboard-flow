@@ -1,6 +1,11 @@
 "use client";
 
-import { useCallback, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import { type MediaNode, type VideoMediaNode } from "../core/graph";
 import { type MediaUpdate } from "../core/commands";
@@ -107,31 +112,77 @@ export function useTrimPointerDrag(
 ) => void {
   const store = useCollectionsStore();
   const trimPreview = useTrimPreview();
+  const activeCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(
+    () => () => {
+      activeCleanupRef.current?.();
+    },
+    [node, trimPreview]
+  );
+
   return useCallback(
     (event, pixelsPerSecond, resolve, onLive) => {
       if (event.button !== 0 || pixelsPerSecond <= 0) return;
+      activeCleanupRef.current?.();
       // Keep the gesture off dnd-kit's item drag, the strip's pan, and (for
       // an overview grip) the overview's own move handler.
       event.preventDefault();
       event.stopPropagation();
       const startX = event.clientX;
+      const pointerId = event.pointerId;
+      const pointerTarget = event.currentTarget;
       let pending: MediaUpdate | null = null;
+      let finished = false;
       try {
-        event.currentTarget.setPointerCapture(event.pointerId);
+        pointerTarget.setPointerCapture(pointerId);
       } catch {
         /* untrusted pointer (tests) — window listeners below suffice */
       }
 
-      const onMove = (moveEvent: PointerEvent) => {
+      function removeListeners() {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+      }
+
+      function releasePointerCapture() {
+        try {
+          if (pointerTarget.hasPointerCapture(pointerId)) {
+            pointerTarget.releasePointerCapture(pointerId);
+          }
+        } catch {
+          /* the target may already be detached or have lost capture */
+        }
+      }
+
+      function clearActiveCleanup(cleanup: () => void) {
+        if (activeCleanupRef.current === cleanup) activeCleanupRef.current = null;
+      }
+
+      function abortGesture() {
+        if (finished) return;
+        finished = true;
+        removeListeners();
+        releasePointerCapture();
+        clearActiveCleanup(abortGesture);
+        trimPreview.previewTrim(node.id, null);
+      }
+
+      function onMove(moveEvent: PointerEvent) {
+        if (finished) return;
         const { update, live } = resolve((moveEvent.clientX - startX) / pixelsPerSecond);
         pending = update;
         onLive?.(live);
         trimPreview.previewTrim(node.id, live);
-      };
-      const onUp = (upEvent: PointerEvent) => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        window.removeEventListener("pointercancel", onUp);
+      }
+
+      function onUp(upEvent: PointerEvent) {
+        if (finished) return;
+        finished = true;
+        removeListeners();
+        releasePointerCapture();
+        clearActiveCleanup(abortGesture);
         onLive?.(null);
         const update = pending;
         pending = null;
@@ -147,7 +198,9 @@ export function useTrimPointerDrag(
         // value before release) does not change graph identity, so views
         // cannot rely on their commit effect to clear the live preview.
         if (!dispatched.ok) trimPreview.previewTrim(node.id, null);
-      };
+      }
+
+      activeCleanupRef.current = abortGesture;
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onUp);
