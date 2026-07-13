@@ -12,6 +12,10 @@ type PointerStep = Readonly<{
   clientX: number;
   clientY: number;
   delayAfterMs?: number;
+  /** Defaults to the primary pointer (id 1). Override to model a second
+   *  finger/stylus for multi-pointer and gesture-ownership tests. */
+  pointerId?: number;
+  isPrimary?: boolean;
 }>;
 
 const POINTER_INIT: PointerEventInit = {
@@ -26,7 +30,13 @@ const POINTER_INIT: PointerEventInit = {
 export async function dispatchPointerSequence(steps: readonly PointerStep[]): Promise<void> {
   for (const step of steps) {
     step.element.dispatchEvent(
-      new PointerEvent(step.type, { ...POINTER_INIT, clientX: step.clientX, clientY: step.clientY })
+      new PointerEvent(step.type, {
+        ...POINTER_INIT,
+        clientX: step.clientX,
+        clientY: step.clientY,
+        ...(step.pointerId !== undefined ? { pointerId: step.pointerId } : {}),
+        ...(step.isPrimary !== undefined ? { isPrimary: step.isPrimary } : {}),
+      })
     );
     if (step.delayAfterMs) {
       await new Promise((resolve) => setTimeout(resolve, step.delayAfterMs));
