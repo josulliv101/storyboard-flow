@@ -319,7 +319,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       [focusNode, childIds]
     );
     const { focusedIndex, onKeyDown, onItemFocus } = useVirtualRovingFocus({
-      count: childIds.length,
+      itemIds: childIds,
       isDragging: () => store.getSnapshot().interaction.isDragging,
       focusByIndex,
       resolveNextIndex: resolveStripIndex,
@@ -531,7 +531,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   aria-colindex={item.index + 1}
                   // Sync the roving index to whatever card actually gains focus
                   // (click, programmatic focus), not just keyboard navigation.
-                  onFocus={() => onItemFocus(item.index)}
+                  onFocus={() => onItemFocus(childIds[item.index])}
                   style={{
                     position: "absolute",
                     top: 0,

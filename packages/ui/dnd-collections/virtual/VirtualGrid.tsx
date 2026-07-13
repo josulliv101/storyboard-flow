@@ -169,7 +169,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       [cols]
     );
     const { focusedIndex, onKeyDown, onItemFocus } = useVirtualRovingFocus({
-      count: childIds.length,
+      itemIds: childIds,
       isDragging: () => store.getSnapshot().interaction.isDragging,
       focusByIndex,
       resolveNextIndex: resolveGridIndex,
@@ -276,7 +276,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                       key={id}
                       role="gridcell"
                       aria-colindex={colInRow + 1}
-                      onFocus={() => onItemFocus(absoluteIndex)}
+                      onFocus={() => onItemFocus(id)}
                       style={{ width: cellWidth, height: cellHeight }}
                     >
                       <NodeCard
