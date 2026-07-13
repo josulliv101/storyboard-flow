@@ -82,6 +82,24 @@ describe("createCollectionsStore", () => {
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
+  test("selection APIs ignore node ids that are missing from the graph", () => {
+    const store = createCollectionsStore(graphFixture());
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.setSelection([id("x"), id("missing")]);
+    expect([...store.getSnapshot().interaction.selectedIds]).toEqual(["x"]);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    listener.mockClear();
+    store.toggleSelected(id("missing"));
+    expect([...store.getSnapshot().interaction.selectedIds]).toEqual(["x"]);
+    expect(listener).not.toHaveBeenCalled();
+
+    store.setSelection([id("x"), id("still-missing")]);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   test("beginDrag puts the PRESSED id first and sets isDragging", () => {
     const store = createCollectionsStore(graphFixture());
     store.setSelection([id("x"), id("y"), id("z")]);

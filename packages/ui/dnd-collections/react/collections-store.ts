@@ -71,7 +71,9 @@ export type CollectionsStore = Readonly<{
    */
   replaceGraph: (graph: CollectionsGraph) => void;
 
+  /** Replace selection with the supplied ids that exist in the current graph. */
   setSelection: (ids: readonly NodeId[]) => void;
+  /** Toggle an existing graph node; missing ids are ignored. */
   toggleSelected: (id: NodeId) => void;
   clearSelection: () => void;
 
@@ -248,7 +250,10 @@ export function createCollectionsStore(
     replaceGraph,
 
     setSelection: (ids) => {
-      const next = new Set(ids);
+      const next = new Set<NodeId>();
+      for (const id of ids) {
+        if (graph.nodesById.has(id)) next.add(id);
+      }
       // Re-selecting the exact same set (e.g. clicking an already-selected
       // node) must not notify — a no-op state "change" would force every
       // subscriber to re-run its selector for nothing.
@@ -256,6 +261,7 @@ export function createCollectionsStore(
       setInteraction({ selectedIds: next });
     },
     toggleSelected: (id) => {
+      if (!graph.nodesById.has(id)) return;
       const next = new Set(interaction.selectedIds);
       if (next.has(id)) next.delete(id);
       else next.add(id);
