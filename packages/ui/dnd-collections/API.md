@@ -586,8 +586,9 @@ key off these):
 | `data-drop-indicator` | indicator bar | `"before"` or `"after"` on the adjacency target. |
 | `data-trim-handle` | media edge handle | `"left"` or `"right"` (left is video-only). |
 | `data-trim-preview` | trim readout | The previewed effective duration (seconds) while a handle is dragged. |
-| `data-trim-overview` | overview filmstrip (`VirtualStrip` only) | The selected video's node id. Renders directly above its clip; absent unless a video is selected AND mounted. |
+| `data-trim-overview` | overview filmstrip (`VirtualStrip` only) | The selected video's node id. Renders directly above its clip; absent unless a video is selected AND mounted. Dragging its body MOVES the source window (trim-in/out shift together, duration constant). |
 | `data-trim-overview-window` | amber "showing" window | Its left/right edges are pixel-aligned with the clip's own rendered edges (see the trim overview section below). |
+| `data-trim-overview-handle` | overview window grip | `"left"` (trim-in) or `"right"` (trim-out); dragging trims the clip, same `update-media` as the card edge handles. |
 | `data-testid="drag-ghost"` / `"drag-ghost-count"` | overlay | The ghost and its `+N` badge. |
 | `data-testid="history-log"` / `"history-empty"`, `data-history-entry` | history log | Log container / empty marker / entries. |
 

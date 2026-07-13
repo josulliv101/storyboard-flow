@@ -1280,3 +1280,97 @@ export const LeftHandleShrinkStaysAnchored: Story = {
 export const PhaseBPlayground: Story = {
   render: () => <PhaseBHarness />,
 };
+
+function OverviewHarness() {
+  return (
+    <DndCollections initialGraph={trimmedGraph()} animateMoves={false}>
+      <SelectOnMount id="vid" />
+      <div className="flex w-[640px] flex-col gap-3">
+        <UndoRedoControls />
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+          }
+          trimPixelsPerSecond={TRIM_PPS}
+        />
+      </div>
+    </DndCollections>
+  );
+}
+
+export const OverviewHandlesAndMove: Story = {
+  // Phase B.2: the overview is interactive. Its amber grips TRIM the clip
+  // (right grip = trim-out here) — the SAME update-media the card handles
+  // dispatch — and dragging the filmstrip body MOVES the source window
+  // (trim-in/out shift together, showing constant) so the clip width doesn't
+  // change but a different part of the source lands in the window. The window
+  // stays locked on the clip throughout; on a move the source slides under it.
+  render: () => <OverviewHarness />,
+  play: async ({ canvasElement }) => {
+    const rect = (id: string) => nodeCard(canvasElement, id).getBoundingClientRect();
+    const width = (id: string) => Math.round(rect(id).width);
+    const overview = () => canvasElement.querySelector<HTMLElement>("[data-trim-overview]")!;
+    const windowRect = () =>
+      canvasElement.querySelector<HTMLElement>("[data-trim-overview-window]")!.getBoundingClientRect();
+    const grip = (side: "left" | "right") =>
+      canvasElement.querySelector<HTMLElement>(`[data-trim-overview-handle="${side}"]`)!;
+    const holdElBy = async (el: HTMLElement, dx: number) => {
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      await dispatchPointerSequence([
+        { element: el, type: "pointerdown", clientX: x, clientY: y },
+        { element: document, type: "pointermove", clientX: x + dx, clientY: y, delayAfterMs: 40 },
+      ]);
+    };
+    const release = async () => {
+      await dispatchPointerSequence([
+        { element: document, type: "pointerup", clientX: 0, clientY: 0, delayAfterMs: 30 },
+      ]);
+    };
+    const undoButton = () => within(canvasElement).getByRole("button", { name: /undo/i });
+    const user = userEvent.setup();
+
+    await waitForLayout(nodeCard(canvasElement, "vid"));
+    // vid: full 10s, trim-in 2s, trim-out 1.5s -> showing 6.5s -> 156px.
+    expect(width("vid")).toBe(156);
+    // Overview window sits on the clip.
+    expect(Math.round(windowRect().left)).toBe(Math.round(rect("vid").left));
+    expect(Math.round(windowRect().right)).toBe(Math.round(rect("vid").right));
+
+    // 1) RIGHT grip trims trim-out: drag it in (left) 48px -> trim-out +2s ->
+    //    showing 4.5s -> 108px. The clip's LEFT edge is anchored (right-side
+    //    trim), and the window shrinks with the clip.
+    await holdElBy(grip("right"), -48);
+    await waitFor(() => expect(width("vid")).toBe(108));
+    expect(Math.round(windowRect().right)).toBe(Math.round(rect("vid").right));
+    await release();
+    await waitFor(() => expect(undoButton()).toBeEnabled());
+    expect(width("vid")).toBe(108);
+    await user.click(undoButton());
+    await waitFor(() => expect(width("vid")).toBe(156));
+
+    // 2) MOVE: drag the filmstrip body right 48px (+2s) -> trim-in 2s -> 0s,
+    //    trim-out 1.5s -> 3.5s. Showing (and the clip width) is UNCHANGED; the
+    //    clip doesn't move; the window stays on it; the source filmstrip slides
+    //    right (its content-space left grows as trim-in shrinks).
+    const vidLeft0 = rect("vid").left;
+    const overviewLeft0 = overview().getBoundingClientRect().left;
+    await holdElBy(overview(), 48); // grabs the filmstrip body, not a grip
+    await waitFor(() => {
+      expect(overview().getBoundingClientRect().left).toBeGreaterThan(overviewLeft0 + 40);
+    });
+    expect(width("vid")).toBe(156); // duration unchanged
+    expect(Math.round(rect("vid").left)).toBe(Math.round(vidLeft0)); // clip didn't move
+    expect(Math.round(windowRect().left)).toBe(Math.round(rect("vid").left)); // window on clip
+    await release();
+    await waitFor(() => expect(undoButton()).toBeEnabled());
+    expect(width("vid")).toBe(156);
+  },
+};
+
+/** Play-less twin of OverviewHandlesAndMove for the real-mouse e2e. */
+export const OverviewPlayground: Story = {
+  render: () => <OverviewHarness />,
+};

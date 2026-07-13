@@ -191,11 +191,16 @@ NOOP cleanly and the handle stays view-agnostic).
 - Keep the overview slice out of the card selectors, or the render-efficiency
   guard (`RenderEfficiencyDuringDrag`) will fail.
 
-## Optional Phase B.2
+## Phase B.2 — SHIPPED
 
-- Make the **overview's** amber handles draggable too (the app trims from the
-  source window). Same `previewTrim` path; the overview handle maps pixel delta
-  → seconds at the overview's pps (== strip pps), so it stays in sync.
+- The **overview's** amber grips are draggable and trim the clip (left =
+  trim-in, right = trim-out), and dragging the **filmstrip body** MOVES the
+  source window (trim-in/out shift together, showing/duration constant) so you
+  scrub which part of the source the clip plays — the window stays locked on
+  the clip while the filmstrip slides under it. All three share one gesture
+  core with the card handles (`react/trim-gesture.ts`: `resolveTrim`,
+  `resolveMove`, `useTrimPointerDrag`) → the same `previewTrim` live path and
+  one `update-media` commit. See ARCHITECTURE.md's trim section.
 
 ## Open decisions to confirm before building
 
