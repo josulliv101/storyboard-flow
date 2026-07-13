@@ -14,10 +14,42 @@ export function useLiveAnnouncements(store: CollectionsStore): Readonly<{
   announce: (message: string) => void;
 }> {
   const [announcement, setAnnouncement] = useState("");
+  const announcementRef = useRef("");
+  const repeatTimerRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (repeatTimerRef.current !== null) {
+        window.clearTimeout(repeatTimerRef.current);
+      }
+    },
+    []
+  );
+
   const announce = useCallback((message: string) => {
-    // Toggle a trailing zero-width space so repeating the same message still
-    // re-announces (aria-live only fires on content changes).
-    setAnnouncement((prev) => (prev === message ? `${message}​` : message));
+    if (repeatTimerRef.current !== null) {
+      window.clearTimeout(repeatTimerRef.current);
+      repeatTimerRef.current = null;
+    }
+
+    if (announcementRef.current !== message) {
+      announcementRef.current = message;
+      setAnnouncement(message);
+      return;
+    }
+
+    // A live region does not announce an assignment that leaves its text
+    // unchanged. Clear repeated text, then insert the exact message again in
+    // a later task so assistive technology observes two real DOM changes.
+    // Keeping the delay here (rather than adding an invisible character)
+    // preserves the spoken text verbatim.
+    announcementRef.current = "";
+    setAnnouncement("");
+    repeatTimerRef.current = window.setTimeout(() => {
+      announcementRef.current = message;
+      repeatTimerRef.current = null;
+      setAnnouncement(message);
+    }, 50);
   }, []);
 
   // Selection changes are announced. Set identity only changes on real

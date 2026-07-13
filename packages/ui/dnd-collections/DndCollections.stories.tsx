@@ -484,6 +484,38 @@ export const KeyboardMoves: Story = {
   },
 };
 
+export const RepeatedAnnouncementsReinsertExactText: Story = {
+  render: () => <StandardBoard />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const alpha = nodeCard(canvasElement, "alpha");
+    const status = canvasElement.querySelector<HTMLElement>('[role="status"]')!;
+    const boundaryMessage = "Already first in its collection.";
+    const observed: string[] = [];
+    const observer = new MutationObserver(() => {
+      const text = status.textContent ?? "";
+      if (text) observed.push(text);
+    });
+    observer.observe(status, { childList: true, characterData: true, subtree: true });
+
+    try {
+      alpha.focus();
+      await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+      await waitFor(() =>
+        expect(observed.filter((text) => text === boundaryMessage)).toHaveLength(1)
+      );
+
+      await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+      await waitFor(() =>
+        expect(observed.filter((text) => text === boundaryMessage)).toHaveLength(2)
+      );
+      expect(status.textContent).toBe(boundaryMessage);
+    } finally {
+      observer.disconnect();
+    }
+  },
+};
+
 export const FlipAnimatesCommits: Story = {
   // The FLIP layer: committed moves (drop/undo/redo) play inverted-transform
   // animations on every displaced card — including cards that never
