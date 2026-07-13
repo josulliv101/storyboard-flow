@@ -1,7 +1,18 @@
 import { describe, expect, test } from "vitest";
-import { buildGraph, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "./graph";
+import {
+  buildGraph,
+  getChildren,
+  parseNodeId,
+  type CollectionsGraph,
+  type GraphNodeSpec,
+} from "./graph";
 import { applyCommand } from "./commands";
-import { resolveGridRowMoveCommand, resolveKeyboardCommand, resolveTrimCommand } from "./keyboard";
+import {
+  resolveGridRowMoveCommand,
+  resolveKeyboardCommand,
+  resolveTrashCommand,
+  resolveTrimCommand,
+} from "./keyboard";
 
 const media = (id: string): GraphNodeSpec => ({ kind: "media", id, name: id });
 const collection = (id: string, children: readonly GraphNodeSpec[] = []): GraphNodeSpec => ({
@@ -299,5 +310,74 @@ describe("resolveTrimCommand", () => {
       ok: false,
       error: { reason: "same-position" },
     });
+  });
+});
+
+describe("resolveTrashCommand", () => {
+  // root: [A, B, Trash(t1)] — a designated trash collection holding one item.
+  const trashGraph = build([
+    collection("root", [media("A"), media("B"), collection("Trash", [media("t1")])]),
+  ]);
+
+  test("appends the node to the end of the trash collection", () => {
+    expect(resolveTrashCommand(trashGraph, id("A"), id("Trash"))).toEqual({
+      ok: true,
+      // Trash already holds one item (t1), so the node lands at index 1.
+      value: { type: "move-nodes", nodeIds: ["A"], toParentId: "Trash", toIndex: 1 },
+    });
+  });
+
+  test("the resolved command applies and is undoable", () => {
+    const resolved = resolveTrashCommand(trashGraph, id("A"), id("Trash"));
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    const applied = applyCommand(trashGraph, resolved.value);
+    expect(applied.ok).toBe(true);
+    if (!applied.ok) return;
+    expect(getChildren(applied.value.graph, id("Trash"))).toEqual(["t1", "A"]);
+    expect(getChildren(applied.value.graph, id("root"))).toEqual(["B", "Trash"]);
+  });
+
+  test("rejects a node already directly inside trash (no-op)", () => {
+    expect(resolveTrashCommand(trashGraph, id("t1"), id("Trash"))).toEqual({
+      ok: false,
+      error: { reason: "already-in-trash", nodeId: "t1" },
+    });
+  });
+
+  test("rejects roots and unknown nodes", () => {
+    expect(resolveTrashCommand(trashGraph, id("root"), id("Trash"))).toEqual({
+      ok: false,
+      error: { reason: "cannot-move-root", nodeId: "root" },
+    });
+    expect(resolveTrashCommand(trashGraph, id("ghost"), id("Trash"))).toEqual({
+      ok: false,
+      error: { reason: "missing-node", nodeId: "ghost" },
+    });
+  });
+
+  test("rejects a trash id that is absent or not a collection", () => {
+    expect(resolveTrashCommand(trashGraph, id("A"), id("B"))).toEqual({
+      ok: false,
+      error: { reason: "no-trash-collection", trashId: "B" },
+    });
+    expect(resolveTrashCommand(trashGraph, id("A"), id("ghost"))).toEqual({
+      ok: false,
+      error: { reason: "no-trash-collection", trashId: "ghost" },
+    });
+  });
+
+  test("resolves a command the reducer then rejects as a cycle", () => {
+    // Trashing a collection INTO one of its own descendants is a cycle. The
+    // resolver stays structural and produces the command; the reducer guards.
+    const nested = build([
+      collection("root", [collection("Outer", [collection("Inner", [])])]),
+    ]);
+    const resolved = resolveTrashCommand(nested, id("Outer"), id("Inner"));
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    const applied = applyCommand(nested, resolved.value);
+    expect(applied.ok).toBe(false);
+    if (!applied.ok) expect(applied.error.reason).toBe("would-create-cycle");
   });
 });

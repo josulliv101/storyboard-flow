@@ -54,9 +54,13 @@ export function TrimHandles({
 
   return (
     <>
+      {/* Pointer-only affordances: not focusable and aria-hidden. The
+          accessible way to trim is the focused card + Alt+Shift+Arrows
+          (see use-keyboard-controller / the sr-only instructions). */}
       {showLeft && (
         <div
           data-trim-handle="left"
+          aria-hidden="true"
           className={`${HANDLE_CLASS} left-0 rounded-l-md`}
           onPointerDown={(event) => startTrim("left", event)}
         >
@@ -65,6 +69,7 @@ export function TrimHandles({
       )}
       <div
         data-trim-handle="right"
+        aria-hidden="true"
         className={`${HANDLE_CLASS} right-0 rounded-r-md`}
         onPointerDown={(event) => startTrim("right", event)}
       >

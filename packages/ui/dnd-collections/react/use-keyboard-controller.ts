@@ -8,14 +8,16 @@ import {
   type RefObject,
 } from "react";
 
-import { mediaDurationSeconds, type NodeId } from "../core/graph";
+import { getChildren, mediaDurationSeconds, type NodeId } from "../core/graph";
 import {
   resolveGridRowMoveCommand,
   resolveKeyboardCommand,
+  resolveTrashCommand,
   resolveTrimCommand,
   type GridRowMoveRejection,
   type KeyboardMoveAction,
   type KeyboardRejection,
+  type KeyboardTrashRejection,
   type KeyboardTrimAction,
   type KeyboardTrimRejection,
 } from "../core/keyboard";
@@ -91,16 +93,31 @@ const TRIM_REJECTION_MESSAGES: Readonly<
   "invalid-step": undefined,
 };
 
+// Alt+Delete moves the focused card to the designated trash collection (the
+// keyboard equivalent of dropping it on the TrashTarget). `undefined` = silent
+// (corrupt/out-of-scope input); keyed by the rejection union so a new reason
+// forces a decision here at compile time.
+const TRASH_REJECTION_MESSAGES: Readonly<
+  Record<KeyboardTrashRejection["reason"], string | undefined>
+> = {
+  "already-in-trash": "Already in trash.",
+  "cannot-move-root": "Top-level collections cannot be moved to trash.",
+  "missing-node": undefined,
+  "no-trash-collection": undefined,
+};
+
 export function useCollectionsKeyboard(args: {
   store: CollectionsStore;
   announce: (message: string) => void;
   containerRef: RefObject<HTMLDivElement | null>;
+  /** Where a mounted <TrashTarget> registers its id, for Alt+Delete. */
+  trashRef: RefObject<NodeId | null>;
 }): Readonly<{
   handleKeyDownCapture: (event: ReactKeyboardEvent) => void;
   /** Re-focus a card after a move unmounts/remounts it (new parent or virtual slot). */
   restoreFocus: (nodeId: NodeId, fallbackId?: NodeId) => void;
 }> {
-  const { store, announce, containerRef } = args;
+  const { store, announce, containerRef, trashRef } = args;
   const pendingFocusRef = useRef<(() => void) | null>(null);
 
   useEffect(
@@ -184,6 +201,38 @@ export function useCollectionsKeyboard(args: {
     [store, announce]
   );
 
+  const handleTrash = useCallback(
+    (nodeId: NodeId, trashId: NodeId) => {
+      const { graph } = store.getSnapshot();
+      const name = graph.nodesById.get(nodeId)?.name ?? "item";
+      // Compute the neighbor BEFORE the move so focus can land on whatever
+      // takes the vacated slot (next sibling, else previous) once the card
+      // leaves for the usually-hidden trash collection.
+      const parentId = graph.parentById.get(nodeId);
+      const siblings = parentId ? getChildren(graph, parentId) : [];
+      const selfIndex = siblings.indexOf(nodeId);
+      const neighbor = siblings[selfIndex + 1] ?? siblings[selfIndex - 1];
+
+      const resolved = resolveTrashCommand(graph, nodeId, trashId);
+      if (!resolved.ok) {
+        const message = TRASH_REJECTION_MESSAGES[resolved.error.reason];
+        if (message) announce(message);
+        return;
+      }
+      const dispatched = store.dispatch(resolved.value);
+      if (!dispatched.ok) {
+        if (dispatched.error.reason === "would-create-cycle") {
+          store.flashRejection([nodeId]);
+          announce("Cannot move a collection into itself or one of its nested collections.");
+        }
+        return;
+      }
+      announce(`Moved "${name}" to trash.`);
+      restoreFocus(neighbor ?? trashId, trashId);
+    },
+    [store, announce, restoreFocus]
+  );
+
   const handleKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent) => {
       if (!event.altKey || event.ctrlKey || event.metaKey) return;
@@ -196,6 +245,18 @@ export function useCollectionsKeyboard(args: {
         card?.getAttribute("data-node-id") ?? card?.getAttribute("data-node-wrapper");
       if (!rawId) return;
       const nodeId = rawId as NodeId;
+
+      // Alt+Delete moves the focused card to the registered trash collection.
+      // Only consumed when a <TrashTarget> is mounted and no dnd-kit drag owns
+      // movement; otherwise the key is left for the app/browser.
+      if (event.key === "Delete") {
+        const trashId = trashRef.current;
+        if (trashId === null || store.getSnapshot().interaction.isDragging) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handleTrash(nodeId, trashId);
+        return;
+      }
 
       const isCollectionsCommand = event.shiftKey
         ? TRIM_ACTION_BY_KEY[event.key] !== undefined
@@ -263,7 +324,7 @@ export function useCollectionsKeyboard(args: {
       // doesn't render — fall back to the destination collection's own card.
       restoreFocus(nodeId, resolved.value.toParentId);
     },
-    [store, announce, handleGridRowMove, handleTrim, restoreFocus]
+    [store, announce, trashRef, handleGridRowMove, handleTrim, handleTrash, restoreFocus]
   );
 
   return { handleKeyDownCapture, restoreFocus };

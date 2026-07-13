@@ -72,10 +72,12 @@ export { createHistory, type CollectionsHistory, type HistoryEntry } from "./cor
 export {
   resolveGridRowMoveCommand,
   resolveKeyboardCommand,
+  resolveTrashCommand,
   resolveTrimCommand,
   type GridRowMoveRejection,
   type KeyboardMoveAction,
   type KeyboardRejection,
+  type KeyboardTrashRejection,
   type KeyboardTrimAction,
   type KeyboardTrimRejection,
 } from "./core/keyboard";

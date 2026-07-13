@@ -244,3 +244,52 @@ export function resolveTrimCommand(
   }
   return { ok: true, value: { type: "update-media", nodeId, update } };
 }
+
+// Keyboard trash: move the focused node into a designated trash collection —
+// the keyboard equivalent of dropping it on the TrashTarget. Resolves to the
+// SAME move-nodes command (append to the trash collection's end), so subtrees
+// ride along and undo restores exactly like the pointer drop. Nothing is ever
+// deleted; trash is just a collection.
+export type KeyboardTrashRejection =
+  | Readonly<{ reason: "missing-node"; nodeId: NodeId }>
+  | Readonly<{ reason: "cannot-move-root"; nodeId: NodeId }>
+  /** The supplied trash id is absent or not a collection. */
+  | Readonly<{ reason: "no-trash-collection"; trashId: NodeId }>
+  /** The node is already directly inside trash — a no-op. */
+  | Readonly<{ reason: "already-in-trash"; nodeId: NodeId }>;
+
+export function resolveTrashCommand(
+  graph: CollectionsGraph,
+  nodeId: NodeId,
+  trashId: NodeId
+): Result<MoveNodesCommand, KeyboardTrashRejection> {
+  if (!graph.nodesById.has(nodeId)) {
+    return { ok: false, error: { reason: "missing-node", nodeId } };
+  }
+  const parentId = graph.parentById.get(nodeId);
+  if (parentId === undefined) {
+    return { ok: false, error: { reason: "missing-node", nodeId } };
+  }
+  if (parentId === null) {
+    return { ok: false, error: { reason: "cannot-move-root", nodeId } };
+  }
+  const trash = graph.nodesById.get(trashId);
+  if (!trash || trash.kind !== "collection") {
+    return { ok: false, error: { reason: "no-trash-collection", trashId } };
+  }
+  if (parentId === trashId) {
+    return { ok: false, error: { reason: "already-in-trash", nodeId } };
+  }
+  // Trying to trash a collection that itself contains trash resolves to a
+  // command the reducer rejects as would-create-cycle — the controller
+  // surfaces that the same way it does for keyboard moves.
+  return {
+    ok: true,
+    value: {
+      type: "move-nodes",
+      nodeIds: [nodeId],
+      toParentId: trashId,
+      toIndex: getChildren(graph, trashId).length,
+    },
+  };
+}
