@@ -117,6 +117,13 @@ export type VirtualStripHandle = Readonly<{
   remeasure: () => void;
 }>;
 
+// A fully trimmed clip can derive a 0px width from `itemWidthFor`. The slot
+// still needs to be visible and clickable: NodeCard's `w-full` fills the slot
+// (overriding its own `w-32` default), so a 0px slot renders an invisible,
+// unselectable card. The node's semantic duration/trim is left untouched;
+// only the rendered/measured slot is floored to this minimum.
+const MIN_ITEM_WIDTH = 12;
+
 export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
   function VirtualStrip(
     {
@@ -164,9 +171,12 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
 
     const widthForIndex = (index: number): number => {
       const node = nodesById.get(childIds[index]);
-      // A zero derived width is meaningful for a fully trimmed clip (the
-      // card's own chrome still supplies its minimum visual hit area).
-      return finiteNonNegativeOr(node ? itemWidthFor?.(node) : undefined, itemWidth);
+      // Floor the slot at a clickable minimum: a fully trimmed clip derives a
+      // 0px width, and NodeCard's w-full would then render it 0px wide and
+      // unselectable. estimateSize and the rendered slot both read this, so
+      // layout stays consistent; the node's semantic duration is untouched.
+      const width = finiteNonNegativeOr(node ? itemWidthFor?.(node) : undefined, itemWidth);
+      return Math.max(MIN_ITEM_WIDTH, width);
     };
 
     // Stable keys by node id (reorders move DOM nodes instead of repainting

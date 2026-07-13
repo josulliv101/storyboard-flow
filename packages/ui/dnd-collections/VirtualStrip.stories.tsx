@@ -121,6 +121,54 @@ export const InvalidNumericOptionsUseSafeDefaults: Story = {
   },
 };
 
+function zeroWidthGraph() {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "strip",
+      name: "Strip",
+      children: [
+        { kind: "media", id: "wide", name: "Wide", durationSeconds: 5 },
+        { kind: "media", id: "zero", name: "Zero", durationSeconds: 5 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+export const FullyTrimmedClipKeepsMinimumWidth: Story = {
+  // A clip whose itemWidthFor yields 0 (fully trimmed) must not collapse to a
+  // 0px, invisible, unselectable slot — the slot is floored to a clickable
+  // minimum while the node's semantic duration stays whatever it is.
+  render: () => (
+    <DndCollections initialGraph={zeroWidthGraph()}>
+      <div className="w-[640px]">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) => (node.kind === "media" && node.name === "Zero" ? 0 : 96)}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "wide"));
+    const zero = nodeCard(canvasElement, "zero");
+    const zeroSlot = zero.closest<HTMLElement>("[data-virtual-index]")!;
+
+    // The 0-width clip did not vanish: its slot holds the interactive minimum.
+    expect(parseFloat(zeroSlot.style.width)).toBe(12);
+    expect(zero.getBoundingClientRect().width).toBeGreaterThanOrEqual(12);
+
+    // And it is still selectable by pointer.
+    const user = userEvent.setup();
+    await user.click(zero);
+    await waitFor(() =>
+      expect(nodeCard(canvasElement, "zero")).toHaveAttribute("data-selected", "true")
+    );
+  },
+};
+
 /** Play-less twin for e2e (real-mouse scroll/drag must not race a play()). */
 export const VirtualPlayground: Story = {
   render: () => <StripHarness />,
