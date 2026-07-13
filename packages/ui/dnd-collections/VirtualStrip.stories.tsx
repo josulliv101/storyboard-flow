@@ -574,6 +574,12 @@ export const PanToScrollWithMomentum: Story = {
     const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
     const m3 = nodeCard(canvasElement, "m3");
     await waitForLayout(m3);
+    const grip = m3
+      .closest("[data-node-wrapper]")!
+      .querySelector<HTMLElement>('[data-drag-handle="m3"]')!;
+    expect(grip.tagName).toBe("BUTTON");
+    expect(grip.getAttribute("aria-describedby")).not.toMatch(/undefined|null/);
+    expect(m3.getAttribute("aria-describedby")).not.toMatch(/undefined|null/);
     const body = rectCenter(m3);
 
     // Fast leftward drag from a card BODY: 120px over ~3 frames.
