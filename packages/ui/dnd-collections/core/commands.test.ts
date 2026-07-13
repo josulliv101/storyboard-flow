@@ -363,6 +363,69 @@ describe("applyCommand: add-nodes", () => {
     }
   });
 
+  test("rejects a malformed runtime node without partially adding the batch", () => {
+    const graph = fixture();
+    const result = applyCommand(graph, {
+      type: "add-nodes",
+      nodes: [
+        newMedia,
+        {
+          ...newMedia,
+          id: parseNodeId("invalid-duration"),
+          durationSeconds: Number.NaN,
+        },
+      ],
+      toParentId: parseNodeId("root-a"),
+      toIndex: 0,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        reason: "invalid-node",
+        index: 1,
+        validationError: {
+          reason: "invalid-value",
+          path: "$.durationSeconds",
+          message: "Expected a finite, non-negative number.",
+        },
+      },
+    });
+    expect(graph.nodesById.has(newMedia.id)).toBe(false);
+    expect(graph.nodesById.has(parseNodeId("invalid-duration"))).toBe(false);
+  });
+
+  test("stores a parsed copy instead of caller-owned node data", () => {
+    const graph = fixture();
+    const posterSrcs = ["frame-a.jpg", "frame-b.jpg"];
+    const node = {
+      id: parseNodeId("new-video"),
+      kind: "media" as const,
+      mediaKind: "video" as const,
+      name: "New video",
+      posterSrcs,
+      fullDurationSeconds: 10,
+      trimInSeconds: 1,
+      trimOutSeconds: 2,
+    };
+    const result = applyCommand(graph, {
+      type: "add-nodes",
+      nodes: [node],
+      toParentId: parseNodeId("root-a"),
+      toIndex: 0,
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+
+    const stored = result.value.graph.nodesById.get(node.id);
+    expect(stored).not.toBe(node);
+    if (stored?.kind !== "media" || stored.mediaKind !== "video") {
+      throw new Error("Expected the added video node.");
+    }
+    expect(stored.posterSrcs).not.toBe(posterSrcs);
+    posterSrcs[0] = "mutated.jpg";
+    expect(stored.posterSrcs).toEqual(["frame-a.jpg", "frame-b.jpg"]);
+  });
+
   test("rejects empty adds and non-collection targets", () => {
     const graph = fixture();
     expect(
@@ -401,7 +464,7 @@ describe("applyCommand: add-nodes", () => {
     const redone = applyPatch(undone, patch);
     expect(findGraphInvariantViolation(redone)).toBeNull();
     expect(childNames(redone, "F")).toEqual(["f1", "new-1"]);
-    expect(redone.nodesById.get(newMedia.id)).toEqual(newMedia);
+    expect(redone.nodesById.get(newMedia.id)).toEqual(added.nodesById.get(newMedia.id));
   });
 });
 

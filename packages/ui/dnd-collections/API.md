@@ -231,6 +231,7 @@ Rejections (`CommandRejection.reason`):
 | `cannot-move-root` | A dragged id is a top-level collection — roots are structural anchors. |
 | `duplicate-node-id` | An id appears twice in `nodeIds`, or (add-nodes) an added id already exists / repeats in the batch. |
 | `invalid-node-id` | (add-nodes) An added node's id is empty or whitespace-only — it can't be addressed or encoded as a droppable. |
+| `invalid-node` | (add-nodes) A node failed runtime validation. Includes its batch `index` and a `validationError` with the precise value path. |
 | `not-media-node` | (update-media) `nodeId` is a collection, not a media node. |
 | `invalid-media-update` | (update-media) The payload's `mediaKind` doesn't match the node, or it carries non-finite values. |
 | `nothing-to-add` | `add-nodes` with an empty `nodes` array. |
