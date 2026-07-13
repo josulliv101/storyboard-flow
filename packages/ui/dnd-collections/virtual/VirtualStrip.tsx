@@ -132,6 +132,10 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // Stable array reference between commits — the virtualizer's item keys
     // and index math stay coherent across drags for free.
     const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
+    const indexById = useMemo(
+      () => new Map(childIds.map((id, index) => [id, index])),
+      [childIds]
+    );
     // nodesById is never re-allocated by moves, so this subscription is inert.
     const nodesById = useCollectionsSelector((s) => s.graph.nodesById);
     // The selected video (if any) drives the TrimOverview band above the row.
@@ -212,8 +216,8 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // memoized cards still don't re-render. The callback must stay
     // reference-stable (trim handles read it via context) — it is, reading
     // mutable inputs from a ref and calling the stable setState.
-    const trimStateRef = useRef({ childIds, virtualizer, gap, trimPixelsPerSecond, widthForIndex });
-    trimStateRef.current = { childIds, virtualizer, gap, trimPixelsPerSecond, widthForIndex };
+    const trimStateRef = useRef({ indexById, virtualizer, gap, trimPixelsPerSecond, widthForIndex });
+    trimStateRef.current = { indexById, virtualizer, gap, trimPixelsPerSecond, widthForIndex };
     const [liveTrim, setLiveTrim] = useState<{ nodeId: NodeId; trim: LiveTrim } | null>(null);
     // Pre-drag slot size of the item being left-trimmed, captured once per
     // gesture. The anchor transform is measured against THIS, not the live
@@ -227,7 +231,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const dragShiftRef = useRef(0);
     const previewTrim = useCallback<TrimPreview["previewTrim"]>((nodeId, live) => {
       const s = trimStateRef.current;
-      const index = s.childIds.indexOf(nodeId);
+      const index = s.indexById.get(nodeId) ?? -1;
 
       if (live === null || index === -1) {
         // Abort/no-op: snap the item back to its committed size; clearing the
@@ -300,12 +304,12 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
 
     const scrollToNode = useCallback(
       (id: NodeId): boolean => {
-        const index = childIds.indexOf(id);
-        if (index === -1) return false;
+        const index = indexById.get(id);
+        if (index === undefined) return false;
         virtualizer.scrollToIndex(index);
         return true;
       },
-      [childIds, virtualizer]
+      [indexById, virtualizer]
     );
     const focusNode = useFocusNode(scrollRef, scrollToNode);
 
@@ -320,6 +324,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     );
     const { focusedIndex, onKeyDown, onItemFocus } = useVirtualRovingFocus({
       itemIds: childIds,
+      indexById,
       isDragging: () => store.getSnapshot().interaction.isDragging,
       focusByIndex,
       resolveNextIndex: resolveStripIndex,
@@ -337,7 +342,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // float above without being clipped (the scroll container's overflow-x
     // clips y too), it's rendered OUTSIDE that container and positioned to
     // track the clip. Only render it while the clip is actually mounted.
-    const selectedVideoIndex = selectedVideo ? childIds.indexOf(selectedVideo.id) : -1;
+    const selectedVideoIndex = selectedVideo ? (indexById.get(selectedVideo.id) ?? -1) : -1;
     const selectedVideoItem =
       selectedVideoIndex === -1
         ? undefined

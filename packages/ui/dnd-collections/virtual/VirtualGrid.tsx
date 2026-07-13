@@ -5,6 +5,7 @@ import {
   useCallback,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useState,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -65,6 +66,10 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
     ref
   ) {
     const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
+    const indexById = useMemo(
+      () => new Map(childIds.map((id, index) => [id, index])),
+      [childIds]
+    );
 
     const { scrollRef, contentRef, resolveBoundaryRef, setContainerRef } =
       useVirtualInsertContainer(collectionId, "vgrid");
@@ -127,12 +132,12 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
 
     const scrollToNode = useCallback(
       (id: NodeId): boolean => {
-        const index = childIds.indexOf(id);
-        if (index === -1) return false;
+        const index = indexById.get(id);
+        if (index === undefined) return false;
         virtualizer.scrollToIndex(Math.floor(index / cols));
         return true;
       },
-      [childIds, virtualizer, cols]
+      [indexById, virtualizer, cols]
     );
     const focusNode = useFocusNode(scrollRef, scrollToNode);
 
@@ -170,6 +175,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
     );
     const { focusedIndex, onKeyDown, onItemFocus } = useVirtualRovingFocus({
       itemIds: childIds,
+      indexById,
       isDragging: () => store.getSnapshot().interaction.isDragging,
       focusByIndex,
       resolveNextIndex: resolveGridIndex,

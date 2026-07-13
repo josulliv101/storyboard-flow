@@ -122,6 +122,7 @@ export function useFocusNode(
  */
 export function useVirtualRovingFocus(args: {
   itemIds: readonly NodeId[];
+  indexById: ReadonlyMap<NodeId, number>;
   isDragging: () => boolean;
   /** Scroll the index into view and focus its card once the virtualizer mounts it. */
   focusByIndex: (index: number) => void;
@@ -133,7 +134,7 @@ export function useVirtualRovingFocus(args: {
   /** Wire to each card's onFocus so click / programmatic focus updates the roving item. */
   onItemFocus: (id: NodeId) => void;
 }> {
-  const { itemIds, isDragging, focusByIndex, resolveNextIndex } = args;
+  const { itemIds, indexById, isDragging, focusByIndex, resolveNextIndex } = args;
   const [focusedId, setFocusedId] = useState<NodeId | null>(() => itemIds[0] ?? null);
   const focusedIdRef = useRef<NodeId | null>(itemIds[0] ?? null);
 
@@ -148,11 +149,11 @@ export function useVirtualRovingFocus(args: {
   // the next arrow navigates from a valid base.
   useEffect(() => {
     const current = focusedIdRef.current;
-    if (current !== null && itemIds.includes(current)) return;
+    if (current !== null && indexById.has(current)) return;
     setFocused(itemIds[0] ?? null);
-  }, [itemIds, setFocused]);
+  }, [itemIds, indexById, setFocused]);
 
-  const storedIndex = focusedId === null ? -1 : itemIds.indexOf(focusedId);
+  const storedIndex = focusedId === null ? -1 : (indexById.get(focusedId) ?? -1);
   const focusedIndex = storedIndex === -1 ? 0 : storedIndex;
 
   const onKeyDown = useCallback(
@@ -163,7 +164,7 @@ export function useVirtualRovingFocus(args: {
       const count = itemIds.length;
       if (count === 0) return;
       const currentId = focusedIdRef.current;
-      const currentIndex = currentId === null ? -1 : itemIds.indexOf(currentId);
+      const currentIndex = currentId === null ? -1 : (indexById.get(currentId) ?? -1);
       const next = resolveNextIndex(event.key, currentIndex === -1 ? 0 : currentIndex, count);
       if (next === null) return;
       event.preventDefault();
@@ -173,7 +174,7 @@ export function useVirtualRovingFocus(args: {
       setFocused(nextId);
       focusByIndex(clamped);
     },
-    [itemIds, isDragging, focusByIndex, resolveNextIndex, setFocused]
+    [itemIds, indexById, isDragging, focusByIndex, resolveNextIndex, setFocused]
   );
 
   return {
