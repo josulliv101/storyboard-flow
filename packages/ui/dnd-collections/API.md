@@ -245,9 +245,8 @@ Rejections (`CommandRejection.reason`):
 
 ## Core: patches (`core/patches.ts`)
 
-Patches are the reversible, serializable record of every mutation. The raw
-shape backs internal undo/redo and the `onChange` feed; persistence wraps it
-in a checked, versioned `PatchEnvelope`.
+Patches are the reversible, serializable record of every mutation — the
+same primitive backs undo/redo, the `onChange` feed, and persistence.
 
 ```ts
 type NodeMove = {
@@ -277,28 +276,13 @@ type CollectionsPatch =
 
 Swaps each move's endpoints; applying the result undoes the original.
 
-### `replayPatchEnvelope(graph, currentRevision, value): Result<PatchReplaySuccess, PatchReplayError>`
+### `applyPatch(graph, patch): CollectionsGraph`
 
-The public persistence/replay boundary. `value` is `unknown` and must be a
-schema-versioned `PatchEnvelope` with a non-empty `baseRevision`, advancing
-`revision`, and a runtime-valid patch. Replay verifies that `baseRevision`
-matches `currentRevision`, checks every recorded source slot/value and
-destination precondition, applies the patch, then validates the resulting
-graph. Failures leave the caller's graph and revision unchanged.
-
-```ts
-type PatchEnvelope = {
-  schemaVersion: 1;
-  baseRevision: string;
-  revision: string;
-  patch: CollectionsPatch;
-};
-```
-
-`createPatchEnvelope(patch, baseRevision, revision)` creates an envelope for
-a trusted in-memory patch. The unchecked adjacent-state primitive used by
-the reducer and undo/redo is intentionally absent from the main entry point;
-advanced internal tooling can import it from `dnd-collections/unsafe`.
+The only code that rewrites graph indexes (forward apply, undo, and redo all
+run through it). Structural sharing: only affected parents' children arrays
+are re-allocated; `nodesById` and `rootIds` are reused untouched. Does not
+validate — apply patches only to the graph state they were produced against
+(or its inverse-adjacent state).
 
 ---
 
@@ -760,6 +744,6 @@ the same store, FLIP scope, and collision pipeline as the built-ins:
 value and its maximum speed to a finite non-negative value before starting
 the animation loop.
 
-Use `replayPatchEnvelope` for external or persisted patch data. Unchecked
-adjacent-state application is available only from the explicit
-`dnd-collections/unsafe` entry point for internal tooling.
+`applyPatch` (Core) is the one deliberately unchecked primitive: it rewrites
+indexes without validation, so apply patches only to the graph state they
+were produced against (or its inverse-adjacent state).
