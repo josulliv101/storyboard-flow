@@ -2,6 +2,11 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 import { finiteNonNegativeOr, finitePositiveOr } from "../core/numeric";
+import {
+  AUTO_SCROLL_FRAME_MS,
+  edgeScrollVelocity,
+  frameScaledDistance,
+} from "./edge-autoscroll-math";
 import { useCollectionsSelector } from "./collections-store";
 
 // Deterministic edge auto-scroll for the virtualized containers. dnd-kit's
@@ -83,7 +88,13 @@ export function useEdgeAutoScroll(
     };
 
     let frame = 0;
-    const step = () => {
+    // Scale each tick by the real elapsed time (the rAF timestamp), not a
+    // fixed per-frame amount — otherwise a 120Hz display scrolls twice as fast
+    // as a 60Hz one. First frame uses one baseline frame's worth.
+    let lastTime: number | null = null;
+    const step = (now: number) => {
+      const elapsedMs = lastTime === null ? AUTO_SCROLL_FRAME_MS : now - lastTime;
+      lastTime = now;
       const pointer = pointerRef.current;
       if (pointer) {
         const inCrossAxis =
@@ -93,16 +104,12 @@ export function useEdgeAutoScroll(
         const [position, start, end] =
           axis === "x" ? [pointer.x, rect.left, rect.right] : [pointer.y, rect.top, rect.bottom];
 
-        if (inCrossAxis && position > start && position < end) {
-          let velocity = 0;
-          if (position < start + edge) {
-            velocity = -maxSpeed * (1 - (position - start) / edge);
-          } else if (position > end - edge) {
-            velocity = maxSpeed * (1 - (end - position) / edge);
-          }
+        if (inCrossAxis) {
+          const velocity = edgeScrollVelocity(position, start, end, edge, maxSpeed);
           if (velocity !== 0) {
-            if (axis === "x") el.scrollLeft += velocity;
-            else el.scrollTop += velocity;
+            const distance = frameScaledDistance(velocity, elapsedMs);
+            if (axis === "x") el.scrollLeft += distance;
+            else el.scrollTop += distance;
           }
         }
       }
