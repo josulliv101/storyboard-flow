@@ -108,7 +108,9 @@ export const MAX_VIDEO_FRAMES = 5;
  * card cycles the available `posterSrcs` to fill this count.
  */
 export function videoFrameCount(durationSeconds: number, max: number = MAX_VIDEO_FRAMES): number {
-  const ceiling = Math.max(1, Math.floor(max));
+  const ceiling = Number.isFinite(max)
+    ? Math.max(1, Math.floor(max))
+    : MAX_VIDEO_FRAMES;
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 1;
   return Math.max(1, Math.min(ceiling, Math.round(durationSeconds / SECONDS_PER_VIDEO_FRAME)));
 }

@@ -100,6 +100,12 @@ describe("videoFrameCount", () => {
     expect(videoFrameCount(4, 1)).toBe(1);
   });
 
+  test("malformed per-view caps fall back to a safe finite cap", () => {
+    expect(videoFrameCount(100, Number.NaN)).toBe(MAX_VIDEO_FRAMES);
+    expect(videoFrameCount(100, Number.POSITIVE_INFINITY)).toBe(MAX_VIDEO_FRAMES);
+    expect(videoFrameCount(100, -4)).toBe(1);
+  });
+
   test("non-finite durations degrade to a single frame", () => {
     expect(videoFrameCount(Number.NaN)).toBe(1);
     expect(videoFrameCount(Number.POSITIVE_INFINITY)).toBe(1);

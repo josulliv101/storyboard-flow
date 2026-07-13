@@ -81,6 +81,7 @@ const TRIM_REJECTION_MESSAGES: Readonly<
   "no-start-edge": "Images can only be trimmed at the end.",
   "not-media-node": undefined,
   "missing-node": undefined,
+  "invalid-step": undefined,
 };
 
 export function useCollectionsKeyboard(args: {

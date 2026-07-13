@@ -198,6 +198,7 @@ export type KeyboardTrimAction =
 export type KeyboardTrimRejection =
   | Readonly<{ reason: "missing-node"; nodeId: NodeId }>
   | Readonly<{ reason: "not-media-node"; nodeId: NodeId }>
+  | Readonly<{ reason: "invalid-step"; stepSeconds: number }>
   /** A start-edge action on an image — images have no start trim. */
   | Readonly<{ reason: "no-start-edge"; nodeId: NodeId }>;
 
@@ -207,6 +208,9 @@ export function resolveTrimCommand(
   action: KeyboardTrimAction,
   stepSeconds: number
 ): Result<UpdateMediaCommand, KeyboardTrimRejection> {
+  if (!Number.isFinite(stepSeconds) || stepSeconds <= 0) {
+    return { ok: false, error: { reason: "invalid-step", stepSeconds } };
+  }
   const node = graph.nodesById.get(nodeId);
   if (!node) return { ok: false, error: { reason: "missing-node", nodeId } };
   if (node.kind !== "media") return { ok: false, error: { reason: "not-media-node", nodeId } };

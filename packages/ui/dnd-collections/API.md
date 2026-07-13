@@ -100,7 +100,8 @@ Use this everywhere a media item's on-timeline length is needed (card display,
 How many poster frames a video card shows: `~durationSeconds / SECONDS_PER_VIDEO_FRAME`,
 at least 1, capped at `max` (default `MAX_VIDEO_FRAMES`). Longer clips show
 more frames; a view can pass a tighter `max` (e.g. how many fit the card
-width). The card cycles the node's `posterSrcs` to fill this count — a video
+width). Non-finite `max` values fall back to `MAX_VIDEO_FRAMES`; values below
+1 clamp to 1. The card cycles the node's `posterSrcs` to fill this count — a video
 card is a frame SEQUENCE, never a `<video>` element.
 
 ### `parseNodeId(id: string): NodeId`
@@ -333,7 +334,7 @@ Resolution rules:
   a horizontal row with a card, resolves insert-adjacent against the nearest
   card in that row (gap drops land between cards; dragged cards are not
   anchors). Otherwise `append-to-collection`.
-- Returns `null` only when hovering a dragged node's own card. Descendants
+- Returns `null` when geometry is malformed or when hovering a dragged node's own card. Descendants
   of a dragged collection DO resolve intents — flag them with
   `isIntentInvalid` for the "cannot drop" preview; the reducer rejects them
   at commit regardless.
@@ -357,9 +358,9 @@ enforces, so a preview built on this can never disagree with the outcome.
 ### `resolveCommandFromIntent(graph, intent, draggedIds): Result<CollectionsCommand, IntentRejection>`
 
 Intent → command, doing the post-removal index math (the off-by-one class
-lives here, nowhere else). `IntentRejection` is
-`{ reason: "missing-node"; nodeId: NodeId }` — the adjacency target
-vanished.
+lives here, nowhere else). `IntentRejection` is `missing-node` when the
+adjacency target vanished, or `invalid-index` when a virtual boundary is
+fractional or non-finite.
 
 ### `resolveAddCommandFromIntent(graph, intent, nodes): Result<CollectionsCommand, IntentRejection>`
 
@@ -440,8 +441,9 @@ type KeyboardTrimAction =
   | "trim-start-extend" | "trim-start-reduce"; // the video START edge: trim-in (image rejects)
 ```
 
-`KeyboardTrimRejection.reason`: `missing-node`, `not-media-node`, and
-`no-start-edge` (a start-edge action on an image). Wired in the default views
+`stepSeconds` must be finite and greater than zero. `KeyboardTrimRejection.reason`:
+`missing-node`, `not-media-node`, `invalid-step`, and `no-start-edge` (a
+start-edge action on an image). Wired in the default views
 as **Alt+Shift+Arrow** (horizontal = end edge, vertical = video start edge).
 
 ---
