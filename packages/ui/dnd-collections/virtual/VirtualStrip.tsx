@@ -61,7 +61,7 @@ function resolveStripIndex(key: string, current: number, count: number): number 
 // yields via isGestureClaimed.) Module-level so option identities are
 // stable.
 const isPannableStripSurface = (target: Element): boolean =>
-  !target.closest("[data-drag-handle], [data-trim-handle]");
+  !target.closest("[data-drag-handle], [data-trim-handle], [data-trim-overview]");
 const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
 
 // Vertical band reserved above the row for the selected video's TrimOverview

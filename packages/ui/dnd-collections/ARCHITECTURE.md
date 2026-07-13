@@ -205,8 +205,23 @@ scroll listeners, because it's a real DOM child of the same natively-scrolled
 container the clip lives in. `TrimPreview` (widened to `previewTrim`) carries
 the drag's live `trimInSeconds`/`trimOutSeconds` split (not just the
 resulting duration) so this alignment holds mid-drag, not only after commit;
-`VirtualStrip` keeps that live override in a ref (not the store) and clears it
-whenever `nodesById` changes identity (any commit — trim, undo, redo).
+`VirtualStrip` keeps that live override in interaction state local to the view
+(not the store, so bystander cards don't subscribe) and clears it whenever
+`nodesById` changes identity (any commit — trim, undo, redo).
+
+The overview is itself interactive, sharing the card handles' gesture core
+(`trim-gesture.ts`: `resolveTrim`, `resolveMove`, `useTrimPointerDrag` — one
+pointer lifecycle → live `previewTrim` → one `update-media` on release). Its
+amber grips TRIM (left = trim-in, right = trim-out) exactly like the card
+edges. Dragging the filmstrip body instead MOVES the source window:
+`resolveMove` shifts trim-in and trim-out together, keeping showing (and so the
+clip width) constant. Because the window sits at `anchorLeft + trimInWidth ==
+clipLeft` for ANY trim-in, a move leaves the window locked on the clip while
+the filmstrip — drawn from `anchorLeft`, which changes with trim-in — slides
+under it, so you scrub which part of the source the clip plays. A move carries
+`side: "move"`, which the left-grow anchor ignores (effective is unchanged, so
+its transform is 0 anyway). The band opts out of the strip's pan via
+`data-trim-overview`.
 
 Two properties fall out of this shape and everything else depends on them:
 

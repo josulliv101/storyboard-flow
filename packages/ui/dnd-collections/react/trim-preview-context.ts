@@ -16,11 +16,12 @@ import { type NodeId } from "../core/graph";
 
 /** Live trim split during a drag — carries the in/out values (not just the
  *  resulting duration) so a view can position UI that depends on trimIn
- *  itself, e.g. the overview window's left edge. `side` is which handle is
- *  being dragged: a left-handle drag anchors the clip's RIGHT edge (grows
- *  left), so the view needs to know it. */
+ *  itself, e.g. the overview window's left edge. `side` is the gesture: a
+ *  "left" drag anchors the clip's RIGHT edge (grows left) so the view needs
+ *  to know it; "move" slides the source window (trim-in/out together, showing
+ *  constant) so the effective duration — and the card width — don't change. */
 export type LiveTrim = Readonly<{
-  side: "left" | "right";
+  side: "left" | "right" | "move";
   trimInSeconds: number;
   trimOutSeconds: number;
   effectiveSeconds: number;

@@ -1,8 +1,9 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useCallback, type PointerEvent as ReactPointerEvent } from "react";
 
 import { type VideoMediaNode } from "../core/graph";
+import { resolveMove, resolveTrim, useTrimPointerDrag, type TrimSide } from "./trim-gesture";
 
 // Source-window overview for a SELECTED video: the FULL source rendered as a
 // poster filmstrip, with an amber window marking what's currently showing
@@ -18,6 +19,13 @@ import { type VideoMediaNode } from "../core/graph";
 // listeners) — see ARCHITECTURE.md's trim section. `trimInSeconds`/
 // `trimOutSeconds` are passed in (not read from the node) so a live drag can
 // override the committed values before they land.
+//
+// It's interactive: the window's amber grips TRIM (left = trim-in, right =
+// trim-out — the same `update-media` the card handles dispatch, via the same
+// shared gesture), and dragging the filmstrip elsewhere MOVES the source
+// window (trim-in/out together, showing constant). Because the window sits at
+// `anchorLeft + trimInWidth == clipLeft` for any trim-in, a move keeps the
+// window locked on the clip while the source slides under it.
 
 const fmt1 = (s: number) => `${(Math.round(s * 10) / 10).toFixed(1)}s`;
 
@@ -58,10 +66,25 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   // container clips the overflow), capped so a long source stays bounded.
   const frameCount = Math.max(1, Math.min(40, Math.ceil(fullWidth / FRAME_SIZE)));
 
+  const beginDrag = useTrimPointerDrag(node);
+  const startTrim = useCallback(
+    (side: TrimSide) => (event: ReactPointerEvent) =>
+      beginDrag(event, pixelsPerSecond, (delta) => resolveTrim(node, side, delta)),
+    [beginDrag, node, pixelsPerSecond]
+  );
+  const startMove = useCallback(
+    (event: ReactPointerEvent) => beginDrag(event, pixelsPerSecond, (delta) => resolveMove(node, delta)),
+    [beginDrag, node, pixelsPerSecond]
+  );
+
   return (
     <div
       data-trim-overview={node.id}
-      className="absolute h-11 overflow-hidden rounded-md"
+      // Dragging the filmstrip (anywhere but the amber grips, which
+      // stopPropagation) MOVES the source window. `data-trim-overview` also
+      // opts the whole band out of the strip's pan gesture.
+      onPointerDown={startMove}
+      className="absolute h-11 cursor-grab touch-none overflow-hidden rounded-md select-none active:cursor-grabbing"
       style={{ width: fullWidth, top, transform: `translateX(${anchorLeft}px)` }}
     >
       {/* Full-source filmstrip. */}
@@ -91,14 +114,22 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
         style={{ width: trimOut * pixelsPerSecond }}
       />
 
-      {/* The amber "showing" window. */}
+      {/* The amber "showing" window, with draggable trim grips on each edge. */}
       <div
         data-trim-overview-window
         className="absolute inset-y-0 rounded-sm border-2 border-amber-300 bg-amber-300/10 shadow-[0_0_0_1px_rgba(0,0,0,0.5)]"
         style={{ width: windowWidth, transform: `translateX(${trimInWidth}px)` }}
       >
-        <span className="absolute inset-y-0 left-0 w-2 rounded-l-sm bg-amber-200/90" />
-        <span className="absolute inset-y-0 right-0 w-2 rounded-r-sm bg-amber-200/90" />
+        <span
+          data-trim-overview-handle="left"
+          onPointerDown={startTrim("left")}
+          className="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-sm bg-amber-200/90"
+        />
+        <span
+          data-trim-overview-handle="right"
+          onPointerDown={startTrim("right")}
+          className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-sm bg-amber-200/90"
+        />
       </div>
 
       {/* Full-clip readout. */}

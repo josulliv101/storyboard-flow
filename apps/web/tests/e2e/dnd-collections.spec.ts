@@ -516,6 +516,59 @@ test.describe('DndCollections E2E', () => {
     await expect(page.getByRole('button', { name: /undo/i })).toBeEnabled();
   });
 
+  test('overview: right grip trims the clip; dragging the filmstrip moves the source window', async ({
+    page,
+  }) => {
+    // OverviewPlayground pre-selects a video (full 10s, trim-in 2s, trim-out
+    // 1.5s -> showing 6.5s -> 156px). The overview's amber grips trim; dragging
+    // the filmstrip body moves the source window without changing duration.
+    await page.goto(storyPath('ui-dndcollectionsvirtual--overview-playground'));
+
+    const vid = card(page, 'vid');
+    const overview = page.locator('[data-trim-overview]');
+    const win = page.locator('[data-trim-overview-window]');
+    await vid.waitFor({ state: 'visible' });
+    await overview.waitFor({ state: 'visible' });
+    expect(Math.round((await vid.boundingBox())!.width)).toBe(156);
+
+    // Right grip in (left) 48px -> trim-out +2s -> showing 4.5s -> 108px.
+    const rightGrip = page.locator('[data-trim-overview-handle="right"]');
+    const g = (await rightGrip.boundingBox())!;
+    await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(g.x + g.width / 2 - 48, g.y + g.height / 2, { steps: 10 });
+    await page.waitForTimeout(120);
+    await expect(async () => {
+      expect(Math.round((await vid.boundingBox())!.width)).toBe(108);
+    }).toPass();
+    const vb = (await vid.boundingBox())!;
+    const wb = (await win.boundingBox())!;
+    expect(Math.round(wb.x + wb.width)).toBe(Math.round(vb.x + vb.width)); // window on clip
+    await page.mouse.up();
+    await page.getByRole('button', { name: /undo/i }).click();
+    await expect(async () => {
+      expect(Math.round((await vid.boundingBox())!.width)).toBe(156);
+    }).toPass();
+
+    // Move: drag the filmstrip body (near its left, over the images) right 48px.
+    // Duration unchanged; the clip doesn't move; the source strip slides right.
+    const ob0 = (await overview.boundingBox())!;
+    const vidLeft0 = (await vid.boundingBox())!.x;
+    await page.mouse.move(ob0.x + 20, ob0.y + ob0.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(ob0.x + 20 + 48, ob0.y + ob0.height / 2, { steps: 10 });
+    await page.waitForTimeout(120);
+    await expect(async () => {
+      expect((await overview.boundingBox())!.x).toBeGreaterThan(ob0.x + 40);
+    }).toPass();
+    expect(Math.round((await vid.boundingBox())!.width)).toBe(156); // duration unchanged
+    expect(Math.round((await vid.boundingBox())!.x)).toBe(Math.round(vidLeft0)); // clip unmoved
+    const wb2 = (await win.boundingBox())!;
+    expect(Math.round(wb2.x)).toBe(Math.round((await vid.boundingBox())!.x)); // window on clip
+    await page.mouse.up();
+    await expect(page.getByRole('button', { name: /undo/i })).toBeEnabled();
+  });
+
   test('reorders within a collection (drop on right half = after)', async ({ page }) => {
     await page.goto(storyPath(PLAYGROUND));
 
