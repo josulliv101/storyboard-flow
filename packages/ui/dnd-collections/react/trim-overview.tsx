@@ -21,6 +21,11 @@ import { type VideoMediaNode } from "../core/graph";
 
 const fmt1 = (s: number) => `${(Math.round(s * 10) / 10).toFixed(1)}s`;
 
+// The strip is `h-11` (44px) tall; square frames are that wide too. Frames are
+// fixed-size and the strip clips the partial last one (overflow-hidden), so
+// each thumbnail keeps a 1:1 aspect instead of stretching to fill the width.
+const FRAME_SIZE = 44;
+
 export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   node,
   pixelsPerSecond,
@@ -49,8 +54,9 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   const windowWidth = Math.max(2, showing * pixelsPerSecond);
 
   const posters = node.posterSrcs ?? [];
-  const frameW = 78;
-  const frameCount = Math.max(1, Math.min(24, Math.round(fullWidth / frameW)));
+  // Enough square frames to cover the strip width (ceil so the row fills; the
+  // container clips the overflow), capped so a long source stays bounded.
+  const frameCount = Math.max(1, Math.min(40, Math.ceil(fullWidth / FRAME_SIZE)));
 
   return (
     <div
@@ -71,7 +77,8 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
               src={posters[i % posters.length]}
               alt=""
               draggable={false}
-              className="h-full min-w-0 flex-1 border-r border-black/60 object-cover last:border-r-0"
+              style={{ width: FRAME_SIZE }}
+              className="h-full shrink-0 border-r border-black/60 object-cover last:border-r-0"
             />
           ))
         )}

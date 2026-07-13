@@ -1,14 +1,27 @@
 # Trim UX — Phase B plan (left-grows-left + live overview)
 
-> Status: **planning**. Phase A shipped (amber `TrimOverview` source-window
+> Status: **SHIPPED.** Phase A shipped first (amber `TrimOverview` source-window
 > strip, `showing / full` pill, amber handles, overview locked to the strip's
-> `trimPixelsPerSecond` so the window == clip width). The "X-alignment" open
-> decision below and its prerequisite live-overview-sync mechanism have ALSO
-> shipped (ahead of the rest of this plan — see "Current state" and the
-> resolved decision below). What remains of this doc is the "left grows left"
-> scroll-anchor mechanic. Reference implementation to match:
-> `packages/ui/timeline/media/video-source-filmstrip.tsx` and the app running
-> at `http://localhost:3001/.../workbench`.
+> `trimPixelsPerSecond` so the window == clip width). Then the "X-alignment"
+> decision + its live-overview-sync mechanism shipped. Then the "left grows
+> left" mechanic (this doc's core goal) shipped: a left-handle drag anchors
+> the clip's RIGHT edge so the left edge follows the cursor and left neighbors
+> slide left. It anchors via a composited **transform** on the content layer
+> derived from live-trim state (`previewTrim`, `trimBaselineRef`,
+> `dragShiftX`), reconciled to a real `scrollLeft` at commit — NOT a per-frame
+> `scrollLeft` write (an earlier version did that and stuttered, and clamped
+> at the strip start so a shrink there wrongly shrank the right edge). See
+> `virtual/VirtualStrip.tsx` and ARCHITECTURE.md's trim section. What remains
+> is only the OPTIONAL Phase B.2 (draggable overview handles) below. Reference
+> implementation matched: `packages/ui/timeline/media/video-source-filmstrip.tsx`.
+>
+> **Known limitation (accepted):** the transform anchors consistently during
+> the drag at any scroll position, but the COMMIT converts it to native
+> `scrollLeft`, which is bounded at 0. On the FIRST item (index 0, no left
+> neighbors) the left drag keeps grow-right; and committing a left-trim on a
+> clip at the strip start can snap by the shortfall the scroll can't absorb.
+> This suits `VirtualStrip`'s large-collection purpose; a non-scrollable
+> timeline genuinely can't represent "grow past content 0" in native layout.
 
 ## Goal (from the user's recording)
 

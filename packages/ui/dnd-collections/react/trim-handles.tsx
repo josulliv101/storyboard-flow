@@ -122,8 +122,9 @@ export function TrimHandles({
         pendingRef.current = update;
         setPreview(effectiveSeconds);
         // Live-resize the card AND publish the live trim split (view state
-        // only; the graph commits on release).
-        trimPreview.previewTrim(node.id, { trimInSeconds, trimOutSeconds, effectiveSeconds });
+        // only; the graph commits on release). `side` lets the view anchor
+        // the right edge for a left-handle drag (grow left).
+        trimPreview.previewTrim(node.id, { side, trimInSeconds, trimOutSeconds, effectiveSeconds });
       };
       const onUp = (upEvent: PointerEvent) => {
         window.removeEventListener("pointermove", onMove);

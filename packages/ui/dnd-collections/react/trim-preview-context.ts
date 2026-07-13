@@ -16,8 +16,11 @@ import { type NodeId } from "../core/graph";
 
 /** Live trim split during a drag — carries the in/out values (not just the
  *  resulting duration) so a view can position UI that depends on trimIn
- *  itself, e.g. the overview window's left edge. */
+ *  itself, e.g. the overview window's left edge. `side` is which handle is
+ *  being dragged: a left-handle drag anchors the clip's RIGHT edge (grows
+ *  left), so the view needs to know it. */
 export type LiveTrim = Readonly<{
+  side: "left" | "right";
   trimInSeconds: number;
   trimOutSeconds: number;
   effectiveSeconds: number;

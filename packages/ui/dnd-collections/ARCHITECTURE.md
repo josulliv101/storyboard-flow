@@ -165,6 +165,30 @@ covers non-drag trims (keyboard, direct dispatch) the resizeItem path misses.
 The last preview size already matches the committed size, so there is no
 resize flash. An aborted drag (pointercancel, or a no-op) resets the preview.
 
+The LEFT handle grows the clip toward the left: its right edge stays anchored,
+the left edge follows the cursor, and left neighbors slide left. `resizeItem`
+alone can't do this — it keeps `offset[index]` fixed and only shifts LATER
+offsets right, so growth appears on the right. So a left drag pairs the resize
+with a composited **transform** on the content layer: `translateX(−(newSize −
+size0))`, where `size0` is the slot size captured at drag start
+(`trimBaselineRef`). Since viewport-x = contentX − scrollLeft + translateX,
+the item's right edge `(offset + newSize) + translateX` stays constant while
+its left edge and left neighbors move by the growth; right neighbors, shifted
+by `resizeItem`, are cancelled by the transform and stay put. The shift is
+derived from the live-trim state during render, so it lands in the SAME React
+commit as the resize (atomic — no stutter), and it's a transform rather than a
+`scrollLeft` write for two reasons: a transform isn't clamped (so shrinking a
+clip at the strip start, where `scrollLeft` can't go below 0, stays consistent
+instead of collapsing to a right-edge shrink), and it doesn't fire scroll
+events that fight the pan/auto-scroll hooks. At COMMIT the `nodesById` effect
+converts the transform into a real `scrollLeft` (`scrollLeft −= shift`) and
+clears the live-trim state, so removing the transform doesn't jump the clip —
+seamless where there's scroll room, a small snap where there isn't (the known
+native-scroll limit). An abort just clears the live-trim state (transform → 0,
+scroll untouched → revert). Gated to the left handle on a non-first item;
+index 0 keeps grow-right. The right handle is unchanged (grows right, left edge
+anchored, pure `resizeItem`).
+
 For a selected video, `VirtualStrip` also renders a `TrimOverviewStrip`
 (`trim-overview.tsx`) — the full source as a poster filmstrip with an amber
 window marking what's showing — directly above that clip's row, and reserves

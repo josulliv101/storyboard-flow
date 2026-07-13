@@ -1,6 +1,14 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { getChildren, isVideoMedia, type CollectionItemNode, type NodeId } from "../core/graph";
@@ -174,38 +182,72 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
 
     // Live trim preview: a trim handle calls this per pointer-move to resize
     // ONE card without a graph commit, AND to publish the drag's current
-    // trimIn/trimOut split — the overview needs the LIVE split (not just the
-    // resulting duration) to keep its window aligned with the clip's
-    // rendered edges while the drag is in flight. `resizeItem` updates the
-    // item's cached size and shifts the offsets after it — no full
-    // re-measure, no per-frame graph churn (the commit lands once, on
-    // release). The callback must stay reference-stable so trim handles,
-    // which read it via context, don't re-render on every strip render — so
-    // it reads/writes live values via refs instead of state.
+    // trimIn/trimOut split. Two things read that split during render: the
+    // overview (to keep its window on the clip's edges) and the right-edge
+    // ANCHOR for a left-handle drag (below). `resizeItem` updates the item's
+    // cached size and shifts the offsets after it — no full re-measure, no
+    // per-frame graph churn (the commit lands once, on release). The live
+    // split lives in state, not a ref, so clearing it on commit/abort forces
+    // the anchor transform back to 0 in the same render; the strip re-renders
+    // on every move anyway (resizeItem), so this adds no renders, and the
+    // memoized cards still don't re-render. The callback must stay
+    // reference-stable (trim handles read it via context) — it is, reading
+    // mutable inputs from a ref and calling the stable setState.
     const trimStateRef = useRef({ childIds, virtualizer, gap, trimPixelsPerSecond, widthForIndex });
     trimStateRef.current = { childIds, virtualizer, gap, trimPixelsPerSecond, widthForIndex };
-    const liveTrimRef = useRef<{ nodeId: NodeId; trim: LiveTrim } | null>(null);
+    const [liveTrim, setLiveTrim] = useState<{ nodeId: NodeId; trim: LiveTrim } | null>(null);
+    // Pre-drag slot size of the item being left-trimmed, captured once per
+    // gesture. The anchor transform is measured against THIS, not the live
+    // committed size — at the commit render `widthForIndex` already reflects
+    // the new size, which would collapse the transform to 0 a frame before
+    // the scroll reconciliation and flash. Held until commit/abort clears it.
+    const trimBaselineRef = useRef<{ nodeId: NodeId; size0: number } | null>(null);
+    // Last computed anchor shift (px), written during render; the commit
+    // effect converts it into a real scroll so removing the transform doesn't
+    // jump the anchored clip.
+    const dragShiftRef = useRef(0);
     const previewTrim = useCallback<TrimPreview["previewTrim"]>((nodeId, live) => {
       const s = trimStateRef.current;
       const index = s.childIds.indexOf(nodeId);
-      liveTrimRef.current = live && index !== -1 ? { nodeId, trim: live } : null;
-      if (index === -1) return;
-      // null resets to the item's data-derived size; otherwise mirror
-      // estimateSize (width + gap) at the caller's px-per-second scale.
-      const size =
-        live === null
-          ? s.widthForIndex(index) + s.gap
-          : live.effectiveSeconds * (s.trimPixelsPerSecond ?? 0) + s.gap;
-      s.virtualizer.resizeItem(index, size);
+
+      if (live === null || index === -1) {
+        // Abort/no-op: snap the item back to its committed size; clearing the
+        // live split resets the anchor transform to 0 (scroll untouched, so
+        // the content returns to where it started).
+        if (index !== -1) s.virtualizer.resizeItem(index, s.widthForIndex(index) + s.gap);
+        trimBaselineRef.current = null;
+        setLiveTrim(null);
+        return;
+      }
+
+      // Capture the pre-drag slot size once, for a left-handle drag on a
+      // non-first item (index 0 has no left room, so it keeps grow-right).
+      if (live.side === "left" && index > 0 && trimBaselineRef.current?.nodeId !== nodeId) {
+        trimBaselineRef.current = { nodeId, size0: s.widthForIndex(index) + s.gap };
+      }
+
+      setLiveTrim({ nodeId, trim: live });
+      // Crisp width via resizeItem (grows/shrinks rightward). The right-edge
+      // anchor is a composited transform derived during render, applied in
+      // the SAME commit as this resize (atomic — no stutter).
+      s.virtualizer.resizeItem(index, live.effectiveSeconds * (s.trimPixelsPerSecond ?? 0) + s.gap);
     }, []);
     const trimPreview = useMemo<TrimPreview>(() => ({ previewTrim }), [previewTrim]);
 
-    // A graph commit (trim release, undo/redo, any edit) invalidates any
-    // leftover live trim override — `nodesById` only gets a new identity on a
-    // commit, never on a move or a drag, so this can't fire mid-drag.
+    // On a COMMIT (nodesById gets a new identity — trim release, undo/redo,
+    // any edit; never a move/drag) convert the drag's anchor transform into a
+    // real scroll, so clearing the transform below doesn't jump the anchored
+    // clip. Where scrollLeft has no room (a clip near the strip start), this
+    // clamps and the final position snaps by the shortfall — the known limit
+    // of native-scroll anchoring; the DRAG itself stayed consistent because a
+    // transform isn't clamped. Unrelated commits have shift 0 → no-op.
     useEffect(() => {
-      liveTrimRef.current = null;
-    }, [nodesById]);
+      const shift = dragShiftRef.current;
+      if (shift !== 0 && scrollRef.current) scrollRef.current.scrollLeft -= shift;
+      dragShiftRef.current = 0;
+      trimBaselineRef.current = null;
+      setLiveTrim(null);
+    }, [nodesById, scrollRef]);
 
     // Pointer -> visible boundary index from the virtualizer's measurements
     // (O(log n), variable widths included) — never from card rects, since
@@ -289,13 +331,30 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // window's position/width track the drag frame-for-frame.
     const overviewTrim =
       selectedVideo &&
-      (liveTrimRef.current?.nodeId === selectedVideo.id
-        ? liveTrimRef.current.trim
+      (liveTrim?.nodeId === selectedVideo.id
+        ? liveTrim.trim
         : { trimInSeconds: selectedVideo.trimInSeconds, trimOutSeconds: selectedVideo.trimOutSeconds });
     const overviewAnchorLeft =
       selectedVideoItem && overviewTrim
         ? selectedVideoItem.start - overviewTrim.trimInSeconds * (trimPixelsPerSecond ?? 0)
         : 0;
+
+    // Right-edge anchor for a left-handle drag ("grows left"): resizeItem
+    // grew the item rightward, so translate the whole content layer by the
+    // negated growth. viewport-x = contentX − scrollLeft + dragShiftX, so the
+    // right edge (offset + newSize) stays fixed while the left edge and left
+    // neighbors slide; right neighbors, shifted by resizeItem, are cancelled
+    // and stay put. A transform (not a scrollLeft write) because it's
+    // unclamped — consistent when shrinking a clip at the strip start, where
+    // scrollLeft can't go below 0 — and composited, applied atomically with
+    // the resize (no per-frame scroll write racing it → no stutter).
+    let dragShiftX = 0;
+    const trimBaseline = trimBaselineRef.current;
+    if (liveTrim && trimBaseline && trimBaseline.nodeId === liveTrim.nodeId && liveTrim.trim.side === "left") {
+      const liveSlot = liveTrim.trim.effectiveSeconds * (trimPixelsPerSecond ?? 0) + gap;
+      dragShiftX = -(liveSlot - trimBaseline.size0);
+    }
+    dragShiftRef.current = dragShiftX;
 
     useImperativeHandle(
       ref,
@@ -362,7 +421,15 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
             ref={contentRef}
             role="row"
             aria-rowindex={1}
-            style={{ width: virtualizer.getTotalSize(), height: contentHeight, position: "relative" }}
+            style={{
+              width: virtualizer.getTotalSize(),
+              height: contentHeight,
+              position: "relative",
+              // The left-handle "grows left" anchor (0 unless a left trim is
+              // in flight). Shifts the whole content layer — clips AND the
+              // overview — so they move together and stay aligned.
+              transform: dragShiftX ? `translateX(${dragShiftX}px)` : undefined,
+            }}
           >
             {selectedVideo && selectedVideoItem && overviewTrim && trimPixelsPerSecond !== undefined && (
               <TrimOverviewStrip

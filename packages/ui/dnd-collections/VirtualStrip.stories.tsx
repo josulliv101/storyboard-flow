@@ -1095,3 +1095,188 @@ export const KeyboardTrim: Story = {
     await waitFor(() => expect(width("vid")).toBe(216));
   },
 };
+
+// Phase B fixture: a strip WIDE enough to scroll (needed for the right-edge
+// anchor — a left-handle drag grows the item and shifts scrollLeft to hold
+// the right edge, which only has room on a scrollable strip), with a video at
+// index 3 (trim-in 3s of a 10s source -> effective 7s -> 168px) flanked by
+// image neighbors on both sides.
+function phaseBGraph() {
+  const children: GraphNodeSpec[] = [];
+  for (let i = 0; i < 3; i++) {
+    children.push({ kind: "media", id: `l${i}`, name: `L${i}`, src: trimDogFrames[0], durationSeconds: 4 });
+  }
+  children.push({
+    kind: "media",
+    mediaKind: "video",
+    id: "vid",
+    name: "Vid",
+    posterSrcs: trimDogFrames,
+    fullDurationSeconds: 10,
+    trimInSeconds: 3,
+    trimOutSeconds: 0,
+  });
+  for (let i = 0; i < 10; i++) {
+    children.push({ kind: "media", id: `r${i}`, name: `R${i}`, src: trimDogFrames[1], durationSeconds: 4 });
+  }
+  const result = buildGraph([{ kind: "collection", id: "strip", name: "Strip", children }]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+function PhaseBHarness() {
+  return (
+    <DndCollections initialGraph={phaseBGraph()} animateMoves={false}>
+      <SelectOnMount id="vid" />
+      <div className="flex w-[640px] flex-col gap-3">
+        <UndoRedoControls />
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+          }
+          trimPixelsPerSecond={TRIM_PPS}
+        />
+      </div>
+    </DndCollections>
+  );
+}
+
+export const LeftHandleGrowsLeft: Story = {
+  // Phase B: dragging the video's LEFT handle leftward grows the clip toward
+  // the left — its RIGHT edge stays anchored, its left edge follows the
+  // cursor, and left neighbors are pushed left while right neighbors stay put.
+  // The mechanic is targeted resizeItem + a scrollLeft shift (no card
+  // re-renders, no mid-drag graph commit).
+  render: () => <PhaseBHarness />,
+  play: async ({ canvasElement }) => {
+    const rect = (id: string) => nodeCard(canvasElement, id).getBoundingClientRect();
+    const width = (id: string) => Math.round(rect(id).width);
+    const handle = (id: string, side: "left" | "right") =>
+      nodeCard(canvasElement, id)
+        .closest("[data-node-wrapper]")!
+        .querySelector<HTMLElement>(`[data-trim-handle="${side}"]`)!;
+    const holdHandleBy = async (el: HTMLElement, dx: number) => {
+      const r = el.getBoundingClientRect();
+      const y = r.top + r.height / 2;
+      const x = r.left + r.width / 2;
+      await dispatchPointerSequence([
+        { element: el, type: "pointerdown", clientX: x, clientY: y },
+        { element: document, type: "pointermove", clientX: x + dx, clientY: y, delayAfterMs: 40 },
+      ]);
+    };
+    const release = async () => {
+      await dispatchPointerSequence([
+        { element: document, type: "pointerup", clientX: 0, clientY: 0, delayAfterMs: 30 },
+      ]);
+    };
+    const undoButton = () => within(canvasElement).getByRole("button", { name: /undo/i });
+
+    await waitForLayout(nodeCard(canvasElement, "vid"));
+    // vid effective 7s -> 168px; left neighbor L2 and right neighbor R0 mount.
+    expect(width("vid")).toBe(168);
+
+    const vidRight0 = rect("vid").right;
+    const l2Right0 = rect("l2").right;
+    const r0Left0 = rect("r0").left;
+    // A left-side bystander (offset unchanged by resizeItem AND not moved by
+    // the drag geometry beyond the shared scroll shift) — its memoized card
+    // must not re-render during the gesture.
+    const bystander = nodeCard(canvasElement, "l1");
+    const renderCount0 = bystander.getAttribute("data-render-count");
+
+    // Drag the LEFT handle LEFT by 48px -> trim-in 3s -> 1s -> effective 9s
+    // -> 216px (grew by 48). Hold, without releasing, to inspect the live
+    // anchored state.
+    await holdHandleBy(handle("vid", "left"), -48);
+    await waitFor(() => expect(width("vid")).toBe(216));
+
+    // Right edge anchored (within a rounding px); left neighbor pushed left by
+    // the growth; right neighbor stays put.
+    expect(Math.abs(rect("vid").right - vidRight0)).toBeLessThanOrEqual(1);
+    expect(Math.round(rect("l2").right)).toBe(Math.round(l2Right0 - 48));
+    expect(Math.round(rect("r0").left)).toBe(Math.round(r0Left0));
+    // Overview window (vid is selected) stays aligned to the clip through the
+    // scroll-anchored drag.
+    {
+      const w = canvasElement.querySelector<HTMLElement>("[data-trim-overview-window]")!.getBoundingClientRect();
+      const v = rect("vid");
+      expect(Math.round(w.left)).toBe(Math.round(v.left));
+      expect(Math.round(w.right)).toBe(Math.round(v.right));
+    }
+    // Perf guard: no bystander re-render during the live trim.
+    expect(bystander.getAttribute("data-render-count")).toBe(renderCount0);
+
+    // Nothing committed yet.
+    expect(undoButton()).toBeDisabled();
+
+    // Release commits it; the right edge stays anchored (no flash) and the
+    // width holds at 216.
+    await release();
+    await waitFor(() => expect(undoButton()).toBeEnabled());
+    expect(width("vid")).toBe(216);
+    expect(Math.abs(rect("vid").right - vidRight0)).toBeLessThanOrEqual(1);
+
+    // Ordinary undoable command.
+    const user = userEvent.setup();
+    await user.click(undoButton());
+    await waitFor(() => expect(width("vid")).toBe(168));
+  },
+};
+
+export const LeftHandleShrinkStaysAnchored: Story = {
+  // Regression: dragging the left handle to the RIGHT (trimming in / shrinking)
+  // keeps the clip's RIGHT edge anchored and moves its LEFT edge right —
+  // CONSISTENTLY, even at the strip start where scrollLeft can't go negative.
+  // The previous imperative-scroll anchor clamped at 0 there and the right
+  // edge shrank inward instead (inconsistent). The anchor is now a composited
+  // transform (unclamped) applied atomically with the resize (no per-frame
+  // scroll write — smooth). Proven here by scrollLeft staying 0 throughout.
+  render: () => <PhaseBHarness />,
+  play: async ({ canvasElement }) => {
+    const rect = (id: string) => nodeCard(canvasElement, id).getBoundingClientRect();
+    const width = (id: string) => Math.round(rect(id).width);
+    const handle = (id: string, side: "left" | "right") =>
+      nodeCard(canvasElement, id)
+        .closest("[data-node-wrapper]")!
+        .querySelector<HTMLElement>(`[data-trim-handle="${side}"]`)!;
+    const holdHandleBy = async (el: HTMLElement, dx: number) => {
+      const r = el.getBoundingClientRect();
+      const y = r.top + r.height / 2;
+      const x = r.left + r.width / 2;
+      await dispatchPointerSequence([
+        { element: el, type: "pointerdown", clientX: x, clientY: y },
+        { element: document, type: "pointermove", clientX: x + dx, clientY: y, delayAfterMs: 40 },
+      ]);
+    };
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+
+    await waitForLayout(nodeCard(canvasElement, "vid"));
+    expect(width("vid")).toBe(168);
+    expect(strip.scrollLeft).toBe(0); // at the start — the old clamp case
+    const vidRight0 = rect("vid").right;
+    const vidLeft0 = rect("vid").left;
+
+    // Drag the LEFT handle RIGHT +48 -> trim-in 3s -> 5s -> effective 5s -> 120px.
+    await holdHandleBy(handle("vid", "left"), 48);
+    await waitFor(() => expect(width("vid")).toBe(120));
+
+    // Right edge stays anchored; the LEFT edge moves right by the shrink — NOT
+    // the right edge shrinking inward. And no scroll was written (smooth).
+    expect(Math.abs(rect("vid").right - vidRight0)).toBeLessThanOrEqual(1);
+    expect(Math.round(rect("vid").left)).toBe(Math.round(vidLeft0 + 48));
+    expect(strip.scrollLeft).toBe(0);
+
+    // Abort leaves the graph untouched and reverts the view.
+    await dispatchPointerSequence([
+      { element: document, type: "pointercancel", clientX: 0, clientY: 0, delayAfterMs: 30 },
+    ]);
+    await waitFor(() => expect(width("vid")).toBe(168));
+    expect(Math.round(rect("vid").right)).toBe(Math.round(vidRight0));
+  },
+};
+
+/** Play-less twin of LeftHandleGrowsLeft for the real-mouse e2e. */
+export const PhaseBPlayground: Story = {
+  render: () => <PhaseBHarness />,
+};

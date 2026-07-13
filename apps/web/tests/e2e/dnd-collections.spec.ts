@@ -415,6 +415,107 @@ test.describe('DndCollections E2E', () => {
     await expectAligned();
   });
 
+  test('trim left-grows-left: real-mouse left drag anchors the right edge, pushes left neighbors', async ({
+    page,
+  }) => {
+    // PhaseBPlayground is a scrollable strip with a video at index 3
+    // (effective 7s -> 168px) flanked by image neighbors. Dragging its LEFT
+    // handle left grows the clip toward the left: right edge anchored, left
+    // neighbor pushed left, right neighbor stays put.
+    await page.goto(storyPath('ui-dndcollectionsvirtual--phase-b-playground'));
+
+    const vid = card(page, 'vid');
+    await vid.waitFor({ state: 'visible' });
+    const leftNeighbor = card(page, 'l2');
+    const rightNeighbor = card(page, 'r0');
+    await leftNeighbor.waitFor({ state: 'visible' });
+    await rightNeighbor.waitFor({ state: 'visible' });
+
+    expect(Math.round((await vid.boundingBox())!.width)).toBe(168);
+    const vidBox0 = (await vid.boundingBox())!;
+    const vidRight0 = vidBox0.x + vidBox0.width;
+    const l2Right0 = (await leftNeighbor.boundingBox())!.x + (await leftNeighbor.boundingBox())!.width;
+    const r0Left0 = (await rightNeighbor.boundingBox())!.x;
+
+    const leftHandle = page.locator('[data-node-wrapper="vid"] [data-trim-handle="left"]');
+    await leftHandle.waitFor({ state: 'attached' });
+    const hb = (await leftHandle.boundingBox())!;
+    const startX = hb.x + hb.width / 2;
+    const startY = hb.y + hb.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX - 48, startY, { steps: 12 }); // trim-in 3s -> 1s
+    await page.waitForTimeout(150); // dwell
+
+    // Live, before release: width grew to 216, right edge anchored, left
+    // neighbor pushed left by ~48, right neighbor unmoved.
+    await expect(async () => {
+      expect(Math.round((await vid.boundingBox())!.width)).toBe(216);
+    }).toPass();
+    const vidBox1 = (await vid.boundingBox())!;
+    expect(Math.abs(vidBox1.x + vidBox1.width - vidRight0)).toBeLessThanOrEqual(1);
+    const l2Box1 = (await leftNeighbor.boundingBox())!;
+    expect(Math.round(l2Box1.x + l2Box1.width)).toBe(Math.round(l2Right0 - 48));
+    expect(Math.round((await rightNeighbor.boundingBox())!.x)).toBe(Math.round(r0Left0));
+    await expect(page.getByRole('button', { name: /undo/i })).toBeDisabled();
+
+    await page.mouse.up();
+
+    // Commit holds the anchored position (no flash).
+    await expect(page.getByRole('button', { name: /undo/i })).toBeEnabled();
+    const vidBox2 = (await vid.boundingBox())!;
+    expect(Math.round(vidBox2.width)).toBe(216);
+    expect(Math.abs(vidBox2.x + vidBox2.width - vidRight0)).toBeLessThanOrEqual(1);
+
+    // Undo reverts.
+    await page.getByRole('button', { name: /undo/i }).click();
+    await expect(async () => {
+      expect(Math.round((await vid.boundingBox())!.width)).toBe(168);
+    }).toPass();
+  });
+
+  test('trim left-shrink stays anchored: right edge held, left edge moves right, no scroll write', async ({
+    page,
+  }) => {
+    // Regression for the reported inconsistency: at the strip start dragging
+    // the left handle RIGHT (shrinking) used to clamp scrollLeft at 0 and
+    // shrink the RIGHT edge inward. Now a composited transform anchors the
+    // right edge with no per-frame scroll write (smooth + consistent).
+    await page.goto(storyPath('ui-dndcollectionsvirtual--phase-b-playground'));
+
+    const vid = card(page, 'vid');
+    await vid.waitFor({ state: 'visible' });
+    const strip = page.locator('[data-virtual-strip="strip"]');
+    expect(await strip.evaluate((el) => el.scrollLeft)).toBe(0);
+
+    const box0 = (await vid.boundingBox())!;
+    const vidRight0 = box0.x + box0.width;
+    const vidLeft0 = box0.x;
+
+    const leftHandle = page.locator('[data-node-wrapper="vid"] [data-trim-handle="left"]');
+    const hb = (await leftHandle.boundingBox())!;
+    const startX = hb.x + hb.width / 2;
+    const startY = hb.y + hb.height / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + 48, startY, { steps: 12 }); // trim-in 3s -> 5s
+    await page.waitForTimeout(150);
+
+    await expect(async () => {
+      expect(Math.round((await vid.boundingBox())!.width)).toBe(120);
+    }).toPass();
+    const box1 = (await vid.boundingBox())!;
+    // Right edge anchored; left edge moved right by the shrink; scroll untouched.
+    expect(Math.abs(box1.x + box1.width - vidRight0)).toBeLessThanOrEqual(1);
+    expect(Math.round(box1.x)).toBe(Math.round(vidLeft0 + 48));
+    expect(await strip.evaluate((el) => el.scrollLeft)).toBe(0);
+
+    await page.mouse.up();
+    await expect(page.getByRole('button', { name: /undo/i })).toBeEnabled();
+  });
+
   test('reorders within a collection (drop on right half = after)', async ({ page }) => {
     await page.goto(storyPath(PLAYGROUND));
 
