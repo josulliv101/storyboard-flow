@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { type DragStartEvent } from "@dnd-kit/core";
 
-import { type CollectionItemNode } from "../core/graph";
+import { parseCollectionItemNode, type CollectionItemNode } from "../core/graph";
 import { resolveAddCommandFromIntent, type DropIntent } from "../core/intents";
 import { type CollectionsStore } from "./collections-store";
 import { PALETTE_DATA_KEY } from "./palette";
@@ -37,10 +37,9 @@ export function usePaletteDrag(args: {
 
   const startPaletteDrag = useCallback(
     (event: DragStartEvent): boolean => {
-      const createPaletteNode = event.active.data.current?.[PALETTE_DATA_KEY] as
-        | (() => CollectionItemNode)
-        | undefined;
-      if (!createPaletteNode) return false;
+      const factory = event.active.data.current?.[PALETTE_DATA_KEY];
+      if (typeof factory !== "function") return false;
+      const createPaletteNode = factory as () => unknown;
       // From here it IS a palette drag, even if creation fails.
       paletteSessionRef.current = true;
       intentRef.current = null;
@@ -48,22 +47,19 @@ export function usePaletteDrag(args: {
       // throw would strand the gesture with the sensor armed, and a malformed
       // return would crash the `node.name` read below. Contain both, announce
       // once, and let endPaletteDrag clean up the session silently.
-      let node: CollectionItemNode | undefined;
+      let candidate: unknown;
       try {
-        node = createPaletteNode();
+        candidate = createPaletteNode();
       } catch {
-        node = undefined;
+        candidate = undefined;
       }
-      if (
-        !node ||
-        typeof node !== "object" ||
-        typeof node.id !== "string" ||
-        typeof node.name !== "string"
-      ) {
+      const parsed = parseCollectionItemNode(candidate);
+      if (!parsed.ok) {
         announce("Could not create item.");
         setPaletteNodes(null);
         return true;
       }
+      const node = parsed.value;
       setPaletteNodes([node]);
       store.beginPaletteDrag();
       announce(`Picked up new "${node.name}".`);

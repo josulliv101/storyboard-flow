@@ -196,6 +196,17 @@ export const PaletteFactoryErrorIsContained: Story = {
     <DndCollections initialGraph={paletteGraph()} animateMoves={false}>
       <div className="flex w-[640px] flex-col gap-4">
         <PaletteItem
+          paletteId="invalid-duration"
+          createNode={() => ({
+            id: parseNodeId("invalid-duration"),
+            kind: "media",
+            name: "Invalid duration",
+            durationSeconds: Number.NaN,
+          })}
+        >
+          + Invalid duration
+        </PaletteItem>
+        <PaletteItem
           paletteId="boom"
           createNode={() => {
             throw new Error("factory boom");
@@ -218,7 +229,18 @@ export const PaletteFactoryErrorIsContained: Story = {
     const bravo = nodeCard(canvasElement, "bravo");
     await waitForLayout(bravo);
 
-    // 1. Throwing factory: contained + announced while held...
+    // 1. Structurally plausible but invalid node data is rejected at pick-up,
+    //    before drag state or an overlay can be published.
+    const invalidDuration = canvasElement.querySelector<HTMLElement>(
+      '[data-palette-item="invalid-duration"]'
+    )!;
+    await dragHoldAt(invalidDuration, rectPoint(bravo, 0.15));
+    await expect(await canvas.findByText(/could not create item/i)).toBeInTheDocument();
+    expect(canvas.queryByText(/picked up new/i)).toBeNull();
+    await releaseAt(rectPoint(bravo, 0.15));
+    expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie"]);
+
+    // 2. Throwing factory: contained + announced while held...
     const boom = canvasElement.querySelector<HTMLElement>('[data-palette-item="boom"]')!;
     await dragHoldAt(boom, rectPoint(bravo, 0.15));
     await expect(await canvas.findByText(/could not create item/i)).toBeInTheDocument();
@@ -227,7 +249,7 @@ export const PaletteFactoryErrorIsContained: Story = {
     expect(canvas.queryByText(/cancelled drag/i)).toBeNull();
     expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie"]);
 
-    // 2. Factory returning a malformed value (null) is contained the same way
+    // 3. Factory returning a malformed value (null) is contained the same way
     //    — no crash reading node.name.
     const nullish = canvasElement.querySelector<HTMLElement>('[data-palette-item="nullish"]')!;
     await dragHoldAt(nullish, rectPoint(nodeCard(canvasElement, "charlie"), 0.85));
@@ -235,7 +257,7 @@ export const PaletteFactoryErrorIsContained: Story = {
     await releaseAt(rectPoint(nodeCard(canvasElement, "charlie"), 0.85));
     expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie"]);
 
-    // 3. The board still works: a normal reorder commits.
+    // 4. The board still works: a normal reorder commits.
     await dragToPoint(
       nodeCard(canvasElement, "alpha"),
       rectPoint(nodeCard(canvasElement, "charlie"), 0.85)
