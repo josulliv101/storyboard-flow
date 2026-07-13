@@ -123,7 +123,16 @@ export function useTrimPointerDrag(
 
   return useCallback(
     (event, pixelsPerSecond, resolve, onLive) => {
-      if (event.button !== 0 || !Number.isFinite(pixelsPerSecond) || pixelsPerSecond <= 0) return;
+      // Only the primary pointer's left button starts a trim. A secondary
+      // finger/stylus must not open a gesture (and, below, must not steer or
+      // end the one the primary owns).
+      if (
+        !event.isPrimary ||
+        event.button !== 0 ||
+        !Number.isFinite(pixelsPerSecond) ||
+        pixelsPerSecond <= 0
+      )
+        return;
       activeCleanupRef.current?.();
       // Keep the gesture off dnd-kit's item drag, the strip's pan, and (for
       // an overview grip) the overview's own move handler.
@@ -170,7 +179,8 @@ export function useTrimPointerDrag(
       }
 
       function onMove(moveEvent: PointerEvent) {
-        if (finished) return;
+        // Ignore every pointer but the one that started this gesture.
+        if (finished || moveEvent.pointerId !== pointerId) return;
         const { update, live } = resolve((moveEvent.clientX - startX) / pixelsPerSecond);
         pending = update;
         onLive?.(live);
@@ -178,7 +188,8 @@ export function useTrimPointerDrag(
       }
 
       function onUp(upEvent: PointerEvent) {
-        if (finished) return;
+        // A different pointer's release/cancel must not end this gesture.
+        if (finished || upEvent.pointerId !== pointerId) return;
         finished = true;
         removeListeners();
         releasePointerCapture();
