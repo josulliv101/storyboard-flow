@@ -223,7 +223,9 @@ export const NodeCard = memo(function NodeCard({
             dragHandle ? "pt-6" : "cursor-grab active:cursor-grabbing",
             isCollection ? "bg-muted/60" : "bg-background",
             isSelected ? "border-primary ring-2 ring-primary" : "border-border",
-            isRejected ? "border-destructive ring-2 ring-destructive animate-pulse" : "",
+            // Static red ring is the always-on rejection cue; the pulse is
+            // motion-gated so reduced-motion users still get the ring, no throb.
+            isRejected ? "border-destructive ring-2 ring-destructive motion-safe:animate-pulse" : "",
           ].join(" "),
           className
         )}
