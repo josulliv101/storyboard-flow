@@ -1,0 +1,57 @@
+// Pure geometry for the horizontal virtual strip, split out of VirtualStrip so
+// the boundary/indicator/anchor arithmetic can be unit tested without a
+// virtualizer, DOM, or rAF loop. VirtualStrip owns the measurements, refs, and
+// scrolling; this owns the numbers.
+
+/** Half the drop-indicator line's width (px) — used to center it in a gap. */
+const INDICATOR_HALF_WIDTH = 2;
+
+/**
+ * The visible boundary index for a pointer at content-x `contentX`, given the
+ * strip's measured `totalSize` and item `count`. Before the first item -> 0;
+ * at/past the end, or with no measured item under the pointer -> `count`;
+ * otherwise the pointer's item rounded to the nearer edge by its midpoint.
+ * `item` is the virtualizer's measured item under `contentX` (null when out of
+ * range or unmeasured).
+ */
+export function resolveBoundaryIndex(
+  contentX: number,
+  totalSize: number,
+  count: number,
+  item: Readonly<{ start: number; size: number; index: number }> | null
+): number {
+  if (contentX <= 0) return 0;
+  if (contentX >= totalSize) return count;
+  if (!item) return count;
+  return contentX < item.start + item.size / 2 ? item.index : item.index + 1;
+}
+
+/**
+ * Left offset (content coords) for the drop indicator at a boundary whose gap
+ * begins at `edgeStart` — half a gap back, centered on the indicator line, and
+ * never negative. `edgeStart` is the following item's `start`, or the strip's
+ * total size when appending at the far end.
+ */
+export function indicatorLeftOffset(edgeStart: number, gap: number): number {
+  return Math.max(0, edgeStart - gap / 2 - INDICATOR_HALF_WIDTH);
+}
+
+/**
+ * Slot width (px) a clip of `effectiveSeconds` occupies at `pixelsPerSecond`,
+ * plus its trailing `gap` — the size handed to the virtualizer's `resizeItem`.
+ */
+export function slotSizeFor(effectiveSeconds: number, pixelsPerSecond: number, gap: number): number {
+  return effectiveSeconds * pixelsPerSecond + gap;
+}
+
+/**
+ * The "grows left" anchor transform (px) for a left-handle trim: `resizeItem`
+ * grew the slot rightward from `baselineSize` to `liveSlotSize`, so translate
+ * the content layer by the negated growth to pin the clip's RIGHT edge (a
+ * shrink yields a positive shift; no change yields 0).
+ */
+export function leftAnchorShift(liveSlotSize: number, baselineSize: number): number {
+  // baseline − live == −(growth); written this way so no change yields +0
+  // rather than −0 (behaviorally identical, but tidier).
+  return baselineSize - liveSlotSize;
+}

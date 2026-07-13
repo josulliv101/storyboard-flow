@@ -37,6 +37,12 @@ import {
   VirtualEmptyHint,
   type VirtualViewPoint,
 } from "./use-virtual-collection-view";
+import {
+  indicatorLeftOffset,
+  leftAnchorShift,
+  resolveBoundaryIndex,
+  slotSizeFor,
+} from "./virtual-strip-geometry";
 
 // 1D roving navigation: Left/Right step one item, Home/End jump to the ends.
 function resolveStripIndex(key: string, current: number, count: number): number | null {
@@ -277,7 +283,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       // Crisp width via resizeItem (grows/shrinks rightward). The right-edge
       // anchor is a composited transform derived during render, applied in
       // the SAME commit as this resize (atomic — no stutter).
-      s.virtualizer.resizeItem(index, live.effectiveSeconds * (s.trimPixelsPerSecond ?? 0) + s.gap);
+      s.virtualizer.resizeItem(index, slotSizeFor(live.effectiveSeconds, s.trimPixelsPerSecond ?? 0, s.gap));
     }, []);
     const trimPreview = useMemo<TrimPreview>(() => ({ previewTrim }), [previewTrim]);
 
@@ -311,11 +317,12 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         return childIds.length;
       }
       const contentX = point.x - content.getBoundingClientRect().left;
-      if (contentX <= 0) return 0;
-      if (contentX >= virtualizer.getTotalSize()) return childIds.length;
-      const item = virtualizer.getVirtualItemForOffset(contentX);
-      if (!item) return childIds.length;
-      return contentX < item.start + item.size / 2 ? item.index : item.index + 1;
+      const totalSize = virtualizer.getTotalSize();
+      // Only measure an item for an in-range pointer; the pure resolver applies
+      // the same before-first / past-end clamps.
+      const item =
+        contentX > 0 && contentX < totalSize ? virtualizer.getVirtualItemForOffset(contentX) : null;
+      return resolveBoundaryIndex(contentX, totalSize, childIds.length, item ?? null);
     };
     usePublishBoundary(resolveBoundaryRef, resolveBoundary);
 
@@ -450,8 +457,8 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     let dragShiftX = 0;
     const trimBaseline = trimBaselineRef.current;
     if (liveTrim && trimBaseline && trimBaseline.nodeId === liveTrim.nodeId && liveTrim.trim.side === "left") {
-      const liveSlot = liveTrim.trim.effectiveSeconds * (trimPixelsPerSecond ?? 0) + gap;
-      dragShiftX = -(liveSlot - trimBaseline.size0);
+      const liveSlot = slotSizeFor(liveTrim.trim.effectiveSeconds, trimPixelsPerSecond ?? 0, gap);
+      dragShiftX = leftAnchorShift(liveSlot, trimBaseline.size0);
     }
     dragShiftRef.current = dragShiftX;
 
@@ -484,10 +491,10 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // (append at the far end) falls back to the total size.
     const boundaryLeft = (k: number): number | null => {
       if (k >= childIds.length) {
-        return Math.max(0, virtualizer.getTotalSize() - gap / 2 - 2);
+        return indicatorLeftOffset(virtualizer.getTotalSize(), gap);
       }
       const item = virtualizer.getVirtualItems().find((v) => v.index === k);
-      return item ? Math.max(0, item.start - gap / 2 - 2) : null;
+      return item ? indicatorLeftOffset(item.start, gap) : null;
     };
     const indicatorLeft = indicatorIndex !== null ? boundaryLeft(indicatorIndex) : null;
 
