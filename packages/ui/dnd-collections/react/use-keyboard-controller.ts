@@ -192,6 +192,19 @@ export function useCollectionsKeyboard(args: {
       if (!rawId) return;
       const nodeId = rawId as NodeId;
 
+      const isCollectionsCommand = event.shiftKey
+        ? TRIM_ACTION_BY_KEY[event.key] !== undefined
+        : KEYBOARD_ACTION_BY_KEY[event.key] !== undefined;
+      if (isCollectionsCommand && store.getSnapshot().interaction.isDragging) {
+        // A live dnd-kit drag owns movement until it commits or cancels. Do
+        // not let the direct Alt grammar mutate the graph underneath it.
+        // Consume only recognized commands; bare arrows and Escape still
+        // reach dnd-kit's keyboard sensor.
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       // Alt+SHIFT+Arrows TRIM the media card — checked before the move/grid
       // logic so a held Shift never falls through to a move. (A non-arrow
       // Shift combo is left alone: return without consuming the event.)
