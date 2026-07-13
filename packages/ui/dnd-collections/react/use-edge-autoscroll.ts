@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { finiteNonNegativeOr, finitePositiveOr } from "../core/numeric";
 import { useCollectionsSelector } from "./collections-store";
 
@@ -30,6 +30,37 @@ export function useEdgeAutoScroll(
 ): void {
   const edge = finitePositiveOr(options?.edge, 48);
   const maxSpeed = finiteNonNegativeOr(options?.maxSpeed, 14);
+  const pointerRef = useRef<Readonly<{ id: number; x: number; y: number }> | null>(null);
+
+  // Observe the active pointer before dnd-kit publishes drag state. The move
+  // that crosses the activation threshold may be the final pointer event
+  // before the user parks at an edge; installing this listener only after
+  // `dragging` becomes true would miss that position. Tracking from
+  // pointerdown also keeps keyboard drags from inheriting stale mouse data.
+  useEffect(() => {
+    const handleDown = (event: PointerEvent) => {
+      if (!event.isPrimary) return;
+      pointerRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    };
+    const handleMove = (event: PointerEvent) => {
+      if (pointerRef.current?.id !== event.pointerId) return;
+      pointerRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    };
+    const handleEnd = (event: PointerEvent) => {
+      if (pointerRef.current?.id === event.pointerId) pointerRef.current = null;
+    };
+    window.addEventListener("pointerdown", handleDown, { passive: true });
+    window.addEventListener("pointermove", handleMove, { passive: true });
+    window.addEventListener("pointerup", handleEnd, { passive: true });
+    window.addEventListener("pointercancel", handleEnd, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", handleDown);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleEnd);
+      window.removeEventListener("pointercancel", handleEnd);
+      pointerRef.current = null;
+    };
+  }, []);
 
   // Explicit drag-live flag: set by beginDrag/beginPaletteDrag, cleared by
   // endDrag — never inferred from intents, which can be null mid-drag over
@@ -40,11 +71,6 @@ export function useEdgeAutoScroll(
     if (!dragging) return;
     const el = containerRef.current;
     if (!el) return;
-
-    let pointer: Readonly<{ x: number; y: number }> | null = null;
-    const handleMove = (event: PointerEvent) => {
-      pointer = { x: event.clientX, y: event.clientY };
-    };
 
     // Cached container rect. The container scrolling itself (which this loop
     // does every frame) does NOT move its box, so remeasure only when an
@@ -58,6 +84,7 @@ export function useEdgeAutoScroll(
 
     let frame = 0;
     const step = () => {
+      const pointer = pointerRef.current;
       if (pointer) {
         const inCrossAxis =
           axis === "x"
@@ -82,12 +109,10 @@ export function useEdgeAutoScroll(
       frame = requestAnimationFrame(step);
     };
 
-    window.addEventListener("pointermove", handleMove, { passive: true });
     window.addEventListener("scroll", remeasure, { passive: true, capture: true });
     window.addEventListener("resize", remeasure, { passive: true });
     frame = requestAnimationFrame(step);
     return () => {
-      window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("scroll", remeasure, { capture: true });
       window.removeEventListener("resize", remeasure);
       cancelAnimationFrame(frame);

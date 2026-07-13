@@ -606,6 +606,43 @@ export const PanToScrollWithMomentum: Story = {
   },
 };
 
+export const ActivationPointerSeedsEdgeAutoScroll: Story = {
+  render: () => <StripHarness />,
+  play: async ({ canvasElement }) => {
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+    const handle = nodeHandle(canvasElement, "m3");
+    await waitForLayout(handle);
+    const start = rectCenter(handle);
+    const stripRect = strip.getBoundingClientRect();
+
+    // The one move both activates dnd-kit and parks the pointer in the edge
+    // band. No further pointermove is sent: auto-scroll must use the position
+    // observed before the store published `isDragging`.
+    await dispatchPointerSequence([
+      { element: handle, type: "pointerdown", clientX: start.x, clientY: start.y },
+      {
+        element: document,
+        type: "pointermove",
+        clientX: stripRect.right - 2,
+        clientY: start.y,
+        delayAfterMs: 30,
+      },
+    ]);
+    await waitFor(() => {
+      expect(canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')).not.toBeNull();
+      expect(strip.scrollLeft).toBeGreaterThan(5);
+    });
+    await dispatchPointerSequence([
+      {
+        element: document,
+        type: "pointercancel",
+        clientX: stripRect.right - 2,
+        clientY: start.y,
+      },
+    ]);
+  },
+};
+
 /** Play-less twin (hold mode) for e2e. */
 export const HoldPlayground: Story = {
   render: () => <StripHarness activation="hold" />,
