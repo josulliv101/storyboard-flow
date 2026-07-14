@@ -219,7 +219,9 @@ export function buildGraph(
               mediaKind: "video",
               name: spec.name,
               src: spec.src,
-              posterSrcs: spec.posterSrcs,
+              // Copied (like parseCollectionItemNode does): the graph is
+              // Readonly, so it must not alias an array the caller can mutate.
+              posterSrcs: spec.posterSrcs === undefined ? undefined : [...spec.posterSrcs],
               fullDurationSeconds: spec.fullDurationSeconds,
               trimInSeconds: spec.trimInSeconds ?? 0,
               trimOutSeconds: spec.trimOutSeconds ?? 0,

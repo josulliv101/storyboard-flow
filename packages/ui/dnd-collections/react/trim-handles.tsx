@@ -3,6 +3,7 @@
 import { useCallback, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import { mediaDurationSeconds, type MediaNode } from "../core/graph";
+import { roundSecondsForDisplay } from "./duration-format";
 import { resolveTrim, useTrimPointerDrag, type TrimSide } from "./trim-gesture";
 
 // Edge drag-handles that TRIM a media item: a right handle on every media
@@ -89,13 +90,9 @@ export function TrimHandles({
           data-trim-preview={preview}
           className="pointer-events-none absolute -top-5 left-1/2 z-30 -translate-x-1/2 rounded bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-black shadow"
         >
-          {round1(preview)}s
+          {roundSecondsForDisplay(preview)}s
         </div>
       )}
     </>
   );
-}
-
-function round1(seconds: number): number {
-  return Math.round(seconds * 10) / 10;
 }

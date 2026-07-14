@@ -22,6 +22,7 @@ import {
   type KeyboardTrimRejection,
 } from "../core/keyboard";
 import { type CollectionsStore } from "./collections-store";
+import { roundSecondsForDisplay } from "./duration-format";
 import { focusNodeWhenMounted } from "./node-dom";
 
 // Semantic keyboard moves (Alt+key on a focused card), by event delegation
@@ -196,7 +197,7 @@ export function useCollectionsKeyboard(args: {
       // put — just announce the new length.
       const after = store.getSnapshot().graph.nodesById.get(nodeId);
       const seconds = after && after.kind === "media" ? mediaDurationSeconds(after) : 0;
-      announce(`Trimmed "${name}" to ${seconds}s.`);
+      announce(`Trimmed "${name}" to ${roundSecondsForDisplay(seconds)}s.`);
     },
     [store, announce]
   );
@@ -247,9 +248,12 @@ export function useCollectionsKeyboard(args: {
       const nodeId = rawId as NodeId;
 
       // Alt+Delete moves the focused card to the registered trash collection.
-      // Only consumed when a <TrashTarget> is mounted and no dnd-kit drag owns
-      // movement; otherwise the key is left for the app/browser.
+      // EXACTLY Alt+Delete: a held Shift makes it a different chord, left for
+      // the app/browser like any other unrecognized combo (the trim branch
+      // below guards held Shift the same way). Only consumed when a
+      // <TrashTarget> is mounted and no dnd-kit drag owns movement.
       if (event.key === "Delete") {
+        if (event.shiftKey) return;
         const trashId = trashRef.current;
         if (trashId === null || store.getSnapshot().interaction.isDragging) return;
         event.preventDefault();

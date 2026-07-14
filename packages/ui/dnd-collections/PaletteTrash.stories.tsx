@@ -390,6 +390,13 @@ export const TrashViaKeyboard: Story = {
 
     const user = userEvent.setup();
     nodeCard(canvasElement, "bravo").focus();
+
+    // The chord is EXACTLY Alt+Delete — a held Shift is left for the app/
+    // browser and must not trash. (If it did, the assertions below would see
+    // two items in trash and the wrong panel order.)
+    await user.keyboard("{Alt>}{Shift>}{Delete}{/Shift}{/Alt}");
+    expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie"]);
+
     await user.keyboard("{Alt>}{Delete}{/Alt}");
 
     await waitFor(() => {

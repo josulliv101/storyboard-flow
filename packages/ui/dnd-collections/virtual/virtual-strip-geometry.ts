@@ -7,6 +7,17 @@
 const INDICATOR_HALF_WIDTH = 2;
 
 /**
+ * A fully trimmed clip can derive a 0px width from its duration. The slot
+ * still needs to be visible and clickable: NodeCard's `w-full` fills the slot
+ * (overriding its own `w-32` default), so a 0px slot renders an invisible,
+ * unselectable card. Applied by BOTH the committed layout (`widthForIndex` in
+ * VirtualStrip) and the live preview (`slotSizeFor`) — they must agree, or the
+ * commit re-measure snaps the card by the floor delta on release. The node's
+ * semantic duration/trim is left untouched; only the rendered slot is floored.
+ */
+export const MIN_ITEM_WIDTH = 12;
+
+/**
  * The visible boundary index for a pointer at content-x `contentX`, given the
  * strip's measured `totalSize` and item `count`. Before the first item -> 0;
  * at/past the end, or with no measured item under the pointer -> `count`;
@@ -39,9 +50,12 @@ export function indicatorLeftOffset(edgeStart: number, gap: number): number {
 /**
  * Slot width (px) a clip of `effectiveSeconds` occupies at `pixelsPerSecond`,
  * plus its trailing `gap` — the size handed to the virtualizer's `resizeItem`.
+ * Floored at `MIN_ITEM_WIDTH` like the committed layout, so the last preview
+ * of a near-fully-trimmed clip already matches the post-commit re-measure
+ * (no resize snap on release, no invisible mid-drag sliver).
  */
 export function slotSizeFor(effectiveSeconds: number, pixelsPerSecond: number, gap: number): number {
-  return effectiveSeconds * pixelsPerSecond + gap;
+  return Math.max(MIN_ITEM_WIDTH, effectiveSeconds * pixelsPerSecond) + gap;
 }
 
 /**

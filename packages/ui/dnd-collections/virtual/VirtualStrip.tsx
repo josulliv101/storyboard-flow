@@ -38,6 +38,7 @@ import {
   type VirtualViewPoint,
 } from "./use-virtual-collection-view";
 import {
+  MIN_ITEM_WIDTH,
   indicatorLeftOffset,
   leftAnchorShift,
   resolveBoundaryIndex,
@@ -122,13 +123,6 @@ export type VirtualStripHandle = Readonly<{
   /** Drop all cached widths and re-run `itemWidthFor` (metadata/zoom changed). */
   remeasure: () => void;
 }>;
-
-// A fully trimmed clip can derive a 0px width from `itemWidthFor`. The slot
-// still needs to be visible and clickable: NodeCard's `w-full` fills the slot
-// (overriding its own `w-32` default), so a 0px slot renders an invisible,
-// unselectable card. The node's semantic duration/trim is left untouched;
-// only the rendered/measured slot is floored to this minimum.
-const MIN_ITEM_WIDTH = 12;
 
 export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
   function VirtualStrip(

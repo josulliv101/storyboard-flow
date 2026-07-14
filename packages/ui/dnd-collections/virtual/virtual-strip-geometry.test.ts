@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MIN_ITEM_WIDTH,
   indicatorLeftOffset,
   leftAnchorShift,
   resolveBoundaryIndex,
@@ -54,8 +55,15 @@ describe("slotSizeFor", () => {
     expect(slotSizeFor(5, 24, 8)).toBe(128);
   });
 
-  it("collapses a fully trimmed clip to just the gap", () => {
-    expect(slotSizeFor(0, 24, 8)).toBe(8);
+  it("floors a fully trimmed clip at the clickable minimum, like the committed layout", () => {
+    // The last live preview must equal the post-commit re-measure (which
+    // floors at MIN_ITEM_WIDTH) or the card snaps on release.
+    expect(slotSizeFor(0, 24, 8)).toBe(MIN_ITEM_WIDTH + 8);
+    expect(slotSizeFor(0.2, 24, 8)).toBe(MIN_ITEM_WIDTH + 8); // 4.8px derived -> floored
+  });
+
+  it("leaves widths at or above the floor untouched", () => {
+    expect(slotSizeFor(0.5, 24, 8)).toBe(20); // exactly MIN_ITEM_WIDTH
   });
 });
 
