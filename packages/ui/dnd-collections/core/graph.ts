@@ -266,8 +266,14 @@ export function isCollection(node: CollectionItemNode): node is CollectionNode {
   return node.kind === "collection";
 }
 
+// Shared fallback so unknown/media ids return a STABLE reference: selectors
+// pass getChildren results straight to useCollectionsSelector, and a fresh []
+// per call would defeat the Object.is bail on every notify (a view mounted
+// with a dead collection id would re-render per drag frame).
+const NO_CHILDREN: readonly NodeId[] = [];
+
 export function getChildren(graph: CollectionsGraph, collectionId: NodeId): readonly NodeId[] {
-  return graph.childrenById.get(collectionId) ?? [];
+  return graph.childrenById.get(collectionId) ?? NO_CHILDREN;
 }
 
 /**
@@ -627,6 +633,21 @@ export function parseGraphSpec(
         });
       }
       continue;
+    }
+
+    // A media record carrying `children` is almost certainly a mis-tagged
+    // collection (serializer/authoring error). Accepting it would silently
+    // DISCARD the whole subtree — buildGraph's media branch never reads the
+    // key — and duplicate ids hidden inside it would evade the duplicate-id
+    // check. Reject loudly instead.
+    if (current.value.children !== undefined) {
+      return {
+        ok: false,
+        error: invalidValue(
+          `${current.path}.children`,
+          "Media nodes cannot have children."
+        ),
+      };
     }
 
     const mediaError = validateMediaRecord(current.value, current.path, false);

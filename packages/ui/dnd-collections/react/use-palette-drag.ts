@@ -75,6 +75,11 @@ export function usePaletteDrag(args: {
     const intent = intentRef.current;
     intentRef.current = null;
     setPaletteNodes(null);
+    // The store's drag state is authoritative for whether this gesture may
+    // still COMMIT: replaceGraph (async data landing mid-drag) resets it, and
+    // a drop after that must not add nodes to the swapped-in graph. Read it
+    // before endDrag() (which clears it unconditionally).
+    const storeDragLive = store.getSnapshot().interaction.isDragging;
     // Clears the published drop intent too — without this, indicators
     // linger after the drop and drag-gated behaviors stay armed.
     store.endDrag();
@@ -82,6 +87,11 @@ export function usePaletteDrag(args: {
     // Factory failed at pick-up: already announced, nothing to add. Consume the
     // gesture silently — no second "Cancelled drag".
     if (!nodes) return true;
+
+    if (!storeDragLive) {
+      announce("Cancelled drag.");
+      return true;
+    }
 
     if (!intent) {
       announce("Cancelled drag.");
