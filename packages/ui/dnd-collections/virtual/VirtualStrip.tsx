@@ -221,11 +221,15 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // Variable widths come from node DATA, so a data change (a trim commit,
     // a palette add) must re-run the cached measurements. `nodesById` only
     // gets a new identity on such a commit — never on a move or a drag — so
-    // this stays at commit cadence, not per frame. Fixed-width strips
-    // (no itemWidthFor) never need it.
+    // this stays at commit cadence, not per frame. Trim-enabled strips need
+    // it even at fixed widths: a live trim resizes slots via `resizeItem`,
+    // whose cache only `measure()` clears (TanStack's cache is key-based, so
+    // a reorder carries a stale size along) — without this, undoing a trim
+    // would leave the slot at the trimmed width. Fixed-width strips without
+    // trim handles never need it.
     useEffect(() => {
-      if (itemWidthFor) virtualizer.measure();
-    }, [nodesById, itemWidthFor, virtualizer]);
+      if (itemWidthFor || trimPixelsPerSecond !== undefined) virtualizer.measure();
+    }, [nodesById, itemWidthFor, trimPixelsPerSecond, virtualizer]);
 
     // Live trim preview: a trim handle calls this per pointer-move to resize
     // ONE card without a graph commit, AND to publish the drag's current
@@ -240,9 +244,16 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // memoized cards still don't re-render. The callback must stay
     // reference-stable (trim handles read it via context) — it is, reading
     // mutable inputs from a ref and calling the stable setState.
-    const trimStateRef = useRef({ indexById, virtualizer, gap, trimPixelsPerSecond, widthForIndex });
-    trimStateRef.current = { indexById, virtualizer, gap, trimPixelsPerSecond, widthForIndex };
+    const trimStateRef = useRef({ indexById, virtualizer, gap, trimPixelsPerSecond, widthForIndex, nodesById });
+    trimStateRef.current = { indexById, virtualizer, gap, trimPixelsPerSecond, widthForIndex, nodesById };
     const [liveTrim, setLiveTrim] = useState<{ nodeId: NodeId; trim: LiveTrim } | null>(null);
+    // The COMMITTED node the live gesture started from. The commit effect
+    // below uses it to tell this gesture's own settling commit (the node's
+    // identity changed) from an UNRELATED commit landing mid-drag (identity
+    // preserved by structural sharing) — converting the anchor transform on
+    // an unrelated commit would double-compensate once the still-live drag
+    // re-applies it, displacing the strip.
+    const gestureNodeRef = useRef<{ nodeId: NodeId; node: CollectionItemNode | null } | null>(null);
     // Pre-drag slot size of the item being left-trimmed, captured once per
     // gesture. The anchor transform is measured against THIS, not the live
     // committed size — at the commit render `widthForIndex` already reflects
@@ -263,8 +274,16 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         // the content returns to where it started).
         if (index !== -1) s.virtualizer.resizeItem(index, s.widthForIndex(index) + s.gap);
         trimBaselineRef.current = null;
+        gestureNodeRef.current = null;
         setLiveTrim(null);
         return;
+      }
+
+      // Remember which committed node this gesture is trimming (once per
+      // gesture — the identity can't change mid-gesture except by the very
+      // commits the effect below needs to distinguish).
+      if (gestureNodeRef.current?.nodeId !== nodeId) {
+        gestureNodeRef.current = { nodeId, node: s.nodesById.get(nodeId) ?? null };
       }
 
       // Capture the pre-drag slot size once, for a left-handle drag on a
@@ -287,13 +306,33 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // clip. Where scrollLeft has no room (a clip near the strip start), this
     // clamps and the final position snaps by the shortfall — the known limit
     // of native-scroll anchoring; the DRAG itself stayed consistent because a
-    // transform isn't clamped. Unrelated commits have shift 0 → no-op.
+    // transform isn't clamped.
     useEffect(() => {
+      // An UNRELATED commit landing mid-gesture (e.g. a keyboard trim on a
+      // DIFFERENT card) must not settle this gesture: the trimmed node's
+      // identity is preserved by structural sharing, the drag stays live, and
+      // converting the transform now would double-compensate — the next
+      // pointer move re-applies the transform with no offsetting scroll, and
+      // the release converts it again, leaving the strip displaced. The
+      // gesture's own settling commits (its release, a same-node keyboard
+      // trim, undo) always change the node's identity and fall through.
+      // (liveTrim is read from this commit's render on purpose — adding it to
+      // the deps would run the conversion on every preview move.)
+      const gesture = gestureNodeRef.current;
+      if (
+        liveTrim &&
+        gesture?.nodeId === liveTrim.nodeId &&
+        nodesById.get(liveTrim.nodeId) === gesture.node
+      ) {
+        return;
+      }
       const shift = dragShiftRef.current;
       if (shift !== 0 && scrollRef.current) scrollRef.current.scrollLeft -= shift;
       dragShiftRef.current = 0;
       trimBaselineRef.current = null;
+      gestureNodeRef.current = null;
       setLiveTrim(null);
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- liveTrim intentionally omitted (see comment)
     }, [nodesById, scrollRef]);
 
     // Pointer -> visible boundary index from the virtualizer's measurements

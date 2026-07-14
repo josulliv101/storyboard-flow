@@ -163,7 +163,14 @@ export function usePanWithMomentum(
 
       const last = samples[samples.length - 1];
       const first = samples[0];
-      if (last && first && last.t > first.t) {
+      // A release after a stationary HOLD must not fling: samples are only
+      // appended/pruned on movement, so once the pointer stops the window
+      // still describes the pre-hold motion (and nothing trims it). "Pan
+      // fast, stop dead, hold, release" is the universal kill-momentum
+      // gesture — if the newest sample is older than the sampling window,
+      // the pointer has been still at least that long; treat it as a stop.
+      const stale = last !== undefined && performance.now() - last.t > SAMPLE_WINDOW_MS;
+      if (!stale && last && first && last.t > first.t) {
         const pointerVelocity = (last.p - first.p) / (last.t - first.t);
         startGlide(-pointerVelocity); // scroll continues opposite the pointer
       }

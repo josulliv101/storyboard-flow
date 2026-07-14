@@ -674,6 +674,37 @@ export const PanToScrollWithMomentum: Story = {
   },
 };
 
+export const StationaryHoldReleaseDoesNotFling: Story = {
+  // The universal kill-momentum gesture: pan fast, stop dead, HOLD, release.
+  // Samples are only pruned on movement, so the window still describes the
+  // pre-hold motion at release — without the staleness check the strip would
+  // fling as if flicked. (Hand jitter masks the bug in manual testing; the
+  // simulated pointer here is perfectly still.)
+  render: () => <StripHarness />,
+  play: async ({ canvasElement }) => {
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+    const m3 = nodeCard(canvasElement, "m3");
+    await waitForLayout(m3);
+    const body = rectCenter(m3);
+
+    // Fast leftward pan, then a stationary hold well past SAMPLE_WINDOW_MS
+    // (120ms) before releasing.
+    await dispatchPointerSequence([
+      { element: m3, type: "pointerdown", clientX: body.x, clientY: body.y },
+      { element: m3, type: "pointermove", clientX: body.x - 40, clientY: body.y, delayAfterMs: 16 },
+      { element: m3, type: "pointermove", clientX: body.x - 80, clientY: body.y, delayAfterMs: 16 },
+      { element: m3, type: "pointermove", clientX: body.x - 120, clientY: body.y, delayAfterMs: 300 },
+      { element: m3, type: "pointerup", clientX: body.x - 120, clientY: body.y },
+    ]);
+
+    // No glide: the scroll position must hold steady after the release.
+    const atRelease = strip.scrollLeft;
+    expect(atRelease).toBeGreaterThan(100); // the pan itself did scroll
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(strip.scrollLeft).toBe(atRelease);
+  },
+};
+
 export const ActivationPointerSeedsEdgeAutoScroll: Story = {
   render: () => <StripHarness />,
   play: async ({ canvasElement }) => {
