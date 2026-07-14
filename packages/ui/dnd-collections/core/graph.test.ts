@@ -322,6 +322,29 @@ describe("buildGraph", () => {
     const graph = build([collection("root", [spec])]);
     expect(graph.nodesById.size).toBe(20_002);
   });
+
+  test("copies posterSrcs — mutating the caller's array never reaches the graph", () => {
+    const posterSrcs = ["a.jpg", "b.jpg"];
+    const graph = build([
+      collection("root", [
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "v1",
+          name: "V1",
+          posterSrcs,
+          fullDurationSeconds: 10,
+        },
+      ]),
+    ]);
+
+    posterSrcs.push("evil.jpg");
+    const node = graph.nodesById.get(parseNodeId("v1"));
+    expect(node?.kind === "media" && node.mediaKind === "video" ? node.posterSrcs : null).toEqual([
+      "a.jpg",
+      "b.jpg",
+    ]);
+  });
 });
 
 describe("isSameOrAncestor", () => {

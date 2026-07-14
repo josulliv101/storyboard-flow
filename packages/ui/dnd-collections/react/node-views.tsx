@@ -14,6 +14,7 @@ import { encodeDropTarget } from "../core/intents";
 import { finitePositiveOrUndefined } from "../core/numeric";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
+import { roundSecondsForDisplay } from "./duration-format";
 import { NodeThumbnail } from "./node-thumbnail";
 import { TrimHandles } from "./trim-handles";
 
@@ -255,7 +256,7 @@ export const NodeCard = memo(function NodeCard({
             <span className="mt-1 flex items-center justify-between gap-1">
               <span className="truncate font-medium text-foreground">{node.name}</span>
               <span className="shrink-0 text-[10px] text-muted-foreground">
-                {mediaDurationSeconds(node)}s
+                {roundSecondsForDisplay(mediaDurationSeconds(node))}s
               </span>
             </span>
           </>
@@ -363,7 +364,9 @@ export function NodeCardGhost({
     >
       <span className="truncate font-medium text-foreground">{node.name}</span>
       <span className="text-[10px] text-muted-foreground">
-        {node.kind === "collection" ? "Collection" : `${mediaDurationSeconds(node)}s`}
+        {node.kind === "collection"
+          ? "Collection"
+          : `${roundSecondsForDisplay(mediaDurationSeconds(node))}s`}
       </span>
       {extraCount > 0 && (
         <span
