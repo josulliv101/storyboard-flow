@@ -25,6 +25,21 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(value, max));
 }
 
+// Pointer trims capture CONTINUOUS pixels ((clientX - startX) / pps), so a raw
+// commit stores values like 3.5416666666666665s. Snap the resolved trim to a
+// 0.1s grid so committed durations stay round and match what the UI shows
+// exactly (the display path rounds to the same 0.1s). This is an input-capture
+// decision local to the pointer gesture — the keyboard path already steps whole
+// seconds, and the reducer still owns the physical clamp. A sub-0.05s nudge
+// snaps to no change, which the reducer then rejects as same-position (tiny
+// accidental drags don't create imperceptible trims). `Math.round(x * 10) / 10`
+// avoids the float dust that `Math.round(x / 0.1) * 0.1` leaves behind.
+export const TRIM_QUANTUM_SECONDS = 0.1;
+
+function quantize(seconds: number): number {
+  return Math.round(seconds * 10) / 10;
+}
+
 /** Resolve a TRIM (duration changes): a right handle on every media (image
  *  duration / video trim-out) and a left handle on video (trim-in). Returns
  *  the `update` to commit plus the `live` split to preview. */
@@ -35,9 +50,11 @@ export function resolveTrim(
 ): { update: MediaUpdate; live: LiveTrim } {
   if (node.mediaKind === "video") {
     if (side === "left") {
-      // Left edge inward (right, +delta) trims MORE off the start.
+      // Left edge inward (right, +delta) trims MORE off the start. Snap to the
+      // 0.1s grid, then clamp — effective is DERIVED from the snapped value so
+      // the previewed width and the committed data agree exactly.
       const trimInSeconds = clamp(
-        node.trimInSeconds + deltaSeconds,
+        quantize(node.trimInSeconds + deltaSeconds),
         0,
         node.fullDurationSeconds - node.trimOutSeconds
       );
@@ -53,7 +70,7 @@ export function resolveTrim(
     }
     // Right edge inward (left, -delta) trims MORE off the end.
     const trimOutSeconds = clamp(
-      node.trimOutSeconds - deltaSeconds,
+      quantize(node.trimOutSeconds - deltaSeconds),
       0,
       node.fullDurationSeconds - node.trimInSeconds
     );
@@ -68,7 +85,7 @@ export function resolveTrim(
     };
   }
   // Image: the right edge sets the duration directly (outward = longer).
-  const durationSeconds = Math.max(0, node.durationSeconds + deltaSeconds);
+  const durationSeconds = Math.max(0, quantize(node.durationSeconds + deltaSeconds));
   return {
     update: { mediaKind: "image", durationSeconds },
     live: { side, trimInSeconds: 0, trimOutSeconds: 0, effectiveSeconds: durationSeconds },
@@ -85,7 +102,9 @@ export function resolveMove(
 ): { update: MediaUpdate; live: LiveTrim } {
   const showing = Math.max(0, node.fullDurationSeconds - node.trimInSeconds - node.trimOutSeconds);
   const room = Math.max(0, node.fullDurationSeconds - showing); // trim-in + trim-out
-  const trimInSeconds = clamp(node.trimInSeconds - deltaSeconds, 0, room);
+  // Snap trim-in to the 0.1s grid; trim-out is derived so `showing` (and the
+  // clip width) stays exactly constant — the defining property of a move.
+  const trimInSeconds = clamp(quantize(node.trimInSeconds - deltaSeconds), 0, room);
   const trimOutSeconds = Math.max(0, room - trimInSeconds);
   return {
     update: { mediaKind: "video", trimInSeconds, trimOutSeconds },

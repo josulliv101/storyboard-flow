@@ -42,27 +42,43 @@ export function useEdgeAutoScroll(
   // before the user parks at an edge; installing this listener only after
   // `dragging` becomes true would miss that position. Tracking from
   // pointerdown also keeps keyboard drags from inheriting stale mouse data.
+  //
+  // Only `pointerdown` stays bound at rest (press-frequency, cheap); the
+  // high-frequency `pointermove` — which fires on EVERY mouse move even with
+  // no button down, and once per mounted view — is attached lazily on a
+  // primary press and torn down on its release. A drag only ever happens
+  // between a primary down and its up, so the pre-activation position is still
+  // captured; idle mouse movement no longer runs N per-view handlers.
   useEffect(() => {
-    const handleDown = (event: PointerEvent) => {
-      if (!event.isPrimary) return;
-      pointerRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
-    };
     const handleMove = (event: PointerEvent) => {
       if (pointerRef.current?.id !== event.pointerId) return;
       pointerRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
     };
-    const handleEnd = (event: PointerEvent) => {
-      if (pointerRef.current?.id === event.pointerId) pointerRef.current = null;
-    };
-    window.addEventListener("pointerdown", handleDown, { passive: true });
-    window.addEventListener("pointermove", handleMove, { passive: true });
-    window.addEventListener("pointerup", handleEnd, { passive: true });
-    window.addEventListener("pointercancel", handleEnd, { passive: true });
-    return () => {
-      window.removeEventListener("pointerdown", handleDown);
+    const detachMove = () => {
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleEnd);
       window.removeEventListener("pointercancel", handleEnd);
+    };
+    function handleEnd(event: PointerEvent) {
+      // Only the tracked pointer's own release tears down: a foreign or
+      // non-primary pointer's up must not stop tracking the one we own.
+      if (pointerRef.current?.id !== event.pointerId) return;
+      pointerRef.current = null;
+      detachMove();
+    }
+    const handleDown = (event: PointerEvent) => {
+      if (!event.isPrimary) return;
+      pointerRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+      // addEventListener dedupes identical (type, listener, capture) triples,
+      // so a second primary press before release can't double-bind.
+      window.addEventListener("pointermove", handleMove, { passive: true });
+      window.addEventListener("pointerup", handleEnd, { passive: true });
+      window.addEventListener("pointercancel", handleEnd, { passive: true });
+    };
+    window.addEventListener("pointerdown", handleDown, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", handleDown);
+      detachMove();
       pointerRef.current = null;
     };
   }, []);
