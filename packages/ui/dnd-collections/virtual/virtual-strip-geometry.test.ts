@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildGraph, parseNodeId, type CollectionsGraph } from "../core/graph";
 import {
   MIN_ITEM_WIDTH,
+  createTimeToOffset,
   durationToWidth,
   indicatorLeftOffset,
   leftAnchorShift,
@@ -145,6 +146,49 @@ describe("timeToOffset", () => {
         pixelsPerSecond: 24,
       })
     ).toBe(0);
+  });
+
+  it("createTimeToOffset: .at agrees with the one-shot wrapper everywhere", () => {
+    const lookup = createTimeToOffset({
+      graph: fixture(),
+      collectionId: strip,
+      pixelsPerSecond: 24,
+    });
+    for (const t of [-1, 0, 0.5, 2, 3.999, 4, 7.5, 10.999, 11, 11.1, 11.2, 999]) {
+      expect(lookup.at(t)).toBeCloseTo(at(t), 8);
+    }
+    expect(lookup.totalDurationSeconds).toBeCloseTo(4 + 7 + 0.2, 8);
+    expect(lookup.endOffset).toBe(428);
+  });
+
+  it("createTimeToOffset: a monotonic cursor matches .at, including seeks", () => {
+    const lookup = createTimeToOffset({
+      graph: fixture(),
+      collectionId: strip,
+      pixelsPerSecond: 24,
+    });
+    const cursor = lookup.cursor();
+    // Forward playback across every segment boundary (the O(1) path)...
+    for (let t = 0; t <= 12; t += 0.25) {
+      expect(cursor.at(t)).toBeCloseTo(lookup.at(t), 8);
+    }
+    // ...a backward seek re-anchors...
+    expect(cursor.at(1.5)).toBeCloseTo(lookup.at(1.5), 8);
+    // ...and a far-forward seek does too.
+    expect(cursor.at(11.15)).toBeCloseTo(lookup.at(11.15), 8);
+    // Independent cursors don't share state.
+    expect(lookup.cursor().at(6)).toBeCloseTo(lookup.at(6), 8);
+  });
+
+  it("createTimeToOffset: empty collections yield a constant 0", () => {
+    const lookup = createTimeToOffset({
+      graph: fixture(),
+      collectionId: parseNodeId("nope"),
+      pixelsPerSecond: 24,
+    });
+    expect(lookup.at(5)).toBe(0);
+    expect(lookup.cursor().at(5)).toBe(0);
+    expect(lookup.totalDurationSeconds).toBe(0);
   });
 });
 

@@ -12,6 +12,7 @@ import {
   resolveKeyboardCommand,
   resolveTrashCommand,
   resolveTrimCommand,
+  resolveWindowMoveCommand,
 } from "./keyboard";
 
 const media = (id: string): GraphNodeSpec => ({ kind: "media", id, name: id });
@@ -379,5 +380,123 @@ describe("resolveTrashCommand", () => {
     const applied = applyCommand(nested, resolved.value);
     expect(applied.ok).toBe(false);
     if (!applied.ok) expect(applied.error.reason).toBe("would-create-cycle");
+  });
+});
+
+describe("resolveWindowMoveCommand", () => {
+  // root: [img (4s image), vid (10s source, trimmed 2s in / 1s out -> 7s)]
+  const windowGraph = build([
+    collection("root", [
+      { kind: "media", id: "img", name: "img", durationSeconds: 4 },
+      {
+        kind: "media",
+        mediaKind: "video",
+        id: "vid",
+        name: "vid",
+        fullDurationSeconds: 10,
+        trimInSeconds: 2,
+        trimOutSeconds: 1,
+      },
+    ]),
+  ]);
+
+  test("slides both trims together, holding the showing duration", () => {
+    expect(resolveWindowMoveCommand(windowGraph, id("vid"), "window-earlier", 1)).toEqual({
+      ok: true,
+      value: {
+        type: "update-media",
+        nodeId: "vid",
+        update: { mediaKind: "video", trimInSeconds: 1, trimOutSeconds: 2 },
+      },
+    });
+    expect(resolveWindowMoveCommand(windowGraph, id("vid"), "window-later", 1)).toEqual({
+      ok: true,
+      value: {
+        type: "update-media",
+        nodeId: "vid",
+        update: { mediaKind: "video", trimInSeconds: 3, trimOutSeconds: 0 },
+      },
+    });
+  });
+
+  test("clamps at the room's ends — a partial step slides what's left", () => {
+    // Earlier by 5s with only 2s of trim-in: the window lands at the source
+    // start, the remainder of the step is absorbed (like the pointer move).
+    expect(resolveWindowMoveCommand(windowGraph, id("vid"), "window-earlier", 5)).toEqual({
+      ok: true,
+      value: {
+        type: "update-media",
+        nodeId: "vid",
+        update: { mediaKind: "video", trimInSeconds: 0, trimOutSeconds: 3 },
+      },
+    });
+  });
+
+  test("a step with no room resolves to the current values -> same-position at dispatch", () => {
+    // Already at the source end (trim-out 0): "later" cannot move.
+    const atEnd = build([
+      collection("root", [
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "vid",
+          fullDurationSeconds: 10,
+          trimInSeconds: 3,
+          trimOutSeconds: 0,
+        },
+      ]),
+    ]);
+    const resolved = resolveWindowMoveCommand(atEnd, id("vid"), "window-later", 1);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    const applied = applyCommand(atEnd, resolved.value);
+    expect(applied).toEqual({ ok: false, error: { reason: "same-position" } });
+  });
+
+  test("an untrimmed video has no room in either direction", () => {
+    const untrimmed = build([
+      collection("root", [
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "vid",
+          fullDurationSeconds: 10,
+          trimInSeconds: 0,
+          trimOutSeconds: 0,
+        },
+      ]),
+    ]);
+    for (const action of ["window-earlier", "window-later"] as const) {
+      const resolved = resolveWindowMoveCommand(untrimmed, id("vid"), action, 1);
+      expect(resolved.ok).toBe(true);
+      if (!resolved.ok) continue;
+      expect(applyCommand(untrimmed, resolved.value)).toEqual({
+        ok: false,
+        error: { reason: "same-position" },
+      });
+    }
+  });
+
+  test("rejects images, collections, unknown nodes, and invalid steps", () => {
+    expect(resolveWindowMoveCommand(windowGraph, id("img"), "window-earlier", 1)).toEqual({
+      ok: false,
+      error: { reason: "no-source-window", nodeId: "img" },
+    });
+    expect(resolveWindowMoveCommand(windowGraph, id("root"), "window-earlier", 1)).toEqual({
+      ok: false,
+      error: { reason: "not-media-node", nodeId: "root" },
+    });
+    expect(resolveWindowMoveCommand(windowGraph, id("ghost"), "window-earlier", 1)).toEqual({
+      ok: false,
+      error: { reason: "missing-node", nodeId: "ghost" },
+    });
+    for (const step of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(resolveWindowMoveCommand(windowGraph, id("vid"), "window-later", step)).toEqual({
+        ok: false,
+        error: { reason: "invalid-step", stepSeconds: step },
+      });
+    }
   });
 });

@@ -542,8 +542,9 @@ function DndCollectionsContext({
         collection and Alt plus Up moves it out; Alt plus Enter and Alt plus Backspace do the same
         nesting and un-nesting anywhere, including inside a grid, where Alt plus Up and Down move
         between rows instead. For media, Alt plus Shift plus Left or Right trims the end and Alt
-        plus Shift plus Up or Down trims the start of a video. Press Alt plus Delete to move it to
-        trash.
+        plus Shift plus Up or Down trims the start of a video, and Alt plus Shift plus Home or End
+        slides a video&apos;s source window earlier or later without changing its length. Press Alt
+        plus Delete to move it to trash.
       </p>
       {/* Palette items are external drag sources — the card instructions
           above (selection, Alt-moves) don't apply, so they reference this

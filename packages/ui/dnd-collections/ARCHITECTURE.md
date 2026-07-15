@@ -373,7 +373,10 @@ Everything semantic happens in `core/`.
   trim branch is checked before the move/grid logic so a held Shift never
   falls through to a move, and a trim keeps the card mounted, so focus stays
   put (no restore needed). Alt+Shift+↑/↓ on an image announces "trimmed at the
-  end only" (images have no start edge).
+  end only" (images have no start edge). **Alt+Shift+Home/End** slide a
+  video's source window (trim-in/out together, showing duration constant —
+  the overview filmstrip drag's keyboard equivalent, `resolveWindowMoveCommand`),
+  closing the last pointer-only trim operation.
 - The card button is always a tab stop and always carries the KEYBOARD grab
   (Enter) — in handle mode the grip is a pointer-only second stop, so the
   instructions' "Press Enter to pick it up" stays true in every mode,

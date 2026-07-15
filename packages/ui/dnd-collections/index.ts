@@ -74,12 +74,15 @@ export {
   resolveKeyboardCommand,
   resolveTrashCommand,
   resolveTrimCommand,
+  resolveWindowMoveCommand,
   type GridRowMoveRejection,
   type KeyboardMoveAction,
   type KeyboardRejection,
   type KeyboardTrashRejection,
   type KeyboardTrimAction,
   type KeyboardTrimRejection,
+  type KeyboardWindowMoveAction,
+  type KeyboardWindowMoveRejection,
 } from "./core/keyboard";
 
 // React bindings (store + provider + default views)

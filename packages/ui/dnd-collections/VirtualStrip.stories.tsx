@@ -1018,7 +1018,9 @@ export const FlipAnimatesStripReorder: Story = {
     m0.focus();
     await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
 
-    const flip = m0.getAnimations().flatMap((a) => {
+    // FLIP animates the data-node-wrapper HOST (whole item, siblings incl.).
+    const host = m0.closest<HTMLElement>("[data-node-wrapper]") ?? m0;
+    const flip = host.getAnimations().flatMap((a) => {
       if (!(a.effect instanceof KeyframeEffect)) return [];
       const t = a.effect.getKeyframes()[0]?.transform;
       return typeof t === "string" && t.startsWith("translate") ? [t] : [];

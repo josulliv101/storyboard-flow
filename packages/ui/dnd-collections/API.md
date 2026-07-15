@@ -446,6 +446,20 @@ type KeyboardTrimAction =
 start-edge action on an image). Wired in the default views
 as **Alt+Shift+Arrow** (horizontal = end edge, vertical = video start edge).
 
+### `resolveWindowMoveCommand(graph, nodeId, action, stepSeconds): Result<UpdateMediaCommand, KeyboardWindowMoveRejection>`
+
+Keyboard source-window slide for a focused VIDEO: `"window-earlier"` /
+`"window-later"` shift trim-in and trim-out TOGETHER by `stepSeconds`, so
+the showing duration (and the card width) never changes — the keyboard
+equivalent of dragging the overview filmstrip. Unlike `resolveTrimCommand`,
+this resolver clamps itself (mirroring the pointer `resolveMove` math — the
+reducer's independent per-end clamps would otherwise change the duration); a
+step with no room resolves to the current values and comes back from
+`dispatch` as `same-position`, announced as a boundary.
+`KeyboardWindowMoveRejection.reason`: `missing-node`, `not-media-node`,
+`invalid-step`, and `no-source-window` (images). Wired in the default views
+as **Alt+Shift+Home / Alt+Shift+End**.
+
 ### `resolveTrashCommand(graph, nodeId, trashId): Result<MoveNodesCommand, KeyboardTrashRejection>`
 
 Keyboard "move to trash" for a focused node, resolving to the same
@@ -517,6 +531,7 @@ layer is a separate, always-available set of quick semantic moves:
 | Alt+ArrowUp | `move-out` |
 | Alt+Shift+ArrowLeft / Alt+Shift+ArrowRight | Trim the end edge shorter / longer (image duration / video trim-out) |
 | Alt+Shift+ArrowUp / Alt+Shift+ArrowDown | Trim the video start edge (trim-in); images reject |
+| Alt+Shift+Home / Alt+Shift+End | Slide the video source window earlier / later (duration unchanged); images reject |
 | Alt+Delete | Move to trash (only while a `<TrashTarget>` is mounted) |
 
 Alt+Enter / Alt+Backspace are always-available synonyms for
@@ -525,9 +540,10 @@ Alt+ArrowUp / Alt+ArrowDown become row moves (± the column count) and the
 arrow bindings are therefore unavailable for nesting.
 
 The pointer trim handles and the source-window overview are `aria-hidden`
-visual affordances — the accessible way to trim is a focused card plus the
-Alt+Shift bindings above. (Sliding a video's source window without changing
-its duration remains pointer-only; a keyboard equivalent is a known gap.)
+visual affordances — every operation they offer has a keyboard equivalent on
+the focused card: the Alt+Shift arrow bindings trim the edges, and
+Alt+Shift+Home/End slide a video's source window (trim-in/out shift
+together; the showing duration never changes).
 
 ---
 
@@ -811,7 +827,7 @@ type VirtualStripProps = {
   itemDragActivation?: "handle" | "hold";                // default "handle" (grip bar); "hold" = press-and-hold the body. Ignored when panToScroll is off (bodies drag instantly)
   trimPixelsPerSecond?: number;                          // override the trim conversion; DEFAULTS to pixelsPerSecond. Handles render when either is set; commits update-media on release. LIVE resize follows the strip's OWN width resolution (a synthesized node with the live trims runs through itemWidthFor/pixelsPerSecond) — so consumer floors hold mid-drag, and a fixed-width strip's card keeps its width (data trims, geometry doesn't)
   itemContent?: CollectionItemContentComponent;          // per-view card pixels; overrides the provider registry
-  overlay?: ReactNode;                                   // content-coordinate layer over the strip (playhead, markers): rides scroll + live-trim transform; aria-hidden, pointer-events none
+  overlay?: ReactNode;                                   // STRICTLY PRESENTATIONAL content-coordinate layer over the strip (playhead, markers): rides scroll + live-trim transform. aria-hidden + pointer-events none — no interactive/focusable children (focusable-inside-aria-hidden is an a11y violation); interactive scrubbers belong in your own layer outside the strip
   className?: string;
 };
 type VirtualStripHandle = {
@@ -836,11 +852,17 @@ a `nodes-updated` patch resizes exactly the touched slots (targeted
 `resizeItem`); a full re-measure happens only for `replaceGraph`, scale/
 layout prop changes, and the `remeasure()` handle.
 
-For overlay math, `timeToOffset({ graph, collectionId, timeSeconds,
-pixelsPerSecond, gap?, itemWidth?, minimumWidth? })` maps timeline time →
-content-x over a `pixelsPerSecond`-sized strip (media advance the clock,
-collections occupy width only; floored clips cap at their right edge; the
-transient first-item gutter is excluded). Strips sized by a custom
+For overlay math, `createTimeToOffset({ graph, collectionId,
+pixelsPerSecond, gap?, itemWidth?, minimumWidth? })` builds a timeline-time
+→ content-x lookup over a `pixelsPerSecond`-sized strip: O(n) prefix sums
+once (rebuild at commit/config cadence via `onChange` /
+`subscribeToChanges`), then `.at(t)` is O(log n) and `.cursor().at(t)` is
+O(1) amortized for monotonic consumption — the per-frame playhead path,
+ideally writing a transform imperatively rather than re-rendering React per
+frame. Mapping semantics: media advance the clock, collections occupy width
+only, floored clips cap at their right edge, out-of-range times clamp, and
+the transient first-item gutter is excluded. `timeToOffset({ ...,
+timeSeconds })` remains the one-shot convenience. Strips sized by a custom
 `itemWidthFor` need their own mapping against that same function.
 
 When `trimPixelsPerSecond` is set and a mounted video is selected,

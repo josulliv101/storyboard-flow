@@ -167,14 +167,15 @@ export function useCollectionsComponentsValue(
     const previous = previousRef.current;
     previousRef.current = value;
     if (process.env.NODE_ENV === "production") return;
-    // The memo above keys on exactly the three fields, so a new value
+    // The memo above keys on exactly the registry's fields, so a new value
     // identity IS a field-identity change — symmetric by construction.
     if (warnedRef.current || previous === value) return;
     warnedRef.current = true;
     console.warn(
       "dnd-collections: a `components` entry changed identity between renders. " +
-        "Define ItemContent/GhostContent/TrimHandleContent at module scope — a new " +
-        "component type per render remounts every card's content and defeats memoization."
+        "Define ItemContent/GhostContent/TrimHandleContent/OverviewContent at module " +
+        "scope — a new component type per render remounts every card's content and " +
+        "defeats memoization."
     );
   }, [value]);
 

@@ -95,44 +95,67 @@ export function leftAnchorShift(liveSlotSize: number, baselineSize: number): num
   return baselineSize - liveSlotSize;
 }
 
-/**
- * Timeline time → content-x, for overlay math (a playhead at `timeSeconds`)
- * over a `pixelsPerSecond`-sized strip. Walks the collection's children:
- * media items advance the clock by their EFFECTIVE duration and the x by
- * their slot width (`durationToWidth` + gap — the same conversion the strip
- * lays out with); non-media items (collections) occupy width but no time.
- *
- * Semantics to be aware of:
- * - Inside a FLOORED clip (shorter than `minimumWidth / pps`), x advances at
- *   `pps` and caps at the clip's right edge — the clip is wider than its
- *   time, so the playhead never overshoots it.
- * - `timeSeconds` past the strip's total duration clamps to the last media
- *   item's right edge; negative times clamp to 0.
- * - The result is CONTENT coordinates, which is what the `overlay` slot
- *   renders in. It does NOT include `VirtualStrip`'s transient first-item
- *   gutter (`paddingStart` while a trimmed-in first video is selected) — the
- *   one case content-x and item offsets diverge.
- * - Assumes `pixelsPerSecond` sizing; strips sized by a custom `itemWidthFor`
- *   need their own mapping against that same function.
- */
-export function timeToOffset(args: {
+export type TimeToOffsetConfig = Readonly<{
   graph: CollectionsGraph;
   collectionId: NodeId;
-  timeSeconds: number;
   pixelsPerSecond: number;
   /** Match the strip's props: gap default 8, itemWidth default 128. */
   gap?: number;
   itemWidth?: number;
   minimumWidth?: number;
-}): number {
-  const { graph, collectionId, timeSeconds, pixelsPerSecond } = args;
-  const gap = args.gap ?? 8;
-  const itemWidth = args.itemWidth ?? 128;
-  const minimumWidth = args.minimumWidth ?? MIN_ITEM_WIDTH;
+}>;
 
+export type TimeToOffsetLookup = Readonly<{
+  /** Content-x for an arbitrary time — O(log n) binary search. */
+  at: (timeSeconds: number) => number;
+  /**
+   * A stateful cursor for MONOTONIC consumption — the per-frame playhead:
+   * O(1) per call while time stays in or hops to the adjacent segment
+   * (which is every frame of normal playback), O(log n) for a seek. Create
+   * one cursor per consumer loop; it never mutates the lookup.
+   */
+  cursor: () => Readonly<{ at: (timeSeconds: number) => number }>;
+  /** Total played duration (media only; collections carry no time). */
+  totalDurationSeconds: number;
+  /** Content-x of the last media item's right edge — the overflow clamp. */
+  endOffset: number;
+}>;
+
+/**
+ * Build a timeline-time → content-x lookup for overlay math (a playhead)
+ * over a `pixelsPerSecond`-sized strip. Prefix sums are built ONCE (O(n));
+ * rebuild at commit/config cadence (`onChange` / `subscribeToChanges` — a
+ * playhead's per-frame path should be `lookup.cursor().at(t)`, ideally
+ * writing a transform imperatively rather than re-rendering React per
+ * frame).
+ *
+ * Mapping semantics: media items advance the clock by their EFFECTIVE
+ * duration and the x by their slot width (`durationToWidth` + gap — the
+ * same conversion the strip lays out with); non-media items (collections)
+ * occupy width but no time. Inside a FLOORED clip x advances at `pps` and
+ * caps at the clip's right edge (the clip is wider than its time). Times
+ * past the total clamp to `endOffset`; negative times clamp to the first
+ * clip's left edge. The result is CONTENT coordinates (what the `overlay`
+ * slot renders in) and excludes `VirtualStrip`'s transient first-item
+ * gutter. Assumes `pixelsPerSecond` sizing; strips sized by a custom
+ * `itemWidthFor` need their own mapping against that same function.
+ */
+export function createTimeToOffset(config: TimeToOffsetConfig): TimeToOffsetLookup {
+  const { graph, collectionId, pixelsPerSecond } = config;
+  const gap = config.gap ?? 8;
+  const itemWidth = config.itemWidth ?? 128;
+  const minimumWidth = config.minimumWidth ?? MIN_ITEM_WIDTH;
+
+  // Time segments: media with duration > 0. Zero-duration media and
+  // collections occupy width but never own a time slice, so they only
+  // advance x. Segments are contiguous in time by construction.
+  const timeStarts: number[] = [];
+  const xStarts: number[] = [];
+  const widths: number[] = [];
+  const durations: number[] = [];
   let x = 0;
   let clock = 0;
-  let lastMediaRight: number | null = null;
+  let lastMediaRight = 0;
   for (const childId of getChildren(graph, collectionId)) {
     const node = graph.nodesById.get(childId);
     if (!node) continue;
@@ -142,13 +165,82 @@ export function timeToOffset(args: {
     }
     const duration = mediaDurationSeconds(node);
     const width = durationToWidth(duration, pixelsPerSecond, minimumWidth);
-    if (timeSeconds < clock + duration) {
-      const within = Math.max(0, timeSeconds - clock) * pixelsPerSecond;
-      return x + Math.min(within, width);
+    if (duration > 0) {
+      timeStarts.push(clock);
+      xStarts.push(x);
+      widths.push(width);
+      durations.push(duration);
+      clock += duration;
     }
-    clock += duration;
     x += width + gap;
     lastMediaRight = x - gap;
   }
-  return lastMediaRight ?? 0;
+  const count = timeStarts.length;
+  const endOffset = lastMediaRight;
+
+  /** Index of the last segment whose start time is <= t (t must be >= 0). */
+  const locate = (t: number): number => {
+    let lo = 0;
+    let hi = count - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (timeStarts[mid] <= t) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+
+  const offsetWithin = (index: number, t: number): number => {
+    const within = Math.max(0, t - timeStarts[index]) * pixelsPerSecond;
+    return xStarts[index] + Math.min(within, widths[index]);
+  };
+
+  const at = (timeSeconds: number): number => {
+    if (count === 0) return endOffset;
+    if (timeSeconds <= timeStarts[0]) return xStarts[0];
+    if (timeSeconds >= clock) return endOffset;
+    return offsetWithin(locate(timeSeconds), timeSeconds);
+  };
+
+  return {
+    at,
+    cursor: () => {
+      let index = 0;
+      return {
+        at: (timeSeconds: number): number => {
+          if (count === 0) return endOffset;
+          if (timeSeconds <= timeStarts[0]) return xStarts[0];
+          if (timeSeconds >= clock) return endOffset;
+          if (timeSeconds < timeStarts[index]) {
+            // Backward seek: re-anchor.
+            index = locate(timeSeconds);
+          } else if (timeSeconds >= timeStarts[index] + durations[index]) {
+            // Forward: the adjacent segment is the common playback hop (O(1));
+            // anything farther is a seek (O(log n)).
+            if (
+              index + 1 < count &&
+              timeSeconds < timeStarts[index + 1] + durations[index + 1]
+            ) {
+              index += 1;
+            } else {
+              index = locate(timeSeconds);
+            }
+          }
+          return offsetWithin(index, timeSeconds);
+        },
+      };
+    },
+    totalDurationSeconds: clock,
+    endOffset,
+  };
+}
+
+/**
+ * One-shot convenience over `createTimeToOffset` — fine for occasional
+ * lookups; for a per-frame playhead build the lookup once and use a cursor.
+ */
+export function timeToOffset(
+  args: TimeToOffsetConfig & { timeSeconds: number }
+): number {
+  return createTimeToOffset(args).at(args.timeSeconds);
 }

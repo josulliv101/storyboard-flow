@@ -375,6 +375,22 @@ test.describe('DndCollections E2E', () => {
     // Undo reverts the last trim (ordinary undoable command).
     await page.getByRole('button', { name: /undo/i }).click();
     await expect(async () => expect(await widthOf(vid)).toBe(192)).toPass();
+
+    // Alt+Shift+End SLIDES the source window later (trim-in 1s -> 2s,
+    // trim-out 1s -> 0s): the clip's width holds — the observable is the
+    // floating overview, whose anchor (clipLeft - trimIn * pps) shifts left
+    // by exactly the slide (24px at 24 px/s).
+    const overview = page.locator('[data-trim-overview="vid"]');
+    await overview.waitFor({ state: 'visible' });
+    const overviewLeft0 = (await overview.boundingBox())!.x;
+    // The undo click moved focus to the button — the chord needs the card.
+    await vid.click();
+    await expect(vid).toBeFocused();
+    await trim('End');
+    await expect(async () => {
+      expect(Math.round((await overview.boundingBox())!.x)).toBe(Math.round(overviewLeft0 - 24));
+    }).toPass();
+    expect(await widthOf(vid)).toBe(192); // duration (and width) unchanged
   });
 
   test('trim overview: amber window stays aligned to the clip during a real drag', async ({
