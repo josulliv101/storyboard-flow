@@ -623,17 +623,47 @@ type CollectionItemContentProps = Readonly<{
   rejected: boolean;          // rejection flash — style it or ignore it
   isDragSource: boolean;      // dimmed-in-place under the drag ghost
   dragActivation: NodeCardDragActivation; // "handle" overlays an 18px grip bar — leave room
+  trimEnabled: boolean;       // the shell renders trim handles on this card
 }>;
 type CollectionItemContentComponent = ComponentType<CollectionItemContentProps>;
 
 type CollectionGhostContentProps = Readonly<{ node: CollectionItemNode; extraCount: number }>;
 type CollectionGhostContentComponent = ComponentType<CollectionGhostContentProps>;
 
+type CollectionTrimHandleContentProps = Readonly<{
+  side: "left" | "right";     // left = video trim-in; right = image duration / video trim-out
+  node: MediaNode;
+  selected: boolean;
+}>;
+type CollectionTrimHandleContentComponent = ComponentType<CollectionTrimHandleContentProps>;
+
 type CollectionsComponents = Readonly<{
   ItemContent?: CollectionItemContentComponent;  // every card, all views
   GhostContent?: CollectionGhostContentComponent; // the drag-overlay ghost
+  TrimHandleContent?: CollectionTrimHandleContentComponent; // pixels INSIDE the trim hit zones
 }>;
 ```
+
+**Trim handles** follow the same split: the shell keeps each handle's HIT
+ZONE — positioning, width, cursor, the pointer gesture, and the
+sibling-of-the-button DOM shape (load-bearing for gesture arbitration) —
+while `TrimHandleContent` fills it (default: the amber grip bar,
+`DefaultTrimHandleContent`). Duration readouts are CARD content, not handle
+chrome: the showing/full pill and the live preview bubble live in
+`DefaultItemContent`, gated on `trimEnabled`, so custom content never fights
+a shell-drawn pill.
+
+### `useLiveTrim(nodeId): LiveTrim | null`
+
+Live trim values for consumer readouts (a pill that tracks the drag). Live
+trims deliberately never touch the store and the shell doesn't re-render
+mid-gesture, so live values can't arrive as props — this hook subscribes to
+a provider-level emitter instead. It returns the gesture's `LiveTrim` split
+per pointer move and `null` when the gesture settles (abort, no-op, or
+commit — the committed node then carries the same values, so there is no
+flash). Opt-in cost: the CALLING component re-renders per move — scope it to
+a leaf readout, not your whole card (see `DefaultTrimReadout` /
+`LiveTrimReadout` story); every other card stays frozen.
 
 Register once at the provider (`<DndCollections components={{ ItemContent }}>`)
 — that is what keeps cards and the drag ghost in sync from one place — or per
@@ -685,8 +715,9 @@ key off these):
 | `data-panel-id` / `data-panel-droppable` | panel section / its drop zone | Collection identity. |
 | `data-nest-state` | overlay on a collection card | `"valid"` or `"invalid"` while it's the live nest target. |
 | `data-drop-indicator` | indicator bar | `"before"` or `"after"` on the adjacency target. |
-| `data-trim-handle` | media edge handle | `"left"` or `"right"` (left is video-only). |
-| `data-trim-preview` | trim readout | The previewed effective duration (seconds) while a handle is dragged. |
+| `data-trim-handle` | media edge handle hit zone | `"left"` or `"right"` (left is video-only). Its pixels are the `TrimHandleContent` slot. |
+| `data-trim-pill` | `DefaultItemContent` readout | Showing/full duration pill (trim-enabled media cards; absent with custom content). |
+| `data-trim-preview` | `DefaultItemContent` readout | The previewed effective duration (seconds) while a handle is dragged (via `useLiveTrim`). |
 | `data-trim-overview` | overview filmstrip (`VirtualStrip` only) | The selected video's node id. Renders directly above its clip; absent unless a video is selected AND mounted. Dragging its body MOVES the source window (trim-in/out shift together, duration constant). |
 | `data-trim-overview-window` | amber "showing" window | Its left/right edges are pixel-aligned with the clip's own rendered edges (see the trim overview section below). |
 | `data-trim-overview-handle` | overview window grip | `"left"` (trim-in) or `"right"` (trim-out); dragging trims the clip, same `update-media` as the card edge handles. |

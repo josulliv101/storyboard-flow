@@ -1147,9 +1147,13 @@ export const TrimMediaWithHandles: Story = {
 
     // Over-drag the end: effective duration clamps at 0 (slot width 0, so the
     // card bottoms out at its ~18px chrome — never negative, never huge).
+    // The pill (now DefaultItemContent's readout) reports 0 showing of the
+    // full 10s source.
     await dragHandleBy(handle("vid", "right")!, -600);
     await waitFor(() => expect(width("vid")).toBeLessThanOrEqual(20));
-    expect(nodeCard(canvasElement, "vid").textContent).toMatch(/(?:^|\D)0s$/);
+    expect(
+      nodeCard(canvasElement, "vid").querySelector("[data-trim-pill]")!.textContent
+    ).toBe("0.00s / 10.00s");
   },
 };
 

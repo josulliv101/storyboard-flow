@@ -296,6 +296,7 @@ export const NodeCard = memo(function NodeCard({
           // activation and onDragStart publishing the store's drag set.
           isDragSource={isDragging || isDragSource}
           dragActivation={dragActivation}
+          trimEnabled={trimScale !== undefined && node.kind === "media"}
         />
       </button>
 
@@ -321,7 +322,7 @@ export const NodeCard = memo(function NodeCard({
       )}
 
       {trimScale !== undefined && node.kind === "media" && (
-        <TrimHandles node={node} pixelsPerSecond={trimScale} />
+        <TrimHandles node={node} pixelsPerSecond={trimScale} selected={isSelected} />
       )}
 
       <NodeCardIndicators nestState={nestState} dropSide={dropSide} />

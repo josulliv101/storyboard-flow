@@ -111,9 +111,16 @@ export {
   type CollectionGhostContentProps,
   type CollectionItemContentComponent,
   type CollectionItemContentProps,
+  type CollectionTrimHandleContentComponent,
+  type CollectionTrimHandleContentProps,
   type CollectionsComponents,
 } from "./react/collections-components";
 export { DefaultItemContent } from "./react/default-item-content";
+export { DefaultTrimHandleContent } from "./react/trim-handles";
+// Live trim values for consumer readouts: opt-in, per-move re-renders scoped
+// to the calling component only (the store is never notified mid-gesture).
+export { useLiveTrim } from "./react/live-trim";
+export { type LiveTrim } from "./react/trim-preview-context";
 export { HistoryLog, UndoRedoControls } from "./react/history-views";
 export { PaletteItem, type PaletteItemProps } from "./react/palette";
 export { TrashTarget } from "./react/trash-target";
