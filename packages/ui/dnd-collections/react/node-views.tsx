@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useRef, type MouseEvent } from "react";
+import { memo, useCallback, useRef, type KeyboardEventHandler, type MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { twMerge } from "tailwind-merge";
 
@@ -219,9 +219,13 @@ export const NodeCard = memo(function NodeCard({
   // -1), and the instructions element promises "Press Enter to pick it up"
   // on every card. Attach just the KeyboardSensor activator — dnd-kit's
   // Enter handler preventDefaults on activation, so it never doubles as a
-  // selection click.
-  const bodyListeners: Record<string, Function> | undefined = dragHandle
-    ? listeners && { onKeyDown: listeners.onKeyDown }
+  // selection click. (One localized cast: dnd-kit types its listener map as
+  // Record<string, Function>, erasing the signature — the KeyboardSensor
+  // activator is a keydown handler.)
+  const bodyListeners = dragHandle
+    ? listeners && {
+        onKeyDown: listeners.onKeyDown as KeyboardEventHandler<HTMLButtonElement>,
+      }
     : listeners;
 
   const setRefs = useCallback(

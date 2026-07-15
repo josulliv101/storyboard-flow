@@ -675,9 +675,10 @@ Rules, all load-bearing for the efficiency model:
 
 - **Identity-stable**: define components at module scope and wrap them in
   `React.memo`. An inline definition is a NEW component type per render —
-  React remounts every card's content subtree (a dev warning fires once on
-  churn). The `components` object literal itself may be inline; only the
-  fields must be stable.
+  React remounts every card's content subtree (development builds warn once
+  per provider instance, including for entries appearing/disappearing). The
+  `components` object literal itself may be inline; only the fields must be
+  stable.
 - **Presentational only**: content renders inside a `<button>` — no
   interactive elements (buttons, links, inputs). Interactivity (selection,
   drag, trim) is the shell's job; compound primitives for custom interactive
@@ -760,7 +761,7 @@ type VirtualStripProps = {
   overscan?: number;                                     // default 4
   panToScroll?: boolean;                                 // default true — drag the surface to scroll, with momentum
   itemDragActivation?: "handle" | "hold";                // default "handle" (grip bar); "hold" = press-and-hold the body. Ignored when panToScroll is off (bodies drag instantly)
-  trimPixelsPerSecond?: number;                          // override the trim conversion; DEFAULTS to pixelsPerSecond. Handles render when either is set; the card resizes LIVE during the drag and commits update-media on release
+  trimPixelsPerSecond?: number;                          // override the trim conversion; DEFAULTS to pixelsPerSecond. Handles render when either is set; commits update-media on release. LIVE resize follows the strip's OWN width resolution (a synthesized node with the live trims runs through itemWidthFor/pixelsPerSecond) — so consumer floors hold mid-drag, and a fixed-width strip's card keeps its width (data trims, geometry doesn't)
   itemContent?: CollectionItemContentComponent;          // per-view card pixels; overrides the provider registry
   overlay?: ReactNode;                                   // content-coordinate layer over the strip (playhead, markers): rides scroll + live-trim transform; aria-hidden, pointer-events none
   className?: string;

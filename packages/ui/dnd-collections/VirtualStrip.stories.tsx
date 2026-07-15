@@ -1927,3 +1927,162 @@ export const PlayheadOverlay: Story = {
 export const PlayheadOverlayPlayground: Story = {
   render: () => <PlayheadOverlayExample />,
 };
+
+export const ConsumerFloorLivePreview: Story = {
+  // The live trim preview routes through the SAME width resolution as the
+  // committed layout: a consumer itemWidthFor with its OWN floor (60px here)
+  // governs mid-drag widths too, so an over-drag can't dip to the package's
+  // 12px minimum and snap back up on release — the MIN_ITEM_WIDTH bug class,
+  // one level up, closed for arbitrary consumer mappings.
+  render: () => (
+    <DndCollections initialGraph={ppsGraph()} animateMoves={false}>
+      <div className="w-[640px]">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? Math.max(60, mediaDurationSeconds(node) * 24) : undefined
+          }
+          trimPixelsPerSecond={24}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const width = () =>
+      Math.round(nodeCard(canvasElement, "vid").getBoundingClientRect().width);
+    await waitForLayout(nodeCard(canvasElement, "vid"));
+    expect(width()).toBe(240);
+
+    const handleEl = nodeCard(canvasElement, "vid")
+      .closest("[data-node-wrapper]")!
+      .querySelector<HTMLElement>('[data-trim-handle="right"]')!;
+    const start = rectCenter(handleEl);
+
+    // Over-drag far past the floor and HOLD: the LIVE width clamps at the
+    // consumer's 60px, not the package's 12px minimum.
+    await dispatchPointerSequence([
+      { element: handleEl, type: "pointerdown", clientX: start.x, clientY: start.y },
+      { element: document, type: "pointermove", clientX: start.x - 600, clientY: start.y, delayAfterMs: 30 },
+    ]);
+    await waitFor(() => expect(width()).toBe(60));
+
+    // Release: no snap — the committed width equals the last preview.
+    await dispatchPointerSequence([
+      { element: document, type: "pointerup", clientX: start.x - 600, clientY: start.y, delayAfterMs: 30 },
+    ]);
+    await waitFor(() => expect(width()).toBe(60));
+  },
+};
+
+export const ItemWidthForBeatsPixelsPerSecond: Story = {
+  // Precedence pin: when BOTH sizing inputs are set, itemWidthFor (the
+  // advanced override) wins and pixelsPerSecond is ignored for widths —
+  // 10s video at itemWidthFor's 24px/s = 240px, not pps' 10px/s = 100px.
+  render: () => (
+    <DndCollections initialGraph={ppsGraph()} animateMoves={false}>
+      <div className="w-[640px]">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          pixelsPerSecond={10}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * 24 : undefined
+          }
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const width = (id: string) =>
+      Math.round(nodeCard(canvasElement, id).getBoundingClientRect().width);
+    await waitForLayout(nodeCard(canvasElement, "vid"));
+    expect(width("vid")).toBe(240); // itemWidthFor's scale, not pps'
+    expect(width("img")).toBe(96);
+    expect(width("folder")).toBe(128); // itemWidthFor miss -> itemWidth
+    // pixelsPerSecond still arms the trim handles (trim scale inherits it).
+    expect(
+      nodeCard(canvasElement, "vid")
+        .closest("[data-node-wrapper]")!
+        .querySelector('[data-trim-handle="right"]')
+    ).not.toBeNull();
+  },
+};
+
+function overlayTrimGraph() {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "strip",
+      name: "Strip",
+      children: [
+        { kind: "media", id: "l0", name: "L0", durationSeconds: 4 },
+        { kind: "media", id: "l1", name: "L1", durationSeconds: 4 },
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "Vid",
+          fullDurationSeconds: 10,
+          trimInSeconds: 3,
+          trimOutSeconds: 0,
+        },
+        { kind: "media", id: "r0", name: "R0", durationSeconds: 4 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+export const OverlayRidesLeftTrimTransform: Story = {
+  // The docs claim the overlay "rides the live-trim transform" — proven
+  // here: during a left-handle GROW (right edge anchored via a content
+  // translate), a playhead in the overlay shifts by exactly the growth,
+  // and the commit's transform→scroll conversion leaves it exactly where
+  // the drag put it (no jump on release).
+  render: () => (
+    <DndCollections initialGraph={overlayTrimGraph()} animateMoves={false}>
+      <div className="w-[320px]">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          pixelsPerSecond={24}
+          overlay={
+            <div
+              data-playhead
+              style={{ position: "absolute", top: 0, bottom: 0, left: 100, width: 2, background: "red" }}
+            />
+          }
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const vid = nodeCard(canvasElement, "vid");
+    await waitForLayout(vid);
+    const playheadX = () =>
+      Math.round(canvasElement.querySelector<HTMLElement>("[data-playhead]")!.getBoundingClientRect().left);
+    const vidWidth = () => Math.round(vid.getBoundingClientRect().width);
+    expect(vidWidth()).toBe(7 * 24); // effective 7s
+
+    const handleEl = vid
+      .closest("[data-node-wrapper]")!
+      .querySelector<HTMLElement>('[data-trim-handle="left"]')!;
+    const start = rectCenter(handleEl);
+    const x0 = playheadX();
+
+    // Grow left by 48px (trim-in 3s -> 1s): the content layer translates
+    // -48 to anchor the right edge, and the playhead rides it.
+    await dispatchPointerSequence([
+      { element: handleEl, type: "pointerdown", clientX: start.x, clientY: start.y },
+      { element: document, type: "pointermove", clientX: start.x - 48, clientY: start.y, delayAfterMs: 40 },
+    ]);
+    await waitFor(() => expect(vidWidth()).toBe(9 * 24));
+    expect(Math.abs(playheadX() - (x0 - 48))).toBeLessThanOrEqual(1);
+
+    // Commit: the transform becomes real scroll — the playhead stays put.
+    await dispatchPointerSequence([
+      { element: document, type: "pointerup", clientX: start.x - 48, clientY: start.y, delayAfterMs: 40 },
+    ]);
+    await waitFor(() => expect(vidWidth()).toBe(9 * 24));
+    expect(Math.abs(playheadX() - (x0 - 48))).toBeLessThanOrEqual(1);
+  },
+};

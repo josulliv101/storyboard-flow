@@ -110,14 +110,14 @@ export function useCollectionsComponents(): CollectionsComponents {
   return useContext(CollectionsComponentsContext);
 }
 
-let warnedUnstableComponents = false;
-
 /**
  * Normalizes the provider's `components` prop into a context value whose
  * identity follows the FIELD identities (an inline `components={{ ... }}`
  * object literal per render is fine as long as the components themselves are
- * stable). Warns once if a component identity churns between renders — that
- * remounts every card's content subtree and defeats memoization.
+ * stable). In development builds, warns once PER INSTANCE when any entry
+ * changes identity between renders — including appearing/disappearing
+ * entries: either way React sees a new component type and remounts every
+ * card's content subtree, defeating memoization.
  */
 export function useCollectionsComponentsValue(
   components?: CollectionsComponents
@@ -134,24 +134,20 @@ export function useCollectionsComponentsValue(
   );
 
   const previousRef = useRef(value);
+  const warnedRef = useRef(false);
   useEffect(() => {
     const previous = previousRef.current;
     previousRef.current = value;
-    if (warnedUnstableComponents || previous === value) return;
-    const churned =
-      (previous.ItemContent && value.ItemContent && previous.ItemContent !== value.ItemContent) ||
-      (previous.GhostContent && value.GhostContent && previous.GhostContent !== value.GhostContent) ||
-      (previous.TrimHandleContent &&
-        value.TrimHandleContent &&
-        previous.TrimHandleContent !== value.TrimHandleContent);
-    if (churned) {
-      warnedUnstableComponents = true;
-      console.warn(
-        "dnd-collections: a `components` entry changed identity between renders. " +
-          "Define ItemContent/GhostContent at module scope (a new component type per " +
-          "render remounts every card's content and defeats memoization)."
-      );
-    }
+    if (process.env.NODE_ENV === "production") return;
+    // The memo above keys on exactly the three fields, so a new value
+    // identity IS a field-identity change — symmetric by construction.
+    if (warnedRef.current || previous === value) return;
+    warnedRef.current = true;
+    console.warn(
+      "dnd-collections: a `components` entry changed identity between renders. " +
+        "Define ItemContent/GhostContent/TrimHandleContent at module scope — a new " +
+        "component type per render remounts every card's content and defeats memoization."
+    );
   }, [value]);
 
   return value;

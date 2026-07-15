@@ -92,6 +92,11 @@ const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
 // Gap between the floating overview tooltip and the top of the strip.
 const OVERVIEW_GAP = 8;
 
+// Layering inside the strip content: drop indicator and trim-handle hit
+// zones sit at z-20, the default trim-preview bubble at z-30; the consumer
+// overlay shares the bubble tier — above cards and handles, below nothing.
+const OVERLAY_Z_INDEX = 30;
+
 export type VirtualStripProps = Readonly<{
   collectionId: NodeId;
   /**
@@ -231,6 +236,28 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     };
     const widthForIndex = (index: number): number => widthForNode(nodesById.get(childIds[index]));
 
+    // The LIVE slot size for a mid-gesture trim, routed through the SAME
+    // width resolution as the committed layout by synthesizing a node that
+    // carries the live trim values. This is what makes "the last preview
+    // equals the committed size" hold for ANY consumer mapping — a custom
+    // `itemWidthFor` floor or nonlinear scale would otherwise drift from a
+    // raw seconds*pps preview and snap on release (the MIN_ITEM_WIDTH bug
+    // class, one level up). Corollary: a FIXED-width strip's card keeps its
+    // width during a trim (data changes, geometry doesn't) instead of
+    // resizing live and snapping back at commit.
+    const previewSlotSize = (nodeId: NodeId, live: LiveTrim): number => {
+      const node = nodesById.get(nodeId);
+      if (node && node.kind === "media") {
+        const previewNode: CollectionItemNode =
+          node.mediaKind === "video"
+            ? { ...node, trimInSeconds: live.trimInSeconds, trimOutSeconds: live.trimOutSeconds }
+            : { ...node, durationSeconds: live.effectiveSeconds };
+        return widthForNode(previewNode) + gap;
+      }
+      // Trims only exist on media; mirror the raw conversion as a safety net.
+      return slotSizeFor(live.effectiveSeconds, trimPixelsPerSecond ?? 0, gap);
+    };
+
     // Stable keys by node id (reorders move DOM nodes instead of repainting
     // every slot's contents) AND a stable callback identity: TanStack
     // memoizes its measurements array on getItemKey's IDENTITY, so an inline
@@ -290,24 +317,41 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         feedNodesRef.current = change.graph.nodesById;
         if (change.patch.type !== "nodes-updated") return;
         const s = trimStateRef.current;
+        // Index derived from the CHANGE's own graph, never a render-time
+        // cache: the store supports reentrant dispatch, and queued changes
+        // flush in order — a listener dispatching a MOVE before this update
+        // drains would make any cached index stale. O(children) per update,
+        // at commit cadence.
+        const children = change.graph.childrenById.get(collectionId);
+        if (!children) return;
         for (const update of change.patch.updates) {
-          const index = s.indexById.get(update.nodeId);
-          if (index === undefined) continue;
+          const index = children.indexOf(update.nodeId);
+          if (index === -1) continue;
           s.virtualizer.resizeItem(index, s.widthForNode(update.after) + s.gap);
         }
       });
-    }, [store, sizingFromData]);
+    }, [store, sizingFromData, collectionId]);
     // replaceGraph deliberately emits NO change event: a nodesById identity
     // the feed never saw is a wholesale swap, and surviving ids may carry
-    // stale key-based sizes — drop the whole measurement cache. (Also covers
-    // the initial mount, where measuring an empty cache is free.)
+    // stale key-based sizes — drop the whole measurement cache. The mount
+    // run only SEEDS the baseline (the initial layout measures itself).
     useEffect(() => {
       if (!sizingFromData) return;
-      if (feedNodesRef.current === nodesById) return;
+      if (feedNodesRef.current === null || feedNodesRef.current === nodesById) {
+        feedNodesRef.current = nodesById;
+        return;
+      }
+      feedNodesRef.current = nodesById;
       virtualizer.measure();
     }, [nodesById, sizingFromData, virtualizer]);
-    // A scale/layout config change re-derives every width.
+    // A scale/layout config change re-derives every width (mount run skipped
+    // for the same reason).
+    const configMeasuredRef = useRef(false);
     useEffect(() => {
+      if (!configMeasuredRef.current) {
+        configMeasuredRef.current = true;
+        return;
+      }
       virtualizer.measure();
     }, [pixelsPerSecond, itemWidth, gap, virtualizer]);
 
@@ -328,18 +372,18 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       indexById,
       virtualizer,
       gap,
-      trimPixelsPerSecond,
       widthForIndex,
       widthForNode,
+      previewSlotSize,
       nodesById,
     });
     trimStateRef.current = {
       indexById,
       virtualizer,
       gap,
-      trimPixelsPerSecond,
       widthForIndex,
       widthForNode,
+      previewSlotSize,
       nodesById,
     };
     const [liveTrim, setLiveTrim] = useState<{ nodeId: NodeId; trim: LiveTrim } | null>(null);
@@ -389,10 +433,11 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       }
 
       setLiveTrim({ nodeId, trim: live });
-      // Crisp width via resizeItem (grows/shrinks rightward). The right-edge
+      // Crisp width via resizeItem (grows/shrinks rightward), through the
+      // SAME width resolution as the committed layout. The right-edge
       // anchor is a composited transform derived during render, applied in
       // the SAME commit as this resize (atomic — no stutter).
-      s.virtualizer.resizeItem(index, slotSizeFor(live.effectiveSeconds, s.trimPixelsPerSecond ?? 0, s.gap));
+      s.virtualizer.resizeItem(index, s.previewSlotSize(nodeId, live));
     }, []);
     const trimPreview = useMemo<TrimPreview>(() => ({ previewTrim }), [previewTrim]);
 
@@ -586,7 +631,9 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     let dragShiftX = 0;
     const trimBaseline = trimBaselineRef.current;
     if (liveTrim && trimBaseline && trimBaseline.nodeId === liveTrim.nodeId && liveTrim.trim.side === "left") {
-      const liveSlot = slotSizeFor(liveTrim.trim.effectiveSeconds, trimPixelsPerSecond ?? 0, gap);
+      // Same preview-width resolution as resizeItem, or the anchor transform
+      // would cancel a different growth than the one that happened.
+      const liveSlot = previewSlotSize(liveTrim.nodeId, liveTrim.trim);
       dragShiftX = leftAnchorShift(liveSlot, trimBaseline.size0);
     }
     dragShiftRef.current = dragShiftX;
@@ -732,11 +779,11 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   auto-scroll, and the live-trim anchor transform all apply
                   for free. pointer-events: none so pan/drag/trim gestures
                   pass through; aria-hidden keeps the grid tree valid. */}
-              {overlay !== undefined && (
+              {overlay != null && (
                 <div
                   aria-hidden="true"
                   data-virtual-overlay
-                  style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 30 }}
+                  style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: OVERLAY_Z_INDEX }}
                 >
                   {overlay}
                 </div>
