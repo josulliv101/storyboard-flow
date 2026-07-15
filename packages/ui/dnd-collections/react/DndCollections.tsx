@@ -52,6 +52,7 @@ import {
   type CollectionsComponents,
 } from "./collections-components";
 import { CollectionsContainerContext } from "./container-context";
+import { LiveTrimChannelContext, useCreateLiveTrimChannel } from "./live-trim";
 import { useFlipGraphAnimation } from "./use-flip-graph-animation";
 import { NodeCardGhost } from "./node-views";
 import { CollectionsPointerSensor } from "./pointer-sensors";
@@ -155,6 +156,9 @@ export function DndCollections({
   children,
 }: DndCollectionsProps) {
   const componentsValue = useCollectionsComponentsValue(components);
+  // Live trim values ride a ref-backed emitter (never the store): only
+  // content that opted in via useLiveTrim re-renders per trim move.
+  const liveTrimChannel = useCreateLiveTrimChannel();
   // The store captures its options once, but callback props must stay fresh
   // — a parent passing an inline closure over its latest state expects that
   // version to be called. Route through a ref, updated in a layout effect
@@ -183,7 +187,9 @@ export function DndCollections({
   return (
     <CollectionsStoreProvider value={store}>
       <CollectionsComponentsContext.Provider value={componentsValue}>
-        <DndCollectionsContext animateMoves={animateMoves}>{children}</DndCollectionsContext>
+        <LiveTrimChannelContext.Provider value={liveTrimChannel}>
+          <DndCollectionsContext animateMoves={animateMoves}>{children}</DndCollectionsContext>
+        </LiveTrimChannelContext.Provider>
       </CollectionsComponentsContext.Provider>
     </CollectionsStoreProvider>
   );

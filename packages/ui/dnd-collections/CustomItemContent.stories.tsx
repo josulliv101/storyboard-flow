@@ -7,19 +7,25 @@ import {
   mediaDurationSeconds,
   parseNodeId,
   type GraphNodeSpec,
+  type MediaNode,
+  type NodeId,
 } from "./core/graph";
 import { DndCollections } from "./react/DndCollections";
 import {
   type CollectionGhostContentProps,
   type CollectionItemContentProps,
+  type CollectionTrimHandleContentProps,
 } from "./react/collections-components";
+import { useLiveTrim } from "./react/live-trim";
 import { CollectionPanels } from "./react/node-views";
 import { VirtualStrip } from "./virtual/VirtualStrip";
 import {
+  dispatchPointerSequence,
   dragHoldAt,
   moveHeldPointer,
   nodeCard,
   panelOrder,
+  rectCenter,
   rectPoint,
   releaseAt,
   waitForLayout,
@@ -151,16 +157,41 @@ function timelineGraph() {
   ]);
 }
 
+/** App-style trim-handle pixels: an amber zone whose intensity follows the
+ *  card's selection, with a grip line — filling the shell-owned hit zone. */
+const TimelineTrimHandle = memo(function TimelineTrimHandle({
+  side,
+  selected,
+}: CollectionTrimHandleContentProps) {
+  return (
+    <span
+      data-timeline-handle={side}
+      className={[
+        "flex h-full w-full items-center justify-center",
+        side === "left" ? "rounded-l-md" : "rounded-r-md",
+        selected ? "bg-amber-400" : "bg-amber-400/40",
+      ].join(" ")}
+    >
+      <span className="h-5 w-0.5 rounded bg-black/50" />
+    </span>
+  );
+});
+
 export const TimelineLookalike: Story = {
   // The end goal, as a story: consumer pixels dictate the entire card look
-  // (filmstrip, selection chrome, readout pill) while the package keeps
-  // widths-from-duration, trimming, selection, and drag behavior.
+  // (filmstrip, selection chrome, readout pill, trim-handle visuals) while
+  // the package keeps widths-from-duration, trim gestures, selection, and
+  // drag behavior. Registered at the provider so cards, handles, and ghost
+  // stay in sync from one place.
   render: () => (
-    <DndCollections initialGraph={timelineGraph()} animateMoves={false}>
+    <DndCollections
+      initialGraph={timelineGraph()}
+      animateMoves={false}
+      components={{ ItemContent: TimelineClipContent, TrimHandleContent: TimelineTrimHandle }}
+    >
       <div className="w-[640px] pt-10">
         <VirtualStrip
           collectionId={parseNodeId("strip")}
-          itemContent={TimelineClipContent}
           itemDragActivation="hold"
           itemWidthFor={(node) =>
             node.kind === "media" ? mediaDurationSeconds(node) * CLIP_PPS : undefined
@@ -183,6 +214,9 @@ export const TimelineLookalike: Story = {
     );
     expect(vid.textContent).toContain("7.00s / 10.00s");
     expect(vid.querySelector("[data-timeline-clip-badge]")).toBeNull();
+    // No duplicate readout: the default pill belongs to DefaultItemContent,
+    // which custom content replaces wholesale.
+    expect(vid.querySelector("[data-trim-pill]")).toBeNull();
 
     // Selection is still shell behavior; the BADGE is consumer pixels.
     const user = userEvent.setup();
@@ -192,11 +226,127 @@ export const TimelineLookalike: Story = {
       expect(vid.querySelector("[data-timeline-clip-badge]")).not.toBeNull();
     });
 
-    // Package-owned trim handles coexist with consumer pixels (siblings of
-    // the button, so they never live inside the consumer's markup).
+    // Package-owned trim-handle HIT ZONES coexist with consumer pixels
+    // (siblings of the button) — and their visuals are the registered
+    // TrimHandleContent, reflecting the selection.
     const wrapper = vid.closest("[data-node-wrapper]")!;
-    expect(wrapper.querySelector('[data-trim-handle="left"]')).not.toBeNull();
-    expect(wrapper.querySelector('[data-trim-handle="right"]')).not.toBeNull();
+    expect(
+      wrapper.querySelector('[data-trim-handle="left"] [data-timeline-handle="left"]')
+    ).not.toBeNull();
+    expect(
+      wrapper.querySelector('[data-trim-handle="right"] [data-timeline-handle="right"]')
+    ).not.toBeNull();
+  },
+};
+
+// ── Live trim readout via useLiveTrim ───────────────────────────────────────
+
+/** Leaf readout: the ONLY component that re-renders per trim move. */
+function LiveSeconds({ id, node }: { id: NodeId; node: MediaNode }) {
+  const live = useLiveTrim(id);
+  const seconds = live ? live.effectiveSeconds : mediaDurationSeconds(node);
+  return (
+    <span data-live-seconds={live ? "live" : "committed"} className="font-mono tabular-nums">
+      {seconds.toFixed(2)}s
+    </span>
+  );
+}
+
+const LiveReadoutContent = memo(function LiveReadoutContent({
+  id,
+  node,
+  trimEnabled,
+}: CollectionItemContentProps) {
+  const renders = useRef(0);
+  renders.current += 1;
+  return (
+    <span
+      data-content-render-count={renders.current}
+      className="flex h-full w-full flex-col justify-between rounded-md border border-border bg-background p-2 text-xs"
+    >
+      <span className="truncate">{node.name}</span>
+      {trimEnabled && node.kind === "media" && <LiveSeconds id={id} node={node} />}
+    </span>
+  );
+});
+
+export const LiveTrimReadout: Story = {
+  // A consumer duration readout that tracks the drag live via useLiveTrim:
+  // live during the gesture, committed after release — and scoped: the
+  // BYSTANDER card's content never re-renders during the trim.
+  render: () => (
+    <DndCollections
+      initialGraph={graphOrThrow([
+        {
+          kind: "collection",
+          id: "strip",
+          name: "Strip",
+          children: [
+            { kind: "media", id: "still", name: "Still", durationSeconds: 4 },
+            {
+              kind: "media",
+              mediaKind: "video",
+              id: "clip",
+              name: "Clip",
+              fullDurationSeconds: 10,
+              trimInSeconds: 0,
+              trimOutSeconds: 0,
+            },
+          ],
+        },
+      ])}
+      animateMoves={false}
+      components={{ ItemContent: LiveReadoutContent }}
+    >
+      <div className="w-[640px]">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * CLIP_PPS : undefined
+          }
+          trimPixelsPerSecond={CLIP_PPS}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const clip = nodeCard(canvasElement, "clip");
+    const still = nodeCard(canvasElement, "still");
+    await waitForLayout(clip);
+    const liveSeconds = () => clip.querySelector<HTMLElement>("[data-live-seconds]")!;
+    const stillContent = () => still.querySelector<HTMLElement>("[data-content-render-count]")!;
+
+    expect(liveSeconds()).toHaveAttribute("data-live-seconds", "committed");
+    expect(liveSeconds().textContent).toBe("10.00s");
+    const bystanderBefore = stillContent().getAttribute("data-content-render-count");
+
+    // Drag the right handle IN 48px (trim-out +2s) and HOLD: the readout
+    // tracks the drag live, before any commit.
+    const handle = clip
+      .closest("[data-node-wrapper]")!
+      .querySelector<HTMLElement>('[data-trim-handle="right"]')!;
+    const start = rectCenter(handle);
+    await dispatchPointerSequence([
+      { element: handle, type: "pointerdown", clientX: start.x, clientY: start.y },
+      { element: document, type: "pointermove", clientX: start.x - 24, clientY: start.y, delayAfterMs: 30 },
+      { element: document, type: "pointermove", clientX: start.x - 48, clientY: start.y, delayAfterMs: 30 },
+    ]);
+    await waitFor(() => {
+      expect(liveSeconds()).toHaveAttribute("data-live-seconds", "live");
+      expect(liveSeconds().textContent).toBe("8.00s");
+    });
+    // The bystander's content did not re-render for someone else's trim.
+    expect(stillContent().getAttribute("data-content-render-count")).toBe(bystanderBefore);
+
+    // Release commits: the readout settles on the committed value, no flash
+    // (the last live value equals the committed one).
+    await dispatchPointerSequence([
+      { element: document, type: "pointerup", clientX: start.x - 48, clientY: start.y, delayAfterMs: 30 },
+    ]);
+    await waitFor(() => {
+      expect(liveSeconds()).toHaveAttribute("data-live-seconds", "committed");
+      expect(liveSeconds().textContent).toBe("8.00s");
+    });
   },
 };
 

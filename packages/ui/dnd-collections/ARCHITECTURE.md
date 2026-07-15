@@ -146,7 +146,12 @@ The trim UI is edge handles on the card (`NodeCard trimPixelsPerSecond`),
 rendered as SIBLINGS of the draggable button so a handle press never reaches
 the item-drag sensor or the strip's pan. A handle drag converts pixels to
 seconds, clamps, and dispatches `update-media` once on release — the committed
-graph is untouched until then, exactly like a node drag.
+graph is untouched until then, exactly like a node drag. The shell/content
+split applies here too: the package owns each handle's hit zone and gesture;
+the pixels inside it are the `TrimHandleContent` slot, and duration readouts
+are card CONTENT (`DefaultItemContent`), with live drag values delivered to
+opted-in readouts over a ref-backed emitter (`useLiveTrim`) — never the
+store, so bystander cards stay frozen mid-gesture.
 
 The card resizes LIVE as the handle drags, and it does so without a graph
 commit OR a full re-measure. The view (VirtualStrip) provides a `TrimPreview`

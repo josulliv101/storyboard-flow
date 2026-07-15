@@ -10,6 +10,7 @@ import {
 import { type MediaNode, type VideoMediaNode } from "../core/graph";
 import { type MediaUpdate } from "../core/commands";
 import { useCollectionsStore } from "./collections-store";
+import { useLiveTrimPublisher } from "./live-trim";
 import { useTrimPreview, type LiveTrim } from "./trim-preview-context";
 
 // Shared trim-gesture core for BOTH the card edge handles (`trim-handles.tsx`)
@@ -131,6 +132,10 @@ export function useTrimPointerDrag(
 ) => void {
   const store = useCollectionsStore();
   const trimPreview = useTrimPreview();
+  // Second live-value consumer beside the view's TrimPreview: the emitter
+  // consumer content opts into via useLiveTrim (live per move, null when the
+  // gesture settles — abort, no-op, OR successful commit).
+  const publishLive = useLiveTrimPublisher();
   const activeCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(
@@ -199,6 +204,7 @@ export function useTrimPointerDrag(
         // trim committing on this node mid-gesture would otherwise strand
         // the preview bubble with a stale number.
         onLive?.(null);
+        publishLive(node.id, null);
         trimPreview.previewTrim(node.id, null);
       }
 
@@ -208,6 +214,7 @@ export function useTrimPointerDrag(
         const { update, live } = resolve((moveEvent.clientX - startX) / pixelsPerSecond);
         pending = update;
         onLive?.(live);
+        publishLive(node.id, live);
         trimPreview.previewTrim(node.id, live);
       }
 
@@ -223,12 +230,17 @@ export function useTrimPointerDrag(
         pending = null;
         if (upEvent.type === "pointercancel" || !update) {
           // Aborted (or a no-op click): drop the live preview, snapping back.
+          publishLive(node.id, null);
           trimPreview.previewTrim(node.id, null);
           return;
         }
         // Commit. The view reconciles to the new data (its last preview
         // already matches), so there is no flash.
         const dispatched = store.dispatch({ type: "update-media", nodeId: node.id, update });
+        // The emitter clears on EVERY settle, success included: subscribers'
+        // committed node now carries the same values the last live preview
+        // showed (quantize-then-clamp parity), so there is no flash.
+        publishLive(node.id, null);
         // A no-op (for example, moving away and returning to the committed
         // value before release) does not change graph identity, so views
         // cannot rely on their commit effect to clear the live preview.
@@ -240,6 +252,6 @@ export function useTrimPointerDrag(
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onUp);
     },
-    [node, store, trimPreview]
+    [node, store, trimPreview, publishLive]
   );
 }

@@ -9,7 +9,7 @@ import {
   type ComponentType,
 } from "react";
 
-import { type CollectionItemNode, type NodeId } from "../core/graph";
+import { type CollectionItemNode, type MediaNode, type NodeId } from "../core/graph";
 
 // The consumer-content seam: dnd-collections owns BEHAVIOR and GEOMETRY
 // (drag wiring, selection, trim gestures, aria, measurement, indicators);
@@ -45,6 +45,13 @@ export type CollectionItemContentProps = Readonly<{
    * card — leave room for it (the default content pads its top).
    */
   dragActivation: NodeCardDragActivation;
+  /**
+   * True when the shell renders trim handles on this card (a media node in
+   * a trim-enabled view). The default content gates its duration readout on
+   * it; pair yours with `useLiveTrim(id)` for a readout that tracks the
+   * drag live.
+   */
+  trimEnabled: boolean;
 }>;
 
 /**
@@ -67,12 +74,31 @@ export type CollectionGhostContentProps = Readonly<{
  *  width — fixed OR variable (virtual strips). */
 export type CollectionGhostContentComponent = ComponentType<CollectionGhostContentProps>;
 
+export type CollectionTrimHandleContentProps = Readonly<{
+  /** "left" = video trim-in; "right" = image duration / video trim-out. */
+  side: "left" | "right";
+  node: MediaNode;
+  selected: boolean;
+}>;
+
+/**
+ * The VISUALS inside a trim handle's hit zone. The shell keeps the zone
+ * itself — positioning, width, cursor, the pointer gesture, and its
+ * sibling-of-the-button DOM shape (load-bearing: a handle press must never
+ * reach the drag sensor or the strip's pan) — and renders this component
+ * filling it. Presentational only, like ItemContent.
+ */
+export type CollectionTrimHandleContentComponent =
+  ComponentType<CollectionTrimHandleContentProps>;
+
 export type CollectionsComponents = Readonly<{
   /** Replaces the card pixels everywhere (panels, virtual views). Per-view
    *  `itemContent` props override this registry entry. */
   ItemContent?: CollectionItemContentComponent;
   /** Replaces the drag-overlay ghost pixels. */
   GhostContent?: CollectionGhostContentComponent;
+  /** Replaces the pixels INSIDE the trim-handle hit zones. */
+  TrimHandleContent?: CollectionTrimHandleContentComponent;
 }>;
 
 const EMPTY_COMPONENTS: CollectionsComponents = {};
@@ -98,9 +124,13 @@ export function useCollectionsComponentsValue(
 ): CollectionsComponents {
   const ItemContent = components?.ItemContent;
   const GhostContent = components?.GhostContent;
+  const TrimHandleContent = components?.TrimHandleContent;
   const value = useMemo<CollectionsComponents>(
-    () => (ItemContent || GhostContent ? { ItemContent, GhostContent } : EMPTY_COMPONENTS),
-    [ItemContent, GhostContent]
+    () =>
+      ItemContent || GhostContent || TrimHandleContent
+        ? { ItemContent, GhostContent, TrimHandleContent }
+        : EMPTY_COMPONENTS,
+    [ItemContent, GhostContent, TrimHandleContent]
   );
 
   const previousRef = useRef(value);
@@ -110,7 +140,10 @@ export function useCollectionsComponentsValue(
     if (warnedUnstableComponents || previous === value) return;
     const churned =
       (previous.ItemContent && value.ItemContent && previous.ItemContent !== value.ItemContent) ||
-      (previous.GhostContent && value.GhostContent && previous.GhostContent !== value.GhostContent);
+      (previous.GhostContent && value.GhostContent && previous.GhostContent !== value.GhostContent) ||
+      (previous.TrimHandleContent &&
+        value.TrimHandleContent &&
+        previous.TrimHandleContent !== value.TrimHandleContent);
     if (churned) {
       warnedUnstableComponents = true;
       console.warn(

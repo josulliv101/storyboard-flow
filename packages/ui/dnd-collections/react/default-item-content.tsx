@@ -2,26 +2,64 @@
 
 import { memo } from "react";
 
-import { mediaDurationSeconds } from "../core/graph";
+import { mediaDurationSeconds, type MediaNode, type NodeId } from "../core/graph";
 import { type CollectionItemContentProps } from "./collections-components";
 import { roundSecondsForDisplay } from "./duration-format";
+import { useLiveTrim } from "./live-trim";
 import { NodeThumbnail } from "./node-thumbnail";
 
 // The package's stock card pixels — thumbnail, name, duration/child-count
-// label, selection ring, rejection flash, drag-source dimming — extracted
-// from NodeCard so consumers can swap in their own. This is also the
-// reference implementation for custom content: memoized, presentational
-// (spans only — it renders inside a <button>), and driven entirely by the
-// contract props. The card BOX (sizing, border-box position) belongs to the
-// shell; this fills it and paints everything visible.
+// label, selection ring, rejection flash, drag-source dimming, and (on
+// trim-enabled cards) the duration readouts — extracted from NodeCard so
+// consumers can swap in their own. This is also the reference implementation
+// for custom content: memoized, presentational (spans only — it renders
+// inside a <button>), and driven entirely by the contract props plus the
+// opt-in `useLiveTrim` seam. The card BOX (sizing, border-box position)
+// belongs to the shell; this fills it and paints everything visible.
+
+/**
+ * The trim readouts: the showing/full pill (committed data) and the live
+ * preview bubble that tracks a handle drag. A LEAF component on purpose —
+ * `useLiveTrim` re-renders its caller per pointer move, so the subscription
+ * is scoped to this readout, mounted only on trim-enabled media cards; the
+ * rest of the card never re-renders mid-gesture.
+ */
+function DefaultTrimReadout({ id, node }: { id: NodeId; node: MediaNode }) {
+  const live = useLiveTrim(id);
+  const pill =
+    node.mediaKind === "video"
+      ? `${mediaDurationSeconds(node).toFixed(2)}s / ${node.fullDurationSeconds.toFixed(2)}s`
+      : `${node.durationSeconds.toFixed(2)}s`;
+  return (
+    <>
+      {/* Showing/full readout pill (bottom-right), matching the app. */}
+      <span
+        data-trim-pill
+        className="pointer-events-none absolute right-1 bottom-1 z-20 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[9px] text-zinc-100 tabular-nums select-none"
+      >
+        {pill}
+      </span>
+      {live !== null && (
+        <span
+          data-trim-preview={live.effectiveSeconds}
+          className="pointer-events-none absolute -top-5 left-1/2 z-30 -translate-x-1/2 rounded bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-black shadow"
+        >
+          {roundSecondsForDisplay(live.effectiveSeconds)}s
+        </span>
+      )}
+    </>
+  );
+}
 
 export const DefaultItemContent = memo(function DefaultItemContent({
+  id,
   node,
   childCount,
   selected,
   rejected,
   isDragSource,
   dragActivation,
+  trimEnabled,
 }: CollectionItemContentProps) {
   const isCollection = node.kind === "collection";
   return (
@@ -50,6 +88,7 @@ export const DefaultItemContent = memo(function DefaultItemContent({
               {roundSecondsForDisplay(mediaDurationSeconds(node))}s
             </span>
           </span>
+          {trimEnabled && <DefaultTrimReadout id={id} node={node} />}
         </>
       ) : (
         <>
