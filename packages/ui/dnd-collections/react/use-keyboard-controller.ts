@@ -14,12 +14,15 @@ import {
   resolveKeyboardCommand,
   resolveTrashCommand,
   resolveTrimCommand,
+  resolveWindowMoveCommand,
   type GridRowMoveRejection,
   type KeyboardMoveAction,
   type KeyboardRejection,
   type KeyboardTrashRejection,
   type KeyboardTrimAction,
   type KeyboardTrimRejection,
+  type KeyboardWindowMoveAction,
+  type KeyboardWindowMoveRejection,
 } from "../core/keyboard";
 import { type CollectionsStore } from "./collections-store";
 import { roundSecondsForDisplay } from "./duration-format";
@@ -82,6 +85,27 @@ const TRIM_ACTION_BY_KEY: Readonly<Record<string, KeyboardTrimAction | undefined
 
 /** One keypress = one second, clamped by the reducer exactly like a drag. */
 const TRIM_STEP_SECONDS = 1;
+
+// Alt+Shift+Home/End SLIDE a video's source window (trim-in/out shift
+// together, showing duration constant) — the keyboard equivalent of dragging
+// the overview filmstrip. Home = earlier footage, End = later.
+const WINDOW_MOVE_ACTION_BY_KEY: Readonly<
+  Record<string, KeyboardWindowMoveAction | undefined>
+> = {
+  Home: "window-earlier",
+  End: "window-later",
+};
+
+// `undefined` = intentionally silent; keyed by the rejection union so a new
+// reason forces a decision here at compile time.
+const WINDOW_MOVE_REJECTION_MESSAGES: Readonly<
+  Record<KeyboardWindowMoveRejection["reason"], string | undefined>
+> = {
+  "no-source-window": "Only videos have a source window.",
+  "not-media-node": undefined,
+  "missing-node": undefined,
+  "invalid-step": undefined,
+};
 
 // `undefined` = intentionally silent (corrupt/out-of-scope input). Keyed by the
 // rejection union so a new reason forces a decision here at compile time.
@@ -214,6 +238,39 @@ export function useCollectionsKeyboard(args: {
     [store, announce]
   );
 
+  const handleWindowMove = useCallback(
+    (nodeId: NodeId, action: KeyboardWindowMoveAction) => {
+      const { graph } = store.getSnapshot();
+      const name = graph.nodesById.get(nodeId)?.name ?? "item";
+      const resolved = resolveWindowMoveCommand(graph, nodeId, action, TRIM_STEP_SECONDS);
+      if (!resolved.ok) {
+        const message = WINDOW_MOVE_REJECTION_MESSAGES[resolved.error.reason];
+        if (message) announce(message);
+        return;
+      }
+      const dispatched = store.dispatch(resolved.value);
+      if (!dispatched.ok) {
+        // No room left in that direction (or no trimmed room at all) — the
+        // resolver clamped to the current values and the reducer rejected
+        // the no-op. Announce the boundary.
+        if (dispatched.error.reason === "same-position") {
+          announce(
+            action === "window-earlier"
+              ? `"${name}" source window is at the start.`
+              : `"${name}" source window is at the end.`
+          );
+        }
+        return;
+      }
+      // A window move keeps the card mounted and its width constant — just
+      // announce the slide.
+      announce(
+        `Moved "${name}" source window ${action === "window-earlier" ? "earlier" : "later"}.`
+      );
+    },
+    [store, announce]
+  );
+
   const handleTrash = useCallback(
     (nodeId: NodeId, trashId: NodeId) => {
       const { graph } = store.getSnapshot();
@@ -289,7 +346,8 @@ export function useCollectionsKeyboard(args: {
       }
 
       const isCollectionsCommand = event.shiftKey
-        ? TRIM_ACTION_BY_KEY[event.key] !== undefined
+        ? TRIM_ACTION_BY_KEY[event.key] !== undefined ||
+          WINDOW_MOVE_ACTION_BY_KEY[event.key] !== undefined
         : KEYBOARD_ACTION_BY_KEY[event.key] !== undefined;
       if (isCollectionsCommand && store.getSnapshot().interaction.isDragging) {
         // A live dnd-kit drag owns movement until it commits or cancels. Do
@@ -301,10 +359,18 @@ export function useCollectionsKeyboard(args: {
         return;
       }
 
-      // Alt+SHIFT+Arrows TRIM the media card — checked before the move/grid
-      // logic so a held Shift never falls through to a move. (A non-arrow
-      // Shift combo is left alone: return without consuming the event.)
+      // Alt+SHIFT+Arrows TRIM the media card, Alt+SHIFT+Home/End SLIDE a
+      // video's source window — both checked before the move/grid logic so a
+      // held Shift never falls through to a move. (Any other Shift combo is
+      // left alone: return without consuming the event.)
       if (event.shiftKey) {
+        const windowAction = WINDOW_MOVE_ACTION_BY_KEY[event.key];
+        if (windowAction) {
+          event.preventDefault();
+          event.stopPropagation();
+          handleWindowMove(nodeId, windowAction);
+          return;
+        }
         const trimAction = TRIM_ACTION_BY_KEY[event.key];
         if (!trimAction) return;
         event.preventDefault();
@@ -354,7 +420,7 @@ export function useCollectionsKeyboard(args: {
       // doesn't render — fall back to the destination collection's own card.
       restoreFocus(nodeId, resolved.value.toParentId);
     },
-    [store, announce, trashRef, handleGridRowMove, handleTrim, handleTrash, restoreFocus]
+    [store, announce, trashRef, handleGridRowMove, handleTrim, handleWindowMove, handleTrash, restoreFocus]
   );
 
   return { handleKeyDownCapture, restoreFocus };

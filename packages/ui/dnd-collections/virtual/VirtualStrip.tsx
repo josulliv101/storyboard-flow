@@ -145,13 +145,15 @@ export type VirtualStripProps = Readonly<{
    *  MUST be identity-stable (module scope). */
   itemContent?: CollectionItemContentComponent;
   /**
-   * Rendered in CONTENT coordinates over the whole strip content (inside an
-   * `aria-hidden`, `pointer-events: none` layer above the cards), so it
-   * rides scrolling, auto-scroll, and the live-trim transform for free — a
-   * playhead line, region markers. Position children absolutely; convert
-   * time to x with the same `durationToWidth`/`pixelsPerSecond` scale.
-   * Re-enable pointer-events on your own elements if they must be
-   * interactive (they then sit above cards and handles — your trade-off).
+   * STRICTLY PRESENTATIONAL content rendered in CONTENT coordinates over the
+   * whole strip (inside an `aria-hidden`, `pointer-events: none` layer above
+   * the cards), so it rides scrolling, auto-scroll, and the live-trim
+   * transform for free — a playhead line, region markers. Position children
+   * absolutely; convert time to x with `timeToOffset`/`durationToWidth`.
+   * NO interactive or focusable elements: the layer is hidden from assistive
+   * technology, and a focusable child inside `aria-hidden` is an a11y
+   * violation (focusable-but-invisible to AT). An interactive scrubber
+   * belongs in your own positioned layer OUTSIDE the strip.
    */
   overlay?: ReactNode;
   className?: string;
@@ -778,7 +780,10 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   coordinates: living inside the spacer means scroll,
                   auto-scroll, and the live-trim anchor transform all apply
                   for free. pointer-events: none so pan/drag/trim gestures
-                  pass through; aria-hidden keeps the grid tree valid. */}
+                  pass through; aria-hidden keeps the grid tree valid —
+                  which is why the slot is PRESENTATIONAL ONLY (a focusable
+                  child inside aria-hidden would be reachable by keyboard
+                  yet invisible to assistive technology). */}
               {overlay != null && (
                 <div
                   aria-hidden="true"

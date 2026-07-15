@@ -38,7 +38,22 @@ const FRAME_SIZE = 44;
 
 /** The stock overview background: the full-source poster filmstrip plus the
  *  "full clip" readout. Consumers replace it via the `OverviewContent`
- *  registry slot; the dims/window/grips/move gesture stay package-owned. */
+ *  registry slot; the dims/window/grips/move gesture stay package-owned.
+ *
+ *  Memo comparator: the contract carries live trimIn/trimOut (changing per
+ *  pointer move during a drag), but THIS renderer reads only `node` and
+ *  `fullWidth` — a shallow memo would reconcile up to 40 <img> elements per
+ *  move for nothing. Custom OverviewContent components that DO read the trim
+ *  values get standard shallow memo semantics (they registered their own
+ *  component, not this one). */
+const defaultOverviewPropsEqual = (
+  prev: CollectionTrimOverviewContentProps,
+  next: CollectionTrimOverviewContentProps
+): boolean =>
+  prev.node === next.node &&
+  prev.pixelsPerSecond === next.pixelsPerSecond &&
+  prev.fullWidth === next.fullWidth;
+
 export const DefaultTrimOverviewContent = memo(function DefaultTrimOverviewContent({
   node,
   fullWidth,
@@ -75,7 +90,7 @@ export const DefaultTrimOverviewContent = memo(function DefaultTrimOverviewConte
       </span>
     </>
   );
-});
+}, defaultOverviewPropsEqual);
 
 export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   node,
@@ -116,10 +131,9 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
     <div
       data-trim-overview={node.id}
       // Pointer-only source-window visualization: aria-hidden so assistive
-      // tech isn't led into an unlabeled filmstrip. Trimming is available to
-      // the keyboard via the focused card + Alt+Shift+Arrows. (Sliding the
-      // source window without changing duration is still pointer-only — a
-      // keyboard equivalent is a known gap, tracked for a follow-up.)
+      // tech isn't led into an unlabeled filmstrip. Every operation it
+      // offers has a keyboard equivalent on the focused card: Alt+Shift+
+      // Arrows trim the edges, Alt+Shift+Home/End slide the source window.
       aria-hidden="true"
       // Dragging the filmstrip (anywhere but the amber grips, which
       // stopPropagation) MOVES the source window.

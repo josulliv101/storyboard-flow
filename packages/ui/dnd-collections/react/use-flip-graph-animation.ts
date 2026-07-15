@@ -15,9 +15,18 @@ type CardRect = Readonly<{ card: HTMLElement; nodeId: string; point: Point }>;
 
 function measureCards(container: HTMLElement): CardRect[] {
   const rects: CardRect[] = [];
-  for (const card of container.querySelectorAll<HTMLElement>("[data-node-id]")) {
-    const nodeId = card.dataset.nodeId;
+  for (const idElement of container.querySelectorAll<HTMLElement>("[data-node-id]")) {
+    const nodeId = idElement.dataset.nodeId;
     if (!nodeId) continue;
+    // Animate the WHOLE item, not just the element carrying the id: both
+    // NodeCard and CollectionItem.Root put `data-node-id` on the focusable
+    // selection button, whose SIBLINGS (grip bar, trim handles, consumer
+    // controls in compound items, indicators) live in the `data-node-wrapper`
+    // host — translating only the button would teleport everything else to
+    // the final position while the button glides. Identity stays keyed by
+    // the id element; custom views without a wrapper animate the id element
+    // itself, preserving the documented contract.
+    const card = idElement.closest<HTMLElement>("[data-node-wrapper]") ?? idElement;
     const rect = card.getBoundingClientRect();
     rects.push({ card, nodeId, point: { x: rect.left, y: rect.top } });
   }

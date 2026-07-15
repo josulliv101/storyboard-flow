@@ -538,7 +538,8 @@ export const FlipAnimatesCommits: Story = {
     // moment the awaited click returns. alpha travels back left, and bravo
     // (which never re-rendered) shifts too.
     await user.click(canvas.getByRole("button", { name: /undo/i }));
-    const moved = nodeCard(canvasElement, "alpha");
+    // FLIP animates the WRAPPER (the whole item, siblings included).
+    const moved = flipHost(nodeCard(canvasElement, "alpha"));
     expect(moved.getAnimations().length).toBeGreaterThan(0);
 
     await waitFor(() => {
@@ -597,15 +598,6 @@ export const TwoInstancesStayIsolated: Story = {
     // live when the awaited click returns.
     await user.click(within(boardOne).getByRole("button", { name: /undo/i }));
 
-    // getAnimations() also reports CSS transitions (the card has
-    // transition-all), so pick out FLIP by its translate keyframe.
-    const flipTransforms = (el: HTMLElement) =>
-      el.getAnimations().flatMap((a) => {
-        if (!(a.effect instanceof KeyframeEffect)) return [];
-        const t = a.effect.getKeyframes()[0]?.transform;
-        return typeof t === "string" && t.startsWith("translate") ? [t] : [];
-      });
-
     // Board one's alpha slides home WITHIN ITS ROW: the inverted transform
     // must have a zero vertical component. A cross-instance rect collision
     // would produce a large dy (the distance between the boards).
@@ -620,24 +612,35 @@ export const TwoInstancesStayIsolated: Story = {
   },
 };
 
-// FLIP keyframe transforms of an element, excluding CSS transitions (the
-// card has transition-all) — picked out by the translate keyframe.
-function flipTransforms(el: HTMLElement): string[] {
-  return el.getAnimations().flatMap((a) => {
-    if (!(a.effect instanceof KeyframeEffect)) return [];
-    const t = a.effect.getKeyframes()[0]?.transform;
-    return typeof t === "string" && t.startsWith("translate") ? [t] : [];
-  });
+// FLIP animates the data-node-wrapper HOST (the whole item — button plus
+// sibling grip/handles/indicators), keyed by the data-node-id element.
+// Resolve a card button to the element the sweep actually animates.
+function flipHost(el: HTMLElement): HTMLElement {
+  return el.closest<HTMLElement>("[data-node-wrapper]") ?? el;
 }
 
-// The in-flight FLIP animation on an element (its translate keyframe effect),
+// FLIP keyframe transforms of a card, excluding CSS transitions (the card
+// has transition-all) — picked out by the translate keyframe.
+function flipTransforms(el: HTMLElement): string[] {
+  return flipHost(el)
+    .getAnimations()
+    .flatMap((a) => {
+      if (!(a.effect instanceof KeyframeEffect)) return [];
+      const t = a.effect.getKeyframes()[0]?.transform;
+      return typeof t === "string" && t.startsWith("translate") ? [t] : [];
+    });
+}
+
+// The in-flight FLIP animation on a card (its translate keyframe effect),
 // or undefined once it has finished/cancelled.
 function flipAnimation(el: HTMLElement): Animation | undefined {
-  return el.getAnimations().find((a) => {
-    if (!(a.effect instanceof KeyframeEffect)) return false;
-    const t = a.effect.getKeyframes()[0]?.transform;
-    return typeof t === "string" && t.startsWith("translate");
-  });
+  return flipHost(el)
+    .getAnimations()
+    .find((a) => {
+      if (!(a.effect instanceof KeyframeEffect)) return false;
+      const t = a.effect.getKeyframes()[0]?.transform;
+      return typeof t === "string" && t.startsWith("translate");
+    });
 }
 
 // Wait for an element's FLIP animation to advance past its start. A commit

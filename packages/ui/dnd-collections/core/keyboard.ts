@@ -245,6 +245,62 @@ export function resolveTrimCommand(
   return { ok: true, value: { type: "update-media", nodeId, update } };
 }
 
+// Keyboard source-window move: slide a video's showing window through its
+// source without changing the showing duration — the keyboard equivalent of
+// dragging the overview filmstrip. "earlier" reveals earlier footage
+// (trim-in decreases, trim-out increases); "later" the reverse. Resolves to
+// the SAME `update-media` command every other trim surface dispatches.
+//
+// Unlike the edge-trim resolver (which sends the raw stepped value and lets
+// the reducer clamp), this resolver clamps ITSELF, mirroring the pointer
+// `resolveMove` math: both trims must shift together to hold the duration
+// constant, and the reducer's independent per-end clamps would otherwise
+// change it. A step with no room left resolves to the current values, which
+// the reducer rejects as `same-position` — the controller announces it as a
+// boundary.
+export type KeyboardWindowMoveAction = "window-earlier" | "window-later";
+
+export type KeyboardWindowMoveRejection =
+  | Readonly<{ reason: "missing-node"; nodeId: NodeId }>
+  | Readonly<{ reason: "not-media-node"; nodeId: NodeId }>
+  | Readonly<{ reason: "invalid-step"; stepSeconds: number }>
+  /** Images have no source window to slide. */
+  | Readonly<{ reason: "no-source-window"; nodeId: NodeId }>;
+
+export function resolveWindowMoveCommand(
+  graph: CollectionsGraph,
+  nodeId: NodeId,
+  action: KeyboardWindowMoveAction,
+  stepSeconds: number
+): Result<UpdateMediaCommand, KeyboardWindowMoveRejection> {
+  if (!Number.isFinite(stepSeconds) || stepSeconds <= 0) {
+    return { ok: false, error: { reason: "invalid-step", stepSeconds } };
+  }
+  const node = graph.nodesById.get(nodeId);
+  if (!node) return { ok: false, error: { reason: "missing-node", nodeId } };
+  if (node.kind !== "media") return { ok: false, error: { reason: "not-media-node", nodeId } };
+  if (node.mediaKind !== "video") {
+    return { ok: false, error: { reason: "no-source-window", nodeId } };
+  }
+
+  // The slack the window can slide through is exactly the trimmed room.
+  const room = node.trimInSeconds + node.trimOutSeconds;
+  const raw =
+    action === "window-earlier"
+      ? node.trimInSeconds - stepSeconds
+      : node.trimInSeconds + stepSeconds;
+  const trimInSeconds = Math.max(0, Math.min(raw, room));
+  const trimOutSeconds = room - trimInSeconds;
+  return {
+    ok: true,
+    value: {
+      type: "update-media",
+      nodeId,
+      update: { mediaKind: "video", trimInSeconds, trimOutSeconds },
+    },
+  };
+}
+
 // Keyboard trash: move the focused node into a designated trash collection —
 // the keyboard equivalent of dropping it on the TrashTarget. Resolves to the
 // SAME move-nodes command (append to the trash collection's end), so subtrees

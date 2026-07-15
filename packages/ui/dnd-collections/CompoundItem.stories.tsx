@@ -209,3 +209,65 @@ export const InteractiveCompoundItems: Story = {
     });
   },
 };
+
+export const CompoundFlipAnimatesWholeItem: Story = {
+  // FLIP animates the data-node-wrapper HOST — the whole compound item,
+  // consumer controls and handles included — not just the selection surface
+  // (which would let siblings teleport while the surface glides).
+  render: () => (
+    <DndCollections initialGraph={compoundGraph()}>
+      <CompoundList />
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "alpha"));
+    const user = userEvent.setup();
+    nodeCard(canvasElement, "alpha").focus();
+
+    // The commit's FLIP sweep plays synchronously in the layout effect, so
+    // animations are live the moment the awaited keypress returns.
+    await user.keyboard("{Alt>}{ArrowRight}{/Alt}");
+    const wrapper = canvasElement.querySelector<HTMLElement>('[data-node-wrapper="alpha"]')!;
+    const flip = wrapper.getAnimations().flatMap((a) => {
+      if (!(a.effect instanceof KeyframeEffect)) return [];
+      const t = a.effect.getKeyframes()[0]?.transform;
+      return typeof t === "string" && t.startsWith("translate") ? [t] : [];
+    });
+    expect(flip.length).toBeGreaterThan(0);
+
+    await waitFor(() => {
+      expect(listOrder(canvasElement)).toEqual(["bravo", "alpha", "charlie"]);
+    });
+  },
+};
+
+export const CompoundKeyboardGrab: Story = {
+  // The manual Enter-grab wiring on SelectionSurface (the KeyboardSensor
+  // activator attached by hand): Enter picks the item up (ghost appears),
+  // Escape cancels cleanly.
+  render: () => (
+    <DndCollections initialGraph={compoundGraph()} animateMoves={false}>
+      <CompoundList />
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "alpha"));
+    const user = userEvent.setup();
+    nodeCard(canvasElement, "alpha").focus();
+
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(
+        canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')
+      ).not.toBeNull();
+    });
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(
+        canvasElement.ownerDocument.querySelector('[data-testid="drag-ghost"]')
+      ).toBeNull();
+    });
+    expect(listOrder(canvasElement)).toEqual(["alpha", "bravo", "charlie"]);
+  },
+};
