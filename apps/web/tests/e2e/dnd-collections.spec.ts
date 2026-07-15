@@ -569,6 +569,84 @@ test.describe('DndCollections E2E', () => {
     await expect(page.getByRole('button', { name: /undo/i })).toBeEnabled();
   });
 
+  test('playhead overlay rides a live left-trim anchor and stays put on commit', async ({
+    page,
+  }) => {
+    await page.goto(storyPath('ui-dndcollectionsvirtual--playhead-overlay-playground'));
+    const strip = page.locator('[data-virtual-strip="strip"]');
+    const video = card(page, 'vid');
+    const playhead = page.locator('[data-playhead]');
+    const leftHandle = video
+      .locator('xpath=ancestor::*[@data-node-wrapper][1]')
+      .locator('[data-trim-handle="left"]');
+    await leftHandle.waitFor({ state: 'visible' });
+
+    const videoBefore = (await video.boundingBox())!;
+    const playheadBefore = (await playhead.boundingBox())!;
+    const handleBox = (await leftHandle.boundingBox())!;
+    const startX = handleBox.x + handleBox.width / 2;
+    const startY = handleBox.y + handleBox.height / 2;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX - 48, startY, { steps: 10 });
+
+    await expect.poll(async () => Math.round((await video.boundingBox())!.width)).toBe(240);
+    const videoLive = (await video.boundingBox())!;
+    const playheadLive = (await playhead.boundingBox())!;
+    expect(
+      Math.abs(videoLive.x + videoLive.width - (videoBefore.x + videoBefore.width))
+    ).toBeLessThanOrEqual(2);
+    expect(Math.round(playheadLive.x - playheadBefore.x)).toBe(-48);
+
+    await page.mouse.up();
+    await expect
+      .poll(async () => {
+        const settled = (await playhead.boundingBox())!;
+        return Math.abs(settled.x - playheadLive.x);
+      })
+      .toBeLessThanOrEqual(2);
+    await expect
+      .poll(() =>
+        strip.locator('[role="row"]').evaluate((el) => getComputedStyle(el).transform)
+      )
+      .toBe('none');
+  });
+
+  test('real-mouse drag moves an item from a virtual strip into a virtual grid', async ({
+    page,
+  }) => {
+    await page.goto(storyPath('ui-dndcollectionsvirtualgrid--strip-to-grid-playground'));
+    const grid = page.locator('[data-virtual-grid="grid"]');
+    await mouseDrag(page, page.locator('[data-drag-handle="s0"]'), card(page, 'g2'), 0.15);
+
+    await expect
+      .poll(async () =>
+        grid.locator('[data-node-id]').evaluateAll((els) =>
+          els.map((el) => (el as HTMLElement).dataset.nodeId ?? '')
+        )
+      )
+      .toEqual(['g0', 'g1', 's0', 'g2', 'g3', 'g4', 'g5', 'g6', 'g7']);
+    await expect(page.locator('[data-virtual-strip="strip"] [data-node-id="s0"]')).toHaveCount(0);
+  });
+
+  test('real-mouse trash drop is undoable', async ({ page }) => {
+    await page.goto(storyPath('ui-dndcollectionspalette--palette-playground'));
+    const trash = page.locator('[data-trash-target="trash"]');
+
+    await mouseDrag(page, card(page, 'bravo'), trash);
+
+    await expect.poll(() => panelOrder(page, 'panel-a')).toEqual(['alpha', 'charlie']);
+    await expect(trash).toContainText(/trash \(1\)/i);
+
+    await page.getByRole('button', { name: /undo/i }).click();
+    await expect.poll(() => panelOrder(page, 'panel-a')).toEqual([
+      'alpha',
+      'bravo',
+      'charlie',
+    ]);
+    await expect(trash).toHaveText(/^trash$/i);
+  });
+
   test('reorders within a collection (drop on right half = after)', async ({ page }) => {
     await page.goto(storyPath(PLAYGROUND));
 

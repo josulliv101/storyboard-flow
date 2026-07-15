@@ -135,18 +135,22 @@ function stripAndGridGraph() {
   return result.value;
 }
 
-export const StripToGridMove: Story = {
-  // §6/§7: moving between a horizontal strip and a vertical grid — two
-  // virtualized views, one provider, one graph; the drop resolves against
-  // whichever container is under the pointer.
-  render: () => (
+function StripAndGridExample() {
+  return (
     <DndCollections initialGraph={stripAndGridGraph()}>
       <div className="flex w-[600px] flex-col gap-6">
         <VirtualStrip collectionId={parseNodeId("strip")} />
         <VirtualGrid collectionId={parseNodeId("grid")} columns={COLUMNS} height={300} />
       </div>
     </DndCollections>
-  ),
+  );
+}
+
+export const StripToGridMove: Story = {
+  // §6/§7: moving between a horizontal strip and a vertical grid — two
+  // virtualized views, one provider, one graph; the drop resolves against
+  // whichever container is under the pointer.
+  render: () => <StripAndGridExample />,
   play: async ({ canvasElement }) => {
     // s0 lives in a strip: item drags start on its grip bar (the body pans).
     const s0 = nodeHandle(canvasElement, "s0");
@@ -162,6 +166,11 @@ export const StripToGridMove: Story = {
       expect(strip.querySelector<HTMLElement>("[data-node-id]")!.dataset.nodeId).toBe("s1");
     });
   },
+};
+
+/** Play-less twin for real-mouse cross-view drops in Playwright. */
+export const StripToGridPlayground: Story = {
+  render: () => <StripAndGridExample />,
 };
 
 export const GridKeyboardRowMoves: Story = {

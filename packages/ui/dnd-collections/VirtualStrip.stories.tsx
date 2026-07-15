@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 
-import { buildGraph, mediaDurationSeconds, parseNodeId, type GraphNodeSpec } from "./core/graph";
+import {
+  buildGraph,
+  mediaDurationSeconds,
+  parseNodeId,
+  type GraphNodeSpec,
+} from "./core/graph";
 import { useCollectionsStore } from "./react/collections-store";
 import { DndCollections } from "./react/DndCollections";
 import { UndoRedoControls } from "./react/history-views";
@@ -1786,13 +1791,35 @@ export const PixelsPerSecondSizing: Story = {
   },
 };
 
-export const PlayheadOverlay: Story = {
-  // The overlay slot renders in CONTENT coordinates: a playhead placed with
-  // the shared durationToWidth scale sits at its exact content x and rides
-  // scrolling for free — its viewport position shifts by exactly the scroll
-  // while its content-relative offset never changes.
-  render: () => (
-    <DndCollections initialGraph={ppsGraph()} animateMoves={false}>
+function playheadGraph() {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "strip",
+      name: "Strip",
+      children: [
+        { kind: "media", id: "img", name: "Img", durationSeconds: 4 },
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "Vid",
+          fullDurationSeconds: 10,
+          trimInSeconds: 2,
+          trimOutSeconds: 0,
+        },
+        { kind: "collection", id: "folder", name: "Folder", children: [] },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+function PlayheadOverlayExample() {
+  return (
+    <DndCollections initialGraph={playheadGraph()} animateMoves={false}>
+      <SelectOnMount id="vid" />
       <div className="w-[320px]">
         <VirtualStrip
           collectionId={parseNodeId("strip")}
@@ -1813,7 +1840,15 @@ export const PlayheadOverlay: Story = {
         />
       </div>
     </DndCollections>
-  ),
+  );
+}
+
+export const PlayheadOverlay: Story = {
+  // The overlay slot renders in CONTENT coordinates: a playhead placed with
+  // the shared durationToWidth scale sits at its exact content x and rides
+  // scrolling for free — its viewport position shifts by exactly the scroll
+  // while its content-relative offset never changes.
+  render: () => <PlayheadOverlayExample />,
   play: async ({ canvasElement }) => {
     await waitForLayout(nodeCard(canvasElement, "img"));
     const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
@@ -1835,4 +1870,9 @@ export const PlayheadOverlay: Story = {
     });
     expect(Math.round(contentOffset())).toBe(120);
   },
+};
+
+/** Play-less twin for real-pointer left-trim anchoring assertions. */
+export const PlayheadOverlayPlayground: Story = {
+  render: () => <PlayheadOverlayExample />,
 };
