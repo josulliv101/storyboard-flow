@@ -6,7 +6,8 @@
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
     "test:storybook": "vitest --project=storybook --run",
-    "test:storybook:coverage": "vitest --project=storybook --run --coverage"
+    "test:storybook:coverage": "vitest --project=storybook --run --coverage",
+    "test:dnd-collections:coverage": "vitest --run --coverage ../../packages/ui/dnd-collections --coverage.reportsDirectory=coverage/dnd-collections --testNamePattern=\"^(?!.*Render Efficiency During Drag).*$\" && vitest --project=storybook --run ../../packages/ui/dnd-collections/DndCollections.stories.tsx --testNamePattern=\"Render Efficiency During Drag\""
   },
   "dependencies": {
     "@storyboard/db": "*",

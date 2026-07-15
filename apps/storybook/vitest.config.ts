@@ -13,10 +13,15 @@ const dirname =
 export default defineConfig({
   test: {
     coverage: {
+      allowExternal: true,
       exclude: [
         ...coverageConfigDefaults.exclude,
         "**/.storybook/**",
+        "**/*stories-helpers.*",
         "**/*.stories.*",
+        "**/*.test.*",
+        "**/*.spec.*",
+        "**/__tests__/**",
         "**/storybook-static/**",
         "**/test-results/**",
         "**/playwright-report/**",
