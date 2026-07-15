@@ -420,3 +420,36 @@ export const TrashViaKeyboard: Story = {
     });
   },
 };
+
+export const TrashViaKeyboardFocusFallbacks: Story = {
+  // Deleting the last sibling focuses the previous card; deleting the only
+  // remaining card focuses the hidden collection's visible trash target.
+  render: () => <PaletteBoard />,
+  play: async ({ canvasElement }) => {
+    const user = userEvent.setup();
+    const trash = canvasElement.querySelector<HTMLElement>("[data-trash-target]")!;
+    await waitForLayout(nodeCard(canvasElement, "charlie"));
+
+    nodeCard(canvasElement, "charlie").focus();
+    await user.keyboard("{Alt>}{Delete}{/Alt}");
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo"]);
+      expect(document.activeElement?.getAttribute("data-node-id")).toBe("bravo");
+    });
+
+    nodeCard(canvasElement, "alpha").focus();
+    await user.keyboard("{Alt>}{Delete}{/Alt}");
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")).toEqual(["bravo"]);
+      expect(document.activeElement?.getAttribute("data-node-id")).toBe("bravo");
+    });
+
+    nodeCard(canvasElement, "bravo").focus();
+    await user.keyboard("{Alt>}{Delete}{/Alt}");
+    await waitFor(() => {
+      expect(panelOrder(canvasElement, "panel-a")).toEqual([]);
+      expect(document.activeElement).toBe(trash);
+      expect(trash.textContent).toMatch(/trash \(3\)/i);
+    });
+  },
+};
