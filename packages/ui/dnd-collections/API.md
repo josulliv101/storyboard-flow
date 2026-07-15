@@ -158,7 +158,7 @@ The empty graph constant.
 | Export | Signature | Notes |
 | --- | --- | --- |
 | `isCollection` | `(node: CollectionItemNode) => node is CollectionNode` | Type guard. |
-| `getChildren` | `(graph, collectionId) => readonly NodeId[]` | `[]` for unknown/media ids. Returned array is reference-stable across moves that don't touch this collection. |
+| `getChildren` | `(graph, collectionId) => readonly NodeId[]` | `[]` for unknown/media ids (a shared constant, so even the miss case is reference-stable — safe in selectors). Returned array is reference-stable across moves that don't touch this collection. |
 | `isSameOrAncestor` | `(graph, possibleAncestorId, id) => boolean` | True if `possibleAncestorId` is `id` or an ancestor. O(depth), cycle-guarded. |
 | `getDocumentOrder` | `(graph) => ReadonlyMap<NodeId, number>` | Depth-first reading-order index of every node. |
 
@@ -518,9 +518,10 @@ layer is a separate, always-available set of quick semantic moves:
 | Alt+Shift+ArrowUp / Alt+Shift+ArrowDown | Trim the video start edge (trim-in); images reject |
 | Alt+Delete | Move to trash (only while a `<TrashTarget>` is mounted) |
 
-Inside a `VirtualGrid`, Alt+ArrowUp / Alt+ArrowDown become row moves (± the
-column count); Alt+Enter / Alt+Backspace are the grid-safe synonyms for
-`nest-in-neighbor` / `move-out`.
+Alt+Enter / Alt+Backspace are always-available synonyms for
+`nest-in-neighbor` / `move-out` — they matter inside a `VirtualGrid`, where
+Alt+ArrowUp / Alt+ArrowDown become row moves (± the column count) and the
+arrow bindings are therefore unavailable for nesting.
 
 The pointer trim handles and the source-window overview are `aria-hidden`
 visual affordances — the accessible way to trim is a focused card plus the
@@ -563,10 +564,10 @@ type CollectionsChange = {
 | `clearSelection` | `() => void` | No-op when already empty. |
 | `beginDrag` | `(pressedId: NodeId) => void` | Drag set = the selection if it contains `pressedId` (pressed id first — it's the overlay primary), else just `pressedId`. Sets `isDragging`. |
 | `beginPaletteDrag` | `() => void` | Marks a palette drag live (`isDragging` without `activeIds`). Ends via `endDrag`. |
-| `setDropIntent` | `(intent: DropIntent \| null) => void` | Deduplicates equal intents; computes `dropIntentInvalid` once per change. |
+| `setDropIntent` | `(intent: DropIntent \| null) => void` | Deduplicates equal intents; computes `dropIntentInvalid` once per change. Non-null intents are IGNORED while no drag is live (`isDragging` false) — a dnd-kit gesture can outlive the store's drag state (`replaceGraph` mid-drag, failed palette factory) and must not repaint indicators. `null` always clears. |
 | `endDrag` | `() => void` | Clears drag state; never mutates the graph. |
 | `flashRejection` | `(ids: readonly NodeId[]) => void` | Sets `rejectedIdSet` for 600ms (re-flash resets the timer). |
-| `destroy` | `() => void` | Clears listeners and any pending flash timer; the provider calls it on unmount. |
+| `destroy` | `() => void` | Clears listeners, any pending flash timer, AND live flash state (a store can outlive effect cleanup — Activity-style hide — and must not stay flagged); the provider calls it on unmount. |
 
 ```ts
 type CollectionsSnapshot = {
@@ -612,12 +613,12 @@ ones (everything they do goes through the store API above).
 | --- | --- | --- |
 | `CollectionPanels` | `collectionIds?: readonly NodeId[]` | One panel per id (default: the graph's roots). FLIP animation is owned by `<DndCollections animateMoves>`, not here. |
 | `CollectionPanel` | `collectionId: NodeId` | One droppable panel with its cards. |
-| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: "body" \| "handle" \| "hold"`, `trimPixelsPerSecond?: number` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only activator; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). A finite, positive `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in); invalid scales are treated as omitted. The card resizes LIVE during the drag when the view provides a `TrimPreview` (VirtualStrip does, via targeted `resizeItem`); without one it still trims, just without live resize. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
+| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: NodeCardDragActivation` (`"body" \| "handle" \| "hold"`), `rovingTabIndex?: number`, `trimPixelsPerSecond?: number` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only POINTER activator — the keyboard grab (Enter) stays on the card button in every mode; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). `rovingTabIndex` (0 or -1) is for virtualized views' single-tab-stop roving focus: exactly one mounted card is `0`; it also demotes the grip to `-1` (pointer-only). A finite, positive `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in); invalid scales are treated as omitted. The card resizes LIVE during the drag when the view provides a `TrimPreview` (VirtualStrip does, via targeted `resizeItem`); without one it still trims, just without live resize. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
 | `NodeCardGhost` | `node: CollectionItemNode`, `extraCount: number` | The drag-overlay ghost; renders a `+N` badge when `extraCount > 0`. |
-| `UndoRedoControls` | — | Buttons bound to `store.undo`/`store.redo`, disabled off `canUndo`/`canRedo`. |
+| `UndoRedoControls` | — | Buttons bound to `store.undo`/`store.redo`, disabled off `canUndo`/`canRedo`. Announces "Change undone." / "Change redone." through the instance live region (best-effort: silent under bare `CollectionsStoreProvider` hosting). |
 | `HistoryLog` | — | Human-readable command log over `historyEntries`. |
-| `PaletteItem` | `paletteId: string`, `createNode: () => CollectionItemNode`, `children?` | External drag source; the factory runs at drag START (fresh ids per drag). Its runtime result is validated and copied before drag state is published; throws or malformed values cancel with one announcement. The drop commits `add-nodes` through the standard intent pipeline. |
-| `TrashTarget` | `trashId: NodeId` | Styled panel droppable for a (usually hidden) trash root; drops are ordinary moves — subtrees ride along, undo restores, nothing is deleted. The id must resolve to a live collection; invalid targets stay disabled. |
+| `PaletteItem` | `paletteId: string`, `createNode: () => CollectionItemNode`, `children?` | External drag source; the factory runs at drag START (fresh ids per drag). Its runtime result is validated and copied before drag state is published; throws or malformed values cancel with one announcement. The drop commits `add-nodes` through the standard intent pipeline. `aria-describedby` points at palette-specific keyboard instructions (Enter picks up, arrows aim, Enter drops) rather than dnd-kit's blanked default. |
+| `TrashTarget` | `trashId: NodeId` | Styled panel droppable (`role="group"`, which supports `aria-disabled`) for a (usually hidden) trash root; drops are ordinary moves — subtrees ride along, undo restores, nothing is deleted. The id must resolve to a live collection; invalid targets stay disabled. Focusable at `tabIndex` -1: Alt+Delete on a collection's LAST child lands keyboard focus here when no sibling (and no rendered trash card) can take it. |
 
 ### DOM/test hooks
 
@@ -755,8 +756,8 @@ the same store, FLIP scope, and collision pipeline as the built-ins:
 | Export | From | Use |
 | --- | --- | --- |
 | `CollectionsStoreProvider` | `react/collections-store` | Wrap a subtree in a store you created with `createCollectionsStore` (headless/custom hosting). |
-| `useCollectionsContainer` / `CollectionsContainerContext` / `CollectionsContainerValue` | `react/container-context` | Read the instance's wrapper ref (FLIP scope) and the `aria-describedby` instructions id. |
-| `VIRTUAL_INSERT_DATA_KEY` / `VirtualInsertTarget` | `react/virtual-droppable` | The droppable-`data` contract a custom virtualized container carries so collision detection resolves pointer → boundary index through its own layout math. The collection must exist and the resolver must return an integer; thrown errors and invalid results reject the target. |
+| `useCollectionsContainer` / `CollectionsContainerContext` / `CollectionsContainerValue` | `react/container-context` | Read the instance's wrapper ref (FLIP scope), the card and palette `aria-describedby` instruction ids (`instructionsId` / `paletteInstructionsId`), the `trashRef` slot a mounted `<TrashTarget>` registers into (Alt+Delete scope), and `announce` — the instance's aria-live channel. |
+| `VIRTUAL_INSERT_DATA_KEY` / `VirtualInsertTarget` / `isVirtualInsertTarget` | `react/virtual-droppable` | The droppable-`data` contract a custom virtualized container carries so collision detection resolves pointer → boundary index through its own layout math. The collection must exist and the resolver must return an integer; thrown errors and invalid results reject the target. `isVirtualInsertTarget` is the runtime guard that narrows an unknown droppable-`data` entry to the contract. |
 | `useEdgeAutoScroll` | `react/use-edge-autoscroll` | Deterministic edge auto-scroll for a custom virtualized scroll container (pairs with `usePanWithMomentum`). |
 | `usePanWithMomentum` / `PanWithMomentumOptions` | `react/use-pan-with-momentum` | Surface pan with optional inertial glide. Invalid slop/velocity/friction values use safe defaults; friction is constrained to the open interval `(0, 1)` and max velocity never falls below the stop threshold. |
 

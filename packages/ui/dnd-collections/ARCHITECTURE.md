@@ -340,17 +340,28 @@ Everything semantic happens in `core/`.
   falls through to a move, and a trim keeps the card mounted, so focus stays
   put (no restore needed). Alt+Shift+↑/↓ on an image announces "trimmed at the
   end only" (images have no start edge).
-- The card button is always a tab stop (even in handle mode, where the grip
-  is a second stop for pointer/grab drag) so the selection control is always
-  reachable. dnd-kit's own announcer and screen-reader instructions are
-  disabled at the provider; this package speaks through one `aria-live`
-  channel with human node names.
+- The card button is always a tab stop and always carries the KEYBOARD grab
+  (Enter) — in handle mode the grip is a pointer-only second stop, so the
+  instructions' "Press Enter to pick it up" stays true in every mode,
+  including roving virtual views where the grip is `tabIndex=-1`. dnd-kit's
+  own announcer and screen-reader instructions are disabled at the provider;
+  this package speaks through one `aria-live` channel with human node names,
+  including MID-DRAG target feedback ("Over \"Panel B\".", "— cannot drop
+  (cycle).") whenever the destination collection or its validity changes, so
+  a keyboard grab-drag is never blind between pick-up and drop.
 
 Boundary cases (already first, no adjacent collection, …) come back as
 typed rejections and are announced via the aria-live region. It repeats the
 same message by clearing the region and reinserting the exact text in a later
 task. Assistive technology observes a real DOM change without an invisible
 character becoming part of the spoken content.
+
+The announce channel is a ref-backed EMITTER and the live region is its own
+leaf component (`LiveAnnouncementRegion`) — announcement state must never
+live in the provider, whose re-render reaches every card through dnd-kit's
+internal context and would break the no-bystander-re-render guarantee each
+time something is spoken (the mid-drag announcements above made this
+load-bearing; `RenderEfficiencyDuringDrag` catches regressions).
 
 Inside the virtualized views there is a THIRD arrow-key role, and the three
 stay disjoint by design: **bare arrows NAVIGATE** (roving focus, in

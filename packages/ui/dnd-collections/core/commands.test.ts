@@ -226,6 +226,31 @@ describe("applyCommand: move-nodes", () => {
     expect(result).toEqual({ ok: false, error: { reason: "same-position" } });
   });
 
+  test("rejects a MULTI-node arrangement that lands where it started as same-position", () => {
+    // [A, B] back to the head of root-a: post-removal base is [C, D, F],
+    // ascending insertion reproduces [A, B, C, D, F] — identical layout, so
+    // graphChildrenEqual must catch it (nothing pushed to history).
+    const graph = fixture();
+    const result = applyCommand(graph, {
+      type: "move-nodes",
+      nodeIds: ids(["A", "B"]),
+      toParentId: parseNodeId("root-a"),
+      toIndex: 0,
+    });
+    expect(result).toEqual({ ok: false, error: { reason: "same-position" } });
+  });
+
+  test("rejects an empty drag set as nothing-to-move", () => {
+    const graph = fixture();
+    const result = applyCommand(graph, {
+      type: "move-nodes",
+      nodeIds: [],
+      toParentId: parseNodeId("root-b"),
+      toIndex: 0,
+    });
+    expect(result).toEqual({ ok: false, error: { reason: "nothing-to-move" } });
+  });
+
   test("rejects unknown nodes and non-collection targets", () => {
     const graph = fixture();
     expect(
