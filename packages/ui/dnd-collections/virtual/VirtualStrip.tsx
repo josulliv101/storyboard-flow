@@ -19,6 +19,7 @@ import {
   finitePositiveOrUndefined,
   nonNegativeIntegerOr,
 } from "../core/numeric";
+import { type CollectionItemContentComponent } from "../react/collections-components";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { findNodeElement } from "../react/node-dom";
 import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
@@ -112,6 +113,9 @@ export type VirtualStripProps = Readonly<{
    * trim resizes the card by the amount dragged.
    */
   trimPixelsPerSecond?: number;
+  /** Per-view card pixels — overrides the provider `components` registry.
+   *  MUST be identity-stable (module scope). */
+  itemContent?: CollectionItemContentComponent;
   className?: string;
 }>;
 
@@ -136,6 +140,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       panToScroll = true,
       itemDragActivation = "handle",
       trimPixelsPerSecond: trimPixelsPerSecondOption,
+      itemContent,
       className,
     },
     ref
@@ -627,6 +632,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                     dragActivation={cardActivation}
                     rovingTabIndex={item.index === rovingIndex ? 0 : -1}
                     trimPixelsPerSecond={trimPixelsPerSecond}
+                    itemContent={itemContent}
                   />
                 </div>
               ))}

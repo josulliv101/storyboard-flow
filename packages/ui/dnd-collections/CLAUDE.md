@@ -41,6 +41,13 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
 - **Preview validity must equal commit outcome.** `isIntentInvalid` and the
   reducer enforce the same cycle rule; if you change one, change both (they
   share `isSameOrAncestor` — keep it that way).
+- **The shell/content boundary is the customization seam.** `NodeCard` is a
+  visually transparent interaction shell; ALL pixels live in the content
+  component (`DefaultItemContent` or a consumer's, via the provider
+  `components` registry / per-view `itemContent`). Never paint in the shell,
+  never move behavior (wiring, aria, trim handles, listener placement) into
+  content, and keep content components identity-stable — an inline component
+  definition remounts every card's content per render.
 - **Displaced siblings don't re-render**, so per-card effects never fire for
   the cards a commit moved — that's why FLIP is a single graph-identity
   sweep in `use-flip-graph-animation.ts`. Don't convert it to per-card

@@ -1,52 +1,73 @@
 "use client";
 
-import { memo, useCallback, useRef, type CSSProperties, type MouseEvent } from "react";
+import { memo, useCallback, useRef, type MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { twMerge } from "tailwind-merge";
 
-import {
-  getChildren,
-  mediaDurationSeconds,
-  type CollectionItemNode,
-  type NodeId,
-} from "../core/graph";
+import { getChildren, mediaDurationSeconds, type NodeId } from "../core/graph";
 import { encodeDropTarget } from "../core/intents";
 import { finitePositiveOrUndefined } from "../core/numeric";
+import {
+  useCollectionsComponents,
+  type CollectionGhostContentProps,
+  type CollectionItemContentComponent,
+  type NodeCardDragActivation,
+} from "./collections-components";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
+import { DefaultItemContent } from "./default-item-content";
 import { roundSecondsForDisplay } from "./duration-format";
-import { NodeThumbnail } from "./node-thumbnail";
 import { TrimHandles } from "./trim-handles";
 
-// Default views. Each NodeCard receives ONLY its id — every dynamic value
-// arrives through selector subscriptions returning primitives (or stable
-// graph references), so a drag over one card re-renders that card alone.
-// `memo` + constant props means parents mapping stable children arrays
-// don't re-render cards either. The data-render-count attribute makes this
-// efficiency claim assertable in tests instead of aspirational.
+// Default views. Each NodeCard receives ONLY its id (plus identity-stable
+// configuration) — every dynamic value arrives through selector
+// subscriptions returning primitives (or stable graph references), so a drag
+// over one card re-renders that card alone. `memo` + constant props means
+// parents mapping stable children arrays don't re-render cards either. The
+// data-render-count attribute makes this efficiency claim assertable in
+// tests instead of aspirational.
+//
+// NodeCard is a visually TRANSPARENT interaction shell: it owns behavior and
+// geometry (drag/drop wiring, selection, aria, trim handles, indicators,
+// the card box) and paints nothing. Pixels come from a content component —
+// `DefaultItemContent` unless the consumer registered one (provider
+// `components` / per-view `itemContent`) — rendered inside the card button
+// with rarely-changing props only, so custom content inherits the whole
+// efficiency story.
 //
 // FLIP movement animation is NOT owned here — it is a provider-level sweep
 // (see DndCollections `animateMoves`) so one pass animates panels, virtual,
 // and custom views together.
 
+export type { NodeCardDragActivation } from "./collections-components";
+
 export type CollectionPanelsProps = Readonly<{
   /** Which collections to render as top-level panels. Defaults to the graph's roots. */
   collectionIds?: readonly NodeId[];
+  /** Per-view card pixels — overrides the provider `components` registry. */
+  itemContent?: CollectionItemContentComponent;
 }>;
 
-export function CollectionPanels({ collectionIds }: CollectionPanelsProps) {
+export function CollectionPanels({ collectionIds, itemContent }: CollectionPanelsProps) {
   const rootIds = useCollectionsSelector((s) => s.graph.rootIds);
   const panelIds = collectionIds ?? rootIds;
   return (
     <div className="flex flex-col gap-6">
       {panelIds.map((id) => (
-        <CollectionPanel key={id} collectionId={id} />
+        <CollectionPanel key={id} collectionId={id} itemContent={itemContent} />
       ))}
     </div>
   );
 }
 
-export function CollectionPanel({ collectionId }: { collectionId: NodeId }) {
+export function CollectionPanel({
+  collectionId,
+  itemContent,
+}: {
+  collectionId: NodeId;
+  /** Per-view card pixels — overrides the provider `components` registry. */
+  itemContent?: CollectionItemContentComponent;
+}) {
   const name = useCollectionsSelector(
     (s) => s.graph.nodesById.get(collectionId)?.name ?? String(collectionId)
   );
@@ -88,14 +109,12 @@ export function CollectionPanel({ collectionId }: { collectionId: NodeId }) {
             Drop items here
           </p>
         ) : (
-          childIds.map((id) => <NodeCard key={id} id={id} />)
+          childIds.map((id) => <NodeCard key={id} id={id} itemContent={itemContent} />)
         )}
       </div>
     </section>
   );
 }
-
-export type NodeCardDragActivation = "body" | "handle" | "hold";
 
 function joinAriaIds(...ids: readonly (string | undefined)[]): string | undefined {
   const joined = ids.filter((id): id is string => !!id).join(" ");
@@ -108,6 +127,7 @@ export const NodeCard = memo(function NodeCard({
   dragActivation = "body",
   rovingTabIndex,
   trimPixelsPerSecond,
+  itemContent,
 }: {
   id: NodeId;
   /**
@@ -116,6 +136,12 @@ export const NodeCard = memo(function NodeCard({
    * "h-full w-full" to make cards fill their (possibly variable) slot.
    */
   className?: string;
+  /**
+   * Per-card pixels — overrides the provider `components` registry, falls
+   * back to `DefaultItemContent`. MUST be identity-stable (module scope): a
+   * new component type per render remounts the content subtree.
+   */
+  itemContent?: CollectionItemContentComponent;
   /**
    * How item drags start on this card:
    * - "body" (default): instant drag from anywhere on the card.
@@ -149,6 +175,10 @@ export const NodeCard = memo(function NodeCard({
   const trimScale = finitePositiveOrUndefined(trimPixelsPerSecond);
   const store = useCollectionsStore();
   const { instructionsId } = useCollectionsContainer();
+  // Pixels: per-card override → provider registry → the stock look.
+  // (Hook called unconditionally — `??` would skip it and break hook order.)
+  const registeredContent = useCollectionsComponents().ItemContent;
+  const ItemContent = itemContent ?? registeredContent ?? DefaultItemContent;
 
   // nodesById is never re-allocated by move patches, so this reference is
   // stable across drags — the selector only "changes" if the node itself does.
@@ -213,15 +243,15 @@ export const NodeCard = memo(function NodeCard({
   if (!node) return null;
 
   const isCollection = node.kind === "collection";
-  const style: CSSProperties | undefined =
-    isDragging || isDragSource ? { opacity: 0.4 } : undefined;
 
   return (
     <div className={twMerge("group relative", className)} data-node-wrapper={id}>
+      {/* The transparent interaction shell: sizing, cursor, focus, wiring,
+          and state attributes — ZERO paint. All visible pixels (border,
+          background, rings, dimming, content) belong to ItemContent. */}
       <button
         type="button"
         ref={setRefs}
-        style={style}
         data-node-id={id}
         data-node-kind={node.kind}
         data-render-count={renderCountRef.current}
@@ -231,13 +261,8 @@ export const NodeCard = memo(function NodeCard({
         onClick={handleClick}
         className={twMerge(
           [
-            "flex h-24 w-32 flex-col items-stretch justify-between rounded-md border p-2 text-left text-xs transition-all select-none",
-            dragHandle ? "pt-6" : "cursor-grab active:cursor-grabbing",
-            isCollection ? "bg-muted/60" : "bg-background",
-            isSelected ? "border-primary ring-2 ring-primary" : "border-border",
-            // Static red ring is the always-on rejection cue; the pulse is
-            // motion-gated so reduced-motion users still get the ring, no throb.
-            isRejected ? "border-destructive ring-2 ring-destructive motion-safe:animate-pulse" : "",
+            "flex h-24 w-32 select-none",
+            dragHandle ? "" : "cursor-grab active:cursor-grabbing",
           ].join(" "),
           className
         )}
@@ -261,24 +286,17 @@ export const NodeCard = memo(function NodeCard({
         // the attribute spread above — must come after it.
         {...(rovingTabIndex !== undefined ? { tabIndex: rovingTabIndex } : {})}
       >
-        {node.kind === "media" ? (
-          <>
-            <NodeThumbnail node={node} />
-            <span className="mt-1 flex items-center justify-between gap-1">
-              <span className="truncate font-medium text-foreground">{node.name}</span>
-              <span className="shrink-0 text-[10px] text-muted-foreground">
-                {roundSecondsForDisplay(mediaDurationSeconds(node))}s
-              </span>
-            </span>
-          </>
-        ) : (
-          <>
-            <span className="truncate font-medium text-foreground">{node.name}</span>
-            <span className="text-[10px] text-muted-foreground">
-              Collection · {childCount} items
-            </span>
-          </>
-        )}
+        <ItemContent
+          id={id}
+          node={node}
+          childCount={childCount}
+          selected={isSelected}
+          rejected={isRejected}
+          // dnd-kit's isDragging covers the sub-frame gap between sensor
+          // activation and onDragStart publishing the store's drag set.
+          isDragSource={isDragging || isDragSource}
+          dragActivation={dragActivation}
+        />
       </button>
 
       {/* Grip bar: THE drag activator when dragHandle is on — listeners and
@@ -357,14 +375,10 @@ function NodeCardIndicators({
   );
 }
 
-/** Drag-overlay ghost: the primary card plus a "+N" badge for multi-drag. */
-export function NodeCardGhost({
-  node,
-  extraCount,
-}: {
-  node: CollectionItemNode;
-  extraCount: number;
-}) {
+/** Drag-overlay ghost: the primary card plus a "+N" badge for multi-drag.
+ *  The stock `GhostContent` — consumers replace it via the provider
+ *  `components` registry. */
+export function NodeCardGhost({ node, extraCount }: CollectionGhostContentProps) {
   return (
     <div
       data-testid="drag-ghost"

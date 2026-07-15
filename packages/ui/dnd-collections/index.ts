@@ -102,6 +102,18 @@ export {
   NodeCardGhost,
   type NodeCardDragActivation,
 } from "./react/node-views";
+// Consumer item pixels: register ItemContent/GhostContent on <DndCollections
+// components> (or per view via itemContent) — the package keeps behavior and
+// geometry, consumers keep the visible card. DefaultItemContent is the stock
+// look and the reference implementation for custom content.
+export {
+  type CollectionGhostContentComponent,
+  type CollectionGhostContentProps,
+  type CollectionItemContentComponent,
+  type CollectionItemContentProps,
+  type CollectionsComponents,
+} from "./react/collections-components";
+export { DefaultItemContent } from "./react/default-item-content";
 export { HistoryLog, UndoRedoControls } from "./react/history-views";
 export { PaletteItem, type PaletteItemProps } from "./react/palette";
 export { TrashTarget } from "./react/trash-target";

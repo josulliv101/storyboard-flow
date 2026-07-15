@@ -17,6 +17,7 @@ import {
   nonNegativeIntegerOr,
   positiveIntegerOrUndefined,
 } from "../core/numeric";
+import { type CollectionItemContentComponent } from "../react/collections-components";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { NodeCard } from "../react/node-views";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
@@ -49,6 +50,9 @@ export type VirtualGridProps = Readonly<{
   overscan?: number;
   /** Scroll viewport height. */
   height?: number;
+  /** Per-view card pixels — overrides the provider `components` registry.
+   *  MUST be identity-stable (module scope). */
+  itemContent?: CollectionItemContentComponent;
   className?: string;
 }>;
 
@@ -67,6 +71,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       columns: columnsOption,
       overscan: overscanOption,
       height: heightOption,
+      itemContent,
       className,
     },
     ref
@@ -304,6 +309,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                         id={id}
                         className="h-full w-full"
                         rovingTabIndex={absoluteIndex === rovingIndex ? 0 : -1}
+                        itemContent={itemContent}
                       />
                     </div>
                   );
