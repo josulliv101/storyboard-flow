@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   MIN_ITEM_WIDTH,
+  durationToWidth,
   indicatorLeftOffset,
   leftAnchorShift,
   resolveBoundaryIndex,
@@ -47,6 +48,20 @@ describe("indicatorLeftOffset", () => {
 
   it("handles a zero gap", () => {
     expect(indicatorLeftOffset(50, 0)).toBe(48);
+  });
+});
+
+describe("durationToWidth", () => {
+  it("is seconds*pps, floored at the clickable minimum", () => {
+    expect(durationToWidth(5, 24)).toBe(120);
+    expect(durationToWidth(0, 24)).toBe(MIN_ITEM_WIDTH);
+    expect(durationToWidth(0.2, 24)).toBe(MIN_ITEM_WIDTH); // 4.8px derived
+  });
+
+  it("honors an explicit minimum and rejects non-finite math", () => {
+    expect(durationToWidth(0, 24, 40)).toBe(40);
+    expect(durationToWidth(Number.NaN, 24)).toBe(MIN_ITEM_WIDTH);
+    expect(durationToWidth(5, Number.POSITIVE_INFINITY)).toBe(MIN_ITEM_WIDTH);
   });
 });
 

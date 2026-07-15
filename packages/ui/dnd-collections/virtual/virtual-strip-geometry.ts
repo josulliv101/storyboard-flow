@@ -48,14 +48,32 @@ export function indicatorLeftOffset(edgeStart: number, gap: number): number {
 }
 
 /**
+ * THE duration → width conversion — the single sizing invariant every layer
+ * shares: committed layout (`VirtualStrip pixelsPerSecond`), the live trim
+ * preview (`slotSizeFor`), and virtualizer measurement all run through this
+ * one function, so they cannot drift. Consumers use it too (playhead math,
+ * or an `itemWidthFor` that must agree with the trim scale). Non-finite
+ * inputs and short durations floor at `minimumWidth` — the clickable slot
+ * minimum.
+ */
+export function durationToWidth(
+  durationSeconds: number,
+  pixelsPerSecond: number,
+  minimumWidth: number = MIN_ITEM_WIDTH
+): number {
+  const width = durationSeconds * pixelsPerSecond;
+  return Number.isFinite(width) ? Math.max(minimumWidth, width) : minimumWidth;
+}
+
+/**
  * Slot width (px) a clip of `effectiveSeconds` occupies at `pixelsPerSecond`,
  * plus its trailing `gap` — the size handed to the virtualizer's `resizeItem`.
- * Floored at `MIN_ITEM_WIDTH` like the committed layout, so the last preview
- * of a near-fully-trimmed clip already matches the post-commit re-measure
- * (no resize snap on release, no invisible mid-drag sliver).
+ * Floored (via `durationToWidth`) like the committed layout, so the last
+ * preview of a near-fully-trimmed clip already matches the post-commit
+ * reconciliation (no resize snap on release, no invisible mid-drag sliver).
  */
 export function slotSizeFor(effectiveSeconds: number, pixelsPerSecond: number, gap: number): number {
-  return Math.max(MIN_ITEM_WIDTH, effectiveSeconds * pixelsPerSecond) + gap;
+  return durationToWidth(effectiveSeconds, pixelsPerSecond) + gap;
 }
 
 /**

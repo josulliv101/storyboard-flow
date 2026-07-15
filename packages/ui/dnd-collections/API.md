@@ -557,6 +557,7 @@ type CollectionsChange = {
 | --- | --- | --- |
 | `getSnapshot` | `() => CollectionsSnapshot` | Snapshot identity changes per notify; FIELD identities change only when the field did. |
 | `subscribe` | `(listener: () => void) => () => void` | Returns unsubscribe. |
+| `subscribeToChanges` | `(listener: (change: CollectionsChange) => void) => () => void` | The committed-change feed as a multi-listener seam — same events and ordering as the `onChange` option. For consumers that need the PATCH of a commit (e.g. `VirtualStrip` resizes exactly the slots a `nodes-updated` patch touched). Fires for dispatch/undo/redo; `replaceGraph` emits nothing. |
 | `dispatch` | `(command) => Result<CollectionsPatch, CommandRejection>` | Reduce + push history + notify + `onChange`. |
 | `undo` / `redo` | `() => boolean` | False when the respective stack is empty. |
 | `replaceGraph` | `(graph: CollectionsGraph) => Result<void, GraphValidationError>` | Runtime-validates then swaps the committed graph wholesale — the escape hatch for async/server-loaded data (`initialGraph` is initial-only). Invalid input is rejected without changing or notifying the store. A successful swap clears undo/redo history (old patches can't replay on a new graph) and any in-progress drag/preview, prunes the selection to surviving ids, and — deliberately — does NOT fire `onChange` (the caller supplied this state; echoing it risks feedback loops). |
@@ -751,15 +752,17 @@ only after Enter — navigation stands down while a drag is live.
 ```ts
 type VirtualStripProps = {
   collectionId: NodeId;
-  itemWidth?: number;                                    // default 128; fallback when itemWidthFor is absent
-  itemWidthFor?: (node: CollectionItemNode) => number | undefined; // per-node width from metadata; memoized by node id
+  pixelsPerSecond?: number;                              // THE timeline scale: media widths = durationToWidth(duration, pps), and trim handles inherit it — one scale, no drift. The recommended sizing for duration-mapped strips
+  itemWidth?: number;                                    // default 128; collections and non-duration fallbacks
+  itemWidthFor?: (node: CollectionItemNode) => number | undefined; // ADVANCED per-node width override (beats pixelsPerSecond); memoized by node id
   itemHeight?: number;                                   // default 96
   gap?: number;                                          // default 8
   overscan?: number;                                     // default 4
   panToScroll?: boolean;                                 // default true — drag the surface to scroll, with momentum
   itemDragActivation?: "handle" | "hold";                // default "handle" (grip bar); "hold" = press-and-hold the body. Ignored when panToScroll is off (bodies drag instantly)
-  trimPixelsPerSecond?: number;                          // enable media trim handles; set to your itemWidthFor scale. The card resizes LIVE during the drag (targeted resizeItem, no re-measure) and commits update-media on release
+  trimPixelsPerSecond?: number;                          // override the trim conversion; DEFAULTS to pixelsPerSecond. Handles render when either is set; the card resizes LIVE during the drag and commits update-media on release
   itemContent?: CollectionItemContentComponent;          // per-view card pixels; overrides the provider registry
+  overlay?: ReactNode;                                   // content-coordinate layer over the strip (playhead, markers): rides scroll + live-trim transform; aria-hidden, pointer-events none
   className?: string;
 };
 type VirtualStripHandle = {
@@ -770,10 +773,19 @@ type VirtualStripHandle = {
 ```
 
 Numeric layout options are normalized before reaching the virtualizer:
-base widths/heights and trim scale must be finite and positive, `gap` is
-finite and non-negative, and `overscan` is a non-negative integer. Invalid
-values use the documented defaults; `itemWidthFor` may return zero for a
-fully trimmed clip, while negative/non-finite results use `itemWidth`.
+`pixelsPerSecond`, base widths/heights, and the trim scale must be finite
+and positive, `gap` is finite and non-negative, and `overscan` is a
+non-negative integer. Invalid values use the documented defaults;
+`itemWidthFor` may return zero for a fully trimmed clip, while
+negative/non-finite results use `itemWidth`. All duration-derived widths run
+through the exported `durationToWidth(seconds, pps, min = MIN_ITEM_WIDTH)` —
+committed layout, live trim preview, and virtualizer measurement share the
+one conversion, so they cannot drift; use it for overlay/playhead math too.
+
+Slot widths reconcile at COMMIT cadence through `store.subscribeToChanges`:
+a `nodes-updated` patch resizes exactly the touched slots (targeted
+`resizeItem`); a full re-measure happens only for `replaceGraph`, scale/
+layout prop changes, and the `remeasure()` handle.
 
 When `trimPixelsPerSecond` is set and a mounted video is selected,
 `VirtualStrip` renders the source-window overview (`TrimOverviewStrip`) as a
@@ -827,6 +839,7 @@ keep durable state in the collection store.
 | Attribute | Element | Meaning |
 | --- | --- | --- |
 | `data-virtual-strip` / `data-virtual-grid` | scroll container | Collection identity. |
+| `data-virtual-overlay` | overlay layer (strip) | The consumer `overlay` slot's content-coordinate wrapper (aria-hidden, pointer-events none). |
 | `data-grid-columns` | grid container | Live column count (keyboard row-move scope). |
 | `data-virtual-index` / `data-virtual-row` | slot / row wrapper | Virtualizer index. |
 | `data-drop-indicator="virtual"` / `"virtual-grid"` | indicator line | The resolved insert boundary, in content coordinates. |

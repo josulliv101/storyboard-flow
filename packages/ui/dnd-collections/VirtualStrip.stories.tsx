@@ -7,6 +7,7 @@ import { useCollectionsStore } from "./react/collections-store";
 import { DndCollections } from "./react/DndCollections";
 import { UndoRedoControls } from "./react/history-views";
 import { VirtualStrip, type VirtualStripHandle } from "./virtual/VirtualStrip";
+import { durationToWidth } from "./virtual/virtual-strip-geometry";
 import {
   dispatchPointerSequence,
   dragHoldAt,
@@ -1705,5 +1706,133 @@ export const FirstItemGutterOnSelect: Story = {
       expect(overview()).toBeNull();
       expect(vidLeft()).toBe(originLeft);
     });
+  },
+};
+
+// ── pixelsPerSecond sizing + the overlay slot (Phase: sizing unification) ──
+
+function ppsGraph() {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "strip",
+      name: "Strip",
+      children: [
+        { kind: "media", id: "img", name: "Img", durationSeconds: 4 },
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "Vid",
+          fullDurationSeconds: 10,
+          trimInSeconds: 0,
+          trimOutSeconds: 0,
+        },
+        { kind: "collection", id: "folder", name: "Folder", children: [] },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+export const PixelsPerSecondSizing: Story = {
+  // pixelsPerSecond is THE scale: media widths derive from duration, trim
+  // handles inherit the same conversion (no separate trimPixelsPerSecond,
+  // no itemWidthFor), collections keep the fixed itemWidth — and a trim
+  // commit/undo reconciles slot widths through the TARGETED resize path
+  // (the nodes-updated patch resizes exactly the touched slot).
+  render: () => (
+    <DndCollections initialGraph={ppsGraph()} animateMoves={false}>
+      <div className="flex w-[640px] flex-col gap-3">
+        <UndoRedoControls />
+        <VirtualStrip collectionId={parseNodeId("strip")} pixelsPerSecond={24} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const width = (id: string) =>
+      Math.round(nodeCard(canvasElement, id).getBoundingClientRect().width);
+    await waitForLayout(nodeCard(canvasElement, "vid"));
+
+    // Media widths = duration * pps; collections keep the fixed itemWidth.
+    expect(width("img")).toBe(96);
+    expect(width("vid")).toBe(240);
+    expect(width("folder")).toBe(128);
+
+    // Trim handles inherited the scale: right edge in 48px -> trim-out +2s
+    // -> 8s -> 192px, live before release and held after commit.
+    const handleEl = nodeCard(canvasElement, "vid")
+      .closest("[data-node-wrapper]")!
+      .querySelector<HTMLElement>('[data-trim-handle="right"]')!;
+    const start = rectCenter(handleEl);
+    await dispatchPointerSequence([
+      { element: handleEl, type: "pointerdown", clientX: start.x, clientY: start.y },
+      { element: document, type: "pointermove", clientX: start.x - 48, clientY: start.y, delayAfterMs: 30 },
+    ]);
+    await waitFor(() => expect(width("vid")).toBe(192));
+    await dispatchPointerSequence([
+      { element: document, type: "pointerup", clientX: start.x - 48, clientY: start.y, delayAfterMs: 30 },
+    ]);
+    const undoButton = within(canvasElement).getByRole("button", { name: /undo/i });
+    await waitFor(() => expect(undoButton).toBeEnabled());
+    expect(width("vid")).toBe(192);
+
+    // Undo arrives as a nodes-updated patch too: the targeted resize
+    // restores exactly this slot to 240px.
+    const user = userEvent.setup();
+    await user.click(undoButton);
+    await waitFor(() => expect(width("vid")).toBe(240));
+  },
+};
+
+export const PlayheadOverlay: Story = {
+  // The overlay slot renders in CONTENT coordinates: a playhead placed with
+  // the shared durationToWidth scale sits at its exact content x and rides
+  // scrolling for free — its viewport position shifts by exactly the scroll
+  // while its content-relative offset never changes.
+  render: () => (
+    <DndCollections initialGraph={ppsGraph()} animateMoves={false}>
+      <div className="w-[320px]">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          pixelsPerSecond={24}
+          overlay={
+            <div
+              data-playhead
+              style={{
+                position: "absolute",
+                top: 0,
+                bottom: 0,
+                left: durationToWidth(5, 24),
+                width: 2,
+                background: "red",
+              }}
+            />
+          }
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "img"));
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+    const playhead = () => canvasElement.querySelector<HTMLElement>("[data-playhead]")!;
+    const spacer = playhead().closest("[data-virtual-overlay]")!.parentElement as HTMLElement;
+    const contentOffset = () =>
+      playhead().getBoundingClientRect().left - spacer.getBoundingClientRect().left;
+
+    expect(Math.round(contentOffset())).toBe(120); // durationToWidth(5, 24)
+
+    // Scroll the strip: the playhead rides the content — viewport position
+    // shifts by exactly the scroll, content-relative offset is unchanged.
+    const viewportBefore = playhead().getBoundingClientRect().left;
+    strip.scrollLeft = 60;
+    await waitFor(() => {
+      expect(Math.round(playhead().getBoundingClientRect().left)).toBe(
+        Math.round(viewportBefore - 60)
+      );
+    });
+    expect(Math.round(contentOffset())).toBe(120);
   },
 };

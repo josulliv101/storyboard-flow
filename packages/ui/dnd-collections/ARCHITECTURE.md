@@ -164,11 +164,18 @@ move. Two constraints make it fit the render model: the provided callback is
 reference-stable (ref-backed), so trim handles — which read it via context,
 bypassing NodeCard's memo — don't re-render on every strip render; and the
 preview never touches the store, so no bystander card re-renders. On release
-the commit changes `nodesById`; the strip re-measures then (identity changes
-on a commit, never on a move/drag, so it stays at commit cadence), which also
-covers non-drag trims (keyboard, direct dispatch) the resizeItem path misses.
-The last preview size already matches the committed size, so there is no
-resize flash. An aborted drag (pointercancel, or a no-op) resets the preview.
+the commit reconciles through the store's change feed (`subscribeToChanges`):
+the `nodes-updated` patch names exactly the nodes whose widths changed, so
+the strip resizes only THOSE slots (targeted `resizeItem`, commit cadence,
+never a full re-measure) — which also covers non-drag trims (keyboard,
+direct dispatch). Full `measure()` is reserved for `replaceGraph` (which
+emits no change event — detected as a nodesById identity the feed never
+saw), scale/layout prop changes, and the `remeasure()` handle. Every
+duration-derived width — committed layout, live preview, measurement — runs
+through one exported `durationToWidth` conversion, so the sizing layers
+cannot drift. The last preview size already matches the committed size, so
+there is no resize flash. An aborted drag (pointercancel, or a no-op) resets
+the preview.
 
 The LEFT handle grows the clip toward the left: its right edge stays anchored,
 the left edge follows the cursor, and left neighbors slide left. `resizeItem`

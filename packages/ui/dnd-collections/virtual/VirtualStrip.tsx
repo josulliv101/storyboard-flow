@@ -9,10 +9,18 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
-import { getChildren, isVideoMedia, type CollectionItemNode, type NodeId } from "../core/graph";
+import {
+  getChildren,
+  isVideoMedia,
+  mediaDurationSeconds,
+  type CollectionItemNode,
+  type CollectionsGraph,
+  type NodeId,
+} from "../core/graph";
 import {
   finiteNonNegativeOr,
   finitePositiveOr,
@@ -40,6 +48,7 @@ import {
 } from "./use-virtual-collection-view";
 import {
   MIN_ITEM_WIDTH,
+  durationToWidth,
   indicatorLeftOffset,
   leftAnchorShift,
   resolveBoundaryIndex,
@@ -85,11 +94,24 @@ const OVERVIEW_GAP = 8;
 
 export type VirtualStripProps = Readonly<{
   collectionId: NodeId;
-  /** Card width when `itemWidthFor` is absent or returns nothing for a node. */
+  /**
+   * THE timeline scale: media card widths derive from their effective
+   * duration via `durationToWidth(seconds, pixelsPerSecond)`, and — unless
+   * `trimPixelsPerSecond` overrides it — the trim handles convert drags at
+   * the same scale, so widths and trims cannot drift apart. Collections
+   * (and non-media fallbacks) use `itemWidth`. The recommended way to size
+   * a duration-mapped strip; `itemWidthFor` remains the advanced override.
+   */
+  pixelsPerSecond?: number;
+  /** Card width when duration-derived sizing doesn't apply: collections,
+   *  strips without `pixelsPerSecond`/`itemWidthFor`, or an `itemWidthFor`
+   *  miss. */
   itemWidth?: number;
   /**
-   * Per-node width from metadata (aspect ratio, duration, user data...).
-   * Evaluated lazily per index — never by rendering the node. The
+   * ADVANCED per-node width from metadata (aspect ratio, user data...) —
+   * overrides `pixelsPerSecond` sizing when both are set; keep the two on
+   * the same scale or trims will resize cards by a different amount than
+   * the drag. Evaluated lazily per index — never by rendering the node. The
    * virtualizer memoizes its measurements (keyed by the stable `getItemKey`),
    * so this runs once per layout, not once per render. After metadata loads
    * or zoom/scale changes, call `remeasure()` on the handle to recompute.
@@ -108,14 +130,25 @@ export type VirtualStripProps = Readonly<{
    */
   itemDragActivation?: "handle" | "hold";
   /**
-   * Enable media trim handles at card edges, converting the drag at this many
-   * pixels per second. Set it to the SAME scale your `itemWidthFor` uses so a
-   * trim resizes the card by the amount dragged.
+   * Override the trim handles' pixels-per-second conversion. Defaults to
+   * `pixelsPerSecond`, which is almost always what you want (one scale for
+   * widths AND trims); set explicitly only with a custom `itemWidthFor`
+   * whose scale differs. Trim handles render when either is set.
    */
   trimPixelsPerSecond?: number;
   /** Per-view card pixels — overrides the provider `components` registry.
    *  MUST be identity-stable (module scope). */
   itemContent?: CollectionItemContentComponent;
+  /**
+   * Rendered in CONTENT coordinates over the whole strip content (inside an
+   * `aria-hidden`, `pointer-events: none` layer above the cards), so it
+   * rides scrolling, auto-scroll, and the live-trim transform for free — a
+   * playhead line, region markers. Position children absolutely; convert
+   * time to x with the same `durationToWidth`/`pixelsPerSecond` scale.
+   * Re-enable pointer-events on your own elements if they must be
+   * interactive (they then sit above cards and handles — your trade-off).
+   */
+  overlay?: ReactNode;
   className?: string;
 }>;
 
@@ -132,6 +165,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
   function VirtualStrip(
     {
       collectionId,
+      pixelsPerSecond: pixelsPerSecondOption,
       itemWidth: itemWidthOption,
       itemWidthFor,
       itemHeight: itemHeightOption,
@@ -141,15 +175,20 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       itemDragActivation = "handle",
       trimPixelsPerSecond: trimPixelsPerSecondOption,
       itemContent,
+      overlay,
       className,
     },
     ref
   ) {
+    const pixelsPerSecond = finitePositiveOrUndefined(pixelsPerSecondOption);
     const itemWidth = finitePositiveOr(itemWidthOption, 128);
     const itemHeight = finitePositiveOr(itemHeightOption, 96);
     const gap = finiteNonNegativeOr(gapOption, 8);
     const overscan = nonNegativeIntegerOr(overscanOption, 4);
-    const trimPixelsPerSecond = finitePositiveOrUndefined(trimPixelsPerSecondOption);
+    // One scale for widths AND trims by default: the handles inherit
+    // pixelsPerSecond unless explicitly overridden.
+    const trimPixelsPerSecond =
+      finitePositiveOrUndefined(trimPixelsPerSecondOption) ?? pixelsPerSecond;
     const store = useCollectionsStore();
     const cardActivation: NodeCardDragActivation = panToScroll ? itemDragActivation : "body";
 
@@ -174,15 +213,23 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const { scrollRef, contentRef, resolveBoundaryRef, setContainerRef } =
       useVirtualInsertContainer(collectionId, "vstrip");
 
-    const widthForIndex = (index: number): number => {
-      const node = nodesById.get(childIds[index]);
-      // Floor the slot at a clickable minimum: a fully trimmed clip derives a
-      // 0px width, and NodeCard's w-full would then render it 0px wide and
-      // unselectable. estimateSize and the rendered slot both read this, so
-      // layout stays consistent; the node's semantic duration is untouched.
-      const width = finiteNonNegativeOr(node ? itemWidthFor?.(node) : undefined, itemWidth);
-      return Math.max(MIN_ITEM_WIDTH, width);
+    // The committed width of a node, floored at a clickable minimum: a fully
+    // trimmed clip derives a 0px width, and NodeCard's w-full would then
+    // render it 0px wide and unselectable. estimateSize, the rendered slot,
+    // and the targeted-resize subscriber all read this, so layout stays
+    // consistent; the node's semantic duration is untouched. Resolution:
+    // itemWidthFor (advanced override) → pixelsPerSecond duration mapping
+    // (media only) → the fixed itemWidth.
+    const widthForNode = (node: CollectionItemNode | undefined): number => {
+      if (node && itemWidthFor) {
+        return Math.max(MIN_ITEM_WIDTH, finiteNonNegativeOr(itemWidthFor(node), itemWidth));
+      }
+      if (node && node.kind === "media" && pixelsPerSecond !== undefined) {
+        return durationToWidth(mediaDurationSeconds(node), pixelsPerSecond);
+      }
+      return Math.max(MIN_ITEM_WIDTH, itemWidth);
     };
+    const widthForIndex = (index: number): number => widthForNode(nodesById.get(childIds[index]));
 
     // Stable keys by node id (reorders move DOM nodes instead of repainting
     // every slot's contents) AND a stable callback identity: TanStack
@@ -223,18 +270,46 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       paddingStart: firstItemGutter,
     });
 
-    // Variable widths come from node DATA, so a data change (a trim commit,
-    // a palette add) must re-run the cached measurements. `nodesById` only
-    // gets a new identity on such a commit — never on a move or a drag — so
-    // this stays at commit cadence, not per frame. Trim-enabled strips need
-    // it even at fixed widths: a live trim resizes slots via `resizeItem`,
-    // whose cache only `measure()` clears (TanStack's cache is key-based, so
-    // a reorder carries a stale size along) — without this, undoing a trim
-    // would leave the slot at the trimmed width. Fixed-width strips without
-    // trim handles never need it.
+    // Data-derived sizing reconciles at COMMIT cadence through the store's
+    // change feed: a `nodes-updated` patch names exactly the nodes whose
+    // widths may have changed (trim commit/undo/redo, keyboard trim), so
+    // only THOSE slots are resized — never a full re-measure. Moves, adds,
+    // and removals need nothing: TanStack's measurement cache is keyed by
+    // `getItemKey` (node id), so sizes follow reorders and new keys measure
+    // fresh. The feed fires synchronously during dispatch, before React
+    // renders, so `trimStateRef` still holds the pre-commit indexes (which
+    // updates don't change) while `update.after` carries the NEW node.
+    const sizingFromData =
+      itemWidthFor !== undefined ||
+      pixelsPerSecond !== undefined ||
+      trimPixelsPerSecond !== undefined;
+    const feedNodesRef = useRef<CollectionsGraph["nodesById"] | null>(null);
     useEffect(() => {
-      if (itemWidthFor || trimPixelsPerSecond !== undefined) virtualizer.measure();
-    }, [nodesById, itemWidthFor, trimPixelsPerSecond, virtualizer]);
+      if (!sizingFromData) return;
+      return store.subscribeToChanges((change) => {
+        feedNodesRef.current = change.graph.nodesById;
+        if (change.patch.type !== "nodes-updated") return;
+        const s = trimStateRef.current;
+        for (const update of change.patch.updates) {
+          const index = s.indexById.get(update.nodeId);
+          if (index === undefined) continue;
+          s.virtualizer.resizeItem(index, s.widthForNode(update.after) + s.gap);
+        }
+      });
+    }, [store, sizingFromData]);
+    // replaceGraph deliberately emits NO change event: a nodesById identity
+    // the feed never saw is a wholesale swap, and surviving ids may carry
+    // stale key-based sizes — drop the whole measurement cache. (Also covers
+    // the initial mount, where measuring an empty cache is free.)
+    useEffect(() => {
+      if (!sizingFromData) return;
+      if (feedNodesRef.current === nodesById) return;
+      virtualizer.measure();
+    }, [nodesById, sizingFromData, virtualizer]);
+    // A scale/layout config change re-derives every width.
+    useEffect(() => {
+      virtualizer.measure();
+    }, [pixelsPerSecond, itemWidth, gap, virtualizer]);
 
     // Live trim preview: a trim handle calls this per pointer-move to resize
     // ONE card without a graph commit, AND to publish the drag's current
@@ -249,8 +324,24 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // memoized cards still don't re-render. The callback must stay
     // reference-stable (trim handles read it via context) — it is, reading
     // mutable inputs from a ref and calling the stable setState.
-    const trimStateRef = useRef({ indexById, virtualizer, gap, trimPixelsPerSecond, widthForIndex, nodesById });
-    trimStateRef.current = { indexById, virtualizer, gap, trimPixelsPerSecond, widthForIndex, nodesById };
+    const trimStateRef = useRef({
+      indexById,
+      virtualizer,
+      gap,
+      trimPixelsPerSecond,
+      widthForIndex,
+      widthForNode,
+      nodesById,
+    });
+    trimStateRef.current = {
+      indexById,
+      virtualizer,
+      gap,
+      trimPixelsPerSecond,
+      widthForIndex,
+      widthForNode,
+      nodesById,
+    };
     const [liveTrim, setLiveTrim] = useState<{ nodeId: NodeId; trim: LiveTrim } | null>(null);
     // The COMMITTED node the live gesture started from. The commit effect
     // below uses it to tell this gesture's own settling commit (the node's
@@ -636,6 +727,20 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   />
                 </div>
               ))}
+              {/* Consumer overlay (playhead, region markers) in CONTENT
+                  coordinates: living inside the spacer means scroll,
+                  auto-scroll, and the live-trim anchor transform all apply
+                  for free. pointer-events: none so pan/drag/trim gestures
+                  pass through; aria-hidden keeps the grid tree valid. */}
+              {overlay !== undefined && (
+                <div
+                  aria-hidden="true"
+                  data-virtual-overlay
+                  style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 30 }}
+                >
+                  {overlay}
+                </div>
+              )}
             </div>
           </div>
         </div>

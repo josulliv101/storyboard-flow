@@ -77,6 +77,15 @@ export class InvalidInitialGraphError extends Error {
 export type CollectionsStore = Readonly<{
   getSnapshot: () => CollectionsSnapshot;
   subscribe: (listener: () => void) => () => void;
+  /**
+   * Subscribe to the COMMITTED-change feed — the same events (and ordering
+   * guarantees) as the `onChange` option, as a multi-listener seam. For
+   * views/tooling that need the PATCH of a commit (e.g. a virtual view
+   * resizing exactly the nodes a `nodes-updated` patch touched), which the
+   * snapshot deliberately doesn't carry. Fires for dispatch/undo/redo;
+   * `replaceGraph` deliberately emits nothing here either.
+   */
+  subscribeToChanges: (listener: (change: CollectionsChange) => void) => () => void;
 
   dispatch: (command: CollectionsCommand) => Result<CollectionsPatch, CommandRejection>;
   undo: () => boolean;
@@ -138,6 +147,7 @@ export function createCollectionsStore(
   };
   const history = createHistory({ maxEntries: options?.maxHistoryEntries });
   const listeners = new Set<() => void>();
+  const changeListeners = new Set<(change: CollectionsChange) => void>();
   const onChange = options?.onChange;
   const pendingChanges: CollectionsChange[] = [];
   let notificationDepth = 0;
@@ -171,12 +181,13 @@ export function createCollectionsStore(
   }
 
   function flushPendingChanges() {
-    if (!onChange || emittingChanges) return;
+    if ((!onChange && changeListeners.size === 0) || emittingChanges) return;
     emittingChanges = true;
     try {
       let change = pendingChanges.shift();
       while (change) {
-        onChange(change);
+        onChange?.(change);
+        for (const listener of changeListeners) listener(change);
         change = pendingChanges.shift();
       }
     } finally {
@@ -185,7 +196,7 @@ export function createCollectionsStore(
   }
 
   function notify(change?: CollectionsChange) {
-    if (change && onChange) pendingChanges.push(change);
+    if (change && (onChange || changeListeners.size > 0)) pendingChanges.push(change);
     snapshot = buildSnapshot();
     notificationDepth += 1;
     try {
@@ -299,6 +310,12 @@ export function createCollectionsStore(
         listeners.delete(listener);
       };
     },
+    subscribeToChanges: (listener) => {
+      changeListeners.add(listener);
+      return () => {
+        changeListeners.delete(listener);
+      };
+    },
 
     dispatch,
     undo,
@@ -391,6 +408,7 @@ export function createCollectionsStore(
         snapshot = buildSnapshot();
       }
       listeners.clear();
+      changeListeners.clear();
     },
   };
 }

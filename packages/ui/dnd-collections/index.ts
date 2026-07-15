@@ -154,6 +154,10 @@ export {
   type VirtualStripHandle,
   type VirtualStripProps,
 } from "./virtual/VirtualStrip";
+// THE duration -> width conversion every sizing layer shares (committed
+// layout, live trim preview, virtualizer measurement). Consumers use it for
+// overlay/playhead math or an itemWidthFor that must agree with trims.
+export { MIN_ITEM_WIDTH, durationToWidth } from "./virtual/virtual-strip-geometry";
 export {
   VirtualGrid,
   type VirtualGridHandle,
