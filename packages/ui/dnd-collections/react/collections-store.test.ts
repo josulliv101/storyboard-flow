@@ -249,6 +249,55 @@ describe("createCollectionsStore", () => {
     expect(store.getSnapshot().interaction.isDragging).toBe(false);
   });
 
+  test("subscribeToChanges mirrors the onChange feed and unsubscribes cleanly", () => {
+    const viaOption: string[] = [];
+    const viaSeam: string[] = [];
+    const store = createCollectionsStore(graphFixture(), {
+      onChange: (c) => viaOption.push(c.origin),
+    });
+    const interactionNotifies = vi.fn();
+    const unsubscribe = store.subscribeToChanges((change) => {
+      viaSeam.push(`${change.origin}:${change.patch.type}`);
+    });
+    store.subscribe(interactionNotifies);
+
+    store.dispatch(moveX);
+    store.undo();
+    store.redo();
+    // Interaction-only updates never reach the change feed.
+    store.setSelection([id("y")]);
+
+    expect(viaSeam).toEqual([
+      "command:nodes-moved",
+      "undo:nodes-moved",
+      "redo:nodes-moved",
+    ]);
+    expect(viaOption).toEqual(["command", "undo", "redo"]); // both feeds, same events
+
+    unsubscribe();
+    store.undo();
+    expect(viaSeam).toHaveLength(3); // no longer delivered
+    expect(viaOption).toHaveLength(4); // the option keeps receiving
+  });
+
+  test("subscribeToChanges works without an onChange option and stops on destroy", () => {
+    const store = createCollectionsStore(graphFixture());
+    const seen = vi.fn();
+    store.subscribeToChanges(seen);
+
+    store.dispatch(moveX);
+    expect(seen).toHaveBeenCalledTimes(1);
+
+    store.destroy();
+    store.dispatch({
+      type: "move-nodes",
+      nodeIds: [id("y")],
+      toParentId: id("root-b"),
+      toIndex: 0,
+    });
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
   test("undo restores, redo replays; onChange origins are labeled", () => {
     const origins: string[] = [];
     const store = createCollectionsStore(graphFixture(), {
