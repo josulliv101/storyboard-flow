@@ -2,6 +2,7 @@ import { memo, useRef, useSyncExternalStore } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, userEvent, waitFor } from "storybook/test";
 
+import { cn } from "../lib/utils";
 import {
   buildGraph,
   mediaDurationSeconds,
@@ -16,6 +17,7 @@ import {
   type CollectionItemContentProps,
   type CollectionTrimHandleContentProps,
 } from "./react/collections-components";
+import { useCollectionsSelector } from "./react/collections-store";
 import { useLiveTrim } from "./react/live-trim";
 import { CollectionPanels } from "./react/node-views";
 import { VirtualStrip } from "./virtual/VirtualStrip";
@@ -76,6 +78,10 @@ const clipFrames = [
   new URL("./fixtures/dog-tracking-2s.png", import.meta.url).href,
   new URL("./fixtures/dog-exit-4s.png", import.meta.url).href,
 ] as const;
+const collectionFrames = [
+  new URL("./fixtures/clip-field.jpg", import.meta.url).href,
+  new URL("./fixtures/clip-chop.jpg", import.meta.url).href,
+] as const;
 
 const CLIP_PPS = 24;
 
@@ -89,8 +95,21 @@ const TimelineClipContent = memo(function TimelineClipContent({
 }: CollectionItemContentProps) {
   if (node.kind !== "media") {
     return (
-      <span className="flex h-full w-full items-center justify-center rounded-md border border-border bg-muted/60 text-xs">
-        {node.name} · {childCount}
+      <span
+        data-timeline-collection={selected ? "selected" : "idle"}
+        className={cn(
+          "flex h-full w-full flex-col justify-between overflow-hidden rounded-md border bg-muted p-2 text-left",
+          selected ? "border-primary ring-4 ring-primary" : "border-border",
+          isDragSource && "opacity-40"
+        )}
+      >
+        <span className="text-[9px] font-bold tracking-wide text-muted-foreground uppercase">
+          Collection
+        </span>
+        <span className="truncate text-sm font-semibold">{node.name}</span>
+        <span className="text-[10px] text-muted-foreground tabular-nums">
+          {childCount} {childCount === 1 ? "item" : "items"}
+        </span>
       </span>
     );
   }
@@ -156,6 +175,222 @@ function timelineGraph() {
     },
   ]);
 }
+
+function timelineGraphWithCollection() {
+  return graphOrThrow([
+    {
+      kind: "collection",
+      id: "strip",
+      name: "Timeline",
+      children: [
+        { kind: "media", id: "intro", name: "Intro", src: clipFrames[0], durationSeconds: 3 },
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "Vid",
+          posterSrcs: clipFrames,
+          fullDurationSeconds: 10,
+          trimInSeconds: 2,
+          trimOutSeconds: 1,
+        },
+        {
+          kind: "collection",
+          id: "b-roll",
+          name: "B-roll",
+          children: [
+            {
+              kind: "media",
+              id: "b-roll-1",
+              name: "Field",
+              src: collectionFrames[0],
+              durationSeconds: 2,
+            },
+            {
+              kind: "media",
+              id: "b-roll-2",
+              name: "Chop",
+              src: collectionFrames[1],
+              durationSeconds: 4,
+            },
+          ],
+        },
+        { kind: "media", id: "outro", name: "Outro", src: clipFrames[1], durationSeconds: 4 },
+      ],
+    },
+  ]);
+}
+
+type UserCollectionCoverProps = Readonly<{
+  id: NodeId;
+  name: string;
+  childCount: number;
+  selected: boolean;
+  isDragSource: boolean;
+}>;
+
+const UserCollectionCover = memo(function UserCollectionCover({
+  id,
+  name,
+  childCount,
+  selected,
+  isDragSource,
+}: UserCollectionCoverProps) {
+  const firstImageSrc = useCollectionsSelector((snapshot) => {
+    const childIds = snapshot.graph.childrenById.get(id) ?? [];
+    for (const childId of childIds) {
+      const child = snapshot.graph.nodesById.get(childId);
+      if (child?.kind === "media" && child.mediaKind !== "video" && child.src) {
+        return child.src;
+      }
+    }
+    return null;
+  });
+
+  return (
+    <span
+      data-user-collection-cover={selected ? "selected" : "idle"}
+      className={cn(
+        "relative flex h-full w-full overflow-hidden rounded-md border bg-muted text-left",
+        selected ? "border-primary ring-4 ring-primary" : "border-border",
+        isDragSource && "opacity-40"
+      )}
+    >
+      {firstImageSrc ? (
+        <img
+          data-user-collection-first-image
+          src={firstImageSrc}
+          alt=""
+          draggable={false}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        <span
+          data-user-collection-empty-cover
+          className="flex h-full w-full items-center justify-center text-xs text-muted-foreground"
+        >
+          No image
+        </span>
+      )}
+      <span className="absolute inset-x-0 bottom-0 flex flex-col bg-background/90 px-2 py-1">
+        <span className="truncate text-xs font-semibold">{name}</span>
+        <span className="text-[9px] text-muted-foreground tabular-nums">
+          {childCount} {childCount === 1 ? "item" : "items"}
+        </span>
+      </span>
+    </span>
+  );
+});
+
+const FirstChildImageItemContent = memo(function FirstChildImageItemContent(
+  props: CollectionItemContentProps
+) {
+  if (props.node.kind === "collection") {
+    return (
+      <UserCollectionCover
+        id={props.id}
+        name={props.node.name}
+        childCount={props.childCount}
+        selected={props.selected}
+        isDragSource={props.isDragSource}
+      />
+    );
+  }
+  return <TimelineClipContent {...props} />;
+});
+
+const UserCollectionBookendCover = memo(function UserCollectionBookendCover({
+  id,
+  name,
+  childCount,
+  selected,
+  isDragSource,
+}: UserCollectionCoverProps) {
+  const firstImageSrc = useCollectionsSelector((snapshot) => {
+    const childIds = snapshot.graph.childrenById.get(id) ?? [];
+    for (const childId of childIds) {
+      const child = snapshot.graph.nodesById.get(childId);
+      if (child?.kind === "media" && child.mediaKind !== "video" && child.src) {
+        return child.src;
+      }
+    }
+    return null;
+  });
+  const lastImageSrc = useCollectionsSelector((snapshot) => {
+    const childIds = snapshot.graph.childrenById.get(id) ?? [];
+    for (let index = childIds.length - 1; index >= 0; index -= 1) {
+      const child = snapshot.graph.nodesById.get(childIds[index]);
+      if (
+        child?.kind === "media" &&
+        child.mediaKind !== "video" &&
+        child.src &&
+        child.src !== firstImageSrc
+      ) {
+        return child.src;
+      }
+    }
+    return null;
+  });
+
+  return (
+    <span
+      data-user-collection-bookends={selected ? "selected" : "idle"}
+      className={cn(
+        "relative flex h-full w-full overflow-hidden rounded-md border bg-muted text-left",
+        selected ? "border-primary ring-4 ring-primary" : "border-border",
+        isDragSource && "opacity-40"
+      )}
+    >
+      <span className="grid size-full grid-cols-1 gap-px bg-border has-[img]:grid-cols-2">
+        {firstImageSrc ? (
+          <img
+            data-user-collection-first-image
+            src={firstImageSrc}
+            alt=""
+            draggable={false}
+            className="size-full min-w-0 object-cover"
+          />
+        ) : (
+          <span className="bg-muted" />
+        )}
+        {lastImageSrc ? (
+          <img
+            data-user-collection-last-image
+            src={lastImageSrc}
+            alt=""
+            draggable={false}
+            className="size-full min-w-0 object-cover"
+          />
+        ) : (
+          <span className="bg-muted" />
+        )}
+      </span>
+      <span className="absolute inset-x-0 bottom-0 flex flex-col bg-background/90 px-2 py-1">
+        <span className="truncate text-xs font-semibold">{name}</span>
+        <span className="text-[9px] text-muted-foreground tabular-nums">
+          {childCount} {childCount === 1 ? "item" : "items"}
+        </span>
+      </span>
+    </span>
+  );
+});
+
+const FirstAndLastChildImageItemContent = memo(function FirstAndLastChildImageItemContent(
+  props: CollectionItemContentProps
+) {
+  if (props.node.kind === "collection") {
+    return (
+      <UserCollectionBookendCover
+        id={props.id}
+        name={props.node.name}
+        childCount={props.childCount}
+        selected={props.selected}
+        isDragSource={props.isDragSource}
+      />
+    );
+  }
+  return <TimelineClipContent {...props} />;
+});
 
 /** App-style trim-handle pixels: an amber zone whose intensity follows the
  *  card's selection, with a grip line — filling the shell-owned hit zone. */
@@ -236,6 +471,153 @@ export const TimelineLookalike: Story = {
     expect(
       wrapper.querySelector('[data-trim-handle="right"] [data-timeline-handle="right"]')
     ).not.toBeNull();
+  },
+};
+
+export const TimelineLookalikeWithCollectionItem: Story = {
+  // The same consumer-owned timeline pixels, now with a collection node in
+  // the strip. Media keeps its filmstrip treatment; collections receive the
+  // same shell behavior plus their own label, name, child count, and selected
+  // state without pretending to be trimmable media.
+  render: () => (
+    <DndCollections
+      initialGraph={timelineGraphWithCollection()}
+      animateMoves={false}
+      components={{ ItemContent: TimelineClipContent, TrimHandleContent: TimelineTrimHandle }}
+    >
+      <div className="w-[640px] pt-10">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemDragActivation="hold"
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * CLIP_PPS : undefined
+          }
+          trimPixelsPerSecond={CLIP_PPS}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const video = nodeCard(canvasElement, "vid");
+    const collectionCard = nodeCard(canvasElement, "b-roll");
+    const collectionContent = () =>
+      collectionCard.querySelector<HTMLElement>("[data-timeline-collection]")!;
+    await waitForLayout(video);
+    await waitForLayout(collectionCard);
+
+    // Both node kinds use the consumer content slot in the same strip.
+    expect(video.querySelector("[data-timeline-clip]")).not.toBeNull();
+    expect(collectionCard).toHaveAttribute("data-node-kind", "collection");
+    expect(collectionContent()).toHaveAttribute("data-timeline-collection", "idle");
+    expect(collectionContent().textContent).toContain("B-roll");
+    expect(collectionContent().textContent).toContain("2 items");
+
+    // Collections participate in selection, but never receive media trim handles.
+    expect(
+      collectionCard.closest("[data-node-wrapper]")?.querySelector("[data-trim-handle]")
+    ).toBeNull();
+    const user = userEvent.setup();
+    await user.click(collectionCard);
+    await waitFor(() => {
+      expect(collectionCard).toHaveAttribute("data-selected", "true");
+      expect(collectionContent()).toHaveAttribute("data-timeline-collection", "selected");
+    });
+  },
+};
+
+export const CollectionItemWithFirstChildImage: Story = {
+  // A consumer-defined collection card can derive its own visuals from the
+  // graph. This renderer scans the collection's direct children and uses the
+  // first image media node with a source as the collection cover.
+  render: () => (
+    <DndCollections
+      initialGraph={timelineGraphWithCollection()}
+      animateMoves={false}
+      components={{ ItemContent: FirstChildImageItemContent, TrimHandleContent: TimelineTrimHandle }}
+    >
+      <div className="w-[640px] pt-10">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemDragActivation="hold"
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * CLIP_PPS : undefined
+          }
+          trimPixelsPerSecond={CLIP_PPS}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const collectionCard = nodeCard(canvasElement, "b-roll");
+    await waitForLayout(collectionCard);
+    const cover = () =>
+      collectionCard.querySelector<HTMLElement>("[data-user-collection-cover]")!;
+    const coverImage = () =>
+      collectionCard.querySelector<HTMLImageElement>("[data-user-collection-first-image]")!;
+
+    expect(cover()).toHaveAttribute("data-user-collection-cover", "idle");
+    expect(coverImage()).toHaveAttribute("src", collectionFrames[0]);
+    expect(cover().textContent).toContain("B-roll");
+    expect(cover().textContent).toContain("2 items");
+    expect(collectionCard.querySelector("[data-user-collection-empty-cover]")).toBeNull();
+
+    const user = userEvent.setup();
+    await user.click(collectionCard);
+    await waitFor(() => {
+      expect(collectionCard).toHaveAttribute("data-selected", "true");
+      expect(cover()).toHaveAttribute("data-user-collection-cover", "selected");
+    });
+  },
+};
+
+export const CollectionItemWithFirstAndLastChildImages: Story = {
+  // Another consumer-owned collection treatment: the first and last direct
+  // image children become a split cover. The fixture intentionally supplies
+  // different sources so both ends of the collection are visible.
+  render: () => (
+    <DndCollections
+      initialGraph={timelineGraphWithCollection()}
+      animateMoves={false}
+      components={{
+        ItemContent: FirstAndLastChildImageItemContent,
+        TrimHandleContent: TimelineTrimHandle,
+      }}
+    >
+      <div className="w-[640px] pt-10">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemDragActivation="hold"
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * CLIP_PPS : undefined
+          }
+          trimPixelsPerSecond={CLIP_PPS}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const collectionCard = nodeCard(canvasElement, "b-roll");
+    await waitForLayout(collectionCard);
+    const cover = () =>
+      collectionCard.querySelector<HTMLElement>("[data-user-collection-bookends]")!;
+    const firstImage = () =>
+      collectionCard.querySelector<HTMLImageElement>("[data-user-collection-first-image]")!;
+    const lastImage = () =>
+      collectionCard.querySelector<HTMLImageElement>("[data-user-collection-last-image]")!;
+
+    expect(cover()).toHaveAttribute("data-user-collection-bookends", "idle");
+    expect(firstImage()).toHaveAttribute("src", collectionFrames[0]);
+    expect(lastImage()).toHaveAttribute("src", collectionFrames[1]);
+    expect(firstImage().getAttribute("src")).not.toBe(lastImage().getAttribute("src"));
+    expect(cover().textContent).toContain("B-roll");
+    expect(cover().textContent).toContain("2 items");
+
+    const user = userEvent.setup();
+    await user.click(collectionCard);
+    await waitFor(() => {
+      expect(collectionCard).toHaveAttribute("data-selected", "true");
+      expect(cover()).toHaveAttribute("data-user-collection-bookends", "selected");
+    });
   },
 };
 
