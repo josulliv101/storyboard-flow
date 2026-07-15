@@ -470,6 +470,7 @@ type DndCollectionsProps = {
   onChange?: (change: CollectionsChange) => void;
   maxHistoryEntries?: number; // cap the undo stack; positive integer, default unbounded
   animateMoves?: boolean;     // post-commit FLIP sweep, default true; one sweep for ALL views
+  components?: CollectionsComponents; // consumer pixels: ItemContent / GhostContent (see "Custom item content")
   children: ReactNode;
 };
 ```
@@ -604,6 +605,57 @@ efficiency mechanism, so a selector that allocates per call defeats it.
 
 ---
 
+## React: custom item content (`react/collections-components.tsx`)
+
+The consumer-content seam: the package owns BEHAVIOR and GEOMETRY (drag
+wiring, selection, trim gestures, aria, indicators, measurement, the card
+box); consumers own PIXELS. `NodeCard` is a visually transparent interaction
+shell that renders a content component inside its button surface —
+`DefaultItemContent` (the stock look, also exported as the reference
+implementation) unless one is registered.
+
+```ts
+type CollectionItemContentProps = Readonly<{
+  id: NodeId;
+  node: CollectionItemNode;   // stable reference — new identity ONLY on a data commit
+  childCount: number;         // collections; 0 for media
+  selected: boolean;
+  rejected: boolean;          // rejection flash — style it or ignore it
+  isDragSource: boolean;      // dimmed-in-place under the drag ghost
+  dragActivation: NodeCardDragActivation; // "handle" overlays an 18px grip bar — leave room
+}>;
+type CollectionItemContentComponent = ComponentType<CollectionItemContentProps>;
+
+type CollectionGhostContentProps = Readonly<{ node: CollectionItemNode; extraCount: number }>;
+type CollectionGhostContentComponent = ComponentType<CollectionGhostContentProps>;
+
+type CollectionsComponents = Readonly<{
+  ItemContent?: CollectionItemContentComponent;  // every card, all views
+  GhostContent?: CollectionGhostContentComponent; // the drag-overlay ghost
+}>;
+```
+
+Register once at the provider (`<DndCollections components={{ ItemContent }}>`)
+— that is what keeps cards and the drag ghost in sync from one place — or per
+view via the `itemContent` prop (which overrides the registry). Resolution:
+per-view `itemContent` → provider registry → `DefaultItemContent`.
+
+Rules, all load-bearing for the efficiency model:
+
+- **Identity-stable**: define components at module scope and wrap them in
+  `React.memo`. An inline definition is a NEW component type per render —
+  React remounts every card's content subtree (a dev warning fires once on
+  churn). The `components` object literal itself may be inline; only the
+  fields must be stable.
+- **Presentational only**: content renders inside a `<button>` — no
+  interactive elements (buttons, links, inputs). Interactivity (selection,
+  drag, trim) is the shell's job; compound primitives for custom interactive
+  placement are a planned escape hatch.
+- Nothing per-frame ever reaches content: every prop is a rarely-changing
+  primitive plus the structurally-shared `node`. Content may subscribe to
+  its own stores — that re-renders only the subscribed content, never the
+  shells (`CustomContentRenderEfficiency` asserts both directions).
+
 ## React: views (`react/node-views.tsx`, `react/history-views.tsx`)
 
 Default views — usable as-is, or as reference implementations for custom
@@ -611,9 +663,9 @@ ones (everything they do goes through the store API above).
 
 | Component | Props | Notes |
 | --- | --- | --- |
-| `CollectionPanels` | `collectionIds?: readonly NodeId[]` | One panel per id (default: the graph's roots). FLIP animation is owned by `<DndCollections animateMoves>`, not here. |
-| `CollectionPanel` | `collectionId: NodeId` | One droppable panel with its cards. |
-| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: NodeCardDragActivation` (`"body" \| "handle" \| "hold"`), `rovingTabIndex?: number`, `trimPixelsPerSecond?: number` | Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only POINTER activator — the keyboard grab (Enter) stays on the card button in every mode; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). `rovingTabIndex` (0 or -1) is for virtualized views' single-tab-stop roving focus: exactly one mounted card is `0`; it also demotes the grip to `-1` (pointer-only). A finite, positive `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in); invalid scales are treated as omitted. The card resizes LIVE during the drag when the view provides a `TrimPreview` (VirtualStrip does, via targeted `resizeItem`); without one it still trims, just without live resize. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
+| `CollectionPanels` | `collectionIds?: readonly NodeId[]`, `itemContent?` | One panel per id (default: the graph's roots). FLIP animation is owned by `<DndCollections animateMoves>`, not here. `itemContent` overrides the provider registry for these panels' cards. |
+| `CollectionPanel` | `collectionId: NodeId`, `itemContent?` | One droppable panel with its cards. |
+| `NodeCard` | `id: NodeId`, `className?: string`, `dragActivation?: NodeCardDragActivation` (`"body" \| "handle" \| "hold"`), `rovingTabIndex?: number`, `trimPixelsPerSecond?: number`, `itemContent?: CollectionItemContentComponent` | A visually transparent interaction shell — pixels come from `itemContent` → the provider registry → `DefaultItemContent` (see "Custom item content"). Memoized; id-only state by design — everything dynamic arrives via selectors. `className` is tailwind-merged onto wrapper AND button (sizing overrides beat the `h-24 w-32` defaults; virtual views pass `"h-full w-full"`). `dragActivation`: `"body"` (default) drags instantly from anywhere; `"handle"` renders a top grip bar as the only POINTER activator — the keyboard grab (Enter) stays on the card button in every mode; `"hold"` requires a 250ms press (fast movement is handed to surface gestures). `rovingTabIndex` (0 or -1) is for virtualized views' single-tab-stop roving focus: exactly one mounted card is `0`; it also demotes the grip to `-1` (pointer-only). A finite, positive `trimPixelsPerSecond` enables edge trim handles on media (right = image duration / video trim-out; left = video trim-in); invalid scales are treated as omitted. The card resizes LIVE during the drag when the view provides a `TrimPreview` (VirtualStrip does, via targeted `resizeItem`); without one it still trims, just without live resize. Body clicks always select; ghosts stay card-sized. Draggable + droppable. |
 | `NodeCardGhost` | `node: CollectionItemNode`, `extraCount: number` | The drag-overlay ghost; renders a `+N` badge when `extraCount > 0`. |
 | `UndoRedoControls` | — | Buttons bound to `store.undo`/`store.redo`, disabled off `canUndo`/`canRedo`. Announces "Change undone." / "Change redone." through the instance live region (best-effort: silent under bare `CollectionsStoreProvider` hosting). |
 | `HistoryLog` | — | Human-readable command log over `historyEntries`. |
@@ -676,6 +728,7 @@ type VirtualStripProps = {
   panToScroll?: boolean;                                 // default true — drag the surface to scroll, with momentum
   itemDragActivation?: "handle" | "hold";                // default "handle" (grip bar); "hold" = press-and-hold the body. Ignored when panToScroll is off (bodies drag instantly)
   trimPixelsPerSecond?: number;                          // enable media trim handles; set to your itemWidthFor scale. The card resizes LIVE during the drag (targeted resizeItem, no re-measure) and commits update-media on release
+  itemContent?: CollectionItemContentComponent;          // per-view card pixels; overrides the provider registry
   className?: string;
 };
 type VirtualStripHandle = {
@@ -715,6 +768,7 @@ type VirtualGridProps = {
   columns?: number;     // fixed count; omit to derive responsively from width. Non-positive-integer values fall back to responsive
   overscan?: number;    // default 2 (rows)
   height?: number;      // default 480 — scroll viewport height
+  itemContent?: CollectionItemContentComponent; // per-view card pixels; overrides the provider registry
   className?: string;
 };
 type VirtualGridHandle = {

@@ -45,6 +45,12 @@ import {
   type CollectionsChange,
   type CollectionsStore,
 } from "./collections-store";
+import {
+  CollectionsComponentsContext,
+  useCollectionsComponents,
+  useCollectionsComponentsValue,
+  type CollectionsComponents,
+} from "./collections-components";
 import { CollectionsContainerContext } from "./container-context";
 import { useFlipGraphAnimation } from "./use-flip-graph-animation";
 import { NodeCardGhost } from "./node-views";
@@ -76,6 +82,14 @@ export type DndCollectionsProps = Readonly<{
    * panels, virtual, and custom views. Honors `prefers-reduced-motion`.
    */
   animateMoves?: boolean;
+  /**
+   * Consumer pixels: `ItemContent` replaces every card's visible content
+   * (panels and virtual views alike; per-view `itemContent` props override
+   * it), `GhostContent` replaces the drag-overlay ghost. Registering here —
+   * rather than per card — is what keeps the ghost and the cards in sync
+   * from one place. Components MUST be identity-stable (module scope).
+   */
+  components?: CollectionsComponents;
   children: ReactNode;
 }>;
 
@@ -137,8 +151,10 @@ export function DndCollections({
   onChange,
   maxHistoryEntries,
   animateMoves = true,
+  components,
   children,
 }: DndCollectionsProps) {
+  const componentsValue = useCollectionsComponentsValue(components);
   // The store captures its options once, but callback props must stay fresh
   // — a parent passing an inline closure over its latest state expects that
   // version to be called. Route through a ref, updated in a layout effect
@@ -166,7 +182,9 @@ export function DndCollections({
 
   return (
     <CollectionsStoreProvider value={store}>
-      <DndCollectionsContext animateMoves={animateMoves}>{children}</DndCollectionsContext>
+      <CollectionsComponentsContext.Provider value={componentsValue}>
+        <DndCollectionsContext animateMoves={animateMoves}>{children}</DndCollectionsContext>
+      </CollectionsComponentsContext.Provider>
     </CollectionsStoreProvider>
   );
 }
@@ -546,8 +564,11 @@ function CollectionsDragOverlay({
   );
   const node = paletteNodes?.[0] ?? primaryNode;
   const extraCount = Math.max(0, (paletteNodes ? paletteNodes.length : activeIds.length) - 1);
+  // Consumer ghost pixels, falling back to the stock ghost — registered at
+  // the provider so cards and their drag preview stay in sync in one place.
+  const GhostContent = useCollectionsComponents().GhostContent ?? NodeCardGhost;
 
   return (
-    <DragOverlay>{node ? <NodeCardGhost node={node} extraCount={extraCount} /> : null}</DragOverlay>
+    <DragOverlay>{node ? <GhostContent node={node} extraCount={extraCount} /> : null}</DragOverlay>
   );
 }

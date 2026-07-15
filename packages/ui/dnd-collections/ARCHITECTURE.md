@@ -270,14 +270,29 @@ stream. The design answer has three layers:
    dispatch/undo/redo — never rebuilt per interaction notify), and
    no-op updates (`setSelection` with the same set, an unchanged
    `DropIntent`) don't notify at all.
-3. **Id-only card props.** `NodeCard` is `memo` and receives just `id`;
-   every dynamic value (node data, selection, drag-source dimming, drop
-   side, nest state) arrives through selectors returning primitives or
-   stable references. A drag over one card re-renders that card alone.
+3. **Id-only card props.** `NodeCard` is `memo` and receives just `id`
+   (plus identity-stable configuration); every dynamic value (node data,
+   selection, drag-source dimming, drop side, nest state) arrives through
+   selectors returning primitives or stable references. A drag over one
+   card re-renders that card alone.
+4. **A shell/content component boundary.** `NodeCard` is a visually
+   TRANSPARENT interaction shell — it owns behavior and geometry (drag/drop
+   wiring, selection, aria, trim handles, indicators, the card box) and
+   paints nothing. Pixels come from a memoized content component
+   (`DefaultItemContent`, or a consumer's via the provider `components`
+   registry / per-view `itemContent`), rendered with the node plus
+   rarely-changing primitives only. Because the optimization is the
+   component boundary — not the shell's hooks — consumer content inherits
+   the whole efficiency story for free, and a consumer's own store
+   subscriptions re-render only their content, never the shells. Content
+   components must be identity-stable (module scope): a new component type
+   per render REMOUNTS every card's content subtree.
 
 This is asserted, not aspirational: cards expose `data-render-count`, and
 the `RenderEfficiencyDuringDrag` story fails if a bystander card re-renders
-during mid-drag pointer jitter.
+during mid-drag pointer jitter — `CustomContentRenderEfficiency` repeats the
+assertion with consumer content and a consumer-owned external store, in both
+directions.
 
 ## dnd-kit integration decisions
 
