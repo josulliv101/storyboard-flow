@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { buildGraph, parseNodeId, type CollectionsGraph } from "../core/graph";
 import {
   MIN_ITEM_WIDTH,
   durationToWidth,
@@ -7,6 +8,7 @@ import {
   leftAnchorShift,
   resolveBoundaryIndex,
   slotSizeFor,
+  timeToOffset,
 } from "./virtual-strip-geometry";
 
 const item = (start: number, size: number, index: number) => ({ start, size, index });
@@ -79,6 +81,70 @@ describe("slotSizeFor", () => {
 
   it("leaves widths at or above the floor untouched", () => {
     expect(slotSizeFor(0.5, 24, 8)).toBe(20); // exactly MIN_ITEM_WIDTH
+  });
+});
+
+describe("timeToOffset", () => {
+  // [img 4s][folder (no time)][vid 10-2-1=7s][tiny 0.2s (floored)]
+  function fixture(): CollectionsGraph {
+    const result = buildGraph([
+      {
+        kind: "collection",
+        id: "strip",
+        name: "Strip",
+        children: [
+          { kind: "media", id: "img", name: "Img", durationSeconds: 4 },
+          { kind: "collection", id: "folder", name: "Folder", children: [] },
+          {
+            kind: "media",
+            mediaKind: "video",
+            id: "vid",
+            name: "Vid",
+            fullDurationSeconds: 10,
+            trimInSeconds: 2,
+            trimOutSeconds: 1,
+          },
+          { kind: "media", id: "tiny", name: "Tiny", durationSeconds: 0.2 },
+        ],
+      },
+    ]);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    return result.value;
+  }
+  const strip = parseNodeId("strip");
+  const at = (t: number) =>
+    timeToOffset({ graph: fixture(), collectionId: strip, timeSeconds: t, pixelsPerSecond: 24 });
+  // Layout at pps 24, gap 8, itemWidth 128:
+  // img [0, 96) · folder [104, 232) · vid [240, 408) · tiny [416, 428) (floored)
+
+  it("maps times inside a clip linearly from its content start", () => {
+    expect(at(0)).toBe(0);
+    expect(at(2)).toBe(48);
+  });
+
+  it("skips non-media widths without advancing the clock", () => {
+    // t=4 is the start of the SECOND media item, after the folder's slot.
+    expect(at(4)).toBe(240);
+    expect(at(4 + 3.5)).toBe(240 + 84);
+  });
+
+  it("caps inside a floored clip at its right edge and clamps at the ends", () => {
+    // tiny starts at t=11; its 0.2s spans 4.8px of its 12px slot.
+    expect(at(11.1)).toBeCloseTo(416 + 2.4, 5);
+    expect(at(-1)).toBe(0);
+    // Past the total duration: the last media item's right edge.
+    expect(at(999)).toBe(428);
+  });
+
+  it("returns 0 for an unknown or empty collection", () => {
+    expect(
+      timeToOffset({
+        graph: fixture(),
+        collectionId: parseNodeId("nope"),
+        timeSeconds: 5,
+        pixelsPerSecond: 24,
+      })
+    ).toBe(0);
   });
 });
 

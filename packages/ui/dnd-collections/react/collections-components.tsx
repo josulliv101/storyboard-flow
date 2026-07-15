@@ -9,7 +9,12 @@ import {
   type ComponentType,
 } from "react";
 
-import { type CollectionItemNode, type MediaNode, type NodeId } from "../core/graph";
+import {
+  type CollectionItemNode,
+  type MediaNode,
+  type NodeId,
+  type VideoMediaNode,
+} from "../core/graph";
 
 // The consumer-content seam: dnd-collections owns BEHAVIOR and GEOMETRY
 // (drag wiring, selection, trim gestures, aria, measurement, indicators);
@@ -91,6 +96,26 @@ export type CollectionTrimHandleContentProps = Readonly<{
 export type CollectionTrimHandleContentComponent =
   ComponentType<CollectionTrimHandleContentProps>;
 
+export type CollectionTrimOverviewContentProps = Readonly<{
+  node: VideoMediaNode;
+  pixelsPerSecond: number;
+  /** Live drag values override the node's committed trim mid-gesture. */
+  trimInSeconds: number;
+  trimOutSeconds: number;
+  /** The full source's rendered width (`fullDurationSeconds * pps`, min 1px). */
+  fullWidth: number;
+}>;
+
+/**
+ * The BACKGROUND pixels of the source-window overview (`VirtualStrip`'s
+ * floating tooltip for a selected video): the full-source filmstrip and any
+ * labels. The package keeps the overview's geometry and interactivity — the
+ * dimmed trimmed-room layers, the amber showing-window, its trim grips, and
+ * the filmstrip-move gesture. Presentational only, like the other slots.
+ */
+export type CollectionTrimOverviewContentComponent =
+  ComponentType<CollectionTrimOverviewContentProps>;
+
 export type CollectionsComponents = Readonly<{
   /** Replaces the card pixels everywhere (panels, virtual views). Per-view
    *  `itemContent` props override this registry entry. */
@@ -99,6 +124,8 @@ export type CollectionsComponents = Readonly<{
   GhostContent?: CollectionGhostContentComponent;
   /** Replaces the pixels INSIDE the trim-handle hit zones. */
   TrimHandleContent?: CollectionTrimHandleContentComponent;
+  /** Replaces the source-window overview's filmstrip/label pixels. */
+  OverviewContent?: CollectionTrimOverviewContentComponent;
 }>;
 
 const EMPTY_COMPONENTS: CollectionsComponents = {};
@@ -125,12 +152,13 @@ export function useCollectionsComponentsValue(
   const ItemContent = components?.ItemContent;
   const GhostContent = components?.GhostContent;
   const TrimHandleContent = components?.TrimHandleContent;
+  const OverviewContent = components?.OverviewContent;
   const value = useMemo<CollectionsComponents>(
     () =>
-      ItemContent || GhostContent || TrimHandleContent
-        ? { ItemContent, GhostContent, TrimHandleContent }
+      ItemContent || GhostContent || TrimHandleContent || OverviewContent
+        ? { ItemContent, GhostContent, TrimHandleContent, OverviewContent }
         : EMPTY_COMPONENTS,
-    [ItemContent, GhostContent, TrimHandleContent]
+    [ItemContent, GhostContent, TrimHandleContent, OverviewContent]
   );
 
   const previousRef = useRef(value);

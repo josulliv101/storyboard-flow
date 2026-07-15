@@ -638,12 +638,28 @@ type CollectionTrimHandleContentProps = Readonly<{
 }>;
 type CollectionTrimHandleContentComponent = ComponentType<CollectionTrimHandleContentProps>;
 
+type CollectionTrimOverviewContentProps = Readonly<{
+  node: VideoMediaNode;
+  pixelsPerSecond: number;
+  trimInSeconds: number;      // live drag values override the committed trim
+  trimOutSeconds: number;
+  fullWidth: number;          // the full source's rendered width
+}>;
+type CollectionTrimOverviewContentComponent = ComponentType<CollectionTrimOverviewContentProps>;
+
 type CollectionsComponents = Readonly<{
   ItemContent?: CollectionItemContentComponent;  // every card, all views
   GhostContent?: CollectionGhostContentComponent; // the drag-overlay ghost
   TrimHandleContent?: CollectionTrimHandleContentComponent; // pixels INSIDE the trim hit zones
+  OverviewContent?: CollectionTrimOverviewContentComponent; // the overview's filmstrip/label pixels
 }>;
 ```
+
+**The source-window overview** splits the same way: `OverviewContent`
+replaces its BACKGROUND pixels (the full-source filmstrip and labels —
+default `DefaultTrimOverviewContent`), while the package keeps the dimmed
+trimmed-room layers, the amber showing-window, its trim grips, and the
+filmstrip-move gesture.
 
 **Trim handles** follow the same split: the shell keeps each handle's HIT
 ZONE — positioning, width, cursor, the pointer gesture, and the
@@ -687,6 +703,38 @@ Rules, all load-bearing for the efficiency model:
   primitive plus the structurally-shared `node`. Content may subscribe to
   its own stores — that re-renders only the subscribed content, never the
   shells (`CustomContentRenderEfficiency` asserts both directions).
+
+## React: compound items (`react/collection-item.tsx`)
+
+The FULL-custom escape hatch for items whose DOM composition the content
+slot can't express — interactive controls inside the card, a grip placed
+anywhere, trim handles embedded in custom chrome. Behavior is delivered
+through context (no raw refs/listeners to mis-spread); the consumer owns
+every pixel AND the DOM shape:
+
+```tsx
+<CollectionItem.Root id={id} trimPixelsPerSecond={24}>
+  <CollectionItem.SelectionSurface>…visible card…</CollectionItem.SelectionSurface>
+  <button onClick={mute}>M</button>  {/* real control: no select, no drag */}
+  <CollectionItem.DragHandle>⠿</CollectionItem.DragHandle>
+  <CollectionItem.TrimHandle side="right">…grip pixels…</CollectionItem.TrimHandle>
+  <CollectionItem.DropIndicators />
+</CollectionItem.Root>
+```
+
+| Primitive | Owns |
+| --- | --- |
+| `Root` | `id`, `className?`, `trimPixelsPerSecond?`, `rovingTabIndex?`. The draggable node AND droppable (ghost/collision rects = the whole item), the narrow selector subscriptions (same as NodeCard — the efficiency story holds), `data-node-wrapper`/`data-render-count`. Renders null for missing ids. |
+| `SelectionSurface` | The focusable `<button>`: `data-node-id` (FLIP, keyboard delegation, roving focus, and e2e key off it), selection clicks (Ctrl/Cmd toggles), `aria-label`/`aria-pressed`/instructions `describedby`, and the KEYBOARD grab (Enter) — always the tab stop. |
+| `DragHandle` | Pointer-only drag activator (`data-drag-handle`, `touch-action: none`, aria-hidden) — place it anywhere; keyboard drag stays on the SelectionSurface. |
+| `TrimHandle` | `side: "left" \| "right"` + your grip pixels as children. The hit zone (default edge geometry, override via `className`), the pointer gesture, `data-trim-handle` (the strip's pan filter skips it). Renders null for collections, images' left side, or without `Root trimPixelsPerSecond`. |
+| `DropIndicators` | The stock nest overlay + before/after bars. Or draw your own from `useCollectionItemState()` (`{ id, node, childCount, selected, rejected, isDragSource, dropSide, nestState }`). |
+
+Use compound items in YOUR containers (a mapped `getChildren` list, a custom
+virtualized view): card-adjacent drops, keyboard moves, trims, undo, and
+announcements all flow through the standard pipeline. `NodeCard` remains the
+batteries-included card; reach for `CollectionItem` only when the content
+slot isn't enough.
 
 ## React: views (`react/node-views.tsx`, `react/history-views.tsx`)
 
@@ -787,6 +835,13 @@ Slot widths reconcile at COMMIT cadence through `store.subscribeToChanges`:
 a `nodes-updated` patch resizes exactly the touched slots (targeted
 `resizeItem`); a full re-measure happens only for `replaceGraph`, scale/
 layout prop changes, and the `remeasure()` handle.
+
+For overlay math, `timeToOffset({ graph, collectionId, timeSeconds,
+pixelsPerSecond, gap?, itemWidth?, minimumWidth? })` maps timeline time →
+content-x over a `pixelsPerSecond`-sized strip (media advance the clock,
+collections occupy width only; floored clips cap at their right edge; the
+transient first-item gutter is excluded). Strips sized by a custom
+`itemWidthFor` need their own mapping against that same function.
 
 When `trimPixelsPerSecond` is set and a mounted video is selected,
 `VirtualStrip` renders the source-window overview (`TrimOverviewStrip`) as a

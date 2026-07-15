@@ -334,8 +334,10 @@ export const NodeCard = memo(function NodeCard({
   );
 });
 
-/** Presentational drop-preview overlays: nest highlight + before/after bars. */
-function NodeCardIndicators({
+/** Presentational drop-preview overlays: nest highlight + before/after bars.
+ *  Shared by NodeCard and CollectionItem.DropIndicators (not exported from
+ *  the package index — the compound primitive is the public seam). */
+export function NodeCardIndicators({
   nestState,
   dropSide,
 }: {
