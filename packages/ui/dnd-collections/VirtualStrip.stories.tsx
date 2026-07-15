@@ -175,6 +175,38 @@ export const FullyTrimmedClipKeepsMinimumWidth: Story = {
   },
 };
 
+export const MissingCollectionUsesNativeScrollFallback: Story = {
+  render: () => (
+    <DndCollections initialGraph={bigGraph()}>
+      <div className="w-[640px]">
+        <VirtualStrip
+          collectionId={parseNodeId("missing-strip")}
+          panToScroll={false}
+          className="native-scroll-coverage"
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const strip = canvasElement.querySelector<HTMLElement>(
+      '[data-virtual-strip="missing-strip"]'
+    )!;
+    expect(strip).toHaveAttribute("aria-label", "missing-strip, 0 items");
+    expect(strip).toHaveAttribute("aria-rowcount", "0");
+    expect(strip).toHaveClass("native-scroll-coverage");
+    expect(strip.style.touchAction).toBe("auto");
+    expect(strip.querySelector("[data-drag-handle]")).toBeNull();
+
+    const keydown = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "ArrowRight",
+    });
+    strip.dispatchEvent(keydown);
+    expect(keydown.defaultPrevented).toBe(false);
+  },
+};
+
 /** Play-less twin for e2e (real-mouse scroll/drag must not race a play()). */
 export const VirtualPlayground: Story = {
   render: () => <StripHarness />,
@@ -911,6 +943,16 @@ export const KeyboardRovingNavigation: Story = {
       expect(nodeCard(canvasElement, "m0").tabIndex).toBe(-1);
     });
 
+    // Reverse navigation and unrelated keys keep the roving stop predictable.
+    await user.keyboard("{ArrowLeft}");
+    await waitFor(() => {
+      const first = nodeCard(canvasElement, "m0");
+      expect(first.ownerDocument.activeElement).toBe(first);
+      expect(first.tabIndex).toBe(0);
+    });
+    await user.keyboard("{PageDown}");
+    expect(document.activeElement).toBe(nodeCard(canvasElement, "m0"));
+
     // End jumps to the last item — unmounted and far offscreen — scrolling it
     // into view and focusing it. This is the whole point: no Tab could reach it.
     expect(canvasElement.querySelector('[data-node-id="m999"]')).toBeNull();
@@ -920,6 +962,15 @@ export const KeyboardRovingNavigation: Story = {
       expect(last).not.toBeNull();
       expect(last!.ownerDocument.activeElement).toBe(last);
       expect(last!.tabIndex).toBe(0);
+    });
+
+    // Home returns from the virtualized tail to the first logical item.
+    await user.keyboard("{Home}");
+    await waitFor(() => {
+      const first = canvasElement.querySelector<HTMLElement>('[data-node-id="m0"]');
+      expect(first).not.toBeNull();
+      expect(first!.ownerDocument.activeElement).toBe(first);
+      expect(first!.tabIndex).toBe(0);
     });
   },
 };

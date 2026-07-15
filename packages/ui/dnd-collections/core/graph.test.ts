@@ -235,6 +235,231 @@ describe("runtime graph validation", () => {
       error: { path: '$.nodesById["image"].durationSeconds' },
     });
   });
+
+  test("rejects malformed node identity and media fields at their exact paths", () => {
+    const cases: ReadonlyArray<readonly [value: unknown, path: string]> = [
+      [null, "$"],
+      [{ id: 1, kind: "collection", name: "Collection" }, "$.id"],
+      [{ id: " ", kind: "collection", name: "Collection" }, "$.id"],
+      [{ id: "collection", kind: "collection", name: 1 }, "$.name"],
+      [{ id: "media", kind: "media", mediaKind: "audio", name: "Media" }, "$.mediaKind"],
+      [
+        { id: "media", kind: "media", name: "Media", src: 42, durationSeconds: 4 },
+        "$.src",
+      ],
+      [{ id: "media", kind: "media", name: "Media" }, "$.durationSeconds"],
+      [
+        { id: "media", kind: "media", name: "Media", durationSeconds: "4" },
+        "$.durationSeconds",
+      ],
+      [
+        { id: "media", kind: "media", name: "Media", durationSeconds: -1 },
+        "$.durationSeconds",
+      ],
+      [
+        { id: "video", kind: "media", mediaKind: "video", name: "Video" },
+        "$.fullDurationSeconds",
+      ],
+      [
+        {
+          id: "video",
+          kind: "media",
+          mediaKind: "video",
+          name: "Video",
+          fullDurationSeconds: 10,
+        },
+        "$.trimInSeconds",
+      ],
+      [
+        {
+          id: "video",
+          kind: "media",
+          mediaKind: "video",
+          name: "Video",
+          fullDurationSeconds: 10,
+          trimInSeconds: 0,
+        },
+        "$.trimOutSeconds",
+      ],
+      [
+        {
+          id: "video",
+          kind: "media",
+          mediaKind: "video",
+          name: "Video",
+          fullDurationSeconds: 10,
+          trimInSeconds: 0,
+          trimOutSeconds: 0,
+          posterSrcs: "poster.jpg",
+        },
+        "$.posterSrcs",
+      ],
+    ];
+
+    for (const [value, path] of cases) {
+      expect(parseCollectionItemNode(value)).toMatchObject({
+        ok: false,
+        error: { path },
+      });
+    }
+
+    expect(
+      parseCollectionItemNode({
+        id: "image",
+        kind: "media",
+        mediaKind: "image",
+        name: "Image",
+        src: "image.jpg",
+        durationSeconds: 4,
+      })
+    ).toMatchObject({
+      ok: true,
+      value: { id: "image", mediaKind: "image", src: "image.jpg" },
+    });
+  });
+
+  test("validates graph container and index shapes before invariants", () => {
+    const cases: ReadonlyArray<readonly [value: unknown, path: string]> = [
+      [null, "$"],
+      [{}, "$.nodesById"],
+      [
+        { nodesById: new Map(), childrenById: {}, parentById: new Map(), rootIds: [] },
+        "$.childrenById",
+      ],
+      [
+        { nodesById: new Map(), childrenById: new Map(), parentById: {}, rootIds: [] },
+        "$.parentById",
+      ],
+      [
+        {
+          nodesById: new Map(),
+          childrenById: new Map(),
+          parentById: new Map(),
+          rootIds: {},
+        },
+        "$.rootIds",
+      ],
+      [
+        {
+          nodesById: new Map([["", { id: "", kind: "collection", name: "Root" }]]),
+          childrenById: new Map(),
+          parentById: new Map(),
+          rootIds: [],
+        },
+        "$.nodesById",
+      ],
+      [
+        {
+          nodesById: new Map([
+            [
+              "expected",
+              {
+                id: "actual",
+                kind: "media",
+                mediaKind: "image",
+                name: "Image",
+                durationSeconds: 4,
+              },
+            ],
+          ]),
+          childrenById: new Map(),
+          parentById: new Map(),
+          rootIds: [],
+        },
+        '$.nodesById["expected"].id',
+      ],
+      [
+        {
+          nodesById: new Map(),
+          childrenById: new Map([["", []]]),
+          parentById: new Map(),
+          rootIds: [],
+        },
+        "$.childrenById",
+      ],
+      [
+        {
+          nodesById: new Map(),
+          childrenById: new Map([["root", "child"]]),
+          parentById: new Map(),
+          rootIds: [],
+        },
+        '$.childrenById["root"]',
+      ],
+      [
+        {
+          nodesById: new Map(),
+          childrenById: new Map([["root", [""]]]),
+          parentById: new Map(),
+          rootIds: [],
+        },
+        '$.childrenById["root"][0]',
+      ],
+      [
+        {
+          nodesById: new Map(),
+          childrenById: new Map(),
+          parentById: new Map([["", null]]),
+          rootIds: [],
+        },
+        "$.parentById",
+      ],
+      [
+        {
+          nodesById: new Map(),
+          childrenById: new Map(),
+          parentById: new Map([["child", 1]]),
+          rootIds: [],
+        },
+        '$.parentById["child"]',
+      ],
+      [
+        {
+          nodesById: new Map(),
+          childrenById: new Map(),
+          parentById: new Map(),
+          rootIds: [""],
+        },
+        "$.rootIds[0]",
+      ],
+    ];
+
+    for (const [value, path] of cases) {
+      expect(validateGraph(value)).toMatchObject({
+        ok: false,
+        error: { path },
+      });
+    }
+  });
+
+  test("accepts omitted spec defaults and reports normalized graph invariant failures", () => {
+    const withoutChildren: GraphNodeSpec = {
+      kind: "collection",
+      id: "root",
+      name: "Root",
+    };
+    const graph = build([withoutChildren]);
+    expect(getChildren(graph, parseNodeId("root"))).toEqual([]);
+
+    expect(
+      parseGraphSpec([
+        withoutChildren,
+        { kind: "media", id: "draft", name: "Draft", src: "draft.jpg" },
+      ])
+    ).toMatchObject({ ok: true });
+
+    const corrupted = {
+      ...graph,
+      parentById: new Map([[parseNodeId("root"), parseNodeId("root")]]),
+    };
+    expect(validateGraph(corrupted)).toMatchObject({
+      ok: false,
+      error: {
+        reason: "graph-invariant",
+        violation: { reason: "child-parent-mismatch", childId: "root" },
+      },
+    });
+  });
 });
 
 describe("getChildren", () => {

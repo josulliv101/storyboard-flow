@@ -441,6 +441,21 @@ export const KeyboardRovingNavigation: Story = {
       expect(m5.ownerDocument.activeElement).toBe(m5);
     });
 
+    // Reverse column/row navigation returns to the origin.
+    await user.keyboard("{ArrowLeft}");
+    await waitFor(() => {
+      const m4 = nodeCard(canvasElement, "m4");
+      expect(m4.ownerDocument.activeElement).toBe(m4);
+    });
+    await user.keyboard("{ArrowUp}");
+    await waitFor(() => {
+      const first = nodeCard(canvasElement, "m0");
+      expect(first.ownerDocument.activeElement).toBe(first);
+      expect(first.tabIndex).toBe(0);
+    });
+    await user.keyboard("{PageDown}");
+    expect(document.activeElement).toBe(nodeCard(canvasElement, "m0"));
+
     // Navigation must NOT reorder the collection.
     expect(gridOrder(canvasElement, "grid").slice(0, 4)).toEqual(["m0", "m1", "m2", "m3"]);
 
@@ -451,6 +466,13 @@ export const KeyboardRovingNavigation: Story = {
       const last = canvasElement.querySelector<HTMLElement>('[data-node-id="m999"]');
       expect(last).not.toBeNull();
       expect(last!.ownerDocument.activeElement).toBe(last);
+    });
+
+    await user.keyboard("{Home}");
+    await waitFor(() => {
+      const first = canvasElement.querySelector<HTMLElement>('[data-node-id="m0"]');
+      expect(first).not.toBeNull();
+      expect(first!.ownerDocument.activeElement).toBe(first);
     });
   },
 };
