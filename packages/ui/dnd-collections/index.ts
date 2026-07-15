@@ -173,8 +173,11 @@ export {
 // content-x for overlay/playhead math over pixelsPerSecond-sized strips.
 export {
   MIN_ITEM_WIDTH,
+  createTimeToOffset,
   durationToWidth,
   timeToOffset,
+  type TimeToOffsetConfig,
+  type TimeToOffsetLookup,
 } from "./virtual/virtual-strip-geometry";
 export {
   VirtualGrid,

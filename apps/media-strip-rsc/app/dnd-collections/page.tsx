@@ -30,9 +30,10 @@ export default function DndCollectionsPage() {
             DnD Collections
           </h1>
           <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground text-pretty">
-            A normalized collection graph projected into an interactive React board. Every move,
-            nested drop, palette addition, undo, and redo travels through the same typed command and
-            reversible-patch pipeline.
+            A normalized collection graph projected into an interactive React board and a
+            duration-mapped timeline strip. Every move, nested drop, trim, palette addition, undo,
+            and redo travels through the same typed command and reversible-patch pipeline — and
+            every clip pixel on the timeline is app-owned via the consumer content slots.
           </p>
         </div>
       </header>

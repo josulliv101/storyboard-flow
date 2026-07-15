@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "media-strip-rsc",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "apps/media-strip-rsc", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}

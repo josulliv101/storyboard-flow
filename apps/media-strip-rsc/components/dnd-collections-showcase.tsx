@@ -29,6 +29,8 @@ import {
   type GraphNodeSpec,
 } from "@storyboard/ui/dnd-collections";
 
+import { DndTimelineShowcase } from "./dnd-timeline-showcase";
+
 const BOARD_COLLECTION_IDS = [
   parseNodeId("assembly-board"),
   parseNodeId("selects-board"),
@@ -154,6 +156,10 @@ function describeChange(change: CollectionsChange): string {
     return `Added ${count} new ${count === 1 ? "item" : "items"}.`;
   }
 
+  if (change.command.type === "update-media") {
+    return "Trimmed a clip.";
+  }
+
   const count = change.command.nodeIds.length;
   return `Moved ${count} ${count === 1 ? "item" : "items"}.`;
 }
@@ -199,12 +205,17 @@ export function DndCollectionsShowcase() {
   };
 
   return (
-    <DndCollections
-      key={boardVersion}
-      initialGraph={INITIAL_GRAPH}
-      onChange={handleChange}
-    >
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+    <div className="flex flex-col gap-6">
+      {/* Its own provider/graph: two DndCollections instances on one page
+          stay fully isolated (stores, FLIP sweeps, announcements). */}
+      <DndTimelineShowcase />
+
+      <DndCollections
+        key={boardVersion}
+        initialGraph={INITIAL_GRAPH}
+        onChange={handleChange}
+      >
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 flex flex-col gap-6">
           <Card>
             <CardHeader>
@@ -326,7 +337,8 @@ export function DndCollectionsShowcase() {
             </CardContent>
           </Card>
         </aside>
-      </div>
-    </DndCollections>
+        </div>
+      </DndCollections>
+    </div>
   );
 }
