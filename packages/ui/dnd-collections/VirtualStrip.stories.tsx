@@ -1927,3 +1927,49 @@ export const PlayheadOverlay: Story = {
 export const PlayheadOverlayPlayground: Story = {
   render: () => <PlayheadOverlayExample />,
 };
+
+export const ConsumerFloorLivePreview: Story = {
+  // The live trim preview routes through the SAME width resolution as the
+  // committed layout: a consumer itemWidthFor with its OWN floor (60px here)
+  // governs mid-drag widths too, so an over-drag can't dip to the package's
+  // 12px minimum and snap back up on release — the MIN_ITEM_WIDTH bug class,
+  // one level up, closed for arbitrary consumer mappings.
+  render: () => (
+    <DndCollections initialGraph={ppsGraph()} animateMoves={false}>
+      <div className="w-[640px]">
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? Math.max(60, mediaDurationSeconds(node) * 24) : undefined
+          }
+          trimPixelsPerSecond={24}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const width = () =>
+      Math.round(nodeCard(canvasElement, "vid").getBoundingClientRect().width);
+    await waitForLayout(nodeCard(canvasElement, "vid"));
+    expect(width()).toBe(240);
+
+    const handleEl = nodeCard(canvasElement, "vid")
+      .closest("[data-node-wrapper]")!
+      .querySelector<HTMLElement>('[data-trim-handle="right"]')!;
+    const start = rectCenter(handleEl);
+
+    // Over-drag far past the floor and HOLD: the LIVE width clamps at the
+    // consumer's 60px, not the package's 12px minimum.
+    await dispatchPointerSequence([
+      { element: handleEl, type: "pointerdown", clientX: start.x, clientY: start.y },
+      { element: document, type: "pointermove", clientX: start.x - 600, clientY: start.y, delayAfterMs: 30 },
+    ]);
+    await waitFor(() => expect(width()).toBe(60));
+
+    // Release: no snap — the committed width equals the last preview.
+    await dispatchPointerSequence([
+      { element: document, type: "pointerup", clientX: start.x - 600, clientY: start.y, delayAfterMs: 30 },
+    ]);
+    await waitFor(() => expect(width()).toBe(60));
+  },
+};

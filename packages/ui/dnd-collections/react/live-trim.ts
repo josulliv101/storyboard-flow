@@ -13,6 +13,12 @@ import { type LiveTrim } from "./trim-preview-context";
 // re-renders per pointer move — but ONLY the trimmed card's content, the one
 // card that is supposed to be changing. Everything else stays still.
 //
+// Subscriptions are KEYED BY NODE ID, so a publish — which happens per
+// pointer move — dispatches only to the trimmed node's own listeners (O(1)),
+// never fanning out across every mounted readout. Per-frame work touching
+// only the involved card is the package's core discipline; the channel obeys
+// it too.
+//
 // The gesture (useTrimPointerDrag) publishes alongside the view's
 // TrimPreview: the live split per move, and `null` on abort, no-op, AND
 // successful commit (the committed node then carries the same values the
@@ -20,7 +26,7 @@ import { type LiveTrim } from "./trim-preview-context";
 
 export type LiveTrimChannel = Readonly<{
   publish: (nodeId: NodeId, live: LiveTrim | null) => void;
-  subscribe: (listener: (nodeId: NodeId, live: LiveTrim | null) => void) => () => void;
+  subscribe: (nodeId: NodeId, listener: (live: LiveTrim | null) => void) => () => void;
 }>;
 
 const NOOP_CHANNEL: LiveTrimChannel = {
@@ -34,15 +40,20 @@ export const LiveTrimChannelContext = createContext<LiveTrimChannel>(NOOP_CHANNE
 export function useCreateLiveTrimChannel(): LiveTrimChannel {
   const channelRef = useRef<LiveTrimChannel | null>(null);
   if (channelRef.current === null) {
-    const listeners = new Set<(nodeId: NodeId, live: LiveTrim | null) => void>();
+    const listenersByNode = new Map<NodeId, Set<(live: LiveTrim | null) => void>>();
     channelRef.current = {
       publish: (nodeId, live) => {
-        for (const listener of listeners) listener(nodeId, live);
+        const listeners = listenersByNode.get(nodeId);
+        if (!listeners) return;
+        for (const listener of listeners) listener(live);
       },
-      subscribe: (listener) => {
+      subscribe: (nodeId, listener) => {
+        let listeners = listenersByNode.get(nodeId);
+        if (!listeners) listenersByNode.set(nodeId, (listeners = new Set()));
         listeners.add(listener);
         return () => {
           listeners.delete(listener);
+          if (listeners.size === 0) listenersByNode.delete(nodeId);
         };
       },
     };
@@ -60,15 +71,16 @@ export function useLiveTrimPublisher(): LiveTrimChannel["publish"] {
  * content components that render live readouts (a duration pill tracking the
  * drag): subscribing re-renders THIS component per pointer move — scope it
  * to a leaf (the readout), not your whole card, if the card is expensive.
+ * A readout mounted MID-gesture (virtualization scrolling the card in)
+ * starts at null and syncs on the gesture's next move.
  */
 export function useLiveTrim(nodeId: NodeId): LiveTrim | null {
   const channel = useContext(LiveTrimChannelContext);
   const [live, setLive] = useState<LiveTrim | null>(null);
   useEffect(() => {
-    // A gesture can't be mid-flight for a node whose readout just mounted,
-    // and unmount drops the subscription — no stale state either side.
-    return channel.subscribe((id, next) => {
-      if (id !== nodeId) return;
+    // Unmount drops the subscription; the null → null bail keeps at-rest
+    // publishes from re-rendering settled readouts.
+    return channel.subscribe(nodeId, (next) => {
       setLive((current) => (current === next ? current : next));
     });
   }, [channel, nodeId]);
