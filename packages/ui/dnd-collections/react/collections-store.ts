@@ -347,6 +347,13 @@ export function createCollectionsStore(
     beginPaletteDrag: () =>
       setInteraction({ isDragging: true, dropIntent: null, dropIntentInvalid: false }),
     setDropIntent: (intent) => {
+      // Intents are only meaningful while a drag is live. The dnd-kit gesture
+      // can outlive the store's drag state — replaceGraph (async data landing
+      // mid-drag) resets it, and a palette drag whose factory failed never set
+      // it — but its collision loop keeps resolving and publishing. An ungated
+      // write would repaint drop indicators for a drag the store says is over.
+      // Clearing (null) is always allowed.
+      if (intent !== null && !interaction.isDragging) return;
       if (intentEqual(interaction.dropIntent, intent)) return; // per-move noise gate
       // Validity is computed ONCE per intent change (not per card per
       // frame). The reducer enforces the same rule at commit, so this
@@ -375,6 +382,14 @@ export function createCollectionsStore(
     destroy: () => {
       if (rejectionTimer !== null) clearTimeout(rejectionTimer);
       rejectionTimer = null;
+      // The cancelled timer would have cleared this; don't strand a live
+      // flash in a store that outlives destroy() (Activity-style hide runs
+      // effect cleanup while retaining component state — on reveal the cards
+      // would still render data-rejected).
+      if (interaction.rejectedIdSet.size > 0) {
+        interaction = { ...interaction, rejectedIdSet: EMPTY_SELECTION };
+        snapshot = buildSnapshot();
+      }
       listeners.clear();
     },
   };

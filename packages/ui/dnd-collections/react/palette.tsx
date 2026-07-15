@@ -1,8 +1,10 @@
 "use client";
 
+import { useContext } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { twMerge } from "tailwind-merge";
 import { type CollectionItemNode } from "../core/graph";
+import { CollectionsContainerContext } from "./container-context";
 
 // External palette drag source: a draggable that creates a BRAND-NEW node
 // when a drag starts (fresh ids per drag — the factory runs at pick-up, so
@@ -28,6 +30,11 @@ export function PaletteItem({ paletteId, createNode, className, children }: Pale
     id: `palette:${paletteId}`,
     data: { [PALETTE_DATA_KEY]: createNode },
   });
+  // Nullable on purpose (headless hosting has no instructions element).
+  // dnd-kit's attributes point aria-describedby at the provider-BLANKED
+  // default instructions — an empty description — so override it with the
+  // palette-specific text after the spread.
+  const paletteInstructionsId = useContext(CollectionsContainerContext)?.paletteInstructionsId;
   return (
     <button
       type="button"
@@ -39,6 +46,7 @@ export function PaletteItem({ paletteId, createNode, className, children }: Pale
       )}
       {...attributes}
       {...listeners}
+      aria-describedby={paletteInstructionsId ?? attributes["aria-describedby"]}
     >
       {children ?? paletteId}
     </button>

@@ -183,6 +183,17 @@ export const NodeCard = memo(function NodeCard({
   } = useDraggable({ id: dndId });
   const { setNodeRef: setDroppableRef } = useDroppable({ id: dndId });
 
+  // In handle mode the grip owns POINTER drags (the body stays free for
+  // surface gestures), but the KEYBOARD grab must live on the card button:
+  // it is the only tab stop in roving virtual views (the grip is demoted to
+  // -1), and the instructions element promises "Press Enter to pick it up"
+  // on every card. Attach just the KeyboardSensor activator — dnd-kit's
+  // Enter handler preventDefaults on activation, so it never doubles as a
+  // selection click.
+  const bodyListeners: Record<string, Function> | undefined = dragHandle
+    ? listeners && { onKeyDown: listeners.onKeyDown }
+    : listeners;
+
   const setRefs = useCallback(
     (element: HTMLElement | null) => {
       setDraggableRef(element);
@@ -232,7 +243,7 @@ export const NodeCard = memo(function NodeCard({
         )}
         {...(dragActivation === "hold" ? { "data-drag-activation": "hold" } : {})}
         {...(dragHandle ? {} : attributes)}
-        {...(dragHandle ? {} : listeners)}
+        {...bodyListeners}
         // After dnd-kit's attribute spread: dnd-kit sets aria-pressed for its
         // grabbed state; here the pressed semantic is SELECTION (and the drag
         // state is conveyed by the overlay + dimming instead).

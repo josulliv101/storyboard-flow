@@ -194,6 +194,11 @@ export function useTrimPointerDrag(
         removeListeners();
         releasePointerCapture();
         clearActiveCleanup(abortGesture);
+        // Mirror onUp: the caller's local UI (e.g. the card's readout pill)
+        // must also reset on an abort through the cleanup path — a keyboard
+        // trim committing on this node mid-gesture would otherwise strand
+        // the preview bubble with a stale number.
+        onLive?.(null);
         trimPreview.previewTrim(node.id, null);
       }
 

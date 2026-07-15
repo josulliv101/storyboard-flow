@@ -48,7 +48,13 @@ export function TrashTarget({ trashId }: { trashId: NodeId }) {
   return (
     <div
       ref={setNodeRef}
-      role="region"
+      // "group", not "region": ARIA 1.2 doesn't support aria-disabled on
+      // landmark roles, so a misconfigured trash id would have no accessible
+      // disabled signal. tabIndex -1 makes it a programmatic focus target —
+      // Alt+Delete on a collection's LAST child lands focus here instead of
+      // dropping to <body> (the trash collection itself is usually hidden).
+      role="group"
+      tabIndex={-1}
       aria-disabled={!isCollection}
       aria-label={`Trash${count > 0 ? `, ${count} items` : ""}. Drop items here, or press Alt+Delete on a focused item, to move it to trash.`}
       data-trash-target={trashId}

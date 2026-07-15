@@ -186,11 +186,17 @@ export function useVirtualRovingFocus(args: {
   };
 }
 
-/** The empty-collection affordance shared by strip and grid. */
+/** The empty-collection affordance shared by strip and grid. aria-hidden: a
+ *  bare <p> is not a valid owned child of role="grid" (rows only), and the
+ *  emptiness is already conveyed accessibly by the grid's aria-label
+ *  ("<name>, 0 items"). */
 export function VirtualEmptyHint({ visible }: { visible: boolean }) {
   if (!visible) return null;
   return (
-    <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-2 text-xs text-muted-foreground select-none">
+    <p
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 flex items-center justify-center px-2 text-xs text-muted-foreground select-none"
+    >
       Drop items here
     </p>
   );

@@ -1,7 +1,10 @@
 "use client";
 
+import { useContext } from "react";
+
 import { type CollectionsCommand } from "../core/commands";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
+import { CollectionsContainerContext } from "./container-context";
 
 // Devtools-style widgets over the store's patch history: undo/redo controls
 // and a human-readable command/patch log. The same history entries are
@@ -23,13 +26,21 @@ export function UndoRedoControls() {
   const store = useCollectionsStore();
   const canUndo = useCollectionsSelector((s) => s.canUndo);
   const canRedo = useCollectionsSelector((s) => s.canRedo);
+  // Nullable on purpose: these controls also work under a bare
+  // CollectionsStoreProvider (headless hosting), where there is no provider
+  // live region — announcing is best-effort, undo/redo never depends on it.
+  const announce = useContext(CollectionsContainerContext)?.announce;
 
   return (
     <div className="flex gap-2">
       <button
         type="button"
         disabled={!canUndo}
-        onClick={() => store.undo()}
+        onClick={() => {
+          // Every other mutation path announces its outcome; undo/redo must
+          // too, or a screen-reader user activating the button hears nothing.
+          if (store.undo()) announce?.("Change undone.");
+        }}
         className="rounded border px-3 py-1 text-xs font-medium disabled:opacity-40"
       >
         Undo
@@ -37,7 +48,9 @@ export function UndoRedoControls() {
       <button
         type="button"
         disabled={!canRedo}
-        onClick={() => store.redo()}
+        onClick={() => {
+          if (store.redo()) announce?.("Change redone.");
+        }}
         className="rounded border px-3 py-1 text-xs font-medium disabled:opacity-40"
       >
         Redo

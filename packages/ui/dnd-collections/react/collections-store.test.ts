@@ -148,6 +148,7 @@ describe("createCollectionsStore", () => {
   test("same-set selection and equal drop intents do not notify", () => {
     const store = createCollectionsStore(graphFixture());
     store.setSelection([id("x"), id("y")]);
+    store.beginDrag(id("x")); // drop intents only register while a drag is live
     const listener = vi.fn();
     store.subscribe(listener);
 
@@ -163,6 +164,45 @@ describe("createCollectionsStore", () => {
     expect(listener).toHaveBeenCalledTimes(2);
     store.clearSelection(); // already empty
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  test("drop intents are ignored while no drag is live; clearing is always allowed", () => {
+    const store = createCollectionsStore(graphFixture());
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    // Idle: the dnd-kit collision loop can outlive the store's drag state
+    // (replaceGraph mid-drag, failed palette factory) — a late publication
+    // must not repaint indicators for a drag the store says is over.
+    store.setDropIntent({ type: "nest-inside", collectionId: id("root-b") });
+    expect(store.getSnapshot().interaction.dropIntent).toBeNull();
+    expect(listener).not.toHaveBeenCalled();
+
+    store.beginPaletteDrag();
+    store.setDropIntent({ type: "nest-inside", collectionId: id("root-b") });
+    expect(store.getSnapshot().interaction.dropIntent).not.toBeNull();
+
+    store.endDrag();
+    expect(store.getSnapshot().interaction.dropIntent).toBeNull();
+    store.setDropIntent({ type: "append-to-collection", collectionId: id("root-b") });
+    expect(store.getSnapshot().interaction.dropIntent).toBeNull();
+  });
+
+  test("replaceGraph mid-drag blocks late intent publications from the dead gesture", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.beginDrag(id("x"));
+    const next = buildGraph([
+      { kind: "collection", id: "root-a", name: "A", children: [media("y")] },
+    ]);
+    if (!next.ok) throw new Error(JSON.stringify(next.error));
+    expect(store.replaceGraph(next.value).ok).toBe(true);
+
+    // The still-live gesture keeps resolving intents; the store must refuse
+    // them — isDragging was reset and nothing may preview against the new
+    // graph until a fresh drag begins.
+    store.setDropIntent({ type: "append-to-collection", collectionId: id("root-a") });
+    expect(store.getSnapshot().interaction.dropIntent).toBeNull();
+    expect(store.getSnapshot().interaction.isDragging).toBe(false);
   });
 
   test("selection APIs ignore node ids that are missing from the graph", () => {
@@ -361,5 +401,16 @@ describe("createCollectionsStore", () => {
     store.destroy();
     vi.advanceTimersByTime(1000);
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  test("destroy does not strand a live rejection flash in the retained store", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.flashRejection([id("x")]);
+
+    // Cancelling the timer would otherwise leave rejectedIdSet populated
+    // forever in a store that survives effect cleanup (Activity-style hide):
+    // on reveal the cards would still render data-rejected.
+    store.destroy();
+    expect(store.getSnapshot().interaction.rejectedIdSet.size).toBe(0);
   });
 });

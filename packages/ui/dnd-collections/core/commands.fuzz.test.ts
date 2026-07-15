@@ -3,6 +3,7 @@ import {
   buildGraph,
   findGraphInvariantViolation,
   parseNodeId,
+  type CollectionItemNode,
   type CollectionsGraph,
   type GraphNodeSpec,
   type NodeId,
@@ -41,7 +42,39 @@ function randomSpec(
     for (let i = 0; i < childCount; i++) children.push(randomSpec(rand, depth - 1, counter));
     return { kind: "collection", id, name: id, children };
   }
+  // Both media flavors: videos carry trims (fullDuration >= 4, trims <= 1
+  // each, so the trim-total invariant always holds at construction).
+  if (rand() < 0.35) {
+    return {
+      kind: "media",
+      mediaKind: "video",
+      id,
+      name: id,
+      fullDurationSeconds: 4 + Math.floor(rand() * 12),
+      trimInSeconds: Math.floor(rand() * 2),
+      trimOutSeconds: Math.floor(rand() * 2),
+    };
+  }
   return { kind: "media", id, name: id, durationSeconds: 1 + Math.floor(rand() * 9) };
+}
+
+/** A brand-new node for an add-nodes batch: image, video, or empty collection. */
+function randomNewNode(rand: () => number, id: string): CollectionItemNode {
+  const nodeId = parseNodeId(id);
+  const roll = rand();
+  if (roll < 0.2) return { id: nodeId, kind: "collection", name: "fz" };
+  if (roll < 0.55) {
+    return {
+      id: nodeId,
+      kind: "media",
+      mediaKind: "video",
+      name: "fz",
+      fullDurationSeconds: 6 + Math.floor(rand() * 6),
+      trimInSeconds: Math.floor(rand() * 2),
+      trimOutSeconds: Math.floor(rand() * 2),
+    };
+  }
+  return { id: nodeId, kind: "media", mediaKind: "image", name: "fz", durationSeconds: 2 };
 }
 
 function randomGraph(rand: () => number): CollectionsGraph {
@@ -93,27 +126,41 @@ describe("fuzz: command -> patch -> inverse round-trips", () => {
         const roll = rand();
         let command: CollectionsCommand;
         if (roll < 0.2) {
+          // Multi-node batches of mixed kinds — a single-image-only generator
+          // left multi-add and collection-add round-trips unexercised.
+          const batch = 1 + Math.floor(rand() * 3);
+          const nodes: CollectionItemNode[] = [];
+          for (let i = 0; i < batch; i++) {
+            nodes.push(randomNewNode(rand, `fz${seed}-${step}-${i}`));
+          }
           command = {
             type: "add-nodes",
-            nodes: [
-              {
-                id: parseNodeId(`fz${seed}-${step}`),
-                kind: "media",
-                name: "fz",
-                durationSeconds: 2,
-              },
-            ],
+            nodes,
             toParentId: pick(rand, collections),
             toIndex: Math.floor(rand() * 8),
           };
         } else if (roll < 0.35 && mediaIds.length > 0) {
-          // Data mutation: retrim a random image (all fuzz media are images).
-          // Exercises the nodes-updated patch's invert round-trip.
-          command = {
-            type: "update-media",
-            nodeId: pick(rand, mediaIds),
-            update: { mediaKind: "image", durationSeconds: 1 + Math.floor(rand() * 9) },
-          };
+          // Data mutation: retrim a random media leaf — image duration or
+          // video trims (the reducer clamps; the patch stores before/after,
+          // so the invert round-trip stays exact either way).
+          const nodeId = pick(rand, mediaIds);
+          const node = graph.nodesById.get(nodeId);
+          command =
+            node?.kind === "media" && node.mediaKind === "video"
+              ? {
+                  type: "update-media",
+                  nodeId,
+                  update: {
+                    mediaKind: "video",
+                    trimInSeconds: rand() < 0.5 ? Math.floor(rand() * 4) : undefined,
+                    trimOutSeconds: Math.floor(rand() * 4),
+                  },
+                }
+              : {
+                  type: "update-media",
+                  nodeId,
+                  update: { mediaKind: "image", durationSeconds: 1 + Math.floor(rand() * 9) },
+                };
         } else {
           // Duplicates, descendants-of-dragged, and cycle targets all occur
           // naturally — the rejection paths are part of the property.

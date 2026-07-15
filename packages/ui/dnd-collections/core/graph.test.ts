@@ -245,6 +245,14 @@ describe("getChildren", () => {
     expect(getChildren(graph, parseNodeId("m1"))).toEqual([]); // media has no children entry
   });
 
+  test("the unknown-id fallback is reference-stable across calls", () => {
+    // Selectors pass getChildren results straight to useCollectionsSelector;
+    // a fresh [] per call would defeat the Object.is bail and re-render a
+    // dead-id view on every store notify.
+    expect(getChildren(graph, parseNodeId("nope"))).toBe(getChildren(graph, parseNodeId("nope")));
+    expect(getChildren(graph, parseNodeId("m1"))).toBe(getChildren(graph, parseNodeId("nope")));
+  });
+
   test("returns the ordered children of a collection", () => {
     expect(getChildren(graph, parseNodeId("root"))).toEqual(["m1", "f"]);
   });
@@ -287,6 +295,27 @@ describe("buildGraph", () => {
   test("rejects empty ids", () => {
     const result = buildGraph([collection("root", [media("")])]);
     expect(result).toEqual({ ok: false, error: { reason: "empty-id" } });
+  });
+
+  test("rejects a media spec that carries children instead of silently dropping the subtree", () => {
+    // A mis-tagged collection (kind "media" + children) used to pass
+    // validation with the whole subtree silently discarded — and duplicate
+    // ids hidden inside it evaded the duplicate-id check entirely.
+    const misTagged = {
+      kind: "media",
+      id: "oops",
+      name: "Oops",
+      durationSeconds: 4,
+      children: [{ kind: "media", id: "lost", name: "Lost", durationSeconds: 2 }],
+    } as unknown as GraphNodeSpec;
+    const result = buildGraph([collection("root", [misTagged])]);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "invalid-spec",
+        error: { reason: "invalid-value", path: "$[0].children[0].children" },
+      },
+    });
   });
 
   test("rejects malformed runtime node fields before normalizing them", () => {
