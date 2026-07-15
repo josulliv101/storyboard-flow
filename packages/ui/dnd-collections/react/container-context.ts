@@ -10,14 +10,22 @@ import { type NodeId } from "../core/graph";
 //   multiple boards on one page (possibly reusing node ids) stay isolated.
 // - instructionsId: id of the hidden keyboard-usage instructions element,
 //   for aria-describedby on cards and grip bars.
+// - paletteInstructionsId: id of the palette-specific instructions element
+//   (PaletteItem's aria-describedby — the card instructions don't apply to
+//   an external drag source).
 // - trashRef: a single slot a mounted <TrashTarget> registers its collection
 //   id into, so the keyboard controller can offer Alt+Delete "move to trash"
 //   without the provider knowing about trash. null when none is mounted.
+// - announce: the instance's aria-live channel, so views outside the
+//   provider's own controllers (UndoRedoControls) can speak outcomes through
+//   the one live region instead of growing their own.
 
 export type CollectionsContainerValue = Readonly<{
   containerRef: RefObject<HTMLElement | null>;
   instructionsId: string;
+  paletteInstructionsId: string;
   trashRef: MutableRefObject<NodeId | null>;
+  announce: (message: string) => void;
 }>;
 
 export const CollectionsContainerContext =

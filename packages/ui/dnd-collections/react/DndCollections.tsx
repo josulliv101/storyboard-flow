@@ -31,6 +31,7 @@ import { getChildren, type CollectionItemNode, type CollectionsGraph, type NodeI
 import {
   decodeDropTarget,
   encodeDropTarget,
+  intentDestination,
   resolveCommandFromIntent,
   resolveDropIntent,
   type DropIntent,
@@ -48,7 +49,7 @@ import { CollectionsContainerContext } from "./container-context";
 import { useFlipGraphAnimation } from "./use-flip-graph-animation";
 import { NodeCardGhost } from "./node-views";
 import { CollectionsPointerSensor } from "./pointer-sensors";
-import { useLiveAnnouncements } from "./use-announcements";
+import { LiveAnnouncementRegion, useAnnounceChannel } from "./use-announcements";
 import { useCollectionsKeyboard } from "./use-keyboard-controller";
 import { usePaletteDrag } from "./use-palette-drag";
 import { VIRTUAL_INSERT_DATA_KEY, isVirtualInsertTarget } from "./virtual-droppable";
@@ -189,7 +190,11 @@ function DndCollectionsContext({
   animateMoves: boolean;
 }) {
   const store = useCollectionsStore();
-  const { announcement, announce } = useLiveAnnouncements(store);
+  // Ref-backed channel: speaking must never set state HERE — this component
+  // renders <DndContext>, and a re-render fans out to every card through
+  // dnd-kit's internal context. Only <LiveAnnouncementRegion> re-renders.
+  const announceChannel = useAnnounceChannel();
+  const announce = announceChannel.announce;
 
   // Pointer activation is per-TARGET (see react/pointer-sensors.ts):
   // instant distance activation everywhere, press-and-hold on card bodies
@@ -220,9 +225,10 @@ function DndCollectionsContext({
     trashRef,
   });
   const instructionsId = useId();
+  const paletteInstructionsId = useId();
   const containerValue = useMemo(
-    () => ({ containerRef, instructionsId, trashRef }),
-    [instructionsId]
+    () => ({ containerRef, instructionsId, paletteInstructionsId, trashRef, announce }),
+    [instructionsId, paletteInstructionsId, announce]
   );
 
   const collisionDetection = useCallback<CollisionDetection>(
@@ -373,6 +379,7 @@ function DndCollectionsContext({
       const target = decodeDropTarget(String(event.active.id));
       if (!target || target.type !== "node") return;
       intentRef.current = null;
+      spokenTargetRef.current = null;
       store.beginDrag(target.nodeId);
       const { interaction, graph } = store.getSnapshot();
       const count = interaction.activeIds.length;
@@ -382,9 +389,36 @@ function DndCollectionsContext({
     [store, announce, palette]
   );
 
+  // The spoken drop target of the live drag: `<destinationId>:<invalid>` —
+  // dnd-kit's own onDragOver announcements are silenced (they speak raw
+  // droppable ids), so THIS is the replacement mid-drag feedback. Announcing
+  // at destination-collection granularity (not per boundary index) keeps a
+  // keyboard grab-drag informative without per-arrow spam.
+  const spokenTargetRef = useRef<string | null>(null);
+
   const publishIntent = useCallback(() => {
-    store.setDropIntent(intentRef.current);
-  }, [store]);
+    const intent = intentRef.current;
+    store.setDropIntent(intent);
+
+    const { graph, interaction } = store.getSnapshot();
+    if (!interaction.isDragging) return;
+    if (!intent) {
+      // Off every target: reset so re-entering the same collection speaks again.
+      spokenTargetRef.current = null;
+      return;
+    }
+    const destination = intentDestination(graph, intent);
+    if (destination === null) return;
+    const spoken = `${destination}:${interaction.dropIntentInvalid}`;
+    if (spokenTargetRef.current === spoken) return;
+    spokenTargetRef.current = spoken;
+    const name = graph.nodesById.get(destination)?.name ?? "collection";
+    announce(
+      interaction.dropIntentInvalid
+        ? `Over "${name}" — cannot drop (cycle).`
+        : `Over "${name}".`
+    );
+  }, [store, announce]);
 
   const handleDragEnd = useCallback(
     () => {
@@ -392,6 +426,7 @@ function DndCollectionsContext({
 
       const intent = intentRef.current;
       intentRef.current = null;
+      spokenTargetRef.current = null;
       const { graph, interaction } = store.getSnapshot();
       const activeIds = interaction.activeIds;
 
@@ -440,6 +475,7 @@ function DndCollectionsContext({
 
   const handleDragCancel = useCallback(() => {
     intentRef.current = null;
+    spokenTargetRef.current = null;
     palette.clearPaletteDrag();
     store.endDrag();
     announce("Cancelled drag.");
@@ -470,35 +506,30 @@ function DndCollectionsContext({
       {animateMoves && <FlipAnimator containerRef={containerRef} />}
       {/* The single keyboard-usage description, referenced by cards via
           aria-describedby (dnd-kit's own instructions are blanked above). It
-          must match the real grammar: Space selects, Enter grabs for a
-          free-form drag, and Alt+keys are the quick semantic moves. */}
+          must match the real grammar EXACTLY — every chord here is verified
+          against use-keyboard-controller and the sensor config: Space
+          selects, Enter grabs for a free-form drag, and Alt+keys are the
+          quick semantic moves. */}
       <p id={instructionsId} className="sr-only">
-        Press Space to select this item, or Control plus Space to add it to a multi-selection.
-        Press Enter to pick it up, then use the Arrow keys to move it and Enter to drop, or
-        Escape to cancel. Alt plus Arrow keys move it one step at a time; Alt plus Down nests it
-        into a neighboring collection and Alt plus Up moves it out. Inside a grid, Alt plus Up and
-        Down move between rows. For media, Alt plus Shift plus Left or Right trims the end and Alt
+        Press Space to select this item, or Control or Command plus Space to add it to a
+        multi-selection. Press Enter to pick it up, then use the Arrow keys to move it and Enter
+        to drop, or Escape to cancel. Alt plus Arrow keys move it one step at a time, and Alt plus
+        Home or End moves it to the start or end. Alt plus Down nests it into a neighboring
+        collection and Alt plus Up moves it out; Alt plus Enter and Alt plus Backspace do the same
+        nesting and un-nesting anywhere, including inside a grid, where Alt plus Up and Down move
+        between rows instead. For media, Alt plus Shift plus Left or Right trims the end and Alt
         plus Shift plus Up or Down trims the start of a video. Press Alt plus Delete to move it to
         trash.
       </p>
+      {/* Palette items are external drag sources — the card instructions
+          above (selection, Alt-moves) don't apply, so they reference this
+          one instead of dnd-kit's blanked default. */}
+      <p id={paletteInstructionsId} className="sr-only">
+        Press Enter to pick up a new item, then use the Arrow keys to choose where it goes and
+        Enter to drop it, or Escape to cancel.
+      </p>
       <CollectionsDragOverlay paletteNodes={palette.paletteNodes} />
-      <div
-        aria-live="polite"
-        role="status"
-        style={{
-          position: "absolute",
-          width: 1,
-          height: 1,
-          padding: 0,
-          margin: -1,
-          overflow: "hidden",
-          clip: "rect(0, 0, 0, 0)",
-          whiteSpace: "nowrap",
-          border: 0,
-        }}
-      >
-        {announcement}
-      </div>
+      <LiveAnnouncementRegion channel={announceChannel} />
     </DndContext>
   );
 }

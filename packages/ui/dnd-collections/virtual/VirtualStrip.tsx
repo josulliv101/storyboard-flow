@@ -561,7 +561,9 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
             // though only a handful of cells are mounted.
             role="grid"
             aria-label={`${name}, ${childIds.length} items`}
-            aria-rowcount={1}
+            // An empty strip has no rows (the spacer drops its row role too);
+            // claiming rowcount 1 over an empty row is an invalid grid tree.
+            aria-rowcount={childIds.length === 0 ? 0 : 1}
             aria-colcount={childIds.length}
             onKeyDown={onKeyDown}
             className={[
@@ -578,8 +580,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
             <VirtualEmptyHint visible={childIds.length === 0} />
             <div
               ref={contentRef}
-              role="row"
-              aria-rowindex={1}
+              {...(childIds.length > 0 ? { role: "row", "aria-rowindex": 1 } : {})}
               style={{
                 width: virtualizer.getTotalSize(),
                 height: itemHeight,

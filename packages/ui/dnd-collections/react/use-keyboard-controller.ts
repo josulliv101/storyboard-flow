@@ -23,7 +23,7 @@ import {
 } from "../core/keyboard";
 import { type CollectionsStore } from "./collections-store";
 import { roundSecondsForDisplay } from "./duration-format";
-import { focusNodeWhenMounted } from "./node-dom";
+import { findNodeElement, focusNodeWhenMounted } from "./node-dom";
 
 // Semantic keyboard moves (Alt+key on a focused card), by event delegation
 // on the provider wrapper so no per-card wiring is needed. Alt combos
@@ -106,6 +106,18 @@ const TRASH_REJECTION_MESSAGES: Readonly<
   "missing-node": undefined,
   "no-trash-collection": undefined,
 };
+
+/** Focus a mounted <TrashTarget> by its collection id (attribute-value match,
+ *  so ids with arbitrary characters need no CSS escaping). */
+function focusTrashTargetElement(root: HTMLElement | null, trashId: NodeId): void {
+  if (!root) return;
+  for (const el of root.querySelectorAll<HTMLElement>("[data-trash-target]")) {
+    if (el.dataset.trashTarget === trashId) {
+      el.focus();
+      return;
+    }
+  }
+}
 
 export function useCollectionsKeyboard(args: {
   store: CollectionsStore;
@@ -229,9 +241,23 @@ export function useCollectionsKeyboard(args: {
         return;
       }
       announce(`Moved "${name}" to trash.`);
-      restoreFocus(neighbor ?? trashId, trashId);
+      if (neighbor) {
+        restoreFocus(neighbor, trashId);
+        return;
+      }
+      // The panel just emptied. The trash collection is usually a HIDDEN
+      // root (only the <TrashTarget> chrome renders), so falling back to its
+      // node card would find nothing and focus would drop to <body>. Prefer
+      // the card when a view does render it; otherwise focus the trash
+      // target itself (tabIndex -1 for exactly this).
+      const root = containerRef.current;
+      if (root && findNodeElement(root, trashId)) {
+        restoreFocus(trashId, trashId);
+        return;
+      }
+      focusTrashTargetElement(root, trashId);
     },
-    [store, announce, restoreFocus]
+    [store, announce, restoreFocus, containerRef]
   );
 
   const handleKeyDownCapture = useCallback(

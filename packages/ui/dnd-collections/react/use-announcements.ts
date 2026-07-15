@@ -1,18 +1,83 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createElement,
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+} from "react";
 import { type NodeId } from "../core/graph";
-import { useCollectionsSelector, type CollectionsStore } from "./collections-store";
+import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 
 // The aria-live announcement channel: one `announce(message)` used by every
 // interaction path (drags, keyboard moves, palette drops, rejections), plus
-// the §20 selection-change announcements. The provider renders the actual
-// live region from the returned `announcement`.
+// the selection-change announcements.
+//
+// The channel is a ref-backed EMITTER, not provider state, and the live
+// region lives in its own leaf component (`LiveAnnouncementRegion`). This is
+// load-bearing for the render-efficiency model: the provider renders
+// <DndContext>, and any state update there re-renders every useDraggable/
+// useDroppable consumer through dnd-kit's internal context — announcement
+// state in the provider would re-render EVERY card each time something is
+// spoken (including mid-drag "Over …" feedback), breaking the
+// no-bystander-re-render guarantee. Speaking must only ever re-render the
+// region itself.
 
-export function useLiveAnnouncements(store: CollectionsStore): Readonly<{
-  announcement: string;
+export type AnnounceChannel = Readonly<{
+  /** Speak a message through the instance's live region. Safe to call from
+   *  event handlers and effects; a no-op until the region mounts. */
   announce: (message: string) => void;
-}> {
+  /** The region's subscription seam. One region per channel. */
+  subscribe: (listener: (message: string) => void) => () => void;
+}>;
+
+/** One stable channel per provider instance. */
+export function useAnnounceChannel(): AnnounceChannel {
+  const channelRef = useRef<AnnounceChannel | null>(null);
+  if (channelRef.current === null) {
+    const listeners = new Set<(message: string) => void>();
+    channelRef.current = {
+      announce: (message) => {
+        for (const listener of listeners) listener(message);
+      },
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    };
+  }
+  return channelRef.current;
+}
+
+const VISUALLY_HIDDEN: CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
+
+/**
+ * The instance's polite live region — the ONLY component announcement state
+ * re-renders. Also owns the selection-change announcements (set identity only
+ * changes on real selection changes, so it is quiet during drags/reorders).
+ */
+export const LiveAnnouncementRegion = memo(function LiveAnnouncementRegion({
+  channel,
+}: {
+  channel: AnnounceChannel;
+}): ReactElement {
+  const store = useCollectionsStore();
   const [announcement, setAnnouncement] = useState("");
   const announcementRef = useRef("");
   const repeatTimerRef = useRef<number | null>(null);
@@ -26,7 +91,7 @@ export function useLiveAnnouncements(store: CollectionsStore): Readonly<{
     []
   );
 
-  const announce = useCallback((message: string) => {
+  const speak = useCallback((message: string) => {
     if (repeatTimerRef.current !== null) {
       window.clearTimeout(repeatTimerRef.current);
       repeatTimerRef.current = null;
@@ -52,6 +117,8 @@ export function useLiveAnnouncements(store: CollectionsStore): Readonly<{
     }, 50);
   }, []);
 
+  useEffect(() => channel.subscribe(speak), [channel, speak]);
+
   // Selection changes are announced. Set identity only changes on real
   // selection changes (the store no-ops same-set updates), so this effect
   // is quiet during drags and reorders.
@@ -62,15 +129,19 @@ export function useLiveAnnouncements(store: CollectionsStore): Readonly<{
     previousSelectionRef.current = selectedIds;
     if (previous === null || previous === selectedIds) return; // mount / no change
     if (selectedIds.size === 0) {
-      announce("Selection cleared.");
+      speak("Selection cleared.");
     } else if (selectedIds.size === 1) {
       const [onlyId] = selectedIds;
       const name = store.getSnapshot().graph.nodesById.get(onlyId)?.name ?? "item";
-      announce(`"${name}" selected.`);
+      speak(`"${name}" selected.`);
     } else {
-      announce(`${selectedIds.size} items selected.`);
+      speak(`${selectedIds.size} items selected.`);
     }
-  }, [selectedIds, announce, store]);
+  }, [selectedIds, speak, store]);
 
-  return { announcement, announce };
-}
+  return createElement(
+    "div",
+    { "aria-live": "polite", role: "status", style: VISUALLY_HIDDEN },
+    announcement
+  );
+});
