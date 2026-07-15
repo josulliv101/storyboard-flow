@@ -3,6 +3,13 @@
 // virtualizer, DOM, or rAF loop. VirtualStrip owns the measurements, refs, and
 // scrolling; this owns the numbers.
 
+import {
+  getChildren,
+  mediaDurationSeconds,
+  type CollectionsGraph,
+  type NodeId,
+} from "../core/graph";
+
 /** Half the drop-indicator line's width (px) — used to center it in a gap. */
 const INDICATOR_HALF_WIDTH = 2;
 
@@ -86,4 +93,62 @@ export function leftAnchorShift(liveSlotSize: number, baselineSize: number): num
   // baseline − live == −(growth); written this way so no change yields +0
   // rather than −0 (behaviorally identical, but tidier).
   return baselineSize - liveSlotSize;
+}
+
+/**
+ * Timeline time → content-x, for overlay math (a playhead at `timeSeconds`)
+ * over a `pixelsPerSecond`-sized strip. Walks the collection's children:
+ * media items advance the clock by their EFFECTIVE duration and the x by
+ * their slot width (`durationToWidth` + gap — the same conversion the strip
+ * lays out with); non-media items (collections) occupy width but no time.
+ *
+ * Semantics to be aware of:
+ * - Inside a FLOORED clip (shorter than `minimumWidth / pps`), x advances at
+ *   `pps` and caps at the clip's right edge — the clip is wider than its
+ *   time, so the playhead never overshoots it.
+ * - `timeSeconds` past the strip's total duration clamps to the last media
+ *   item's right edge; negative times clamp to 0.
+ * - The result is CONTENT coordinates, which is what the `overlay` slot
+ *   renders in. It does NOT include `VirtualStrip`'s transient first-item
+ *   gutter (`paddingStart` while a trimmed-in first video is selected) — the
+ *   one case content-x and item offsets diverge.
+ * - Assumes `pixelsPerSecond` sizing; strips sized by a custom `itemWidthFor`
+ *   need their own mapping against that same function.
+ */
+export function timeToOffset(args: {
+  graph: CollectionsGraph;
+  collectionId: NodeId;
+  timeSeconds: number;
+  pixelsPerSecond: number;
+  /** Match the strip's props: gap default 8, itemWidth default 128. */
+  gap?: number;
+  itemWidth?: number;
+  minimumWidth?: number;
+}): number {
+  const { graph, collectionId, timeSeconds, pixelsPerSecond } = args;
+  const gap = args.gap ?? 8;
+  const itemWidth = args.itemWidth ?? 128;
+  const minimumWidth = args.minimumWidth ?? MIN_ITEM_WIDTH;
+
+  let x = 0;
+  let clock = 0;
+  let lastMediaRight: number | null = null;
+  for (const childId of getChildren(graph, collectionId)) {
+    const node = graph.nodesById.get(childId);
+    if (!node) continue;
+    if (node.kind !== "media") {
+      x += Math.max(minimumWidth, itemWidth) + gap;
+      continue;
+    }
+    const duration = mediaDurationSeconds(node);
+    const width = durationToWidth(duration, pixelsPerSecond, minimumWidth);
+    if (timeSeconds < clock + duration) {
+      const within = Math.max(0, timeSeconds - clock) * pixelsPerSecond;
+      return x + Math.min(within, width);
+    }
+    clock += duration;
+    x += width + gap;
+    lastMediaRight = x - gap;
+  }
+  return lastMediaRight ?? 0;
 }

@@ -62,6 +62,13 @@ react/
   node-views.tsx            Default views: CollectionPanels / -Panel /
                             NodeCard / NodeCardGhost. Cards receive ONLY an
                             id; everything else arrives via selectors.
+  collection-item.tsx       Compound primitives (CollectionItem.Root /
+                            SelectionSurface / DragHandle / TrimHandle /
+                            DropIndicators): the full-custom escape hatch —
+                            consumer-owned DOM shape (interactive controls
+                            included) over package-owned behavior, delivered
+                            through context. Same narrow selectors as
+                            NodeCard, so the efficiency story holds.
   node-thumbnail.tsx        NodeThumbnail: image = one <img> from src; video =
                             a sequence of poster frames (never a <video>),
                             count scaling with clip length. Memoized on node.

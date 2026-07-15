@@ -113,10 +113,21 @@ export {
   type CollectionItemContentProps,
   type CollectionTrimHandleContentComponent,
   type CollectionTrimHandleContentProps,
+  type CollectionTrimOverviewContentComponent,
+  type CollectionTrimOverviewContentProps,
   type CollectionsComponents,
 } from "./react/collections-components";
 export { DefaultItemContent } from "./react/default-item-content";
 export { DefaultTrimHandleContent } from "./react/trim-handles";
+export { DefaultTrimOverviewContent } from "./react/trim-overview";
+// Compound primitives — the FULL-custom escape hatch: consumer-owned DOM
+// shape (interactive controls included) over package-owned behavior,
+// delivered through context. See "Compound items" in API.md.
+export {
+  CollectionItem,
+  useCollectionItemState,
+  type CollectionItemState,
+} from "./react/collection-item";
 // Live trim values for consumer readouts: opt-in, per-move re-renders scoped
 // to the calling component only (the store is never notified mid-gesture).
 export { useLiveTrim } from "./react/live-trim";
@@ -155,9 +166,13 @@ export {
   type VirtualStripProps,
 } from "./virtual/VirtualStrip";
 // THE duration -> width conversion every sizing layer shares (committed
-// layout, live trim preview, virtualizer measurement). Consumers use it for
-// overlay/playhead math or an itemWidthFor that must agree with trims.
-export { MIN_ITEM_WIDTH, durationToWidth } from "./virtual/virtual-strip-geometry";
+// layout, live trim preview, virtualizer measurement), plus timeline-time ->
+// content-x for overlay/playhead math over pixelsPerSecond-sized strips.
+export {
+  MIN_ITEM_WIDTH,
+  durationToWidth,
+  timeToOffset,
+} from "./virtual/virtual-strip-geometry";
 export {
   VirtualGrid,
   type VirtualGridHandle,

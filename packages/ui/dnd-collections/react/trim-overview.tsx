@@ -3,6 +3,10 @@
 import { memo, useCallback, type PointerEvent as ReactPointerEvent } from "react";
 
 import { type VideoMediaNode } from "../core/graph";
+import {
+  useCollectionsComponents,
+  type CollectionTrimOverviewContentProps,
+} from "./collections-components";
 import { resolveMove, resolveTrim, useTrimPointerDrag, type TrimSide } from "./trim-gesture";
 
 // Source-window overview for a SELECTED video: the FULL source rendered as a
@@ -32,6 +36,47 @@ const fmt1 = (s: number) => `${(Math.round(s * 10) / 10).toFixed(1)}s`;
 // each thumbnail keeps a 1:1 aspect instead of stretching to fill the width.
 const FRAME_SIZE = 44;
 
+/** The stock overview background: the full-source poster filmstrip plus the
+ *  "full clip" readout. Consumers replace it via the `OverviewContent`
+ *  registry slot; the dims/window/grips/move gesture stay package-owned. */
+export const DefaultTrimOverviewContent = memo(function DefaultTrimOverviewContent({
+  node,
+  fullWidth,
+}: CollectionTrimOverviewContentProps) {
+  const posters = node.posterSrcs ?? [];
+  // Enough square frames to cover the strip width (ceil so the row fills; the
+  // container clips the overflow), capped so a long source stays bounded.
+  const frameCount = Math.max(1, Math.min(40, Math.ceil(fullWidth / FRAME_SIZE)));
+  return (
+    <>
+      {/* Full-source filmstrip. */}
+      <div className="flex h-full w-full">
+        {posters.length === 0 ? (
+          <span className="flex h-full w-full items-center justify-center bg-muted text-[10px] text-muted-foreground select-none">
+            No preview frames
+          </span>
+        ) : (
+          Array.from({ length: frameCount }).map((_, i) => (
+            <img
+              key={i}
+              src={posters[i % posters.length]}
+              alt=""
+              draggable={false}
+              style={{ width: FRAME_SIZE }}
+              className="h-full shrink-0 border-r border-black/60 object-cover last:border-r-0"
+            />
+          ))
+        )}
+      </div>
+
+      {/* Full-clip readout. */}
+      <span className="pointer-events-none absolute top-0.5 left-1/2 -translate-x-1/2 rounded-full bg-black/75 px-2 py-0.5 font-mono text-[9px] text-zinc-100 select-none">
+        full clip {fmt1(Math.max(0, node.fullDurationSeconds))}
+      </span>
+    </>
+  );
+});
+
 export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   node,
   pixelsPerSecond,
@@ -53,10 +98,8 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   const trimInWidth = trimIn * pixelsPerSecond;
   const windowWidth = Math.max(2, showing * pixelsPerSecond);
 
-  const posters = node.posterSrcs ?? [];
-  // Enough square frames to cover the strip width (ceil so the row fills; the
-  // container clips the overflow), capped so a long source stays bounded.
-  const frameCount = Math.max(1, Math.min(40, Math.ceil(fullWidth / FRAME_SIZE)));
+  const OverviewContent =
+    useCollectionsComponents().OverviewContent ?? DefaultTrimOverviewContent;
 
   const beginDrag = useTrimPointerDrag(node);
   const startTrim = useCallback(
@@ -84,25 +127,14 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
       className="relative h-11 cursor-grab touch-none overflow-hidden rounded-md select-none active:cursor-grabbing"
       style={{ width: fullWidth }}
     >
-      {/* Full-source filmstrip. */}
-      <div className="flex h-full w-full">
-        {posters.length === 0 ? (
-          <span className="flex h-full w-full items-center justify-center bg-muted text-[10px] text-muted-foreground select-none">
-            No preview frames
-          </span>
-        ) : (
-          Array.from({ length: frameCount }).map((_, i) => (
-            <img
-              key={i}
-              src={posters[i % posters.length]}
-              alt=""
-              draggable={false}
-              style={{ width: FRAME_SIZE }}
-              className="h-full shrink-0 border-r border-black/60 object-cover last:border-r-0"
-            />
-          ))
-        )}
-      </div>
+      {/* Background pixels (filmstrip + labels): the OverviewContent slot. */}
+      <OverviewContent
+        node={node}
+        pixelsPerSecond={pixelsPerSecond}
+        trimInSeconds={trimIn}
+        trimOutSeconds={trimOut}
+        fullWidth={fullWidth}
+      />
 
       {/* Dim the trimmed room on each side. */}
       <div className="absolute inset-y-0 left-0 bg-background/55" style={{ width: trimInWidth }} />
@@ -128,11 +160,6 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
           className="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-sm bg-amber-200/90"
         />
       </div>
-
-      {/* Full-clip readout. */}
-      <span className="pointer-events-none absolute top-0.5 left-1/2 -translate-x-1/2 rounded-full bg-black/75 px-2 py-0.5 font-mono text-[9px] text-zinc-100 select-none">
-        full clip {fmt1(full)}
-      </span>
     </div>
   );
 });

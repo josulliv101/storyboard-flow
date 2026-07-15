@@ -16,6 +16,7 @@ import {
   type CollectionGhostContentProps,
   type CollectionItemContentProps,
   type CollectionTrimHandleContentProps,
+  type CollectionTrimOverviewContentProps,
 } from "./react/collections-components";
 import { useCollectionsSelector } from "./react/collections-store";
 import { useLiveTrim } from "./react/live-trim";
@@ -617,6 +618,57 @@ export const CollectionItemWithFirstAndLastChildImages: Story = {
     await waitFor(() => {
       expect(collectionCard).toHaveAttribute("data-selected", "true");
       expect(cover()).toHaveAttribute("data-user-collection-bookends", "selected");
+    });
+  },
+};
+
+// ── Overview background slot ────────────────────────────────────────────────
+
+const CustomOverviewContent = memo(function CustomOverviewContent({
+  node,
+}: CollectionTrimOverviewContentProps) {
+  return (
+    <span
+      data-custom-overview
+      className="flex h-full w-full items-center justify-center bg-zinc-800 text-[10px] text-amber-300"
+    >
+      {node.name} · {node.fullDurationSeconds}s source
+    </span>
+  );
+});
+
+export const CustomOverviewSlot: Story = {
+  // OverviewContent replaces the source-window overview's BACKGROUND pixels
+  // (filmstrip + labels); the package keeps the geometry and interactivity —
+  // the amber showing-window, its trim grips, and the move gesture.
+  render: () => (
+    <DndCollections
+      initialGraph={timelineGraph()}
+      animateMoves={false}
+      components={{ OverviewContent: CustomOverviewContent }}
+    >
+      <div className="w-[640px] pt-16">
+        <VirtualStrip collectionId={parseNodeId("strip")} pixelsPerSecond={24} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const vid = nodeCard(canvasElement, "vid");
+    await waitForLayout(vid);
+    const user = userEvent.setup();
+    await user.click(vid);
+
+    await waitFor(() => {
+      const overview = canvasElement.querySelector('[data-trim-overview="vid"]');
+      expect(overview).not.toBeNull();
+      // Consumer background pixels...
+      expect(overview!.querySelector("[data-custom-overview]")).not.toBeNull();
+      expect(overview!.textContent).toContain("Vid · 10s source");
+      expect(overview!.textContent).not.toContain("full clip"); // default label replaced
+      // ...with the package's interactive window and grips intact.
+      expect(overview!.querySelector("[data-trim-overview-window]")).not.toBeNull();
+      expect(overview!.querySelector('[data-trim-overview-handle="left"]')).not.toBeNull();
+      expect(overview!.querySelector('[data-trim-overview-handle="right"]')).not.toBeNull();
     });
   },
 };
