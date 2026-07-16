@@ -13,12 +13,18 @@ export default function DndCollectionsPage() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col gap-8 px-5 py-8 md:px-8">
       <header className="flex flex-col gap-5 border-b border-border pb-6">
-        <nav aria-label="Breadcrumb">
+        <nav aria-label="Breadcrumb" className="flex flex-wrap gap-4">
           <Link
             href="/collections/assembly"
             className="text-sm font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
           >
             Back to Media Strip
+          </Link>
+          <Link
+            href="/graph-timeline"
+            className="text-sm font-medium text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+          >
+            Graph Timeline (architecture proof)
           </Link>
         </nav>
 
