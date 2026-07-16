@@ -31,6 +31,7 @@ import {
   useCollectionsSelector,
   useCollectionsStore,
   useLiveTrim,
+  usePanWithMomentum,
   videoFrameCount,
   type CollectionGhostContentProps,
   type CollectionItemContentProps,
@@ -377,6 +378,64 @@ const PALETTE_ASSET_LIMIT = 48;
  * lib/graph-view-events.ts); the legacy drawer — whose media-strip drags
  * cannot land on dnd-collections timelines — stays off these routes.
  */
+/**
+ * The scrollable thumbnail rail. Its OWN component on purpose:
+ * `usePanWithMomentum` attaches listeners in an effect that reads the ref
+ * once (its deps never change), so the hook must run in the component that
+ * MOUNTS the scroll container — hoisted into the drawer (which renders this
+ * rail conditionally), the ref would still be null when the effect ran and
+ * grab-to-pan would silently never engage.
+ */
+function PaletteRail({ assets }: Readonly<{ assets: readonly CloudinaryAsset[] }>) {
+  const store = useCollectionsStore();
+  const railRef = useRef<HTMLDivElement>(null);
+
+  // Grab-to-pan with momentum, exactly like the timeline strips: the rail's
+  // hold marker (below) makes thumbnail presses press-and-hold to DRAG, so
+  // fast swipes cancel the pending drag and pan instead; the pan stands
+  // down when a still press claims the pointer.
+  const panOptions = useMemo<Parameters<typeof usePanWithMomentum>[2]>(
+    () => ({ isGestureClaimed: () => store.getSnapshot().interaction.isDragging }),
+    [store],
+  );
+  usePanWithMomentum(railRef, "x", panOptions);
+
+  return (
+    // The hold marker routes thumbnail presses through press-and-hold
+    // activation (CollectionsPointerSensor), freeing fast swipes for the
+    // grab-to-pan. pan-y leaves vertical touch scrolling to the page.
+    <div
+      ref={railRef}
+      data-drag-activation="hold"
+      className="flex cursor-grab gap-2 overflow-x-auto pb-1 select-none active:cursor-grabbing"
+      style={{ touchAction: "pan-y" }}
+    >
+      {assets.map((asset) => (
+        <PaletteItem
+          key={asset.id}
+          paletteId={`asset-${asset.id}`}
+          createNode={() => createNodeFromAsset(asset)}
+          className="relative h-24 w-36 shrink-0 overflow-hidden p-0"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={asset.thumbnailUrl}
+            alt={assetDisplayName(asset)}
+            draggable={false}
+            loading="lazy"
+            className="h-full w-full object-cover"
+          />
+          {asset.resourceType === "video" && (
+            <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1 py-0.5 text-[9px] font-bold tracking-wide text-zinc-100">
+              VIDEO
+            </span>
+          )}
+        </PaletteItem>
+      ))}
+    </div>
+  );
+}
+
 function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose: () => void }>) {
   const [state, setState] = useState<AssetPaletteState>({ status: "loading" });
 
@@ -416,9 +475,12 @@ function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose
   if (!open || typeof document === "undefined") return null;
 
   return createPortal(
+    // z-40: above the page content (strips top out at z-30) but BELOW
+    // dnd-kit's DragOverlay (z-index 999) — the drag ghost must float over
+    // this drawer, not under it.
     <section
       aria-label="Asset palette"
-      className="pointer-events-none fixed inset-x-0 bottom-0 z-[9000]"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-40"
     >
       <aside
         role="dialog"
@@ -459,30 +521,7 @@ function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose
               No assets yet — upload some from the asset library on the storyboard view.
             </p>
           ) : (
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {state.assets.map((asset) => (
-                <PaletteItem
-                  key={asset.id}
-                  paletteId={`asset-${asset.id}`}
-                  createNode={() => createNodeFromAsset(asset)}
-                  className="relative h-24 w-36 shrink-0 overflow-hidden p-0"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={asset.thumbnailUrl}
-                    alt={assetDisplayName(asset)}
-                    draggable={false}
-                    loading="lazy"
-                    className="h-full w-full object-cover"
-                  />
-                  {asset.resourceType === "video" && (
-                    <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1 py-0.5 text-[9px] font-bold tracking-wide text-zinc-100">
-                      VIDEO
-                    </span>
-                  )}
-                </PaletteItem>
-              ))}
-            </div>
+            <PaletteRail assets={state.assets} />
           ))}
       </aside>
     </section>,
