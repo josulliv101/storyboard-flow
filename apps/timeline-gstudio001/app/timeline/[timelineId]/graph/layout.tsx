@@ -24,7 +24,10 @@ export default async function GraphViewLayout({
   }
 
   return (
-    <div className="mx-auto grid w-full max-w-[1400px] gap-5">
+    // graph-view-theme scopes the design-token VALUES (see globals.css) so
+    // the dnd-collections package's own pixels paint here without altering
+    // the token-less legacy views.
+    <div className="graph-view-theme mx-auto grid w-full max-w-[1400px] gap-5">
       <ClientGraphView projectId={timelineId} />
       {children}
     </div>
