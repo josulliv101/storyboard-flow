@@ -156,6 +156,13 @@ export default function ProjectTimelinePage({
           </nav>
         </div>
         <div className="shrink-0 flex items-center gap-4">
+          <Link
+            href={`/timeline/${encodeURIComponent(projectId)}/graph`}
+            className="text-xs text-zinc-400 hover:text-white transition-colors"
+            title="Open this project in the graph view (architecture preview)"
+          >
+            Graph view
+          </Link>
           <ToggleSwitch
             id="global-hierarchy-toggle"
             label="Hierarchy Mode"
