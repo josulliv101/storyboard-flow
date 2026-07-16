@@ -870,6 +870,18 @@ type VirtualStripHandle = {
 };
 ```
 
+**Layout requirement — the strip needs a definite inline size.** Its scroll
+container (`overflow-x-auto`) fills whatever width its parent gives it, so
+every ancestor between the strip and a definite width must not size itself
+by content. Block flow and column flex are safe (children stretch). The
+traps are intrinsic-sizing contexts: a `grid` ancestor's auto track and a
+row-flex ancestor's `min-width: auto` both consult the strip's min-content
+— which, for a scroll container, is its full virtualized CONTENT width — so
+the strip grows past the viewport instead of overflowing inside itself, and
+pan-to-scroll has nothing to scroll (`scrollWidth === clientWidth`). Fix at
+the ancestor: `minmax(0, 1fr)` for the grid track, `min-w-0` on the flex
+item, or use column flex.
+
 Numeric layout options are normalized before reaching the virtualizer:
 `pixelsPerSecond`, base widths/heights, and the trim scale must be finite
 and positive, `gap` is finite and non-negative, and `overscan` is a

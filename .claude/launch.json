@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "apps/media-strip-rsc", "run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "timeline-gstudio001",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "apps/timeline-gstudio001", "run", "dev"],
+      "port": 3000
     }
   ]
 }

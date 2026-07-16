@@ -4,6 +4,52 @@
 @source "../components";
 @source "../../../packages/ui";
 
+/* Design tokens for the dnd-collections package's own pixels (drop
+   indicator, focus rings, ghost chrome — bg-primary, border-border, …).
+   Registered `inline` so utilities reference the --gv-* custom properties
+   directly, and the VALUES are declared only under .graph-view-theme below:
+   inside the graph view every token paints; everywhere else the var is
+   undefined and the declaration is invalid-at-computed-value — i.e. exactly
+   the unstyled behavior the legacy storyboard/workbench views have always
+   had (they also contain token classes, and defining these globally would
+   repaint them). Scoping keeps this branch additive. */
+@theme inline {
+  --color-background: var(--gv-background);
+  --color-foreground: var(--gv-foreground);
+  --color-card: var(--gv-card);
+  --color-card-foreground: var(--gv-foreground);
+  --color-popover: var(--gv-card);
+  --color-popover-foreground: var(--gv-foreground);
+  --color-primary: var(--gv-primary);
+  --color-primary-foreground: var(--gv-primary-foreground);
+  --color-secondary: var(--gv-muted);
+  --color-secondary-foreground: var(--gv-foreground);
+  --color-muted: var(--gv-muted);
+  --color-muted-foreground: var(--gv-muted-foreground);
+  --color-accent: var(--gv-muted);
+  --color-accent-foreground: var(--gv-foreground);
+  --color-destructive: var(--gv-destructive);
+  --color-destructive-foreground: var(--gv-foreground);
+  --color-border: var(--gv-border);
+  --color-input: var(--gv-border);
+  --color-ring: var(--gv-ring);
+}
+
+/* Zinc-dark values matching the app shell; sky accent matching the graph
+   view's collection styling. Tailwind v4 palette oklch values. */
+.graph-view-theme {
+  --gv-background: oklch(0.141 0.005 285.823); /* zinc-950 */
+  --gv-foreground: oklch(0.985 0 0); /* zinc-50 */
+  --gv-card: oklch(0.21 0.006 285.885); /* zinc-900 */
+  --gv-muted: oklch(0.274 0.006 286.033); /* zinc-800 */
+  --gv-muted-foreground: oklch(0.705 0.015 286.067); /* zinc-400 */
+  --gv-border: oklch(0.274 0.006 286.033); /* zinc-800 */
+  --gv-primary: oklch(0.685 0.169 237.323); /* sky-500 */
+  --gv-primary-foreground: oklch(0.141 0.005 285.823); /* zinc-950 */
+  --gv-ring: oklch(0.746 0.16 232.661); /* sky-400 */
+  --gv-destructive: oklch(0.637 0.237 25.331); /* red-500 */
+}
+
 :root {
   color-scheme: dark;
 }
