@@ -19,6 +19,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { AssetLibraryDrawer } from "@/components/assets/asset-library-drawer";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
+import { GRAPH_ASSETS_TOGGLE_EVENT, isGraphViewRoute } from "@/lib/graph-view-events";
 import { cn } from "@/lib/utils";
 import type { ProjectViewMode } from "@storyboard/ui/timeline/timeline-view-state";
 
@@ -338,6 +339,14 @@ export function TimelineSidebar() {
           const handleClick =
             item.id === "assets"
               ? () => {
+                  // On graph routes the asset surface is the graph view's own
+                  // palette drawer (its drags work with dnd-collections; the
+                  // legacy drawer's can't land there) — hand off to it.
+                  if (isGraphViewRoute(pathname)) {
+                    window.dispatchEvent(new CustomEvent(GRAPH_ASSETS_TOGGLE_EVENT));
+                    setIsTrashOpen(false);
+                    return;
+                  }
                   setIsAssetLibraryOpen(!isAssetLibraryOpen);
                   setIsTrashOpen(false);
                 }
