@@ -10,6 +10,7 @@ import {
   buildFocusedGraph,
   buildHydrationSpecs,
   collectAffectedCollectionIds,
+  collectUnhydratedDropTargets,
   graphChildrenToClips,
 } from "./adapter";
 import {
@@ -294,6 +295,97 @@ describe("against the app's real initial documents", () => {
     if (!result.ok) throw new Error(result.error);
     const projected = graphChildrenToClips(result.value.graph, result.value.details, "scene-a");
     expect(projected.map((c) => c.id)).toEqual(documents["scene-a"].clips.map((c) => c.id));
+  });
+});
+
+describe("collectUnhydratedDropTargets", () => {
+  it("flags moves and adds whose destination is an un-hydrated placeholder", () => {
+    const result = buildFocusedGraph(DOCUMENTS, "focus-root");
+    if (!result.ok) throw new Error(result.error);
+    const { details } = result.value; // "grandchild" is a placeholder (hydrated: false)
+
+    expect(
+      collectUnhydratedDropTargets(
+        {
+          type: "nodes-moved",
+          moves: [
+            {
+              nodeId: parseNodeId("img-1"),
+              fromParentId: parseNodeId("focus-root"),
+              fromIndex: 0,
+              toParentId: parseNodeId("grandchild"),
+              toIndex: 0,
+            },
+          ],
+        },
+        details,
+      ),
+    ).toEqual(["grandchild"]);
+
+    expect(
+      collectUnhydratedDropTargets(
+        {
+          type: "nodes-added",
+          adds: [
+            {
+              parentId: parseNodeId("grandchild"),
+              index: 0,
+              node: { id: parseNodeId("new-1"), kind: "media", name: "New", durationSeconds: 2 },
+            },
+          ],
+        },
+        details,
+      ),
+    ).toEqual(["grandchild"]);
+  });
+
+  it("passes hydrated destinations, roots without details, and non-placing patches", () => {
+    const result = buildFocusedGraph(DOCUMENTS, "focus-root");
+    if (!result.ok) throw new Error(result.error);
+    const { graph, details } = result.value;
+
+    // "child" is hydrated: true; "focus-root" has no detail entry at all —
+    // both are legitimate destinations.
+    expect(
+      collectUnhydratedDropTargets(
+        {
+          type: "nodes-moved",
+          moves: [
+            {
+              nodeId: parseNodeId("img-1"),
+              fromParentId: parseNodeId("focus-root"),
+              fromIndex: 0,
+              toParentId: parseNodeId("child"),
+              toIndex: 0,
+            },
+            {
+              nodeId: parseNodeId("c-img"),
+              fromParentId: parseNodeId("child"),
+              fromIndex: 0,
+              toParentId: parseNodeId("focus-root"),
+              toIndex: 0,
+            },
+          ],
+        },
+        details,
+      ),
+    ).toEqual([]);
+
+    expect(
+      collectUnhydratedDropTargets(
+        {
+          type: "nodes-updated",
+          updates: [
+            {
+              nodeId: parseNodeId("vid-1"),
+              before: graph.nodesById.get(parseNodeId("vid-1"))!,
+              after: graph.nodesById.get(parseNodeId("vid-1"))!,
+            },
+          ],
+        },
+        details,
+      ),
+    ).toEqual([]);
   });
 });
 
