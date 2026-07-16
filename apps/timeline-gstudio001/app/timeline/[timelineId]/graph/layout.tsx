@@ -27,7 +27,14 @@ export default async function GraphViewLayout({
     // graph-view-theme scopes the design-token VALUES (see globals.css) so
     // the dnd-collections package's own pixels paint here without altering
     // the token-less legacy views.
-    <div className="graph-view-theme mx-auto grid w-full max-w-[1400px] gap-5">
+    //
+    // flex-col, NOT grid: a grid's auto track sizes to its items'
+    // min-content, and a virtualized strip's scroll container contributes
+    // its full CONTENT width there — the track (and the strip) would grow
+    // past the container instead of overflowing inside it, killing
+    // pan-to-scroll. Column flex stretches children to this container's
+    // definite width, which is what the strip's overflow-x needs.
+    <div className="graph-view-theme mx-auto flex w-full max-w-[1400px] flex-col gap-5">
       <ClientGraphView projectId={timelineId} />
       {children}
     </div>
