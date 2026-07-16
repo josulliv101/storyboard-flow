@@ -53,6 +53,7 @@ export default defineConfig({
           include: [
             "../../packages/ui/**/*.test.ts",
             "../../packages/ui/**/*.test.tsx",
+            "../../packages/timeline-domain/**/*.test.ts",
           ],
         },
       },
