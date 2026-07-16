@@ -17,9 +17,12 @@ import { ArrowLeft } from "lucide-react";
 
 import {
   DndCollections,
+  PaletteItem,
+  TrashTarget,
   UndoRedoControls,
   VirtualGrid,
   VirtualStrip,
+  buildGraph,
   getChildren,
   mediaDurationSeconds,
   parseNodeId,
@@ -30,16 +33,17 @@ import {
   videoFrameCount,
   type CollectionGhostContentProps,
   type CollectionItemContentProps,
+  type CollectionItemNode,
   type CollectionTrimHandleContentProps,
   type CollectionsChange,
   type CollectionsComponents,
   type CollectionsGraph,
   type CollectionsStore,
+  type GraphNodeSpec,
   type MediaNode,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 import {
-  buildFocusedGraph,
   buildHydrationSpecs,
   collectAffectedCollectionIds,
   collectUnhydratedDropTargets,
@@ -48,8 +52,10 @@ import {
   type DetailsById,
 } from "@storyboard/timeline-domain";
 
+import { useAuth } from "@/components/auth/auth-provider";
 import { Button } from "@/components/core/button";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+import type { CloudinaryAsset } from "@/lib/cloudinary-media-store";
 
 // The graph project view — phase 3 of docs/storyboard-graph-architecture.md,
 // running against the app's REAL persistence (the same auth-gated
@@ -288,6 +294,159 @@ function HydrationController({
   }, [pathKey, projectId, details, store, onDetails, onFocusError]);
 
   return null;
+}
+
+// ── Asset palette ───────────────────────────────────────────────────────────
+// The user's Cloudinary library as external drag sources: PaletteItem's
+// factory runs at drag START (fresh node id per drag), and the drop commits
+// an ordinary add-nodes through the intent pipeline — undoable, persisted
+// patch-scoped like any other change.
+
+/** App-side fields for a node created by a palette drag, keyed by the
+ *  freshly minted node id. The factory can't reach React state (it runs
+ *  inside dnd-kit's drag start), so it parks the detail here and the
+ *  PersistenceBridge claims it when the add COMMITS — before the first
+ *  write, so poster/aspect round-trip into the stored clip. */
+const pendingPaletteDetails = new Map<string, ClipDetail>();
+
+const DEFAULT_IMAGE_SECONDS = 4;
+const DEFAULT_VIDEO_SECONDS = 8;
+
+function assetDisplayName(asset: CloudinaryAsset): string {
+  const path = asset.relativePath ?? asset.pathname;
+  return path.split("/").pop() ?? path;
+}
+
+function createNodeFromAsset(asset: CloudinaryAsset): CollectionItemNode {
+  const id = parseNodeId(
+    `asset-${asset.id}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+  );
+  const name = assetDisplayName(asset);
+  const aspect =
+    asset.width && asset.height && asset.height > 0 ? asset.width / asset.height : 16 / 9;
+  pendingPaletteDetails.set(id as string, {
+    alt: name,
+    aspect,
+    trackIndex: 0,
+    poster: asset.thumbnailUrl,
+    ...(asset.resourceType === "image"
+      ? { sourceDuration: DEFAULT_IMAGE_SECONDS, trimIn: 0, trimOut: 0 }
+      : {}),
+  });
+  if (asset.resourceType === "video") {
+    return {
+      id,
+      kind: "media",
+      mediaKind: "video",
+      name,
+      src: asset.url,
+      posterSrcs: [asset.thumbnailUrl],
+      // Cloudinary listing carries no duration; a workable default the user
+      // can trim — the real length can backfill once media metadata lands.
+      fullDurationSeconds: DEFAULT_VIDEO_SECONDS,
+      trimInSeconds: 0,
+      trimOutSeconds: 0,
+    };
+  }
+  return {
+    id,
+    kind: "media",
+    mediaKind: "image",
+    name,
+    src: asset.url,
+    durationSeconds: DEFAULT_IMAGE_SECONDS,
+  };
+}
+
+type AssetPaletteState =
+  | Readonly<{ status: "loading" }>
+  | Readonly<{ status: "error"; message: string }>
+  | Readonly<{ status: "ready"; assets: readonly CloudinaryAsset[] }>;
+
+const PALETTE_ASSET_LIMIT = 24;
+
+function AssetPalette() {
+  const [state, setState] = useState<AssetPaletteState>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/assets", { cache: "no-store" });
+        const result = (await response.json().catch(() => ({}))) as {
+          assets?: CloudinaryAsset[];
+          error?: string;
+        };
+        if (cancelled) return;
+        if (!response.ok || !result.assets) {
+          setState({ status: "error", message: result.error ?? "Could not load assets." });
+          return;
+        }
+        setState({ status: "ready", assets: result.assets.slice(0, PALETTE_ASSET_LIMIT) });
+      } catch (cause) {
+        if (!cancelled) {
+          setState({
+            status: "error",
+            message: cause instanceof Error ? cause.message : "Could not load assets.",
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <section aria-label="Asset library palette" className="min-w-0">
+      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+        Asset library — drag into any timeline
+      </h3>
+      {state.status === "loading" && (
+        <div className="flex gap-2">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div key={index} className="h-20 w-28 shrink-0 animate-pulse rounded-md bg-zinc-900" />
+          ))}
+        </div>
+      )}
+      {state.status === "error" && (
+        <p className="rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
+          {state.message}
+        </p>
+      )}
+      {state.status === "ready" &&
+        (state.assets.length === 0 ? (
+          <p className="rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
+            No assets yet — upload some from the asset library drawer.
+          </p>
+        ) : (
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {state.assets.map((asset) => (
+              <PaletteItem
+                key={asset.id}
+                paletteId={`asset-${asset.id}`}
+                createNode={() => createNodeFromAsset(asset)}
+                className="relative h-20 w-28 shrink-0 overflow-hidden p-0"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={asset.thumbnailUrl}
+                  alt={assetDisplayName(asset)}
+                  draggable={false}
+                  loading="lazy"
+                  className="h-full w-full object-cover"
+                />
+                {asset.resourceType === "video" && (
+                  <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1 py-0.5 text-[9px] font-bold tracking-wide text-zinc-100">
+                    VIDEO
+                  </span>
+                )}
+              </PaletteItem>
+            ))}
+          </div>
+        ))}
+    </section>
+  );
 }
 
 // ── Consumer pixels (module scope — identity-stable) ────────────────────────
@@ -567,8 +726,13 @@ type SyncEntry = Readonly<{
  */
 function PersistenceBridge({
   details,
+  onDetails,
   onSync,
-}: Readonly<{ details: DetailsById; onSync: (entry: SyncEntry) => void }>) {
+}: Readonly<{
+  details: DetailsById;
+  onDetails: (merged: Readonly<Record<string, ClipDetail>>) => void;
+  onSync: (entry: SyncEntry) => void;
+}>) {
   const store = useCollectionsStore();
   const { announce } = useCollectionsContainer();
   const detailsRef = useRef(details);
@@ -579,7 +743,24 @@ function PersistenceBridge({
   useEffect(
     () =>
       store.subscribeToChanges((change) => {
-        const current = detailsRef.current;
+        let current = detailsRef.current;
+
+        // A committed palette add claims its parked detail BEFORE the write
+        // below, so poster/aspect round-trip into the very first PATCH.
+        if (change.patch.type === "nodes-added") {
+          let claimed: Record<string, ClipDetail> | null = null;
+          for (const add of change.patch.adds) {
+            const detail = pendingPaletteDetails.get(add.node.id as string);
+            if (detail) {
+              (claimed ??= {})[add.node.id as string] = detail;
+              pendingPaletteDetails.delete(add.node.id as string);
+            }
+          }
+          if (claimed) {
+            current = { ...current, ...claimed };
+            onDetails(claimed);
+          }
+        }
 
         if (change.origin !== "undo") {
           const blocked = collectUnhydratedDropTargets(change.patch, current);
@@ -617,7 +798,7 @@ function PersistenceBridge({
           collections: affected,
         });
       }),
-    [store, announce, onSync],
+    [store, announce, onDetails, onSync],
   );
 
   return null;
@@ -743,7 +924,13 @@ function GraphViewChrome({
 type BootState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ status: "error"; message: string }>
-  | Readonly<{ status: "ready"; graph: CollectionsGraph; details: DetailsById }>;
+  | Readonly<{
+      status: "ready";
+      graph: CollectionsGraph;
+      details: DetailsById;
+      /** The trash collection's root id, when its document loaded. */
+      trashRootId: string | null;
+    }>;
 
 export function GraphTimelineView({ projectId }: { projectId: string }) {
   // Mounted by the route-group LAYOUT (which persists across focus
@@ -777,14 +964,24 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
     graphDocumentsGateway.lastError,
   );
 
-  // Boot: fetch the project's own document, then build the initial graph
-  // rooted at it. Referenced child timelines start as placeholders — each is
-  // its own stored document, fetched on focus/expand by the controller.
+  // Boot: fetch the project's document AND the user's trash document, then
+  // build a TWO-root graph — the project timeline and the trash collection.
+  // Trash is just another stored collection document (`trash-<uid>`), so
+  // drops onto <TrashTarget> are ordinary moves between roots: undoable,
+  // and persisted by the same patch-scoped write path. Referenced child
+  // timelines start as placeholders — fetched on focus/expand.
+  const { user } = useAuth();
+  const trashDocId = user ? `trash-${user.uid}` : null;
   useEffect(() => {
+    if (trashDocId === null) return; // auth still resolving (AuthGate guarantees a user)
     let cancelled = false;
-    void graphDocumentsGateway.ensure(projectId).then((doc) => {
+    void (async () => {
+      const [projectDoc, trashDoc] = await Promise.all([
+        graphDocumentsGateway.ensure(projectId),
+        graphDocumentsGateway.ensure(trashDocId),
+      ]);
       if (cancelled) return;
-      if (!doc) {
+      if (!projectDoc) {
         setBoot({
           status: "error",
           message:
@@ -792,18 +989,67 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
         });
         return;
       }
-      const built = buildFocusedGraph(graphDocumentsGateway.read(), projectId, 0);
-      if (!built.ok) {
-        setBoot({ status: "error", message: built.error });
+
+      const projectSpecs = buildHydrationSpecs(graphDocumentsGateway.read(), projectId, 0);
+      if (!projectSpecs.ok) {
+        setBoot({ status: "error", message: projectSpecs.error });
         return;
       }
-      setDetails(built.value.details);
-      setBoot({ status: "ready", graph: built.value.graph, details: built.value.details });
-    });
+      const projectRoot: GraphNodeSpec = {
+        kind: "collection",
+        id: projectId,
+        name: projectDoc.title,
+        children: projectSpecs.value.specs,
+      };
+      let bootDetails: Record<string, ClipDetail> = { ...projectSpecs.value.details };
+
+      // Trash root — hydrated in FULL at boot: patch-scoped writes replace a
+      // document wholesale, so the graph must hold everything the stored
+      // trash holds before a write may touch it.
+      let trashRootId: string | null = null;
+      let roots: GraphNodeSpec[] = [projectRoot];
+      if (trashDoc) {
+        const trashSpecs = buildHydrationSpecs(graphDocumentsGateway.read(), trashDocId, 0, [
+          projectId,
+          ...Object.keys(bootDetails),
+        ]);
+        if (trashSpecs.ok) {
+          roots = [
+            projectRoot,
+            {
+              kind: "collection",
+              id: trashDocId,
+              name: trashDoc.title || "Trash Bin",
+              children: trashSpecs.value.specs,
+            },
+          ];
+          bootDetails = {
+            ...bootDetails,
+            ...trashSpecs.value.details,
+            [trashDocId]: { ...FALLBACK_DETAIL, hydrated: true },
+          };
+          trashRootId = trashDocId;
+        }
+      }
+
+      let built = buildGraph(roots);
+      if (!built.ok && trashRootId !== null) {
+        // Id collision between trash content and the project (stale trash
+        // data): boot WITHOUT trash rather than not at all.
+        trashRootId = null;
+        built = buildGraph([projectRoot]);
+      }
+      if (!built.ok) {
+        setBoot({ status: "error", message: JSON.stringify(built.error) });
+        return;
+      }
+      setDetails(bootDetails);
+      setBoot({ status: "ready", graph: built.value, details: bootDetails, trashRootId });
+    })();
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, trashDocId]);
 
   const onDetails = useCallback(
     (merged: Readonly<Record<string, ClipDetail>>) =>
@@ -847,7 +1093,7 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
         </p>
       )}
       <DndCollections initialGraph={boot.graph} components={GRAPH_VIEW_COMPONENTS}>
-        <PersistenceBridge details={details} onSync={onSync} />
+        <PersistenceBridge details={details} onDetails={onDetails} onSync={onSync} />
         <HydrationController
           projectId={projectId}
           segments={timelinePath}
@@ -899,6 +1145,22 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
                 />
               )}
               <SubTimelines focusedId={focusedId} details={details} onDetails={onDetails} />
+              <div className="flex items-end gap-4">
+                <div className="min-w-0 grow">
+                  <AssetPalette />
+                </div>
+                {boot.trashRootId !== null && (
+                  <div className="shrink-0">
+                    <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                      Trash
+                    </h3>
+                    {/* Drops here are ordinary moves into the trash-<uid>
+                        document — undoable, persisted patch-scoped. Also
+                        enables Alt+Delete on focused cards. */}
+                    <TrashTarget trashId={parseNodeId(boot.trashRootId)} />
+                  </div>
+                )}
+              </div>
               <SyncPanel entries={syncLog} />
             </div>
           )}
