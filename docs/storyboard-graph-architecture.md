@@ -226,10 +226,16 @@ replacement, never by big-bang rewrite.
 1. **Single-parent confirmation:** a collection lives under exactly one
    parent (containment). If the product ever needs the *same* collection
    instanced under multiple parents, that is a different model — flag now.
-2. **Hydration ↔ undo policy details:** ~~whether undo history survives focus
-   navigation across un-hydrated boundaries~~ — settled: it does, via
-   `store.hydrate` (see § 4). Remaining: gating drops into un-hydrated
-   collections vs. hydrate-on-drop.
+2. **Hydration ↔ undo policy details:** settled in full. Undo history
+   survives focus navigation via `store.hydrate` (see § 4). Drops into
+   un-hydrated collections are handled by two cooperating layers: every
+   VISIBLE placeholder collection hydrates eagerly (the focused timeline's
+   children plus the grandchild cards inside their strips — the working set
+   stays view-bounded), and the persistence bridge BOUNCES the residual
+   race (`collectUnhydratedDropTargets` → `store.undo()` + rejection flash
+   + announcement) so content can never land in, or overwrite, a document
+   whose clips haven't loaded. Writes additionally refuse any collection
+   with `hydrated: false`.
 3. **Eviction:** whether far-from-focus subtrees are ever de-hydrated, or
    memory is allowed to grow monotonically per session (likely fine at
    storyboard scale; decide explicitly).

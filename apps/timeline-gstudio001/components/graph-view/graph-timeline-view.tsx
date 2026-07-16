@@ -9,6 +9,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -22,6 +23,7 @@ import {
   getChildren,
   mediaDurationSeconds,
   parseNodeId,
+  useCollectionsContainer,
   useCollectionsSelector,
   useCollectionsStore,
   useLiveTrim,
@@ -40,6 +42,7 @@ import {
   buildFocusedGraph,
   buildHydrationSpecs,
   collectAffectedCollectionIds,
+  collectUnhydratedDropTargets,
   graphChildrenToClips,
   type ClipDetail,
   type DetailsById,
@@ -256,11 +259,23 @@ function HydrationController({
         // The focused timeline's placeholder child collections load their
         // own clips so their inline strips have content. Fetches run in
         // parallel; hydration applies as each lands.
-        const graph = store.getSnapshot().graph;
-        const collectionChildren = getChildren(graph, parseNodeId(focusedId)).filter(
-          (childId) => graph.nodesById.get(childId)?.kind === "collection",
-        );
-        await Promise.all(collectionChildren.map((childId) => ensure(childId as string)));
+        const collectionChildrenOf = (id: string) => {
+          const graph = store.getSnapshot().graph;
+          return getChildren(graph, parseNodeId(id))
+            .filter((childId) => graph.nodesById.get(childId)?.kind === "collection")
+            .map((childId) => childId as string);
+        };
+        const children = collectionChildrenOf(focusedId);
+        await Promise.all(children.map(ensure));
+        if (!cancelled) {
+          // One more shallow level: grandchild collections are VISIBLE as
+          // cards inside the sub-timeline strips, and every visible
+          // collection is a drop target — hydrating them keeps the
+          // gate-until-hydrated bounce (PersistenceBridge) a rare race
+          // fallback instead of the common path.
+          const grandchildren = children.flatMap(collectionChildrenOf);
+          await Promise.all(grandchildren.map(ensure));
+        }
       }
       if (cancelled) return;
       onFocusError(error);
@@ -522,14 +537,93 @@ function SubTimelines({
   );
 }
 
-// ── Persistence sync panel ──────────────────────────────────────────────────
+// ── Persistence bridge ──────────────────────────────────────────────────────
 
 type SyncEntry = Readonly<{
   at: number;
   origin: CollectionsChange["origin"];
   patchType: CollectionsChange["patch"]["type"];
   collections: readonly string[];
+  /** True when the change was REVERTED (drop into an un-hydrated collection). */
+  bounced?: boolean;
 }>;
+
+/**
+ * The write path AND the gate-until-hydrated policy, in one subscriber:
+ *
+ * - A command (or redo) that places content INTO an un-hydrated placeholder
+ *   is BOUNCED — undone on the spot with a rejection flash and an
+ *   announcement. Letting it stand would block the collection's hydration
+ *   (the engine refuses to fill a non-empty collection) and eventually let
+ *   a write clobber the stored document. Eager visible hydration
+ *   (HydrationController) makes this a rare fetch-latency race, not the
+ *   common path.
+ * - Everything else is written patch-scoped: only the touched documents,
+ *   and never one whose clips haven't loaded (`hydrated: false`).
+ *
+ * Lives INSIDE the provider (unlike an `onChange` prop) because bouncing
+ * needs the store; `subscribeToChanges` supports reentrant dispatch, so
+ * undoing from within the feed is safe and ordered.
+ */
+function PersistenceBridge({
+  details,
+  onSync,
+}: Readonly<{ details: DetailsById; onSync: (entry: SyncEntry) => void }>) {
+  const store = useCollectionsStore();
+  const { announce } = useCollectionsContainer();
+  const detailsRef = useRef(details);
+  useEffect(() => {
+    detailsRef.current = details;
+  });
+
+  useEffect(
+    () =>
+      store.subscribeToChanges((change) => {
+        const current = detailsRef.current;
+
+        if (change.origin !== "undo") {
+          const blocked = collectUnhydratedDropTargets(change.patch, current);
+          if (blocked.length > 0) {
+            store.undo();
+            const placedIds =
+              change.patch.type === "nodes-moved"
+                ? change.patch.moves.map((move) => move.nodeId)
+                : change.patch.type === "nodes-added"
+                  ? change.patch.adds.map((add) => add.node.id)
+                  : [];
+            if (placedIds.length > 0) store.flashRejection(placedIds);
+            announce("That collection is still loading — drop again once its clips appear.");
+            onSync({
+              at: Date.now(),
+              origin: change.origin,
+              patchType: change.patch.type,
+              collections: blocked,
+              bounced: true,
+            });
+            return;
+          }
+        }
+
+        const affected = collectAffectedCollectionIds(change.graph, change.patch).filter(
+          (id) => graphDocumentsGateway.peek(id) !== null && current[id]?.hydrated !== false,
+        );
+        for (const id of affected) {
+          graphDocumentsGateway.writeClips(id, graphChildrenToClips(change.graph, current, id));
+        }
+        onSync({
+          at: Date.now(),
+          origin: change.origin,
+          patchType: change.patch.type,
+          collections: affected,
+        });
+      }),
+    [store, announce, onSync],
+  );
+
+  return null;
+}
+
+// ── Persistence sync panel ──────────────────────────────────────────────────
 
 function SyncPanel({ entries }: { entries: readonly SyncEntry[] }) {
   return (
@@ -549,9 +643,17 @@ function SyncPanel({ entries }: { entries: readonly SyncEntry[] }) {
               <span className="text-zinc-100">{entry.origin}</span>
               <span>{entry.patchType}</span>
               <span aria-hidden="true">→</span>
-              <span className="text-sky-400">
-                {entry.collections.length === 0 ? "(nothing stored)" : entry.collections.join(", ")}
-              </span>
+              {entry.bounced ? (
+                <span className="text-amber-400">
+                  reverted — {entry.collections.join(", ")} still loading
+                </span>
+              ) : (
+                <span className="text-sky-400">
+                  {entry.collections.length === 0
+                    ? "(nothing stored)"
+                    : entry.collections.join(", ")}
+                </span>
+              )}
             </li>
           ))}
         </ol>
@@ -709,30 +811,11 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
     [],
   );
 
-  // The persistence write path: map the committed patch to the documents it
-  // touched, rewrite ONLY those through the gateway (debounced PATCH each).
-  const handleChange = useCallback(
-    (change: CollectionsChange) => {
-      const affected = collectAffectedCollectionIds(change.graph, change.patch).filter(
-        (id) => graphDocumentsGateway.peek(id) !== null,
-      );
-      for (const id of affected) {
-        graphDocumentsGateway.writeClips(id, graphChildrenToClips(change.graph, details, id));
-      }
-      setSyncLog((log) =>
-        [
-          {
-            at: Date.now(),
-            origin: change.origin,
-            patchType: change.patch.type,
-            collections: affected,
-          },
-          ...log,
-        ].slice(0, 6),
-      );
-    },
-    [details],
-  );
+  // Persistence (write path + gate-until-hydrated bounce) lives in
+  // <PersistenceBridge> inside the provider — bouncing needs the store.
+  const onSync = useCallback((entry: SyncEntry) => {
+    setSyncLog((log) => [entry, ...log].slice(0, 6));
+  }, []);
 
   if (boot.status === "loading") {
     return (
@@ -763,11 +846,8 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
           {gatewayError}
         </p>
       )}
-      <DndCollections
-        initialGraph={boot.graph}
-        components={GRAPH_VIEW_COMPONENTS}
-        onChange={handleChange}
-      >
+      <DndCollections initialGraph={boot.graph} components={GRAPH_VIEW_COMPONENTS}>
+        <PersistenceBridge details={details} onSync={onSync} />
         <HydrationController
           projectId={projectId}
           segments={timelinePath}

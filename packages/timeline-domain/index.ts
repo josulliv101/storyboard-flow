@@ -6,6 +6,7 @@ export {
   buildFocusedGraph,
   buildHydrationSpecs,
   collectAffectedCollectionIds,
+  collectUnhydratedDropTargets,
   graphChildrenToClips,
   type BuildFocusedGraphResult,
   type BuildHydrationSpecsResult,

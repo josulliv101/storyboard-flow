@@ -9,6 +9,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -29,6 +30,7 @@ import {
   getChildren,
   mediaDurationSeconds,
   parseNodeId,
+  useCollectionsContainer,
   useCollectionsSelector,
   useCollectionsStore,
   useLiveTrim,
@@ -46,6 +48,7 @@ import {
   buildFocusedGraph,
   buildHydrationSpecs,
   collectAffectedCollectionIds,
+  collectUnhydratedDropTargets,
   graphChildrenToClips,
   type ClipDetail,
   type DetailsById,
@@ -169,13 +172,23 @@ function HydrationController({
     }
     if (error === null) {
       // The focused timeline's placeholder child collections load their own
-      // clips (one level) so their inline strips have content.
-      const graph = store.getSnapshot().graph;
-      for (const childId of getChildren(graph, parseNodeId(focusedId))) {
-        const node = graph.nodesById.get(childId);
-        if (node?.kind === "collection" && detailOf(childId as string)?.hydrated === false) {
-          ensure(childId as string, 0);
-        }
+      // clips (one level) so their inline strips have content — and then one
+      // more shallow level: grandchild collections are VISIBLE as cards
+      // inside those strips, and every visible collection is a drop target,
+      // so hydrating them keeps the gate-until-hydrated bounce
+      // (PersistenceBridge) a rare race fallback instead of the common path.
+      const collectionChildrenOf = (id: string) => {
+        const graph = store.getSnapshot().graph;
+        return getChildren(graph, parseNodeId(id))
+          .filter((childId) => graph.nodesById.get(childId)?.kind === "collection")
+          .map((childId) => childId as string);
+      };
+      const children = collectionChildrenOf(focusedId);
+      for (const childId of children) {
+        if (detailOf(childId)?.hydrated === false) ensure(childId, 0);
+      }
+      for (const grandchildId of children.flatMap(collectionChildrenOf)) {
+        if (detailOf(grandchildId)?.hydrated === false) ensure(grandchildId, 0);
       }
     }
 
@@ -498,14 +511,87 @@ function SubTimelines({
   );
 }
 
-// ── Persistence sync panel ──────────────────────────────────────────────────
+// ── Persistence bridge ──────────────────────────────────────────────────────
 
 type SyncEntry = Readonly<{
   at: number;
   origin: CollectionsChange["origin"];
   patchType: CollectionsChange["patch"]["type"];
   collections: readonly string[];
+  /** True when the change was REVERTED (drop into an un-hydrated collection). */
+  bounced?: boolean;
 }>;
+
+/**
+ * The write path AND the gate-until-hydrated policy, in one subscriber: a
+ * command (or redo) placing content INTO an un-hydrated placeholder is
+ * BOUNCED — undone on the spot with a rejection flash — because letting it
+ * stand would block the collection's hydration (the engine refuses to fill
+ * a non-empty collection) and let a write clobber the stored document.
+ * Everything else writes patch-scoped, never touching a document whose
+ * clips haven't loaded. Lives INSIDE the provider (unlike an `onChange`
+ * prop) because bouncing needs the store; `subscribeToChanges` supports
+ * reentrant dispatch, so undoing from within the feed is safe and ordered.
+ */
+function PersistenceBridge({
+  details,
+  onSync,
+}: Readonly<{ details: DetailsById; onSync: (entry: SyncEntry) => void }>) {
+  const store = useCollectionsStore();
+  const { announce } = useCollectionsContainer();
+  const detailsRef = useRef(details);
+  useEffect(() => {
+    detailsRef.current = details;
+  });
+
+  useEffect(
+    () =>
+      store.subscribeToChanges((change) => {
+        const current = detailsRef.current;
+
+        if (change.origin !== "undo") {
+          const blocked = collectUnhydratedDropTargets(change.patch, current);
+          if (blocked.length > 0) {
+            store.undo();
+            const placedIds =
+              change.patch.type === "nodes-moved"
+                ? change.patch.moves.map((move) => move.nodeId)
+                : change.patch.type === "nodes-added"
+                  ? change.patch.adds.map((add) => add.node.id)
+                  : [];
+            if (placedIds.length > 0) store.flashRejection(placedIds);
+            announce("That collection is still loading — drop again once its clips appear.");
+            onSync({
+              at: Date.now(),
+              origin: change.origin,
+              patchType: change.patch.type,
+              collections: blocked,
+              bounced: true,
+            });
+            return;
+          }
+        }
+
+        const affected = collectAffectedCollectionIds(change.graph, change.patch).filter(
+          (id) => readDocuments()[id] !== undefined && current[id]?.hydrated !== false,
+        );
+        for (const id of affected) {
+          writeDocumentClips(id, graphChildrenToClips(change.graph, current, id));
+        }
+        onSync({
+          at: Date.now(),
+          origin: change.origin,
+          patchType: change.patch.type,
+          collections: affected,
+        });
+      }),
+    [store, announce, onSync],
+  );
+
+  return null;
+}
+
+// ── Persistence sync panel ──────────────────────────────────────────────────
 
 function SyncPanel({ entries }: { entries: readonly SyncEntry[] }) {
   return (
@@ -525,9 +611,17 @@ function SyncPanel({ entries }: { entries: readonly SyncEntry[] }) {
               <span className="text-foreground">{entry.origin}</span>
               <span>{entry.patchType}</span>
               <span aria-hidden="true">→</span>
-              <span className="text-primary">
-                {entry.collections.length === 0 ? "(no stored documents)" : entry.collections.join(", ")}
-              </span>
+              {entry.bounced ? (
+                <span className="text-amber-400">
+                  reverted — {entry.collections.join(", ")} still loading
+                </span>
+              ) : (
+                <span className="text-primary">
+                  {entry.collections.length === 0
+                    ? "(no stored documents)"
+                    : entry.collections.join(", ")}
+                </span>
+              )}
             </li>
           ))}
         </ol>
@@ -665,31 +759,11 @@ export function GraphTimeline() {
     [],
   );
 
-  // The persistence write path: map the committed patch to the documents it
-  // touched, rewrite only those. `change.graph` is post-commit, so the
-  // projection reads the truth the engine just established.
-  const handleChange = useCallback(
-    (change: CollectionsChange) => {
-      const affected = collectAffectedCollectionIds(change.graph, change.patch).filter(
-        (id) => readDocuments()[id] !== undefined,
-      );
-      for (const id of affected) {
-        writeDocumentClips(id, graphChildrenToClips(change.graph, details, id));
-      }
-      setSyncLog((log) =>
-        [
-          {
-            at: Date.now(),
-            origin: change.origin,
-            patchType: change.patch.type,
-            collections: affected,
-          },
-          ...log,
-        ].slice(0, 6),
-      );
-    },
-    [details],
-  );
+  // Persistence (write path + gate-until-hydrated bounce) lives in
+  // <PersistenceBridge> inside the provider — bouncing needs the store.
+  const onSync = useCallback((entry: SyncEntry) => {
+    setSyncLog((log) => [entry, ...log].slice(0, 6));
+  }, []);
 
   if (!initial.ok) {
     return (
@@ -707,11 +781,8 @@ export function GraphTimeline() {
   return (
     <div className="flex flex-col gap-4">
       <Breadcrumbs timelinePath={timelinePath} />
-      <DndCollections
-        initialGraph={initial.value.graph}
-        components={GRAPH_TIMELINE_COMPONENTS}
-        onChange={handleChange}
-      >
+      <DndCollections initialGraph={initial.value.graph} components={GRAPH_TIMELINE_COMPONENTS}>
+        <PersistenceBridge details={details} onSync={onSync} />
         <HydrationController
           segments={timelinePath}
           focusedId={focusedId}

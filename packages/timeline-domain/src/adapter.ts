@@ -361,6 +361,39 @@ export function graphChildrenToClips(
 }
 
 /**
+ * The destination collections of a committed patch that are still
+ * UN-hydrated placeholders — their stored clips haven't loaded, so letting
+ * content land in them both blocks their future hydration (the engine
+ * refuses to fill a non-empty collection) and, worse, would let the
+ * patch-scoped write overwrite the stored document with only the new
+ * content. Apps use this to enforce the gate-until-hydrated policy: revert
+ * (undo) a command whose destination appears here.
+ */
+export function collectUnhydratedDropTargets(
+  patch: CollectionsPatch,
+  details: DetailsById,
+): readonly string[] {
+  const unhydrated = (id: NodeId) => details[id as string]?.hydrated === false;
+  const ids = new Set<string>();
+  switch (patch.type) {
+    case "nodes-moved":
+      for (const move of patch.moves) {
+        if (unhydrated(move.toParentId)) ids.add(move.toParentId as string);
+      }
+      break;
+    case "nodes-added":
+      for (const add of patch.adds) {
+        if (unhydrated(add.parentId)) ids.add(add.parentId as string);
+      }
+      break;
+    // nodes-removed / nodes-updated place nothing anywhere.
+    default:
+      break;
+  }
+  return [...ids];
+}
+
+/**
  * The collections whose stored documents a committed change touches — the
  * patch-scoped persistence write set.
  */
