@@ -18,6 +18,6 @@ const GraphTimeline = dynamic(
   },
 );
 
-export function ClientGraphTimeline({ timelinePath }: { timelinePath: string[] }) {
-  return <GraphTimeline timelinePath={timelinePath} />;
+export function ClientGraphTimeline() {
+  return <GraphTimeline />;
 }

@@ -8,10 +8,16 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/typ
 
 import {
   buildFocusedGraph,
+  buildHydrationSpecs,
   collectAffectedCollectionIds,
   graphChildrenToClips,
 } from "./adapter";
-import { findGraphInvariantViolation, getChildren, parseNodeId } from "./engine";
+import {
+  findGraphInvariantViolation,
+  getChildren,
+  hydrateCollection,
+  parseNodeId,
+} from "./engine";
 
 // The adapter is the storage/hydration seam of the graph architecture: real
 // TimelineDocuments in, a valid focused graph + side-table out, and clips
@@ -173,6 +179,71 @@ describe("buildFocusedGraph", () => {
 
   it("rejects an unknown focus target", () => {
     expect(buildFocusedGraph(DOCUMENTS, "nope")).toMatchObject({ ok: false });
+  });
+});
+
+describe("buildHydrationSpecs", () => {
+  it("hydrates a placeholder mid-session to the same shape a fresh focused build gives", () => {
+    // Focused build leaves the grandchild as a placeholder…
+    const focused = buildFocusedGraph(DOCUMENTS, "focus-root");
+    if (!focused.ok) throw new Error(focused.error);
+    expect(getChildren(focused.value.graph, parseNodeId("grandchild"))).toEqual([]);
+
+    // …then the incremental payload fills it through the engine's hydrate.
+    const payload = buildHydrationSpecs(
+      DOCUMENTS,
+      "grandchild",
+      1,
+      focused.value.graph.nodesById.keys(),
+    );
+    expect(payload.ok).toBe(true);
+    if (!payload.ok) return;
+    const hydrated = hydrateCollection(
+      focused.value.graph,
+      parseNodeId("grandchild"),
+      payload.value.specs,
+    );
+    expect(hydrated.ok).toBe(true);
+    if (!hydrated.ok) return;
+
+    expect(findGraphInvariantViolation(hydrated.value)).toBeNull();
+    expect(getChildren(hydrated.value, parseNodeId("grandchild"))).toEqual(["g-img"]);
+    expect(payload.value.details["g-img"]).toMatchObject({ alt: "g-img alt" });
+  });
+
+  it("demotes children already present in the live graph via usedIds", () => {
+    // A doc whose collection clip references a timeline the live graph
+    // already contains elsewhere ("child" is in the focused build).
+    const docs = {
+      ...DOCUMENTS,
+      grandchild: {
+        ...GRANDCHILD_DOC,
+        clips: packTimelineClips([
+          image("g-img", 1),
+          collectionClip("g-ref-clip", "child", "Child again"),
+        ]),
+      },
+    };
+    const focused = buildFocusedGraph(docs, "focus-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const payload = buildHydrationSpecs(docs, "grandchild", 1, focused.value.graph.nodesById.keys());
+    if (!payload.ok) throw new Error(payload.error);
+    // The duplicate reference became a card keyed by the CLIP id, so the
+    // engine accepts the specs without an id collision.
+    const hydrated = hydrateCollection(
+      focused.value.graph,
+      parseNodeId("grandchild"),
+      payload.value.specs,
+    );
+    expect(hydrated.ok).toBe(true);
+    if (!hydrated.ok) return;
+    expect(getChildren(hydrated.value, parseNodeId("grandchild"))).toEqual(["g-img", "g-ref-clip"]);
+    expect(payload.value.details["g-ref-clip"]).toMatchObject({ duplicateOfTimelineId: "child" });
+  });
+
+  it("rejects an unknown timeline", () => {
+    expect(buildHydrationSpecs(DOCUMENTS, "nope")).toMatchObject({ ok: false });
   });
 });
 

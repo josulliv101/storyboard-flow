@@ -286,6 +286,38 @@ validate — apply patches only to the graph state they were produced against
 
 ---
 
+## Core: hydrate (`core/hydrate.ts`)
+
+### `hydrateCollection(graph, collectionId, children): Result<CollectionsGraph, HydrateRejection>`
+
+Fill an EMPTY collection (a lazy-loaded placeholder) with a denormalized
+`GraphNodeSpec` subtree — the incremental middle between `initialGraph`
+(initial-only) and `replaceGraph` (wholesale swap). Because hydration only
+ADDS nodes under a childless collection, every existing history patch stays
+replayable — this is what lets a store keep one graph and one undo stack
+alive across drill-in navigation while documents load on focus.
+
+Pure and structurally sharing: the input graph is untouched, untouched
+nodes/children arrays keep their identities, and an empty spec list returns
+the SAME graph reference. Specs are validated with the same walker as
+`buildGraph` (wrapped in the target), so intra-subtree duplicate ids,
+media-with-children, and malformed fields are all caught; ids colliding with
+the HOST graph are rejected before anything merges.
+
+```ts
+type HydrateRejection =
+  | { reason: "missing-collection"; collectionId: NodeId }
+  | { reason: "not-a-collection"; collectionId: NodeId }
+  | { reason: "collection-not-empty"; collectionId: NodeId } // fills placeholders only — merge policy is the caller's
+  | { reason: "duplicate-id"; id: string } // collides with the host graph, or repeats within the specs
+  | { reason: "invalid-spec"; error: BuildGraphError };
+```
+
+Hydration is IO landing, not user intent — see `store.hydrate` for how the
+store keeps it invisible to undo/redo and the change feed.
+
+---
+
 ## Core: intents (`core/intents.ts`)
 
 Geometry → semantics, separate from legality (the reducer's job).
@@ -573,10 +605,11 @@ type CollectionsChange = {
 | --- | --- | --- |
 | `getSnapshot` | `() => CollectionsSnapshot` | Snapshot identity changes per notify; FIELD identities change only when the field did. |
 | `subscribe` | `(listener: () => void) => () => void` | Returns unsubscribe. |
-| `subscribeToChanges` | `(listener: (change: CollectionsChange) => void) => () => void` | The committed-change feed as a multi-listener seam — same events and ordering as the `onChange` option. For consumers that need the PATCH of a commit (e.g. `VirtualStrip` resizes exactly the slots a `nodes-updated` patch touched). Fires for dispatch/undo/redo; `replaceGraph` emits nothing. |
+| `subscribeToChanges` | `(listener: (change: CollectionsChange) => void) => () => void` | The committed-change feed as a multi-listener seam — same events and ordering as the `onChange` option. For consumers that need the PATCH of a commit (e.g. `VirtualStrip` resizes exactly the slots a `nodes-updated` patch touched). Fires for dispatch/undo/redo; `replaceGraph` and `hydrate` emit nothing. |
 | `dispatch` | `(command) => Result<CollectionsPatch, CommandRejection>` | Reduce + push history + notify + `onChange`. |
 | `undo` / `redo` | `() => boolean` | False when the respective stack is empty. |
 | `replaceGraph` | `(graph: CollectionsGraph) => Result<void, GraphValidationError>` | Runtime-validates then swaps the committed graph wholesale — the escape hatch for async/server-loaded data (`initialGraph` is initial-only). Invalid input is rejected without changing or notifying the store. A successful swap clears undo/redo history (old patches can't replay on a new graph) and any in-progress drag/preview, prunes the selection to surviving ids, and — deliberately — does NOT fire `onChange` (the caller supplied this state; echoing it risks feedback loops). |
+| `hydrate` | `(collectionId: NodeId, children: readonly GraphNodeSpec[]) => Result<void, HydrateRejection>` | `replaceGraph`'s incremental sibling for hydrate-on-focus: fills an EMPTY collection via `hydrateCollection`. Undo/redo SURVIVES (only adds, under a childless collection — every history patch stays replayable), interaction state is untouched, and — like `replaceGraph` — nothing is emitted on `onChange`/`subscribeToChanges` (IO landing, not user intent). Snapshot subscribers are notified; data-sized `VirtualStrip`s detect the feed-less graph change and re-measure on their own. Rejections return without notifying. |
 | `setSelection` | `(ids: readonly NodeId[]) => void` | No-op (no notify) when the set is unchanged. |
 | `toggleSelected` | `(id: NodeId) => void` | |
 | `clearSelection` | `() => void` | No-op when already empty. |

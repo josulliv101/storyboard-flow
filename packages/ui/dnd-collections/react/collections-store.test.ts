@@ -462,4 +462,85 @@ describe("createCollectionsStore", () => {
     store.destroy();
     expect(store.getSnapshot().interaction.rejectedIdSet.size).toBe(0);
   });
+
+  // Hydration is IO landing, not user intent: it must reach snapshot
+  // subscribers (views re-render) while staying invisible to undo/redo and
+  // the persistence change feed — and, unlike replaceGraph, it must leave
+  // the history replayable.
+  describe("hydrate", () => {
+    const hydrationSpecs: readonly GraphNodeSpec[] = [
+      media("h1"),
+      { kind: "collection", id: "h-nested", name: "Nested", children: [media("h2")] },
+    ];
+
+    test("fills the placeholder and notifies snapshot subscribers only", () => {
+      const changes: CollectionsChange[] = [];
+      const store = createCollectionsStore(graphFixture(), { onChange: (c) => changes.push(c) });
+      const feed = vi.fn();
+      store.subscribeToChanges(feed);
+      const listener = vi.fn();
+      store.subscribe(listener);
+
+      const result = store.hydrate(id("root-b"), hydrationSpecs);
+      expect(result.ok).toBe(true);
+      const { graph, canUndo, historyEntries } = store.getSnapshot();
+      expect([...(graph.childrenById.get(id("root-b")) ?? [])]).toEqual(["h1", "h-nested"]);
+      expect(listener).toHaveBeenCalledTimes(1);
+      // No history entry, no change-feed event, no onChange.
+      expect(canUndo).toBe(false);
+      expect(historyEntries).toHaveLength(0);
+      expect(feed).not.toHaveBeenCalled();
+      expect(changes).toHaveLength(0);
+    });
+
+    test("undo history SURVIVES hydration and still replays", () => {
+      const store = createCollectionsStore(graphFixture());
+      // Commit BEFORE hydration: move x into root-b, then undo it so the
+      // placeholder is empty again when hydration lands.
+      expect(store.dispatch(moveX).ok).toBe(true);
+      expect(store.undo()).toBe(true);
+
+      expect(store.hydrate(id("root-b"), hydrationSpecs).ok).toBe(true);
+      // Redo replays the pre-hydration patch onto the hydrated graph.
+      expect(store.redo()).toBe(true);
+      const children = [...(store.getSnapshot().graph.childrenById.get(id("root-b")) ?? [])];
+      expect(children).toEqual(["x", "h1", "h-nested"]);
+      // …and undoing it again leaves the hydrated nodes untouched.
+      expect(store.undo()).toBe(true);
+      expect([...(store.getSnapshot().graph.childrenById.get(id("root-b")) ?? [])]).toEqual([
+        "h1",
+        "h-nested",
+      ]);
+    });
+
+    test("rejections return without notifying anyone", () => {
+      const store = createCollectionsStore(graphFixture());
+      const listener = vi.fn();
+      store.subscribe(listener);
+      const before = store.getSnapshot();
+
+      expect(store.hydrate(id("root-a"), hydrationSpecs)).toMatchObject({
+        ok: false,
+        error: { reason: "collection-not-empty" },
+      });
+      expect(store.hydrate(id("root-b"), [media("x")])).toMatchObject({
+        ok: false,
+        error: { reason: "duplicate-id", id: "x" },
+      });
+      expect(listener).not.toHaveBeenCalled();
+      expect(store.getSnapshot()).toBe(before);
+    });
+
+    test("an empty spec list is a silent no-op", () => {
+      const store = createCollectionsStore(graphFixture());
+      const listener = vi.fn();
+      store.subscribe(listener);
+      const before = store.getSnapshot();
+
+      expect(store.hydrate(id("root-b"), []).ok).toBe(true);
+      expect(listener).not.toHaveBeenCalled();
+      expect(store.getSnapshot()).toBe(before);
+      expect(store.getSnapshot().graph).toBe(before.graph);
+    });
+  });
 });

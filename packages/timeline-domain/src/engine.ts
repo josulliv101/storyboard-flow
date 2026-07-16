@@ -8,6 +8,7 @@ export {
   buildGraph,
   findGraphInvariantViolation,
   getChildren,
+  hydrateCollection,
   mediaDurationSeconds,
   parseNodeId,
   type CollectionItemNode,

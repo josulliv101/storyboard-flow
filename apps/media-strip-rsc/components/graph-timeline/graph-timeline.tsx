@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   createContext,
   memo,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -37,16 +38,18 @@ import {
   type CollectionTrimHandleContentProps,
   type CollectionsChange,
   type CollectionsComponents,
+  type CollectionsStore,
   type MediaNode,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 import {
   buildFocusedGraph,
+  buildHydrationSpecs,
   collectAffectedCollectionIds,
   graphChildrenToClips,
+  type ClipDetail,
   type DetailsById,
   type DocumentsById,
-  type FocusedGraph,
 } from "@storyboard/timeline-domain";
 import { createInitialTimelineDocuments } from "@storyboard/ui/timeline/timeline-documents";
 import type { TimelineClip } from "@storyboard/ui/timeline/types";
@@ -54,30 +57,28 @@ import type { TimelineClip } from "@storyboard/ui/timeline/types";
 // The phase-2 proof of docs/storyboard-graph-architecture.md, on the app's
 // REAL data (`createInitialTimelineDocuments`):
 //
-//   - ONE <DndCollections> owns the page. The focused timeline and every
-//     inline sub-timeline are projections of the same graph, so dragging a
-//     clip between timelines, nesting it into a collection card, and undoing
-//     all of it are one store's business — no cross-provider choreography.
-//   - The URL is the focus path (per-view state lives in the route). Double-
-//     clicking a collection clip or pressing a sub-timeline's Focus button
-//     pushes its timeline id onto the path; landing there hydrates that
-//     document into a fresh graph (hydrate-on-focus).
+//   - ONE <DndCollections> owns the whole SESSION. The provider mounts once
+//     with the root timeline; focus (the URL's catch-all path) is pure view
+//     state, and drilling in never remounts anything — which is why the
+//     UNDO STACK SURVIVES navigation. Cross-timeline drags, nesting, and
+//     undo are all one store's business.
+//   - Documents hydrate on focus through the engine's hydration seam
+//     (`store.hydrate` — IO landing, invisible to undo and the change
+//     feed): navigating to a placeholder timeline fills it in place, and a
+//     placeholder sub-timeline can also be loaded inline without leaving
+//     the current focus.
 //   - Persistence is patch-scoped: every committed change (command, undo,
 //     redo) is mapped by `collectAffectedCollectionIds` to the documents it
 //     touched, and ONLY those are rewritten via `graphChildrenToClips` — the
 //     write path the sync panel makes visible.
-//
-// Known, deliberate trade-off: drilling in remounts the provider, so the
-// undo stack is scoped to a focus session (hydration stays out-of-band from
-// undo; see the architecture doc's open questions).
 
 const ROOT_TIMELINE_ID = "root";
 const TIMELINE_PPS = 40;
 
 // ── Session document store ──────────────────────────────────────────────────
 // Module scope stands in for the persistence layer: committed edits survive
-// drill-in navigation (which remounts the provider), so what a focus session
-// hydrates is what previous sessions wrote — a true storage round-trip.
+// full page remounts, so what a session hydrates is what previous sessions
+// wrote — a true storage round-trip.
 
 let sessionDocuments: DocumentsById = createInitialTimelineDocuments();
 
@@ -89,6 +90,100 @@ function writeDocumentClips(timelineId: string, clips: TimelineClip[]) {
   const doc = sessionDocuments[timelineId];
   if (!doc) return;
   sessionDocuments = { ...sessionDocuments, [timelineId]: { ...doc, clips } };
+}
+
+// ── Hydration ───────────────────────────────────────────────────────────────
+
+/**
+ * Fill one placeholder timeline through the engine's hydration seam and
+ * return the side-table entries to merge (or null when there was nothing to
+ * do). `levels` as in `buildHydrationSpecs`: 0 loads the timeline's own
+ * clips, 1 also loads each child collection's clips.
+ */
+function hydrateTimeline(
+  store: CollectionsStore,
+  details: Readonly<Record<string, ClipDetail>>,
+  timelineId: string,
+  levels: number,
+): Record<string, ClipDetail> | null {
+  const graph = store.getSnapshot().graph;
+  const doc = readDocuments()[timelineId];
+  if (!doc) return null;
+  const alreadyHydrated = details[timelineId]?.hydrated === true;
+  if (alreadyHydrated || getChildren(graph, parseNodeId(timelineId)).length > 0) return null;
+
+  const payload = buildHydrationSpecs(readDocuments(), timelineId, levels, graph.nodesById.keys());
+  if (!payload.ok) return null;
+  const applied = store.hydrate(parseNodeId(timelineId), payload.value.specs);
+  if (!applied.ok) return null;
+
+  const merged: Record<string, ClipDetail> = { ...payload.value.details };
+  const own = details[timelineId];
+  if (own) merged[timelineId] = { ...own, hydrated: true };
+  return merged;
+}
+
+/**
+ * Keeps the graph hydrated for the current focus path: every route segment's
+ * document is loaded (deep links land on a root-only graph), and the focused
+ * timeline's child collections load their own clips so the inline
+ * sub-timelines render. Renders nothing; runs at navigation cadence.
+ */
+function HydrationController({
+  segments,
+  focusedId,
+  details,
+  onDetails,
+  onFocusError,
+}: Readonly<{
+  segments: readonly string[];
+  focusedId: string;
+  details: DetailsById;
+  onDetails: (merged: Readonly<Record<string, ClipDetail>>) => void;
+  onFocusError: (error: string | null) => void;
+}>) {
+  const store = useCollectionsStore();
+  const pathKey = segments.join("/");
+
+  useEffect(() => {
+    const path = pathKey === "" ? [] : pathKey.split("/");
+    const merged: Record<string, ClipDetail> = {};
+    const detailOf = (id: string) => merged[id] ?? details[id];
+    const ensure = (timelineId: string, levels: number) => {
+      const hydrated = hydrateTimeline(
+        store,
+        { ...details, ...merged },
+        timelineId,
+        levels,
+      );
+      if (hydrated) Object.assign(merged, hydrated);
+    };
+
+    let error: string | null = null;
+    for (const segment of [ROOT_TIMELINE_ID, ...path]) {
+      if (!store.getSnapshot().graph.nodesById.has(parseNodeId(segment))) {
+        error = `Unknown timeline "${segment}".`;
+        break;
+      }
+      ensure(segment, 1);
+    }
+    if (error === null) {
+      // The focused timeline's placeholder child collections load their own
+      // clips (one level) so their inline strips have content.
+      const graph = store.getSnapshot().graph;
+      for (const childId of getChildren(graph, parseNodeId(focusedId))) {
+        const node = graph.nodesById.get(childId);
+        if (node?.kind === "collection" && detailOf(childId as string)?.hydrated === false) {
+          ensure(childId as string, 0);
+        }
+      }
+    }
+
+    onFocusError(error);
+    if (Object.keys(merged).length > 0) onDetails(merged);
+  }, [pathKey, focusedId, details, store, onDetails, onFocusError]);
+
+  return null;
 }
 
 // ── Navigation context ──────────────────────────────────────────────────────
@@ -105,12 +200,10 @@ const GraphTimelineNavContext = createContext<GraphTimelineNav | null>(null);
 function GraphTimelineNavProvider({
   details,
   focusedId,
-  timelinePath,
   children,
 }: Readonly<{
   details: DetailsById;
   focusedId: string;
-  timelinePath: readonly string[];
   children: React.ReactNode;
 }>) {
   const router = useRouter();
@@ -123,21 +216,24 @@ function GraphTimelineNavProvider({
         // A duplicate-reference card opens the timeline it points at.
         const timelineId = details[nodeId as string]?.duplicateOfTimelineId ?? (nodeId as string);
         if (timelineId === focusedId) return;
-        // Build the URL chain by walking up the LIVE graph to the focused
-        // root — the node may have been dragged under a different collection
-        // since mount, and the path must reflect where it lives now.
+        if (timelineId === ROOT_TIMELINE_ID) {
+          router.push("/graph-timeline");
+          return;
+        }
+        // Focus paths are ROOT-anchored: walk up the LIVE graph (the node
+        // may have been dragged elsewhere since it appeared) to the root.
         const { graph } = store.getSnapshot();
         const chain: string[] = [timelineId];
         let parent = graph.parentById.get(parseNodeId(timelineId)) ?? null;
-        while (parent !== null && (parent as string) !== focusedId) {
+        while (parent !== null && (parent as string) !== ROOT_TIMELINE_ID) {
           chain.unshift(parent as string);
           parent = graph.parentById.get(parent) ?? null;
         }
-        if ((parent as string | null) !== focusedId) return; // detached — no route to it
-        router.push(`/graph-timeline/${[...timelinePath, ...chain].join("/")}`);
+        if ((parent as string | null) !== ROOT_TIMELINE_ID) return; // detached — no route to it
+        router.push(`/graph-timeline/${chain.join("/")}`);
       },
     }),
-    [details, focusedId, timelinePath, router, store],
+    [details, focusedId, router, store],
   );
 
   return (
@@ -295,10 +391,19 @@ const GRAPH_TIMELINE_COMPONENTS: CollectionsComponents = {
 // the parent — a second projection of the same graph in the same provider,
 // which is exactly what makes cross-timeline drags native.
 
-function SubTimelines({ focusedId, details }: { focusedId: string; details: DetailsById }) {
+function SubTimelines({
+  focusedId,
+  details,
+  onDetails,
+}: Readonly<{
+  focusedId: string;
+  details: DetailsById;
+  onDetails: (merged: Readonly<Record<string, ClipDetail>>) => void;
+}>) {
   const nav = useContext(GraphTimelineNavContext);
-  // Graph identity changes only per committed change — this section re-
-  // renders at commit cadence (cheap), never per drag move.
+  const store = useCollectionsStore();
+  // Graph identity changes only per committed change/hydration — this
+  // section re-renders at commit cadence (cheap), never per drag move.
   const graph = useCollectionsSelector((s) => s.graph);
   const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(new Set());
 
@@ -332,6 +437,19 @@ function SubTimelines({ focusedId, details }: { focusedId: string; details: Deta
                 </Badge>
               )}
               <span className="grow" />
+              {!hydrated && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    const merged = hydrateTimeline(store, details, id, 0);
+                    if (merged) onDetails(merged);
+                  }}
+                >
+                  Load inline
+                </Button>
+              )}
               {hydrated && (
                 <Button
                   type="button"
@@ -369,8 +487,8 @@ function SubTimelines({ focusedId, details }: { focusedId: string; details: Deta
             )}
             {!hydrated && (
               <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-                This timeline&apos;s document loads when focused — press Focus (or double-click its
-                clip above).
+                This timeline&apos;s document hasn&apos;t loaded — Load inline hydrates it right
+                here (undo history is untouched), Focus navigates to it.
               </p>
             )}
           </section>
@@ -398,6 +516,7 @@ function SyncPanel({ entries }: { entries: readonly SyncEntry[] }) {
       {entries.length === 0 ? (
         <p className="mt-2 text-xs text-muted-foreground">
           No writes yet — reorder, trim, nest, or undo and watch which documents get rewritten.
+          Hydration never appears here: loading data is not a change worth writing back.
         </p>
       ) : (
         <ol className="mt-2 flex flex-col gap-1 font-mono text-[11px] text-muted-foreground">
@@ -417,92 +536,53 @@ function SyncPanel({ entries }: { entries: readonly SyncEntry[] }) {
   );
 }
 
-// ── The board (one provider per focus session) ──────────────────────────────
+// ── The focused board (a PROJECTION — the provider lives above it) ──────────
 
 function GraphTimelineBoard({
   focusedId,
-  timelinePath,
-  focusedGraph,
+  details,
+  onDetails,
+  syncLog,
 }: Readonly<{
   focusedId: string;
-  timelinePath: readonly string[];
-  focusedGraph: FocusedGraph;
+  details: DetailsById;
+  onDetails: (merged: Readonly<Record<string, ClipDetail>>) => void;
+  syncLog: readonly SyncEntry[];
 }>) {
-  const { graph: initialGraph, details, missingDocuments } = focusedGraph;
-  const [syncLog, setSyncLog] = useState<readonly SyncEntry[]>([]);
   const focusedDoc = readDocuments()[focusedId];
 
-  // The persistence write path: map the committed patch to the documents it
-  // touched, rewrite only those. `change.graph` is post-commit, so the
-  // projection reads the truth the engine just established.
-  const handleChange = useCallback(
-    (change: CollectionsChange) => {
-      const affected = collectAffectedCollectionIds(change.graph, change.patch).filter(
-        (id) => readDocuments()[id] !== undefined,
-      );
-      for (const id of affected) {
-        writeDocumentClips(id, graphChildrenToClips(change.graph, details, id));
-      }
-      setSyncLog((log) =>
-        [
-          {
-            at: Date.now(),
-            origin: change.origin,
-            patchType: change.patch.type,
-            collections: affected,
-          },
-          ...log,
-        ].slice(0, 6),
-      );
-    },
-    [details],
-  );
-
   return (
-    <DndCollections
-      initialGraph={initialGraph}
-      components={GRAPH_TIMELINE_COMPONENTS}
-      onChange={handleChange}
-    >
-      <GraphTimelineNavProvider details={details} focusedId={focusedId} timelinePath={timelinePath}>
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              <h2>{focusedDoc?.title ?? focusedId}</h2>
-            </CardTitle>
-            {focusedDoc?.description && (
-              <CardDescription>{focusedDoc.description}</CardDescription>
-            )}
-            <CardAction>
-              <UndoRedoControls />
-            </CardAction>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-5">
-            {missingDocuments.length > 0 && (
-              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                Referenced timelines without documents: {missingDocuments.join(", ")} (left as
-                placeholders).
-              </p>
-            )}
-            <VirtualStrip
-              collectionId={parseNodeId(focusedId)}
-              pixelsPerSecond={TIMELINE_PPS}
-              itemHeight={88}
-              itemDragActivation="hold"
-              className="bg-black/25"
-            />
-            <SubTimelines focusedId={focusedId} details={details} />
-            <SyncPanel entries={syncLog} />
-            <ul className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
-              <li>Press-and-hold a clip to drag — including between the timelines above.</li>
-              <li>Drag a clip&apos;s amber edges to trim; drop a clip ON a dashed card to nest it.</li>
-              <li>Double-click a dashed collection clip to focus its timeline (the URL follows).</li>
-              <li>Undo/redo covers all of it — one history, because it&apos;s one graph.</li>
-            </ul>
-          </CardContent>
-        </Card>
-      </GraphTimelineNavProvider>
-    </DndCollections>
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          <h2>{focusedDoc?.title ?? focusedId}</h2>
+        </CardTitle>
+        {focusedDoc?.description && <CardDescription>{focusedDoc.description}</CardDescription>}
+        <CardAction>
+          <UndoRedoControls />
+        </CardAction>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
+        <VirtualStrip
+          collectionId={parseNodeId(focusedId)}
+          pixelsPerSecond={TIMELINE_PPS}
+          itemHeight={88}
+          itemDragActivation="hold"
+          className="bg-black/25"
+        />
+        <SubTimelines focusedId={focusedId} details={details} onDetails={onDetails} />
+        <SyncPanel entries={syncLog} />
+        <ul className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+          <li>Press-and-hold a clip to drag — including between the timelines above.</li>
+          <li>Drag a clip&apos;s amber edges to trim; drop a clip ON a dashed card to nest it.</li>
+          <li>Double-click a dashed collection clip to focus its timeline (the URL follows).</li>
+          <li>
+            Undo/redo covers all of it AND survives drill-in — one provider, one graph, one
+            history for the whole session.
+          </li>
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -553,27 +633,73 @@ function Breadcrumbs({ timelinePath }: { timelinePath: readonly string[] }) {
 
 // ── Entry ───────────────────────────────────────────────────────────────────
 
-export function GraphTimeline({ timelinePath }: { timelinePath: string[] }) {
+export function GraphTimeline() {
+  // Mounted by the route-group LAYOUT (which persists across focus
+  // navigation — pages remount per param change), so the focus path comes
+  // from the pathname, not page props.
+  const pathname = usePathname();
+  const timelinePath = useMemo(
+    () =>
+      pathname
+        .replace(/^\/graph-timeline\/?/, "")
+        .split("/")
+        .filter(Boolean)
+        .map(decodeURIComponent),
+    [pathname],
+  );
   const focusedId = timelinePath[timelinePath.length - 1] ?? ROOT_TIMELINE_ID;
-  // Hydrate-on-focus: every focus change re-reads the session documents —
-  // which carry all previously committed writes — and builds a fresh graph
-  // for the focused timeline plus one level of child collections.
-  const built = useMemo(() => buildFocusedGraph(readDocuments(), focusedId), [focusedId]);
+  // The provider's graph mounts ONCE, rooted at the root timeline with one
+  // child level; everything deeper hydrates on focus (HydrationController)
+  // or inline (SubTimelines). Session documents carry all committed writes,
+  // so a full reload rebuilds from what was persisted.
+  const [initial] = useState(() => buildFocusedGraph(readDocuments(), ROOT_TIMELINE_ID));
+  const [details, setDetails] = useState<DetailsById>(() =>
+    initial.ok ? initial.value.details : {},
+  );
+  const [focusError, setFocusError] = useState<string | null>(null);
+  const [syncLog, setSyncLog] = useState<readonly SyncEntry[]>([]);
 
-  if (!built.ok) {
+  const onDetails = useCallback(
+    (merged: Readonly<Record<string, ClipDetail>>) =>
+      setDetails((current) => ({ ...current, ...merged })),
+    [],
+  );
+
+  // The persistence write path: map the committed patch to the documents it
+  // touched, rewrite only those. `change.graph` is post-commit, so the
+  // projection reads the truth the engine just established.
+  const handleChange = useCallback(
+    (change: CollectionsChange) => {
+      const affected = collectAffectedCollectionIds(change.graph, change.patch).filter(
+        (id) => readDocuments()[id] !== undefined,
+      );
+      for (const id of affected) {
+        writeDocumentClips(id, graphChildrenToClips(change.graph, details, id));
+      }
+      setSyncLog((log) =>
+        [
+          {
+            at: Date.now(),
+            origin: change.origin,
+            patchType: change.patch.type,
+            collections: affected,
+          },
+          ...log,
+        ].slice(0, 6),
+      );
+    },
+    [details],
+  );
+
+  if (!initial.ok) {
     return (
       <Card>
         <CardHeader>
           <CardTitle>
-            <h2>Unknown timeline</h2>
+            <h2>Could not load the root timeline</h2>
           </CardTitle>
-          <CardDescription>{built.error}</CardDescription>
+          <CardDescription>{initial.error}</CardDescription>
         </CardHeader>
-        <CardContent>
-          <Link href="/graph-timeline" className="text-sm text-primary underline underline-offset-4">
-            Back to the root timeline
-          </Link>
-        </CardContent>
       </Card>
     );
   }
@@ -581,13 +707,46 @@ export function GraphTimeline({ timelinePath }: { timelinePath: string[] }) {
   return (
     <div className="flex flex-col gap-4">
       <Breadcrumbs timelinePath={timelinePath} />
-      {/* Keyed remount per focus: a focus session is a hydration boundary. */}
-      <GraphTimelineBoard
-        key={focusedId}
-        focusedId={focusedId}
-        timelinePath={timelinePath}
-        focusedGraph={built.value}
-      />
+      <DndCollections
+        initialGraph={initial.value.graph}
+        components={GRAPH_TIMELINE_COMPONENTS}
+        onChange={handleChange}
+      >
+        <HydrationController
+          segments={timelinePath}
+          focusedId={focusedId}
+          details={details}
+          onDetails={onDetails}
+          onFocusError={setFocusError}
+        />
+        <GraphTimelineNavProvider details={details} focusedId={focusedId}>
+          {focusError !== null ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  <h2>Unknown timeline</h2>
+                </CardTitle>
+                <CardDescription>{focusError}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Link
+                  href="/graph-timeline"
+                  className="text-sm text-primary underline underline-offset-4"
+                >
+                  Back to the root timeline
+                </Link>
+              </CardContent>
+            </Card>
+          ) : (
+            <GraphTimelineBoard
+              focusedId={focusedId}
+              details={details}
+              onDetails={onDetails}
+              syncLog={syncLog}
+            />
+          )}
+        </GraphTimelineNavProvider>
+      </DndCollections>
     </div>
   );
 }

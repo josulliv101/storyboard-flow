@@ -3,11 +3,13 @@
 import { createContext, useContext, useSyncExternalStore } from "react";
 import {
   type CollectionsGraph,
+  type GraphNodeSpec,
   type GraphValidationError,
   type NodeId,
   type Result,
   validateGraph,
 } from "../core/graph";
+import { hydrateCollection, type HydrateRejection } from "../core/hydrate";
 import {
   applyCommand,
   type CollectionsCommand,
@@ -100,6 +102,22 @@ export type CollectionsStore = Readonly<{
    * loops — this is a reset, not a recorded mutation.
    */
   replaceGraph: (graph: CollectionsGraph) => Result<void, GraphValidationError>;
+  /**
+   * Fill an EMPTY collection (a lazy-loaded placeholder) with a denormalized
+   * subtree — `replaceGraph`'s incremental sibling for hydrate-on-focus.
+   * Because hydration only ADDS nodes under a childless collection, every
+   * history patch stays replayable, so — unlike `replaceGraph` — undo/redo
+   * SURVIVES. Hydration is IO landing, not user intent: it pushes no history
+   * entry and emits nothing on `onChange`/`subscribeToChanges` (undoing "the
+   * data loaded", or writing it back to the storage it came from, would both
+   * be nonsense). Snapshot subscribers are notified so views re-render.
+   * Consumers keeping geometry caches keyed to `subscribeToChanges` should
+   * also rebuild after a hydrate they issued.
+   */
+  hydrate: (
+    collectionId: NodeId,
+    children: readonly GraphNodeSpec[]
+  ) => Result<void, HydrateRejection>;
 
   /** Replace selection with the supplied ids that exist in the current graph. */
   setSelection: (ids: readonly NodeId[]) => void;
@@ -302,6 +320,23 @@ export function createCollectionsStore(
     return { ok: true, value: undefined };
   }
 
+  function hydrate(
+    collectionId: NodeId,
+    children: readonly GraphNodeSpec[]
+  ): Result<void, HydrateRejection> {
+    const result = hydrateCollection(graph, collectionId, children);
+    if (!result.ok) return result;
+    // Empty spec list: hydrateCollection returned the same graph — nothing
+    // to notify anyone about.
+    if (result.value === graph) return { ok: true, value: undefined };
+    graph = result.value;
+    // Nothing was removed and nothing moved: history, selection, and any
+    // live drag/preview all remain valid — notify with no change payload
+    // (no history entry, no change-feed event; see the type's doc comment).
+    notify();
+    return { ok: true, value: undefined };
+  }
+
   return {
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
@@ -321,6 +356,7 @@ export function createCollectionsStore(
     undo,
     redo,
     replaceGraph,
+    hydrate,
 
     setSelection: (ids) => {
       const next = new Set<NodeId>();
