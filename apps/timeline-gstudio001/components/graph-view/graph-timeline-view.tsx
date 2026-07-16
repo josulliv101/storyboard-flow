@@ -17,6 +17,7 @@ import { ArrowLeft } from "lucide-react";
 import {
   DndCollections,
   UndoRedoControls,
+  VirtualGrid,
   VirtualStrip,
   getChildren,
   mediaDurationSeconds,
@@ -70,6 +71,41 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 // which is the whole migration strategy.
 
 const TIMELINE_PPS = 40;
+
+/** How the FOCUSED timeline's children render: duration-mapped strip or a
+ *  wrapping grid (better at scale). Per-view state, deliberately outside
+ *  the store — the graph doesn't know or care how a view projects it. */
+type FocusSurface = "strip" | "grid";
+
+function SurfaceToggle({
+  surface,
+  onChange,
+}: Readonly<{ surface: FocusSurface; onChange: (surface: FocusSurface) => void }>) {
+  return (
+    <div
+      role="group"
+      aria-label="Focused timeline layout"
+      className="flex items-center rounded-md border border-zinc-800 p-0.5"
+    >
+      {(["strip", "grid"] as const).map((option) => (
+        <button
+          key={option}
+          type="button"
+          aria-pressed={surface === option}
+          onClick={() => onChange(option)}
+          className={[
+            "rounded px-2 py-1 text-xs capitalize transition-colors",
+            surface === option
+              ? "bg-zinc-800 text-zinc-100"
+              : "text-zinc-500 hover:text-zinc-200",
+          ].join(" ")}
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 // ── Navigation context ──────────────────────────────────────────────────────
 // Content components are module-scope (identity-stable, per the package's
@@ -630,6 +666,9 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
   const [details, setDetails] = useState<DetailsById>({});
   const [focusError, setFocusError] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<readonly SyncEntry[]>([]);
+  // Hosted by the persistent layout, so the chosen surface survives
+  // drill-in navigation along with the provider itself.
+  const [surface, setSurface] = useState<FocusSurface>("strip");
   const gatewayError = useSyncExternalStore(
     graphDocumentsGateway.subscribe,
     graphDocumentsGateway.lastError,
@@ -755,15 +794,30 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
                   Press-and-hold to drag (cross-timeline included) · amber edges trim ·
                   double-click a dashed clip to focus it · undo survives drill-in.
                 </p>
-                <UndoRedoControls />
+                <div className="flex shrink-0 items-center gap-3">
+                  <SurfaceToggle surface={surface} onChange={setSurface} />
+                  <UndoRedoControls />
+                </div>
               </div>
-              <VirtualStrip
-                collectionId={parseNodeId(focusedId)}
-                pixelsPerSecond={TIMELINE_PPS}
-                itemHeight={88}
-                itemDragActivation="hold"
-                className="bg-black/25"
-              />
+              {surface === "strip" ? (
+                <VirtualStrip
+                  collectionId={parseNodeId(focusedId)}
+                  pixelsPerSecond={TIMELINE_PPS}
+                  itemHeight={88}
+                  itemDragActivation="hold"
+                  className="bg-black/25"
+                />
+              ) : (
+                // Same graph, same provider — dragging between this grid and
+                // the sub-timeline strips below is native.
+                <VirtualGrid
+                  collectionId={parseNodeId(focusedId)}
+                  cellWidth={160}
+                  cellHeight={96}
+                  height={420}
+                  className="bg-black/25"
+                />
+              )}
               <SubTimelines focusedId={focusedId} details={details} onDetails={onDetails} />
               <SyncPanel entries={syncLog} />
             </div>
