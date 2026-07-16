@@ -13,6 +13,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { createPortal } from "react-dom";
 import { ArrowLeft } from "lucide-react";
 
 import {
@@ -30,6 +31,7 @@ import {
   useCollectionsSelector,
   useCollectionsStore,
   useLiveTrim,
+  usePanWithMomentum,
   videoFrameCount,
   type CollectionGhostContentProps,
   type CollectionItemContentProps,
@@ -55,6 +57,7 @@ import {
 import { useAuth } from "@/components/auth/auth-provider";
 import { Button } from "@/components/core/button";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+import { GRAPH_ASSETS_TOGGLE_EVENT } from "@/lib/graph-view-events";
 import type { CloudinaryAsset } from "@/lib/cloudinary-media-store";
 
 // The graph project view — phase 3 of docs/storyboard-graph-architecture.md,
@@ -363,12 +366,84 @@ type AssetPaletteState =
   | Readonly<{ status: "error"; message: string }>
   | Readonly<{ status: "ready"; assets: readonly CloudinaryAsset[] }>;
 
-const PALETTE_ASSET_LIMIT = 24;
+const PALETTE_ASSET_LIMIT = 48;
 
-function AssetPalette() {
+/**
+ * The graph view's asset surface: the SAME bottom-drawer position and look
+ * as the app's legacy asset library, but its thumbnails are PaletteItems —
+ * external dnd-collections drag sources. Rendered via a portal FROM INSIDE
+ * the provider (portals keep React context, so dnd-kit wiring works across
+ * it) because the drawer must float over the whole page. The sidebar's
+ * Assets button opens this drawer on graph routes (see
+ * lib/graph-view-events.ts); the legacy drawer — whose media-strip drags
+ * cannot land on dnd-collections timelines — stays off these routes.
+ */
+/**
+ * The scrollable thumbnail rail. Its OWN component on purpose:
+ * `usePanWithMomentum` attaches listeners in an effect that reads the ref
+ * once (its deps never change), so the hook must run in the component that
+ * MOUNTS the scroll container — hoisted into the drawer (which renders this
+ * rail conditionally), the ref would still be null when the effect ran and
+ * grab-to-pan would silently never engage.
+ */
+function PaletteRail({ assets }: Readonly<{ assets: readonly CloudinaryAsset[] }>) {
+  const store = useCollectionsStore();
+  const railRef = useRef<HTMLDivElement>(null);
+
+  // Grab-to-pan with momentum, exactly like the timeline strips: the rail's
+  // hold marker (below) makes thumbnail presses press-and-hold to DRAG, so
+  // fast swipes cancel the pending drag and pan instead; the pan stands
+  // down when a still press claims the pointer.
+  const panOptions = useMemo<Parameters<typeof usePanWithMomentum>[2]>(
+    () => ({ isGestureClaimed: () => store.getSnapshot().interaction.isDragging }),
+    [store],
+  );
+  usePanWithMomentum(railRef, "x", panOptions);
+
+  return (
+    // The hold marker routes thumbnail presses through press-and-hold
+    // activation (CollectionsPointerSensor), freeing fast swipes for the
+    // grab-to-pan. pan-y leaves vertical touch scrolling to the page.
+    <div
+      ref={railRef}
+      data-drag-activation="hold"
+      className="flex cursor-grab gap-2 overflow-x-auto pb-1 select-none active:cursor-grabbing"
+      style={{ touchAction: "pan-y" }}
+    >
+      {assets.map((asset) => (
+        <PaletteItem
+          key={asset.id}
+          paletteId={`asset-${asset.id}`}
+          createNode={() => createNodeFromAsset(asset)}
+          className="relative h-24 w-36 shrink-0 overflow-hidden p-0"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={asset.thumbnailUrl}
+            alt={assetDisplayName(asset)}
+            draggable={false}
+            loading="lazy"
+            className="h-full w-full object-cover"
+          />
+          {asset.resourceType === "video" && (
+            <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1 py-0.5 text-[9px] font-bold tracking-wide text-zinc-100">
+              VIDEO
+            </span>
+          )}
+        </PaletteItem>
+      ))}
+    </div>
+  );
+}
+
+function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose: () => void }>) {
   const [state, setState] = useState<AssetPaletteState>({ status: "loading" });
 
+  // Lazy: fetch on first open, keep for the session.
+  const fetchedRef = useRef(false);
   useEffect(() => {
+    if (!open || fetchedRef.current) return;
+    fetchedRef.current = true;
     let cancelled = false;
     void (async () => {
       try {
@@ -395,57 +470,62 @@ function AssetPalette() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [open]);
 
-  return (
-    <section aria-label="Asset library palette" className="min-w-0">
-      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
-        Asset library — drag into any timeline
-      </h3>
-      {state.status === "loading" && (
-        <div className="flex gap-2">
-          {Array.from({ length: 5 }).map((_, index) => (
-            <div key={index} className="h-20 w-28 shrink-0 animate-pulse rounded-md bg-zinc-900" />
-          ))}
+  if (!open || typeof document === "undefined") return null;
+
+  return createPortal(
+    // z-40: above the page content (strips top out at z-30) but BELOW
+    // dnd-kit's DragOverlay (z-index 999) — the drag ghost must float over
+    // this drawer, not under it.
+    <section
+      aria-label="Asset palette"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-40"
+    >
+      <aside
+        role="dialog"
+        aria-modal="false"
+        aria-label="Asset palette"
+        className="pointer-events-auto ml-[72px] flex max-h-[38vh] flex-col border-t border-zinc-800 bg-zinc-950 p-3 text-white shadow-2xl shadow-black/50"
+      >
+        <div className="mb-2 flex items-center gap-3">
+          <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">
+            Assets
+          </h3>
+          <span className="text-[10px] text-zinc-600">
+            Drag a thumbnail into any timeline · Enter picks one up for keyboard placement
+          </span>
+          <span className="grow" />
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+            Close
+          </Button>
         </div>
-      )}
-      {state.status === "error" && (
-        <p className="rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
-          {state.message}
-        </p>
-      )}
-      {state.status === "ready" &&
-        (state.assets.length === 0 ? (
-          <p className="rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
-            No assets yet — upload some from the asset library drawer.
-          </p>
-        ) : (
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {state.assets.map((asset) => (
-              <PaletteItem
-                key={asset.id}
-                paletteId={`asset-${asset.id}`}
-                createNode={() => createNodeFromAsset(asset)}
-                className="relative h-20 w-28 shrink-0 overflow-hidden p-0"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={asset.thumbnailUrl}
-                  alt={assetDisplayName(asset)}
-                  draggable={false}
-                  loading="lazy"
-                  className="h-full w-full object-cover"
-                />
-                {asset.resourceType === "video" && (
-                  <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1 py-0.5 text-[9px] font-bold tracking-wide text-zinc-100">
-                    VIDEO
-                  </span>
-                )}
-              </PaletteItem>
+        {state.status === "loading" && (
+          <div className="flex gap-2">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div
+                key={index}
+                className="h-24 w-36 shrink-0 animate-pulse rounded-md bg-zinc-900"
+              />
             ))}
           </div>
-        ))}
-    </section>
+        )}
+        {state.status === "error" && (
+          <p className="rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
+            {state.message}
+          </p>
+        )}
+        {state.status === "ready" &&
+          (state.assets.length === 0 ? (
+            <p className="rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
+              No assets yet — upload some from the asset library on the storyboard view.
+            </p>
+          ) : (
+            <PaletteRail assets={state.assets} />
+          ))}
+      </aside>
+    </section>,
+    document.body,
   );
 }
 
@@ -958,6 +1038,15 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
   // Hosted by the persistent layout, so the chosen surface survives
   // drill-in navigation along with the provider itself.
   const [surface, setSurface] = useState<FocusSurface>("strip");
+  // The asset palette drawer — opened by the board's Assets button OR the
+  // app sidebar's Assets launcher (which hands off via a window event on
+  // graph routes; see lib/graph-view-events.ts).
+  const [assetsOpen, setAssetsOpen] = useState(false);
+  useEffect(() => {
+    const toggle = () => setAssetsOpen((current) => !current);
+    window.addEventListener(GRAPH_ASSETS_TOGGLE_EVENT, toggle);
+    return () => window.removeEventListener(GRAPH_ASSETS_TOGGLE_EVENT, toggle);
+  }, []);
   const gatewayError = useSyncExternalStore(
     graphDocumentsGateway.subscribe,
     graphDocumentsGateway.lastError,
@@ -1094,6 +1183,9 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
       )}
       <DndCollections initialGraph={boot.graph} components={GRAPH_VIEW_COMPONENTS}>
         <PersistenceBridge details={details} onDetails={onDetails} onSync={onSync} />
+        {/* Portaled to document.body, but rendered HERE so the PaletteItems
+            stay inside the provider's dnd context (portals keep it). */}
+        <AssetPaletteDrawer open={assetsOpen} onClose={() => setAssetsOpen(false)} />
         <HydrationController
           projectId={projectId}
           segments={timelinePath}
@@ -1121,6 +1213,15 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
                   double-click a dashed clip to focus it · undo survives drill-in.
                 </p>
                 <div className="flex shrink-0 items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-pressed={assetsOpen}
+                    onClick={() => setAssetsOpen((current) => !current)}
+                  >
+                    Assets
+                  </Button>
                   <SurfaceToggle surface={surface} onChange={setSurface} />
                   <UndoRedoControls />
                 </div>
@@ -1145,11 +1246,8 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
                 />
               )}
               <SubTimelines focusedId={focusedId} details={details} onDetails={onDetails} />
-              <div className="flex items-end gap-4">
-                <div className="min-w-0 grow">
-                  <AssetPalette />
-                </div>
-                {boot.trashRootId !== null && (
+              {boot.trashRootId !== null && (
+                <div className="flex items-end justify-end">
                   <div className="shrink-0">
                     <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
                       Trash
@@ -1159,8 +1257,8 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
                         enables Alt+Delete on focused cards. */}
                     <TrashTarget trashId={parseNodeId(boot.trashRootId)} />
                   </div>
-                )}
-              </div>
+                </div>
+              )}
               <SyncPanel entries={syncLog} />
             </div>
           )}
