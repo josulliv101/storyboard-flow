@@ -4,11 +4,14 @@
 
 export {
   buildFocusedGraph,
+  buildHydrationSpecs,
   collectAffectedCollectionIds,
   graphChildrenToClips,
   type BuildFocusedGraphResult,
+  type BuildHydrationSpecsResult,
   type ClipDetail,
   type DetailsById,
   type DocumentsById,
   type FocusedGraph,
+  type HydrationSpecs,
 } from "./src/adapter";

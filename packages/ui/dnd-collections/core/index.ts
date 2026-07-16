@@ -48,6 +48,7 @@ export {
   type MoveNodesCommand,
   type UpdateMediaCommand,
 } from "./commands";
+export { hydrateCollection, type HydrateRejection } from "./hydrate";
 export {
   applyPatch,
   invertPatch,

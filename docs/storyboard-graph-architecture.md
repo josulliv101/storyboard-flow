@@ -144,6 +144,13 @@ adapter under the graph:
 - **Hydration is out-of-band:** it never enters the undo stack. User undo
   replays user commands only. A drop into an un-hydrated collection hydrates
   first (or is gated until expanded).
+  *Implemented:* the engine now ships this as `store.hydrate(collectionId,
+  specs)` / core `hydrateCollection` — fills an empty placeholder, pushes no
+  history entry, emits nothing on the change feed, and (because it only adds
+  nodes under a childless collection) leaves every history patch replayable,
+  so one provider and one undo stack live across all focus navigation. The
+  domain payload comes from `@storyboard/timeline-domain`'s
+  `buildHydrationSpecs`.
 - Writes flow from the store's `onChange`/`subscribeToChanges` feed: a commit
   names exactly the affected collections (patch-scoped), so persistence
   writes only the documents that changed.
@@ -219,9 +226,10 @@ replacement, never by big-bang rewrite.
 1. **Single-parent confirmation:** a collection lives under exactly one
    parent (containment). If the product ever needs the *same* collection
    instanced under multiple parents, that is a different model — flag now.
-2. **Hydration ↔ undo policy details:** gating drops into un-hydrated
-   collections vs. hydrate-on-drop; whether undo history survives focus
-   navigation across un-hydrated boundaries.
+2. **Hydration ↔ undo policy details:** ~~whether undo history survives focus
+   navigation across un-hydrated boundaries~~ — settled: it does, via
+   `store.hydrate` (see § 4). Remaining: gating drops into un-hydrated
+   collections vs. hydrate-on-drop.
 3. **Eviction:** whether far-from-focus subtrees are ever de-hydrated, or
    memory is allowed to grow monotonically per session (likely fine at
    storyboard scale; decide explicitly).

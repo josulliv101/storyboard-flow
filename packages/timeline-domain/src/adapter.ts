@@ -188,6 +188,50 @@ function clipSpecs(
   });
 }
 
+export type HydrationSpecs = Readonly<{
+  /** Child specs for the timeline — feed them to `store.hydrate(timelineId, specs)`. */
+  specs: readonly GraphNodeSpec[];
+  /** Side-table entries for every spec'd node — merge into the app's details map. */
+  details: DetailsById;
+  missingDocuments: readonly string[];
+}>;
+
+export type BuildHydrationSpecsResult =
+  | Readonly<{ ok: true; value: HydrationSpecs }>
+  | Readonly<{ ok: false; error: string }>;
+
+/**
+ * Build the child specs for ONE timeline document — the incremental
+ * hydration payload for `store.hydrate` when a placeholder collection gets
+ * focused or expanded mid-session. `hydrateChildLevels` behaves as in
+ * `buildFocusedGraph`. Pass the LIVE graph's node ids as `usedIds` so a
+ * child referenced elsewhere in the graph demotes to a reference card
+ * instead of colliding.
+ */
+export function buildHydrationSpecs(
+  documents: DocumentsById,
+  timelineId: string,
+  hydrateChildLevels = 1,
+  usedIds?: Iterable<string>,
+): BuildHydrationSpecsResult {
+  const doc = documents[timelineId];
+  if (!doc) {
+    return { ok: false, error: `Unknown timeline document "${timelineId}".` };
+  }
+  const ctx: BuildContext = {
+    documents,
+    details: {},
+    missing: [],
+    used: new Set(usedIds),
+  };
+  ctx.used.add(timelineId);
+  const specs = clipSpecs(ctx, doc, hydrateChildLevels);
+  return {
+    ok: true,
+    value: { specs, details: ctx.details, missingDocuments: ctx.missing },
+  };
+}
+
 /**
  * Build the graph for a focused timeline (drill-in navigation target).
  * `hydrateChildLevels` controls how many collection levels below the focused
@@ -205,17 +249,13 @@ export function buildFocusedGraph(
     return { ok: false, error: `Unknown timeline document "${focusedId}".` };
   }
 
-  const ctx: BuildContext = {
-    documents,
-    details: {},
-    missing: [],
-    used: new Set([focusedId]),
-  };
+  const children = buildHydrationSpecs(documents, focusedId, hydrateChildLevels);
+  if (!children.ok) return children;
   const rootSpec: GraphNodeSpec = {
     kind: "collection",
     id: focusedId,
     name: focusedDoc.title,
-    children: clipSpecs(ctx, focusedDoc, hydrateChildLevels),
+    children: children.value.specs,
   };
 
   const built = buildGraph([rootSpec]);
@@ -224,7 +264,11 @@ export function buildFocusedGraph(
   }
   return {
     ok: true,
-    value: { graph: built.value, details: ctx.details, missingDocuments: ctx.missing },
+    value: {
+      graph: built.value,
+      details: children.value.details,
+      missingDocuments: children.value.missingDocuments,
+    },
   };
 }
 

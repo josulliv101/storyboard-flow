@@ -272,6 +272,31 @@ Roots are structural anchors: `rootIds` is not part of the patch model, and
 `applyCommand` rejects any attempt to move a root (`cannot-move-root`)
 rather than half-supporting it.
 
+### Hydration: IO landing, outside the mutation path
+
+Lazy-loaded data enters the graph through exactly one seam that is
+deliberately NOT a command: `store.hydrate(collectionId, specs)` (pure core:
+`hydrateCollection`) fills an EMPTY collection — a placeholder standing in
+for a document that hadn't loaded yet — with a denormalized subtree. It sits
+between `initialGraph` (initial-only) and `replaceGraph` (wholesale swap
+that must clear history):
+
+- **Undo/redo survives.** Hydration only ADDS nodes under a childless
+  collection, so every history patch still references nodes that exist, in
+  children arrays hydration never rewrites — the stack replays fine. This is
+  what lets an app keep ONE provider (one graph, one undo stack) alive
+  across drill-in navigation while documents hydrate on focus.
+- **Invisible to history and the change feed.** No history entry (undoing
+  "the data loaded" is nonsense) and no `onChange`/`subscribeToChanges`
+  event (the data came FROM storage; echoing it back invites write loops —
+  same reasoning as `replaceGraph`). Snapshot subscribers are notified so
+  views re-render; data-sized virtual views detect the feed-less graph
+  change through their `replaceGraph` path and re-measure.
+- **Placeholders only.** A non-empty target is rejected
+  (`collection-not-empty`) — merging into populated collections is app
+  policy the engine refuses to guess at. Id collisions with the host graph
+  are rejected before anything merges.
+
 ## The efficiency story
 
 The target workload is a huge graph where a drag is a per-frame event
