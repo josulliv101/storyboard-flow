@@ -36,13 +36,18 @@ export type GraphDocumentsGateway = Readonly<{
   writeClips: (timelineId: string, clips: TimelineClip[]) => void;
   /** Cache-change notifications (documents landing, clips written). */
   subscribe: (listener: () => void) => () => void;
-  /** Most recent load/save failure, for a status banner. Cleared on success. */
+  /** Outstanding load/save failures, for a status banner. Null when every
+   *  document is healthy; multiple failures are all listed. */
   lastError: () => string | null;
 }>;
 
 export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   let documents: DocumentsById = {};
-  let error: string | null = null;
+  // Errors are PER DOCUMENT: a successful write of one timeline must never
+  // clear (and thereby hide) another timeline's failed save — with a single
+  // last-error string, whichever request resolved last won.
+  const errors = new Map<string, string>();
+  let errorBanner: string | null = null;
   const inflight = new Map<string, Promise<TimelineDocument | null>>();
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const listeners = new Set<() => void>();
@@ -51,9 +56,14 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     for (const listener of listeners) listener();
   };
 
-  const setError = (next: string | null) => {
-    if (error === next) return;
-    error = next;
+  const setError = (timelineId: string, next: string | null) => {
+    if (next === null) {
+      if (!errors.delete(timelineId)) return;
+    } else {
+      if (errors.get(timelineId) === next) return;
+      errors.set(timelineId, next);
+    }
+    errorBanner = errors.size === 0 ? null : [...errors.values()].join(" · ");
     notify();
   };
 
@@ -64,22 +74,28 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       });
       if (!response.ok) {
         const result = (await response.json().catch(() => ({}))) as { error?: string };
-        setError(result.error || `Timeline "${timelineId}" failed to load (${response.status}).`);
+        setError(
+          timelineId,
+          result.error || `Timeline "${timelineId}" failed to load (${response.status}).`,
+        );
         return null;
       }
       const result = (await response.json().catch(() => ({}))) as {
         document?: TimelineDocument;
       };
       if (!result.document || result.document.id !== timelineId) {
-        setError(`Timeline "${timelineId}" returned an unexpected document.`);
+        setError(timelineId, `Timeline "${timelineId}" returned an unexpected document.`);
         return null;
       }
       documents = { ...documents, [timelineId]: result.document };
-      setError(null);
+      setError(timelineId, null);
       notify();
       return result.document;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : `Timeline "${timelineId}" failed to load.`);
+      setError(
+        timelineId,
+        cause instanceof Error ? cause.message : `Timeline "${timelineId}" failed to load.`,
+      );
       return null;
     }
   };
@@ -94,13 +110,14 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     }).then(
       (response) => {
         if (!response.ok) {
-          setError(`Saving "${document.title}" failed (${response.status}).`);
+          setError(timelineId, `Saving "${document.title}" failed (${response.status}).`);
         } else {
-          setError(null);
+          setError(timelineId, null);
         }
       },
       (cause: unknown) => {
         setError(
+          timelineId,
           cause instanceof Error ? cause.message : `Saving "${document.title}" failed.`,
         );
       },
@@ -142,7 +159,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
         listeners.delete(listener);
       };
     },
-    lastError: () => error,
+    lastError: () => errorBanner,
   };
 }
 

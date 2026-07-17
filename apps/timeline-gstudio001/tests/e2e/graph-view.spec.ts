@@ -509,6 +509,15 @@ test.describe("graph view E2E", () => {
     await page.mouse.up();
 
     await expect.poll(translateX).toBeGreaterThan(before + 100);
+
+    // Drill-in RESETS the persistent preview clock: the layout (and with it
+    // the time channel) survives navigation, but a different focused
+    // timeline is a different clock — without the reset the transport would
+    // park at "long-timeline-time / short-timeline-duration".
+    await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).click();
+    await page.keyboard.press("o");
+    await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
+    await expect.poll(translateX).toBeLessThan(20);
   });
 
   test("grid mode: playhead rides cells, scrubs horizontally and jumps rows", async ({
