@@ -601,4 +601,40 @@ test.describe("graph view E2E", () => {
     await page.mouse.wheel(0, 400);
     await expect.poll(async () => (await wheelLog()).includes(false)).toBe(true);
   });
+
+  test("crafted focus URLs are rejected; valid deep links still work", async ({ page }) => {
+    await installGraphApi(page);
+
+    // A media clip's id is not a timeline — kind check.
+    await page.goto(`${GRAPH_URL}/alpha`);
+    await expect(page.getByText("Unknown timeline")).toBeVisible();
+
+    // The trash root exists in the graph but is NOT a child of the project —
+    // chain check (same guard covers any collection loaded elsewhere).
+    await page.goto(`${GRAPH_URL}/${TRASH_ID}`);
+    await expect(page.getByText("Unknown timeline")).toBeVisible();
+
+    // A skipped level breaks the chain: the child's clips are not children
+    // of the project directly... but a LEGITIMATE deep link to the child
+    // itself passes every edge and hydrates on boot.
+    await page.goto(`${GRAPH_URL}/${CHILD_ID}`);
+    await expect
+      .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
+      .toEqual(["c1", "c2"]);
+    await expect(page.getByText("Unknown timeline")).toHaveCount(0);
+  });
+
+  test("keyboard: O on a focused collection card drills into it", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
+
+    // Click selects and focuses the card (no drag: item drags need a hold);
+    // "O" is the keyboard twin of the double-click open.
+    await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).click();
+    await page.keyboard.press("o");
+
+    await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+  });
 });

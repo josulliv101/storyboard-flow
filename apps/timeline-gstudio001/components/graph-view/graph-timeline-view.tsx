@@ -183,6 +183,51 @@ function GraphViewNavProvider({
   return <GraphViewNavContext.Provider value={value}>{children}</GraphViewNavContext.Provider>;
 }
 
+/**
+ * Keyboard path to drill-in: "O" on a focused collection card opens it.
+ * Collection cards render their open affordance as a double-click on the
+ * card CONTENT, but the focusable element is the card's selection button —
+ * an interactive child inside a button would be invalid HTML, so pointer-
+ * free users had no way to invoke it. The card's keyboard surface is owned
+ * by the package (Enter grabs, arrows rove, Alt+arrows move), so the app
+ * claims a free key at a bubble boundary instead of touching the shell.
+ *
+ * display: contents — a listener boundary only, invisible to layout.
+ *
+ * NOTE for the upcoming interaction model (click = navigate on collections):
+ * this key stays the keyboard twin of whatever pointer gesture navigation
+ * settles on; only the hint copy should need to change.
+ */
+function OpenKeyBoundary({ children }: Readonly<{ children: React.ReactNode }>) {
+  const nav = useContext(GraphViewNavContext);
+  const store = useCollectionsStore();
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "o" && event.key !== "O") return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const target = event.target as HTMLElement;
+    // Never swallow typing (no editable fields render in the board today,
+    // but a future rename input inside a card must not lose its "o").
+    if (target.closest("input, textarea, [contenteditable=true]")) return;
+    const id = target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
+    if (!id) return;
+    const node = store.getSnapshot().graph.nodesById.get(parseNodeId(id));
+    // Same set double-click navigates: collections, plus duplicate-reference
+    // cards (openTimeline resolves those to the timeline they point at).
+    const opensTimeline =
+      node?.kind === "collection" || nav?.details[id]?.duplicateOfTimelineId !== undefined;
+    if (!opensTimeline) return;
+    event.preventDefault();
+    nav?.openTimeline(parseNodeId(id));
+  };
+
+  return (
+    <div style={{ display: "contents" }} onKeyDown={handleKeyDown}>
+      {children}
+    </div>
+  );
+}
+
 // ── Async hydration ─────────────────────────────────────────────────────────
 
 /**
@@ -303,13 +348,29 @@ function HydrationController({
       };
 
       let error: string | null = null;
+      let previous: string | null = null;
       for (const segment of [projectId, ...path]) {
         if (cancelled) return;
-        if (!store.getSnapshot().graph.nodesById.has(parseNodeId(segment))) {
+        const graph = store.getSnapshot().graph;
+        const node = graph.nodesById.get(parseNodeId(segment));
+        // Kind check: a media clip's id in the path is not a timeline.
+        if (node === undefined || node.kind !== "collection") {
           error = `This project has no timeline "${segment}".`;
           break;
         }
+        // Chain check: each focus segment must be a CHILD of the previous
+        // one. Existence alone would accept the trash root or any collection
+        // loaded elsewhere in the graph (crafted or stale URLs) — focusing
+        // content the path never led to. Runs after the previous segment's
+        // hydration, so the parent edge is present for legitimate deep
+        // links; a collection that was MOVED since the URL was minted fails
+        // here and lands on the route's unknown-timeline state.
+        if (previous !== null && graph.parentById.get(parseNodeId(segment)) !== parseNodeId(previous)) {
+          error = `Timeline "${segment}" is not inside "${previous}".`;
+          break;
+        }
         await ensure(segment);
+        previous = segment;
       }
       if (error === null && !cancelled) {
         // The focused timeline's placeholder child collections load their
@@ -1171,7 +1232,7 @@ const GraphClipContent = memo(function GraphClipContent({
     const previews = detail?.previewItems?.slice(0, 3) ?? [];
     return (
       <span
-        title="Double-click to open this timeline"
+        title="Double-click (or press O) to open this timeline"
         onDoubleClick={() => nav?.openTimeline(id)}
         className={[
           "relative flex h-full w-full flex-col justify-between overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.08] p-1.5",
@@ -1827,6 +1888,7 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
               </Link>
             </div>
           ) : (
+            <OpenKeyBoundary>
             <PreviewShell
               enabled={previewOn}
               focusedId={focusedId}
@@ -1837,7 +1899,7 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs text-zinc-500">
                   Press-and-hold to drag (cross-timeline included) · amber edges trim ·
-                  double-click a dashed clip to focus it · undo survives drill-in.
+                  double-click (or O) a dashed clip to focus it · undo survives drill-in.
                 </p>
                 <div className="flex shrink-0 items-center gap-3">
                   <Button
@@ -1940,6 +2002,7 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
               <SyncPanel entries={syncLog} />
             </div>
             </PreviewShell>
+            </OpenKeyBoundary>
           )}
         </GraphViewNavProvider>
       </DndCollections>
