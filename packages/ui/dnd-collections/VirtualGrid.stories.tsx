@@ -111,6 +111,64 @@ export const ThousandItemGrid: Story = {
   },
 };
 
+function GridOverlayExample() {
+  // Row 2, column 1 in content coordinates (cellHeight 96 + gap 8 = 104).
+  const CELL = 128 + 8;
+  const ROW = 96 + 8;
+  return (
+    <DndCollections initialGraph={gridGraph()}>
+      <div className="w-[600px]">
+        <VirtualGrid
+          collectionId={parseNodeId("grid")}
+          columns={COLUMNS}
+          height={300}
+          overlay={
+            <div
+              data-grid-playhead
+              style={{
+                position: "absolute",
+                left: 1 * CELL,
+                top: 2 * ROW,
+                width: 2,
+                height: 96,
+                background: "red",
+              }}
+            />
+          }
+        />
+      </div>
+    </DndCollections>
+  );
+}
+
+export const GridOverlay: Story = {
+  // The grid overlay renders in CONTENT coordinates inside the scrolling
+  // spacer: a marker placed at (col*cellPitch, row*rowPitch) sits at that
+  // exact content point and rides vertical scroll — viewport position shifts
+  // by exactly the scroll while the content-relative offset never changes.
+  render: () => <GridOverlayExample />,
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+    const grid = canvasElement.querySelector<HTMLElement>('[data-virtual-grid="grid"]')!;
+    const marker = () => canvasElement.querySelector<HTMLElement>("[data-grid-playhead]")!;
+    const spacer = marker().closest("[data-virtual-grid-overlay]")!.parentElement as HTMLElement;
+    const contentTop = () =>
+      marker().getBoundingClientRect().top - spacer.getBoundingClientRect().top;
+
+    expect(Math.round(contentTop())).toBe(2 * (96 + 8)); // row 2
+
+    const viewportBefore = marker().getBoundingClientRect().top;
+    grid.scrollTop = 50;
+    await waitFor(() => {
+      expect(Math.round(marker().getBoundingClientRect().top)).toBe(
+        Math.round(viewportBefore - 50)
+      );
+    });
+    // Content-relative offset unchanged — it rode the scroll.
+    expect(Math.round(contentTop())).toBe(2 * (96 + 8));
+  },
+};
+
 const gridOrder = (canvasElement: HTMLElement, id: string) =>
   [
     ...canvasElement

@@ -510,4 +510,64 @@ test.describe("graph view E2E", () => {
 
     await expect.poll(translateX).toBeGreaterThan(before + 100);
   });
+
+  test("grid mode: playhead rides cells, scrubs horizontally and jumps rows", async ({
+    page,
+  }) => {
+    // Narrow viewport → few responsive columns, so the 4 project clips wrap
+    // onto at least two rows (needed to exercise the vertical row scrub).
+    await page.setViewportSize({ width: 420, height: 900 });
+    await installGraphApi(page);
+    await openGraph(page);
+    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
+
+    // Switch the focused surface to grid, then turn Preview on.
+    await page
+      .getByRole("group", { name: "Focused timeline layout" })
+      .getByRole("button", { name: "grid" })
+      .click();
+    await headerToggle(page, "Preview").click();
+
+    const playhead = page.locator("[data-graph-grid-playhead]");
+    await expect(playhead).toBeVisible();
+
+    const grid = page.locator("[data-virtual-grid]");
+    // Fewer than 4 columns guarantees a second row for the 4 project clips.
+    const cols = Number(await grid.getAttribute("data-grid-columns"));
+    expect(cols).toBeGreaterThanOrEqual(1);
+    expect(cols).toBeLessThan(4);
+
+    const translate = () =>
+      playhead.evaluate((el) => {
+        const m = /translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec((el as HTMLElement).style.transform);
+        return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: 0, y: 0 };
+      });
+
+    // Positions are taken RELATIVE TO THE SCRUB SURFACE, which overlays the
+    // grid exactly — so its interior offsets are layout-independent (the
+    // preview pane above settles asynchronously and shifts absolute page
+    // coords). scrub.hover() also waits for a stable box before pressing.
+    // Content geometry: 9px border+padding, cell 160×96, 8px gap → row pitch
+    // 104, a cell's vertical center ≈ 9 + 48 = 57 below the scrub top.
+    const scrub = page.locator("[data-grid-scrub]");
+    const ROW0_Y = 57;
+    const ROW1_Y = 57 + 104;
+
+    // Horizontal scrub across row 0 → x advances, still on row 0.
+    await scrub.hover({ position: { x: 30, y: ROW0_Y } });
+    await page.mouse.down();
+    const sb = (await scrub.boundingBox())!;
+    await page.mouse.move(sb.x + 150, sb.y + ROW0_Y, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(async () => (await translate()).x).toBeGreaterThan(100);
+    expect((await translate()).y).toBeLessThan(52); // still the first row
+
+    // Vertical scrub: press into the SECOND row → the playhead jumps a row
+    // down (time lands on a later clip). This is the grid-only affordance.
+    await scrub.hover({ position: { x: 89, y: ROW1_Y } });
+    await page.mouse.down();
+    await page.mouse.move(sb.x + 93, sb.y + ROW1_Y, { steps: 4 });
+    await page.mouse.up();
+    await expect.poll(async () => (await translate()).y).toBeGreaterThan(80);
+  });
 });

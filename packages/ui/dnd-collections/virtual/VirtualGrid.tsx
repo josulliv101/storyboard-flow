@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useMemo,
   useState,
+  type ReactNode,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
@@ -53,6 +54,11 @@ export type VirtualGridProps = Readonly<{
   /** Per-view card pixels — overrides the provider `components` registry.
    *  MUST be identity-stable (module scope). */
   itemContent?: CollectionItemContentComponent;
+  /** Presentational layer painted in CONTENT coordinates (inside the
+   *  scrolling spacer), like VirtualStrip's `overlay`: a playhead, region
+   *  markers. aria-hidden and pointer-events: none — scroll and the drop
+   *  spacer height apply for free, and gestures pass through to the cards. */
+  overlay?: ReactNode;
   className?: string;
 }>;
 
@@ -72,6 +78,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       overscan: overscanOption,
       height: heightOption,
       itemContent,
+      overlay,
       className,
     },
     ref
@@ -316,6 +323,20 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                 })}
             </div>
           ))}
+          {/* Consumer overlay (playhead, region markers) in CONTENT
+              coordinates: inside the spacer, so scroll and the drop-spacer
+              height apply for free. pointer-events: none so drag/select pass
+              through; aria-hidden keeps the grid tree valid (a focusable
+              child under aria-hidden would be a keyboard trap). */}
+          {overlay != null && (
+            <div
+              aria-hidden="true"
+              data-virtual-grid-overlay
+              style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 30 }}
+            >
+              {overlay}
+            </div>
+          )}
         </div>
       </div>
     );
