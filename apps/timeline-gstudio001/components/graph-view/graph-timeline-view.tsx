@@ -53,6 +53,14 @@ import {
   type ClipDetail,
   type DetailsById,
 } from "@storyboard/timeline-domain";
+import { MIN_ITEM_WIDTH, durationToWidth } from "@storyboard/ui/dnd-collections";
+import { WorkbenchSplitPane } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
+import {
+  TimelineDocumentsProvider,
+  useTimelineDocuments,
+} from "@storyboard/ui/timeline/timeline-document-store";
+import { createTimelineDocumentsState } from "@storyboard/ui/timeline/timeline-documents";
+import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
 
 import { useAuth } from "@/components/auth/auth-provider";
 import { Button } from "@/components/core/button";
@@ -344,9 +352,9 @@ function createNodeFromAsset(asset: CloudinaryAsset): CollectionItemNode {
       name,
       src: asset.url,
       posterSrcs: [asset.thumbnailUrl],
-      // Cloudinary listing carries no duration; a workable default the user
-      // can trim — the real length can backfill once media metadata lands.
-      fullDurationSeconds: DEFAULT_VIDEO_SECONDS,
+      // Real duration from the Search-API listing; the default only covers
+      // the degraded duration-less listing path.
+      fullDurationSeconds: asset.duration ?? DEFAULT_VIDEO_SECONDS,
       trimInSeconds: 0,
       trimOutSeconds: 0,
     };
@@ -526,6 +534,319 @@ function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose
       </aside>
     </section>,
     document.body,
+  );
+}
+
+// ── Playback preview ────────────────────────────────────────────────────────
+// The graph view drives the SAME preview surface the legacy workbench uses
+// (WorkbenchSplitPane: player + transport + draggable divider), fed with the
+// focused timeline's clips projected from the graph at commit cadence. Two
+// render-cost decisions keep playback cheap:
+//
+//   - The board rides through PreviewShell as `children`, so the per-frame
+//     time state inside the shell never re-renders a single card (stable
+//     children identity skips the whole subtree).
+//   - The strip's playhead paints IMPERATIVELY: time ticks travel a
+//     ref-backed channel (never React state), and the line's transform is
+//     written directly — the documented createTimeToOffset pattern.
+
+type PreviewTimeChannel = Readonly<{
+  get: () => number;
+  set: (time: number) => void;
+  subscribe: (listener: () => void) => () => void;
+}>;
+
+function createPreviewTimeChannel(): PreviewTimeChannel {
+  let time = 0;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => time,
+    set: (next) => {
+      time = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+/**
+ * Bidirectional playback-time ↔ content-x map over the SAME clips
+ * projection the preview pane plays. This matters: the pane's clock runs
+ * over the projected TimelineClips — packing gaps and collection durations
+ * included — so the playhead must map that clock, not the engine's
+ * media-only contiguous one, or it drifts around collections and gaps.
+ * Widths use the strip's own conversions (durationToWidth for media at
+ * TIMELINE_PPS, the 128px default card for collections), interpolating
+ * linearly inside each clip and across each gap.
+ */
+type PlayheadMap = Readonly<{
+  xAt: (time: number) => number;
+  timeAt: (x: number) => number;
+  totalDurationSeconds: number;
+}>;
+
+const STRIP_GAP_PX = 8; // VirtualStrip's default gap
+const COLLECTION_CARD_PX = 128; // VirtualStrip's default itemWidth
+
+function buildPlayheadMap(clips: readonly TimelineClip[]): PlayheadMap {
+  // Piecewise-linear anchors (t, x) at every clip edge; gaps between clips
+  // span their own time (CLIP_GAP_SECONDS) across the strip's gap pixels.
+  const times: number[] = [];
+  const xs: number[] = [];
+  let x = 0;
+  for (const clip of clips) {
+    const width =
+      clip.kind === "collection"
+        ? Math.max(MIN_ITEM_WIDTH, COLLECTION_CARD_PX)
+        : durationToWidth(clip.duration, TIMELINE_PPS);
+    times.push(clip.startTime, clip.startTime + clip.duration);
+    xs.push(x, x + width);
+    x += width + STRIP_GAP_PX;
+  }
+  const count = times.length;
+  const total = count > 0 ? times[count - 1] : 0;
+
+  const lerp = (value: number, from: number[], to: number[]): number => {
+    if (count === 0) return 0;
+    if (value <= from[0]) return to[0];
+    if (value >= from[count - 1]) return to[count - 1];
+    let lo = 0;
+    let hi = count - 1;
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1;
+      if (from[mid] <= value) lo = mid;
+      else hi = mid;
+    }
+    const span = from[hi] - from[lo];
+    const fraction = span > 0 ? (value - from[lo]) / span : 0;
+    return to[lo] + fraction * (to[hi] - to[lo]);
+  };
+
+  return {
+    xAt: (time) => lerp(time, times, xs),
+    timeAt: (offset) => lerp(offset, xs, times),
+    totalDurationSeconds: total,
+  };
+}
+
+/** The red playhead over the focused strip — a line with a triangle cap,
+ *  strictly presentational (the strip overlay layer is aria-hidden and
+ *  pointer-events: none; scrubbing lives in PlayheadScrubBand outside the
+ *  strip). Rebuilds its map when the graph identity changes (commits AND
+ *  hydration), repaints on every channel tick — no React render on either. */
+function GraphPlayhead({
+  focusedId,
+  details,
+  channel,
+}: Readonly<{ focusedId: string; details: DetailsById; channel: PreviewTimeChannel }>) {
+  const store = useCollectionsStore();
+  const lineRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let lastGraph: CollectionsGraph | null = null;
+    let map: PlayheadMap | null = null;
+    const paint = () => {
+      const graph = store.getSnapshot().graph;
+      if (graph !== lastGraph) {
+        lastGraph = graph;
+        map = buildPlayheadMap(graphChildrenToClips(graph, details, focusedId));
+      }
+      const line = lineRef.current;
+      if (line && map) line.style.transform = `translateX(${map.xAt(channel.get())}px)`;
+    };
+    paint();
+    const unsubscribeTime = channel.subscribe(paint);
+    const unsubscribeStore = store.subscribe(paint);
+    return () => {
+      unsubscribeTime();
+      unsubscribeStore();
+    };
+  }, [store, focusedId, details, channel]);
+
+  return (
+    <div
+      ref={lineRef}
+      data-graph-playhead
+      className="absolute inset-y-0 left-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+    >
+      {/* Triangle cap: lifted into the strip's top padding (p-2 = 8px, the
+          triangle's exact height) so it sits ABOVE the items, tip meeting the
+          line at their top edge. Absolute, so it still costs no layout. */}
+      <div
+        className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500"
+      />
+    </div>
+  );
+}
+
+/**
+ * The interactive scrub surface: a thin band overlaying the strip's top
+ * edge (absolute — no layout shift). The strip's own overlay layer is
+ * contractually non-interactive, so the triangle/line VISUALS ride there
+ * while THIS band owns the pointer: press or drag anywhere on it to seek —
+ * the drag starts wherever the playhead triangle is, which is what makes
+ * the triangle feel draggable.
+ */
+function PlayheadScrubBand({
+  focusedId,
+  details,
+  channel,
+}: Readonly<{ focusedId: string; details: DetailsById; channel: PreviewTimeChannel }>) {
+  const store = useCollectionsStore();
+  const bandRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const band = bandRef.current;
+    if (!band) return;
+    // The strip's scroll container is the band's next sibling subtree; the
+    // seek math needs its live scrollLeft and content origin per event.
+    const scroller = band.parentElement?.querySelector<HTMLElement>(".overflow-x-auto") ?? null;
+    if (!scroller) return;
+
+    let map: PlayheadMap | null = null;
+    let mapGraph: CollectionsGraph | null = null;
+    const seek = (event: PointerEvent) => {
+      const graph = store.getSnapshot().graph;
+      if (graph !== mapGraph || !map) {
+        mapGraph = graph;
+        map = buildPlayheadMap(graphChildrenToClips(graph, details, focusedId));
+      }
+      const rect = scroller.getBoundingClientRect();
+      const styles = getComputedStyle(scroller);
+      const contentX =
+        event.clientX -
+        rect.left -
+        parseFloat(styles.borderLeftWidth) -
+        parseFloat(styles.paddingLeft) +
+        scroller.scrollLeft;
+      channel.set(Math.max(0, Math.min(map.timeAt(contentX), map.totalDurationSeconds)));
+    };
+
+    let pointerId: number | null = null;
+    const handleMove = (event: PointerEvent) => {
+      if (event.pointerId === pointerId) seek(event);
+    };
+    const end = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return;
+      pointerId = null;
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+    const handleDown = (event: PointerEvent) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      pointerId = event.pointerId;
+      try {
+        band.setPointerCapture(event.pointerId);
+      } catch {
+        /* synthetic pointer — window listeners suffice */
+      }
+      seek(event);
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    };
+
+    band.addEventListener("pointerdown", handleDown);
+    return () => {
+      band.removeEventListener("pointerdown", handleDown);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+  }, [store, focusedId, details, channel]);
+
+  return (
+    <div
+      ref={bandRef}
+      data-playhead-scrub
+      aria-hidden="true"
+      className="absolute inset-x-0 top-0 z-10 h-3 cursor-ew-resize"
+    />
+  );
+}
+
+/**
+ * Keeps the legacy documents context in step with the gateway cache. The
+ * preview surface resolves COLLECTION clips' frames through
+ * useTimelineDocuments() — without a synced provider it would fall back to
+ * the read-only demo store and show the wrong content. Registration only
+ * (persist: false): the gateway already owns persistence.
+ */
+function GatewayDocumentsBridge() {
+  const { registerTimelineDocument } = useTimelineDocuments();
+  const seenRef = useRef<Readonly<Record<string, TimelineDocument>>>({});
+
+  useEffect(() => {
+    const sync = () => {
+      const seen = seenRef.current;
+      const current = graphDocumentsGateway.read();
+      if (current === seen) return;
+      for (const [id, doc] of Object.entries(current)) {
+        if (seen[id] !== doc) registerTimelineDocument(doc, { persist: false });
+      }
+      seenRef.current = current;
+    };
+    sync();
+    return graphDocumentsGateway.subscribe(sync);
+  }, [registerTimelineDocument]);
+
+  return null;
+}
+
+function PreviewShell({
+  enabled,
+  focusedId,
+  details,
+  channel,
+  children,
+}: Readonly<{
+  enabled: boolean;
+  focusedId: string;
+  details: DetailsById;
+  channel: PreviewTimeChannel;
+  children: React.ReactNode;
+}>) {
+  // Commit-cadence projection: graph identity changes only per committed
+  // change/hydration, so this recomputes exactly when the clips could have.
+  const graph = useCollectionsSelector((s) => s.graph);
+  const clips = useMemo<TimelineClip[]>(
+    () => (enabled ? graphChildrenToClips(graph, details, focusedId) : []),
+    [enabled, graph, details, focusedId],
+  );
+
+  // Per-frame time lives HERE (the pane is a controlled player); `children`
+  // keeps its identity across these renders, so the board subtree skips.
+  // The CHANNEL is the time bus both directions converge on: the pane's
+  // transport writes it via handleTimeChange, the scrub band writes it
+  // directly — and this subscription folds either back into the pane's
+  // controlled clock (same-value sets bail, so no feedback loop).
+  const [time, setTime] = useState(0);
+  useEffect(() => channel.subscribe(() => setTime(channel.get())), [channel]);
+  const handleTimeChange = useCallback(
+    (next: number) => {
+      setTime(next);
+      channel.set(next);
+    },
+    [channel],
+  );
+
+  if (!enabled) return <>{children}</>;
+
+  return (
+    <TimelineDocumentsProvider
+      initialState={createTimelineDocumentsState({ ...graphDocumentsGateway.read() }, {})}
+    >
+      <GatewayDocumentsBridge />
+      <WorkbenchSplitPane clips={clips} currentTime={time} onCurrentTimeChange={handleTimeChange}>
+        {children}
+      </WorkbenchSplitPane>
+    </TimelineDocumentsProvider>
   );
 }
 
@@ -1038,6 +1359,11 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
   // Hosted by the persistent layout, so the chosen surface survives
   // drill-in navigation along with the provider itself.
   const [surface, setSurface] = useState<FocusSurface>("strip");
+  // Playback preview: the workbench split pane above the board, plus the
+  // strip playhead. Per-view state (survives drill-ins with the provider);
+  // the time channel is ref-backed so ticks never render React.
+  const [previewOn, setPreviewOn] = useState(false);
+  const [timeChannel] = useState(createPreviewTimeChannel);
   // The asset palette drawer — opened by the board's Assets button OR the
   // app sidebar's Assets launcher (which hands off via a window event on
   // graph routes; see lib/graph-view-events.ts).
@@ -1206,6 +1532,12 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
               </Link>
             </div>
           ) : (
+            <PreviewShell
+              enabled={previewOn}
+              focusedId={focusedId}
+              details={details}
+              channel={timeChannel}
+            >
             <div className="flex flex-col gap-5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs text-zinc-500">
@@ -1213,6 +1545,15 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
                   double-click a dashed clip to focus it · undo survives drill-in.
                 </p>
                 <div className="flex shrink-0 items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-pressed={previewOn}
+                    onClick={() => setPreviewOn((current) => !current)}
+                  >
+                    Preview
+                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
@@ -1227,13 +1568,34 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
                 </div>
               </div>
               {surface === "strip" ? (
-                <VirtualStrip
-                  collectionId={parseNodeId(focusedId)}
-                  pixelsPerSecond={TIMELINE_PPS}
-                  itemHeight={88}
-                  itemDragActivation="hold"
-                  className="bg-black/25"
-                />
+                // relative wrapper: the scrub band overlays the strip's top
+                // edge (absolute — no layout shift). Playhead VISUALS ride
+                // the strip's presentational overlay; the band owns pointers.
+                <div className="relative">
+                  <VirtualStrip
+                    collectionId={parseNodeId(focusedId)}
+                    pixelsPerSecond={TIMELINE_PPS}
+                    itemHeight={88}
+                    itemDragActivation="hold"
+                    overlay={
+                      previewOn ? (
+                        <GraphPlayhead
+                          focusedId={focusedId}
+                          details={details}
+                          channel={timeChannel}
+                        />
+                      ) : undefined
+                    }
+                    className="bg-black/25"
+                  />
+                  {previewOn && (
+                    <PlayheadScrubBand
+                      focusedId={focusedId}
+                      details={details}
+                      channel={timeChannel}
+                    />
+                  )}
+                </div>
               ) : (
                 // Same graph, same provider — dragging between this grid and
                 // the sub-timeline strips below is native.
@@ -1261,6 +1623,7 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
               )}
               <SyncPanel entries={syncLog} />
             </div>
+            </PreviewShell>
           )}
         </GraphViewNavProvider>
       </DndCollections>

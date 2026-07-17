@@ -166,7 +166,7 @@ export async function GET(
             asset.width && asset.height && asset.height > 0
               ? asset.width / asset.height
               : 16 / 9;
-          const duration = asset.resourceType === "video" ? 6 : 4;
+          const duration = asset.resourceType === "video" ? (asset.duration ?? 6) : 4;
           const stableId = `asset-${asset.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
           const newClip: TimelineClip =

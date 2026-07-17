@@ -25,6 +25,9 @@ export type CloudinaryAsset = {
   size?: number;
   createdAt?: string;
   relativePath?: string;
+  /** Real media duration in seconds — videos only, from the Search API
+   *  listing (the Admin API list endpoint doesn't return it). */
+  duration?: number;
 };
 
 type CloudinaryConfig = {
@@ -45,6 +48,7 @@ type CloudinaryUploadResponse = {
 type CloudinaryResource = {
   bytes?: number;
   created_at?: string;
+  duration?: number;
   format?: string;
   height?: number;
   public_id: string;
@@ -145,6 +149,7 @@ function toAsset(
     size: resource.bytes,
     createdAt: resource.created_at,
     relativePath,
+    duration: resource.resource_type === "video" ? resource.duration : undefined,
   };
 }
 
@@ -196,12 +201,67 @@ async function listCloudinaryResources(
   return assets;
 }
 
+/**
+ * Video listing goes through the Search API instead of the Admin list: only
+ * search results carry `duration` (the list endpoint ignores even an explicit
+ * `fields=duration` — verified against the live API), and real durations are
+ * what lets a dropped video land at its true length instead of a default.
+ */
+async function searchCloudinaryVideos(
+  config: CloudinaryConfig,
+  folderPrefix: string,
+  userId: string,
+) {
+  const assets: CloudinaryAsset[] = [];
+  let nextCursor: string | undefined;
+  let pageCount = 0;
+
+  do {
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/${config.cloudName}/resources/search`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString("base64")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          expression: `public_id:${folderPrefix}/* AND resource_type:video`,
+          max_results: 100,
+          ...(nextCursor ? { next_cursor: nextCursor } : {}),
+        }),
+        cache: "no-store",
+      },
+    );
+    const body = (await response.json().catch(() => null)) as CloudinaryListResponse | null;
+
+    if (!response.ok || !body) {
+      throw new Error(body?.error?.message || `Cloudinary video search failed with ${response.status}.`);
+    }
+
+    assets.push(
+      ...(body.resources || [])
+        .map((resource) => toAsset(config, resource, userId))
+        .filter((asset): asset is CloudinaryAsset => !!asset),
+    );
+    nextCursor = body.next_cursor;
+    pageCount += 1;
+  } while (nextCursor && pageCount < 5);
+
+  return assets;
+}
+
 export async function listCloudinaryAssets(userId: string) {
   const config = getCloudinaryConfig();
   const userFolder = `${config.folder}/${userId}`;
   const [images, videos] = await Promise.all([
     listCloudinaryResources(config, "image", userFolder, userId),
-    listCloudinaryResources(config, "video", userFolder, userId),
+    // Degrade to the duration-less Admin list if search is unavailable —
+    // consumers fall back to default durations, nothing else changes.
+    searchCloudinaryVideos(config, userFolder, userId).catch((error) => {
+      console.warn("[GSTUDIO_CLOUDINARY_SEARCH_FALLBACK]", error);
+      return listCloudinaryResources(config, "video", userFolder, userId);
+    }),
   ]);
 
   return [...images, ...videos].sort((left, right) => {
