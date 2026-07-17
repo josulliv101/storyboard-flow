@@ -569,5 +569,36 @@ test.describe("graph view E2E", () => {
     await page.mouse.move(sb.x + 93, sb.y + ROW1_Y, { steps: 4 });
     await page.mouse.up();
     await expect.poll(async () => (await translate()).y).toBeGreaterThan(80);
+
+    // Wheel over the scrub surface scrolls the GRID and consumes the event
+    // (preventDefault), so the browser doesn't ALSO scroll the surrounding
+    // page — the double-scroll regression. At the grid's boundary the
+    // handler stands down and the event keeps its default action. Asserted
+    // via defaultPrevented observed at window (the app scrolls in an inner
+    // container, so window.scrollY can't witness the default either way).
+    await page.evaluate(() => {
+      const log: boolean[] = [];
+      (window as unknown as { __wheelLog: boolean[] }).__wheelLog = log;
+      window.addEventListener("wheel", (event) => log.push(event.defaultPrevented), {
+        passive: true,
+      });
+    });
+    const wheelLog = () =>
+      page.evaluate(() => (window as unknown as { __wheelLog: boolean[] }).__wheelLog);
+    const gridScrollTop = () => grid.evaluate((el) => el.scrollTop);
+
+    await scrub.hover({ position: { x: 89, y: ROW0_Y } });
+    await page.mouse.wheel(0, 100);
+    await expect.poll(gridScrollTop).toBeGreaterThan(0);
+    await expect
+      .poll(async () => {
+        const log = await wheelLog();
+        return log.length > 0 && log.every(Boolean);
+      })
+      .toBe(true); // consumed: grid scrolled, default prevented
+
+    // Grid is at its boundary now: the next wheel is NOT consumed.
+    await page.mouse.wheel(0, 400);
+    await expect.poll(async () => (await wheelLog()).includes(false)).toBe(true);
   });
 });
