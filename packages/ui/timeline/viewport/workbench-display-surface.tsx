@@ -857,7 +857,12 @@ export function WorkbenchSplitPane({
   return (
     <div
       ref={rootRef}
-      className="grid min-h-0 w-full gap-0"
+      // minmax(0,1fr): a bare auto track sizes to its items' MIN-CONTENT,
+      // and a virtualized child timeline (whose scroll container reports its
+      // full content width there) would blow the track — and the preview
+      // surface with it — past the viewport. Capping the track keeps both
+      // panes at the container's width; children overflow-scroll inside it.
+      className="grid min-h-0 w-full grid-cols-[minmax(0,1fr)] gap-0"
       data-testid="workbench-split-pane"
     >
       <div

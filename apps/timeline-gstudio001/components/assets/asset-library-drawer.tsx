@@ -27,6 +27,7 @@ type CloudinaryAsset = {
   height?: number;
   size?: number;
   createdAt?: string;
+  duration?: number;
 };
 
 type AssetLibraryDrawerProps = {
@@ -44,7 +45,7 @@ function createAssetClip(asset: CloudinaryAsset, index: number, startTime: numbe
     asset.width && asset.height && asset.height > 0
       ? asset.width / asset.height
       : 16 / 9;
-  const duration = asset.resourceType === "video" ? 6 : 4;
+  const duration = asset.resourceType === "video" ? (asset.duration ?? 6) : 4;
   const stableId = `asset-${asset.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
   if (asset.resourceType === "video") {
