@@ -10,6 +10,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: [
+      "app/**/*.test.ts",
       "components/timeline/**/*.test.ts",
       "lib/**/*.test.ts",
       "../../packages/ui/timeline/**/*.test.ts",

@@ -4,6 +4,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 import type { TimelineDocument, TimelineClip } from "@storyboard/ui/timeline/types";
 import { getFirebaseDb } from "./firebase-admin";
+import { resolveOwnership, TimelineAccessDeniedError } from "./timeline-ownership";
 
 type TimelineDocumentRecord = {
   id: string;
@@ -13,6 +14,9 @@ type TimelineDocumentRecord = {
   lastNonEmptyDocument?: TimelineDocument;
   clips?: TimelineClip[];
   isProject?: boolean;
+  /** Authorization boundary: absent only on legacy records, which are
+   *  claimed by the first authenticated toucher (see lib/timeline-ownership). */
+  ownerUid?: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 };
@@ -159,14 +163,36 @@ function toProjectSummary(id: string, data: Partial<TimelineDocumentRecord>): Ti
   };
 }
 
-export async function listFirebaseTimelineProjects() {
+export async function listFirebaseTimelineProjects(requesterUid: string) {
   const snapshot = await withFirebaseTimeout(
     collection().where("isProject", "==", true).limit(100).get(),
     "Loading timeline projects",
   );
 
-  return snapshot.docs
-    .map((doc) => toProjectSummary(doc.id, doc.data() as TimelineDocumentRecord))
+  // The scan (not an ownerUid where-clause) is deliberate while legacy
+  // records exist: unowned projects must surface here so the first
+  // authenticated visit CLAIMS them — otherwise they'd silently vanish from
+  // the list until a manual migration ran. Other users' projects are
+  // filtered out; claims are stamped before returning.
+  const visible: { id: string; data: TimelineDocumentRecord }[] = [];
+  const toClaim: string[] = [];
+  for (const doc of snapshot.docs) {
+    const data = doc.data() as TimelineDocumentRecord;
+    const decision = resolveOwnership(data.ownerUid, requesterUid);
+    if (decision === "denied") continue;
+    if (decision === "claim") toClaim.push(doc.id);
+    visible.push({ id: doc.id, data });
+  }
+  if (toClaim.length > 0) {
+    const batch = getFirebaseDb().batch();
+    for (const id of toClaim) {
+      batch.set(collection().doc(id), { ownerUid: requesterUid }, { merge: true });
+    }
+    await withFirebaseTimeout(batch.commit(), "Claiming legacy timeline projects");
+  }
+
+  return visible
+    .map(({ id, data }) => toProjectSummary(id, data))
     .sort((a, b) => {
       const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
       const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
@@ -174,18 +200,28 @@ export async function listFirebaseTimelineProjects() {
     });
 }
 
-export async function getFirebaseTimelineDocument(id: string) {
+export async function getFirebaseTimelineDocument(id: string, requesterUid: string) {
   const snapshot = await withFirebaseTimeout(
     collection().doc(id).get(),
     "Loading timeline document",
   );
 
   if (!snapshot.exists) return null;
-  return toTimelineDocument(snapshot.id, snapshot.data() as TimelineDocumentRecord);
+  const data = snapshot.data() as TimelineDocumentRecord;
+  const decision = resolveOwnership(data.ownerUid, requesterUid);
+  if (decision === "denied") throw new TimelineAccessDeniedError(id);
+  if (decision === "claim") {
+    await withFirebaseTimeout(
+      collection().doc(id).set({ ownerUid: requesterUid }, { merge: true }),
+      "Claiming legacy timeline document",
+    );
+  }
+  return toTimelineDocument(snapshot.id, data);
 }
 
 export async function saveFirebaseTimelineDocument(
   document: TimelineDocument,
+  requesterUid: string,
   options?: { isProject?: boolean },
 ) {
   if (isUnsavedProjectPlaceholder(document)) {
@@ -196,6 +232,15 @@ export async function saveFirebaseTimelineDocument(
   const ref = collection().doc(normalizedDocument.id);
   const existing = await withFirebaseTimeout(ref.get(), "Loading timeline document");
   const existingIsProject = existing.exists ? existing.get("isProject") === true : false;
+  // Ownership: a save CREATES with the requester as owner, CLAIMS a legacy
+  // unowned record, and is refused on someone else's. Children minted
+  // implicitly through PATCH (collection drops) are stamped here too.
+  const existingOwnerUid = existing.exists
+    ? (existing.data() as TimelineDocumentRecord).ownerUid
+    : undefined;
+  if (existing.exists && resolveOwnership(existingOwnerUid, requesterUid) === "denied") {
+    throw new TimelineAccessDeniedError(normalizedDocument.id);
+  }
   const existingDocument = existing.exists
     ? toTimelineDocument(existing.id, existing.data() as TimelineDocumentRecord)
     : null;
@@ -222,6 +267,7 @@ export async function saveFirebaseTimelineDocument(
           ? { lastNonEmptyDocument: normalizedDocument }
           : {}),
         isProject: options?.isProject ?? existingIsProject,
+        ownerUid: existingOwnerUid ?? requesterUid,
         createdAt: existing.exists ? existing.get("createdAt") || FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       },
@@ -234,7 +280,7 @@ export async function saveFirebaseTimelineDocument(
   return toTimelineDocument(snapshot.id, snapshot.data() as TimelineDocumentRecord);
 }
 
-export async function createFirebaseTimelineProject(title?: string) {
+export async function createFirebaseTimelineProject(requesterUid: string, title?: string) {
   const id = `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const cleanTitle = title?.trim().slice(0, 80) || "Untitled Project";
   const document: TimelineDocument = {
@@ -243,16 +289,19 @@ export async function createFirebaseTimelineProject(title?: string) {
     description: "Custom timeline project.",
     clips: [],
   };
-  await saveFirebaseTimelineDocument(document, { isProject: true });
+  await saveFirebaseTimelineDocument(document, requesterUid, { isProject: true });
   return document;
 }
 
-export async function deleteFirebaseTimelineDocument(id: string) {
+export async function deleteFirebaseTimelineDocument(id: string, requesterUid: string) {
   const ref = collection().doc(id);
   const docSnap = await withFirebaseTimeout(ref.get(), "Loading timeline document for deletion");
-  
+
   if (docSnap.exists) {
     const data = docSnap.data() as TimelineDocumentRecord;
+    if (resolveOwnership(data.ownerUid, requesterUid) === "denied") {
+      throw new TimelineAccessDeniedError(id);
+    }
     const document = data.document;
     if (document && document.clips) {
       const deleteQueue: string[] = [];
@@ -264,9 +313,16 @@ export async function deleteFirebaseTimelineDocument(id: string) {
         }
       };
       extractChildTimelineIds(document.clips);
-      
+
       for (const childId of deleteQueue) {
-        await deleteFirebaseTimelineDocument(childId);
+        try {
+          await deleteFirebaseTimelineDocument(childId, requesterUid);
+        } catch (error) {
+          // A child owned by someone else (shouldn't happen, but ids are
+          // attacker-suppliable in stored clips) is skipped, not fatal —
+          // the requester's own tree still deletes.
+          if (!(error instanceof TimelineAccessDeniedError)) throw error;
+        }
       }
     }
   }
