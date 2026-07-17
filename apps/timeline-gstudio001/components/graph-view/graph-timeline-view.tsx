@@ -199,8 +199,6 @@ async function hydrateTimeline(
   timelineId: string,
 ): Promise<Record<string, ClipDetail> | null> {
   if (details[timelineId]?.hydrated === true) return null;
-  const graph = store.getSnapshot().graph;
-  if (getChildren(graph, parseNodeId(timelineId)).length > 0) return null;
 
   const doc = await graphDocumentsGateway.ensure(timelineId);
   if (!doc) return null;
@@ -208,6 +206,28 @@ async function hydrateTimeline(
   // Re-read the graph — the await may have raced another hydration.
   const current = store.getSnapshot().graph;
   if (!current.nodesById.has(parseNodeId(timelineId))) return null;
+
+  if (getChildren(current, parseNodeId(timelineId)).length > 0) {
+    // REPAIR path: the graph holds this collection's children but the
+    // side-table never recorded them (a past run hydrated the graph, then
+    // its details were lost — or another hydration raced this one). The
+    // graph can't be re-hydrated (the engine only fills empty collections),
+    // but the details CAN be rebuilt from the cached document. Fill only
+    // entries that are missing — never overwrite committed ones (a child
+    // collection's own `hydrated: true` must survive a parent repair).
+    const payload = buildHydrationSpecs(graphDocumentsGateway.read(), timelineId, 0);
+    if (!payload.ok) return null;
+    const merged: Record<string, ClipDetail> = {};
+    for (const [id, detail] of Object.entries(payload.value.details)) {
+      if (details[id] === undefined && current.nodesById.has(parseNodeId(id))) {
+        merged[id] = detail;
+      }
+    }
+    const own = details[timelineId];
+    merged[timelineId] = own ? { ...own, hydrated: true } : { ...FALLBACK_DETAIL, hydrated: true };
+    return merged;
+  }
+
   const payload = buildHydrationSpecs(
     graphDocumentsGateway.read(),
     timelineId,
@@ -250,6 +270,15 @@ function HydrationController({
   const store = useCollectionsStore();
   const pathKey = segments.join("/");
 
+  // The traversal reads `details` only to check hydrated flags, so it goes
+  // through a ref: with `details` in the effect deps, every detail commit
+  // would cancel and restart the in-flight traversal. Declared BEFORE the
+  // main effect so the ref is current when a run starts.
+  const detailsRef = useRef(details);
+  useEffect(() => {
+    detailsRef.current = details;
+  }, [details]);
+
   useEffect(() => {
     let cancelled = false;
     const path = pathKey === "" ? [] : pathKey.split("/");
@@ -257,10 +286,20 @@ function HydrationController({
 
     void (async () => {
       const merged: Record<string, ClipDetail> = {};
-      const detailsNow = () => ({ ...details, ...merged });
+      const detailsNow = () => ({ ...detailsRef.current, ...merged });
       const ensure = async (timelineId: string) => {
         const hydrated = await hydrateTimeline(store, detailsNow(), timelineId);
-        if (hydrated && !cancelled) Object.assign(merged, hydrated);
+        if (hydrated) {
+          Object.assign(merged, hydrated);
+          // Committed immediately and UNCONDITIONALLY — `cancelled` guards
+          // focus-scoped work, but these entries are GRAPH-scoped: the
+          // store.hydrate inside hydrateTimeline already mutated the shared
+          // graph, and the graph outlives this focus run. Dropping them on a
+          // cancelled run would strand hydrated nodes without their aspect/
+          // poster/trim metadata, and the next write touching that document
+          // would bake fallback values into storage.
+          onDetails(hydrated);
+        }
       };
 
       let error: string | null = null;
@@ -296,13 +335,12 @@ function HydrationController({
       }
       if (cancelled) return;
       onFocusError(error);
-      if (Object.keys(merged).length > 0) onDetails(merged);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [pathKey, projectId, details, store, onDetails, onFocusError]);
+  }, [pathKey, projectId, store, onDetails, onFocusError]);
 
   return null;
 }
@@ -329,6 +367,11 @@ function assetDisplayName(asset: CloudinaryAsset): string {
 }
 
 function createNodeFromAsset(asset: CloudinaryAsset): CollectionItemNode {
+  // One drag is in flight at a time, and the bridge deletes the entry on
+  // commit — so anything still in the map here is leftover from a CANCELLED
+  // or rejected drag (its minted id can never be referenced again). Clearing
+  // at the next drag start caps the leak at a single stale entry.
+  pendingPaletteDetails.clear();
   const id = parseNodeId(
     `asset-${asset.id}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
   );
@@ -968,14 +1011,26 @@ function GraphGridScrubSurface({
       window.addEventListener("pointerup", end);
       window.addEventListener("pointercancel", end);
     };
-    // Forward wheel to the grid so it still scrolls under the surface.
+    // Forward wheel to the grid so it still scrolls under the surface. The
+    // grid scroller is a SIBLING subtree, not this surface's scroll ancestor,
+    // so the browser's default action would scroll the page while we scroll
+    // the grid — a double scroll. Non-passive + preventDefault exactly when
+    // the grid consumed the delta; at the grid's boundary the default stands
+    // so the page scrolls naturally.
     const handleWheel = (event: WheelEvent) => {
-      grid.scrollTop += event.deltaY;
-      grid.scrollLeft += event.deltaX;
+      // deltaMode 1 = lines (e.g. Firefox wheel); normalize to pixels.
+      const scale = event.deltaMode === 1 ? 32 : 1;
+      const before = grid.scrollTop;
+      const max = grid.scrollHeight - grid.clientHeight;
+      const next = Math.max(0, Math.min(before + event.deltaY * scale, max));
+      if (next !== before) {
+        grid.scrollTop = next;
+        event.preventDefault();
+      }
     };
 
     surface.addEventListener("pointerdown", handleDown);
-    surface.addEventListener("wheel", handleWheel, { passive: true });
+    surface.addEventListener("wheel", handleWheel, { passive: false });
     return () => {
       surface.removeEventListener("pointerdown", handleDown);
       surface.removeEventListener("wheel", handleWheel);
@@ -1060,12 +1115,20 @@ function PreviewShell({
     [channel],
   );
 
+  // Created ONCE (lazy useState), never per render: the provider consumes
+  // initialState only on its first render, and this component re-renders on
+  // every playback tick (up to 30Hz) — building it inline JSON-cloned every
+  // cached document per frame just to throw the result away. Documents that
+  // land after this snapshot are covered by GatewayDocumentsBridge, which
+  // sweeps the full gateway cache on every provider mount.
+  const [initialDocumentsState] = useState(() =>
+    createTimelineDocumentsState({ ...graphDocumentsGateway.read() }, {}),
+  );
+
   if (!enabled) return <>{children}</>;
 
   return (
-    <TimelineDocumentsProvider
-      initialState={createTimelineDocumentsState({ ...graphDocumentsGateway.read() }, {})}
-    >
+    <TimelineDocumentsProvider initialState={initialDocumentsState}>
       <GatewayDocumentsBridge />
       <WorkbenchSplitPane clips={clips} currentTime={time} onCurrentTimeChange={handleTimeChange}>
         {children}
@@ -1731,7 +1794,15 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
           {gatewayError}
         </p>
       )}
-      <DndCollections initialGraph={boot.graph} components={GRAPH_VIEW_COMPONENTS}>
+      <DndCollections
+        initialGraph={boot.graph}
+        components={GRAPH_VIEW_COMPONENTS}
+        // The provider lives in a persistent layout (undo survives drill-in),
+        // so an unbounded history would retain every patch — including
+        // removed-node payloads — for the whole session. 200 undo steps is
+        // far beyond practical use while keeping memory flat.
+        maxHistoryEntries={200}
+      >
         <PersistenceBridge details={details} onDetails={onDetails} onSync={onSync} />
         {/* Portaled to document.body, but rendered HERE so the PaletteItems
             stay inside the provider's dnd context (portals keep it). */}
