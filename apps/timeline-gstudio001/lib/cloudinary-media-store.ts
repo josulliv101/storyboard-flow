@@ -251,7 +251,33 @@ async function searchCloudinaryVideos(
   return assets;
 }
 
+// Per-user TTL cache over the full asset listing. Every timeline GET runs a
+// listing for document healing, and the graph view's eager hydration can GET
+// dozens of timelines in one burst — without this each GET pays multiple
+// paginated Cloudinary API calls (rate-limit and latency risk). Caching the
+// PROMISE also dedupes the burst: concurrent callers share one in-flight
+// listing. Uploads and deletes invalidate, so a fresh listing follows any
+// change a user makes through this app.
+const ASSET_LIST_TTL_MS = 60_000;
+const assetListCache = new Map<string, { at: number; promise: Promise<CloudinaryAsset[]> }>();
+
+function invalidateAssetListCache(userId?: string) {
+  if (userId) assetListCache.delete(userId);
+  else assetListCache.clear();
+}
+
 export async function listCloudinaryAssets(userId: string) {
+  const cached = assetListCache.get(userId);
+  if (cached && Date.now() - cached.at < ASSET_LIST_TTL_MS) return cached.promise;
+
+  const promise = listCloudinaryAssetsUncached(userId);
+  assetListCache.set(userId, { at: Date.now(), promise });
+  // Failures are never cached — the next caller retries immediately.
+  promise.catch(() => assetListCache.delete(userId));
+  return promise;
+}
+
+async function listCloudinaryAssetsUncached(userId: string) {
   const config = getCloudinaryConfig();
   const userFolder = `${config.folder}/${userId}`;
   const [images, videos] = await Promise.all([
@@ -329,6 +355,8 @@ export async function uploadCloudinaryMedia(
       ? cloudinaryVideoThumbnailUrl(config, body.public_id)
       : undefined;
 
+  invalidateAssetListCache(userId);
+
   return {
     pathname: body.public_id,
     url: body.secure_url,
@@ -368,6 +396,10 @@ export async function deleteCloudinaryAsset(publicId: string, resourceType: "ima
     const err = await response.json().catch(() => ({}));
     throw new Error(err.error?.message || "Failed to delete Cloudinary asset.");
   }
+
+  // No uid in this signature; the public_id embeds it but parsing is
+  // brittle. Deletes are rare — clear every user's cached listing.
+  invalidateAssetListCache();
 
   return await response.json();
 }

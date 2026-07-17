@@ -12,7 +12,7 @@ export async function DELETE() {
     if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const trashId = `trash-${user.uid}`;
-    const trashDoc = await getFirebaseTimelineDocument(trashId);
+    const trashDoc = await getFirebaseTimelineDocument(trashId, user.uid);
 
     if (trashDoc && trashDoc.clips.length > 0) {
       for (const clip of trashDoc.clips) {
@@ -31,7 +31,7 @@ export async function DELETE() {
       }
 
       trashDoc.clips = [];
-      await saveFirebaseTimelineDocument(trashDoc);
+      await saveFirebaseTimelineDocument(trashDoc, user.uid);
     }
 
     return NextResponse.json({ success: true });

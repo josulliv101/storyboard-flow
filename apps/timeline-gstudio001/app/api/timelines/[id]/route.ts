@@ -16,6 +16,7 @@ import {
 } from "@storyboard/ui/timeline/timeline-documents";
 import { listCloudinaryAssets } from "@/lib/cloudinary-media-store";
 import { healTimelineDocument } from "@/lib/heal-timeline-document";
+import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +25,21 @@ function isValidTimelineId(id: string) {
   return /^[a-zA-Z0-9_-]+$/.test(id);
 }
 
+/** User-scoped ids (trash-<uid>, asset-library-<uid>…) embed their owner:
+ *  a mismatch is rejected before any storage read. Returns null when the id
+ *  is fine (not scoped, or scoped to the requester). */
+function scopedIdMismatch(id: string, uid: string) {
+  return checkUserScopedId(id, uid) === false
+    ? NextResponse.json({ error: "Timeline was not found." }, { status: 404 })
+    : null;
+}
+
 function storageErrorResponse(error: unknown, fallback: string) {
+  // Someone else's document: a plain not-found, so timeline ids can't be
+  // probed for existence.
+  if (error instanceof TimelineAccessDeniedError) {
+    return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
+  }
   const message =
     error instanceof Error &&
     (error.message.startsWith("Firebase Storage is not configured") ||
@@ -56,8 +71,11 @@ export async function GET(
     if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { id } = await params;
+    const mismatch = scopedIdMismatch(id, user.uid);
+    if (mismatch) return mismatch;
+
     if (id.startsWith("trash-")) {
-      const firebaseDocument = await getFirebaseTimelineDocument(id);
+      const firebaseDocument = await getFirebaseTimelineDocument(id, user.uid);
       const doc: TimelineDocument = firebaseDocument || {
         id,
         title: "Trash Bin",
@@ -71,7 +89,7 @@ export async function GET(
     }
 
     if (id.startsWith("asset-library-")) {
-      const firebaseDocument = await getFirebaseTimelineDocument(id);
+      const firebaseDocument = await getFirebaseTimelineDocument(id, user.uid);
 
       let title = "Cloudinary Assets";
       if (id.startsWith("asset-library-col-")) {
@@ -226,7 +244,7 @@ export async function GET(
       });
     }
 
-    const firebaseDocument = await getFirebaseTimelineDocument(id);
+    const firebaseDocument = await getFirebaseTimelineDocument(id, user.uid);
     if (firebaseDocument) {
       // Load-time self-heal: re-point moved/renamed Cloudinary assets AND
       // backfill real video durations onto untrimmed clips (see
@@ -238,7 +256,7 @@ export async function GET(
       );
 
       if (changed) {
-        await saveFirebaseTimelineDocument(healedDocument).catch(() => {});
+        await saveFirebaseTimelineDocument(healedDocument, user.uid).catch(() => {});
       }
 
       return NextResponse.json({ document: healedDocument });
@@ -249,7 +267,7 @@ export async function GET(
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }
 
-    const savedDocument = await saveFirebaseTimelineDocument(fallbackDocument);
+    const savedDocument = await saveFirebaseTimelineDocument(fallbackDocument, user.uid);
     return NextResponse.json({ document: savedDocument });
   } catch (error) {
     return storageErrorResponse(error, "Unable to load the timeline document.");
@@ -261,13 +279,15 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { response } = await requireAuthUser();
-    if (response) return response;
+    const { user, response } = await requireAuthUser();
+    if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { id } = await params;
     if (!isValidTimelineId(id)) {
       return NextResponse.json({ error: "Invalid timeline id." }, { status: 400 });
     }
+    const mismatch = scopedIdMismatch(id, user.uid);
+    if (mismatch) return mismatch;
 
     const body = (await request.json().catch(() => ({}))) as {
       document?: unknown;
@@ -284,7 +304,7 @@ export async function PATCH(
       );
     }
 
-    const savedDocument = await saveFirebaseTimelineDocument(body.document);
+    const savedDocument = await saveFirebaseTimelineDocument(body.document, user.uid);
     return NextResponse.json({ document: savedDocument });
   } catch (error) {
     if (
@@ -303,15 +323,17 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { response } = await requireAuthUser();
-    if (response) return response;
+    const { user, response } = await requireAuthUser();
+    if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { id } = await params;
     if (!isValidTimelineId(id)) {
       return NextResponse.json({ error: "Invalid timeline id." }, { status: 400 });
     }
+    const mismatch = scopedIdMismatch(id, user.uid);
+    if (mismatch) return mismatch;
 
-    await deleteFirebaseTimelineDocument(id);
+    await deleteFirebaseTimelineDocument(id, user.uid);
     return NextResponse.json({ success: true });
   } catch (error) {
     return storageErrorResponse(error, "Unable to delete the timeline document.");

@@ -23,10 +23,10 @@ function storageErrorResponse(error: unknown, fallback: string) {
 
 export async function GET() {
   try {
-    const { response } = await requireAuthUser();
-    if (response) return response;
+    const { user, response } = await requireAuthUser();
+    if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    return NextResponse.json({ projects: await listFirebaseTimelineProjects() });
+    return NextResponse.json({ projects: await listFirebaseTimelineProjects(user.uid) });
   } catch (error) {
     return storageErrorResponse(error, "Unable to load timeline projects.");
   }
@@ -34,12 +34,12 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { response } = await requireAuthUser();
-    if (response) return response;
+    const { user, response } = await requireAuthUser();
+    if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = (await request.json().catch(() => ({}))) as { title?: unknown };
     const title = typeof body.title === "string" ? body.title : undefined;
-    const project = await createFirebaseTimelineProject(title);
+    const project = await createFirebaseTimelineProject(user.uid, title);
 
     return NextResponse.json({ project }, { status: 201 });
   } catch (error) {
