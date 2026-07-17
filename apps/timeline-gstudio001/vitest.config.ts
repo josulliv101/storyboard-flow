@@ -11,6 +11,7 @@ export default defineConfig({
     environment: "node",
     include: [
       "components/timeline/**/*.test.ts",
+      "lib/**/*.test.ts",
       "../../packages/ui/timeline/**/*.test.ts",
     ],
   },
