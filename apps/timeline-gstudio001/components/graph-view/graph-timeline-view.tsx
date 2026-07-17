@@ -205,6 +205,9 @@ function OpenKeyBoundary({ children }: Readonly<{ children: React.ReactNode }>) 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "o" && event.key !== "O") return;
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    // A keyboard-grabbed card is mid-drag: navigating away now would strand
+    // the drag session in a view where its source card no longer exists.
+    if (store.getSnapshot().interaction.isDragging) return;
     const target = event.target as HTMLElement;
     // Never swallow typing (no editable fields render in the board today,
     // but a future rename input inside a card must not lose its "o").
@@ -476,7 +479,7 @@ function createNodeFromAsset(asset: CloudinaryAsset): CollectionItemNode {
 type AssetPaletteState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ status: "error"; message: string }>
-  | Readonly<{ status: "ready"; assets: readonly CloudinaryAsset[] }>;
+  | Readonly<{ status: "ready"; assets: readonly CloudinaryAsset[]; truncated: boolean }>;
 
 const PALETTE_ASSET_LIMIT = 48;
 
@@ -551,11 +554,18 @@ function PaletteRail({ assets }: Readonly<{ assets: readonly CloudinaryAsset[] }
 function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose: () => void }>) {
   const [state, setState] = useState<AssetPaletteState>({ status: "loading" });
 
-  // Lazy: fetch on first open, keep for the session.
-  const fetchedRef = useRef(false);
+  // Lazy: fetch on first open, keep a SUCCESS for the session. Failures are
+  // never latched (the old fetched-once ref marked the attempt as done
+  // before it ran, so one transient error made the palette unrecoverable
+  // until reload): the error state has its own Retry, and closing an
+  // errored drawer resets it so the next open refetches.
+  const handleClose = () => {
+    if (state.status === "error") setState({ status: "loading" });
+    onClose();
+  };
+
   useEffect(() => {
-    if (!open || fetchedRef.current) return;
-    fetchedRef.current = true;
+    if (!open || state.status !== "loading") return;
     let cancelled = false;
     void (async () => {
       try {
@@ -569,7 +579,11 @@ function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose
           setState({ status: "error", message: result.error ?? "Could not load assets." });
           return;
         }
-        setState({ status: "ready", assets: result.assets.slice(0, PALETTE_ASSET_LIMIT) });
+        setState({
+          status: "ready",
+          assets: result.assets.slice(0, PALETTE_ASSET_LIMIT),
+          truncated: result.assets.length > PALETTE_ASSET_LIMIT,
+        });
       } catch (cause) {
         if (!cancelled) {
           setState({
@@ -582,7 +596,7 @@ function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, state.status]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -608,7 +622,7 @@ function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose
             Drag a thumbnail into any timeline · Enter picks one up for keyboard placement
           </span>
           <span className="grow" />
-          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+          <Button type="button" variant="ghost" size="sm" onClick={handleClose}>
             Close
           </Button>
         </div>
@@ -623,9 +637,17 @@ function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose
           </div>
         )}
         {state.status === "error" && (
-          <p className="rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
-            {state.message}
-          </p>
+          <div className="flex items-center gap-3 rounded-md border border-zinc-800 px-3 py-2">
+            <p className="text-xs text-zinc-500">{state.message}</p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setState({ status: "loading" })}
+            >
+              Retry
+            </Button>
+          </div>
         )}
         {state.status === "ready" &&
           (state.assets.length === 0 ? (
@@ -633,7 +655,15 @@ function AssetPaletteDrawer({ open, onClose }: Readonly<{ open: boolean; onClose
               No assets yet — upload some from the asset library on the storyboard view.
             </p>
           ) : (
-            <PaletteRail assets={state.assets} />
+            <>
+              <PaletteRail assets={state.assets} />
+              {state.truncated && (
+                <p className="mt-1 text-[10px] text-zinc-600">
+                  Showing the newest {PALETTE_ASSET_LIMIT} assets — the full library is on the
+                  storyboard view.
+                </p>
+              )}
+            </>
           ))}
       </aside>
     </section>,
@@ -1176,6 +1206,25 @@ function PreviewShell({
     [channel],
   );
 
+  // Time state and the channel outlive drill-in (the provider lives in a
+  // persistent layout), but a DIFFERENT focused timeline is a different
+  // clock: without a reset, drilling from 60s into a 10s timeline parks the
+  // transport at "60 / 10" with the playhead pinned to the end. Both
+  // effects write only the CHANNEL (the external clock) — the local `time`
+  // state follows through the subscription above, which is also what keeps
+  // the playhead and scrub surfaces in step.
+  useEffect(() => {
+    channel.set(0);
+  }, [channel, focusedId]);
+
+  // Edits can also shorten the projection UNDER a parked playhead (trim,
+  // delete, undo) — clamp to the new end rather than pointing past it.
+  const totalDuration =
+    clips.length > 0 ? clips[clips.length - 1].startTime + clips[clips.length - 1].duration : 0;
+  useEffect(() => {
+    if (channel.get() > totalDuration) channel.set(totalDuration);
+  }, [channel, totalDuration]);
+
   // Created ONCE (lazy useState), never per render: the provider consumes
   // initialState only on its first render, and this component re-renders on
   // every playback tick (up to 30Hz) — building it inline JSON-cloned every
@@ -1559,12 +1608,13 @@ function SyncPanel({ entries }: { entries: readonly SyncEntry[] }) {
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
       <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
-        Patch-scoped document saves
+        Patch-scoped document writes
       </h3>
       {entries.length === 0 ? (
         <p className="mt-2 text-xs text-zinc-500">
-          No saves yet — reorder, trim, nest, or undo and watch which timeline documents get
-          PATCHed. Hydration never appears here: loading data is not a change worth writing back.
+          No writes yet — reorder, trim, nest, or undo and watch which timeline documents are
+          QUEUED for a PATCH (writes debounce briefly and any failure appears in the banner
+          above). Hydration never appears here: loading data is not a change worth writing back.
         </p>
       ) : (
         <ol className="mt-2 flex flex-col gap-1 font-mono text-[11px] text-zinc-400">
