@@ -634,6 +634,73 @@ function buildPlayheadMap(clips: readonly TimelineClip[]): PlayheadMap {
   };
 }
 
+// Grid surface cell geometry — must match the <VirtualGrid> props below and
+// its default gap, since the playhead maps time onto that exact layout.
+const GRID_CELL_W = 160;
+const GRID_CELL_H = 96;
+const GRID_GAP = 8;
+
+/**
+ * The grid analog of buildPlayheadMap. In the grid every cell is the SAME
+ * width regardless of the clip's duration, so time maps onto a cell as a
+ * fraction of that constant width, and the playhead advances cell-by-cell,
+ * wrapping down a row every `cols` clips. `timeAt` is 2D — column from x AND
+ * row from y — so a scrub can move within a row or jump rows.
+ */
+type GridPlayheadMap = Readonly<{
+  posAt: (time: number) => { x: number; y: number };
+  timeAt: (x: number, y: number) => number;
+  totalDurationSeconds: number;
+  rowHeight: number;
+}>;
+
+function buildGridPlayheadMap(clips: readonly TimelineClip[], cols: number): GridPlayheadMap {
+  const columns = Math.max(1, cols);
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (const clip of clips) {
+    starts.push(clip.startTime);
+    ends.push(clip.startTime + clip.duration);
+  }
+  const n = clips.length;
+  const total = n > 0 ? ends[n - 1] : 0;
+  const cellX = (i: number) => (i % columns) * (GRID_CELL_W + GRID_GAP);
+  const cellY = (i: number) => Math.floor(i / columns) * (GRID_CELL_H + GRID_GAP);
+  const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+  return {
+    rowHeight: GRID_CELL_H,
+    totalDurationSeconds: total,
+    posAt: (time) => {
+      if (n === 0) return { x: 0, y: 0 };
+      // Last clip whose start <= time (binary search); time landing in the
+      // gap after a clip clamps to that clip's right edge.
+      let lo = 0;
+      if (time >= starts[n - 1]) {
+        lo = n - 1;
+      } else if (time > starts[0]) {
+        let hi = n - 1;
+        while (lo < hi - 1) {
+          const mid = (lo + hi) >> 1;
+          if (starts[mid] <= time) lo = mid;
+          else hi = mid;
+        }
+      }
+      const span = ends[lo] - starts[lo];
+      const frac = span > 0 ? clamp01((time - starts[lo]) / span) : 0;
+      return { x: cellX(lo) + frac * GRID_CELL_W, y: cellY(lo) };
+    },
+    timeAt: (x, y) => {
+      if (n === 0) return 0;
+      const row = Math.max(0, Math.floor(y / (GRID_CELL_H + GRID_GAP)));
+      const col = Math.max(0, Math.min(columns - 1, Math.floor(x / (GRID_CELL_W + GRID_GAP))));
+      const i = Math.max(0, Math.min(n - 1, row * columns + col));
+      const frac = clamp01((x - cellX(i)) / GRID_CELL_W);
+      return Math.min(total, Math.max(0, starts[i] + frac * (ends[i] - starts[i])));
+    },
+  };
+}
+
 /** The red playhead over the focused strip — a line with a triangle cap,
  *  strictly presentational (the strip overlay layer is aria-hidden and
  *  pointer-events: none; scrubbing lives in PlayheadScrubBand outside the
@@ -767,6 +834,163 @@ function PlayheadScrubBand({
       data-playhead-scrub
       aria-hidden="true"
       className="absolute inset-x-0 top-0 z-10 h-3 cursor-ew-resize"
+    />
+  );
+}
+
+/**
+ * The grid playhead: a one-row-tall red line inside the grid's content
+ * overlay (so it scrolls with the rows and the scroller's overflow clips it
+ * when its row is off-screen). It moves through the active cell as time
+ * advances and jumps to the next cell/row on clip boundaries. Column count
+ * comes from the grid's own `data-grid-columns`, so the map rebuilds when a
+ * resize reflows the grid. Painted imperatively — no React render per tick.
+ */
+function GraphGridPlayhead({
+  focusedId,
+  details,
+  channel,
+}: Readonly<{ focusedId: string; details: DetailsById; channel: PreviewTimeChannel }>) {
+  const store = useCollectionsStore();
+  const lineRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const line = lineRef.current;
+    if (!line) return;
+    const grid = line.closest<HTMLElement>("[data-virtual-grid]");
+
+    let lastGraph: CollectionsGraph | null = null;
+    let lastCols = 0;
+    let map: GridPlayheadMap | null = null;
+    const paint = () => {
+      const graph = store.getSnapshot().graph;
+      const cols = Number(grid?.dataset.gridColumns) || 1;
+      if (graph !== lastGraph || cols !== lastCols) {
+        lastGraph = graph;
+        lastCols = cols;
+        map = buildGridPlayheadMap(graphChildrenToClips(graph, details, focusedId), cols);
+      }
+      if (!map) return;
+      const { x, y } = map.posAt(channel.get());
+      line.style.transform = `translate(${x}px, ${y}px)`;
+      line.style.height = `${map.rowHeight}px`;
+    };
+    paint();
+
+    const unsubscribeTime = channel.subscribe(paint);
+    const unsubscribeStore = store.subscribe(paint);
+    // Responsive columns can change on resize with no store/graph change.
+    const observer = grid ? new ResizeObserver(paint) : null;
+    if (grid && observer) observer.observe(grid);
+    return () => {
+      unsubscribeTime();
+      unsubscribeStore();
+      observer?.disconnect();
+    };
+  }, [store, focusedId, details, channel]);
+
+  return (
+    <div
+      ref={lineRef}
+      data-graph-grid-playhead
+      className="absolute left-0 top-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+    >
+      <div className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500" />
+    </div>
+  );
+}
+
+/**
+ * The grid scrub surface: a full-grid pointer layer (the grid has no per-row
+ * top gutter the way the strip does, and the user scrubs BOTH axes — column
+ * within a row, row by dragging vertically). It reads content coordinates
+ * off the overlay wrapper (same rect as the scrolling spacer, so scroll is
+ * already folded in) and seeks through the 2D map. Because it overlays the
+ * cards, wheel events are forwarded to the grid so it still scrolls while
+ * previewing.
+ *
+ * Trade-off: covering the cards means item drag/reorder is paused while
+ * Preview is on in grid mode — toggle Preview off to rearrange.
+ */
+function GraphGridScrubSurface({
+  focusedId,
+  details,
+  channel,
+}: Readonly<{ focusedId: string; details: DetailsById; channel: PreviewTimeChannel }>) {
+  const store = useCollectionsStore();
+  const surfaceRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const grid = surface.parentElement?.querySelector<HTMLElement>("[data-virtual-grid]") ?? null;
+    if (!grid) return;
+
+    let map: GridPlayheadMap | null = null;
+    let mapGraph: CollectionsGraph | null = null;
+    let mapCols = 0;
+    const seek = (event: PointerEvent) => {
+      const graph = store.getSnapshot().graph;
+      const cols = Number(grid.dataset.gridColumns) || 1;
+      if (graph !== mapGraph || cols !== mapCols || !map) {
+        mapGraph = graph;
+        mapCols = cols;
+        map = buildGridPlayheadMap(graphChildrenToClips(graph, details, focusedId), cols);
+      }
+      // The overlay wrapper shares the scrolling spacer's rect, so its top/
+      // left already fold in scroll position and container padding.
+      const overlay = grid.querySelector<HTMLElement>("[data-virtual-grid-overlay]");
+      const rect = (overlay ?? grid).getBoundingClientRect();
+      channel.set(map.timeAt(event.clientX - rect.left, event.clientY - rect.top));
+    };
+
+    let pointerId: number | null = null;
+    const handleMove = (event: PointerEvent) => {
+      if (event.pointerId === pointerId) seek(event);
+    };
+    const end = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return;
+      pointerId = null;
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+    const handleDown = (event: PointerEvent) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      pointerId = event.pointerId;
+      try {
+        surface.setPointerCapture(event.pointerId);
+      } catch {
+        /* synthetic pointer — window listeners suffice */
+      }
+      seek(event);
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    };
+    // Forward wheel to the grid so it still scrolls under the surface.
+    const handleWheel = (event: WheelEvent) => {
+      grid.scrollTop += event.deltaY;
+      grid.scrollLeft += event.deltaX;
+    };
+
+    surface.addEventListener("pointerdown", handleDown);
+    surface.addEventListener("wheel", handleWheel, { passive: true });
+    return () => {
+      surface.removeEventListener("pointerdown", handleDown);
+      surface.removeEventListener("wheel", handleWheel);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+  }, [store, focusedId, details, channel]);
+
+  return (
+    <div
+      ref={surfaceRef}
+      data-grid-scrub
+      aria-hidden="true"
+      className="absolute inset-0 z-10 cursor-crosshair"
     />
   );
 }
@@ -1598,14 +1822,35 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
                 </div>
               ) : (
                 // Same graph, same provider — dragging between this grid and
-                // the sub-timeline strips below is native.
-                <VirtualGrid
-                  collectionId={parseNodeId(focusedId)}
-                  cellWidth={160}
-                  cellHeight={96}
-                  height={420}
-                  className="bg-black/25"
-                />
+                // the sub-timeline strips below is native. In Preview the
+                // playhead rides the grid's content overlay and the scrub
+                // surface owns pointers (see GraphGridScrubSurface).
+                <div className="relative">
+                  <VirtualGrid
+                    collectionId={parseNodeId(focusedId)}
+                    cellWidth={GRID_CELL_W}
+                    cellHeight={GRID_CELL_H}
+                    gap={GRID_GAP}
+                    height={420}
+                    overlay={
+                      previewOn ? (
+                        <GraphGridPlayhead
+                          focusedId={focusedId}
+                          details={details}
+                          channel={timeChannel}
+                        />
+                      ) : undefined
+                    }
+                    className="bg-black/25"
+                  />
+                  {previewOn && (
+                    <GraphGridScrubSurface
+                      focusedId={focusedId}
+                      details={details}
+                      channel={timeChannel}
+                    />
+                  )}
+                </div>
               )}
               <SubTimelines focusedId={focusedId} details={details} onDetails={onDetails} />
               {boot.trashRootId !== null && (

@@ -935,6 +935,7 @@ type VirtualGridProps = {
   overscan?: number;    // default 2 (rows)
   height?: number;      // default 480 — scroll viewport height
   itemContent?: CollectionItemContentComponent; // per-view card pixels; overrides the provider registry
+  overlay?: ReactNode;  // STRICTLY PRESENTATIONAL content-coordinate layer inside the scrolling spacer (playhead, region markers): rides vertical scroll and the drop-spacer height. aria-hidden + pointer-events none — no interactive/focusable children; interactive scrubbers belong in your own layer outside the grid. Position children in content coords: col c → left c*(cellWidth+gap), row r → top r*(cellHeight+gap); read the live column count off data-grid-columns
   className?: string;
 };
 type VirtualGridHandle = {
@@ -962,7 +963,7 @@ keep durable state in the collection store.
 | Attribute | Element | Meaning |
 | --- | --- | --- |
 | `data-virtual-strip` / `data-virtual-grid` | scroll container | Collection identity. |
-| `data-virtual-overlay` | overlay layer (strip) | The consumer `overlay` slot's content-coordinate wrapper (aria-hidden, pointer-events none). |
+| `data-virtual-overlay` / `data-virtual-grid-overlay` | overlay layer (strip / grid) | The consumer `overlay` slot's content-coordinate wrapper (aria-hidden, pointer-events none). |
 | `data-grid-columns` | grid container | Live column count (keyboard row-move scope). |
 | `data-virtual-index` / `data-virtual-row` | slot / row wrapper | Virtualizer index. |
 | `data-drop-indicator="virtual"` / `"virtual-grid"` | indicator line | The resolved insert boundary, in content coordinates. |
