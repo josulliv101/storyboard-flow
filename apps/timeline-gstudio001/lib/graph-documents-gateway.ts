@@ -26,6 +26,9 @@ import type { DocumentsById } from "@storyboard/timeline-domain";
 //     re-persists their intent against the fresh revision.
 
 const SAVE_DEBOUNCE_MS = 900;
+// How long an ensure waits for a declared-incoming RSC prime before
+// fetching itself — roughly a streamed payload's round trip.
+const PRIME_WAIT_MS = 1000;
 
 /** A server-read document + revision, delivered by RSC (layout bootstrap /
  *  focus-path streams) and fed to `prime`. Defined HERE (client-safe) so
@@ -68,6 +71,16 @@ export type GraphDocumentsGateway = Readonly<{
    * leaves the existing fetch paths to do their job.
    */
   prime: (document: TimelineDocument, revision: number) => void;
+  /**
+   * Declare that primes for these ids are INCOMING (the server is streaming
+   * this navigation's payloads): an `ensure` for a missing/stale id waits a
+   * short grace window for the prime before falling back to its own fetch —
+   * this is what lets the RSC payload win the race against the client's
+   * immediate hydration instead of duplicating the read. Only registered
+   * for ids the cache can't already serve; call it only when the session is
+   * KNOWN to be server-primed, or every miss pays the window for nothing.
+   */
+  expectPrimes: (ids: readonly string[], windowMs?: number) => void;
   /** Cache-change notifications (documents landing, clips written). */
   subscribe: (listener: () => void) => () => void;
   /** Outstanding load/save failures, for a status banner. Null when every
@@ -183,6 +196,36 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     }
   };
 
+  // Ids whose primes were declared INCOMING (expectPrimes), with the
+  // deadline after which ensure stops waiting and fetches itself.
+  const expectedPrimes = new Map<string, number>();
+
+  /** Resolve with the primed document if it lands inside the expectation
+   *  window, else null (caller falls back to its own fetch). */
+  const awaitExpectedPrime = (timelineId: string): Promise<TimelineDocument | null> => {
+    const deadline = expectedPrimes.get(timelineId);
+    if (deadline === undefined || Date.now() >= deadline) {
+      expectedPrimes.delete(timelineId);
+      return Promise.resolve(null);
+    }
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const settle = (document: TimelineDocument | null) => {
+        listeners.delete(check);
+        if (timer !== null) clearTimeout(timer);
+        expectedPrimes.delete(timelineId);
+        resolve(document);
+      };
+      const check = () => {
+        const cached = documents[timelineId];
+        if (cached && !staleIds.has(timelineId)) settle(cached);
+      };
+      listeners.add(check);
+      timer = setTimeout(() => settle(null), deadline - Date.now());
+      check();
+    });
+  };
+
   const ensure = (timelineId: string): Promise<TimelineDocument | null> => {
     const cached = documents[timelineId];
     if (cached && !staleIds.has(timelineId)) return Promise.resolve(cached);
@@ -192,7 +235,10 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     // fetching before it settles would read the pre-save server state.
     const settled = saveInFlight ?? Promise.resolve();
     const request = settled
-      .then(() => fetchDocument(timelineId))
+      // An expected RSC prime gets a grace window to land before the
+      // fallback fetch — the server is already streaming this document.
+      .then(() => awaitExpectedPrime(timelineId))
+      .then((primed) => primed ?? fetchDocument(timelineId))
       .then((document) => {
         if (document !== null) staleIds.delete(timelineId);
         return document;
@@ -375,6 +421,14 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       staleIds.delete(timelineId);
       setError(timelineId, null);
       notify();
+    },
+    expectPrimes: (ids, windowMs = PRIME_WAIT_MS) => {
+      const deadline = Date.now() + windowMs;
+      for (const id of ids) {
+        // Only ids the cache can't serve — a fresh cached doc never waits.
+        if (documents[id] !== undefined && !staleIds.has(id)) continue;
+        expectedPrimes.set(id, deadline);
+      }
     },
     subscribe: (listener) => {
       listeners.add(listener);

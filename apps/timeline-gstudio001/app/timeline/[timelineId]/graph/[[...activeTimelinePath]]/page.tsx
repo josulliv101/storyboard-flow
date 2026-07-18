@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { headers } from "next/headers";
 
 import { GraphGatewayPrimer } from "@/components/graph-view/graph-gateway-primer";
 import { getAuthUser } from "@/lib/firebase-auth-session";
@@ -15,8 +16,9 @@ import { loadFocusPathPayloads } from "@/lib/graph-rsc-payloads";
 async function FocusPathStream({
   path,
   uid,
-}: Readonly<{ path: readonly string[]; uid: string }>) {
-  const payloads = await loadFocusPathPayloads(path, uid);
+  focusedOnly,
+}: Readonly<{ path: readonly string[]; uid: string; focusedOnly: boolean }>) {
+  const payloads = await loadFocusPathPayloads(path, uid, { focusedOnly });
   if (payloads.length === 0) return null;
   return <GraphGatewayPrimer payloads={payloads} />;
 }
@@ -32,9 +34,21 @@ export default async function GraphViewPage({
   const user = await getAuthUser();
   if (!user) return null;
 
+  // Soft navigations arrive as RSC flight requests (the `RSC` header): the
+  // client already holds the ancestors from boot and earlier navigations,
+  // so only the newly focused tail is served. A document load (deep link)
+  // has no such header and gets the full path. Header absent when
+  // expected = full path — the safe direction (extra data, never less).
+  const requestHeaders = await headers();
+  const softNavigation = requestHeaders.get("rsc") === "1";
+
   return (
     <Suspense fallback={null}>
-      <FocusPathStream path={activeTimelinePath.map(decodeURIComponent)} uid={user.uid} />
+      <FocusPathStream
+        path={activeTimelinePath.map(decodeURIComponent)}
+        uid={user.uid}
+        focusedOnly={softNavigation}
+      />
     </Suspense>
   );
 }

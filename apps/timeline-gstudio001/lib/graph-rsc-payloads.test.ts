@@ -166,6 +166,17 @@ describe("loadFocusPathPayloads", () => {
     ]);
   });
 
+  it("focusedOnly (soft navigation) serves just the focused tail plus its children", async () => {
+    seed("grand", "user-a", [image("g", 0, 2)]);
+    seed("scene", "user-a", [image("s", 0, 2), collectionClip("gref", "grand", 2)], 4);
+    seed("mid", "user-a", [collectionClip("sref", "scene", 0)], 3);
+
+    const payloads = await loadFocusPathPayloads(["mid", "scene"], "user-a", {
+      focusedOnly: true,
+    });
+    expect(payloads.map((payload) => payload.document.id)).toEqual(["scene", "grand"]);
+  });
+
   it("skips unloadable segments and never repeats a document", async () => {
     seed("scene", "user-a", [collectionClip("self", "scene", 0)], 4);
 

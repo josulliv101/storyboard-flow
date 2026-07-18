@@ -283,6 +283,7 @@ export function GraphTimelineView({
           <HydrationController
             projectId={projectId}
             segments={timelinePath}
+            serverPrimed={bootedFromServer}
             onFocusError={setFocusError}
           />
 

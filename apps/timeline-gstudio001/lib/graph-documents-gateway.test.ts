@@ -406,6 +406,48 @@ describe("graph-documents-gateway", () => {
     expect(getsOf(calls)).toHaveLength(1); // only the original seed GET
   });
 
+  it("ensure waits for a declared-incoming prime instead of fetching", async () => {
+    const calls = installFetch((call) =>
+      call.method === "POST"
+        ? okResults(call.writes)
+        : jsonResponse({ document: doc("a", [clip("fetched")]), revision: 1 }),
+    );
+    const gateway = createGraphDocumentsGateway();
+
+    gateway.expectPrimes(["a"]);
+    const pending = gateway.ensure("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getsOf(calls)).toHaveLength(0); // waiting, not fetching
+
+    gateway.prime(doc("a", [clip("primed")]), 4);
+    expect(clipIds(await pending)).toEqual(["primed"]);
+    expect(getsOf(calls)).toHaveLength(0); // the prime won — no fetch at all
+
+    // A fresh cached id never registers an expectation or waits.
+    gateway.expectPrimes(["a"]);
+    expect(clipIds(await gateway.ensure("a"))).toEqual(["primed"]);
+    expect(getsOf(calls)).toHaveLength(0);
+  });
+
+  it("an expired prime expectation falls back to the fetch", async () => {
+    const calls = installFetch((call) =>
+      call.method === "POST"
+        ? okResults(call.writes)
+        : jsonResponse({ document: doc("a", [clip("fetched")]), revision: 1 }),
+    );
+    const gateway = createGraphDocumentsGateway();
+
+    gateway.expectPrimes(["a"], 500);
+    const pending = gateway.ensure("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getsOf(calls)).toHaveLength(0);
+
+    // The window lapses without a prime: the ordinary fetch takes over.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(clipIds(await pending)).toEqual(["fetched"]);
+    expect(getsOf(calls)).toHaveLength(1);
+  });
+
   it("keeps per-document errors: one document's success does not clear another's failure", async () => {
     let aFails = true;
     const calls = installFetch((call) => {

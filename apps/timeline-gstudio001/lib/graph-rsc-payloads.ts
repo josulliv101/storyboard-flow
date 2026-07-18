@@ -39,15 +39,21 @@ export async function loadGraphBootstrapPayloads(
 }
 
 /**
- * Payloads for a focus navigation: every path segment's document, plus one
+ * Payloads for a focus navigation: the path segments' documents, plus one
  * eager child level under the FOCUSED segment (mirroring the client's
  * eager hydration, so drill-in needs no fetches when these win the race).
  * Segments that fail to serve are skipped — the client's chain validation
  * and error surfacing remain authoritative.
+ *
+ * `focusedOnly` is the soft-navigation DELTA: a client that navigated here
+ * already holds the ancestors (boot + earlier navigations served them), so
+ * only the newly focused tail is worth reading again. Document loads (deep
+ * links) get the full path.
  */
 export async function loadFocusPathPayloads(
   path: readonly string[],
   requesterUid: string,
+  options?: Readonly<{ focusedOnly?: boolean }>,
 ): Promise<readonly GraphServerPayload[]> {
   const payloads: GraphServerPayload[] = [];
   const seen = new Set<string>();
@@ -64,8 +70,9 @@ export async function loadFocusPathPayloads(
     }
   };
 
+  const segments = options?.focusedOnly ? path.slice(-1) : path;
   let focused: GraphServerPayload | null = null;
-  for (const segment of path) {
+  for (const segment of segments) {
     focused = (await serve(segment)) ?? focused;
   }
   if (focused) {

@@ -91,10 +91,15 @@ export async function hydrateTimeline(
 export function HydrationController({
   projectId,
   segments,
+  serverPrimed,
   onFocusError,
 }: Readonly<{
   projectId: string;
   segments: readonly string[];
+  /** True when this session booted from RSC payloads — the server also
+   *  streams each navigation's focus-path documents, so hydration should
+   *  WAIT for those primes instead of racing them with its own fetches. */
+  serverPrimed: boolean;
   onFocusError: (error: string | null) => void;
 }>) {
   const store = useCollectionsStore();
@@ -105,6 +110,14 @@ export function HydrationController({
     let cancelled = false;
     const path = pathKey === "" ? [] : pathKey.split("/");
     const focusedId = path[path.length - 1] ?? projectId;
+
+    // The page is streaming these documents right now: give the primes a
+    // grace window so the RSC payload wins the race instead of every
+    // segment being fetched twice. (Registered only for ids the cache
+    // can't already serve.)
+    if (serverPrimed && path.length > 0) {
+      graphDocumentsGateway.expectPrimes(path);
+    }
 
     void (async () => {
       const ensure = (timelineId: string) => hydrateTimeline(store, detailsStore, timelineId);
@@ -138,6 +151,11 @@ export function HydrationController({
             .map((childId) => childId as string);
         };
         const children = collectionChildrenOf(focusedId);
+        // The page's stream also carries one eager child level under the
+        // focused segment — same grace window for those.
+        if (serverPrimed && children.length > 0) {
+          graphDocumentsGateway.expectPrimes(children);
+        }
         await Promise.all(children.map(ensure));
         if (!cancelled) {
           const grandchildren = children.flatMap(collectionChildrenOf);
@@ -151,7 +169,7 @@ export function HydrationController({
     return () => {
       cancelled = true;
     };
-  }, [pathKey, projectId, store, detailsStore, onFocusError]);
+  }, [pathKey, projectId, store, detailsStore, serverPrimed, onFocusError]);
 
   return null;
 }
