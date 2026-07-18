@@ -15,6 +15,10 @@ import {
   isUnsavedProjectPlaceholder,
 } from "@storyboard/ui/timeline/timeline-documents";
 import { listCloudinaryAssets } from "@/lib/cloudinary-media-store";
+import {
+  collectionChildIds,
+  deriveCollectionSummaries,
+} from "@/lib/derive-collection-summaries";
 import { healTimelineDocument } from "@/lib/heal-timeline-document";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
@@ -259,7 +263,22 @@ export async function GET(
         await saveFirebaseTimelineDocument(healedDocument, user.uid).catch(() => {});
       }
 
-      return NextResponse.json({ document: healedDocument });
+      // Collection summaries derive from the CHILD documents at read time
+      // (see deriveCollectionSummaries) — served fresh, never persisted. A
+      // child that fails to load (missing, or not this user's) keeps the
+      // stored summary.
+      const childIds = collectionChildIds(healedDocument);
+      const childDocuments = new Map(
+        await Promise.all(
+          childIds.map(async (childId) => {
+            const child = await getFirebaseTimelineDocument(childId, user.uid).catch(() => null);
+            return [childId, child] as const;
+          }),
+        ),
+      );
+      const derived = deriveCollectionSummaries(healedDocument, childDocuments);
+
+      return NextResponse.json({ document: derived.document });
     }
 
     const fallbackDocument = getTimelineDocument(id);

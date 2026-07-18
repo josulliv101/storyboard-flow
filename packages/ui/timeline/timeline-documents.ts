@@ -92,7 +92,9 @@ function createCollectionClip({
   };
 }
 
-function previewItemsFrom(clips: TimelineClip[]) {
+// Exported: server-side summary derivation (gstudio's timeline GET) must
+// produce byte-identical previews to this store's own recompute.
+export function previewItemsFrom(clips: TimelineClip[]) {
   const mediaClips = clips.filter(
     (clip) => clip.kind === "image" || clip.kind === "video",
   );

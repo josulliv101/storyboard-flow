@@ -39,6 +39,22 @@ export type GraphDocumentsGateway = Readonly<{
   /** Outstanding load/save failures, for a status banner. Null when every
    *  document is healthy; multiple failures are all listed. */
   lastError: () => string | null;
+  /**
+   * Send every debounce-pending write NOW. Called on pagehide/hidden (with
+   * keepalive, so the requests survive the tab closing) and before a
+   * refresh — closing the tab inside the debounce window must not lose the
+   * last edit.
+   */
+  flushPendingWrites: (options?: { keepalive?: boolean }) => void;
+  /**
+   * Entering the graph view calls this: every cached document is marked
+   * STALE, so `ensure` refetches it (after any in-flight save settles)
+   * instead of trusting the session cache. Without it, edits made in the
+   * storyboard view (or another tab) between graph sessions would be
+   * overwritten by the next full-document PATCH built from stale content.
+   * Cached content stays readable until the refetch lands.
+   */
+  refresh: () => void;
 }>;
 
 export function createGraphDocumentsGateway(): GraphDocumentsGateway {
@@ -50,6 +66,15 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   let errorBanner: string | null = null;
   const inflight = new Map<string, Promise<TimelineDocument | null>>();
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Writes are SERIALIZED per document: at most one PATCH in flight, and a
+  // write requested meanwhile is queued to run after it — always carrying
+  // the LATEST cached document. Without this, an older in-flight PATCH
+  // could reach the server after a newer one and win.
+  const savesInFlight = new Map<string, Promise<void>>();
+  const saveQueued = new Set<string>();
+  // Ids whose cached content predates the current graph session (see
+  // `refresh`): readable, but `ensure` refetches them.
+  let staleIds = new Set<string>();
   const listeners = new Set<() => void>();
 
   const notify = () => {
@@ -100,13 +125,20 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     }
   };
 
-  const persist = (timelineId: string) => {
+  const persist = (timelineId: string, options?: { keepalive?: boolean }) => {
+    if (savesInFlight.has(timelineId)) {
+      saveQueued.add(timelineId);
+      return;
+    }
     const document = documents[timelineId];
     if (!document) return;
-    void fetch(`/api/timelines/${encodeURIComponent(timelineId)}`, {
+    const flight = fetch(`/api/timelines/${encodeURIComponent(timelineId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ document }),
+      // keepalive lets the request outlive an unloading page (pagehide
+      // flush). Not the default: keepalive bodies are capped (~64KB).
+      ...(options?.keepalive ? { keepalive: true } : {}),
     }).then(
       (response) => {
         if (!response.ok) {
@@ -122,19 +154,57 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
         );
       },
     );
+    savesInFlight.set(
+      timelineId,
+      flight.then(() => {
+        savesInFlight.delete(timelineId);
+        // Trailing write: edits that landed mid-flight go out now, from the
+        // latest cache.
+        if (saveQueued.delete(timelineId)) persist(timelineId);
+      }),
+    );
   };
+
+  const flushPendingWrites = (options?: { keepalive?: boolean }) => {
+    for (const [timelineId, timer] of [...saveTimers]) {
+      clearTimeout(timer);
+      saveTimers.delete(timelineId);
+      persist(timelineId, options);
+    }
+  };
+
+  if (typeof window !== "undefined") {
+    // Closing or backgrounding the tab inside the debounce window must not
+    // lose the last edit. pagehide is the unload signal; hidden visibility
+    // additionally covers mobile tab kills (and an early flush is harmless).
+    window.addEventListener("pagehide", () => flushPendingWrites({ keepalive: true }));
+    window.addEventListener("visibilitychange", () => {
+      if (window.document.visibilityState === "hidden") {
+        flushPendingWrites({ keepalive: true });
+      }
+    });
+  }
 
   return {
     read: () => documents,
     peek: (timelineId) => documents[timelineId] ?? null,
     ensure: (timelineId) => {
       const cached = documents[timelineId];
-      if (cached) return Promise.resolve(cached);
+      if (cached && !staleIds.has(timelineId)) return Promise.resolve(cached);
       const pending = inflight.get(timelineId);
       if (pending) return pending;
-      const request = fetchDocument(timelineId).finally(() => {
-        inflight.delete(timelineId);
-      });
+      // A stale doc may still have a save in flight (flushed on refresh) —
+      // fetching before it settles would read the pre-save server state.
+      const settled = savesInFlight.get(timelineId) ?? Promise.resolve();
+      const request = settled
+        .then(() => fetchDocument(timelineId))
+        .then((document) => {
+          if (document !== null) staleIds.delete(timelineId);
+          return document;
+        })
+        .finally(() => {
+          inflight.delete(timelineId);
+        });
       inflight.set(timelineId, request);
       return request;
     },
@@ -160,6 +230,11 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       };
     },
     lastError: () => errorBanner,
+    flushPendingWrites,
+    refresh: () => {
+      flushPendingWrites();
+      staleIds = new Set(Object.keys(documents));
+    },
   };
 }
 
