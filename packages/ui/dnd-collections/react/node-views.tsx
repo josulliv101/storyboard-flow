@@ -16,6 +16,10 @@ import {
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
 import { DefaultItemContent } from "./default-item-content";
+import {
+  handleSelectionSurfaceClick,
+  useCollectionsInteractionPolicy,
+} from "./interaction-policy";
 import { roundSecondsForDisplay } from "./duration-format";
 import { TrimHandles } from "./trim-handles";
 
@@ -236,17 +240,35 @@ export const NodeCard = memo(function NodeCard({
     [setDraggableRef, setDroppableRef]
   );
 
+  const interactionPolicy = useCollectionsInteractionPolicy();
   const handleClick = useCallback(
     (event: MouseEvent) => {
-      if (event.ctrlKey || event.metaKey) store.toggleSelected(id);
-      else store.setSelection([id]);
+      // The selector above returns null only for a removed node — in which
+      // case this card is unmounting and no click can arrive; the guard is
+      // for the type.
+      const current = store.getSnapshot().graph.nodesById.get(id);
+      if (!current) return;
+      handleSelectionSurfaceClick({
+        event,
+        id,
+        node: current,
+        store,
+        policy: interactionPolicy,
+      });
     },
-    [store, id]
+    [store, id, interactionPolicy]
   );
 
   if (!node) return null;
 
   const isCollection = node.kind === "collection";
+  // Selection-gated trims: with `trimRequiresSelection`, handles (and the
+  // content's trimEnabled flag) exist only on the selected card — an
+  // unselected card's edges are plain card body.
+  const trimActive =
+    trimScale !== undefined &&
+    node.kind === "media" &&
+    (!interactionPolicy.trimRequiresSelection || isSelected);
 
   return (
     <div className={twMerge("group relative", className)} data-node-wrapper={id}>
@@ -300,7 +322,7 @@ export const NodeCard = memo(function NodeCard({
           // activation and onDragStart publishing the store's drag set.
           isDragSource={isDragging || isDragSource}
           dragActivation={dragActivation}
-          trimEnabled={trimScale !== undefined && node.kind === "media"}
+          trimEnabled={trimActive}
         />
       </button>
 
@@ -325,7 +347,7 @@ export const NodeCard = memo(function NodeCard({
         </button>
       )}
 
-      {trimScale !== undefined && node.kind === "media" && (
+      {trimActive && trimScale !== undefined && node.kind === "media" && (
         <TrimHandles node={node} pixelsPerSecond={trimScale} selected={isSelected} />
       )}
 

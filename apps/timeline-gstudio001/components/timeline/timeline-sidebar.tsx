@@ -105,12 +105,6 @@ function IconLink({
 
 const ITEMS: DraggableItem[] = [
   {
-    type: "timeline",
-    label: "Timeline",
-    description: "New timeline layer",
-    icon: Layers,
-  },
-  {
     type: "collection",
     label: "Collection",
     description: "Nested timeline beat",

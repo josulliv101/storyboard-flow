@@ -44,6 +44,13 @@ export type GraphDocumentsGateway = Readonly<{
    * batch. No-op for timelines the session hasn't loaded.
    */
   writeClips: (timelineId: string, clips: TimelineClip[]) => void;
+  /**
+   * Insert a BRAND-NEW document into the cache (a collection minted
+   * client-side, e.g. a sidebar-tool drop) with an expected revision of 0 —
+   * the first write is a compare-and-set CREATE, so it can never clobber a
+   * document that turns out to exist. No-op when the id is already cached.
+   */
+  seed: (document: TimelineDocument) => void;
   /** Cache-change notifications (documents landing, clips written). */
   subscribe: (listener: () => void) => () => void;
   /** Outstanding load/save failures, for a status banner. Null when every
@@ -314,6 +321,15 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       notify();
       dirtyIds.add(timelineId);
       scheduleFlush();
+    },
+    seed: (document) => {
+      if (documents[document.id]) return;
+      documents = { ...documents, [document.id]: document };
+      // Expectation 0: the batch write that first persists this document is
+      // a compare-and-set CREATE — a same-id document appearing on the
+      // server meanwhile conflicts instead of being overwritten.
+      revisions.set(document.id, 0);
+      notify();
     },
     subscribe: (listener) => {
       listeners.add(listener);

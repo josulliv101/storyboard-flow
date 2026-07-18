@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useContext, useEffect, useMemo, type MutableRefObject } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -20,10 +20,18 @@ export const GraphViewNavContext = createContext<GraphViewNav | null>(null);
 export function GraphViewNavProvider({
   projectId,
   focusedId,
+  openNodeRef,
   children,
 }: Readonly<{
   projectId: string;
   focusedId: string;
+  /**
+   * Written with the latest openTimeline. The provider-level click-to-open
+   * callback (the `onOpenNode` prop on <DndCollections>) is registered ABOVE
+   * the engine provider, where this component's store isn't reachable — the
+   * ref is the seam that hands it the current focus logic.
+   */
+  openNodeRef?: MutableRefObject<(nodeId: NodeId) => void>;
   children: React.ReactNode;
 }>) {
   const router = useRouter();
@@ -56,6 +64,10 @@ export function GraphViewNavProvider({
     }),
     [detailsStore, focusedId, projectId, router, store],
   );
+
+  useEffect(() => {
+    if (openNodeRef) openNodeRef.current = value.openTimeline;
+  }, [openNodeRef, value]);
 
   return <GraphViewNavContext.Provider value={value}>{children}</GraphViewNavContext.Provider>;
 }

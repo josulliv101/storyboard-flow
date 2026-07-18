@@ -372,6 +372,35 @@ Everything semantic happens in `core/`.
   dimmed; the `DragOverlay` ghost carries a "+N" badge. The reducer sorts
   the set into document order and prunes ids whose ancestor is also moving.
 
+## Click arbitration and the interaction policy
+
+A card's `onClick` only ever sees the residue the gesture pipeline leaves
+behind, and three mechanisms guarantee it:
+
+- **An activated drag suppresses its trailing click.** dnd-kit adds a
+  capture-phase document click listener the moment activation constraints
+  are met — including a press-and-hold grab released WITHOUT moving, so
+  "click-and-hold" is cleanly distinct from "click".
+- **A pan squashes its own click** (`use-pan-with-momentum`): after a real
+  pan, a one-shot capture listener eats the click inside the container.
+- **The pan captures the pointer only once the press BECOMES a pan** (past
+  the slop). Capturing at pointerdown retargets pointerup to the container,
+  and the browser then fires the compatibility click at the container
+  instead of the pressed card — which silently ate every stationary card
+  click on pannable surfaces. (This exact bug shipped; the graph view's
+  e2e interaction-model test guards it with trusted input.)
+
+What the surviving click MEANS is the provider-level interaction policy
+(`react/interaction-policy.ts`, configured via `clickSelection` /
+`onOpenNode` / `openOnClick` / `trimRequiresSelection` on
+`<DndCollections>`): replace-or-toggle selection, click-to-open for
+collections (pointer clicks only — keyboard Space always selects, so the
+grammar below is untouched; Ctrl/Cmd+click always selection-toggles, which
+is also how open-targets join a multi-drag), and selection-gated trim
+handles. One shared grammar covers both card shells (`NodeCard` and the
+`CollectionItem` primitives); coverage lives in
+`InteractionPolicy.stories.tsx`.
+
 ## Keyboard: two coexisting systems
 
 - dnd-kit's `KeyboardSensor` is restricted to **Enter** to grab/drop (arrows

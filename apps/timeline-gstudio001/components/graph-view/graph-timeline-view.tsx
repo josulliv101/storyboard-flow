@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -13,8 +14,10 @@ import {
 import {
   DndCollections,
   buildGraph,
+  type CollectionItemNode,
   type CollectionsGraph,
   type GraphNodeSpec,
+  type NodeId,
 } from "@storyboard/ui/dnd-collections";
 import { buildHydrationSpecs, type ClipDetail } from "@storyboard/timeline-domain";
 
@@ -177,6 +180,23 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
     setSyncLog((log) => [entry, ...log].slice(0, 6));
   }, []);
 
+  // Click-to-open (the pointer twin of the O key): the provider's
+  // onOpenNode fires on a plain click on an open-target card — after the
+  // package's gesture arbitration, so a drag, a hold-grab, or a pan never
+  // opens. The actual focus logic lives in GraphViewNavProvider (it needs
+  // the engine store, which only exists INSIDE <DndCollections>), so it
+  // registers itself into this ref.
+  const openNodeRef = useRef<(nodeId: NodeId) => void>(() => {});
+  const handleOpenNode = useCallback((nodeId: NodeId) => openNodeRef.current(nodeId), []);
+  // Collections open — and so do duplicate-reference cards (media cards
+  // standing in for a timeline referenced twice; same set the O key uses).
+  const openOnClick = useCallback(
+    (nodeId: NodeId, node: CollectionItemNode) =>
+      node.kind === "collection" ||
+      detailsStore.get(nodeId as string)?.duplicateOfTimelineId !== undefined,
+    [detailsStore],
+  );
+
   if (boot.status === "loading") {
     return (
       <div className="grid gap-3" aria-label="Loading graph view">
@@ -215,6 +235,15 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
         initialGraph={boot.graph}
         components={GRAPH_VIEW_COMPONENTS}
         maxHistoryEntries={200}
+        // The interaction model: click toggles a clip's selection (trim
+        // handles exist only while selected), click on a collection or
+        // duplicate-reference card drills in, Ctrl/Cmd+click multi-selects,
+        // press-and-hold drags — the package's arbitration keeps the four
+        // from ever colliding.
+        clickSelection="toggle"
+        trimRequiresSelection
+        onOpenNode={handleOpenNode}
+        openOnClick={openOnClick}
       >
         <GraphDetailsProvider store={detailsStore}>
           <PersistenceBridge onSync={onSync} />
@@ -226,7 +255,11 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
             onFocusError={setFocusError}
           />
 
-          <GraphViewNavProvider projectId={projectId} focusedId={focusedId}>
+          <GraphViewNavProvider
+            projectId={projectId}
+            focusedId={focusedId}
+            openNodeRef={openNodeRef}
+          >
             {focusError !== null ? (
               <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-300">
                 <p className="font-semibold text-zinc-100">Unknown timeline</p>

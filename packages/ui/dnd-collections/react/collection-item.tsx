@@ -25,6 +25,10 @@ import { encodeDropTarget } from "../core/intents";
 import { finitePositiveOrUndefined } from "../core/numeric";
 import { useCollectionsSelector, useCollectionsStore } from "./collections-store";
 import { useCollectionsContainer } from "./container-context";
+import {
+  handleSelectionSurfaceClick,
+  useCollectionsInteractionPolicy,
+} from "./interaction-policy";
 import { NodeCardIndicators } from "./node-views";
 import { resolveTrim, useTrimPointerDrag, type TrimSide } from "./trim-gesture";
 
@@ -169,12 +173,21 @@ const Root = memo(function CollectionItemRoot({
     [setDraggableRef, setDroppableRef]
   );
 
+  const interactionPolicy = useCollectionsInteractionPolicy();
   const select = useCallback(
     (event: MouseEvent) => {
-      if (event.ctrlKey || event.metaKey) store.toggleSelected(id);
-      else store.setSelection([id]);
+      // Same click grammar as NodeCard — one policy for both shells.
+      const current = store.getSnapshot().graph.nodesById.get(id);
+      if (!current) return;
+      handleSelectionSurfaceClick({
+        event,
+        id,
+        node: current,
+        store,
+        policy: interactionPolicy,
+      });
     },
-    [store, id]
+    [store, id, interactionPolicy]
   );
 
   const dragSource = isDragging || isDragSource;
@@ -297,6 +310,7 @@ const TrimHandle = memo(function CollectionItemTrimHandle({
   className?: string;
 }) {
   const ctx = useCollectionItemContext("TrimHandle");
+  const interactionPolicy = useCollectionsInteractionPolicy();
   // Hooks run unconditionally; the render below bails for non-trimmable
   // configurations. The cast is safe: beginDrag is only reachable from a
   // rendered handle, which requires a media node.
@@ -317,7 +331,10 @@ const TrimHandle = memo(function CollectionItemTrimHandle({
   if (
     node.kind !== "media" ||
     trimScale === undefined ||
-    (side === "left" && node.mediaKind !== "video")
+    (side === "left" && node.mediaKind !== "video") ||
+    // Selection-gated trims: the handle (hit zone included) exists only on
+    // the selected item — same policy as NodeCard's stock handles.
+    (interactionPolicy.trimRequiresSelection && !ctx.selected)
   ) {
     return null;
   }

@@ -559,9 +559,9 @@ test.describe("graph view E2E", () => {
     // Drill-in RESETS the persistent preview clock: the layout (and with it
     // the time channel) survives navigation, but a different focused
     // timeline is a different clock — without the reset the transport would
-    // park at "long-timeline-time / short-timeline-duration".
+    // park at "long-timeline-time / short-timeline-duration". A plain click
+    // on the collection card drills (the interaction model's pointer path).
     await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).click();
-    await page.keyboard.press("o");
     await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
     await expect.poll(translateX).toBeLessThan(20);
   });
@@ -684,12 +684,146 @@ test.describe("graph view E2E", () => {
     await openGraph(page);
     await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
 
-    // Click selects and focuses the card (no drag: item drags need a hold);
-    // "O" is the keyboard twin of the double-click open.
-    await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).click();
+    // Keyboard-pure path: FOCUS the card (a click would drill immediately
+    // now — the pointer twin below) and press the open key.
+    await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).focus();
     await page.keyboard.press("o");
 
     await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+  });
+
+  test("interaction model: click toggles selection + trim handles, hold-grab release does neither, collection click drills", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
+
+    // bravo is an IMAGE: selected images grow exactly ONE handle (the end
+    // edge) — a video would grow two.
+    const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
+    const bravoWrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="bravo"]');
+
+    // Unselected media: no trim handles — the edges are plain card body.
+    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(0);
+
+    // A real click toggles selection ON, and the handle grows in. (Retried:
+    // under CI load a press can outlast the 250ms hold threshold, becoming a
+    // hold-grab whose click is — correctly — suppressed.)
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(1);
+
+    // Press-and-hold released IN PLACE is a grab, not a click: the trailing
+    // click is suppressed, so the selection (and handles) stay put.
+    const box = (await bravo.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(400); // past the 250ms hold activation
+    await page.mouse.up();
+    await expect(bravo).toHaveAttribute("data-selected", "true");
+    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(1);
+
+    // Click again: toggles OFF, handles gone. (Same accidental-hold retry.)
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).not.toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(0);
+
+    // A plain click on a collection card DRILLS IN (the pointer twin of O).
+    await expect(async () => {
+      await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).click();
+      await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 3000 });
+    }).toPass({ timeout: 15000 });
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+  });
+
+  test("native drops: sidebar tools and OS files land as nodes and persist", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    let uploads = 0;
+    await page.route("**/api/timeline-media/upload", (route) => {
+      uploads += 1;
+      return route.fulfill({
+        json: { pathname: `upload-${uploads}.png`, url: PIXEL, thumbnailUrl: PIXEL },
+      });
+    });
+    await openGraph(page);
+    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
+
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+
+    // 1) Sidebar IMAGE tool: mints a placeholder image clip at the drop
+    //    position (clientX 0 = before the first card).
+    const toolTransfer = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.setData("application/x-gstudio-type", "image");
+      return transfer;
+    });
+    await dropZone.dispatchEvent("drop", { dataTransfer: toolTransfer, clientX: 0 });
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual([
+        expect.stringMatching(/^image-/),
+        "alpha",
+        "bravo",
+        CHILD_ID,
+        "charlie",
+      ]);
+
+    // 2) Sidebar COLLECTION tool: mints a new collection AND creates its
+    //    (empty) child document in the SAME atomic batch as the parent
+    //    update — a drill-in can never 404 on a half-created collection.
+    const collectionTransfer = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.setData("application/x-gstudio-type", "collection");
+      return transfer;
+    });
+    await dropZone.dispatchEvent("drop", { dataTransfer: collectionTransfer, clientX: 0 });
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order[0]))
+      .toMatch(/^timeline-/);
+    await expect
+      .poll(
+        () =>
+          api.patches.find((patch) => /^timeline-/.test(patch.id) && patch.clipIds.length === 0)
+            ?.id ?? null,
+        { timeout: 5000 },
+      )
+      .not.toBeNull();
+    const newChildId = api.patches.find((patch) => /^timeline-/.test(patch.id))!.id;
+    expect(
+      api.batches.some((batch) => batch.includes(newChildId) && batch.includes(PROJECT_ID)),
+    ).toBe(true);
+
+    // 3) OS FILE drop, several at once: both upload and land as ONE commit.
+    const fileTransfer = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array([137, 80, 78, 71])], "photo-a.png", { type: "image/png" }));
+      transfer.items.add(new File([new Uint8Array([137, 80, 78, 71])], "photo-b.png", { type: "image/png" }));
+      return transfer;
+    });
+    await dropZone.dispatchEvent("drop", { dataTransfer: fileTransfer, clientX: 0 });
+    // 4 fixture clips + image tool + collection tool + 2 files = 8.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length), { timeout: 10000 })
+      .toBe(8);
+    expect(uploads).toBe(2);
+
+    // Both files persisted into the project document in one write.
+    await expect
+      .poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds.length, { timeout: 5000 })
+      .toBe(8);
+
+    // The whole file drop is ONE undoable step.
+    await undoButton(page).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
+      .toBe(6);
   });
 });

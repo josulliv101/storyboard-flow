@@ -326,6 +326,26 @@ describe("graph-documents-gateway", () => {
     expect(gateway.lastError()).toBeNull();
   });
 
+  it("seed makes a client-minted document writable with a compare-and-set create", async () => {
+    const calls = installFetch((call) =>
+      call.method === "POST" ? okResults(call.writes) : jsonResponse({}, 404),
+    );
+    const gateway = createGraphDocumentsGateway();
+
+    gateway.seed(doc("fresh"));
+    expect(clipIds(gateway.peek("fresh"))).toEqual([]);
+
+    gateway.writeClips("fresh", [clip("f1")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    const batch = batchesOf(calls)[0];
+    expect(batch.writes?.[0].expectedRevision).toBe(0); // CAS create
+    expect(clipIds(batch.writes?.[0].document)).toEqual(["f1"]);
+
+    // Seeding never clobbers an existing cache entry.
+    gateway.seed({ ...doc("fresh"), title: "Other" });
+    expect(gateway.peek("fresh")?.title).toBe("Timeline fresh");
+  });
+
   it("keeps per-document errors: one document's success does not clear another's failure", async () => {
     let aFails = true;
     const calls = installFetch((call) => {

@@ -16,7 +16,7 @@ import {
 import { collectReachableDetailIds } from "@/lib/graph-details-store";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
-import { claimPendingPaletteDetails } from "./graph-asset-palette";
+import { claimPendingPaletteDetails } from "./graph-pending-details";
 import { useGraphDetailsStore } from "./graph-details-context";
 
 export type SyncEntry = Readonly<{
