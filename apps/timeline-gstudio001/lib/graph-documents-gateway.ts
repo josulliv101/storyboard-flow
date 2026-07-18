@@ -27,6 +27,14 @@ import type { DocumentsById } from "@storyboard/timeline-domain";
 
 const SAVE_DEBOUNCE_MS = 900;
 
+/** A server-read document + revision, delivered by RSC (layout bootstrap /
+ *  focus-path streams) and fed to `prime`. Defined HERE (client-safe) so
+ *  the server-only loader module and the client share one shape. */
+export type GraphServerPayload = Readonly<{
+  document: TimelineDocument;
+  revision: number;
+}>;
+
 export type GraphDocumentsGateway = Readonly<{
   /** Snapshot of every document the session has loaded or written. */
   read: () => DocumentsById;
@@ -51,6 +59,15 @@ export type GraphDocumentsGateway = Readonly<{
    * document that turns out to exist. No-op when the id is already cached.
    */
   seed: (document: TimelineDocument) => void;
+  /**
+   * Best-effort cache refresh from a SERVER-read payload (RSC bootstrap /
+   * focus-path streams): installs the document and its revision so `ensure`
+   * needs no fetch and the next write carries the right expectation.
+   * Guarded — never applied over local edits (dirty, or any batch in
+   * flight) and never regressing the revision ledger; a skipped prime just
+   * leaves the existing fetch paths to do their job.
+   */
+  prime: (document: TimelineDocument, revision: number) => void;
   /** Cache-change notifications (documents landing, clips written). */
   subscribe: (listener: () => void) => () => void;
   /** Outstanding load/save failures, for a status banner. Null when every
@@ -338,6 +355,25 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       // a compare-and-set CREATE — a same-id document appearing on the
       // server meanwhile conflicts instead of being overwritten.
       revisions.set(document.id, 0);
+      notify();
+    },
+    prime: (document, revision) => {
+      const timelineId = document.id;
+      // Local edits win: a dirty document (or any batch mid-flight, whose
+      // write set isn't inspectable here) must not be replaced by a server
+      // read that predates it.
+      if (dirtyIds.has(timelineId) || saveInFlight !== null) return;
+      const known = revisions.get(timelineId);
+      if (known !== undefined && revision < known) return;
+      if (documents[timelineId] !== undefined && known === revision) {
+        // Same version already cached — just confirm freshness.
+        staleIds.delete(timelineId);
+        return;
+      }
+      documents = { ...documents, [timelineId]: document };
+      revisions.set(timelineId, revision);
+      staleIds.delete(timelineId);
+      setError(timelineId, null);
       notify();
     },
     subscribe: (listener) => {

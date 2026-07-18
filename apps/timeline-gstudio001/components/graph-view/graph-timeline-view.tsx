@@ -23,7 +23,10 @@ import { buildHydrationSpecs, type ClipDetail } from "@storyboard/timeline-domai
 
 import { useAuth } from "@/components/auth/auth-provider";
 import { createGraphDetailsStore } from "@/lib/graph-details-store";
-import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+import {
+  graphDocumentsGateway,
+  type GraphServerPayload,
+} from "@/lib/graph-documents-gateway";
 import { GRAPH_ASSETS_TOGGLE_EVENT } from "@/lib/graph-view-events";
 
 import { AssetPaletteDrawer } from "./graph-asset-palette";
@@ -54,7 +57,15 @@ type BootState =
  * Session orchestration for the graph route. Feature behavior lives in the
  * sibling graph-* modules; this root owns only boot data and durable view state.
  */
-export function GraphTimelineView({ projectId }: { projectId: string }) {
+export function GraphTimelineView({
+  projectId,
+  bootstrap,
+}: {
+  projectId: string;
+  /** Server-read boot payloads (RSC layout). Null = no session at render
+   *  time; the legacy fetch boot covers it. */
+  bootstrap?: readonly GraphServerPayload[] | null;
+}) {
   const pathname = usePathname();
   const base = `/timeline/${encodeURIComponent(projectId)}/graph`;
   const timelinePath = useMemo(
@@ -94,10 +105,30 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
   const { user } = useAuth();
   const trashDocumentId = user ? `trash-${user.uid}` : null;
 
+  // RSC payloads prime the gateway on EVERY layout render (each navigation
+  // re-serves fresh boot documents server-side — a free freshness signal).
+  // Priming is guarded inside the gateway: never over local edits, never
+  // regressing the revision ledger. Declared BEFORE the boot effect so a
+  // first-render bootstrap is in the cache when boot runs.
+  useEffect(() => {
+    for (const payload of bootstrap ?? []) {
+      graphDocumentsGateway.prime(payload.document, payload.revision);
+    }
+  }, [bootstrap]);
+  // Whether THIS mount booted from server payloads — captured once: the
+  // boot effect must not re-run when later layout renders replace the
+  // bootstrap array's identity.
+  const [bootedFromServer] = useState(
+    () => bootstrap !== null && bootstrap !== undefined && bootstrap.length > 0,
+  );
+
   useEffect(() => {
     if (trashDocumentId === null) return;
 
-    graphDocumentsGateway.refresh();
+    // A server-primed boot IS fresh — re-marking the cache stale would just
+    // refetch what the layout already read. The legacy path keeps its
+    // don't-trust-the-session-cache refresh.
+    if (!bootedFromServer) graphDocumentsGateway.refresh();
     let cancelled = false;
     void (async () => {
       const [projectDocument, trashDocument] = await Promise.all([
@@ -174,7 +205,7 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [projectId, trashDocumentId, detailsStore]);
+  }, [projectId, trashDocumentId, detailsStore, bootedFromServer]);
 
   const onSync = useCallback((entry: SyncEntry) => {
     setSyncLog((log) => [entry, ...log].slice(0, 6));

@@ -361,6 +361,51 @@ describe("graph-documents-gateway", () => {
     expect(gateway.peek("fresh")?.title).toBe("Timeline fresh");
   });
 
+  it("prime installs a server payload so ensure needs no fetch and writes carry its revision", async () => {
+    const calls = installFetch((call) =>
+      call.method === "POST" ? okResults(call.writes) : jsonResponse({}, 500),
+    );
+    const gateway = createGraphDocumentsGateway();
+
+    gateway.prime(doc("a", [clip("server-1")]), 7);
+    // Served straight from cache — no GET.
+    expect(clipIds(await gateway.ensure("a"))).toEqual(["server-1"]);
+    expect(getsOf(calls)).toHaveLength(0);
+
+    gateway.writeClips("a", [clip("a2")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)[0].writes?.[0].expectedRevision).toBe(7);
+  });
+
+  it("prime never applies over local edits or a regressed revision", async () => {
+    const calls = installFetch((call) =>
+      call.method === "POST"
+        ? okResults(call.writes)
+        : jsonResponse({ document: doc("a", [clip("a1")]), revision: 5 }),
+    );
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    // Older server read: the ledger (5) wins.
+    gateway.prime(doc("a", [clip("older")]), 3);
+    expect(clipIds(gateway.peek("a"))).toEqual(["a1"]);
+
+    // A dirty document is a local edit in flight to the server — a fresh
+    // server read must not clobber it.
+    gateway.writeClips("a", [clip("local")]);
+    gateway.prime(doc("a", [clip("newer")]), 9);
+    expect(clipIds(gateway.peek("a"))).toEqual(["local"]);
+
+    // Same-revision confirm on a clean cache: the cached content (which IS
+    // that server revision — our own accepted write) stays, staleness
+    // clears, and no refetch happens.
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS); // flush the write → revision 6
+    gateway.refresh(); // marks stale
+    gateway.prime(doc("a", [clip("server-echo")]), 6);
+    expect(clipIds(await gateway.ensure("a"))).toEqual(["local"]);
+    expect(getsOf(calls)).toHaveLength(1); // only the original seed GET
+  });
+
   it("keeps per-document errors: one document's success does not clear another's failure", async () => {
     let aFails = true;
     const calls = installFetch((call) => {

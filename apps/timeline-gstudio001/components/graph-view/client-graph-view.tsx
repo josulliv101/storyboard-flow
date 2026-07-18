@@ -2,6 +2,8 @@
 
 import dynamic from "next/dynamic";
 
+import type { GraphServerPayload } from "@/lib/graph-documents-gateway";
+
 const GraphTimelineView = dynamic(
   () => import("./graph-timeline-view").then((module) => module.GraphTimelineView),
   {
@@ -16,6 +18,13 @@ const GraphTimelineView = dynamic(
   },
 );
 
-export function ClientGraphView({ projectId }: { projectId: string }) {
-  return <GraphTimelineView projectId={projectId} />;
+export function ClientGraphView({
+  projectId,
+  bootstrap,
+}: {
+  projectId: string;
+  /** Server-read boot documents (RSC layout) — null without a session. */
+  bootstrap?: readonly GraphServerPayload[] | null;
+}) {
+  return <GraphTimelineView projectId={projectId} bootstrap={bootstrap ?? null} />;
 }

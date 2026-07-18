@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import type { TimelineDocument, TimelineClip } from "@storyboard/timeline-model/types";
 import {
   getFirebaseTimelineDocument,
-  getFirebaseTimelineEntry,
   saveFirebaseTimelineEntry,
   deleteFirebaseTimelineDocument,
 } from "@/lib/firebase-timeline-store";
@@ -18,11 +17,7 @@ import {
 // package's fixture set, not model logic.
 import { getTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
 import { listCloudinaryAssets } from "@/lib/cloudinary-media-store";
-import {
-  collectionChildIds,
-  deriveCollectionSummaries,
-} from "@/lib/derive-collection-summaries";
-import { healTimelineDocument } from "@/lib/heal-timeline-document";
+import { serveTimelineDocument, serveTrashDocument } from "@/lib/serve-timeline";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
 export const runtime = "nodejs";
@@ -82,14 +77,8 @@ export async function GET(
     if (mismatch) return mismatch;
 
     if (id.startsWith("trash-")) {
-      const entry = await getFirebaseTimelineEntry(id, user.uid);
-      const doc: TimelineDocument = entry?.document || {
-        id,
-        title: "Trash Bin",
-        clips: [],
-      };
-      // revision 0 = not stored yet; a batch write expecting 0 creates it.
-      return NextResponse.json({ document: doc, revision: entry?.revision ?? 0 });
+      const trash = await serveTrashDocument(id, user.uid);
+      return NextResponse.json({ document: trash.document, revision: trash.revision });
     }
 
     if (!isValidTimelineId(id)) {
@@ -252,42 +241,11 @@ export async function GET(
       });
     }
 
-    const entry = await getFirebaseTimelineEntry(id, user.uid);
-    if (entry) {
-      // Load-time self-heal: re-point moved/renamed Cloudinary assets AND
-      // backfill real video durations onto untrimmed clips (see
-      // healTimelineDocument). Persisted only when something actually changed.
-      const cloudinaryAssets = await listCloudinaryAssets(user.uid).catch(() => []);
-      const { document: healedDocument, changed } = healTimelineDocument(
-        entry.document,
-        cloudinaryAssets,
-      );
-
-      // The served revision must reflect the heal write (it bumps the
-      // counter) or the client's first expected-revision write would
-      // conflict spuriously.
-      let revision = entry.revision;
-      if (changed) {
-        const saved = await saveFirebaseTimelineEntry(healedDocument, user.uid).catch(() => null);
-        if (saved) revision = saved.revision;
-      }
-
-      // Collection summaries derive from the CHILD documents at read time
-      // (see deriveCollectionSummaries) — served fresh, never persisted. A
-      // child that fails to load (missing, or not this user's) keeps the
-      // stored summary.
-      const childIds = collectionChildIds(healedDocument);
-      const childDocuments = new Map(
-        await Promise.all(
-          childIds.map(async (childId) => {
-            const child = await getFirebaseTimelineDocument(childId, user.uid).catch(() => null);
-            return [childId, child] as const;
-          }),
-        ),
-      );
-      const derived = deriveCollectionSummaries(healedDocument, childDocuments);
-
-      return NextResponse.json({ document: derived.document, revision });
+    // Heal + read-time summary derivation live in lib/serve-timeline — the
+    // ONE serve path this route shares with the RSC payload loaders.
+    const served = await serveTimelineDocument(id, user.uid);
+    if (served) {
+      return NextResponse.json({ document: served.document, revision: served.revision });
     }
 
     const fallbackDocument = getTimelineDocument(id);
