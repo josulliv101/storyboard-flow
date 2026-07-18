@@ -1,7 +1,11 @@
 import {
-  CLIP_GAP_SECONDS,
   TIMELINE_LEADING_PADDING_SECONDS,
-} from "./constants";
+  cloneTimelineClip,
+  cloneTimelineDocument,
+  packTimelineClips,
+  previewItemsFrom,
+} from "@storyboard/timeline-model";
+
 import { createInitialClips } from "./hooks/use-timeline-clips";
 import type {
   CollectionTimelineClip,
@@ -9,6 +13,22 @@ import type {
   TimelineClip,
   TimelineDocument,
 } from "./types";
+
+// The pure model functions moved to @storyboard/timeline-model (framework-
+// free, shared with the server routes and the graph adapter). Re-exported
+// here so every existing "@storyboard/ui/timeline/timeline-documents"
+// import keeps working; this module keeps the demo fixtures and the
+// documents-state store built on top of them.
+export {
+  cloneTimelineClip,
+  cloneTimelineDocument,
+  decodeFolderPath,
+  encodeFolderPath,
+  getFolderPathFromTimelineId,
+  isUnsavedProjectPlaceholder,
+  packTimelineClips,
+  previewItemsFrom,
+} from "@storyboard/timeline-model";
 
 function clamp(val: number, min: number, max: number) {
   return Math.min(Math.max(val, min), max);
@@ -90,60 +110,6 @@ function createCollectionClip({
     trimIn: 0,
     trimOut: 0,
   };
-}
-
-// Exported: server-side summary derivation (gstudio's timeline GET) must
-// produce byte-identical previews to this store's own recompute.
-export function previewItemsFrom(clips: TimelineClip[]) {
-  const mediaClips = clips.filter(
-    (clip) => clip.kind === "image" || clip.kind === "video",
-  );
-  const previewClips =
-    mediaClips.length <= 3
-      ? mediaClips
-      : [
-          mediaClips[0],
-          mediaClips[Math.floor(mediaClips.length / 2)],
-          mediaClips[mediaClips.length - 1],
-        ];
-
-  return previewClips.map((clip) => ({
-    id: clip.id,
-    kind: clip.kind,
-    src: clip.src,
-    poster: clip.poster,
-    alt: clip.alt,
-  }));
-}
-
-export function packTimelineClips(clips: TimelineClip[]) {
-  let nextStartTime = TIMELINE_LEADING_PADDING_SECONDS;
-
-  return clips.map((clip, index) => {
-    const nextClip = {
-      ...clip,
-      index,
-      startTime: nextStartTime,
-    };
-    nextStartTime += nextClip.duration + CLIP_GAP_SECONDS;
-    return nextClip;
-  });
-}
-
-export function cloneTimelineDocument(document: TimelineDocument): TimelineDocument {
-  return JSON.parse(JSON.stringify(document)) as TimelineDocument;
-}
-
-export function cloneTimelineClip(clip: TimelineClip): TimelineClip {
-  return JSON.parse(JSON.stringify(clip)) as TimelineClip;
-}
-
-export function isUnsavedProjectPlaceholder(document: TimelineDocument) {
-  return (
-    document.id.startsWith("project-") &&
-    document.title === "Loading Project" &&
-    document.clips.length === 0
-  );
 }
 
 const sceneADetailsClips = createMediaClips("scene-a-details", 18);
@@ -866,48 +832,3 @@ export function getChangedTimelineDocumentIds(
 }
 
 export { persistTimelineDocument };
-
-export function encodeFolderPath(folderPath: string): string {
-  if (typeof Buffer !== "undefined") {
-    return Buffer.from(folderPath, "utf-8")
-      .toString("base64")
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-  }
-  const base64 = btoa(encodeURIComponent(folderPath).replace(/%([0-9A-F]{2})/g, (match, p1) => {
-    return String.fromCharCode(parseInt(p1, 16));
-  }));
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-export function decodeFolderPath(encoded: string): string {
-  let base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
-  while (base64.length % 4) {
-    base64 += "=";
-  }
-  if (typeof Buffer !== "undefined") {
-    return Buffer.from(base64, "base64").toString("utf-8");
-  }
-  return decodeURIComponent(
-    Array.prototype.map
-      .call(atob(base64), (c: string) => {
-        return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
-      })
-      .join("")
-  );
-}
-
-export function getFolderPathFromTimelineId(id: string, userId: string): string {
-  if (id === `asset-library-${userId}`) return "";
-  const prefix = `asset-library-col-${userId}-`;
-  if (id.startsWith(prefix)) {
-    const encoded = id.slice(prefix.length);
-    try {
-      return decodeFolderPath(encoded);
-    } catch {
-      return "";
-    }
-  }
-  return "";
-}

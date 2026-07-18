@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  transpilePackages: ["@storyboard/ui"],
+  transpilePackages: ["@storyboard/ui", "@storyboard/timeline-model", "@storyboard/collections-core"],
   images: {
     remotePatterns: [
       {

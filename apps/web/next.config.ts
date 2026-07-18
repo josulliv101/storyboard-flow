@@ -24,7 +24,7 @@ const nextConfig: NextConfig = {
     ],
   },
   output: 'standalone',
-  transpilePackages: ['motion', '@storyboard/ui', '@storyboard/db'],
+  transpilePackages: ['motion', '@storyboard/ui', '@storyboard/db', '@storyboard/timeline-model', '@storyboard/collections-core'],
   experimental: {
     webpackMemoryOptimizations: true,
   },

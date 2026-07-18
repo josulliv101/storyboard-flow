@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
+import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 import { createGraphDocumentsGateway } from "./graph-documents-gateway";
 

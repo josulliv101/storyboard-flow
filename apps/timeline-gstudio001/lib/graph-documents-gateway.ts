@@ -1,4 +1,4 @@
-import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
+import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 import type { DocumentsById } from "@storyboard/timeline-domain";
 
 // The graph view's ONLY coupling to persistence: GET /api/timelines/[id]

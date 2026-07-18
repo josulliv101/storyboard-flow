@@ -13,7 +13,11 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@storyboard/ui/*": ["../ui/*"]
+      "@storyboard/ui/*": ["../ui/*"],
+      "@storyboard/collections-core": ["../collections-core/index.ts"],
+      "@storyboard/collections-core/*": ["../collections-core/*"],
+      "@storyboard/timeline-model": ["../timeline-model/index.ts"],
+      "@storyboard/timeline-model/*": ["../timeline-model/*"]
     }
   },
   "include": ["index.ts", "src/**/*.ts"],

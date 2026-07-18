@@ -6,9 +6,11 @@
   "types": "index.ts",
   "sideEffects": false,
   "dependencies": {
-    "@storyboard/ui": "*"
+    "@storyboard/collections-core": "*",
+    "@storyboard/timeline-model": "*"
   },
   "devDependencies": {
+    "@storyboard/ui": "*",
     "@types/node": "^20"
   }
 }

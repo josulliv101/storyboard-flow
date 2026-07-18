@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { CLIP_GAP_SECONDS } from "@storyboard/ui/timeline/constants";
-import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
+import { CLIP_GAP_SECONDS } from "@storyboard/timeline-model/constants";
+import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 import type { CloudinaryAsset } from "./cloudinary-media-store";
 import { healTimelineDocument } from "./heal-timeline-document";
