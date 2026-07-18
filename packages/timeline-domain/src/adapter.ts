@@ -60,7 +60,9 @@ export type ClipDetail = Readonly<{
   sourceDuration?: number;
   trimIn?: number;
   trimOut?: number;
-  /** Collection-only. */
+  /** The stored clip's own id, when it differs from the node id: every
+   *  collection clip (node id = childTimelineId), and any DEMOTED duplicate
+   *  media clip. The write path round-trips it. */
   sourceClipId?: string;
   itemCount?: number;
   previewItems?: CollectionTimelineClip["previewItems"];
@@ -153,9 +155,24 @@ function clipSpecs(
 ): GraphNodeSpec[] {
   return doc.clips.map((clip) => {
     if (clip.kind !== "collection") {
-      ctx.used.add(clip.id);
-      ctx.details[clip.id] = mediaDetail(clip);
-      return mediaSpec(clip);
+      let nodeId = clip.id;
+      if (ctx.used.has(nodeId)) {
+        // Duplicated media id: the legacy views mint STABLE per-asset clip
+        // ids, so the same asset placed in two documents (or twice in one)
+        // collides — and node ids must be graph-unique. Demote to a
+        // synthetic id, like duplicate collection references demote,
+        // instead of letting store.hydrate reject the whole payload (which
+        // silently blanked the collection). `sourceClipId` preserves the
+        // stored id, so the write path round-trips it unchanged.
+        nodeId = `dup:${doc.id}:${clip.id}`;
+        while (ctx.used.has(nodeId)) nodeId = `${nodeId}~`;
+      }
+      ctx.used.add(nodeId);
+      ctx.details[nodeId] =
+        nodeId === clip.id
+          ? mediaDetail(clip)
+          : { ...mediaDetail(clip), sourceClipId: clip.id };
+      return { ...mediaSpec(clip), id: nodeId };
     }
 
     const childId = clip.childTimelineId;
@@ -296,7 +313,8 @@ export function graphChildrenToClips(
       const duration = mediaDurationSeconds(node);
       nextStartTime += duration + CLIP_GAP_SECONDS;
       const base = {
-        id: node.id as string,
+        // A demoted duplicate (see clipSpecs) writes back its STORED id.
+        id: detail?.sourceClipId ?? (node.id as string),
         index,
         alt: detail?.alt ?? node.name,
         aspect: detail?.aspect ?? 16 / 9,

@@ -57,6 +57,15 @@ export type GraphDocumentsGateway = Readonly<{
    *  document is healthy; multiple failures are all listed. */
   lastError: () => string | null;
   /**
+   * Surface (or clear, with null) an app-reported problem in the same
+   * banner, under the caller's own key — e.g. hydration failures keyed
+   * `hydrate:<id>`, so they never collide with this gateway's own load/save
+   * errors for the same document. Exists because a swallowed failure once
+   * cost a debugging session: anything that leaves a document unusable must
+   * say so.
+   */
+  reportIssue: (key: string, message: string | null) => void;
+  /**
    * Send the pending batch NOW. Called on pagehide/hidden (with keepalive,
    * so the request survives the tab closing) and before a refresh — closing
    * the tab inside the debounce window must not lose the last edit.
@@ -338,6 +347,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       };
     },
     lastError: () => errorBanner,
+    reportIssue: (key, message) => setError(key, message),
     flushPendingWrites,
     refresh: () => {
       flushPendingWrites();

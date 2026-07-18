@@ -811,6 +811,38 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 
+  test("duplicate media ids across documents demote instead of blanking the collection", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    // The child document reuses the PROJECT's "alpha" clip id — the legacy
+    // views mint stable per-asset ids, so the same asset in two documents
+    // produces exactly this. Before demotion, hydrating the child failed
+    // wholesale and silently: the card said "3 items", the drill-in showed 0.
+    api.documents.get(CHILD_ID)!.clips.push(mediaClip("alpha", "image", 2, 4));
+
+    await openGraph(page);
+
+    // The child hydrates FULLY: its own clips plus the demoted duplicate.
+    await expect
+      .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
+      .toEqual(["c1", "c2", expect.stringMatching(/^dup:/)]);
+    // And no hydration error is on the banner.
+    await expect(page.getByText(/could not load its clips/)).toHaveCount(0);
+
+    // A reorder in the child persists the ORIGINAL stored id, not the
+    // demoted node id.
+    await holdDrag(
+      page,
+      strip(page, CHILD_ID).locator('[data-node-id="c1"]'),
+      strip(page, CHILD_ID).locator('[data-node-id="c2"]'),
+      0.85,
+    );
+    await expect
+      .poll(() => api.patchesFor(CHILD_ID).at(-1)?.clipIds, { timeout: 5000 })
+      .toEqual(["c2", "c1", "alpha"]);
+  });
+
   test("native drops: sidebar tools and OS files land as nodes and persist", async ({
     page,
   }) => {

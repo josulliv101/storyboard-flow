@@ -14,6 +14,7 @@ import {
   graphChildrenToClips,
 } from "./adapter";
 import {
+  buildGraph,
   findGraphInvariantViolation,
   getChildren,
   hydrateCollection,
@@ -422,5 +423,49 @@ describe("collectAffectedCollectionIds", () => {
         ],
       }),
     ).toEqual(["focus-root"]);
+  });
+});
+
+describe("duplicate media-id demotion", () => {
+  it("demotes a media id already used in the live graph, preserving the stored id", () => {
+    // "c-img" already exists elsewhere in the graph (legacy stable per-asset
+    // ids make this real data): the spec must NOT carry the colliding id —
+    // store.hydrate would reject the whole payload and blank the collection.
+    const payload = buildHydrationSpecs(DOCUMENTS, "child", 0, ["c-img"]);
+    if (!payload.ok) throw new Error(payload.error);
+
+    const specIds = payload.value.specs.map((spec) => spec.id);
+    expect(specIds).toEqual(["dup:child:c-img", "grandchild"]);
+    expect(payload.value.details["dup:child:c-img"]?.sourceClipId).toBe("c-img");
+    // Non-colliding details stay keyed by their own ids.
+    expect(payload.value.details["dup:child:c-img"]?.alt).toBe("c-img alt");
+  });
+
+  it("demotes the second occurrence when one document repeats a media id", () => {
+    const doubled: TimelineDocument = {
+      id: "doubled",
+      title: "Doubled",
+      clips: packTimelineClips([image("same", 2), image("same", 3)]),
+    };
+    const payload = buildHydrationSpecs({ doubled }, "doubled", 0);
+    if (!payload.ok) throw new Error(payload.error);
+
+    expect(payload.value.specs.map((spec) => spec.id)).toEqual(["same", "dup:doubled:same"]);
+    expect(payload.value.details["dup:doubled:same"]?.sourceClipId).toBe("same");
+  });
+
+  it("round-trips the ORIGINAL stored id through the write path", () => {
+    const payload = buildHydrationSpecs(DOCUMENTS, "child", 0, ["c-img"]);
+    if (!payload.ok) throw new Error(payload.error);
+    const built = buildGraph([
+      { kind: "collection", id: "host", name: "Host", children: [...payload.value.specs] },
+    ]);
+    if (!built.ok) throw new Error(JSON.stringify(built.error));
+
+    const clips = graphChildrenToClips(built.value, payload.value.details, "host");
+    // The demoted node writes back the stored clip id, and the collection
+    // reference keeps its own sourceClipId round-trip.
+    expect(clips.map((clip) => clip.id)).toEqual(["c-img", "c-nested-clip"]);
+    expect(clips[0].src).toBe("https://example.com/c-img.jpg");
   });
 });

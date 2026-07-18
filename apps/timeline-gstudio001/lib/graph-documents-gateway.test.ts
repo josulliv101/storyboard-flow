@@ -326,6 +326,21 @@ describe("graph-documents-gateway", () => {
     expect(gateway.lastError()).toBeNull();
   });
 
+  it("reportIssue surfaces app-reported problems in the banner without touching gateway errors", async () => {
+    installFetch(() => jsonResponse({ document: doc("a", [clip("a1")]), revision: 1 }));
+    const gateway = createGraphDocumentsGateway();
+
+    gateway.reportIssue("hydrate:a", 'Timeline "a" could not load its clips.');
+    expect(gateway.lastError()).toContain("could not load its clips");
+
+    // Clearing the app's key leaves the banner clean; clearing again is a
+    // no-op.
+    gateway.reportIssue("hydrate:a", null);
+    expect(gateway.lastError()).toBeNull();
+    gateway.reportIssue("hydrate:a", null);
+    expect(gateway.lastError()).toBeNull();
+  });
+
   it("seed makes a client-minted document writable with a compare-and-set create", async () => {
     const calls = installFetch((call) =>
       call.method === "POST" ? okResults(call.writes) : jsonResponse({}, 404),

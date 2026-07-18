@@ -16,6 +16,17 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { useGraphDetailsStore } from "./graph-details-context";
 import { FALLBACK_DETAIL } from "./graph-view-config";
 
+/** A hydration failure is a DOCUMENT problem the user must see — a silent
+ *  return here once left a collection showing "9 items" with an empty
+ *  drill-in for a whole debugging session. Keyed apart from the gateway's
+ *  own load/save errors for the same id. */
+function reportHydrationIssue(timelineId: string, message: string | null) {
+  graphDocumentsGateway.reportIssue(
+    `hydrate:${timelineId}`,
+    message === null ? null : `Timeline "${timelineId}" could not load its clips: ${message}`,
+  );
+}
+
 /** Fetch and hydrate one placeholder timeline, including its app-side detail entries. */
 export async function hydrateTimeline(
   store: CollectionsStore,
@@ -25,7 +36,7 @@ export async function hydrateTimeline(
   if (detailsStore.get(timelineId)?.hydrated === true) return;
 
   const document = await graphDocumentsGateway.ensure(timelineId);
-  if (!document) return;
+  if (!document) return; // the gateway surfaced the load failure itself
 
   const current = store.getSnapshot().graph;
   const collectionId = parseNodeId(timelineId);
@@ -33,7 +44,10 @@ export async function hydrateTimeline(
 
   if (getChildren(current, collectionId).length > 0) {
     const payload = buildHydrationSpecs(graphDocumentsGateway.read(), timelineId, 0);
-    if (!payload.ok) return;
+    if (!payload.ok) {
+      reportHydrationIssue(timelineId, payload.error);
+      return;
+    }
 
     const details = detailsStore.read();
     const merged: Record<string, ClipDetail> = {};
@@ -45,6 +59,7 @@ export async function hydrateTimeline(
     const own = details[timelineId];
     merged[timelineId] = own ? { ...own, hydrated: true } : { ...FALLBACK_DETAIL, hydrated: true };
     detailsStore.merge(merged);
+    reportHydrationIssue(timelineId, null);
     return;
   }
 
@@ -54,15 +69,22 @@ export async function hydrateTimeline(
     0,
     current.nodesById.keys(),
   );
-  if (!payload.ok) return;
+  if (!payload.ok) {
+    reportHydrationIssue(timelineId, payload.error);
+    return;
+  }
 
   const applied = store.hydrate(collectionId, payload.value.specs);
-  if (!applied.ok) return;
+  if (!applied.ok) {
+    reportHydrationIssue(timelineId, JSON.stringify(applied.error));
+    return;
+  }
 
   const merged: Record<string, ClipDetail> = { ...payload.value.details };
   const own = detailsStore.get(timelineId);
   merged[timelineId] = own ? { ...own, hydrated: true } : { ...FALLBACK_DETAIL, hydrated: true };
   detailsStore.merge(merged);
+  reportHydrationIssue(timelineId, null);
 }
 
 /** Hydrate the focus path plus the shallow inline timelines rendered below it. */
