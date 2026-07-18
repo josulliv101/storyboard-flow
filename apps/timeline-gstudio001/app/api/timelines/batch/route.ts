@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import type { TimelineDocument } from "@storyboard/ui/timeline/types";
-import { isUnsavedProjectPlaceholder } from "@storyboard/ui/timeline/timeline-documents";
+import type { TimelineDocument } from "@storyboard/timeline-model/types";
+import { isUnsavedProjectPlaceholder } from "@storyboard/timeline-model";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import {
   saveFirebaseTimelineDocumentsAtomic,

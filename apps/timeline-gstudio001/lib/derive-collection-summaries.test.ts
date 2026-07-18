@@ -4,7 +4,7 @@ import type {
   CollectionTimelineClip,
   TimelineClip,
   TimelineDocument,
-} from "@storyboard/ui/timeline/types";
+} from "@storyboard/timeline-model/types";
 
 import { collectionChildIds, deriveCollectionSummaries } from "./derive-collection-summaries";
 

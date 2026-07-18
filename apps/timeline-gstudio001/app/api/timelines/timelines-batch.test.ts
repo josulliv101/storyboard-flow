@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
+import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 // Batch-write tests over the REAL route handler and the REAL
 // firebase-timeline-store transaction — only the process boundaries are

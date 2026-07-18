@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import type { TimelineDocument, TimelineClip } from "@storyboard/ui/timeline/types";
+import type { TimelineDocument, TimelineClip } from "@storyboard/timeline-model/types";
 import {
   getFirebaseTimelineDocument,
   getFirebaseTimelineEntry,
@@ -9,12 +9,14 @@ import {
 } from "@/lib/firebase-timeline-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import {
-  getTimelineDocument,
   decodeFolderPath,
-  getFolderPathFromTimelineId,
   encodeFolderPath,
+  getFolderPathFromTimelineId,
   isUnsavedProjectPlaceholder,
-} from "@storyboard/ui/timeline/timeline-documents";
+} from "@storyboard/timeline-model";
+// Demo-content seed for the GET fallback — deliberately still the UI
+// package's fixture set, not model logic.
+import { getTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
 import { listCloudinaryAssets } from "@/lib/cloudinary-media-store";
 import {
   collectionChildIds,

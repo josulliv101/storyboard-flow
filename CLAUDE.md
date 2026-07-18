@@ -11,6 +11,9 @@ npm-workspaces monorepo (no turbo/nx — plain workspace scripts).
 - `apps/backend` — Python service (`main.py`, venv); `npm run setup:backend` / `npm run dev:backend` from the root.
 - `packages/ui` (`@storyboard/ui`) — framework-agnostic UI components. No package scripts; typecheck and tests run from elsewhere (see Commands).
 - `packages/db` (`@storyboard/db`) — shared db layer, also script-less.
+- `packages/timeline-model` (`@storyboard/timeline-model`) — the PURE stored timeline model: document/clip types, packing constants, and document functions (`packTimelineClips`, `previewItemsFrom`, folder-path helpers…). No dependencies. `packages/ui/timeline` re-exports all of it, so `@storyboard/ui/timeline/{types,constants,timeline-documents}` imports keep working — but server routes and domain code should import from here.
+- `packages/collections-core` (`@storyboard/collections-core`) — the framework-free dnd-collections engine core (graph, commands, patches, history, hydrate…; no React/dnd-kit). `packages/ui/dnd-collections/core/*` are re-export shims onto it.
+- `packages/timeline-domain` (`@storyboard/timeline-domain`) — the TimelineDocument ⇄ CollectionsGraph adapter. Runtime deps are ONLY the two packages above; `@storyboard/ui` is a devDependency for test fixtures.
 
 There are per-package agent instruction files that take precedence closest to the files being edited: root `AGENTS.md`, `packages/ui/AGENTS.md`, `apps/storybook/AGENTS.md`.
 

@@ -28,12 +28,12 @@
 import {
   CLIP_GAP_SECONDS,
   TIMELINE_LEADING_PADDING_SECONDS,
-} from "@storyboard/ui/timeline/constants";
+} from "@storyboard/timeline-model/constants";
 import type {
   CollectionTimelineClip,
   TimelineClip,
   TimelineDocument,
-} from "@storyboard/ui/timeline/types";
+} from "@storyboard/timeline-model/types";
 
 import {
   buildGraph,

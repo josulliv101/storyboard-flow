@@ -2,7 +2,7 @@ import "server-only";
 
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
-import type { TimelineDocument, TimelineClip } from "@storyboard/ui/timeline/types";
+import type { TimelineDocument, TimelineClip } from "@storyboard/timeline-model/types";
 import { getFirebaseDb } from "./firebase-admin";
 import { resolveOwnership, TimelineAccessDeniedError } from "./timeline-ownership";
 

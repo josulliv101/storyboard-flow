@@ -6,6 +6,8 @@
   "types": "index.ts",
   "dependencies": {
     "@base-ui/react": "^1.6.0",
+    "@storyboard/collections-core": "*",
+    "@storyboard/timeline-model": "*",
     "@shadcn/react": "^0.2.0",
     "@tanstack/react-virtual": "^3.14.5",
     "class-variance-authority": "^0.7.1",

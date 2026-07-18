@@ -1,3 +1,13 @@
+// Packing constants (CLIP_GAP_SECONDS, TIMELINE_*_PADDING_SECONDS) are part
+// of the stored model and live in @storyboard/timeline-model — re-exported
+// so every existing "@storyboard/ui/timeline/constants" import keeps
+// working. View-layer constants remain defined here.
+export {
+  CLIP_GAP_SECONDS,
+  TIMELINE_LEADING_PADDING_SECONDS,
+  TIMELINE_TRAILING_PADDING_SECONDS,
+} from "@storyboard/timeline-model/constants";
+
 export const VIDEO_SOURCES = [
   "https://www.w3schools.com/html/mov_bbb.mp4",
   "https://www.w3schools.com/html/movie.mp4",
@@ -22,7 +32,6 @@ export const ITEM_HEIGHT = 200; // Keep for fallback or default
 export const MIN_WIDTH = 60;
 export const MAX_WIDTH = 600;
 export const DEFAULT_PIXELS_PER_SECOND = 100;
-export const CLIP_GAP_SECONDS = 0.12;
 export const DRAG_THRESHOLD_PX = 3;
 export const RESIZE_KEY_STEP_PX = 10;
 export const VISIBLE_OVERSCAN_PX = 700;
@@ -33,7 +42,3 @@ export const TIMELINE_HEIGHT = ITEM_HEIGHT + TIMELINE_ITEM_TOP;
 export const FILMSTRIP_TARGET_FRAME_WIDTH = 54;
 export const FILMSTRIP_MAX_FRAMES = 96;
 export const THUMBNAIL_GAP = 16;
-
-// Gives the first clips room to grow left before hitting time 0.
-export const TIMELINE_LEADING_PADDING_SECONDS = 0;
-export const TIMELINE_TRAILING_PADDING_SECONDS = 0;

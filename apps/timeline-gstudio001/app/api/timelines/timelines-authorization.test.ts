@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
+import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 // Two-user authorization tests over the REAL route handlers and the REAL
 // firebase-timeline-store enforcement — only the process boundaries are

@@ -1,9 +1,9 @@
-import { TIMELINE_LEADING_PADDING_SECONDS } from "@storyboard/ui/timeline/constants";
+import { TIMELINE_LEADING_PADDING_SECONDS } from "@storyboard/timeline-model/constants";
 import {
   packTimelineClips,
   previewItemsFrom,
-} from "@storyboard/ui/timeline/timeline-documents";
-import type { TimelineDocument } from "@storyboard/ui/timeline/types";
+} from "@storyboard/timeline-model";
+import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
 // Read-time derivation of collection-clip summaries (review finding: stale
 // parents). A collection clip stores DENORMALIZED child facts — title,

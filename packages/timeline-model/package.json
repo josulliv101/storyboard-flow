@@ -1,0 +1,11 @@
+{
+  "name": "@storyboard/timeline-model",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "types": "index.ts",
+  "sideEffects": false,
+  "devDependencies": {
+    "@types/node": "^20"
+  }
+}

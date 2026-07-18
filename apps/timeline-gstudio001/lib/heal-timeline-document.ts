@@ -1,5 +1,5 @@
-import { packTimelineClips } from "@storyboard/ui/timeline/timeline-documents";
-import type { TimelineDocument } from "@storyboard/ui/timeline/types";
+import { packTimelineClips } from "@storyboard/timeline-model";
+import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
 import type { CloudinaryAsset } from "./cloudinary-media-store";
 

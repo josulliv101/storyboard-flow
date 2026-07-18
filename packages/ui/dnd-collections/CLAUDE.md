@@ -19,7 +19,11 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
 ## Invariants — do not break these
 
 - **`core/` stays pure.** No React, DOM, or dnd-kit imports. Anything that
-  needs them belongs in `react/`.
+  needs them belongs in `react/`. The core's real home is the standalone
+  `packages/collections-core` (`@storyboard/collections-core`) so domain and
+  server packages can depend on it without this UI package; the `core/*`
+  files here are one-line re-export shims — edit the engine THERE, and its
+  unit tests live there too (same `--project=unit` run).
 - **The graph mutates only through `applyCommand`**, and `applyPatch` is the
   only code that rewrites children/parent indexes (forward apply, undo, and
   redo all share it). Never mutate the committed graph during a drag — the
