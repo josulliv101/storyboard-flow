@@ -517,6 +517,22 @@ type DndCollectionsProps = {
   maxHistoryEntries?: number; // cap the undo stack; positive integer, default unbounded
   animateMoves?: boolean;     // post-commit FLIP sweep, default true; one sweep for ALL views
   components?: CollectionsComponents; // consumer pixels: ItemContent / GhostContent (see "Custom item content")
+  // Interaction policy (react/interaction-policy.ts) — what a PLAIN CLICK on
+  // a card means. Clicks only reach the cards after gesture arbitration: an
+  // activated drag or press-and-hold grab suppresses its trailing click
+  // (dnd-kit), a surface pan squashes its own (use-pan-with-momentum).
+  clickSelection?: "replace" | "toggle"; // default "replace" (select only this card);
+                                         // "toggle": click toggles — sole-selected deselects,
+                                         // a multi-selection member collapses to itself
+  onOpenNode?: (id: NodeId) => void;     // when set: a plain POINTER click on an open-target
+                                         // card OPENS it (drill-in) instead of selecting.
+                                         // Ctrl/Cmd+click still selection-toggles it; keyboard
+                                         // Space always selects (the keyboard grammar is untouched)
+  openOnClick?: (id: NodeId, node: CollectionItemNode) => boolean; // which nodes open,
+                                         // default node.kind === "collection"
+  trimRequiresSelection?: boolean;       // default false; true = trim handles (hit zones
+                                         // included) exist only on SELECTED media cards, and
+                                         // content's trimEnabled follows
   children: ReactNode;
 };
 ```
@@ -524,6 +540,15 @@ type DndCollectionsProps = {
 `animateMoves` is owned here at the provider (not per view), so a single FLIP
 sweep animates every card under the instance — panels, virtual, and custom
 views — on each commit (drop/undo/redo). It honors `prefers-reduced-motion`.
+
+The interaction-policy props apply to BOTH card shells (`NodeCard` and the
+`CollectionItem` primitives) through one shared click grammar: Ctrl/Cmd+click
+is always the additive selection toggle (also how open-target nodes join a
+multi-drag); a plain pointer click opens (when configured) or selects (per
+`clickSelection`); keyboard activation always selects. With
+`trimRequiresSelection`, an unselected card's edges are plain card body — a
+press there clicks or drags, never trims. Interaction-test coverage lives in
+`InteractionPolicy.stories.tsx`.
 
 `maxHistoryEntries` is initial-only (like `initialGraph`): the oldest undo
 entries fall off past the cap. Any non-positive-integer value is treated as

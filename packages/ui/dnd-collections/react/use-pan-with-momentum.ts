@@ -120,6 +120,19 @@ export function usePanWithMomentum(
         }
         if (Math.abs(position - downPosition) < slop) return;
         panning = true; // past the slop: this press is a pan, not a click
+        // Capture ONLY now that the press is a pan. Capturing at pointerdown
+        // retargets pointerup to the container, and the browser then fires
+        // the compatibility click at the container instead of the pressed
+        // card — silently eating every stationary card click on pannable
+        // surfaces. A stationary press must stay an untouched click; a real
+        // pan still gets capture so moves keep delivering outside the
+        // container. (Synthetic pointers can't be captured — listeners on
+        // window cover them.)
+        try {
+          el.setPointerCapture(event.pointerId);
+        } catch {
+          /* untrusted pointer — window listeners suffice */
+        }
       }
       scrollBy(lastPosition - position); // content follows the pointer
       lastPosition = position;
@@ -188,13 +201,8 @@ export function usePanWithMomentum(
       downPosition = pointerAxis(event);
       lastPosition = downPosition;
       samples = [{ t: performance.now(), p: downPosition }];
-      // Capture keeps real pointers delivering outside the container;
-      // synthetic pointers (tests) have no active pointer to capture.
-      try {
-        el.setPointerCapture(event.pointerId);
-      } catch {
-        /* untrusted pointer — window listeners below suffice */
-      }
+      // No capture here — see handleMove: capture waits until the press
+      // commits to panning, so a stationary press stays a real card click.
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", endPan);
       window.addEventListener("pointercancel", endPan);

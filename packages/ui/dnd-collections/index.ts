@@ -100,6 +100,10 @@ export {
 } from "./react/collections-store";
 export { DndCollections, type DndCollectionsProps } from "./react/DndCollections";
 export {
+  type CollectionsClickSelection,
+  type CollectionsInteractionPolicy,
+} from "./react/interaction-policy";
+export {
   CollectionPanel,
   CollectionPanels,
   NodeCard,

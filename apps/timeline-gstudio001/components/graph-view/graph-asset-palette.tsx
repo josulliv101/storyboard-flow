@@ -9,14 +9,13 @@ import {
   useCollectionsStore,
   usePanWithMomentum,
   type CollectionItemNode,
-  type CollectionsPatch,
 } from "@storyboard/ui/dnd-collections";
-import type { ClipDetail } from "@storyboard/timeline-domain";
 
 import { Button } from "@/components/core/button";
 import type { CloudinaryAsset } from "@/lib/cloudinary-media-store";
 
-const pendingPaletteDetails = new Map<string, ClipDetail>();
+import { clearPendingDetails, parkPendingDetail } from "./graph-pending-details";
+
 const DEFAULT_IMAGE_SECONDS = 4;
 const DEFAULT_VIDEO_SECONDS = 8;
 const PALETTE_ASSET_LIMIT = 48;
@@ -27,7 +26,7 @@ function assetDisplayName(asset: CloudinaryAsset): string {
 }
 
 function createNodeFromAsset(asset: CloudinaryAsset): CollectionItemNode {
-  pendingPaletteDetails.clear();
+  clearPendingDetails();
   const id = parseNodeId(
     `asset-${asset.id}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
   );
@@ -35,7 +34,7 @@ function createNodeFromAsset(asset: CloudinaryAsset): CollectionItemNode {
   const aspect =
     asset.width && asset.height && asset.height > 0 ? asset.width / asset.height : 16 / 9;
 
-  pendingPaletteDetails.set(id as string, {
+  parkPendingDetail(id as string, {
     alt: name,
     aspect,
     trackIndex: 0,
@@ -67,23 +66,6 @@ function createNodeFromAsset(asset: CloudinaryAsset): CollectionItemNode {
     src: asset.url,
     durationSeconds: DEFAULT_IMAGE_SECONDS,
   };
-}
-
-/** Claim app-side metadata parked by PaletteItem when an add commits. */
-export function claimPendingPaletteDetails(
-  patch: CollectionsPatch,
-): Record<string, ClipDetail> | null {
-  if (patch.type !== "nodes-added") return null;
-
-  let claimed: Record<string, ClipDetail> | null = null;
-  for (const add of patch.adds) {
-    const id = add.node.id as string;
-    const detail = pendingPaletteDetails.get(id);
-    if (!detail) continue;
-    (claimed ??= {})[id] = detail;
-    pendingPaletteDetails.delete(id);
-  }
-  return claimed;
 }
 
 type AssetPaletteState =

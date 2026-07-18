@@ -15,6 +15,7 @@ import { Button } from "@/components/core/button";
 
 import { useClipDetail, useGraphDetailsStore } from "./graph-details-context";
 import { hydrateTimeline } from "./graph-hydration";
+import { NativeDropStrip } from "./graph-native-drop";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TIMELINE_PPS } from "./graph-view-config";
 
@@ -81,13 +82,15 @@ function SubTimelineSection({
       </div>
 
       {hydrated && !collapsed && (
-        <VirtualStrip
-          collectionId={collectionId}
-          pixelsPerSecond={TIMELINE_PPS}
-          itemHeight={64}
-          itemDragActivation="hold"
-          className="bg-black/20"
-        />
+        <NativeDropStrip collectionId={id}>
+          <VirtualStrip
+            collectionId={collectionId}
+            pixelsPerSecond={TIMELINE_PPS}
+            itemHeight={64}
+            itemDragActivation="hold"
+            className="bg-black/20"
+          />
+        </NativeDropStrip>
       )}
     </section>
   );

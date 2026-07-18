@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useContext } from "react";
+import { memo } from "react";
 
 import {
   mediaDurationSeconds,
@@ -15,7 +15,6 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { useClipDetail } from "./graph-details-context";
-import { GraphViewNavContext } from "./graph-navigation";
 
 /** Leaf subscription: only the clip being trimmed re-renders per pointer move. */
 function LiveDurationPill({ id, node }: { id: NodeId; node: MediaNode }) {
@@ -39,17 +38,18 @@ const GraphClipContent = memo(function GraphClipContent({
   isDragSource,
   trimEnabled,
 }: CollectionItemContentProps) {
-  const nav = useContext(GraphViewNavContext);
   const detail = useClipDetail(id as string);
 
   if (node.kind === "collection") {
     const hydrated = detail?.hydrated === true;
     const count = hydrated ? childCount : (detail?.itemCount ?? childCount);
     const previews = detail?.previewItems?.slice(0, 3) ?? [];
+    // Opening is the SHELL's job now: a plain click on a collection card
+    // routes through the provider's onOpenNode (see graph-timeline-view) —
+    // no double-click handler here. The title is just the affordance hint.
     return (
       <span
-        title="Double-click (or press O) to open this timeline"
-        onDoubleClick={() => nav?.openTimeline(id)}
+        title="Click (or press O) to open this timeline"
         className={[
           "relative flex h-full w-full flex-col justify-between overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.08] p-1.5",
           selected ? "ring-2 ring-amber-400" : "",
@@ -122,14 +122,15 @@ const GraphClipContent = memo(function GraphClipContent({
 
 const GraphTrimHandle = memo(function GraphTrimHandle({
   side,
-  selected,
 }: CollectionTrimHandleContentProps) {
+  // Handles exist only on SELECTED clips (trimRequiresSelection at the
+  // provider), so these pixels are always the active affordance — no
+  // hover-reveal state for unselected cards to style anymore.
   return (
     <span
       className={[
-        "flex h-full w-full items-center justify-center transition-opacity",
+        "flex h-full w-full items-center justify-center bg-amber-400 opacity-95",
         side === "left" ? "rounded-l-md" : "rounded-r-md",
-        selected ? "bg-amber-400 opacity-95" : "bg-amber-400/50 opacity-0 group-hover:opacity-90",
       ].join(" ")}
     >
       <span className="h-4 w-0.5 rounded bg-black/60" />

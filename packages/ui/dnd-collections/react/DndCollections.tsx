@@ -52,6 +52,11 @@ import {
   type CollectionsComponents,
 } from "./collections-components";
 import { CollectionsContainerContext } from "./container-context";
+import {
+  CollectionsInteractionPolicyContext,
+  useCollectionsInteractionPolicyValue,
+  type CollectionsClickSelection,
+} from "./interaction-policy";
 import { LiveTrimChannelContext, useCreateLiveTrimChannel } from "./live-trim";
 import { useFlipGraphAnimation } from "./use-flip-graph-animation";
 import { NodeCardGhost } from "./node-views";
@@ -91,6 +96,34 @@ export type DndCollectionsProps = Readonly<{
    * from one place. Components MUST be identity-stable (module scope).
    */
   components?: CollectionsComponents;
+  /**
+   * What a plain click on a card selects (see react/interaction-policy.ts):
+   * "replace" (default) selects only the clicked card; "toggle" toggles it —
+   * an unselected card becomes the sole selection, the sole-selected card
+   * deselects, a card in a multi-selection collapses the selection to
+   * itself. Ctrl/Cmd+click is an additive toggle in both modes.
+   */
+  clickSelection?: CollectionsClickSelection;
+  /**
+   * When set, a plain POINTER click on an open-target card (default:
+   * collections; override with `openOnClick`) OPENS it — drill-in
+   * navigation — instead of selecting. Ctrl/Cmd+click still
+   * selection-toggles it, and keyboard activation (Space) always selects,
+   * so the keyboard grammar is unchanged. Clicks only survive to this
+   * handler when no drag activated and no pan engaged — a press-and-hold
+   * grab released in place, a drag, or a swipe never opens.
+   */
+  onOpenNode?: (id: NodeId) => void;
+  /** Which nodes a plain click opens (only consulted when `onOpenNode` is
+   *  set). Default: `node.kind === "collection"`. */
+  openOnClick?: (id: NodeId, node: CollectionItemNode) => boolean;
+  /**
+   * Render media trim handles only on SELECTED cards, default `false`.
+   * Unselected card edges become plain card body (press = drag/click), and
+   * content's `trimEnabled` follows, so duration readouts gate with the
+   * handles.
+   */
+  trimRequiresSelection?: boolean;
   children: ReactNode;
 }>;
 
@@ -153,9 +186,19 @@ export function DndCollections({
   maxHistoryEntries,
   animateMoves = true,
   components,
+  clickSelection,
+  onOpenNode,
+  openOnClick,
+  trimRequiresSelection,
   children,
 }: DndCollectionsProps) {
   const componentsValue = useCollectionsComponentsValue(components);
+  const interactionPolicy = useCollectionsInteractionPolicyValue({
+    clickSelection,
+    onOpenNode,
+    openOnClick,
+    trimRequiresSelection,
+  });
   // Live trim values ride a ref-backed emitter (never the store): only
   // content that opted in via useLiveTrim re-renders per trim move.
   const liveTrimChannel = useCreateLiveTrimChannel();
@@ -187,9 +230,11 @@ export function DndCollections({
   return (
     <CollectionsStoreProvider value={store}>
       <CollectionsComponentsContext.Provider value={componentsValue}>
-        <LiveTrimChannelContext.Provider value={liveTrimChannel}>
-          <DndCollectionsContext animateMoves={animateMoves}>{children}</DndCollectionsContext>
-        </LiveTrimChannelContext.Provider>
+        <CollectionsInteractionPolicyContext.Provider value={interactionPolicy}>
+          <LiveTrimChannelContext.Provider value={liveTrimChannel}>
+            <DndCollectionsContext animateMoves={animateMoves}>{children}</DndCollectionsContext>
+          </LiveTrimChannelContext.Provider>
+        </CollectionsInteractionPolicyContext.Provider>
       </CollectionsComponentsContext.Provider>
     </CollectionsStoreProvider>
   );

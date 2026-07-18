@@ -10,6 +10,7 @@ import {
 
 import { Button } from "@/components/core/button";
 
+import { NativeDropStrip } from "./graph-native-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
 import { SyncPanel, type SyncEntry } from "./graph-persistence";
 import {
@@ -92,8 +93,9 @@ export function GraphBoard({
         <div className="flex flex-col gap-5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-zinc-500">
-              Press-and-hold to drag (cross-timeline included) · amber edges trim · double-click
-              (or O) a dashed clip to focus it · undo survives drill-in.
+              Click a clip to select it (amber edges trim while selected) · click (or O on) a
+              dashed clip to focus it · Ctrl+click multi-selects · press-and-hold to drag
+              (cross-timeline included) · undo survives drill-in.
             </p>
             <div className="flex shrink-0 items-center gap-3">
               <Button
@@ -120,7 +122,7 @@ export function GraphBoard({
           </div>
 
           {surface === "strip" ? (
-            <div className="relative">
+            <NativeDropStrip collectionId={focusedId}>
               <VirtualStrip
                 collectionId={parseNodeId(focusedId)}
                 pixelsPerSecond={TIMELINE_PPS}
@@ -136,7 +138,7 @@ export function GraphBoard({
               {previewOn && (
                 <PlayheadScrubBand focusedId={focusedId} channel={timeChannel} />
               )}
-            </div>
+            </NativeDropStrip>
           ) : (
             <div className="relative">
               <VirtualGrid
