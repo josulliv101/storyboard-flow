@@ -16,7 +16,12 @@ import {
   useCollectionsStore,
   type CollectionsGraph,
 } from "@storyboard/ui/dnd-collections";
-import { graphChildrenToClips, type DetailsById } from "@storyboard/timeline-domain";
+import {
+  graphChildrenToClips,
+  manifestToClips,
+  type DetailsById,
+  type PlaybackManifest,
+} from "@storyboard/timeline-domain";
 import { WorkbenchSplitPane } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
 import {
   TimelineDocumentsProvider,
@@ -471,6 +476,67 @@ function GatewayDocumentsBridge() {
   return null;
 }
 
+// The stored manifest goes stale when a commit lands; refetch AFTER the
+// write path has settled it server-side (900ms debounce + batch flight).
+const MANIFEST_REFRESH_DELAY_MS = 2500;
+
+type ManifestClipsState = Readonly<{ clips: TimelineClip[]; forId: string }> | null;
+
+/**
+ * The server-compiled playback read model for the focused timeline: the
+ * COMPLETE nested closure flattened into media leaves (see
+ * timeline-domain/playback-manifest), so preview depth no longer depends on
+ * what the session hydrated. Null until it lands (or when it can't load) —
+ * the caller falls back to the live graph projection, which also covers the
+ * refresh window after local edits.
+ */
+function useManifestClips(enabled: boolean, focusedId: string): TimelineClip[] | null {
+  const store = useCollectionsStore();
+  const [state, setState] = useState<ManifestClipsState>(null);
+  const [staleAt, setStaleAt] = useState(0);
+
+  // Committed changes invalidate the stored manifest — coalesce into one
+  // delayed refetch so a burst of edits refreshes once, after persisting.
+  useEffect(() => {
+    if (!enabled) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = store.subscribeToChanges(() => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => setStaleAt(Date.now()), MANIFEST_REFRESH_DELAY_MS);
+    });
+    return () => {
+      unsubscribe();
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [enabled, store]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/timelines/${encodeURIComponent(focusedId)}/preview-manifest`,
+          { cache: "no-store" },
+        );
+        if (!response.ok) return; // projection fallback stands
+        const result = (await response.json().catch(() => null)) as {
+          manifest?: PlaybackManifest;
+        } | null;
+        if (cancelled || !result?.manifest) return;
+        setState({ clips: manifestToClips(result.manifest), forId: focusedId });
+      } catch {
+        /* projection fallback stands */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, focusedId, staleAt]);
+
+  return state !== null && state.forId === focusedId ? state.clips : null;
+}
+
 export function PreviewShell({
   enabled,
   focusedId,
@@ -489,10 +555,17 @@ export function PreviewShell({
     detailsStore.read,
     detailsStore.read,
   );
-  const clips = useMemo<TimelineClip[]>(
+  const projectionClips = useMemo<TimelineClip[]>(
     () => (enabled ? graphChildrenToClips(graph, details, focusedId) : []),
     [enabled, graph, details, focusedId],
   );
+  // The pane plays the manifest (full nested depth) once it lands; until
+  // then — and for ~2.5s after an edit while the stored documents catch up
+  // — the live focused-level projection plays. Same clock either way: the
+  // projection's collection-card durations come from read-time summaries,
+  // so both models agree on total time when the store is settled.
+  const manifestClips = useManifestClips(enabled, focusedId);
+  const clips = manifestClips ?? projectionClips;
   const [time, setTime] = useState(0);
 
   useEffect(() => channel.subscribe(() => setTime(channel.get())), [channel]);
@@ -525,6 +598,8 @@ export function PreviewShell({
   return (
     <TimelineDocumentsProvider initialState={initialDocumentsState}>
       <GatewayDocumentsBridge />
+      {/* Test/debug witness for which read model the pane is playing. */}
+      <span data-preview-source={manifestClips !== null ? "manifest" : "projection"} hidden />
       <WorkbenchSplitPane clips={clips} currentTime={time} onCurrentTimeChange={handleTimeChange}>
         {children}
       </WorkbenchSplitPane>

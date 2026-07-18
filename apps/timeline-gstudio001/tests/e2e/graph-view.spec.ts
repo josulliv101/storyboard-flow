@@ -105,6 +105,56 @@ function buildFixtureDocuments(): Map<string, FixtureDocument> {
   ]);
 }
 
+/** Flatten the fixture closure the way the real preview-manifest route does
+ *  (fixtures are untrimmed, so every leaf plays at rate 1). */
+function compileFixtureManifest(
+  documents: Map<string, FixtureDocument>,
+  rootId: string,
+  revision: number,
+) {
+  const root = documents.get(rootId);
+  if (!root) return null;
+  type Leaf = Record<string, unknown>;
+  const leaves: Leaf[] = [];
+  const walk = (documentId: string, path: string[], offset: number) => {
+    const doc = documents.get(documentId);
+    if (!doc) return;
+    for (const clip of doc.clips) {
+      if (clip.kind === "collection") {
+        const childId = clip.childTimelineId as string;
+        walk(childId, [...path, childId], offset + (clip.startTime as number));
+        continue;
+      }
+      leaves.push({
+        id: clip.id,
+        collectionPath: path,
+        kind: clip.kind,
+        src: clip.src,
+        poster: clip.poster,
+        timelineStart: offset + (clip.startTime as number),
+        timelineDuration: clip.duration,
+        sourceStart: clip.trimIn ?? 0,
+        playbackRate: 1,
+      });
+    }
+  };
+  walk(rootId, [rootId], 0);
+  const durationSeconds = root.clips.reduce(
+    (duration, clip) =>
+      Math.max(duration, (clip.startTime as number) + (clip.duration as number)),
+    0,
+  );
+  return {
+    projectId: rootId,
+    projectRevision: revision,
+    durationSeconds,
+    leaves: leaves.sort(
+      (a, b) => (a.timelineStart as number) - (b.timelineStart as number),
+    ),
+    compiledAt: new Date().toISOString(),
+  };
+}
+
 // ── API mock ────────────────────────────────────────────────────────────────
 
 type RecordedPatch = { id: string; clipIds: string[] };
@@ -165,6 +215,18 @@ async function installGraphApi(
       },
     }),
   );
+
+  // Two-segment path, so the generic single-segment mock below never sees it.
+  await page.route("**/api/timelines/*/preview-manifest", (route) => {
+    const id = decodeURIComponent(
+      new URL(route.request().url()).pathname.split("/").at(-2) ?? "",
+    );
+    const manifest = compileFixtureManifest(documents, id, revisions.get(id) ?? 0);
+    if (!manifest) {
+      return route.fulfill({ status: 404, json: { error: "Timeline was not found." } });
+    }
+    return route.fulfill({ json: { manifest, missing: [] } });
+  });
 
   await page.route("**/api/timelines/*", async (route) => {
     const request = route.request();
@@ -520,6 +582,13 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
 
     await headerToggle(page, "Preview").click();
+
+    // The pane upgrades to the server-compiled full-depth manifest read
+    // model once it lands (until then the live projection plays).
+    await expect(page.locator("[data-preview-source]")).toHaveAttribute(
+      "data-preview-source",
+      "manifest",
+    );
 
     // Playhead visuals ride the strip's presentational overlay; the triangle
     // cap is a zero-size bordered div (attached, not "visible").

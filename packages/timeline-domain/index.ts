@@ -16,3 +16,9 @@ export {
   type FocusedGraph,
   type HydrationSpecs,
 } from "./src/adapter";
+export {
+  compilePlaybackManifest,
+  manifestToClips,
+  type PlaybackLeaf,
+  type PlaybackManifest,
+} from "./src/playback-manifest";
