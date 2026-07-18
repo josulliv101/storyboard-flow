@@ -64,6 +64,11 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/typ
 
 import { useAuth } from "@/components/auth/auth-provider";
 import { Button } from "@/components/core/button";
+import {
+  collectReachableDetailIds,
+  createGraphDetailsStore,
+  type GraphDetailsStore,
+} from "@/lib/graph-details-store";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { GRAPH_ASSETS_TOGGLE_EVENT } from "@/lib/graph-view-events";
 import type { CloudinaryAsset } from "@/lib/cloudinary-media-store";
@@ -127,37 +132,64 @@ function SurfaceToggle({
   );
 }
 
+// ── Details side-table store ────────────────────────────────────────────────
+// The details table lives in an EXTERNAL store (see lib/graph-details-store):
+// components subscribe to exactly the slice they render. The context carries
+// the STORE — a per-view-session constant — so providing it never re-renders
+// a consumer; only each consumer's own subscription does.
+
+const GraphDetailsStoreContext = createContext<GraphDetailsStore | null>(null);
+
+function useGraphDetailsStore(): GraphDetailsStore {
+  const store = useContext(GraphDetailsStoreContext);
+  if (store === null) {
+    throw new Error("useGraphDetailsStore must be used inside the graph view's provider tree.");
+  }
+  return store;
+}
+
+/** ONE node's detail: the card re-renders when its own entry changes
+ *  (hydration landing, a palette claim) and never for anyone else's. */
+function useClipDetail(id: string): ClipDetail | undefined {
+  const store = useGraphDetailsStore();
+  return useSyncExternalStore(
+    store.subscribe,
+    () => store.get(id),
+    () => store.get(id),
+  );
+}
+
 // ── Navigation context ──────────────────────────────────────────────────────
 // Content components are module-scope (identity-stable, per the package's
-// registry contract), so drill-in and detail lookups reach them via context.
+// registry contract), so drill-in reaches them via context. Deliberately
+// SLIM — just the navigation callback: detail lookups go through the details
+// store, so this value only changes when the focus itself does.
 
 type GraphViewNav = Readonly<{
-  details: DetailsById;
   openTimeline: (nodeId: NodeId) => void;
 }>;
 
 const GraphViewNavContext = createContext<GraphViewNav | null>(null);
 
 function GraphViewNavProvider({
-  details,
   projectId,
   focusedId,
   children,
 }: Readonly<{
-  details: DetailsById;
   projectId: string;
   focusedId: string;
   children: React.ReactNode;
 }>) {
   const router = useRouter();
   const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
 
   const value = useMemo<GraphViewNav>(
     () => ({
-      details,
       openTimeline: (nodeId) => {
         // A duplicate-reference card opens the timeline it points at.
-        const timelineId = details[nodeId as string]?.duplicateOfTimelineId ?? (nodeId as string);
+        const timelineId =
+          detailsStore.get(nodeId as string)?.duplicateOfTimelineId ?? (nodeId as string);
         if (timelineId === focusedId) return;
         const base = `/timeline/${encodeURIComponent(projectId)}/graph`;
         if (timelineId === projectId) {
@@ -177,7 +209,7 @@ function GraphViewNavProvider({
         router.push(`${base}/${chain.map(encodeURIComponent).join("/")}`);
       },
     }),
-    [details, focusedId, projectId, router, store],
+    [detailsStore, focusedId, projectId, router, store],
   );
 
   return <GraphViewNavContext.Provider value={value}>{children}</GraphViewNavContext.Provider>;
@@ -201,6 +233,7 @@ function GraphViewNavProvider({
 function OpenKeyBoundary({ children }: Readonly<{ children: React.ReactNode }>) {
   const nav = useContext(GraphViewNavContext);
   const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "o" && event.key !== "O") return;
@@ -218,7 +251,7 @@ function OpenKeyBoundary({ children }: Readonly<{ children: React.ReactNode }>) 
     // Same set double-click navigates: collections, plus duplicate-reference
     // cards (openTimeline resolves those to the timeline they point at).
     const opensTimeline =
-      node?.kind === "collection" || nav?.details[id]?.duplicateOfTimelineId !== undefined;
+      node?.kind === "collection" || detailsStore.get(id)?.duplicateOfTimelineId !== undefined;
     if (!opensTimeline) return;
     event.preventDefault();
     nav?.openTimeline(parseNodeId(id));
@@ -235,25 +268,30 @@ function OpenKeyBoundary({ children }: Readonly<{ children: React.ReactNode }>) 
 
 /**
  * Fetch (if needed) and hydrate one placeholder timeline through the
- * engine's hydration seam; returns side-table entries to merge, or null when
- * there was nothing to do. Levels as in `buildHydrationSpecs` — the gateway
- * caches one document per fetch, so hydration is always level 0 (a
- * timeline's own clips; its child collections stay placeholders until
- * focused or expanded).
+ * engine's hydration seam, committing the side-table entries straight into
+ * the details store. Commits are immediate and UNCONDITIONAL — callers'
+ * cancellation guards focus-scoped work, but these entries are GRAPH-scoped:
+ * `store.hydrate` here mutates the shared graph, which outlives any focus
+ * run, and a hydrated node without its aspect/poster/trim metadata would
+ * bake fallback values into the next write touching its document. Levels as
+ * in `buildHydrationSpecs` — the gateway caches one document per fetch, so
+ * hydration is always level 0 (a timeline's own clips; its child collections
+ * stay placeholders until focused or expanded).
  */
 async function hydrateTimeline(
   store: CollectionsStore,
-  details: Readonly<Record<string, ClipDetail>>,
+  detailsStore: GraphDetailsStore,
   timelineId: string,
-): Promise<Record<string, ClipDetail> | null> {
-  if (details[timelineId]?.hydrated === true) return null;
+): Promise<void> {
+  if (detailsStore.get(timelineId)?.hydrated === true) return;
 
   const doc = await graphDocumentsGateway.ensure(timelineId);
-  if (!doc) return null;
+  if (!doc) return;
 
-  // Re-read the graph — the await may have raced another hydration.
+  // Re-read graph AND details — the await may have raced another hydration
+  // (the store reads synchronously, so post-await reads are always current).
   const current = store.getSnapshot().graph;
-  if (!current.nodesById.has(parseNodeId(timelineId))) return null;
+  if (!current.nodesById.has(parseNodeId(timelineId))) return;
 
   if (getChildren(current, parseNodeId(timelineId)).length > 0) {
     // REPAIR path: the graph holds this collection's children but the
@@ -264,7 +302,8 @@ async function hydrateTimeline(
     // entries that are missing — never overwrite committed ones (a child
     // collection's own `hydrated: true` must survive a parent repair).
     const payload = buildHydrationSpecs(graphDocumentsGateway.read(), timelineId, 0);
-    if (!payload.ok) return null;
+    if (!payload.ok) return;
+    const details = detailsStore.read();
     const merged: Record<string, ClipDetail> = {};
     for (const [id, detail] of Object.entries(payload.value.details)) {
       if (details[id] === undefined && current.nodesById.has(parseNodeId(id))) {
@@ -273,7 +312,8 @@ async function hydrateTimeline(
     }
     const own = details[timelineId];
     merged[timelineId] = own ? { ...own, hydrated: true } : { ...FALLBACK_DETAIL, hydrated: true };
-    return merged;
+    detailsStore.merge(merged);
+    return;
   }
 
   const payload = buildHydrationSpecs(
@@ -282,14 +322,14 @@ async function hydrateTimeline(
     0,
     current.nodesById.keys(),
   );
-  if (!payload.ok) return null;
+  if (!payload.ok) return;
   const applied = store.hydrate(parseNodeId(timelineId), payload.value.specs);
-  if (!applied.ok) return null;
+  if (!applied.ok) return;
 
   const merged: Record<string, ClipDetail> = { ...payload.value.details };
-  const own = details[timelineId];
+  const own = detailsStore.get(timelineId);
   merged[timelineId] = own ? { ...own, hydrated: true } : { ...FALLBACK_DETAIL, hydrated: true };
-  return merged;
+  detailsStore.merge(merged);
 }
 
 /** Detail for a timeline the graph knows only as a root (no source clip). */
@@ -305,27 +345,15 @@ const FALLBACK_DETAIL: ClipDetail = { alt: "", aspect: 16 / 9, trackIndex: 0 };
 function HydrationController({
   projectId,
   segments,
-  details,
-  onDetails,
   onFocusError,
 }: Readonly<{
   projectId: string;
   segments: readonly string[];
-  details: DetailsById;
-  onDetails: (merged: Readonly<Record<string, ClipDetail>>) => void;
   onFocusError: (error: string | null) => void;
 }>) {
   const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
   const pathKey = segments.join("/");
-
-  // The traversal reads `details` only to check hydrated flags, so it goes
-  // through a ref: with `details` in the effect deps, every detail commit
-  // would cancel and restart the in-flight traversal. Declared BEFORE the
-  // main effect so the ref is current when a run starts.
-  const detailsRef = useRef(details);
-  useEffect(() => {
-    detailsRef.current = details;
-  }, [details]);
 
   useEffect(() => {
     let cancelled = false;
@@ -333,22 +361,11 @@ function HydrationController({
     const focusedId = path[path.length - 1] ?? projectId;
 
     void (async () => {
-      const merged: Record<string, ClipDetail> = {};
-      const detailsNow = () => ({ ...detailsRef.current, ...merged });
-      const ensure = async (timelineId: string) => {
-        const hydrated = await hydrateTimeline(store, detailsNow(), timelineId);
-        if (hydrated) {
-          Object.assign(merged, hydrated);
-          // Committed immediately and UNCONDITIONALLY — `cancelled` guards
-          // focus-scoped work, but these entries are GRAPH-scoped: the
-          // store.hydrate inside hydrateTimeline already mutated the shared
-          // graph, and the graph outlives this focus run. Dropping them on a
-          // cancelled run would strand hydrated nodes without their aspect/
-          // poster/trim metadata, and the next write touching that document
-          // would bake fallback values into storage.
-          onDetails(hydrated);
-        }
-      };
+      // hydrateTimeline reads and commits the details store directly — the
+      // synchronous store is what killed this effect's old ref-mirroring and
+      // local-accumulator workarounds, and detail commits no longer cancel
+      // and restart the in-flight traversal (the store reference is stable).
+      const ensure = (timelineId: string) => hydrateTimeline(store, detailsStore, timelineId);
 
       let error: string | null = null;
       let previous: string | null = null;
@@ -404,7 +421,7 @@ function HydrationController({
     return () => {
       cancelled = true;
     };
-  }, [pathKey, projectId, store, onDetails, onFocusError]);
+  }, [pathKey, projectId, store, detailsStore, onFocusError]);
 
   return null;
 }
@@ -842,19 +859,22 @@ function buildGridPlayheadMap(clips: readonly TimelineClip[], cols: number): Gri
  *  hydration), repaints on every channel tick — no React render on either. */
 function GraphPlayhead({
   focusedId,
-  details,
   channel,
-}: Readonly<{ focusedId: string; details: DetailsById; channel: PreviewTimeChannel }>) {
+}: Readonly<{ focusedId: string; channel: PreviewTimeChannel }>) {
   const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
   const lineRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let lastGraph: CollectionsGraph | null = null;
+    let lastDetails: DetailsById | null = null;
     let map: PlayheadMap | null = null;
     const paint = () => {
       const graph = store.getSnapshot().graph;
-      if (graph !== lastGraph) {
+      const details = detailsStore.read();
+      if (graph !== lastGraph || details !== lastDetails) {
         lastGraph = graph;
+        lastDetails = details;
         map = buildPlayheadMap(graphChildrenToClips(graph, details, focusedId));
       }
       const line = lineRef.current;
@@ -863,11 +883,13 @@ function GraphPlayhead({
     paint();
     const unsubscribeTime = channel.subscribe(paint);
     const unsubscribeStore = store.subscribe(paint);
+    const unsubscribeDetails = detailsStore.subscribe(paint);
     return () => {
       unsubscribeTime();
       unsubscribeStore();
+      unsubscribeDetails();
     };
-  }, [store, focusedId, details, channel]);
+  }, [store, detailsStore, focusedId, channel]);
 
   return (
     <div
@@ -895,10 +917,10 @@ function GraphPlayhead({
  */
 function PlayheadScrubBand({
   focusedId,
-  details,
   channel,
-}: Readonly<{ focusedId: string; details: DetailsById; channel: PreviewTimeChannel }>) {
+}: Readonly<{ focusedId: string; channel: PreviewTimeChannel }>) {
   const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
   const bandRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -911,10 +933,13 @@ function PlayheadScrubBand({
 
     let map: PlayheadMap | null = null;
     let mapGraph: CollectionsGraph | null = null;
+    let mapDetails: DetailsById | null = null;
     const seek = (event: PointerEvent) => {
       const graph = store.getSnapshot().graph;
-      if (graph !== mapGraph || !map) {
+      const details = detailsStore.read();
+      if (graph !== mapGraph || details !== mapDetails || !map) {
         mapGraph = graph;
+        mapDetails = details;
         map = buildPlayheadMap(graphChildrenToClips(graph, details, focusedId));
       }
       const rect = scroller.getBoundingClientRect();
@@ -960,7 +985,7 @@ function PlayheadScrubBand({
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
-  }, [store, focusedId, details, channel]);
+  }, [store, detailsStore, focusedId, channel]);
 
   return (
     <div
@@ -982,10 +1007,10 @@ function PlayheadScrubBand({
  */
 function GraphGridPlayhead({
   focusedId,
-  details,
   channel,
-}: Readonly<{ focusedId: string; details: DetailsById; channel: PreviewTimeChannel }>) {
+}: Readonly<{ focusedId: string; channel: PreviewTimeChannel }>) {
   const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
   const lineRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -994,13 +1019,16 @@ function GraphGridPlayhead({
     const grid = line.closest<HTMLElement>("[data-virtual-grid]");
 
     let lastGraph: CollectionsGraph | null = null;
+    let lastDetails: DetailsById | null = null;
     let lastCols = 0;
     let map: GridPlayheadMap | null = null;
     const paint = () => {
       const graph = store.getSnapshot().graph;
+      const details = detailsStore.read();
       const cols = Number(grid?.dataset.gridColumns) || 1;
-      if (graph !== lastGraph || cols !== lastCols) {
+      if (graph !== lastGraph || details !== lastDetails || cols !== lastCols) {
         lastGraph = graph;
+        lastDetails = details;
         lastCols = cols;
         map = buildGridPlayheadMap(graphChildrenToClips(graph, details, focusedId), cols);
       }
@@ -1013,15 +1041,17 @@ function GraphGridPlayhead({
 
     const unsubscribeTime = channel.subscribe(paint);
     const unsubscribeStore = store.subscribe(paint);
+    const unsubscribeDetails = detailsStore.subscribe(paint);
     // Responsive columns can change on resize with no store/graph change.
     const observer = grid ? new ResizeObserver(paint) : null;
     if (grid && observer) observer.observe(grid);
     return () => {
       unsubscribeTime();
       unsubscribeStore();
+      unsubscribeDetails();
       observer?.disconnect();
     };
-  }, [store, focusedId, details, channel]);
+  }, [store, detailsStore, focusedId, channel]);
 
   return (
     <div
@@ -1048,10 +1078,10 @@ function GraphGridPlayhead({
  */
 function GraphGridScrubSurface({
   focusedId,
-  details,
   channel,
-}: Readonly<{ focusedId: string; details: DetailsById; channel: PreviewTimeChannel }>) {
+}: Readonly<{ focusedId: string; channel: PreviewTimeChannel }>) {
   const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
   const surfaceRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1062,12 +1092,15 @@ function GraphGridScrubSurface({
 
     let map: GridPlayheadMap | null = null;
     let mapGraph: CollectionsGraph | null = null;
+    let mapDetails: DetailsById | null = null;
     let mapCols = 0;
     const seek = (event: PointerEvent) => {
       const graph = store.getSnapshot().graph;
+      const details = detailsStore.read();
       const cols = Number(grid.dataset.gridColumns) || 1;
-      if (graph !== mapGraph || cols !== mapCols || !map) {
+      if (graph !== mapGraph || details !== mapDetails || cols !== mapCols || !map) {
         mapGraph = graph;
+        mapDetails = details;
         mapCols = cols;
         map = buildGridPlayheadMap(graphChildrenToClips(graph, details, focusedId), cols);
       }
@@ -1129,7 +1162,7 @@ function GraphGridScrubSurface({
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
-  }, [store, focusedId, details, channel]);
+  }, [store, detailsStore, focusedId, channel]);
 
   return (
     <div
@@ -1172,19 +1205,26 @@ function GatewayDocumentsBridge() {
 function PreviewShell({
   enabled,
   focusedId,
-  details,
   channel,
   children,
 }: Readonly<{
   enabled: boolean;
   focusedId: string;
-  details: DetailsById;
   channel: PreviewTimeChannel;
   children: React.ReactNode;
 }>) {
   // Commit-cadence projection: graph identity changes only per committed
   // change/hydration, so this recomputes exactly when the clips could have.
+  // The WHOLE details table is the right subscription here (unlike the
+  // cards): the pane plays a projection over every child's detail. The
+  // stable `children` identity still shields the board subtree.
   const graph = useCollectionsSelector((s) => s.graph);
+  const detailsStore = useGraphDetailsStore();
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    detailsStore.read,
+    detailsStore.read,
+  );
   const clips = useMemo<TimelineClip[]>(
     () => (enabled ? graphChildrenToClips(graph, details, focusedId) : []),
     [enabled, graph, details, focusedId],
@@ -1273,9 +1313,11 @@ const GraphClipContent = memo(function GraphClipContent({
   trimEnabled,
 }: CollectionItemContentProps) {
   const nav = useContext(GraphViewNavContext);
+  // Per-entry subscription: THIS card re-renders when its own detail lands
+  // (hydration, a palette claim) — a commit elsewhere touches nobody.
+  const detail = useClipDetail(id as string);
 
   if (node.kind === "collection") {
-    const detail = nav?.details[id as string];
     const hydrated = detail?.hydrated === true;
     const count = hydrated ? childCount : (detail?.itemCount ?? childCount);
     const previews = detail?.previewItems?.slice(0, 3) ?? [];
@@ -1394,17 +1436,83 @@ const GRAPH_VIEW_COMPONENTS: CollectionsComponents = {
 
 // ── Inline sub-timelines ────────────────────────────────────────────────────
 
-function SubTimelines({
-  focusedId,
-  details,
-  onDetails,
+/** One sub-timeline section, with ITS OWN detail subscription: a hydration
+ *  landing for this collection re-renders this section — not its siblings. */
+function SubTimelineSection({
+  collectionId,
+  name,
+  collapsed,
+  onToggleCollapsed,
 }: Readonly<{
-  focusedId: string;
-  details: DetailsById;
-  onDetails: (merged: Readonly<Record<string, ClipDetail>>) => void;
+  collectionId: NodeId;
+  name: string;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }>) {
   const nav = useContext(GraphViewNavContext);
   const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const id = collectionId as string;
+  const detail = useClipDetail(id);
+  const hydrated = detail?.hydrated === true;
+  // Primitive selector: re-renders only when THIS collection's child count
+  // changes, not on every graph commit.
+  const liveCount = useCollectionsSelector((s) => getChildren(s.graph, collectionId).length);
+
+  return (
+    <section aria-label={`Sub-timeline: ${name}`}>
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="h-3 w-3 rounded-sm border border-dashed border-sky-500/60 bg-sky-500/20" />
+        <h3 className="text-sm font-semibold text-zinc-100">{name}</h3>
+        <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
+          {hydrated ? liveCount : (detail?.itemCount ?? 0)} clips
+        </span>
+        {!hydrated && (
+          <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-500">
+            loading…
+          </span>
+        )}
+        <span className="grow" />
+        {!hydrated && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              void hydrateTimeline(store, detailsStore, id);
+            }}
+          >
+            Load inline
+          </Button>
+        )}
+        {hydrated && (
+          <Button type="button" variant="ghost" size="sm" onClick={onToggleCollapsed}>
+            {collapsed ? "Expand" : "Collapse"}
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => nav?.openTimeline(collectionId)}
+        >
+          Focus
+        </Button>
+      </div>
+      {hydrated && !collapsed && (
+        <VirtualStrip
+          collectionId={collectionId}
+          pixelsPerSecond={TIMELINE_PPS}
+          itemHeight={64}
+          itemDragActivation="hold"
+          className="bg-black/20"
+        />
+      )}
+    </section>
+  );
+}
+
+function SubTimelines({ focusedId }: Readonly<{ focusedId: string }>) {
   const graph = useCollectionsSelector((s) => s.graph);
   const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(new Set());
 
@@ -1419,75 +1527,21 @@ function SubTimelines({
         const node = graph.nodesById.get(collectionId);
         if (node?.kind !== "collection") return null;
         const id = collectionId as string;
-        const detail = details[id];
-        const hydrated = detail?.hydrated === true;
-        const collapsed = collapsedIds.has(id);
-        const liveCount = getChildren(graph, collectionId).length;
-
         return (
-          <section key={id} aria-label={`Sub-timeline: ${node.name}`}>
-            <div className="mb-1.5 flex items-center gap-2">
-              <span className="h-3 w-3 rounded-sm border border-dashed border-sky-500/60 bg-sky-500/20" />
-              <h3 className="text-sm font-semibold text-zinc-100">{node.name}</h3>
-              <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
-                {hydrated ? liveCount : (detail?.itemCount ?? 0)} clips
-              </span>
-              {!hydrated && (
-                <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-500">
-                  loading…
-                </span>
-              )}
-              <span className="grow" />
-              {!hydrated && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    void hydrateTimeline(store, details, id).then((merged) => {
-                      if (merged) onDetails(merged);
-                    });
-                  }}
-                >
-                  Load inline
-                </Button>
-              )}
-              {hydrated && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    setCollapsedIds((current) => {
-                      const next = new Set(current);
-                      if (next.has(id)) next.delete(id);
-                      else next.add(id);
-                      return next;
-                    })
-                  }
-                >
-                  {collapsed ? "Expand" : "Collapse"}
-                </Button>
-              )}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => nav?.openTimeline(collectionId)}
-              >
-                Focus
-              </Button>
-            </div>
-            {hydrated && !collapsed && (
-              <VirtualStrip
-                collectionId={collectionId}
-                pixelsPerSecond={TIMELINE_PPS}
-                itemHeight={64}
-                itemDragActivation="hold"
-                className="bg-black/20"
-              />
-            )}
-          </section>
+          <SubTimelineSection
+            key={id}
+            collectionId={collectionId}
+            name={node.name}
+            collapsed={collapsedIds.has(id)}
+            onToggleCollapsed={() =>
+              setCollapsedIds((current) => {
+                const next = new Set(current);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              })
+            }
+          />
         );
       })}
     </div>
@@ -1523,26 +1577,17 @@ type SyncEntry = Readonly<{
  * undoing from within the feed is safe and ordered.
  */
 function PersistenceBridge({
-  details,
-  onDetails,
   onSync,
 }: Readonly<{
-  details: DetailsById;
-  onDetails: (merged: Readonly<Record<string, ClipDetail>>) => void;
   onSync: (entry: SyncEntry) => void;
 }>) {
   const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
   const { announce } = useCollectionsContainer();
-  const detailsRef = useRef(details);
-  useEffect(() => {
-    detailsRef.current = details;
-  });
 
   useEffect(
     () =>
       store.subscribeToChanges((change) => {
-        let current = detailsRef.current;
-
         // A committed palette add claims its parked detail BEFORE the write
         // below, so poster/aspect round-trip into the very first PATCH.
         if (change.patch.type === "nodes-added") {
@@ -1554,11 +1599,11 @@ function PersistenceBridge({
               pendingPaletteDetails.delete(add.node.id as string);
             }
           }
-          if (claimed) {
-            current = { ...current, ...claimed };
-            onDetails(claimed);
-          }
+          if (claimed) detailsStore.merge(claimed);
         }
+
+        // Synchronous store: this read already sees the claim above.
+        const current = detailsStore.read();
 
         if (change.origin !== "undo") {
           const blocked = collectUnhydratedDropTargets(change.patch, current);
@@ -1596,7 +1641,37 @@ function PersistenceBridge({
           collections: affected,
         });
       }),
-    [store, announce, onDetails, onSync],
+    [store, detailsStore, announce, onSync],
+  );
+
+  return null;
+}
+
+/**
+ * Lifecycle for the details side-table (review finding: unbounded
+ * retention). After each commit, entries whose nodes can no longer exist
+ * are dropped. "Can no longer exist" is precise, not heuristic: an id is
+ * retained while it's in the live graph OR mentioned by any undo-stack
+ * patch — undoing a removal resurrects its node, which must get its detail
+ * back. The redo stack isn't visible in the snapshot, so the sweep waits
+ * while a redo branch is open (an undone add could resurrect a node whose
+ * detail was just dropped); the next fresh command clears the branch and
+ * the sweep catches up. Without this, a long session accumulates details
+ * for every node that ever existed — cancelled palette adds, trashed
+ * content aged off the capped history, and so on.
+ */
+function GraphDetailsJanitor() {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+
+  useEffect(
+    () =>
+      store.subscribeToChanges(() => {
+        const snapshot = store.getSnapshot();
+        if (snapshot.canRedo) return;
+        detailsStore.prune(collectReachableDetailIds(snapshot));
+      }),
+    [store, detailsStore],
   );
 
   return null;
@@ -1726,7 +1801,6 @@ type BootState =
   | Readonly<{
       status: "ready";
       graph: CollectionsGraph;
-      details: DetailsById;
       /** The trash collection's root id, when its document loaded. */
       trashRootId: string | null;
     }>;
@@ -1751,7 +1825,10 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
   const focusedId = timelinePath[timelinePath.length - 1] ?? projectId;
 
   const [boot, setBoot] = useState<BootState>({ status: "loading" });
-  const [details, setDetails] = useState<DetailsById>({});
+  // The details side-table — one store per view session, exactly the
+  // lifetime of the engine store it annotates. Consumers subscribe to their
+  // own slice (see useClipDetail), so commits re-render only who they touch.
+  const [detailsStore] = useState(() => createGraphDetailsStore());
   const [focusError, setFocusError] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<readonly SyncEntry[]>([]);
   // Hosted by the persistent layout, so the chosen surface survives
@@ -1862,19 +1939,13 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
         setBoot({ status: "error", message: JSON.stringify(built.error) });
         return;
       }
-      setDetails(bootDetails);
-      setBoot({ status: "ready", graph: built.value, details: bootDetails, trashRootId });
+      detailsStore.replaceAll(bootDetails);
+      setBoot({ status: "ready", graph: built.value, trashRootId });
     })();
     return () => {
       cancelled = true;
     };
-  }, [projectId, trashDocId]);
-
-  const onDetails = useCallback(
-    (merged: Readonly<Record<string, ClipDetail>>) =>
-      setDetails((current) => ({ ...current, ...merged })),
-    [],
-  );
+  }, [projectId, trashDocId, detailsStore]);
 
   // Persistence (write path + gate-until-hydrated bounce) lives in
   // <PersistenceBridge> inside the provider — bouncing needs the store.
@@ -1920,18 +1991,18 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
         // far beyond practical use while keeping memory flat.
         maxHistoryEntries={200}
       >
-        <PersistenceBridge details={details} onDetails={onDetails} onSync={onSync} />
+        <GraphDetailsStoreContext.Provider value={detailsStore}>
+        <PersistenceBridge onSync={onSync} />
+        <GraphDetailsJanitor />
         {/* Portaled to document.body, but rendered HERE so the PaletteItems
             stay inside the provider's dnd context (portals keep it). */}
         <AssetPaletteDrawer open={assetsOpen} onClose={() => setAssetsOpen(false)} />
         <HydrationController
           projectId={projectId}
           segments={timelinePath}
-          details={details}
-          onDetails={onDetails}
           onFocusError={setFocusError}
         />
-        <GraphViewNavProvider details={details} projectId={projectId} focusedId={focusedId}>
+        <GraphViewNavProvider projectId={projectId} focusedId={focusedId}>
           {focusError !== null ? (
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-300">
               <p className="font-semibold text-zinc-100">Unknown timeline</p>
@@ -1945,12 +2016,7 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
             </div>
           ) : (
             <OpenKeyBoundary>
-            <PreviewShell
-              enabled={previewOn}
-              focusedId={focusedId}
-              details={details}
-              channel={timeChannel}
-            >
+            <PreviewShell enabled={previewOn} focusedId={focusedId} channel={timeChannel}>
             <div className="flex flex-col gap-5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs text-zinc-500">
@@ -1992,21 +2058,13 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
                     itemDragActivation="hold"
                     overlay={
                       previewOn ? (
-                        <GraphPlayhead
-                          focusedId={focusedId}
-                          details={details}
-                          channel={timeChannel}
-                        />
+                        <GraphPlayhead focusedId={focusedId} channel={timeChannel} />
                       ) : undefined
                     }
                     className="bg-black/25"
                   />
                   {previewOn && (
-                    <PlayheadScrubBand
-                      focusedId={focusedId}
-                      details={details}
-                      channel={timeChannel}
-                    />
+                    <PlayheadScrubBand focusedId={focusedId} channel={timeChannel} />
                   )}
                 </div>
               ) : (
@@ -2023,25 +2081,17 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
                     height={420}
                     overlay={
                       previewOn ? (
-                        <GraphGridPlayhead
-                          focusedId={focusedId}
-                          details={details}
-                          channel={timeChannel}
-                        />
+                        <GraphGridPlayhead focusedId={focusedId} channel={timeChannel} />
                       ) : undefined
                     }
                     className="bg-black/25"
                   />
                   {previewOn && (
-                    <GraphGridScrubSurface
-                      focusedId={focusedId}
-                      details={details}
-                      channel={timeChannel}
-                    />
+                    <GraphGridScrubSurface focusedId={focusedId} channel={timeChannel} />
                   )}
                 </div>
               )}
-              <SubTimelines focusedId={focusedId} details={details} onDetails={onDetails} />
+              <SubTimelines focusedId={focusedId} />
               {boot.trashRootId !== null && (
                 <div className="flex items-end justify-end">
                   <div className="shrink-0">
@@ -2061,6 +2111,7 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
             </OpenKeyBoundary>
           )}
         </GraphViewNavProvider>
+        </GraphDetailsStoreContext.Provider>
       </DndCollections>
     </div>
   );
