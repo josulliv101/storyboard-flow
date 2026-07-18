@@ -17,9 +17,47 @@ type TimelineDocumentRecord = {
   /** Authorization boundary: absent only on legacy records, which are
    *  claimed by the first authenticated toucher (see lib/timeline-ownership). */
   ownerUid?: string;
+  /** Monotonic save counter, stamped on EVERY write (absent = 0, legacy).
+   *  Clients that carry an expected revision into a batch write get
+   *  compare-and-set semantics; clients that don't (legacy views) keep
+   *  last-write-wins. */
+  revision?: number;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 };
+
+/** A document plus the revision that read observed — the token a client
+ *  hands back as `expectedRevision` to detect concurrent writers. */
+export type TimelineEntry = {
+  document: TimelineDocument;
+  revision: number;
+};
+
+export type TimelineBatchWrite = {
+  document: TimelineDocument;
+  /** Omit for last-write-wins (legacy semantics). When present, the write
+   *  only applies if the stored revision still matches. */
+  expectedRevision?: number;
+};
+
+export type TimelineRevisionConflict = {
+  id: string;
+  actualRevision: number;
+};
+
+/** A batch was rejected because at least one expected revision no longer
+ *  matched — NOTHING in the batch was written. */
+export class TimelineRevisionConflictError extends Error {
+  readonly conflicts: readonly TimelineRevisionConflict[];
+
+  constructor(conflicts: readonly TimelineRevisionConflict[]) {
+    super(
+      `Timeline write conflict: ${conflicts.map((conflict) => conflict.id).join(", ")} changed since they were read.`,
+    );
+    this.name = "TimelineRevisionConflictError";
+    this.conflicts = conflicts;
+  }
+}
 
 export type TimelineProjectSummary = {
   id: string;
@@ -200,7 +238,10 @@ export async function listFirebaseTimelineProjects(requesterUid: string) {
     });
 }
 
-export async function getFirebaseTimelineDocument(id: string, requesterUid: string) {
+export async function getFirebaseTimelineEntry(
+  id: string,
+  requesterUid: string,
+): Promise<TimelineEntry | null> {
   const snapshot = await withFirebaseTimeout(
     collection().doc(id).get(),
     "Loading timeline document",
@@ -216,14 +257,52 @@ export async function getFirebaseTimelineDocument(id: string, requesterUid: stri
       "Claiming legacy timeline document",
     );
   }
-  return toTimelineDocument(snapshot.id, data);
+  return {
+    document: toTimelineDocument(snapshot.id, data),
+    revision: data.revision ?? 0,
+  };
 }
 
-export async function saveFirebaseTimelineDocument(
+export async function getFirebaseTimelineDocument(id: string, requesterUid: string) {
+  const entry = await getFirebaseTimelineEntry(id, requesterUid);
+  return entry?.document ?? null;
+}
+
+/** The one Firestore payload both write paths (single save, atomic batch)
+ *  produce — shared so revision stamping and ownership claiming can't drift
+ *  between them. */
+function buildSavePayload(
+  normalizedDocument: TimelineDocument,
+  existing: TimelineDocumentRecord | undefined,
+  requesterUid: string,
+  revision: number,
+  options?: { isProject?: boolean },
+) {
+  return {
+    id: normalizedDocument.id,
+    title: normalizedDocument.title,
+    description: normalizedDocument.description || null,
+    document: normalizedDocument,
+    clips: normalizedDocument.clips,
+    ...(normalizedDocument.clips.length > 0
+      ? { lastNonEmptyDocument: normalizedDocument }
+      : {}),
+    isProject: options?.isProject ?? existing?.isProject === true,
+    // Ownership: a save CREATES with the requester as owner, CLAIMS a legacy
+    // unowned record, and was refused earlier on someone else's. Children
+    // minted implicitly through writes (collection drops) are stamped too.
+    ownerUid: existing?.ownerUid ?? requesterUid,
+    revision,
+    createdAt: existing?.createdAt || FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+}
+
+export async function saveFirebaseTimelineEntry(
   document: TimelineDocument,
   requesterUid: string,
   options?: { isProject?: boolean },
-) {
+): Promise<TimelineEntry> {
   if (isUnsavedProjectPlaceholder(document)) {
     throw new Error("Refusing to save an unloaded project placeholder.");
   }
@@ -231,18 +310,14 @@ export async function saveFirebaseTimelineDocument(
   const normalizedDocument = normalizeDocument(document);
   const ref = collection().doc(normalizedDocument.id);
   const existing = await withFirebaseTimeout(ref.get(), "Loading timeline document");
-  const existingIsProject = existing.exists ? existing.get("isProject") === true : false;
-  // Ownership: a save CREATES with the requester as owner, CLAIMS a legacy
-  // unowned record, and is refused on someone else's. Children minted
-  // implicitly through PATCH (collection drops) are stamped here too.
-  const existingOwnerUid = existing.exists
-    ? (existing.data() as TimelineDocumentRecord).ownerUid
+  const existingData = existing.exists
+    ? (existing.data() as TimelineDocumentRecord)
     : undefined;
-  if (existing.exists && resolveOwnership(existingOwnerUid, requesterUid) === "denied") {
+  if (existingData && resolveOwnership(existingData.ownerUid, requesterUid) === "denied") {
     throw new TimelineAccessDeniedError(normalizedDocument.id);
   }
-  const existingDocument = existing.exists
-    ? toTimelineDocument(existing.id, existing.data() as TimelineDocumentRecord)
+  const existingDocument = existingData
+    ? toTimelineDocument(existing.id, existingData)
     : null;
 
   if (
@@ -255,29 +330,122 @@ export async function saveFirebaseTimelineDocument(
     );
   }
 
+  // No expectation here: the single-save path keeps last-write-wins (legacy
+  // views). It still STAMPS the next revision so batch writers see honest
+  // counters.
+  const revision = (existingData?.revision ?? 0) + 1;
   await withFirebaseTimeout(
     ref.set(
-      {
-        id: normalizedDocument.id,
-        title: normalizedDocument.title,
-        description: normalizedDocument.description || null,
-        document: normalizedDocument,
-        clips: normalizedDocument.clips,
-        ...(normalizedDocument.clips.length > 0
-          ? { lastNonEmptyDocument: normalizedDocument }
-          : {}),
-        isProject: options?.isProject ?? existingIsProject,
-        ownerUid: existingOwnerUid ?? requesterUid,
-        createdAt: existing.exists ? existing.get("createdAt") || FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
+      buildSavePayload(normalizedDocument, existingData, requesterUid, revision, options),
       { merge: true },
     ),
     "Saving timeline document",
   );
 
   const snapshot = await withFirebaseTimeout(ref.get(), "Loading timeline document");
-  return toTimelineDocument(snapshot.id, snapshot.data() as TimelineDocumentRecord);
+  const savedData = snapshot.data() as TimelineDocumentRecord;
+  return {
+    document: toTimelineDocument(snapshot.id, savedData),
+    revision: savedData.revision ?? revision,
+  };
+}
+
+export async function saveFirebaseTimelineDocument(
+  document: TimelineDocument,
+  requesterUid: string,
+  options?: { isProject?: boolean },
+) {
+  return (await saveFirebaseTimelineEntry(document, requesterUid, options)).document;
+}
+
+/**
+ * ALL-OR-NOTHING multi-document save in one Firestore transaction — the
+ * write path for changes that span documents (a cross-timeline move touches
+ * two), where independent PATCHes could apply half a change. Per-write
+ * `expectedRevision` gives compare-and-set: any mismatch aborts the WHOLE
+ * batch with a TimelineRevisionConflictError listing every conflicted id
+ * (so a stale client can't silently overwrite a newer writer). Ownership
+ * and the empty-over-nonempty guard match the single-save path exactly.
+ */
+export async function saveFirebaseTimelineDocumentsAtomic(
+  writes: readonly TimelineBatchWrite[],
+  requesterUid: string,
+): Promise<{ id: string; revision: number }[]> {
+  for (const write of writes) {
+    if (isUnsavedProjectPlaceholder(write.document)) {
+      throw new Error("Refusing to save an unloaded project placeholder.");
+    }
+  }
+  const ids = writes.map((write) => write.document.id);
+  if (new Set(ids).size !== ids.length) {
+    throw new Error("A batch write must not repeat a timeline id.");
+  }
+
+  return withFirebaseTimeout(
+    getFirebaseDb().runTransaction(async (tx) => {
+      // Firestore transactions require every read before the first write.
+      const refs = ids.map((id) => collection().doc(id));
+      const snapshots = await Promise.all(refs.map((ref) => tx.get(ref)));
+
+      const conflicts: TimelineRevisionConflict[] = [];
+      const staged: {
+        ref: (typeof refs)[number];
+        id: string;
+        revision: number;
+        payload: ReturnType<typeof buildSavePayload>;
+      }[] = [];
+
+      for (let index = 0; index < writes.length; index += 1) {
+        const normalizedDocument = normalizeDocument(writes[index].document);
+        const snapshot = snapshots[index];
+        const existingData = snapshot.exists
+          ? (snapshot.data() as TimelineDocumentRecord)
+          : undefined;
+
+        if (existingData && resolveOwnership(existingData.ownerUid, requesterUid) === "denied") {
+          throw new TimelineAccessDeniedError(normalizedDocument.id);
+        }
+
+        const actualRevision = existingData?.revision ?? 0;
+        const expected = writes[index].expectedRevision;
+        if (expected !== undefined && expected !== actualRevision) {
+          conflicts.push({ id: normalizedDocument.id, actualRevision });
+          continue;
+        }
+
+        const existingDocument = existingData
+          ? toTimelineDocument(snapshot.id, existingData)
+          : null;
+        if (
+          existingDocument &&
+          existingDocument.clips.length > 0 &&
+          normalizedDocument.clips.length === 0
+        ) {
+          throw new Error(
+            "Refusing to save an empty timeline over an existing non-empty document.",
+          );
+        }
+
+        staged.push({
+          ref: refs[index],
+          id: normalizedDocument.id,
+          revision: actualRevision + 1,
+          payload: buildSavePayload(
+            normalizedDocument,
+            existingData,
+            requesterUid,
+            actualRevision + 1,
+          ),
+        });
+      }
+
+      if (conflicts.length > 0) throw new TimelineRevisionConflictError(conflicts);
+
+      for (const entry of staged) tx.set(entry.ref, entry.payload, { merge: true });
+      return staged.map(({ id, revision }) => ({ id, revision }));
+    }),
+    "Saving timeline documents",
+  );
 }
 
 export async function createFirebaseTimelineProject(requesterUid: string, title?: string) {
