@@ -1787,6 +1787,12 @@ export function GraphTimelineView({ projectId }: { projectId: string }) {
   const trashDocId = user ? `trash-${user.uid}` : null;
   useEffect(() => {
     if (trashDocId === null) return; // auth still resolving (AuthGate guarantees a user)
+    // Entering the graph view must not trust the session cache: edits made in
+    // the storyboard view (or another tab) since the last graph session would
+    // otherwise be overwritten by full-document PATCHes built from stale
+    // content. `refresh` flushes pending writes and marks every cached id
+    // stale, so the `ensure` calls below (and hydrate-on-focus) refetch.
+    graphDocumentsGateway.refresh();
     let cancelled = false;
     void (async () => {
       const [projectDoc, trashDoc] = await Promise.all([
