@@ -2,12 +2,12 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // E2E for the graph project view (/timeline/[projectId]/graph) — the REAL
 // Next app driven with real mouse input. The server surface the view touches
-// (/api/auth/me, /api/timelines/[id], /api/assets) is mocked per-test with
-// page.route(), so the suite exercises everything the Storybook layers can't:
-// AuthGate, App Router layout persistence (undo across drill-in), the
-// documents gateway with debounced patch-scoped PATCHes, the palette drawer,
-// the trash root, and the preview playhead — without reading or writing any
-// real storage.
+// (/api/auth/me, /api/timelines/[id], /api/timelines/batch, /api/assets) is
+// mocked per-test with page.route(), so the suite exercises everything the
+// Storybook layers can't: AuthGate, App Router layout persistence (undo
+// across drill-in), the documents gateway's debounced ATOMIC batch writes
+// with expected revisions, the palette drawer, the trash root, and the
+// preview playhead — without reading or writing any real storage.
 //
 // Selector contract (documented in packages/ui/dnd-collections/API.md):
 //   [data-node-id] card buttons · [data-virtual-strip="<collectionId>"]
@@ -111,8 +111,12 @@ type RecordedPatch = { id: string; clipIds: string[] };
 
 type GraphApi = {
   documents: Map<string, FixtureDocument>;
+  /** One entry per document write, in arrival order (batch writes fan out). */
   patches: RecordedPatch[];
   patchesFor: (id: string) => RecordedPatch[];
+  /** The document ids each POST /api/timelines/batch carried — the
+   *  atomicity witness: docs written by one change must share a batch. */
+  batches: string[][];
 };
 
 async function installGraphApi(
@@ -121,6 +125,10 @@ async function installGraphApi(
 ): Promise<GraphApi> {
   const documents = buildFixtureDocuments();
   const patches: RecordedPatch[] = [];
+  const batches: string[][] = [];
+  // Served on GET and enforced on batch writes, like the real API: the
+  // gateway must round-trip these as expectedRevision.
+  const revisions = new Map<string, number>([...documents.keys()].map((id) => [id, 1]));
 
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
@@ -162,6 +170,44 @@ async function installGraphApi(
     const request = route.request();
     const id = decodeURIComponent(new URL(request.url()).pathname.split("/").pop() ?? "");
 
+    // The graph gateway's write path: ONE atomic batch per debounce window,
+    // each write carrying the expectedRevision its GET served. Mirrors the
+    // real endpoint: a conflict rejects the whole batch, success bumps and
+    // returns every revision.
+    if (id === "batch" && request.method() === "POST") {
+      const body = request.postDataJSON() as {
+        writes?: { document?: FixtureDocument; expectedRevision?: number }[];
+      };
+      const writes = (body.writes ?? []).filter(
+        (write): write is { document: FixtureDocument; expectedRevision?: number } =>
+          write.document !== undefined,
+      );
+      const conflicts = writes.flatMap((write) => {
+        const actual = revisions.get(write.document.id) ?? 0;
+        return write.expectedRevision !== undefined && write.expectedRevision !== actual
+          ? [{ id: write.document.id, actualRevision: actual }]
+          : [];
+      });
+      if (conflicts.length > 0) {
+        await route.fulfill({ status: 409, json: { error: "Write conflict.", conflicts } });
+        return;
+      }
+      const results: { id: string; revision: number }[] = [];
+      for (const write of writes) {
+        documents.set(write.document.id, write.document);
+        const next = (revisions.get(write.document.id) ?? 0) + 1;
+        revisions.set(write.document.id, next);
+        patches.push({
+          id: write.document.id,
+          clipIds: write.document.clips.map((clip) => clip.id),
+        });
+        results.push({ id: write.document.id, revision: next });
+      }
+      batches.push(writes.map((write) => write.document.id));
+      await route.fulfill({ json: { results } });
+      return;
+    }
+
     if (options.blockChildDocument && id === CHILD_ID && request.method() === "GET") {
       // Simulate the fetch-latency window the bounce policy exists for: the
       // child document never arrives, so its collection stays un-hydrated.
@@ -175,26 +221,19 @@ async function installGraphApi(
         await route.fulfill({ status: 404, json: { error: "Timeline was not found." } });
         return;
       }
-      await route.fulfill({ json: { document: doc } });
-      return;
-    }
-
-    if (request.method() === "PATCH") {
-      const body = request.postDataJSON() as { document?: FixtureDocument };
-      if (!body.document || body.document.id !== id) {
-        await route.fulfill({ status: 400, json: { error: "Bad document." } });
-        return;
-      }
-      documents.set(id, body.document);
-      patches.push({ id, clipIds: body.document.clips.map((clip) => clip.id) });
-      await route.fulfill({ json: { document: body.document } });
+      await route.fulfill({ json: { document: doc, revision: revisions.get(id) ?? 0 } });
       return;
     }
 
     await route.continue();
   });
 
-  return { documents, patches, patchesFor: (id) => patches.filter((patch) => patch.id === id) };
+  return {
+    documents,
+    patches,
+    patchesFor: (id) => patches.filter((patch) => patch.id === id),
+    batches,
+  };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -293,7 +332,7 @@ test.describe("graph view E2E", () => {
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["bravo", CHILD_ID, "charlie", "alpha"]);
 
-    // The gateway debounces ~900ms, then PATCHes the project document with
+    // The gateway debounces ~900ms, then writes the project document with
     // the reordered clips — the collection clip under its ORIGINAL clip id
     // (sourceClipId round-trip) — and touches nothing else.
     await expect
@@ -417,6 +456,13 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds, { timeout: 5000 })
       .toEqual(["alpha", "clip-scene", "charlie"]);
+    // ATOMICITY: both halves of the move traveled in the SAME batch request —
+    // a crash between two independent PATCHes could persist half a move.
+    expect(
+      api.batches.some(
+        (batch) => batch.includes(TRASH_ID) && batch.includes(PROJECT_ID),
+      ),
+    ).toBe(true);
 
     // Trash drops are ordinary undoable moves.
     await undoButton(page).click();

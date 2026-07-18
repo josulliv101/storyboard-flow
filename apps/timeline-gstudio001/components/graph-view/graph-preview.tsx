@@ -1,0 +1,533 @@
+"use client";
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+
+import {
+  MIN_ITEM_WIDTH,
+  durationToWidth,
+  useCollectionsSelector,
+  useCollectionsStore,
+  type CollectionsGraph,
+} from "@storyboard/ui/dnd-collections";
+import { graphChildrenToClips, type DetailsById } from "@storyboard/timeline-domain";
+import { WorkbenchSplitPane } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
+import {
+  TimelineDocumentsProvider,
+  useTimelineDocuments,
+} from "@storyboard/ui/timeline/timeline-document-store";
+import { createTimelineDocumentsState } from "@storyboard/ui/timeline/timeline-documents";
+import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
+
+import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+
+import { useGraphDetailsStore } from "./graph-details-context";
+import {
+  GRID_CELL_HEIGHT,
+  GRID_CELL_WIDTH,
+  GRID_GAP,
+  TIMELINE_PPS,
+} from "./graph-view-config";
+
+export type PreviewTimeChannel = Readonly<{
+  get: () => number;
+  set: (time: number) => void;
+  subscribe: (listener: () => void) => () => void;
+}>;
+
+export function createPreviewTimeChannel(): PreviewTimeChannel {
+  let time = 0;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => time,
+    set: (next) => {
+      time = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+type PlayheadMap = Readonly<{
+  xAt: (time: number) => number;
+  timeAt: (x: number) => number;
+  totalDurationSeconds: number;
+}>;
+
+const STRIP_GAP_PX = 8;
+const COLLECTION_CARD_PX = 128;
+
+function buildPlayheadMap(clips: readonly TimelineClip[]): PlayheadMap {
+  const times: number[] = [];
+  const xs: number[] = [];
+  let x = 0;
+  for (const clip of clips) {
+    const width =
+      clip.kind === "collection"
+        ? Math.max(MIN_ITEM_WIDTH, COLLECTION_CARD_PX)
+        : durationToWidth(clip.duration, TIMELINE_PPS);
+    times.push(clip.startTime, clip.startTime + clip.duration);
+    xs.push(x, x + width);
+    x += width + STRIP_GAP_PX;
+  }
+  const count = times.length;
+  const total = count > 0 ? times[count - 1] : 0;
+
+  const interpolate = (value: number, from: number[], to: number[]): number => {
+    if (count === 0) return 0;
+    if (value <= from[0]) return to[0];
+    if (value >= from[count - 1]) return to[count - 1];
+    let low = 0;
+    let high = count - 1;
+    while (low < high - 1) {
+      const middle = (low + high) >> 1;
+      if (from[middle] <= value) low = middle;
+      else high = middle;
+    }
+    const span = from[high] - from[low];
+    const fraction = span > 0 ? (value - from[low]) / span : 0;
+    return to[low] + fraction * (to[high] - to[low]);
+  };
+
+  return {
+    xAt: (time) => interpolate(time, times, xs),
+    timeAt: (offset) => interpolate(offset, xs, times),
+    totalDurationSeconds: total,
+  };
+}
+
+type GridPlayheadMap = Readonly<{
+  posAt: (time: number) => { x: number; y: number };
+  timeAt: (x: number, y: number) => number;
+  totalDurationSeconds: number;
+  rowHeight: number;
+}>;
+
+function buildGridPlayheadMap(clips: readonly TimelineClip[], cols: number): GridPlayheadMap {
+  const columns = Math.max(1, cols);
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (const clip of clips) {
+    starts.push(clip.startTime);
+    ends.push(clip.startTime + clip.duration);
+  }
+  const count = clips.length;
+  const total = count > 0 ? ends[count - 1] : 0;
+  const cellX = (index: number) => (index % columns) * (GRID_CELL_WIDTH + GRID_GAP);
+  const cellY = (index: number) =>
+    Math.floor(index / columns) * (GRID_CELL_HEIGHT + GRID_GAP);
+  const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+  return {
+    rowHeight: GRID_CELL_HEIGHT,
+    totalDurationSeconds: total,
+    posAt: (time) => {
+      if (count === 0) return { x: 0, y: 0 };
+      let low = 0;
+      if (time >= starts[count - 1]) {
+        low = count - 1;
+      } else if (time > starts[0]) {
+        let high = count - 1;
+        while (low < high - 1) {
+          const middle = (low + high) >> 1;
+          if (starts[middle] <= time) low = middle;
+          else high = middle;
+        }
+      }
+      const span = ends[low] - starts[low];
+      const fraction = span > 0 ? clamp01((time - starts[low]) / span) : 0;
+      return { x: cellX(low) + fraction * GRID_CELL_WIDTH, y: cellY(low) };
+    },
+    timeAt: (x, y) => {
+      if (count === 0) return 0;
+      const row = Math.max(0, Math.floor(y / (GRID_CELL_HEIGHT + GRID_GAP)));
+      const column = Math.max(
+        0,
+        Math.min(columns - 1, Math.floor(x / (GRID_CELL_WIDTH + GRID_GAP))),
+      );
+      const index = Math.max(0, Math.min(count - 1, row * columns + column));
+      const fraction = clamp01((x - cellX(index)) / GRID_CELL_WIDTH);
+      return Math.min(
+        total,
+        Math.max(0, starts[index] + fraction * (ends[index] - starts[index])),
+      );
+    },
+  };
+}
+
+export function GraphPlayhead({
+  focusedId,
+  channel,
+}: Readonly<{
+  focusedId: string;
+  channel: PreviewTimeChannel;
+}>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const lineRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let lastGraph: CollectionsGraph | null = null;
+    let lastDetails: DetailsById | null = null;
+    let map: PlayheadMap | null = null;
+    const paint = () => {
+      const graph = store.getSnapshot().graph;
+      const details = detailsStore.read();
+      if (graph !== lastGraph || details !== lastDetails) {
+        lastGraph = graph;
+        lastDetails = details;
+        map = buildPlayheadMap(graphChildrenToClips(graph, details, focusedId));
+      }
+      const line = lineRef.current;
+      if (line && map) line.style.transform = `translateX(${map.xAt(channel.get())}px)`;
+    };
+    paint();
+    const unsubscribeTime = channel.subscribe(paint);
+    const unsubscribeStore = store.subscribe(paint);
+    const unsubscribeDetails = detailsStore.subscribe(paint);
+    return () => {
+      unsubscribeTime();
+      unsubscribeStore();
+      unsubscribeDetails();
+    };
+  }, [store, detailsStore, focusedId, channel]);
+
+  return (
+    <div
+      ref={lineRef}
+      data-graph-playhead
+      className="absolute inset-y-0 left-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+    >
+      <div className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500" />
+    </div>
+  );
+}
+
+export function PlayheadScrubBand({
+  focusedId,
+  channel,
+}: Readonly<{
+  focusedId: string;
+  channel: PreviewTimeChannel;
+}>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const bandRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const band = bandRef.current;
+    if (!band) return;
+    const scroller = band.parentElement?.querySelector<HTMLElement>(".overflow-x-auto") ?? null;
+    if (!scroller) return;
+
+    let map: PlayheadMap | null = null;
+    let mapGraph: CollectionsGraph | null = null;
+    let mapDetails: DetailsById | null = null;
+    const seek = (event: PointerEvent) => {
+      const graph = store.getSnapshot().graph;
+      const details = detailsStore.read();
+      if (graph !== mapGraph || details !== mapDetails || !map) {
+        mapGraph = graph;
+        mapDetails = details;
+        map = buildPlayheadMap(graphChildrenToClips(graph, details, focusedId));
+      }
+      const rect = scroller.getBoundingClientRect();
+      const styles = getComputedStyle(scroller);
+      const contentX =
+        event.clientX -
+        rect.left -
+        parseFloat(styles.borderLeftWidth) -
+        parseFloat(styles.paddingLeft) +
+        scroller.scrollLeft;
+      channel.set(Math.max(0, Math.min(map.timeAt(contentX), map.totalDurationSeconds)));
+    };
+
+    let pointerId: number | null = null;
+    const handleMove = (event: PointerEvent) => {
+      if (event.pointerId === pointerId) seek(event);
+    };
+    const end = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return;
+      pointerId = null;
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+    const handleDown = (event: PointerEvent) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      pointerId = event.pointerId;
+      try {
+        band.setPointerCapture(event.pointerId);
+      } catch {
+        // Synthetic pointer: window listeners still own the lifecycle.
+      }
+      seek(event);
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    };
+
+    band.addEventListener("pointerdown", handleDown);
+    return () => {
+      band.removeEventListener("pointerdown", handleDown);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+  }, [store, detailsStore, focusedId, channel]);
+
+  return (
+    <div
+      ref={bandRef}
+      data-playhead-scrub
+      aria-hidden="true"
+      className="absolute inset-x-0 top-0 z-10 h-3 cursor-ew-resize"
+    />
+  );
+}
+
+export function GraphGridPlayhead({
+  focusedId,
+  channel,
+}: Readonly<{
+  focusedId: string;
+  channel: PreviewTimeChannel;
+}>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const lineRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const line = lineRef.current;
+    if (!line) return;
+    const grid = line.closest<HTMLElement>("[data-virtual-grid]");
+    let lastGraph: CollectionsGraph | null = null;
+    let lastDetails: DetailsById | null = null;
+    let lastColumns = 0;
+    let map: GridPlayheadMap | null = null;
+
+    const paint = () => {
+      const graph = store.getSnapshot().graph;
+      const details = detailsStore.read();
+      const columns = Number(grid?.dataset.gridColumns) || 1;
+      if (graph !== lastGraph || details !== lastDetails || columns !== lastColumns) {
+        lastGraph = graph;
+        lastDetails = details;
+        lastColumns = columns;
+        map = buildGridPlayheadMap(graphChildrenToClips(graph, details, focusedId), columns);
+      }
+      if (!map) return;
+      const { x, y } = map.posAt(channel.get());
+      line.style.transform = `translate(${x}px, ${y}px)`;
+      line.style.height = `${map.rowHeight}px`;
+    };
+
+    paint();
+    const unsubscribeTime = channel.subscribe(paint);
+    const unsubscribeStore = store.subscribe(paint);
+    const unsubscribeDetails = detailsStore.subscribe(paint);
+    const observer = grid ? new ResizeObserver(paint) : null;
+    if (grid && observer) observer.observe(grid);
+    return () => {
+      unsubscribeTime();
+      unsubscribeStore();
+      unsubscribeDetails();
+      observer?.disconnect();
+    };
+  }, [store, detailsStore, focusedId, channel]);
+
+  return (
+    <div
+      ref={lineRef}
+      data-graph-grid-playhead
+      className="absolute left-0 top-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+    >
+      <div className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500" />
+    </div>
+  );
+}
+
+export function GraphGridScrubSurface({
+  focusedId,
+  channel,
+}: Readonly<{
+  focusedId: string;
+  channel: PreviewTimeChannel;
+}>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const surfaceRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const grid = surface.parentElement?.querySelector<HTMLElement>("[data-virtual-grid]") ?? null;
+    if (!grid) return;
+
+    let map: GridPlayheadMap | null = null;
+    let mapGraph: CollectionsGraph | null = null;
+    let mapDetails: DetailsById | null = null;
+    let mapColumns = 0;
+    const seek = (event: PointerEvent) => {
+      const graph = store.getSnapshot().graph;
+      const details = detailsStore.read();
+      const columns = Number(grid.dataset.gridColumns) || 1;
+      if (graph !== mapGraph || details !== mapDetails || columns !== mapColumns || !map) {
+        mapGraph = graph;
+        mapDetails = details;
+        mapColumns = columns;
+        map = buildGridPlayheadMap(graphChildrenToClips(graph, details, focusedId), columns);
+      }
+      const overlay = grid.querySelector<HTMLElement>("[data-virtual-grid-overlay]");
+      const rect = (overlay ?? grid).getBoundingClientRect();
+      channel.set(map.timeAt(event.clientX - rect.left, event.clientY - rect.top));
+    };
+
+    let pointerId: number | null = null;
+    const handleMove = (event: PointerEvent) => {
+      if (event.pointerId === pointerId) seek(event);
+    };
+    const end = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return;
+      pointerId = null;
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+    const handleDown = (event: PointerEvent) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      pointerId = event.pointerId;
+      try {
+        surface.setPointerCapture(event.pointerId);
+      } catch {
+        // Synthetic pointer: window listeners still own the lifecycle.
+      }
+      seek(event);
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    };
+    const handleWheel = (event: WheelEvent) => {
+      const scale = event.deltaMode === 1 ? 32 : 1;
+      const before = grid.scrollTop;
+      const maximum = grid.scrollHeight - grid.clientHeight;
+      const next = Math.max(0, Math.min(before + event.deltaY * scale, maximum));
+      if (next !== before) {
+        grid.scrollTop = next;
+        event.preventDefault();
+      }
+    };
+
+    surface.addEventListener("pointerdown", handleDown);
+    surface.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      surface.removeEventListener("pointerdown", handleDown);
+      surface.removeEventListener("wheel", handleWheel);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+  }, [store, detailsStore, focusedId, channel]);
+
+  return (
+    <div
+      ref={surfaceRef}
+      data-grid-scrub
+      aria-hidden="true"
+      className="absolute inset-0 z-10 cursor-crosshair"
+    />
+  );
+}
+
+function GatewayDocumentsBridge() {
+  const { registerTimelineDocument } = useTimelineDocuments();
+  const seenRef = useRef<Readonly<Record<string, TimelineDocument>>>({});
+
+  useEffect(() => {
+    const sync = () => {
+      const seen = seenRef.current;
+      const current = graphDocumentsGateway.read();
+      if (current === seen) return;
+      for (const [id, document] of Object.entries(current)) {
+        if (seen[id] !== document) registerTimelineDocument(document, { persist: false });
+      }
+      seenRef.current = current;
+    };
+    sync();
+    return graphDocumentsGateway.subscribe(sync);
+  }, [registerTimelineDocument]);
+
+  return null;
+}
+
+export function PreviewShell({
+  enabled,
+  focusedId,
+  channel,
+  children,
+}: Readonly<{
+  enabled: boolean;
+  focusedId: string;
+  channel: PreviewTimeChannel;
+  children: React.ReactNode;
+}>) {
+  const graph = useCollectionsSelector((snapshot) => snapshot.graph);
+  const detailsStore = useGraphDetailsStore();
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    detailsStore.read,
+    detailsStore.read,
+  );
+  const clips = useMemo<TimelineClip[]>(
+    () => (enabled ? graphChildrenToClips(graph, details, focusedId) : []),
+    [enabled, graph, details, focusedId],
+  );
+  const [time, setTime] = useState(0);
+
+  useEffect(() => channel.subscribe(() => setTime(channel.get())), [channel]);
+  const handleTimeChange = useCallback(
+    (next: number) => {
+      setTime(next);
+      channel.set(next);
+    },
+    [channel],
+  );
+
+  useEffect(() => {
+    channel.set(0);
+  }, [channel, focusedId]);
+
+  const totalDuration =
+    clips.length > 0
+      ? clips[clips.length - 1].startTime + clips[clips.length - 1].duration
+      : 0;
+  useEffect(() => {
+    if (channel.get() > totalDuration) channel.set(totalDuration);
+  }, [channel, totalDuration]);
+
+  const [initialDocumentsState] = useState(() =>
+    createTimelineDocumentsState({ ...graphDocumentsGateway.read() }, {}),
+  );
+
+  if (!enabled) return <>{children}</>;
+
+  return (
+    <TimelineDocumentsProvider initialState={initialDocumentsState}>
+      <GatewayDocumentsBridge />
+      <WorkbenchSplitPane clips={clips} currentTime={time} onCurrentTimeChange={handleTimeChange}>
+        {children}
+      </WorkbenchSplitPane>
+    </TimelineDocumentsProvider>
+  );
+}

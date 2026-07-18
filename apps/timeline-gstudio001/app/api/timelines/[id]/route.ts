@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import type { TimelineDocument, TimelineClip } from "@storyboard/ui/timeline/types";
 import {
   getFirebaseTimelineDocument,
-  saveFirebaseTimelineDocument,
+  getFirebaseTimelineEntry,
+  saveFirebaseTimelineEntry,
   deleteFirebaseTimelineDocument,
 } from "@/lib/firebase-timeline-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
@@ -79,13 +80,14 @@ export async function GET(
     if (mismatch) return mismatch;
 
     if (id.startsWith("trash-")) {
-      const firebaseDocument = await getFirebaseTimelineDocument(id, user.uid);
-      const doc: TimelineDocument = firebaseDocument || {
+      const entry = await getFirebaseTimelineEntry(id, user.uid);
+      const doc: TimelineDocument = entry?.document || {
         id,
         title: "Trash Bin",
         clips: [],
       };
-      return NextResponse.json({ document: doc });
+      // revision 0 = not stored yet; a batch write expecting 0 creates it.
+      return NextResponse.json({ document: doc, revision: entry?.revision ?? 0 });
     }
 
     if (!isValidTimelineId(id)) {
@@ -248,19 +250,24 @@ export async function GET(
       });
     }
 
-    const firebaseDocument = await getFirebaseTimelineDocument(id, user.uid);
-    if (firebaseDocument) {
+    const entry = await getFirebaseTimelineEntry(id, user.uid);
+    if (entry) {
       // Load-time self-heal: re-point moved/renamed Cloudinary assets AND
       // backfill real video durations onto untrimmed clips (see
       // healTimelineDocument). Persisted only when something actually changed.
       const cloudinaryAssets = await listCloudinaryAssets(user.uid).catch(() => []);
       const { document: healedDocument, changed } = healTimelineDocument(
-        firebaseDocument,
+        entry.document,
         cloudinaryAssets,
       );
 
+      // The served revision must reflect the heal write (it bumps the
+      // counter) or the client's first expected-revision write would
+      // conflict spuriously.
+      let revision = entry.revision;
       if (changed) {
-        await saveFirebaseTimelineDocument(healedDocument, user.uid).catch(() => {});
+        const saved = await saveFirebaseTimelineEntry(healedDocument, user.uid).catch(() => null);
+        if (saved) revision = saved.revision;
       }
 
       // Collection summaries derive from the CHILD documents at read time
@@ -278,7 +285,7 @@ export async function GET(
       );
       const derived = deriveCollectionSummaries(healedDocument, childDocuments);
 
-      return NextResponse.json({ document: derived.document });
+      return NextResponse.json({ document: derived.document, revision });
     }
 
     const fallbackDocument = getTimelineDocument(id);
@@ -286,8 +293,8 @@ export async function GET(
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }
 
-    const savedDocument = await saveFirebaseTimelineDocument(fallbackDocument, user.uid);
-    return NextResponse.json({ document: savedDocument });
+    const saved = await saveFirebaseTimelineEntry(fallbackDocument, user.uid);
+    return NextResponse.json({ document: saved.document, revision: saved.revision });
   } catch (error) {
     return storageErrorResponse(error, "Unable to load the timeline document.");
   }
@@ -323,8 +330,12 @@ export async function PATCH(
       );
     }
 
-    const savedDocument = await saveFirebaseTimelineDocument(body.document, user.uid);
-    return NextResponse.json({ document: savedDocument });
+    // No expected revision on the single-document path: legacy views keep
+    // last-write-wins. The response still carries the stamped revision so
+    // any caller can start carrying expectations (the batch endpoint is the
+    // compare-and-set path).
+    const saved = await saveFirebaseTimelineEntry(body.document, user.uid);
+    return NextResponse.json({ document: saved.document, revision: saved.revision });
   } catch (error) {
     if (
       error instanceof Error &&
