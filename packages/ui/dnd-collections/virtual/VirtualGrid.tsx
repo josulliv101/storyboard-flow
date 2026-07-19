@@ -31,9 +31,12 @@ import {
   type VirtualViewPoint,
 } from "./use-virtual-collection-view";
 
-// Vertical virtualized grid. Cells are FIXED-SIZE by decision (media
-// letterboxes inside its card), which keeps the virtualizer purely
-// row-based: one virtual item per row, columns are index arithmetic.
+// Vertical virtualized grid. Cells are UNIFORM within a grid (no per-item
+// variable width like the strip), which keeps the virtualizer purely
+// row-based: one virtual item per row, columns are index arithmetic. Cell
+// WIDTH stretches to fill the container exactly (see `cellWidth` doc) — only
+// height is a fixed constant, so media letterboxes at a width:height ratio
+// that varies slightly with container width, by design (2026-07-19).
 // Cards are the standard NodeCard; the droppable contract is the same
 // virtualInsert used by VirtualStrip, with 2D boundary math. NOTE: cards
 // moving BETWEEN rows re-parent (rows are keyed by index), so cross-row
@@ -42,10 +45,15 @@ import {
 
 export type VirtualGridProps = Readonly<{
   collectionId: NodeId;
+  /** TARGET/MINIMUM column width used to pick the responsive column count.
+   *  The actual rendered width stretches evenly across the chosen columns to
+   *  fill 100% of the container — unconditionally, even when `columns` is
+   *  pinned — so a row never ends with empty trailing space. */
   cellWidth?: number;
   cellHeight?: number;
   gap?: number;
-  /** Fixed column count; omit to derive responsively from container width. */
+  /** Fixed column count; omit to derive responsively from container width.
+   *  Rendered cell width still stretches to fill the container either way. */
   columns?: number;
   /** Extra ROWS rendered on each side of the viewport. */
   overscan?: number;
@@ -101,19 +109,25 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       useVirtualInsertContainer(collectionId, "vgrid");
 
     // Responsive column count from the content width, unless pinned by the
-    // prop. The spacer's clientWidth already excludes container padding.
+    // prop — but the WIDTH itself is always measured (even when columns is
+    // pinned): the rendered cell width stretches to fill the container in
+    // both modes, so pinning columns must not skip measurement.
     // useLayoutEffect (not useEffect) so the FIRST measurement lands before
     // paint — otherwise the initial render lays out at the `measuredColumns`
     // default of 1 (a single tall column of every row) and visibly reflows to
     // the real count a frame later.
     const [measuredColumns, setMeasuredColumns] = useState(1);
+    const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
     useLayoutEffect(() => {
-      if (columns !== undefined) return;
       const el = scrollRef.current;
       if (!el) return;
       const compute = () => {
+        // The spacer's clientWidth already excludes container padding.
         const width = contentRef.current?.clientWidth ?? el.clientWidth;
-        setMeasuredColumns(Math.max(1, Math.floor((width + gap) / (cellWidth + gap))));
+        setMeasuredWidth(width);
+        if (columns === undefined) {
+          setMeasuredColumns(Math.max(1, Math.floor((width + gap) / (cellWidth + gap))));
+        }
       };
       compute();
       const observer = new ResizeObserver(compute);
@@ -123,6 +137,15 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
     // Invalid pinned values normalize to responsive measurement; both paths
     // guarantee a positive integer before row/column arithmetic.
     const cols = columns ?? measuredColumns;
+    // The RENDERED cell width: stretch evenly across `cols` to consume the
+    // full measured width, so a row never ends with unused trailing space —
+    // `cellWidth` itself stays only the target used to pick `cols` above.
+    // Falls back to the raw target pre-measurement (mirrors `measuredColumns`
+    // defaulting to 1 before its own first measurement).
+    const fillCellWidth =
+      measuredWidth !== null
+        ? Math.max(1, (measuredWidth - (cols - 1) * gap) / cols)
+        : cellWidth;
 
     const rowCount = Math.ceil(childIds.length / cols);
     const rowSize = cellHeight + gap;
@@ -152,7 +175,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       const contentX = point.x - rect.left;
       const contentY = point.y - rect.top;
       const row = Math.max(0, Math.min(Math.floor(contentY / rowSize), rowCount - 1));
-      const col = Math.max(0, Math.min(Math.round(contentX / (cellWidth + gap)), cols));
+      const col = Math.max(0, Math.min(Math.round(contentX / (fillCellWidth + gap)), cols));
       return Math.min(row * cols + col, childIds.length);
     };
     usePublishBoundary(resolveBoundaryRef, resolveBoundary);
@@ -251,7 +274,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         : Math.floor(indicatorIndex / cols);
       const col = appendAfterFullRow ? cols : indicatorIndex % cols;
       return {
-        left: Math.max(0, col * (cellWidth + gap) - gap / 2 - 2),
+        left: Math.max(0, col * (fillCellWidth + gap) - gap / 2 - 2),
         top: row * rowSize,
       };
     })();
@@ -263,6 +286,10 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         // Keyboard scope marker: the provider remaps Alt+ArrowUp/Down to
         // row moves (± this many columns) for cards inside this container.
         data-grid-columns={cols}
+        // Live rendered cell width (post fill-stretch) — overlay consumers
+        // must read this instead of assuming a fixed pixel width, since it
+        // varies with container size the same way data-grid-columns does.
+        data-grid-cell-width={fillCellWidth}
         // 2D grid: bare arrows rove; aria-rowcount/colcount + per-row/cell
         // indexes expose the true position ("row 200 of 250") under virtualization.
         role="grid"
@@ -322,7 +349,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                       role="gridcell"
                       aria-colindex={colInRow + 1}
                       onFocus={() => onItemFocus(id)}
-                      style={{ width: cellWidth, height: cellHeight }}
+                      style={{ width: fillCellWidth, height: cellHeight }}
                     >
                       <NodeCard
                         id={id}

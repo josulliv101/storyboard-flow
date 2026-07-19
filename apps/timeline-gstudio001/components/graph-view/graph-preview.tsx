@@ -33,12 +33,7 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/typ
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useGraphDetailsStore } from "./graph-details-context";
-import {
-  GRID_CELL_HEIGHT,
-  GRID_CELL_WIDTH,
-  GRID_GAP,
-  TIMELINE_PPS,
-} from "./graph-view-config";
+import { GRID_CELL_HEIGHT, GRID_GAP, TIMELINE_PPS } from "./graph-view-config";
 
 export type PreviewTimeChannel = Readonly<{
   get: () => number;
@@ -119,7 +114,11 @@ type GridPlayheadMap = Readonly<{
   rowHeight: number;
 }>;
 
-function buildGridPlayheadMap(clips: readonly TimelineClip[], cols: number): GridPlayheadMap {
+function buildGridPlayheadMap(
+  clips: readonly TimelineClip[],
+  cols: number,
+  cellWidth: number,
+): GridPlayheadMap {
   const columns = Math.max(1, cols);
   const starts: number[] = [];
   const ends: number[] = [];
@@ -129,7 +128,7 @@ function buildGridPlayheadMap(clips: readonly TimelineClip[], cols: number): Gri
   }
   const count = clips.length;
   const total = count > 0 ? ends[count - 1] : 0;
-  const cellX = (index: number) => (index % columns) * (GRID_CELL_WIDTH + GRID_GAP);
+  const cellX = (index: number) => (index % columns) * (cellWidth + GRID_GAP);
   const cellY = (index: number) =>
     Math.floor(index / columns) * (GRID_CELL_HEIGHT + GRID_GAP);
   const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
@@ -152,17 +151,17 @@ function buildGridPlayheadMap(clips: readonly TimelineClip[], cols: number): Gri
       }
       const span = ends[low] - starts[low];
       const fraction = span > 0 ? clamp01((time - starts[low]) / span) : 0;
-      return { x: cellX(low) + fraction * GRID_CELL_WIDTH, y: cellY(low) };
+      return { x: cellX(low) + fraction * cellWidth, y: cellY(low) };
     },
     timeAt: (x, y) => {
       if (count === 0) return 0;
       const row = Math.max(0, Math.floor(y / (GRID_CELL_HEIGHT + GRID_GAP)));
       const column = Math.max(
         0,
-        Math.min(columns - 1, Math.floor(x / (GRID_CELL_WIDTH + GRID_GAP))),
+        Math.min(columns - 1, Math.floor(x / (cellWidth + GRID_GAP))),
       );
       const index = Math.max(0, Math.min(count - 1, row * columns + column));
-      const fraction = clamp01((x - cellX(index)) / GRID_CELL_WIDTH);
+      const fraction = clamp01((x - cellX(index)) / cellWidth);
       return Math.min(
         total,
         Math.max(0, starts[index] + fraction * (ends[index] - starts[index])),
@@ -320,17 +319,32 @@ export function GraphGridPlayhead({
     let lastGraph: CollectionsGraph | null = null;
     let lastDetails: DetailsById | null = null;
     let lastColumns = 0;
+    let lastCellWidth = 0;
     let map: GridPlayheadMap | null = null;
 
     const paint = () => {
       const graph = store.getSnapshot().graph;
       const details = detailsStore.read();
       const columns = Number(grid?.dataset.gridColumns) || 1;
-      if (graph !== lastGraph || details !== lastDetails || columns !== lastColumns) {
+      // Live rendered cell width (post fill-stretch) — VirtualGrid's own
+      // pixel value, never a hardcoded constant: the app's GRID_CELL_WIDTH
+      // is only a target for picking column count, not the rendered size.
+      const cellWidth = Number(grid?.dataset.gridCellWidth) || 1;
+      if (
+        graph !== lastGraph ||
+        details !== lastDetails ||
+        columns !== lastColumns ||
+        cellWidth !== lastCellWidth
+      ) {
         lastGraph = graph;
         lastDetails = details;
         lastColumns = columns;
-        map = buildGridPlayheadMap(graphChildrenToClips(graph, details, focusedId), columns);
+        lastCellWidth = cellWidth;
+        map = buildGridPlayheadMap(
+          graphChildrenToClips(graph, details, focusedId),
+          columns,
+          cellWidth,
+        );
       }
       if (!map) return;
       const { x, y } = map.posAt(channel.get());
@@ -384,15 +398,29 @@ export function GraphGridScrubSurface({
     let mapGraph: CollectionsGraph | null = null;
     let mapDetails: DetailsById | null = null;
     let mapColumns = 0;
+    let mapCellWidth = 0;
     const seek = (event: PointerEvent) => {
       const graph = store.getSnapshot().graph;
       const details = detailsStore.read();
       const columns = Number(grid.dataset.gridColumns) || 1;
-      if (graph !== mapGraph || details !== mapDetails || columns !== mapColumns || !map) {
+      // Live rendered cell width (post fill-stretch) — see GraphGridPlayhead.
+      const cellWidth = Number(grid.dataset.gridCellWidth) || 1;
+      if (
+        graph !== mapGraph ||
+        details !== mapDetails ||
+        columns !== mapColumns ||
+        cellWidth !== mapCellWidth ||
+        !map
+      ) {
         mapGraph = graph;
         mapDetails = details;
         mapColumns = columns;
-        map = buildGridPlayheadMap(graphChildrenToClips(graph, details, focusedId), columns);
+        mapCellWidth = cellWidth;
+        map = buildGridPlayheadMap(
+          graphChildrenToClips(graph, details, focusedId),
+          columns,
+          cellWidth,
+        );
       }
       const overlay = grid.querySelector<HTMLElement>("[data-virtual-grid-overlay]");
       const rect = (overlay ?? grid).getBoundingClientRect();

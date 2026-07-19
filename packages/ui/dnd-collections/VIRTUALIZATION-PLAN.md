@@ -79,10 +79,17 @@ command). Do not fork the reducer/patch model.
    built-in fights the virtualizer.
 
 **Decided (user, 2026-07-10):** variable width applies to the HORIZONTAL
-strip only. Grid cells are fixed-size, media letterboxed inside — rows
-stay uniform, the grid virtualizer stays row-based, and the §5
-measurement/width-cache machinery is a strip-only concern (phase 4
-touches `VirtualStrip` alone).
+strip only. Grid cells are UNIFORM within a grid (no per-item variable width
+like the strip), media letterboxed inside — rows stay uniform, the grid
+virtualizer stays row-based, and the §5 measurement/width-cache machinery is
+a strip-only concern (phase 4 touches `VirtualStrip` alone).
+
+**Amended (user, 2026-07-19):** grid cell WIDTH now stretches to fill the
+full container (no trailing empty space in a row), while height stays a
+fixed constant — so the letterbox aspect ratio varies slightly with
+container width. This doesn't reopen the decision above: cells are still
+uniform within a grid and the virtualizer is still purely row-based: only
+the per-container rendered width changed, not per-item variability.
 
 ## Known traps (already paid for once)
 

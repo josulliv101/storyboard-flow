@@ -83,8 +83,53 @@ export const InvalidNumericOptionsUseSafeDefaults: Story = {
     expect(Number.isInteger(columns) && columns > 0).toBe(true);
     expect(parseFloat(grid.style.maxHeight)).toBe(480);
     const cell = nodeCard(canvasElement, "m0").closest<HTMLElement>('[role="gridcell"]')!;
-    expect(parseFloat(cell.style.width)).toBe(128);
+    // Rendered width STRETCHES to fill the container (gap defaults to 8 after
+    // the invalid -1 normalizes) — no longer pinned to the 128 default target.
+    const cellWidth = Number(grid.dataset.gridCellWidth);
+    expect(parseFloat(cell.style.width)).toBeCloseTo(cellWidth, 5);
+    expect(cellWidth).toBeGreaterThanOrEqual(128);
     expect(parseFloat(cell.style.height)).toBe(96);
+  },
+};
+
+/** Regression coverage: a row never ends with unused trailing space, for
+ *  both the responsive-columns path and a pinned-`columns` path. */
+export const FillsFullWidth: Story = {
+  render: () => (
+    <DndCollections initialGraph={gridGraph()}>
+      <div className="flex flex-col gap-4">
+        <div className="w-[601px]" data-testid="responsive-container">
+          <VirtualGrid collectionId={parseNodeId("grid")} cellWidth={160} gap={8} />
+        </div>
+        <div className="w-[601px]" data-testid="pinned-container">
+          <VirtualGrid collectionId={parseNodeId("grid")} columns={4} gap={8} />
+        </div>
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "m0"));
+
+    const checkFill = (containerTestId: string) => {
+      const container = canvasElement.querySelector<HTMLElement>(
+        `[data-testid="${containerTestId}"]`,
+      )!;
+      const grid = container.querySelector<HTMLElement>("[data-virtual-grid]")!;
+      // Measure the SPACER (contentRef) directly — it's unpadded, so its
+      // width is exactly the content-box width VirtualGrid itself measures
+      // to compute fillCellWidth. Avoids assuming the container's border/
+      // padding box math independently.
+      const spacer = grid.querySelector<HTMLElement>(":scope > div")!;
+      const measuredWidth = spacer.getBoundingClientRect().width;
+      const columns = Number(grid.dataset.gridColumns);
+      const cellWidth = Number(grid.dataset.gridCellWidth);
+      const gap = 8;
+      const rendered = columns * cellWidth + (columns - 1) * gap;
+      expect(rendered).toBeCloseTo(measuredWidth, 0);
+    };
+
+    checkFill("responsive-container");
+    checkFill("pinned-container");
   },
 };
 
@@ -491,7 +536,17 @@ export const AppendAfterFullLastRowIndicator: Story = {
     const m7 = nodeCard(canvasElement, "m7");
     await waitForLayout(m7);
     const rect = m7.getBoundingClientRect();
-    const appendPoint = { x: rect.right + 30, y: rect.top + rect.height / 2 };
+    // Cells now fill flush to the grid's content edge (the fix under test),
+    // so there's no guaranteed slack past the last cell — clamp the "just
+    // past" offset to stay inside the grid's own bounding box, or the point
+    // lands over the page background and the drag never registers a hover.
+    const gridRect = canvasElement
+      .querySelector('[data-virtual-grid="grid"]')!
+      .getBoundingClientRect();
+    const appendPoint = {
+      x: Math.min(rect.right + 30, gridRect.right - 5),
+      y: rect.top + rect.height / 2,
+    };
 
     // Hold m0 just past the last cell -> append at index 8 (after the full row).
     await dragHoldAt(nodeCard(canvasElement, "m0"), appendPoint);

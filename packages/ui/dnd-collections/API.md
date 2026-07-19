@@ -948,19 +948,19 @@ render. With `panToScroll` on, item drags move to a grip bar or behind a
 press-and-hold so the body is free to pan; with it off, `touchAction` stays
 `auto` so native horizontal touch scrolling still works.
 
-### `<VirtualGrid>` — vertical, fixed cells
+### `<VirtualGrid>` — vertical, fill-width cells
 
 ```ts
 type VirtualGridProps = {
   collectionId: NodeId;
-  cellWidth?: number;   // default 128
-  cellHeight?: number;  // default 96
+  cellWidth?: number;   // default 128 — TARGET/MINIMUM used only to pick the responsive column count. The RENDERED width always stretches evenly across the chosen columns to fill 100% of the container (unconditionally, even when columns is pinned) — a row never ends with unused trailing space
+  cellHeight?: number;  // default 96 — fixed; only width stretches, so the media letterbox ratio varies slightly with container width by design
   gap?: number;         // default 8
-  columns?: number;     // fixed count; omit to derive responsively from width. Non-positive-integer values fall back to responsive
+  columns?: number;     // fixed count; omit to derive responsively from width. Non-positive-integer values fall back to responsive. Rendered cell width still stretches to fill either way
   overscan?: number;    // default 2 (rows)
   height?: number;      // default 480 — MAXIMUM viewport height: the grid hugs its content while the rows fit and scrolls past the cap. An empty grid keeps one row's worth of drop area
   itemContent?: CollectionItemContentComponent; // per-view card pixels; overrides the provider registry
-  overlay?: ReactNode;  // STRICTLY PRESENTATIONAL content-coordinate layer inside the scrolling spacer (playhead, region markers): rides vertical scroll and the drop-spacer height. aria-hidden + pointer-events none — no interactive/focusable children; interactive scrubbers belong in your own layer outside the grid. Position children in content coords: col c → left c*(cellWidth+gap), row r → top r*(cellHeight+gap); read the live column count off data-grid-columns
+  overlay?: ReactNode;  // STRICTLY PRESENTATIONAL content-coordinate layer inside the scrolling spacer (playhead, region markers): rides vertical scroll and the drop-spacer height. aria-hidden + pointer-events none — no interactive/focusable children; interactive scrubbers belong in your own layer outside the grid. Position children in content coords: col c → left c*(cellWidth+gap), row r → top r*(cellHeight+gap) — but use the LIVE cellWidth off data-grid-cell-width, not the cellWidth prop (which is only a target, not the rendered size); read the live column count off data-grid-columns
   className?: string;
 };
 type VirtualGridHandle = {
@@ -990,6 +990,7 @@ keep durable state in the collection store.
 | `data-virtual-strip` / `data-virtual-grid` | scroll container | Collection identity. |
 | `data-virtual-overlay` / `data-virtual-grid-overlay` | overlay layer (strip / grid) | The consumer `overlay` slot's content-coordinate wrapper (aria-hidden, pointer-events none). |
 | `data-grid-columns` | grid container | Live column count (keyboard row-move scope). |
+| `data-grid-cell-width` | grid container | Live RENDERED cell width in px (post fill-stretch) — read this for overlay geometry instead of assuming the `cellWidth` prop's target value. |
 | `data-virtual-index` / `data-virtual-row` | slot / row wrapper | Virtualizer index. |
 | `data-drop-indicator="virtual"` / `"virtual-grid"` | indicator line | The resolved insert boundary, in content coordinates. |
 
