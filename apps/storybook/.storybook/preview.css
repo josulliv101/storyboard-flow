@@ -1,8 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=Coiny&family=Outfit:wght@400;500;600;700;800;900&display=swap");
-@import "../../web/app/globals.css";
+@import "./globals.css";
 
-@source "../../web/app";
-@source "../../web/components";
 @source "../../timeline-gstudio001/components";
 @source "../../../packages/ui";
 

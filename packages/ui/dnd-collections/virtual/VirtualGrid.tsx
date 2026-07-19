@@ -49,7 +49,9 @@ export type VirtualGridProps = Readonly<{
   columns?: number;
   /** Extra ROWS rendered on each side of the viewport. */
   overscan?: number;
-  /** Scroll viewport height. */
+  /** MAXIMUM scroll viewport height: the grid is content-height while its
+   *  rows fit, and scrolls only past this cap. An empty grid keeps one
+   *  row's worth of drop area. */
   height?: number;
   /** Per-view card pixels — overrides the provider `components` registry.
    *  MUST be identity-stable (module scope). */
@@ -272,10 +274,20 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
           "relative overflow-y-auto rounded-md border border-dashed border-border p-2",
           className ?? "",
         ].join(" ")}
-        style={{ height }}
+        style={{ maxHeight: height }}
       >
         <VirtualEmptyHint visible={childIds.length === 0} />
-        <div ref={contentRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        <div
+          ref={contentRef}
+          style={{
+            height: virtualizer.getTotalSize(),
+            // The container hugs content (maxHeight), so an empty grid would
+            // collapse to bare padding — keep one row's worth of drop area
+            // (the empty hint is absolutely positioned and adds no height).
+            minHeight: childIds.length === 0 ? rowSize : undefined,
+            position: "relative",
+          }}
+        >
           {indicator && (
             <div
               aria-hidden="true"

@@ -9,16 +9,12 @@ const uiPackageDir = resolve(storybookDir, '../../../packages/ui');
 
 const config: StorybookConfig = {
   stories: [
-    '../../web/components/**/*.stories.@(ts|tsx)',
     '../../../packages/ui/**/*.stories.@(ts|tsx)',
     '../../timeline-gstudio001/components/**/*.stories.@(ts|tsx)',
   ],
   addons: ['@storybook/addon-vitest', '@storybook/addon-a11y', '@storybook/addon-mcp'],
   framework: {
     name: '@storybook/nextjs-vite',
-    options: {
-      nextConfigPath: resolve(storybookDir, '../../web/next.config.ts'),
-    },
   },
   viteFinal: async config => ({
     ...config,
@@ -42,7 +38,6 @@ const config: StorybookConfig = {
           find: /^@\/lib\/utils$/,
           replacement: `${uiPackageDir}/lib/utils`,
         },
-        { find: '@', replacement: resolve(storybookDir, '../../web') },
         { find: '@gstudio', replacement: resolve(storybookDir, '../../timeline-gstudio001') },
         { find: 'es-toolkit/compat/get', replacement: compatShim('get') },
         { find: 'es-toolkit/compat/isPlainObject', replacement: compatShim('isPlainObject') },
@@ -65,7 +60,6 @@ const config: StorybookConfig = {
       include: Array.from(new Set([...(config.optimizeDeps?.include ?? []), 'recharts'])),
     },
   }),
-  staticDirs: ['../../web/public'],
 };
 
 export default config;

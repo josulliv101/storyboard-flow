@@ -958,7 +958,7 @@ type VirtualGridProps = {
   gap?: number;         // default 8
   columns?: number;     // fixed count; omit to derive responsively from width. Non-positive-integer values fall back to responsive
   overscan?: number;    // default 2 (rows)
-  height?: number;      // default 480 — scroll viewport height
+  height?: number;      // default 480 — MAXIMUM viewport height: the grid hugs its content while the rows fit and scrolls past the cap. An empty grid keeps one row's worth of drop area
   itemContent?: CollectionItemContentComponent; // per-view card pixels; overrides the provider registry
   overlay?: ReactNode;  // STRICTLY PRESENTATIONAL content-coordinate layer inside the scrolling spacer (playhead, region markers): rides vertical scroll and the drop-spacer height. aria-hidden + pointer-events none — no interactive/focusable children; interactive scrubbers belong in your own layer outside the grid. Position children in content coords: col c → left c*(cellWidth+gap), row r → top r*(cellHeight+gap); read the live column count off data-grid-columns
   className?: string;
@@ -969,10 +969,10 @@ type VirtualGridHandle = {
 };
 ```
 
-Grid sizes and viewport height must be finite and positive; `gap` is finite
-and non-negative; `overscan` is a non-negative integer. Invalid values use
-the documented defaults, while an invalid fixed `columns` value falls back
-to responsive measurement.
+Grid sizes and the viewport height cap must be finite and positive; `gap` is
+finite and non-negative; `overscan` is a non-negative integer. Invalid values
+use the documented defaults, while an invalid fixed `columns` value falls
+back to responsive measurement.
 
 Row-virtualized (one virtual item per row; columns are index arithmetic).
 Inside a grid, Alt+ArrowUp/Down are row moves (± the column count) — the grid

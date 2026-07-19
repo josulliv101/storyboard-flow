@@ -81,7 +81,7 @@ export const InvalidNumericOptionsUseSafeDefaults: Story = {
     const grid = canvasElement.querySelector<HTMLElement>('[data-virtual-grid="grid"]')!;
     const columns = Number(grid.dataset.gridColumns);
     expect(Number.isInteger(columns) && columns > 0).toBe(true);
-    expect(parseFloat(grid.style.height)).toBe(480);
+    expect(parseFloat(grid.style.maxHeight)).toBe(480);
     const cell = nodeCard(canvasElement, "m0").closest<HTMLElement>('[role="gridcell"]')!;
     expect(parseFloat(cell.style.width)).toBe(128);
     expect(parseFloat(cell.style.height)).toBe(96);
@@ -91,6 +91,46 @@ export const InvalidNumericOptionsUseSafeDefaults: Story = {
 /** Play-less twin for e2e. */
 export const GridPlayground: Story = {
   render: () => <GridHarness />,
+};
+
+function shortAndEmptyGraph() {
+  const children: GraphNodeSpec[] = [];
+  for (let i = 0; i < 6; i++) {
+    children.push({ kind: "media", id: `s${i}`, name: `S${i}`, durationSeconds: 4 });
+  }
+  const result = buildGraph([
+    { kind: "collection", id: "short", name: "Short", children },
+    { kind: "collection", id: "empty", name: "Empty", children: [] },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+export const HeightHugsShortContent: Story = {
+  render: () => (
+    <DndCollections initialGraph={shortAndEmptyGraph()}>
+      <div className="w-[600px] space-y-4">
+        <VirtualGrid collectionId={parseNodeId("short")} columns={COLUMNS} height={300} />
+        <VirtualGrid collectionId={parseNodeId("empty")} columns={COLUMNS} height={300} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "s0"));
+
+    // `height` is a CAP: 6 items in 4 columns = 2 rows, and the container
+    // hugs those rows instead of holding the 300px viewport open.
+    const short = canvasElement.querySelector<HTMLElement>('[data-virtual-grid="short"]')!;
+    expect(short.clientHeight).toBeGreaterThanOrEqual(2 * ROW_SIZE);
+    expect(short.clientHeight).toBeLessThan(300);
+
+    // An empty grid still presents a drop area (one row's worth via the
+    // spacer min-height) with the hint visible — not collapsed padding.
+    const empty = canvasElement.querySelector<HTMLElement>('[data-virtual-grid="empty"]')!;
+    expect(empty.clientHeight).toBeGreaterThanOrEqual(ROW_SIZE);
+    expect(empty.clientHeight).toBeLessThan(300);
+    expect(empty.textContent).toContain("Drop items here");
+  },
 };
 
 export const ThousandItemGrid: Story = {
