@@ -2,14 +2,9 @@
 
 import { useEffect } from "react";
 
-import {
-  useCollectionsContainer,
-  useCollectionsStore,
-  type CollectionsChange,
-} from "@storyboard/ui/dnd-collections";
+import { useCollectionsStore, type CollectionsChange } from "@storyboard/ui/dnd-collections";
 import {
   collectAffectedCollectionIds,
-  collectUnhydratedDropTargets,
   graphChildrenToClips,
 } from "@storyboard/timeline-domain";
 
@@ -27,7 +22,16 @@ export type SyncEntry = Readonly<{
   bounced?: boolean;
 }>;
 
-/** Persist committed graph patches and bounce drops into unloaded collections. */
+/**
+ * Persist committed graph patches.
+ *
+ * Drops into un-hydrated collections are NOT handled here — they are refused
+ * before they commit, by the `commandPolicy` in graph-timeline-view.tsx.
+ * This bridge used to bounce them post-commit with `store.undo()`, which
+ * looked equivalent but silently destroyed the user's redo branch (the
+ * commit clears it) and left the refused command itself redoable. Anything
+ * reaching this subscriber is a change that is meant to stick.
+ */
 export function PersistenceBridge({
   onSync,
 }: Readonly<{
@@ -35,7 +39,6 @@ export function PersistenceBridge({
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
-  const { announce } = useCollectionsContainer();
 
   useEffect(
     () =>
@@ -44,29 +47,6 @@ export function PersistenceBridge({
         if (claimed) detailsStore.merge(claimed);
 
         const current = detailsStore.read();
-        if (change.origin !== "undo") {
-          const blocked = collectUnhydratedDropTargets(change.patch, current);
-          if (blocked.length > 0) {
-            store.undo();
-            const placedIds =
-              change.patch.type === "nodes-moved"
-                ? change.patch.moves.map((move) => move.nodeId)
-                : change.patch.type === "nodes-added"
-                  ? change.patch.adds.map((add) => add.node.id)
-                  : [];
-            if (placedIds.length > 0) store.flashRejection(placedIds);
-            announce("That collection is still loading — drop again once its clips appear.");
-            onSync({
-              at: Date.now(),
-              origin: change.origin,
-              patchType: change.patch.type,
-              collections: blocked,
-              bounced: true,
-            });
-            return;
-          }
-        }
-
         const affected = collectAffectedCollectionIds(change.graph, change.patch).filter(
           (id) => graphDocumentsGateway.peek(id) !== null && current[id]?.hydrated !== false,
         );
@@ -80,7 +60,7 @@ export function PersistenceBridge({
           collections: affected,
         });
       }),
-    [store, detailsStore, announce, onSync],
+    [store, detailsStore, onSync],
   );
 
   return null;

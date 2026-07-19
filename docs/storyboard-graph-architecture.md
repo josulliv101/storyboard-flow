@@ -231,11 +231,20 @@ replacement, never by big-bang rewrite.
    un-hydrated collections are handled by two cooperating layers: every
    VISIBLE placeholder collection hydrates eagerly (the focused timeline's
    children plus the grandchild cards inside their strips — the working set
-   stays view-bounded), and the persistence bridge BOUNCES the residual
-   race (`collectUnhydratedDropTargets` → `store.undo()` + rejection flash
-   + announcement) so content can never land in, or overwrite, a document
-   whose clips haven't loaded. Writes additionally refuse any collection
-   with `hydrated: false`.
+   stays view-bounded), and the residual race is REFUSED BEFORE IT COMMITS
+   by the store's `commandPolicy`
+   (`collectUnhydratedDropTargets(command, details)` → `blocked-by-policy`
+   + rejection flash + announcement) so content can never land in, or
+   overwrite, a document whose clips haven't loaded. Writes additionally
+   refuse any collection with `hydrated: false`.
+
+   The veto is deliberately PRE-commit. An earlier design let the drop
+   commit and had the persistence bridge undo it back out; that reverts the
+   graph but not the history, because pushing a command clears the redo
+   branch. A bounced drop therefore discarded whatever the user still had
+   to redo and left the refused command itself sitting on the redo stack.
+   Any future application-level gate belongs in the same policy seam, not
+   in a post-commit subscriber.
 3. **Eviction:** whether far-from-focus subtrees are ever de-hydrated, or
    memory is allowed to grow monotonically per session (likely fine at
    storyboard scale; decide explicitly).

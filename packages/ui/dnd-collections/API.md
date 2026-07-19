@@ -237,6 +237,9 @@ Rejections (`CommandRejection.reason`):
 | `invalid-media-update` | (update-media) The payload's `mediaKind` doesn't match the node, or it carries non-finite values. |
 | `nothing-to-add` | `add-nodes` with an empty `nodes` array. |
 | `invalid-index` | `toIndex` is not an integer (NaN/±Infinity splice at 0; a fraction desyncs forward apply from patch replay). |
+
+`store.dispatch` can additionally refuse with `blocked-by-policy`, which the
+reducer never produces — see `commandPolicy` below.
 | `would-create-cycle` | A node would move into itself or its own descendant. |
 | `nothing-to-move` | Every dragged id was pruned (all descendants of other dragged ids). |
 | `same-position` | The command would leave the graph identical (a move that lands where it started, or a trim to the current value) — a no-op, nothing pushed to history. |
@@ -533,7 +536,20 @@ type DndCollectionsProps = {
   trimRequiresSelection?: boolean;       // default false; true = trim handles (hit zones
                                          // included) exist only on SELECTED media cards, and
                                          // content's trimEnabled follows
+  commandPolicy?: CommandPolicy;         // pre-commit application veto, consulted on EVERY
+                                         // dispatch (drop, keyboard move, trash, palette add)
   children: ReactNode;
+};
+
+type CommandPolicy = (
+  command: CollectionsCommand,
+  graph: CollectionsGraph          // the CURRENT committed graph
+) => CommandPolicyRejection | null; // null = allow
+
+type CommandPolicyRejection = {
+  reason: "blocked-by-policy";
+  blockedIds: readonly NodeId[];   // what the policy blames, for cues/telemetry
+  message?: string;                // announced on the package's aria-live channel
 };
 ```
 
@@ -553,6 +569,21 @@ press there clicks or drags, never trims. Interaction-test coverage lives in
 `maxHistoryEntries` is initial-only (like `initialGraph`): the oldest undo
 entries fall off past the cap. Any non-positive-integer value is treated as
 unbounded.
+
+`commandPolicy` is the seam for rules the pure reducer can't express —
+application state it has no access to, such as "this collection's contents
+haven't loaded yet, so don't accept drops into it." It runs inside `dispatch`
+BEFORE the reducer, so a refused command mutates nothing, pushes no history
+entry, and emits nothing on the change feed; `dispatch` returns the rejection
+and the package flashes the involved cards and announces `message`. Undo and
+redo bypass it (they replay commands the policy already accepted).
+
+Do **not** implement such a gate by letting the command commit and undoing it
+from an `onChange`/`subscribeToChanges` subscriber. That reverts the graph but
+corrupts history: pushing a command clears the redo branch, so the bounce
+discards the user's redoable work and leaves the refused command itself on the
+redo stack. Read the policy's live source at call time rather than closing over
+render-time state.
 
 Creates one store per component lifetime and wires the full dnd-kit stack:
 PointerSensor (4px activation distance) + KeyboardSensor, pointer-priority
@@ -631,7 +662,7 @@ type CollectionsChange = {
 | `getSnapshot` | `() => CollectionsSnapshot` | Snapshot identity changes per notify; FIELD identities change only when the field did. |
 | `subscribe` | `(listener: () => void) => () => void` | Returns unsubscribe. |
 | `subscribeToChanges` | `(listener: (change: CollectionsChange) => void) => () => void` | The committed-change feed as a multi-listener seam — same events and ordering as the `onChange` option. For consumers that need the PATCH of a commit (e.g. `VirtualStrip` resizes exactly the slots a `nodes-updated` patch touched). Fires for dispatch/undo/redo; `replaceGraph` and `hydrate` emit nothing. |
-| `dispatch` | `(command) => Result<CollectionsPatch, CommandRejection>` | Reduce + push history + notify + `onChange`. |
+| `dispatch` | `(command) => Result<CollectionsPatch, DispatchRejection>` | Consult `commandPolicy` → reduce + push history + notify + `onChange`. A policy veto returns `{ reason: "blocked-by-policy", blockedIds, message? }` and short-circuits BEFORE the reducer: no graph change, no history entry, no change event. |
 | `undo` / `redo` | `() => boolean` | False when the respective stack is empty. |
 | `replaceGraph` | `(graph: CollectionsGraph) => Result<void, GraphValidationError>` | Runtime-validates then swaps the committed graph wholesale — the escape hatch for async/server-loaded data (`initialGraph` is initial-only). Invalid input is rejected without changing or notifying the store. A successful swap clears undo/redo history (old patches can't replay on a new graph) and any in-progress drag/preview, prunes the selection to surviving ids, and — deliberately — does NOT fire `onChange` (the caller supplied this state; echoing it risks feedback loops). |
 | `hydrate` | `(collectionId: NodeId, children: readonly GraphNodeSpec[]) => Result<void, HydrateRejection>` | `replaceGraph`'s incremental sibling for hydrate-on-focus: fills an EMPTY collection via `hydrateCollection`. Undo/redo SURVIVES (only adds, under a childless collection — every history patch stays replayable), interaction state is untouched, and — like `replaceGraph` — nothing is emitted on `onChange`/`subscribeToChanges` (IO landing, not user intent). Snapshot subscribers are notified; data-sized `VirtualStrip`s detect the feed-less graph change and re-measure on their own. Rejections return without notifying. |

@@ -51,6 +51,10 @@ type FetchCall = {
   id: string;
   writes?: BatchWrite[];
   keepalive?: boolean;
+  /** Kept so tests can assert a batch was abandoned (unload takeover). */
+  signal?: AbortSignal;
+  /** Serialized request body length, for keepalive-budget assertions. */
+  bodyBytes?: number;
 };
 
 /** Stubs global fetch; returns the recorded calls for assertions. */
@@ -65,6 +69,9 @@ function installFetch(handler: (call: FetchCall) => Promise<MockResponse> | Mock
           ? (JSON.parse(init.body) as { writes: BatchWrite[] }).writes
           : undefined,
       keepalive: init?.keepalive,
+      signal: init?.signal ?? undefined,
+      bodyBytes:
+        typeof init?.body === "string" ? new TextEncoder().encode(init.body).length : undefined,
     };
     calls.push(call);
     return Promise.resolve(handler(call));
@@ -211,6 +218,130 @@ describe("graph-documents-gateway", () => {
     // The debounce timer was consumed — no duplicate batch later.
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
     expect(batchesOf(calls)).toHaveLength(1);
+  });
+
+  // The unload path. A keepalive flush must never wait on a request that
+  // page teardown is about to kill — queuing behind it is how the last edit
+  // was lost.
+  it("an unload flush takes over a running non-keepalive save instead of queuing behind it", async () => {
+    const stuckSave = deferred<MockResponse>(); // never settles: the page is closing
+    let batchCount = 0;
+    const calls = installFetch((call) => {
+      if (call.method !== "POST") {
+        return jsonResponse({ document: doc("a", [clip("a1")]), revision: 1 });
+      }
+      batchCount += 1;
+      return batchCount === 1 ? stuckSave.promise : okResults(call.writes);
+    });
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    gateway.writeClips("a", [clip("a2")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(1); // in flight, will never settle
+
+    // An edit lands mid-flight, then the tab starts closing.
+    gateway.writeClips("a", [clip("a3")]);
+    gateway.flushPendingWrites({ keepalive: true });
+
+    const batches = batchesOf(calls);
+    expect(batches).toHaveLength(2); // it did NOT wait for the stuck request
+    expect(batches[0].signal?.aborted).toBe(true); // the stuck one was abandoned
+    expect(batches[1].keepalive).toBe(true);
+    // Carries the LATEST cache, and still expects the revision the abandoned
+    // batch expected — no response landed, so the ledger never advanced.
+    expect(clipIds(batches[1].writes?.[0].document)).toEqual(["a3"]);
+    expect(batches[1].writes?.[0].expectedRevision).toBe(1);
+    // Abandoning is not a failure: it must not surface as a save error.
+    expect(gateway.lastError()).toBeNull();
+  });
+
+  it("an unload flush re-sends an in-flight batch even with nothing newly dirty", async () => {
+    const stuckSave = deferred<MockResponse>();
+    let batchCount = 0;
+    const calls = installFetch((call) => {
+      if (call.method !== "POST") {
+        return jsonResponse({ document: doc("a", [clip("a1")]), revision: 1 });
+      }
+      batchCount += 1;
+      return batchCount === 1 ? stuckSave.promise : okResults(call.writes);
+    });
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    gateway.writeClips("a", [clip("a2")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    gateway.flushPendingWrites({ keepalive: true });
+
+    // The in-flight batch's own content is what would have been lost.
+    const batches = batchesOf(calls);
+    expect(batches).toHaveLength(2);
+    expect(batches[1].keepalive).toBe(true);
+    expect(clipIds(batches[1].writes?.[0].document)).toEqual(["a2"]);
+  });
+
+  it("a second unload flush leaves an already-keepalive batch alone", async () => {
+    const stuckSave = deferred<MockResponse>();
+    const calls = installFetch((call) =>
+      call.method === "POST"
+        ? stuckSave.promise
+        : jsonResponse({ document: doc("a", [clip("a1")]), revision: 1 }),
+    );
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    gateway.writeClips("a", [clip("a2")]);
+    gateway.flushPendingWrites({ keepalive: true });
+    expect(batchesOf(calls)).toHaveLength(1);
+
+    // pagehide AND visibilitychange both fire on a real close — the second
+    // must not abandon and re-send a request that is already unload-safe.
+    gateway.flushPendingWrites({ keepalive: true });
+    expect(batchesOf(calls)).toHaveLength(1);
+    expect(batchesOf(calls)[0].signal?.aborted).toBe(false);
+  });
+
+  it("an over-budget unload batch drops keepalive rather than being refused outright", async () => {
+    // Over the 64 KiB keepalive quota the fetch is a NETWORK ERROR, not a
+    // truncation — requesting keepalive here would guarantee the loss.
+    const calls = installFetch((call) =>
+      call.method === "POST"
+        ? okResults(call.writes)
+        : jsonResponse({ document: doc("a", [clip("a1")]), revision: 1 }),
+    );
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    const huge = { ...clip("a2"), alt: "x".repeat(80_000) };
+    gateway.writeClips("a", [huge]);
+    gateway.flushPendingWrites({ keepalive: true });
+
+    const batches = batchesOf(calls);
+    expect(batches).toHaveLength(1);
+    expect(batches[0].bodyBytes).toBeGreaterThan(64 * 1024);
+    expect(batches[0].keepalive).toBeFalsy(); // sent best-effort instead
+    // The batch still went out INTACT — atomicity is not traded away.
+    expect(clipIds(batches[0].writes?.[0].document)).toEqual(["a2"]);
+    // And the risk is surfaced rather than swallowed.
+    expect(gateway.lastError()).toMatch(/too large/i);
+  });
+
+  it("a body under the keepalive budget still gets keepalive", async () => {
+    const calls = installFetch((call) =>
+      call.method === "POST"
+        ? okResults(call.writes)
+        : jsonResponse({ document: doc("a", [clip("a1")]), revision: 1 }),
+    );
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    gateway.writeClips("a", [clip("a2")]);
+    gateway.flushPendingWrites({ keepalive: true });
+
+    const batches = batchesOf(calls);
+    expect(batches[0].bodyBytes).toBeLessThan(56 * 1024);
+    expect(batches[0].keepalive).toBe(true);
+    expect(gateway.lastError()).toBeNull();
   });
 
   it("refresh keeps cached content readable but makes ensure refetch it", async () => {

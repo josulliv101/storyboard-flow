@@ -320,6 +320,136 @@ describe("createCollectionsStore", () => {
     expect(store.undo()).toBe(false); // stack exhausted
   });
 
+  // The commandPolicy contract. These pin WHY the guard is pre-commit: the
+  // "just undo it back out" alternative passes a naive graph assertion but
+  // corrupts history, which is exactly the bug this seam replaced.
+  test("a policy-blocked command never reaches the graph, history, or the change feed", () => {
+    const changes: CollectionsChange[] = [];
+    const store = createCollectionsStore(graphFixture(), {
+      onChange: (c) => changes.push(c),
+      commandPolicy: (command) =>
+        command.type === "move-nodes" && command.toParentId === id("root-b")
+          ? { reason: "blocked-by-policy", blockedIds: [id("root-b")], message: "Still loading." }
+          : null,
+    });
+
+    const result = store.dispatch(moveX);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the policy to block the move");
+    expect(result.error.reason).toBe("blocked-by-policy");
+    if (result.error.reason !== "blocked-by-policy") throw new Error("narrowing");
+    expect(result.error.message).toBe("Still loading.");
+    expect(result.error.blockedIds).toEqual([id("root-b")]);
+
+    const snapshot = store.getSnapshot();
+    expect([...(snapshot.graph.childrenById.get(id("root-a")) ?? [])]).toEqual(["x", "y", "z"]);
+    expect([...(snapshot.graph.childrenById.get(id("root-b")) ?? [])]).toEqual([]);
+    expect(snapshot.canUndo).toBe(false);
+    expect(snapshot.historyEntries).toHaveLength(0);
+    expect(changes).toHaveLength(0);
+  });
+
+  test("the post-commit bounce this replaced DOES corrupt history (why the policy is pre-commit)", () => {
+    // Not a feature — an executable record of the hazard. If someone
+    // reintroduces "commit, inspect in a subscriber, undo it back out",
+    // this is what they get.
+    const store = createCollectionsStore(graphFixture());
+    let bouncing = false;
+    const unsubscribe = store.subscribeToChanges((change) => {
+      if (bouncing && change.origin === "command") store.undo();
+    });
+
+    store.dispatch(moveX); // action A
+    store.undo(); // A is now redoable
+    expect(store.getSnapshot().canRedo).toBe(true);
+
+    bouncing = true;
+    store.dispatch({
+      type: "move-nodes",
+      nodeIds: [id("y")],
+      toParentId: id("root-b"),
+      toIndex: 0,
+    });
+
+    // The graph looks correct — y bounced straight back out...
+    expect([...(store.getSnapshot().graph.childrenById.get(id("root-b")) ?? [])]).toEqual([]);
+    // ...but redo now replays the REFUSED move, not A. That is the bug.
+    bouncing = false;
+    expect(store.getSnapshot().canRedo).toBe(true);
+    store.redo();
+    expect([...(store.getSnapshot().graph.childrenById.get(id("root-b")) ?? [])]).toEqual(["y"]);
+    unsubscribe();
+  });
+
+  test("a policy-blocked command preserves an existing redo branch", () => {
+    // The regression: perform A, undo it (A is now redoable), then attempt a
+    // blocked drop. Committing-then-undoing would clear the redo branch and
+    // leave the REFUSED command redoable in A's place.
+    let blocking = false;
+    const store = createCollectionsStore(graphFixture(), {
+      commandPolicy: () =>
+        blocking ? { reason: "blocked-by-policy", blockedIds: [id("root-b")] } : null,
+    });
+
+    store.dispatch(moveX); // action A
+    expect(store.undo()).toBe(true);
+    expect(store.getSnapshot().canRedo).toBe(true);
+
+    blocking = true;
+    const blocked = store.dispatch({
+      type: "move-nodes",
+      nodeIds: [id("y")],
+      toParentId: id("root-b"),
+      toIndex: 0,
+    });
+    expect(blocked.ok).toBe(false);
+
+    // A is still the redoable entry, and redoing it replays A — not the
+    // move that was just refused.
+    expect(store.getSnapshot().canRedo).toBe(true);
+    blocking = false;
+    expect(store.redo()).toBe(true);
+    expect([...(store.getSnapshot().graph.childrenById.get(id("root-b")) ?? [])]).toEqual(["x"]);
+    expect(store.getSnapshot().canRedo).toBe(false);
+  });
+
+  test("the policy sees the current committed graph and can allow selectively", () => {
+    const seen: string[] = [];
+    const store = createCollectionsStore(graphFixture(), {
+      commandPolicy: (command, graph) => {
+        seen.push([...(graph.childrenById.get(id("root-b")) ?? [])].join("|"));
+        return null;
+      },
+    });
+
+    expect(store.dispatch(moveX).ok).toBe(true);
+    expect(
+      store.dispatch({
+        type: "move-nodes",
+        nodeIds: [id("y")],
+        toParentId: id("root-b"),
+        toIndex: 1,
+      }).ok
+    ).toBe(true);
+    // Second call observed the graph AFTER the first commit — the policy is
+    // handed live state, not the graph the store was created with.
+    expect(seen).toEqual(["", "x"]);
+  });
+
+  test("undo and redo bypass the policy — they replay already-accepted commands", () => {
+    let blocking = false;
+    const store = createCollectionsStore(graphFixture(), {
+      commandPolicy: () =>
+        blocking ? { reason: "blocked-by-policy", blockedIds: [id("root-b")] } : null,
+    });
+    store.dispatch(moveX);
+
+    blocking = true;
+    expect(store.undo()).toBe(true);
+    expect(store.redo()).toBe(true);
+    expect([...(store.getSnapshot().graph.childrenById.get(id("root-b")) ?? [])]).toEqual(["x"]);
+  });
+
   test("replaceGraph swaps the graph, clears history, prunes selection, resets drag, and is silent", () => {
     const changes: CollectionsChange[] = [];
     const store = createCollectionsStore(graphFixture(), { onChange: (c) => changes.push(c) });

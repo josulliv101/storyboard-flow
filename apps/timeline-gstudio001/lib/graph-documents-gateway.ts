@@ -32,6 +32,16 @@ const SAVE_RETRY_MS = 5000;
 // How long an ensure waits for a declared-incoming RSC prime before
 // fetching itself — roughly a streamed payload's round trip.
 const PRIME_WAIT_MS = 1000;
+// The fetch spec caps keepalive at 64 KiB across every in-flight keepalive
+// request on the page, and going over is a hard network error rather than a
+// truncation. Budget under it: headers count toward the quota, and other
+// code on the page (analytics beacons) may hold some of it.
+const KEEPALIVE_BUDGET_BYTES = 56 * 1024;
+
+/** Byte length of a UTF-8 body — `String.length` undercounts non-ASCII
+ *  (clip titles, alt text), which is exactly how a body sneaks over quota. */
+const byteLength = (value: string): number =>
+  typeof TextEncoder === "function" ? new TextEncoder().encode(value).length : value.length;
 
 /** A server-read document + revision, delivered by RSC (layout bootstrap /
  *  focus-path streams) and fed to `prime`. Defined HERE (client-safe) so
@@ -125,6 +135,11 @@ export type GraphDocumentsGateway = Readonly<{
    * Send the pending batch NOW. Called on pagehide/hidden (with keepalive,
    * so the request survives the tab closing) and before a refresh — closing
    * the tab inside the debounce window must not lose the last edit.
+   *
+   * A keepalive flush never QUEUES behind a running save: the running request
+   * was created without keepalive, so teardown would kill it and the queued
+   * batch would never start. It abandons that request instead and re-sends its
+   * documents, plus anything dirtied since, as one unload-safe batch.
    */
   flushPendingWrites: (options?: { keepalive?: boolean }) => void;
   /**
@@ -160,10 +175,15 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   // in-flight batch could reach the server after a newer one and win.
   let saveInFlight: Promise<void> | null = null;
   let saveQueued = false;
-  // A queued trailing batch remembers whether any flush that requested it
-  // needed keepalive (pagehide) — dropping that bit would send the trailing
-  // batch as an ordinary fetch during page teardown.
-  let saveQueuedKeepalive = false;
+  // Whether the in-flight batch was itself sent with keepalive — i.e. already
+  // survives page teardown, so an unload flush has no reason to displace it.
+  let saveInFlightKeepalive = false;
+  // What the in-flight batch is carrying, so an unload flush that abandons it
+  // can re-dirty those documents and re-send them itself.
+  let saveInFlightIds: readonly string[] = [];
+  // Abandons the in-flight batch: aborts the request AND makes its handlers
+  // no-ops, so a late settle can't clobber the batch that replaced it.
+  let abandonSaveInFlight: (() => void) | null = null;
   // Ids whose cached content predates the current graph session (see
   // `refresh`) or lost a revision conflict: readable, but `ensure`
   // refetches them.
@@ -197,14 +217,21 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     errors.clear();
     errorBanner = null;
     inflight.clear();
-    dirtyIds.clear();
     if (saveTimer !== null) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
+    // Abandon BEFORE clearing the dirty set: abandoning re-dirties whatever
+    // the in-flight batch was carrying, and on a reset (a different user is
+    // binding) none of the previous session's documents may survive to be
+    // written into the new one.
+    abandonSaveInFlight?.();
+    abandonSaveInFlight = null;
+    dirtyIds.clear();
     saveInFlight = null;
     saveQueued = false;
-    saveQueuedKeepalive = false;
+    saveInFlightKeepalive = false;
+    saveInFlightIds = [];
     staleIds = new Set();
     expectedPrimes.clear();
     pendingPrimes = [];
@@ -333,13 +360,29 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   };
 
   const persistBatch = (options?: { keepalive?: boolean }) => {
+    const wantsKeepalive = options?.keepalive === true;
+
     if (saveInFlight !== null) {
-      saveQueued = true;
-      // The trailing batch must keep the strongest delivery requirement any
-      // caller asked for — a pagehide flush queued behind a running save
-      // still needs keepalive or the browser may kill it on teardown.
-      if (options?.keepalive) saveQueuedKeepalive = true;
-      return;
+      if (!wantsKeepalive) {
+        // Ordinary write during a flight: queue ONE trailing batch, which
+        // will re-read the latest cache when the current one settles.
+        saveQueued = true;
+        return;
+      }
+      // Unload flush with a batch already running. Queuing behind it — what
+      // this used to do — is what lost the last edit: the running request was
+      // created WITHOUT keepalive, so page teardown kills it, and the
+      // trailing batch that was waiting on its settle never starts at all.
+      if (saveInFlightKeepalive && dirtyIds.size === 0) {
+        // Already unload-safe and carrying everything: leave it alone.
+        return;
+      }
+      // Abandon it and re-send its documents ourselves, from the latest
+      // cache, in one unload-safe batch. Its `expectedRevision`s are still
+      // valid: no response landed, so the revision ledger never advanced.
+      // (If the server did process it before the abort, our batch loses CAS
+      // and 409s — handled, and strictly better than not sending at all.)
+      abandonSaveInFlight?.();
     }
     if (dirtyIds.size === 0) return;
     const writes: { document: TimelineDocument; expectedRevision?: number }[] = [];
@@ -356,32 +399,72 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     if (writes.length === 0) return;
 
     const gen = generation;
-    const settle = () => {
-      // A reset (auth rebind) happened mid-flight: this batch belongs to
-      // the previous session — don't touch the new one's state.
-      if (gen !== generation) return;
+    const batchIds = writes.map((write) => write.document.id);
+    let abandoned = false;
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    abandonSaveInFlight = () => {
+      abandoned = true;
+      controller?.abort();
+      // Put THIS batch's documents back in the dirty set so whatever replaces
+      // it carries them too — nothing is dropped by abandoning a flight.
+      for (const timelineId of batchIds) dirtyIds.add(timelineId);
       saveInFlight = null;
+      saveInFlightKeepalive = false;
+      saveInFlightIds = [];
+      saveQueued = false;
+      abandonSaveInFlight = null;
+    };
+
+    const settle = () => {
+      // A reset (auth rebind) happened mid-flight, or an unload flush took
+      // this batch over: either way this response belongs to a batch nobody
+      // is waiting on — don't touch the state that replaced it.
+      if (gen !== generation || abandoned) return;
+      saveInFlight = null;
+      saveInFlightKeepalive = false;
+      saveInFlightIds = [];
+      abandonSaveInFlight = null;
       // Trailing batch: edits that landed mid-flight go out now, from the
-      // latest cache — carrying a queued keepalive requirement forward.
+      // latest cache.
       if (saveQueued) {
         saveQueued = false;
-        const keepalive = saveQueuedKeepalive;
-        saveQueuedKeepalive = false;
-        persistBatch(keepalive ? { keepalive: true } : undefined);
+        persistBatch();
       }
     };
 
+    const body = JSON.stringify({ writes });
+    // The keepalive quota is 64 KiB across ALL in-flight keepalive requests,
+    // and a request over it is not merely truncated — the fetch is a network
+    // error, so asking for keepalive on an oversized body GUARANTEES the loss
+    // it was meant to prevent. Splitting isn't an option either: this batch is
+    // all-or-nothing by design. So send it as an ordinary request instead —
+    // best effort, but it still lands whenever the page survives (the
+    // visibilitychange case, most same-tab navigations) — and say so, rather
+    // than failing silently.
+    const overKeepaliveBudget = wantsKeepalive && byteLength(body) > KEEPALIVE_BUDGET_BYTES;
+    if (overKeepaliveBudget) {
+      for (const write of writes) {
+        setError(
+          write.document.id,
+          `"${write.document.title}" is too large to be guaranteed a save while the page closes — keep this tab open until it saves.`,
+        );
+      }
+    }
+
+    saveInFlightIds = batchIds;
+    saveInFlightKeepalive = wantsKeepalive && !overKeepaliveBudget;
     saveInFlight = fetch("/api/timelines/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ writes }),
-      // keepalive lets the request outlive an unloading page (pagehide
-      // flush). Not the default: keepalive bodies are capped (~64KB).
-      ...(options?.keepalive ? { keepalive: true } : {}),
+      body,
+      ...(controller ? { signal: controller.signal } : {}),
+      // keepalive lets the request outlive an unloading page (pagehide flush).
+      // Not the default: it spends the shared 64 KiB quota above.
+      ...(saveInFlightKeepalive ? { keepalive: true } : {}),
     })
       .then(
         async (response) => {
-          if (gen !== generation) return;
+          if (gen !== generation || abandoned) return;
           if (response.ok) {
             const result = (await response.json().catch(() => ({}))) as {
               results?: { id: string; revision: number }[];
@@ -445,7 +528,10 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
           scheduleFlush(SAVE_RETRY_MS);
         },
         (cause: unknown) => {
-          if (gen !== generation) return;
+          // `abandoned` covers the abort we issued ourselves: its documents
+          // are already back in `dirtyIds` and travelling in the replacement
+          // batch, so reporting a failure here would be a lie.
+          if (gen !== generation || abandoned) return;
           // Network failure: same re-queue + slow retry as above.
           for (const write of writes) {
             setError(

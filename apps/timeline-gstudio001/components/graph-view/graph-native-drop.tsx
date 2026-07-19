@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 
 import {
   getChildren,
   parseNodeId,
+  useCollectionsContainer,
   useCollectionsStore,
   type CollectionItemNode,
 } from "@storyboard/ui/dnd-collections";
@@ -12,9 +13,14 @@ import {
 import type { ClipDetail } from "@storyboard/timeline-domain";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
-import { uploadTimelineMedia } from "@/lib/timeline-media-client";
+import {
+  GRAPH_INSERT_TOOL_EVENT,
+  isGraphInsertTool,
+  type GraphInsertToolDetail,
+} from "@/lib/graph-view-events";
+import { probeVideoFile, uploadTimelineMedia } from "@/lib/timeline-media-client";
 
-import { parkPendingDetail } from "./graph-pending-details";
+import { parkPendingDetail, unparkPendingDetail } from "./graph-pending-details";
 
 // The NATIVE drag-and-drop seam for the graph strips. dnd-kit owns
 // in-graph drags (cards, palette thumbnails); this layer owns what dnd-kit
@@ -27,10 +33,15 @@ import { parkPendingDetail } from "./graph-pending-details";
 //     add one node per file — in a single undoable commit.
 //
 // Both paths land as an ordinary add-nodes dispatch through the store, so
-// undo, the change feed, and the patch-scoped persistence all apply. The
-// PersistenceBridge's bounce policy stays the gate for un-hydrated targets:
-// a bounced add is undone with a rejection flash, and this layer detects
-// the bounce (the node is gone) and skips its follow-up work.
+// undo, the change feed, and the patch-scoped persistence all apply. Drops
+// into un-hydrated collections are refused BEFORE they commit by the store's
+// commandPolicy, so a refused add comes back from `dispatch` itself.
+//
+// The file pipeline is bounded on three axes, all of which were previously
+// unbounded: each video is decoded ONCE (duration and poster frame off the
+// same element, via probeVideoFile), at most MAX_CONCURRENT_MEDIA files are
+// in flight, and every decode and upload carries an AbortSignal that unmount
+// trips.
 
 const TOOL_MIME = "application/x-gstudio-type";
 // The demo clip the legacy views use for placeholder video content.
@@ -47,111 +58,58 @@ function mintId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Duration probe for dropped video files (images default to 4s). */
-function mediaFileDuration(file: File): Promise<number> {
-  return new Promise((resolve) => {
-    if (!file.type.startsWith("video/")) {
-      resolve(4);
-      return;
+// How many dropped files are decoded/uploaded at once. `Promise.all` over the
+// whole drop meant N video decoders, canvases, blobs, and uploads existing
+// simultaneously — dropping a folder of large videos produced a burst that
+// stalled the main thread. Small enough to bound the peak, big enough that
+// network latency still overlaps.
+const MAX_CONCURRENT_MEDIA = 3;
+
+/** Default timeline seconds for a dropped image. */
+const IMAGE_CLIP_SECONDS = 4;
+
+/** Client-space geometry of one mounted card, measured once per drag. */
+type CardGeometry = Readonly<{ nodeId: string; left: number; right: number; mid: number }>;
+
+type DragGeometry = Readonly<{
+  wrapperLeft: number;
+  /** Mounted cards in DOM order, which mirrors child order. */
+  cards: readonly CardGeometry[];
+}>;
+
+/**
+ * `Promise.all` with a worker pool. Results stay in INPUT order — the drop
+ * adds nodes in file order, so completion order must not leak through.
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await run(items[index]);
     }
-    const video = document.createElement("video");
-    video.preload = "metadata";
-    const sourceUrl = URL.createObjectURL(file);
-    const cleanup = () => {
-      URL.revokeObjectURL(sourceUrl);
-      video.removeAttribute("src");
-      video.load();
-    };
-    video.onloadedmetadata = () => {
-      const duration =
-        Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 5;
-      cleanup();
-      resolve(duration);
-    };
-    video.onerror = () => {
-      cleanup();
-      resolve(5);
-    };
-    video.src = sourceUrl;
-  });
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker),
+  );
+  return results;
 }
 
 /**
- * Wraps a strip and accepts native drops into the given collection.
- * Insertion position follows the legacy midpoint rule, resolved against the
- * MOUNTED cards (virtualization: DOM order matches child order, but indexes
- * must come from the graph, not the DOM position).
+ * Mint-and-insert for the sidebar's tool palette, shared by the two ways a
+ * tool can arrive: a native DRAG (which carries a pointer-derived index) and
+ * plain ACTIVATION of the sidebar button (which appends). Extracted so the
+ * keyboard path runs exactly the same code as the drop — an accessible route
+ * that quietly diverges from the pointer one is how they drift apart.
  */
-export function NativeDropStrip({
-  collectionId,
-  children,
-}: Readonly<{ collectionId: string; children: ReactNode }>) {
+function useToolInsertion(collectionId: string) {
   const store = useCollectionsStore();
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const [indicatorX, setIndicatorX] = useState<number | null>(null);
-  const [upload, setUpload] = useState<
-    | Readonly<{ status: "uploading"; count: number }>
-    | Readonly<{ status: "error"; message: string }>
-    | null
-  >(null);
-
-  const acceptsDrag = (event: DragEvent) => {
-    const types = event.dataTransfer.types;
-    return types.includes(TOOL_MIME) || types.includes("Files");
-  };
-
-  /** Graph child index for a drop at clientX, via mounted-card midpoints. */
-  const resolveInsertIndex = useCallback(
-    (clientX: number): number => {
-      const wrapper = wrapperRef.current;
-      const children_ = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
-      if (!wrapper) return children_.length;
-      const cards = [...wrapper.querySelectorAll<HTMLElement>("[data-node-id]")];
-      for (const card of cards) {
-        const rect = card.getBoundingClientRect();
-        if (clientX < rect.left + rect.width / 2) {
-          const index = children_.indexOf(parseNodeId(card.dataset.nodeId ?? ""));
-          if (index >= 0) return index;
-        }
-      }
-      const last = cards[cards.length - 1];
-      if (last) {
-        const index = children_.indexOf(parseNodeId(last.dataset.nodeId ?? ""));
-        if (index >= 0) return index + 1;
-      }
-      return children_.length;
-    },
-    [store, collectionId],
-  );
-
-  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!acceptsDrag(event)) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    const wrapper = wrapperRef.current;
-    if (!wrapper) return;
-    // Indicator: snap to the resolved insertion edge when a card anchors it,
-    // else follow the pointer (empty strip / trailing whitespace).
-    const rect = wrapper.getBoundingClientRect();
-    const cards = [...wrapper.querySelectorAll<HTMLElement>("[data-node-id]")];
-    let x = event.clientX - rect.left;
-    for (const card of cards) {
-      const cardRect = card.getBoundingClientRect();
-      if (event.clientX < cardRect.left + cardRect.width / 2) {
-        x = cardRect.left - rect.left - 3;
-        break;
-      }
-      x = cardRect.right - rect.left + 3;
-    }
-    setIndicatorX(x);
-  };
-
-  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
-    // Only clear when the pointer truly left the wrapper (dragleave fires
-    // for every child boundary crossing).
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-    setIndicatorX(null);
-  };
 
   const addNodes = useCallback(
     (nodes: readonly CollectionItemNode[], toIndex: number): boolean => {
@@ -161,17 +119,24 @@ export function NativeDropStrip({
         toParentId: parseNodeId(collectionId),
         toIndex,
       });
-      if (!result.ok) return false;
-      // The PersistenceBridge may have BOUNCED the add (un-hydrated target):
-      // it undoes reentrantly, so by now the nodes are gone again.
-      const graph = store.getSnapshot().graph;
-      return nodes.every((node) => graph.nodesById.has(node.id));
+      // Every refusal — including the un-hydrated-target veto — now comes
+      // back from dispatch itself, because the policy runs BEFORE the commit.
+      // Nothing landed in the graph, so there is no post-commit state to
+      // inspect; just release the details parked for nodes that will never
+      // exist.
+      if (!result.ok) {
+        for (const node of nodes) unparkPendingDetail(node.id as string);
+        return false;
+      }
+      return true;
     },
     [store, collectionId],
   );
 
-  const dropTool = useCallback(
-    (tool: SidebarTool, toIndex: number) => {
+  /** Returns whether the tool actually landed, so callers can announce the
+   *  truth rather than assuming success. */
+  const insertTool = useCallback(
+    (tool: SidebarTool, toIndex: number): boolean => {
       if (tool === "collection") {
         const childId = mintId("timeline");
         // hydrated: true — the collection is BRAND-NEW and empty, so drops
@@ -199,7 +164,7 @@ export function NativeDropStrip({
           graphDocumentsGateway.seed({ id: childId, title: "New Timeline", clips: [] });
           graphDocumentsGateway.writeClips(childId, []);
         }
-        return;
+        return added;
       }
 
       const id = mintId(tool);
@@ -213,7 +178,7 @@ export function NativeDropStrip({
           trimIn: 0,
           trimOut: 0,
         });
-        addNodes(
+        return addNodes(
           [
             {
               id: parseNodeId(id),
@@ -226,7 +191,6 @@ export function NativeDropStrip({
           ],
           toIndex,
         );
-        return;
       }
 
       parkPendingDetail(id, {
@@ -235,7 +199,7 @@ export function NativeDropStrip({
         trackIndex: 0,
         poster: placeholder,
       });
-      addNodes(
+      return addNodes(
         [
           {
             id: parseNodeId(id),
@@ -255,6 +219,227 @@ export function NativeDropStrip({
     [addNodes],
   );
 
+  return { addNodes, insertTool };
+}
+
+/** Human label for an inserted tool, for the announcement. */
+const TOOL_LABELS: Readonly<Record<SidebarTool, string>> = {
+  collection: "collection",
+  image: "image clip",
+  video: "video clip",
+};
+
+/**
+ * The KEYBOARD/click path for the sidebar tool palette. The sidebar is app
+ * chrome living outside this provider, so it hands the tool off through a
+ * window event (same pattern as the Assets launcher) and this appends it to
+ * the focused collection.
+ *
+ * Mounted for BOTH surfaces, deliberately: `NativeDropStrip` only wraps the
+ * strip, and an accessible control that silently does nothing in grid mode
+ * would be worse than no control at all.
+ */
+export function SidebarToolInsertBridge({
+  collectionId,
+}: Readonly<{ collectionId: string }>) {
+  const store = useCollectionsStore();
+  const { insertTool } = useToolInsertion(collectionId);
+  const { announce } = useCollectionsContainer();
+
+  useEffect(() => {
+    const handleInsert = (event: Event) => {
+      const tool = (event as CustomEvent<GraphInsertToolDetail>).detail?.tool;
+      if (!tool || !isGraphInsertTool(tool)) return;
+      const parentId = parseNodeId(collectionId);
+      const graph = store.getSnapshot().graph;
+      // Append: with no pointer there is no position to read, and the end of
+      // the timeline is the one spot that needs no explanation.
+      const landed = insertTool(tool, getChildren(graph, parentId).length);
+      const target = graph.nodesById.get(parentId)?.name ?? "the timeline";
+      announce(
+        landed
+          ? `Added a ${TOOL_LABELS[tool]} to the end of "${target}".`
+          : `Could not add a ${TOOL_LABELS[tool]} to "${target}".`,
+      );
+    };
+    window.addEventListener(GRAPH_INSERT_TOOL_EVENT, handleInsert);
+    return () => window.removeEventListener(GRAPH_INSERT_TOOL_EVENT, handleInsert);
+  }, [store, collectionId, insertTool, announce]);
+
+  return null;
+}
+
+/**
+ * Wraps a strip and accepts native drops into the given collection.
+ * Insertion position follows the legacy midpoint rule, resolved against the
+ * MOUNTED cards (virtualization: DOM order matches child order, but indexes
+ * must come from the graph, not the DOM position).
+ */
+export function NativeDropStrip({
+  collectionId,
+  children,
+}: Readonly<{ collectionId: string; children: ReactNode }>) {
+  const store = useCollectionsStore();
+  const { addNodes, insertTool } = useToolInsertion(collectionId);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [indicatorX, setIndicatorX] = useState<number | null>(null);
+  const [upload, setUpload] = useState<
+    | Readonly<{ status: "uploading"; count: number }>
+    | Readonly<{ status: "error"; message: string }>
+    | null
+  >(null);
+
+  // Drag-session geometry (see measureDragGeometry) plus the rAF coalescing
+  // state for the drop indicator. All refs: none of it should drive a render.
+  const dragGeometryRef = useRef<DragGeometry | null>(null);
+  const dragSessionRef = useRef(false);
+  const pointerXRef = useRef(0);
+  const indicatorFrameRef = useRef<number | null>(null);
+  const indicatorXRef = useRef<number | null>(null);
+
+  // Live drops, so unmount (drill-in, route change, surface toggle) can stop
+  // their decodes and uploads instead of leaving media elements and requests
+  // running for a view nobody is looking at. A Set, not one controller: a
+  // second drop while the first is still uploading must not cancel the first.
+  const dropAbortsRef = useRef<Set<AbortController>>(new Set());
+  useEffect(() => {
+    const pending = dropAbortsRef.current;
+    return () => {
+      for (const controller of pending) controller.abort();
+      pending.clear();
+    };
+  }, []);
+
+  const acceptsDrag = (event: DragEvent) => {
+    const types = event.dataTransfer.types;
+    return types.includes(TOOL_MIME) || types.includes("Files");
+  };
+
+  /**
+   * Measure the wrapper and every mounted card ONCE per drag session.
+   *
+   * `dragover` fires continuously, and reading `getBoundingClientRect` per
+   * card per event forces layout on each one. Cards do not move while a
+   * native drag is in progress — nothing commits until drop — so the geometry
+   * is stable, and the only things that invalidate it are scrolling (which
+   * also swaps which cards are virtualized in) and resizing.
+   */
+  const measureDragGeometry = useCallback((): DragGeometry | null => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return null;
+    const wrapperLeft = wrapper.getBoundingClientRect().left;
+    const cards = [...wrapper.querySelectorAll<HTMLElement>("[data-node-id]")].map((card) => {
+      const rect = card.getBoundingClientRect();
+      return {
+        nodeId: card.dataset.nodeId ?? "",
+        left: rect.left,
+        right: rect.right,
+        mid: rect.left + rect.width / 2,
+      };
+    });
+    return { wrapperLeft, cards };
+  }, []);
+
+  /** Graph child index for a drop at clientX, via mounted-card midpoints. */
+  const resolveInsertIndex = useCallback(
+    (clientX: number): number => {
+      const children_ = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
+      // Reuse the drag session's measurements; fall back to measuring for a
+      // drop that arrived without a preceding dragover (programmatic drops).
+      const geometry = dragGeometryRef.current ?? measureDragGeometry();
+      if (!geometry) return children_.length;
+      // An id may be any non-whitespace string, so match by value rather than
+      // reconstructing one — `parseNodeId` throws on an empty attribute.
+      const indexOfCard = (card: CardGeometry) =>
+        children_.findIndex((childId) => (childId as string) === card.nodeId);
+      for (const card of geometry.cards) {
+        if (clientX < card.mid) {
+          const index = indexOfCard(card);
+          if (index >= 0) return index;
+        }
+      }
+      const last = geometry.cards[geometry.cards.length - 1];
+      if (last) {
+        const index = indexOfCard(last);
+        if (index >= 0) return index + 1;
+      }
+      return children_.length;
+    },
+    [store, collectionId, measureDragGeometry],
+  );
+
+  const invalidateDragGeometry = useCallback(() => {
+    dragGeometryRef.current = null;
+  }, []);
+
+  /** Resolve and paint the indicator for the latest pointer x, once a frame. */
+  const flushIndicator = useCallback(() => {
+    indicatorFrameRef.current = null;
+    const geometry = (dragGeometryRef.current ??= measureDragGeometry());
+    if (!geometry) return;
+    const clientX = pointerXRef.current;
+    // Snap to the resolved insertion edge when a card anchors it, else follow
+    // the pointer (empty strip / trailing whitespace).
+    let x = clientX - geometry.wrapperLeft;
+    for (const card of geometry.cards) {
+      if (clientX < card.mid) {
+        x = card.left - geometry.wrapperLeft - 3;
+        break;
+      }
+      x = card.right - geometry.wrapperLeft + 3;
+    }
+    // Most frames of a drag resolve to the SAME edge — re-rendering for them
+    // is pure waste.
+    if (indicatorXRef.current === x) return;
+    indicatorXRef.current = x;
+    setIndicatorX(x);
+  }, [measureDragGeometry]);
+
+  const endDragSession = useCallback(() => {
+    if (!dragSessionRef.current) return;
+    dragSessionRef.current = false;
+    window.removeEventListener("scroll", invalidateDragGeometry, true);
+    window.removeEventListener("resize", invalidateDragGeometry);
+    if (indicatorFrameRef.current !== null) {
+      cancelAnimationFrame(indicatorFrameRef.current);
+      indicatorFrameRef.current = null;
+    }
+    dragGeometryRef.current = null;
+    indicatorXRef.current = null;
+    setIndicatorX(null);
+  }, [invalidateDragGeometry]);
+
+  // A drag can end anywhere (dropped on another target, cancelled with Esc),
+  // and `dragend` fires on the drag SOURCE — which is the sidebar, not us. A
+  // window-level listener is what actually guarantees the session closes.
+  useEffect(() => endDragSession, [endDragSession]);
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+
+    if (!dragSessionRef.current) {
+      dragSessionRef.current = true;
+      // Capture phase: the strip scrolls in its own container, not the window.
+      window.addEventListener("scroll", invalidateDragGeometry, true);
+      window.addEventListener("resize", invalidateDragGeometry);
+      window.addEventListener("dragend", endDragSession, { once: true });
+    }
+    // Coalesce to one resolve+paint per frame, no matter the event rate.
+    pointerXRef.current = event.clientX;
+    if (indicatorFrameRef.current === null) {
+      indicatorFrameRef.current = requestAnimationFrame(flushIndicator);
+    }
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    // Only clear when the pointer truly left the wrapper (dragleave fires
+    // for every child boundary crossing).
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    endDragSession();
+  };
+
   const dropFiles = useCallback(
     async (files: readonly File[], toIndex: number) => {
       const media = files.filter(
@@ -263,19 +448,31 @@ export function NativeDropStrip({
       if (media.length === 0) return;
       setUpload({ status: "uploading", count: media.length });
 
+      const controller = new AbortController();
+      const signal = controller.signal;
+      dropAbortsRef.current.add(controller);
+
       try {
         type UploadResult = Readonly<{
           node: CollectionItemNode | null;
           detail: ClipDetail | null;
           error: string | null;
         }>;
-        const results: readonly UploadResult[] = await Promise.all(
-          media.map(async (file): Promise<UploadResult> => {
+        const results: readonly UploadResult[] = await mapWithConcurrency(
+          media,
+          MAX_CONCURRENT_MEDIA,
+          async (file): Promise<UploadResult> => {
             const isVideo = file.type.startsWith("video/");
-            const duration = await mediaFileDuration(file);
+            // ONE decode per video: duration and poster frame together. The
+            // probe is handed to the upload so it does not decode again.
+            const probe = isVideo ? await probeVideoFile(file, { signal }) : null;
+            const duration = probe?.durationSeconds ?? IMAGE_CLIP_SECONDS;
             let hosted: Awaited<ReturnType<typeof uploadTimelineMedia>>;
             try {
-              hosted = await uploadTimelineMedia(file.name, file);
+              hosted = await uploadTimelineMedia(file.name, file, undefined, {
+                thumbnail: probe?.thumbnail ?? null,
+                signal,
+              });
             } catch {
               return { node: null, detail: null, error: `"${file.name}" could not be uploaded.` };
             }
@@ -309,17 +506,34 @@ export function NativeDropStrip({
               mediaKind: "image",
               name: file.name,
               src: hosted.url,
-              durationSeconds: 4,
+              durationSeconds: IMAGE_CLIP_SECONDS,
             };
             return {
               node,
-              detail: { alt: file.name, aspect: 16 / 9, trackIndex: 0, sourceDuration: 4, trimIn: 0, trimOut: 0 },
+              detail: {
+                alt: file.name,
+                aspect: 16 / 9,
+                trackIndex: 0,
+                sourceDuration: IMAGE_CLIP_SECONDS,
+                trimIn: 0,
+                trimOut: 0,
+              },
               error: null,
             };
-          }),
+          },
         );
 
-        const failure = results.find((result) => result.error)?.error ?? null;
+        // Navigated away or unmounted mid-drop: the nodes belong to a view
+        // that is gone, so commit nothing and touch no state.
+        if (signal.aborted) return;
+
+        // Report every distinct upload failure, not just the first: a drop of
+        // five files that fails three ways used to surface one message.
+        const uploadErrors = [
+          ...new Set(
+            results.map((result) => result.error).filter((error): error is string => error !== null),
+          ),
+        ];
         const landed = results.filter(
           (result): result is UploadResult & { node: CollectionItemNode; detail: ClipDetail } =>
             result.node !== null && result.detail !== null,
@@ -328,20 +542,35 @@ export function NativeDropStrip({
         // palette drag clears every pending detail at drag start, so
         // parking during the (async) uploads left a window where completed
         // files lost their metadata before the commit could claim it.
+        let commitError: string | null = null;
         if (landed.length > 0) {
           for (const result of landed) {
             parkPendingDetail(result.node.id as string, result.detail);
           }
           // ONE dispatch for the whole file set: a multi-file drop is a
           // single undoable step and a single persisted batch.
-          addNodes(
+          const added = addNodes(
             landed.map((result) => result.node),
             toIndex,
           );
+          // The dispatch can be REFUSED (the un-hydrated-target veto). Ignoring
+          // it left the user with successfully uploaded files, no cards, and
+          // no error — the upload silently went nowhere.
+          if (!added) {
+            commitError =
+              landed.length === 1
+                ? `"${landed[0].node.name}" uploaded but could not be added here.`
+                : `${landed.length} files uploaded but could not be added here.`;
+          }
         }
-        setUpload(failure ? { status: "error", message: failure } : null);
+        // The commit failure dominates: it means NOTHING from this drop landed.
+        const message = commitError ?? (uploadErrors.length > 0 ? uploadErrors.join(" · ") : null);
+        setUpload(message ? { status: "error", message } : null);
       } catch {
+        if (signal.aborted) return;
         setUpload({ status: "error", message: "The dropped files could not be added." });
+      } finally {
+        dropAbortsRef.current.delete(controller);
       }
     },
     [addNodes],
@@ -350,12 +579,15 @@ export function NativeDropStrip({
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     if (!acceptsDrag(event)) return;
     event.preventDefault();
-    setIndicatorX(null);
+    // Resolve BEFORE ending the session: the index comes from the same
+    // measurements the indicator was drawn from, so where the user saw the
+    // line is where the node lands.
     const toIndex = resolveInsertIndex(event.clientX);
+    endDragSession();
 
     const tool = event.dataTransfer.getData(TOOL_MIME);
     if (tool && isSidebarTool(tool)) {
-      dropTool(tool, toIndex);
+      insertTool(tool, toIndex);
       return;
     }
     const files = [...event.dataTransfer.files];
@@ -380,21 +612,28 @@ export function NativeDropStrip({
           style={{ transform: `translateX(${indicatorX}px)` }}
         />
       )}
-      {upload !== null && (
-        <p
-          data-native-drop-status
-          className={[
-            "pointer-events-none absolute bottom-1 left-1 z-20 rounded px-2 py-1 text-[10px]",
-            upload.status === "uploading"
+      {/* Always MOUNTED, so it is a live region the moment the page renders:
+          a role="status" element that appears at the same time as its text
+          is unreliably announced. Empty and visually gone while idle. */}
+      <p
+        data-native-drop-status
+        role="status"
+        aria-live="polite"
+        className={[
+          "pointer-events-none absolute bottom-1 left-1 z-20 rounded px-2 py-1 text-[10px]",
+          upload === null
+            ? "sr-only"
+            : upload.status === "uploading"
               ? "bg-zinc-900/90 text-zinc-200"
               : "bg-red-950/90 text-red-200",
-          ].join(" ")}
-        >
-          {upload.status === "uploading"
+        ].join(" ")}
+      >
+        {upload === null
+          ? ""
+          : upload.status === "uploading"
             ? `Uploading ${upload.count} file${upload.count === 1 ? "" : "s"}…`
             : upload.message}
-        </p>
-      )}
+      </p>
     </div>
   );
 }

@@ -10,7 +10,7 @@ import {
 
 import { Button } from "@/components/core/button";
 
-import { NativeDropStrip } from "./graph-native-drop";
+import { NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
 import { SyncPanel, type SyncEntry } from "./graph-persistence";
 import {
@@ -91,6 +91,9 @@ export function GraphBoard({
   return (
     <OpenKeyBoundary>
       <PreviewShell enabled={previewOn} focusedId={focusedId} channel={timeChannel}>
+        {/* Outside the surface branch on purpose: the sidebar's tool buttons
+            must insert in grid mode too, where no NativeDropStrip exists. */}
+        <SidebarToolInsertBridge collectionId={focusedId} />
         <div className="flex flex-col gap-5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-zinc-500">

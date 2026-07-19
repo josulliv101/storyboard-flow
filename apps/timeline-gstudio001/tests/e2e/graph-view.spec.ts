@@ -316,6 +316,15 @@ async function stripOrder(page: Page, collectionId: string): Promise<string[]> {
     .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ""));
 }
 
+/** Grid-surface twin of `stripOrder` — the strip locator finds nothing once
+ *  the surface toggle switches to grid. */
+async function gridOrder(page: Page, collectionId: string): Promise<string[]> {
+  return page
+    .locator(`[data-virtual-grid="${collectionId}"]`)
+    .locator("[data-node-id]")
+    .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ""));
+}
+
 async function openGraph(page: Page): Promise<void> {
   await page.goto(GRAPH_URL);
   await strip(page, PROJECT_ID)
@@ -365,6 +374,7 @@ async function holdDrag(
 }
 
 const undoButton = (page: Page): Locator => page.getByRole("button", { name: /undo/i });
+const redoButton = (page: Page): Locator => page.getByRole("button", { name: /redo/i });
 
 // The sidebar ALSO has an "Assets" button (the drawer-handoff one) — scope
 // to the main region to hit the graph header's own toggles.
@@ -441,6 +451,36 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => stripOrder(page, GRANDCHILD_ID), { timeout: 15000 })
       .toEqual(["g1"]);
+  });
+
+  test("a collection id containing a comma is one row, not two broken ones", async ({ page }) => {
+    // The core allows ANY non-whitespace string as a NodeId. The sub-graph
+    // tree used to subscribe to `ids.join(",")` and rebuild the list with
+    // `split(",")`, so an id like this was torn into two ids addressing
+    // nothing — the row would vanish and its strip would never hydrate.
+    const COMMA_ID = "timeline-e2e,comma";
+    const api = await installGraphApi(page);
+    api.documents
+      .get(PROJECT_ID)!
+      .clips.push(collectionClip("clip-comma", COMMA_ID, 3, "Scene Comma", 1));
+    api.documents.set(COMMA_ID, {
+      id: COMMA_ID,
+      title: "Scene Comma",
+      clips: [mediaClip("k1", "image", 0, 4)],
+    });
+
+    await openGraph(page);
+
+    // Exactly one row for it, and it is addressable by its real id.
+    await expect(page.locator('section[aria-label="Sub-timeline: Scene Comma"]')).toHaveCount(1);
+    // The torn ids ("timeline-e2e" / "comma") must not have produced rows.
+    await expect(page.locator('section[aria-label^="Sub-timeline: "]')).toHaveCount(2);
+
+    // And it behaves like any other row: expanding lazy-hydrates its clips.
+    await expandSubGraph(page, "Scene Comma");
+    await expect
+      .poll(() => stripOrder(page, COMMA_ID), { timeout: 15000 })
+      .toEqual(["k1"]);
   });
 
   test("renaming a sub-graph in place persists to the child document title", async ({ page }) => {
@@ -704,8 +744,8 @@ test.describe("graph view E2E", () => {
       "Open to load",
     );
 
-    // Nest alpha into the placeholder (drop dead-center): the persistence
-    // bridge bounces it — undone on the spot with a rejection flash.
+    // Nest alpha into the placeholder (drop dead-center): the commandPolicy
+    // refuses it BEFORE it commits, with a rejection flash.
     await holdDrag(
       page,
       projectStrip.locator('[data-node-id="alpha"]'),
@@ -728,6 +768,65 @@ test.describe("graph view E2E", () => {
     for (const patch of api.patchesFor(PROJECT_ID)) {
       expect(patch.clipIds).toContain("alpha");
     }
+  });
+
+  test("a refused drop leaves the redo branch intact", async ({ page }) => {
+    // The regression behind the pre-commit commandPolicy. The old design let
+    // the drop commit and undid it from the persistence bridge; the commit
+    // cleared the redo branch on its way in, so a refused drop silently ate
+    // the user's redoable work and left ITSELF queued for redo.
+    await installGraphApi(page, { blockChildDocument: true });
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+
+    // Action A: move alpha to the end, then undo it so A is redoable.
+    await holdDrag(
+      page,
+      projectStrip.locator('[data-node-id="alpha"]'),
+      projectStrip.locator('[data-node-id="charlie"]'),
+      0.85,
+    );
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["bravo", CHILD_ID, "charlie", "alpha"]);
+    await undoButton(page).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+    await expect(redoButton(page)).toBeEnabled();
+
+    // The premise: the child is STILL an un-hydrated placeholder here, after
+    // the drag/undo above. Without this the drop below would be legal and the
+    // test would pass while exercising nothing.
+    await expect(projectStrip.locator(`[data-node-id="${CHILD_ID}"]`)).toContainText(
+      "Open to load",
+    );
+
+    // Now attempt a drop the policy refuses. Must be alpha (index 0, the
+    // same drag the bounce test above proves NESTS) — a node adjacent to the
+    // placeholder resolves dead-center as a same-position no-op instead,
+    // which the reducer rejects for unrelated reasons and would make this
+    // test pass without ever exercising the veto.
+    await holdDrag(
+      page,
+      projectStrip.locator('[data-node-id="alpha"]'),
+      projectStrip.locator(`[data-node-id="${CHILD_ID}"]`),
+      0.5,
+    );
+    // The refusal itself is covered by the bounce test above; here the point
+    // is only that nothing landed (the flash is a 600ms window — too racy to
+    // assert after the extra interactions this test needs).
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+
+    // A is STILL what redo replays — not the refused drop, and not nothing.
+    await expect(redoButton(page)).toBeEnabled();
+    await redoButton(page).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["bravo", CHILD_ID, "charlie", "alpha"]);
+    await expect(redoButton(page)).toBeDisabled();
   });
 
   test("preview mode: playhead with triangle cap, drag-to-scrub, no layout blowout", async ({
@@ -1073,5 +1172,225 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
       .toBe(6);
+  });
+
+  test("sidebar tools insert from the KEYBOARD, with no pointer involved", async ({ page }) => {
+    // The palette used to be pointer-only: its tiles were <div role="button">
+    // whose Enter/Space did nothing but show a "drag this" toast, and actual
+    // insertion needed a native drag carrying a custom DataTransfer. Keyboard
+    // and assistive-tech users could not create anything at all.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const imageTool = page.getByRole("button", { name: /add image clip/i });
+    await expect(imageTool).toBeVisible();
+
+    // Reach it by TABBING — it must be in the focus order, not just clickable.
+    await imageTool.focus();
+    await expect(imageTool).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    // Appended to the end of the focused timeline.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie", expect.stringMatching(/^image-/)]);
+
+    // Space is the other native activation key, and must not be swallowed.
+    await imageTool.focus();
+    await page.keyboard.press(" ");
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
+      .toBe(6);
+
+    // It is an ordinary undoable commit, exactly like the drop path.
+    await undoButton(page).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
+      .toBe(5);
+
+    // And it persists.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.at(-1)), { timeout: 5000 })
+      .toMatch(/^image-/);
+  });
+
+  test("keyboard insertion works in grid mode, where no drop strip is mounted", async ({
+    page,
+  }) => {
+    // The native-drop wrapper only wraps the STRIP. An accessible control
+    // that silently does nothing on the other surface would be worse than
+    // no control at all, so the insert bridge is mounted for both.
+    await installGraphApi(page);
+    await openGraph(page);
+    await headerToggle(page, "grid").click();
+    await expect(page.locator(`[data-native-drop="${PROJECT_ID}"]`)).toHaveCount(0);
+
+    await page.getByRole("button", { name: /add collection/i }).focus();
+    await page.keyboard.press("Enter");
+
+    await expect
+      .poll(() => gridOrder(page, PROJECT_ID).then((order) => order.at(-1) ?? ""))
+      .toMatch(/^timeline-/);
+  });
+
+  test("a 2xx upload with no usable url adds nothing and says so", async ({ page }) => {
+    // The upload SUCCEEDS as far as HTTP is concerned but the body has no
+    // url. Because `src` is optional on a media node, this used to commit and
+    // persist a sourceless clip with no error shown anywhere.
+    const api = await installGraphApi(page);
+    await page.route("**/api/timeline-media/upload", (route) =>
+      route.fulfill({ json: { pathname: "media/orphan.png" } }),
+    );
+    await openGraph(page);
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+
+    const fileTransfer = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(
+        new File([new Uint8Array([137, 80, 78, 71])], "orphan.png", { type: "image/png" }),
+      );
+      return transfer;
+    });
+    await dropZone.dispatchEvent("drop", { dataTransfer: fileTransfer, clientX: 0 });
+
+    // The failure is surfaced in the drop zone's live region...
+    await expect(page.locator("[data-native-drop-status]")).toContainText(/could not be uploaded/i);
+    // ...and the strip is untouched.
+    expect(await stripOrder(page, PROJECT_ID)).toEqual([
+      "alpha",
+      "bravo",
+      CHILD_ID,
+      "charlie",
+    ]);
+    // Nothing was persisted either.
+    await page.waitForTimeout(1500); // outlast the write debounce
+    expect(api.patchesFor(PROJECT_ID)).toHaveLength(0);
+  });
+
+  test("a drop larger than the concurrency limit keeps file order", async ({ page }) => {
+    // The pipeline no longer runs every file at once — it runs a bounded pool
+    // (MAX_CONCURRENT_MEDIA = 3). Completion order therefore differs from
+    // input order, and the nodes must still be added in FILE order. Staggered
+    // upload latency makes the difference observable: without order-preserving
+    // collection, the slow first file would land last.
+    await installGraphApi(page);
+    let seen = 0;
+    let inFlight = 0;
+    let peakInFlight = 0;
+    await page.route("**/api/timeline-media/upload", async (route) => {
+      const index = seen++;
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      // First file is the slowest, so a completion-ordered result would
+      // reverse it to the end.
+      await new Promise((resolve) => setTimeout(resolve, index === 0 ? 400 : 20));
+      inFlight -= 1;
+      return route.fulfill({
+        json: { pathname: `p-${index}.png`, url: `${PIXEL}#file-${index}` },
+      });
+    });
+    await openGraph(page);
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+
+    const fileTransfer = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      for (const name of ["f0.png", "f1.png", "f2.png", "f3.png", "f4.png"]) {
+        transfer.items.add(
+          new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" }),
+        );
+      }
+      return transfer;
+    });
+    // clientX 0 = insert before the first card, so the batch leads the strip.
+    await dropZone.dispatchEvent("drop", { dataTransfer: fileTransfer, clientX: 0 });
+
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length), { timeout: 15000 })
+      .toBe(9);
+
+    // The five new cards lead the strip, and their names are in file order.
+    const names = await strip(page, PROJECT_ID)
+      .locator("[data-node-id]")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") ?? ""));
+    expect(names.slice(0, 5)).toEqual(["f0.png", "f1.png", "f2.png", "f3.png", "f4.png"]);
+
+    // And the pool was actually bounded — this is the half that `Promise.all`
+    // would fail, since it preserves order but starts all five at once.
+    expect(peakInFlight).toBeLessThanOrEqual(3);
+    expect(seen).toBe(5);
+  });
+
+  test("dragover measures once per drag session, not once per event", async ({ page }) => {
+    // Every accepted dragover used to call getBoundingClientRect on the
+    // wrapper AND every mounted card, then setState — forcing layout at the
+    // event rate. Geometry is now measured once per session and the indicator
+    // is resolved at most once per frame.
+    await page.addInitScript(() => {
+      const original = Element.prototype.getBoundingClientRect;
+      (window as unknown as { __rectCalls: number }).__rectCalls = 0;
+      Element.prototype.getBoundingClientRect = function patched() {
+        (window as unknown as { __rectCalls: number }).__rectCalls += 1;
+        return original.call(this);
+      };
+    });
+    await installGraphApi(page);
+    await openGraph(page);
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+    const box = (await dropZone.boundingBox())!;
+
+    const EVENTS = 40;
+    const measured = await page.evaluate(
+      async ({ count, left, width }) => {
+        const zone = document.querySelector("[data-native-drop]");
+        if (!zone) throw new Error("no drop zone");
+        const transfer = new DataTransfer();
+        transfer.setData("application/x-gstudio-type", "image");
+
+        const win = window as unknown as { __rectCalls: number };
+        win.__rectCalls = 0;
+        for (let i = 0; i < count; i++) {
+          zone.dispatchEvent(
+            new DragEvent("dragover", {
+              dataTransfer: transfer,
+              bubbles: true,
+              cancelable: true,
+              clientX: left + (width * i) / count,
+              clientY: 0,
+            }),
+          );
+        }
+        // Let the coalescing frame(s) run.
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return win.__rectCalls;
+      },
+      { count: EVENTS, left: box.x, width: box.width },
+    );
+
+    // One pass over a 4-card strip is ~5 reads. The old path did that per
+    // event (~200 for 40 events); anything at or below one-per-event is a
+    // decisive separation while leaving room for unrelated app measurement.
+    expect(measured).toBeLessThan(EVENTS);
+
+    // And it still works: the indicator is showing.
+    await expect(page.locator("[data-native-drop-indicator]")).toHaveCount(1);
+  });
+
+  test("sidebar tools are still drag sources after becoming real buttons", async ({ page }) => {
+    // Adding the keyboard path must not cost the pointer one. Playwright's
+    // synthetic mouse cannot drive a native HTML5 drag, so this asserts the
+    // next best thing: the element is still draggable and its dragstart
+    // still loads the DataTransfer the drop zone reads.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const imageTool = page.getByRole("button", { name: /add image clip/i });
+    await expect(imageTool).toHaveAttribute("draggable", "true");
+
+    const carried = await imageTool.evaluate((el) => {
+      const transfer = new DataTransfer();
+      el.dispatchEvent(new DragEvent("dragstart", { dataTransfer: transfer, bubbles: true }));
+      return transfer.getData("application/x-gstudio-type");
+    });
+    expect(carried).toBe("image");
   });
 });

@@ -14,12 +14,18 @@ import {
 import {
   DndCollections,
   buildGraph,
+  parseNodeId,
   type CollectionItemNode,
   type CollectionsGraph,
+  type CommandPolicy,
   type GraphNodeSpec,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
-import { buildHydrationSpecs, type ClipDetail } from "@storyboard/timeline-domain";
+import {
+  buildHydrationSpecs,
+  collectUnhydratedDropTargets,
+  type ClipDetail,
+} from "@storyboard/timeline-domain";
 
 import { useAuth } from "@/components/auth/auth-provider";
 import { createGraphDetailsStore } from "@/lib/graph-details-store";
@@ -218,6 +224,42 @@ export function GraphTimelineView({
     setSyncLog((log) => [entry, ...log].slice(0, 6));
   }, []);
 
+  // Gate-until-hydrated, as a PRE-COMMIT veto. A collection whose stored
+  // clips haven't loaded is an empty placeholder: content landing in it would
+  // block its future hydration (the engine only fills an EMPTY collection)
+  // and let the patch-scoped write overwrite the stored document with just
+  // the new content.
+  //
+  // This has to run before the command commits. The previous design let the
+  // drop commit and had the PersistenceBridge undo it back out, which is not
+  // the same thing — committing clears the redo branch, so a bounced drop
+  // silently threw away whatever the user still had to redo and left the
+  // refused drop itself on the redo stack.
+  //
+  // Reads `detailsStore` live (it is a stable external store), so this
+  // closure never goes stale. The onSync call is a deliberate exception to
+  // the "pure predicate" rule — it feeds the SyncPanel's telemetry and fires
+  // at most once per blocked dispatch.
+  const commandPolicy = useCallback<CommandPolicy>(
+    (command) => {
+      const blocked = collectUnhydratedDropTargets(command, detailsStore.read());
+      if (blocked.length === 0) return null;
+      onSync({
+        at: Date.now(),
+        origin: "command",
+        patchType: command.type === "add-nodes" ? "nodes-added" : "nodes-moved",
+        collections: blocked,
+        bounced: true,
+      });
+      return {
+        reason: "blocked-by-policy",
+        blockedIds: blocked.map(parseNodeId),
+        message: "That collection is still loading — drop again once its clips appear.",
+      };
+    },
+    [detailsStore, onSync],
+  );
+
   // Click-to-open (the pointer twin of the O key): the provider's
   // onOpenNode fires on a plain click on an open-target card — after the
   // package's gesture arbitration, so a drag, a hold-grab, or a pan never
@@ -282,6 +324,7 @@ export function GraphTimelineView({
         trimRequiresSelection
         onOpenNode={handleOpenNode}
         openOnClick={openOnClick}
+        commandPolicy={commandPolicy}
       >
         <GraphDetailsProvider store={detailsStore}>
           <PersistenceBridge onSync={onSync} />

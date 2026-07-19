@@ -116,6 +116,9 @@ resolveCommandFromIntent ──────────────────�
       ▼
 CollectionsCommand ("move-nodes")
       │
+      ├──► commandPolicy(command, graph)  ← optional consumer veto, PRE-commit
+      │      returns a rejection ⇒ stop here: no graph change, no history
+      │      entry, no change event (see "Application policy" below)
       ▼
 applyCommand (core/commands.ts)          ← the ONLY reducer
       │  validates: missing-node, duplicate-node-id, cannot-move-root,
@@ -296,6 +299,26 @@ that must clear history):
   (`collection-not-empty`) — merging into populated collections is app
   policy the engine refuses to guess at. Id collisions with the host graph
   are rejected before anything merges.
+
+### Application policy: vetoes belong BEFORE the commit
+
+The reducer validates graph-level truths (does the node exist, would this
+create a cycle). It cannot see application state — most importantly whether a
+placeholder collection's document has actually loaded. That gate is the
+optional `commandPolicy` the provider forwards to the store: it runs inside
+`dispatch`, before `applyCommand`, and a rejection stops the pipeline dead.
+The consumer gets a typed `blocked-by-policy` rejection back and the package
+flashes the involved cards and announces the policy's message.
+
+It has to be pre-commit, and the reason is not stylistic. The obvious
+alternative — let the command commit, inspect the resulting patch in an
+`onChange` subscriber, call `store.undo()` if it violates policy — restores
+the graph but silently corrupts history. `history.push` clears the redo
+branch, so by the time the subscriber runs, whatever the user had left to
+redo is already gone; the undo then pushes the REFUSED command onto the redo
+stack, where redoing it replays the very move that was just rejected. The
+graph looks right and the history is wrong, which is the worst shape a bug
+can take. If a new rule needs to refuse a command, it goes in the policy.
 
 ## The efficiency story
 
