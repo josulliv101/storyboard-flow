@@ -27,9 +27,10 @@ import {
   GRID_CELL_WIDTH,
   GRID_GAP,
   TIMELINE_PPS,
+  type FocusSurface,
 } from "./graph-view-config";
 
-export type FocusSurface = "strip" | "grid";
+export type { FocusSurface };
 
 function SurfaceToggle({
   surface,
@@ -41,7 +42,7 @@ function SurfaceToggle({
   return (
     <div
       role="group"
-      aria-label="Focused timeline layout"
+      aria-label="Timeline layout"
       className="flex items-center rounded-md border border-zinc-800 p-0.5"
     >
       {(["strip", "grid"] as const).map((option) => (
@@ -160,7 +161,7 @@ export function GraphBoard({
             </div>
           )}
 
-          <SubTimelines focusedId={focusedId} />
+          <SubTimelines focusedId={focusedId} surface={surface} />
 
           {trashRootId !== null && (
             <div className="flex items-end justify-end">

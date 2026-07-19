@@ -4,6 +4,7 @@ import { useContext, useState } from "react";
 import { CornerDownRight, Folder, FolderOpen } from "lucide-react";
 
 import {
+  VirtualGrid,
   VirtualStrip,
   getChildren,
   parseNodeId,
@@ -18,7 +19,16 @@ import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-d
 import { hydrateTimeline } from "./graph-hydration";
 import { NativeDropStrip } from "./graph-native-drop";
 import { GraphViewNavContext } from "./graph-navigation";
-import { MAX_SUBTREE_DEPTH, SUBTIMELINE_INDENT_PX, TIMELINE_PPS } from "./graph-view-config";
+import {
+  GRID_CELL_HEIGHT,
+  GRID_CELL_WIDTH,
+  GRID_GAP,
+  MAX_SUBTREE_DEPTH,
+  SUBTIMELINE_INDENT_PX,
+  SUBTIMELINE_GRID_MAX_HEIGHT,
+  TIMELINE_PPS,
+  type FocusSurface,
+} from "./graph-view-config";
 
 /** The focused collection's direct collection child ids, as a stable joined
  *  key so a node subscribes only to ITS OWN child-set identity — a selector
@@ -39,9 +49,11 @@ function useCollectionChildIds(collectionId: NodeId): NodeId[] {
 function SubTimelineNode({
   collectionId,
   depth,
+  surface,
 }: Readonly<{
   collectionId: NodeId;
   depth: number;
+  surface: FocusSurface;
 }>) {
   const nav = useContext(GraphViewNavContext);
   const store = useCollectionsStore();
@@ -152,19 +164,38 @@ function SubTimelineNode({
           className="flex min-w-0 flex-col gap-3"
           style={{ paddingLeft: SUBTIMELINE_INDENT_PX }}
         >
-          <NativeDropStrip collectionId={id}>
-            <VirtualStrip
+          {surface === "grid" ? (
+            // Grid mode is page-wide: mirror the focused grid (no NativeDropStrip
+            // wrapper — the focused grid has none either, so native drops are a
+            // strip-mode affordance).
+            <VirtualGrid
               collectionId={collectionId}
-              pixelsPerSecond={TIMELINE_PPS}
-              itemHeight={64}
-              itemDragActivation="hold"
+              cellWidth={GRID_CELL_WIDTH}
+              cellHeight={GRID_CELL_HEIGHT}
+              gap={GRID_GAP}
+              height={SUBTIMELINE_GRID_MAX_HEIGHT}
               className="bg-black/20"
             />
-          </NativeDropStrip>
+          ) : (
+            <NativeDropStrip collectionId={id}>
+              <VirtualStrip
+                collectionId={collectionId}
+                pixelsPerSecond={TIMELINE_PPS}
+                itemHeight={64}
+                itemDragActivation="hold"
+                className="bg-black/20"
+              />
+            </NativeDropStrip>
+          )}
 
           {depth + 1 < MAX_SUBTREE_DEPTH &&
             childIds.map((childId) => (
-              <SubTimelineNode key={childId as string} collectionId={childId} depth={depth + 1} />
+              <SubTimelineNode
+                key={childId as string}
+                collectionId={childId}
+                depth={depth + 1}
+                surface={surface}
+              />
             ))}
         </div>
       )}
@@ -172,14 +203,22 @@ function SubTimelineNode({
   );
 }
 
-export function SubTimelines({ focusedId }: Readonly<{ focusedId: string }>) {
+export function SubTimelines({
+  focusedId,
+  surface,
+}: Readonly<{ focusedId: string; surface: FocusSurface }>) {
   const childIds = useCollectionChildIds(parseNodeId(focusedId));
   if (childIds.length === 0) return null;
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
       {childIds.map((collectionId) => (
-        <SubTimelineNode key={collectionId as string} collectionId={collectionId} depth={0} />
+        <SubTimelineNode
+          key={collectionId as string}
+          collectionId={collectionId}
+          depth={0}
+          surface={surface}
+        />
       ))}
     </div>
   );

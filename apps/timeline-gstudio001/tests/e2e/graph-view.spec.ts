@@ -464,6 +464,33 @@ test.describe("graph view E2E", () => {
       .toBe("Opening Scene");
   });
 
+  test("surface toggle is page-wide: sub-graph rows follow grid/strip mode", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await expandSubGraph(page, "Scene A");
+    await expect
+      .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
+      .toEqual(["c1", "c2"]);
+
+    const layout = page.getByRole("group", { name: "Timeline layout" });
+    const childStrip = page.locator(`[data-virtual-strip="${CHILD_ID}"]`);
+    const childGrid = page.locator(`[data-virtual-grid="${CHILD_ID}"]`);
+
+    // Default strip mode: the child row is a strip.
+    await expect(childStrip).toBeVisible();
+    await expect(childGrid).toHaveCount(0);
+
+    // Toggle grid → the child follows the page-wide surface, not just the focus.
+    await layout.getByRole("button", { name: "grid" }).click();
+    await expect(childGrid).toBeVisible();
+    await expect(childStrip).toHaveCount(0);
+
+    // Back to strip → the child follows again.
+    await layout.getByRole("button", { name: "strip" }).click();
+    await expect(childStrip).toBeVisible();
+    await expect(childGrid).toHaveCount(0);
+  });
+
   test("hold-drag reorder persists a patch-scoped write to only the touched document", async ({
     page,
   }) => {
@@ -724,9 +751,9 @@ test.describe("graph view E2E", () => {
     await page.setViewportSize({ width: 420, height: 900 });
     await installGraphApi(page);
     await openGraph(page);
-    // Switch the focused surface to grid, then turn Preview on.
+    // Switch the surface to grid, then turn Preview on.
     await page
-      .getByRole("group", { name: "Focused timeline layout" })
+      .getByRole("group", { name: "Timeline layout" })
       .getByRole("button", { name: "grid" })
       .click();
     await headerToggle(page, "Preview").click();
