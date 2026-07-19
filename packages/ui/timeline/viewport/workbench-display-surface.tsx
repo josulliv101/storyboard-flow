@@ -709,6 +709,16 @@ type WorkbenchSplitPaneProps = {
   onCurrentTimeChange: (time: number) => void;
   children: ReactNode;
   preferredClipId?: string | null;
+  /** Read ONCE at mount for a height carried over from a previous mount (e.g.
+   *  the consumer toggled this pane off and back on). Returning a number makes
+   *  the pane start there and SKIP the one-time fit — a height the user chose
+   *  outranks the automatic one. A getter, not a value, so the consumer can
+   *  keep it in a ref instead of re-rendering on every drag frame. */
+  getInitialSurfaceHeight?: () => number | undefined;
+  /** Fires whenever the surface height changes, so a consumer can remember it
+   *  across unmounts. Store it in a ref: this fires per pointer move during a
+   *  divider drag. */
+  onSurfaceHeightChange?: (height: number) => void;
 };
 
 export function WorkbenchSplitPane({
@@ -717,19 +727,38 @@ export function WorkbenchSplitPane({
   onCurrentTimeChange,
   children,
   preferredClipId,
+  getInitialSurfaceHeight,
+  onSurfaceHeightChange,
 }: WorkbenchSplitPaneProps) {
-  const [surfaceHeight, setSurfaceHeight] = useState(DEFAULT_SURFACE_HEIGHT);
+  // Read once, at mount. `undefined` means nothing to restore → fit instead.
+  const [restoredSurfaceHeight] = useState(() => getInitialSurfaceHeight?.());
+  const [surfaceHeight, setSurfaceHeight] = useState(
+    () => restoredSurfaceHeight ?? DEFAULT_SURFACE_HEIGHT,
+  );
   const [isDividerDragging, setIsDividerDragging] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const dividerRef = useRef<HTMLButtonElement | null>(null);
   const lowerPaneRef = useRef<HTMLDivElement | null>(null);
   const dragStartRef = useRef<{ pointerY: number; height: number } | null>(null);
-  const fitFrameRef = useRef<number | null>(null);
+  const clampFrameRef = useRef<number | null>(null);
+  const didInitialSizeRef = useRef(false);
 
   const getViewportBoundaryBottom = useCallback(() => {
     const root = rootRef.current;
     const boundary = root?.closest("main") as HTMLElement | null;
-    return boundary?.getBoundingClientRect().bottom ?? window.innerHeight;
+    const boundaryBottom = boundary?.getBoundingClientRect().bottom ?? window.innerHeight;
+    const drawerHeight = Number.parseFloat(
+      window
+        .getComputedStyle(document.documentElement)
+        .getPropertyValue("--asset-library-height"),
+    );
+    const visibleViewportBottom =
+      window.innerHeight - (Number.isFinite(drawerHeight) ? drawerHeight : 0);
+
+    // A document-sized <main> can extend far below the viewport. Sticky
+    // sizing must use the part that is visible now, while a genuinely
+    // shorter embedding boundary should still win.
+    return Math.min(boundaryBottom, visibleViewportBottom);
   }, []);
 
   const getManualMaxSurfaceHeight = useCallback(() => {
@@ -738,7 +767,9 @@ export function WorkbenchSplitPane({
     }
 
     const root = rootRef.current;
-    const rootTop = root?.getBoundingClientRect().top ?? 0;
+    // Once the surface is stuck, its effective top is zero even though the
+    // split-pane root continues moving above the viewport.
+    const rootTop = Math.max(0, root?.getBoundingClientRect().top ?? 0);
     return Math.max(
       MIN_SURFACE_HEIGHT,
       getViewportBoundaryBottom() - rootTop - MIN_TIMELINE_SPACE,
@@ -763,7 +794,7 @@ export function WorkbenchSplitPane({
     const lowerPane = lowerPaneRef.current;
     if (!root || !divider || !lowerPane || typeof window === "undefined") return;
 
-    const rootTop = root.getBoundingClientRect().top;
+    const rootTop = Math.max(0, root.getBoundingClientRect().top);
     const availableHeight = getViewportBoundaryBottom() - rootTop;
     const dividerHeight = divider.getBoundingClientRect().height;
     const lowerPaneHeight = lowerPane.getBoundingClientRect().height;
@@ -781,46 +812,61 @@ export function WorkbenchSplitPane({
     );
   }, [clampSurfaceHeight, getViewportBoundaryBottom]);
 
-  const scheduleSurfaceFit = useCallback(() => {
-    if (fitFrameRef.current !== null || typeof window === "undefined") return;
-
-    fitFrameRef.current = window.requestAnimationFrame(() => {
-      fitFrameRef.current = null;
-      fitSurfaceToViewport();
+  /** Keep the current height LEGAL for the viewport without re-deriving it —
+   *  a shrinking window may force it down, nothing else does. */
+  const clampToViewport = useCallback(() => {
+    if (dragStartRef.current) return;
+    setSurfaceHeight((height) => {
+      const next = clampSurfaceHeight(height);
+      return Math.abs(height - next) < 0.5 ? height : next;
     });
-  }, [fitSurfaceToViewport]);
+  }, [clampSurfaceHeight]);
+
+  const scheduleClamp = useCallback(() => {
+    if (clampFrameRef.current !== null || typeof window === "undefined") return;
+
+    clampFrameRef.current = window.requestAnimationFrame(() => {
+      clampFrameRef.current = null;
+      clampToViewport();
+    });
+  }, [clampToViewport]);
 
   useLayoutEffect(() => {
-    fitSurfaceToViewport();
-
-    const root = rootRef.current;
-    const lowerPane = lowerPaneRef.current;
-    const divider = dividerRef.current;
-    const boundary = root?.closest("main") as HTMLElement | null;
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(scheduleSurfaceFit);
-
-    if (observer) {
-      if (boundary) observer.observe(boundary);
-      if (lowerPane) observer.observe(lowerPane);
-      if (divider) observer.observe(divider);
+    // Size ONCE on mount. After that the height belongs to the user: only a
+    // divider drag changes it, and a shrinking viewport may clamp it.
+    if (!didInitialSizeRef.current) {
+      didInitialSizeRef.current = true;
+      if (restoredSurfaceHeight !== undefined) clampToViewport();
+      else fitSurfaceToViewport();
     }
 
-    window.addEventListener("resize", scheduleSurfaceFit);
-    window.visualViewport?.addEventListener("resize", scheduleSurfaceFit);
+    const root = rootRef.current;
+    const boundary = root?.closest("main") as HTMLElement | null;
+    // Observe the viewport boundary ONLY, and only to clamp. Watching the
+    // lower pane here is what used to shrink the surface whenever the content
+    // below it grew — expanding a sub-graph folder stole preview height.
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleClamp);
+    if (observer && boundary) observer.observe(boundary);
+
+    window.addEventListener("resize", scheduleClamp);
+    window.visualViewport?.addEventListener("resize", scheduleClamp);
 
     return () => {
       observer?.disconnect();
-      window.removeEventListener("resize", scheduleSurfaceFit);
-      window.visualViewport?.removeEventListener("resize", scheduleSurfaceFit);
-      if (fitFrameRef.current !== null) {
-        window.cancelAnimationFrame(fitFrameRef.current);
-        fitFrameRef.current = null;
+      window.removeEventListener("resize", scheduleClamp);
+      window.visualViewport?.removeEventListener("resize", scheduleClamp);
+      if (clampFrameRef.current !== null) {
+        window.cancelAnimationFrame(clampFrameRef.current);
+        clampFrameRef.current = null;
       }
     };
-  }, [fitSurfaceToViewport, scheduleSurfaceFit]);
+  }, [fitSurfaceToViewport, clampToViewport, scheduleClamp, restoredSurfaceHeight]);
+
+  // Report the height so a consumer can restore it after an unmount.
+  useEffect(() => {
+    onSurfaceHeightChange?.(surfaceHeight);
+  }, [surfaceHeight, onSurfaceHeightChange]);
 
   const handleDividerPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -866,40 +912,45 @@ export function WorkbenchSplitPane({
       data-testid="workbench-split-pane"
     >
       <div
-        className={cn(
-          "min-h-0",
-          !isDividerDragging &&
-            "transition-[height] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
-        )}
-        style={{
-          height: `${surfaceHeight}px`,
-          minHeight: `${MIN_SURFACE_HEIGHT}px`,
-        }}
+        className="sticky top-0 z-30 min-w-0 bg-zinc-950"
+        data-testid="workbench-preview-region"
       >
-        <WorkbenchDisplaySurface
-          clips={clips}
-          currentTime={currentTime}
-          onCurrentTimeChange={onCurrentTimeChange}
-          preferredClipId={preferredClipId}
-          className="h-full"
-        />
+        <div
+          className={cn(
+            "min-h-0",
+            !isDividerDragging &&
+              "transition-[height] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+          )}
+          style={{
+            height: `${surfaceHeight}px`,
+            minHeight: `${MIN_SURFACE_HEIGHT}px`,
+          }}
+        >
+          <WorkbenchDisplaySurface
+            clips={clips}
+            currentTime={currentTime}
+            onCurrentTimeChange={onCurrentTimeChange}
+            preferredClipId={preferredClipId}
+            className="h-full"
+          />
+        </div>
+        <button
+          ref={dividerRef}
+          type="button"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-valuemin={MIN_SURFACE_HEIGHT}
+          aria-valuenow={Math.round(surfaceHeight)}
+          aria-label="Resize workbench display"
+          className="group flex h-5 w-full cursor-row-resize items-center justify-center bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400 focus-visible:outline-offset-2"
+          onPointerDown={handleDividerPointerDown}
+          onPointerMove={handleDividerPointerMove}
+          onPointerUp={handleDividerPointerUp}
+          onPointerCancel={handleDividerPointerUp}
+        >
+          <span className="h-px w-full bg-zinc-800 transition-colors group-hover:bg-amber-400/70 group-active:bg-amber-400" />
+        </button>
       </div>
-      <button
-        ref={dividerRef}
-        type="button"
-        role="separator"
-        aria-orientation="horizontal"
-        aria-valuemin={MIN_SURFACE_HEIGHT}
-        aria-valuenow={Math.round(surfaceHeight)}
-        aria-label="Resize workbench display"
-        className="group flex h-5 w-full cursor-row-resize items-center justify-center bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400 focus-visible:outline-offset-2"
-        onPointerDown={handleDividerPointerDown}
-        onPointerMove={handleDividerPointerMove}
-        onPointerUp={handleDividerPointerUp}
-        onPointerCancel={handleDividerPointerUp}
-      >
-        <span className="h-px w-full bg-zinc-800 transition-colors group-hover:bg-amber-400/70 group-active:bg-amber-400" />
-      </button>
       <div ref={lowerPaneRef} className="min-h-0 pt-3">
         {children}
       </div>

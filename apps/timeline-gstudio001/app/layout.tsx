@@ -18,15 +18,14 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
         <TimelineRouteFadeController />
         <AuthProvider>
           <AuthGate>
-            <div className="relative flex min-h-screen bg-zinc-950 text-white font-sans overflow-x-hidden">
+            <div className="relative flex min-h-screen overflow-x-clip bg-zinc-950 font-sans text-white">
               <Suspense fallback={null}>
                 <TimelineSidebar />
               </Suspense>
               <main
-                className="flex-1 px-8 pt-6 pb-0 overflow-y-auto max-h-screen"
+                className="min-w-0 flex-1 px-8 pt-6"
                 style={{
-                  height: "calc(100dvh - var(--asset-library-height, 0px))",
-                  maxHeight: "calc(100dvh - var(--asset-library-height, 0px))",
+                  paddingBottom: "var(--asset-library-height, 0px)",
                 }}
               >
                 {children}

@@ -635,6 +635,16 @@ export function PreviewShell({
     createTimelineDocumentsState({ ...graphDocumentsGateway.read() }, {}),
   );
 
+  // Toggling the preview off UNMOUNTS the split pane, losing its height. Held
+  // here (this component stays mounted) so reopening restores the height the
+  // user last chose. A ref, not state — restoring only needs it at mount, and
+  // the pane reports on every drag frame.
+  const surfaceHeightRef = useRef<number | undefined>(undefined);
+  const getInitialSurfaceHeight = useCallback(() => surfaceHeightRef.current, []);
+  const handleSurfaceHeightChange = useCallback((height: number) => {
+    surfaceHeightRef.current = height;
+  }, []);
+
   if (!enabled) return <>{children}</>;
 
   return (
@@ -642,7 +652,13 @@ export function PreviewShell({
       <GatewayDocumentsBridge />
       {/* Test/debug witness for which read model the pane is playing. */}
       <span data-preview-source={manifestClips !== null ? "manifest" : "projection"} hidden />
-      <WorkbenchSplitPane clips={clips} currentTime={time} onCurrentTimeChange={handleTimeChange}>
+      <WorkbenchSplitPane
+        clips={clips}
+        currentTime={time}
+        onCurrentTimeChange={handleTimeChange}
+        getInitialSurfaceHeight={getInitialSurfaceHeight}
+        onSurfaceHeightChange={handleSurfaceHeightChange}
+      >
         {children}
       </WorkbenchSplitPane>
     </TimelineDocumentsProvider>

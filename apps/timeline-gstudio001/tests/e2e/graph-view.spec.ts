@@ -491,6 +491,52 @@ test.describe("graph view E2E", () => {
     await expect(childGrid).toHaveCount(0);
   });
 
+  test("preview height is the user's: tree growth never steals it, and a toggle restores it", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await headerToggle(page, "Preview").click();
+
+    const divider = page.getByRole("separator", { name: "Resize workbench display" });
+    await expect(divider).toBeVisible();
+    const heightOf = async () => Number(await divider.getAttribute("aria-valuenow"));
+    await expect.poll(heightOf).toBeGreaterThan(0);
+    const initial = await heightOf();
+
+    // Expanding a sub-graph grows the content BELOW the preview. The preview
+    // used to be fitted to whatever the lower pane left over, so it shrank —
+    // its height must now be untouched by content changes.
+    await expandSubGraph(page, "Scene A");
+    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
+    await page.waitForTimeout(300); // let any resize observers settle
+    expect(await heightOf()).toBe(initial);
+
+    // The document remains the one vertical scroll owner. Once it scrolls
+    // past the preview's natural position, the preview + resize handle stay
+    // pinned to the viewport instead of disappearing with the graph below.
+    const previewRegion = page.getByTestId("workbench-preview-region");
+    const main = page.getByRole("main");
+    const naturalTop = await previewRegion.evaluate(
+      (element) => element.getBoundingClientRect().top,
+    );
+    expect(naturalTop).toBeGreaterThan(0);
+    await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), naturalTop + 40);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    await expect
+      .poll(() => previewRegion.evaluate((element) => element.getBoundingClientRect().top))
+      .toBeCloseTo(0, 0);
+    expect(await main.evaluate((element) => getComputedStyle(element).overflowY)).toBe("visible");
+    expect(await main.evaluate((element) => element.scrollTop)).toBe(0);
+
+    // Closing and reopening the preview restores the same height.
+    await headerToggle(page, "Preview").click();
+    await expect(divider).toHaveCount(0);
+    await headerToggle(page, "Preview").click();
+    await expect(divider).toBeVisible();
+    await expect.poll(heightOf).toBe(initial);
+  });
+
   test("hold-drag reorder persists a patch-scoped write to only the touched document", async ({
     page,
   }) => {
