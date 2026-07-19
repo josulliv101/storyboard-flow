@@ -45,10 +45,11 @@ export async function loadGraphBootstrapPayloads(
 
 /**
  * Payloads for a focus navigation: the path segments' documents, plus one
- * eager child level under the FOCUSED segment (mirroring the client's
- * eager hydration, so drill-in needs no fetches when these win the race).
- * Segments that fail to serve are skipped — the client's chain validation
- * and error surfacing remain authoritative.
+ * eager child level under the FOCUSED segment. The client hydrates the
+ * sub-graph tree lazily (per row, on expand), so this eager level is a pure
+ * warm-cache win — a row's first expand hits the primed gateway cache
+ * instead of a fresh fetch. Segments that fail to serve are skipped — the
+ * client's chain validation and error surfacing remain authoritative.
  *
  * `focusedOnly` is the soft-navigation DELTA: a client that navigated here
  * already holds the ancestors (boot + earlier navigations served them), so

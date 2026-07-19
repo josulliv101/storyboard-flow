@@ -109,7 +109,6 @@ export function HydrationController({
   useEffect(() => {
     let cancelled = false;
     const path = pathKey === "" ? [] : pathKey.split("/");
-    const focusedId = path[path.length - 1] ?? projectId;
 
     // The page is streaming these documents right now: give the primes a
     // grace window so the RSC payload wins the race instead of every
@@ -124,6 +123,10 @@ export function HydrationController({
       let error: string | null = null;
       let previous: string | null = null;
 
+      // Only the FOCUS PATH is hydrated up front — the sub-graph tree below
+      // hydrates each row lazily on its first expand. (The RSC layer still
+      // primes one eager child level into the gateway cache, so that first
+      // expand is a warm-cache hit, not a fresh fetch.)
       for (const segment of [projectId, ...path]) {
         if (cancelled) return;
         const graph = store.getSnapshot().graph;
@@ -141,26 +144,6 @@ export function HydrationController({
         }
         await ensure(segment);
         previous = segment;
-      }
-
-      if (error === null && !cancelled) {
-        const collectionChildrenOf = (id: string) => {
-          const graph = store.getSnapshot().graph;
-          return getChildren(graph, parseNodeId(id))
-            .filter((childId) => graph.nodesById.get(childId)?.kind === "collection")
-            .map((childId) => childId as string);
-        };
-        const children = collectionChildrenOf(focusedId);
-        // The page's stream also carries one eager child level under the
-        // focused segment — same grace window for those.
-        if (serverPrimed && children.length > 0) {
-          graphDocumentsGateway.expectPrimes(children);
-        }
-        await Promise.all(children.map(ensure));
-        if (!cancelled) {
-          const grandchildren = children.flatMap(collectionChildrenOf);
-          await Promise.all(grandchildren.map(ensure));
-        }
       }
 
       if (!cancelled) onFocusError(error);

@@ -21,6 +21,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const PROJECT_ID = "project-e2e-1";
 const CHILD_ID = "timeline-e2e-child";
+const GRANDCHILD_ID = "timeline-e2e-grandchild";
 const USER_ID = "e2e-user";
 const TRASH_ID = `trash-${USER_ID}`;
 const GRAPH_URL = `/timeline/${PROJECT_ID}/graph`;
@@ -58,16 +59,22 @@ function mediaClip(
   };
 }
 
-function collectionClip(id: string, childTimelineId: string, index: number): FixtureClip {
+function collectionClip(
+  id: string,
+  childTimelineId: string,
+  index: number,
+  name = "Scene A",
+  itemCount = 2,
+): FixtureClip {
   return {
     id,
     index,
     kind: "collection",
-    title: "Scene A",
+    title: name,
     childTimelineId,
-    itemCount: 2,
+    itemCount,
     previewItems: [],
-    alt: "Scene A",
+    alt: name,
     aspect: 16 / 9,
     trackIndex: 0,
     startTime: 1 + index * 5,
@@ -316,6 +323,17 @@ async function openGraph(page: Page): Promise<void> {
     .waitFor({ state: "visible", timeout: 30000 });
 }
 
+/** Sub-graph rows start COLLAPSED — expand one to reveal its (lazy-hydrated)
+ *  strip and its own nested rows. `.first()` guards against nested rows once
+ *  children exist under the same section name. */
+async function expandSubGraph(page: Page, name: string): Promise<void> {
+  await page
+    .locator(`section[aria-label="Sub-timeline: ${name}"]`)
+    .getByRole("button", { name: "Expand" })
+    .first()
+    .click();
+}
+
 /** Press-and-hold drag: hold past the 250ms activation delay, travel, dwell,
  *  release. Used for strip cards AND palette thumbnails (both hold-marked). */
 async function holdDrag(
@@ -356,9 +374,7 @@ const headerToggle = (page: Page, label: string): Locator =>
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 test.describe("graph view E2E", () => {
-  test("boots from persisted documents and hydrates the visible sub-timeline", async ({
-    page,
-  }) => {
+  test("sub-graph rows start collapsed and lazy-hydrate on expand", async ({ page }) => {
     await installGraphApi(page);
     await openGraph(page);
 
@@ -366,13 +382,57 @@ test.describe("graph view E2E", () => {
     // clip's node id IS its child timeline id (adapter identity rule).
     expect(await stripOrder(page, PROJECT_ID)).toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
 
-    // Eager hydration: the visible collection loads its own clips and the
-    // inline sub-timeline strip renders them.
+    // The sub-graph row is present but COLLAPSED — its strip is not rendered
+    // and its clips have not been fetched. The count badge comes from the
+    // parent's stored summary without a fetch.
     const section = page.locator('section[aria-label="Sub-timeline: Scene A"]');
     await expect(section).toBeVisible();
+    await expect(strip(page, CHILD_ID)).toHaveCount(0);
+
+    // Expanding lazy-hydrates the row: its inline strip appears with its clips.
+    await expandSubGraph(page, "Scene A");
     await expect
       .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
       .toEqual(["c1", "c2"]);
+  });
+
+  test("sub-graphs nest recursively: expanding a child reveals its own collapsed children", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    // Scene A gains a nested collection "Scene B" (grandchild of the project),
+    // which itself holds one clip. The tree must reveal it collapsed under
+    // Scene A, and only load its clips when IT is expanded in turn.
+    api.documents
+      .get(CHILD_ID)!
+      .clips.push(collectionClip("clip-nested", GRANDCHILD_ID, 2, "Scene B", 1));
+    api.documents.set(GRANDCHILD_ID, {
+      id: GRANDCHILD_ID,
+      title: "Scene B",
+      clips: [mediaClip("g1", "image", 0, 4)],
+    });
+
+    await openGraph(page);
+
+    // Top level collapsed: only Scene A's row exists; Scene B is not rendered
+    // yet (it lives inside the un-expanded Scene A).
+    await expect(page.locator('section[aria-label="Sub-timeline: Scene A"]')).toBeVisible();
+    await expect(page.locator('section[aria-label="Sub-timeline: Scene B"]')).toHaveCount(0);
+
+    // Expand Scene A → its strip loads AND a nested, COLLAPSED Scene B row
+    // appears. Scene B's own strip is not rendered until it is expanded.
+    await expandSubGraph(page, "Scene A");
+    await expect
+      .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
+      .toEqual(["c1", "c2", GRANDCHILD_ID]);
+    await expect(page.locator('section[aria-label="Sub-timeline: Scene B"]')).toBeVisible();
+    await expect(strip(page, GRANDCHILD_ID)).toHaveCount(0);
+
+    // Expand Scene B → the recursion's second level lazy-hydrates its clips.
+    await expandSubGraph(page, "Scene B");
+    await expect
+      .poll(() => stripOrder(page, GRANDCHILD_ID), { timeout: 15000 })
+      .toEqual(["g1"]);
   });
 
   test("hold-drag reorder persists a patch-scoped write to only the touched document", async ({
@@ -380,7 +440,6 @@ test.describe("graph view E2E", () => {
   }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
-    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
     const projectStrip = strip(page, PROJECT_ID);
 
     // Drop on charlie's right half: alpha lands after it.
@@ -411,7 +470,6 @@ test.describe("graph view E2E", () => {
   }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
-    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
     const projectStrip = strip(page, PROJECT_ID);
 
     await holdDrag(
@@ -452,8 +510,6 @@ test.describe("graph view E2E", () => {
   test("palette drag mints a fresh node from an asset and persists it", async ({ page }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
-    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
-
     await headerToggle(page, "Assets").click();
     const drawer = page.getByRole("dialog", { name: "Asset palette" });
     await expect(drawer).toBeVisible();
@@ -501,8 +557,6 @@ test.describe("graph view E2E", () => {
   }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
-    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
-
     const trash = page.locator(`[data-trash-target="${TRASH_ID}"]`);
     await holdDrag(page, strip(page, PROJECT_ID).locator('[data-node-id="bravo"]'), trash);
 
@@ -579,8 +633,6 @@ test.describe("graph view E2E", () => {
   }) => {
     await installGraphApi(page);
     await openGraph(page);
-    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
-
     await headerToggle(page, "Preview").click();
 
     // The pane upgrades to the server-compiled full-depth manifest read
@@ -643,8 +695,6 @@ test.describe("graph view E2E", () => {
     await page.setViewportSize({ width: 420, height: 900 });
     await installGraphApi(page);
     await openGraph(page);
-    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
-
     // Switch the focused surface to grid, then turn Preview on.
     await page
       .getByRole("group", { name: "Focused timeline layout" })
@@ -751,8 +801,6 @@ test.describe("graph view E2E", () => {
   test("keyboard: O on a focused collection card drills into it", async ({ page }) => {
     await installGraphApi(page);
     await openGraph(page);
-    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
-
     // Keyboard-pure path: FOCUS the card (a click would drill immediately
     // now — the pointer twin below) and press the open key.
     await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).focus();
@@ -767,8 +815,6 @@ test.describe("graph view E2E", () => {
   }) => {
     await installGraphApi(page);
     await openGraph(page);
-    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
-
     // bravo is an IMAGE: selected images grow exactly ONE handle (the end
     // edge) — a video would grow two.
     const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
@@ -822,6 +868,7 @@ test.describe("graph view E2E", () => {
     api.documents.get(CHILD_ID)!.clips.push(mediaClip("alpha", "image", 2, 4));
 
     await openGraph(page);
+    await expandSubGraph(page, "Scene A");
 
     // The child hydrates FULLY: its own clips plus the demoted duplicate.
     await expect
@@ -855,8 +902,6 @@ test.describe("graph view E2E", () => {
       });
     });
     await openGraph(page);
-    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
-
     const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
 
     // 1) Sidebar IMAGE tool: mints a placeholder image clip at the drop
