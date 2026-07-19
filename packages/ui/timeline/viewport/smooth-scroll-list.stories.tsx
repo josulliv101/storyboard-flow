@@ -285,6 +285,17 @@ export const ThumbnailMode: Story = {
   },
 };
 
+/** Play-less e2e twin: the real-mouse Playwright suite must not race an
+ *  auto-running play() (its synthetic pointer events kill a concurrent real
+ *  drag), so it selects clips itself on this fixture. */
+export const PlayBarPlayground: Story = {
+  args: {
+    initialViewState: {
+      showPlayBarArea: true,
+    },
+  },
+};
+
 export const FirstClipSelectedAtTimelineStart: Story = {
   args: {
     initialViewState: {
