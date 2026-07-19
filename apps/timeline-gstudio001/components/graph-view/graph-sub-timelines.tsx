@@ -1,6 +1,7 @@
 "use client";
 
 import { useContext, useState } from "react";
+import { Folder, FolderOpen } from "lucide-react";
 
 import {
   VirtualStrip,
@@ -88,17 +89,14 @@ function SubTimelineNode({
           aria-label={expanded ? "Collapse" : "Expand"}
           aria-expanded={expanded}
           onClick={toggle}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-sky-400 transition-colors hover:bg-zinc-800 hover:text-sky-300"
         >
-          <span
-            aria-hidden="true"
-            className="transition-transform"
-            style={{ transform: expanded ? "rotate(90deg)" : "none" }}
-          >
-            ▶
-          </span>
+          {expanded ? (
+            <FolderOpen aria-hidden="true" className="h-4 w-4" />
+          ) : (
+            <Folder aria-hidden="true" className="h-4 w-4" />
+          )}
         </button>
-        <span className="h-3 w-3 shrink-0 rounded-sm border border-dashed border-sky-500/60 bg-sky-500/20" />
         <h3 className="truncate text-sm font-semibold text-zinc-100">{name}</h3>
         <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
           {hydrated ? liveCount : (detail?.itemCount ?? 0)} clips
