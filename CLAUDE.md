@@ -6,9 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 npm-workspaces monorepo (no turbo/nx — plain workspace scripts).
 
-- `apps/web` — the Next.js application (Remotion rendering, Gemini, Firebase, Vercel Blob). Also hosts the Playwright e2e suite for the UI packages (`tests/e2e/`), which runs against the **Storybook** iframe, not the Next app.
-- `apps/storybook` — Storybook workspace, and the place ALL vitest tests run from (both projects, see Commands).
-- `apps/backend` — Python service (`main.py`, venv); `npm run setup:backend` / `npm run dev:backend` from the root.
+- `apps/timeline-gstudio001` — the Next.js application (Firebase auth/storage, Cloudinary assets, the graph view). Has its own vitest suite (`npx vitest run` — app routes/lib + `packages/ui/timeline` tests), its own Storybook on port 6007, and its own Playwright e2e (`tests/e2e/`; the `graph-view` project runs against the real app on :3000 with per-test API mocks).
+- `apps/storybook` — Storybook workspace (port 6006, serves `packages/ui` + gstudio component stories), and the place the shared vitest projects run from (see Commands). Self-contained: its Tailwind entry/tokens live in `.storybook/globals.css`.
 - `packages/ui` (`@storyboard/ui`) — framework-agnostic UI components. No package scripts; typecheck and tests run from elsewhere (see Commands).
 - `packages/db` (`@storyboard/db`) — shared db layer, also script-less.
 - `packages/timeline-model` (`@storyboard/timeline-model`) — the PURE stored timeline model: document/clip types, packing constants, and document functions (`packTimelineClips`, `previewItemsFrom`, folder-path helpers…). No dependencies. `packages/ui/timeline` re-exports all of it, so `@storyboard/ui/timeline/{types,constants,timeline-documents}` imports keep working — but server routes and domain code should import from here.
@@ -23,21 +22,22 @@ Install once at the root: `npm install`.
 
 | Task | Where | Command |
 | --- | --- | --- |
-| Run the web app | root | `npm run dev:frontend` |
+| Run the app | `apps/timeline-gstudio001` | `npm run dev` |
 | Run Storybook (port 6006) | root | `npm run storybook` |
 | Unit tests (pure logic in `packages/ui`) | `apps/storybook` | `npx vitest run --project=unit` |
 | Story interaction tests (real headless Chromium) | `apps/storybook` | `npx vitest run --project=storybook` |
 | One story file | `apps/storybook` | `npx vitest run --project=storybook DndCollections.stories.tsx` |
 | One test by name | `apps/storybook` | add `--testNamePattern "name"` |
 | Typecheck the UI package | `packages/ui` | `npx tsc --noEmit -p tsconfig.json` |
-| E2E (Playwright, real mouse) | `apps/web` | `npx playwright test` (or a filter, e.g. `npx playwright test dnd-collections`) |
-| Lint the web app | `apps/web` | `npm run lint` |
+| App tests (routes, gateway, model) | `apps/timeline-gstudio001` | `npx vitest run` |
+| E2E (Playwright, real mouse) | `apps/timeline-gstudio001` | `npx playwright test --project=graph-view` |
+| Lint the app | `apps/timeline-gstudio001` | `npm run lint` |
 
 Non-obvious wiring:
 
 - `apps/storybook/vitest.config.ts` defines both vitest projects. `unit` is a node-env project whose include globs reach into `../../packages/ui/**/*.test.ts` — that's why UI package unit tests run from the storybook workspace.
 - The `storybook` project runs every story's `play` function in headless Chromium via `@vitest/browser-playwright`. Stories ARE the interaction test suite.
-- Playwright's `webServer` (in `apps/web/playwright.config.ts`) auto-starts Storybook with `npm --prefix ../storybook run storybook`; it reuses an already-running instance on 6006.
+- Playwright's `webServer` (in `apps/timeline-gstudio001/playwright.config.ts`) auto-starts the app's own Storybook (:6007) AND `next dev` (:3000); `reuseExistingServer` is always true for the dev server — never boot a second `next dev` against a shared `.next`.
 
 ## Architecture
 
@@ -52,7 +52,7 @@ Both packages follow the same discipline: pure `core/` logic with no React/DOM i
 
 1. Unit tests (`core/*.test.ts`) for pure logic.
 2. Story `play` functions for interaction coverage — simple clicks/toggles per `apps/storybook/AGENTS.md`, but these repos also drive simulated pointer drags here.
-3. Playwright e2e in `apps/web/tests/e2e/` for real trusted mouse input (drag, scrub, scroll, pointer capture, virtualization).
+3. Playwright e2e in `apps/timeline-gstudio001/tests/e2e/` for real trusted mouse input (drag, scrub, scroll, pointer capture, virtualization) — the `graph-view` project drives the DnD packages inside the real app.
 
 Hard-won traps, all previously lost time:
 

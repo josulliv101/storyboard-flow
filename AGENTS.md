@@ -4,7 +4,7 @@
 
 This is a monorepo with a Next.js app, a Storybook app, and shared UI packages.
 
-- `apps/web` is the Next.js application.
+- `apps/timeline-gstudio001` is the Next.js application.
 - `apps/storybook` is the Storybook workspace/app.
 - `packages/ui` contains framework-agnostic reusable UI components.
 

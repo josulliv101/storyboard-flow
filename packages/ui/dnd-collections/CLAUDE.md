@@ -14,7 +14,7 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
 | Unit tests | `apps/storybook` | `npx vitest run --project=unit` (filter: append `intents`, `commands`, …) |
 | Story interaction tests | `apps/storybook` | `npx vitest run --project=storybook` (name a file to narrow: `DndCollections.stories.tsx`, `PaletteTrash.stories.tsx`, `VirtualStrip.stories.tsx`, `VirtualGrid.stories.tsx`) |
 | Typecheck | `packages/ui` | `npx tsc --noEmit -p tsconfig.json` |
-| E2E (real mouse) | `apps/web` | `npx playwright test dnd-collections` |
+| E2E (real mouse) | `apps/timeline-gstudio001` | `npx playwright test --project=graph-view` |
 
 ## Invariants — do not break these
 
@@ -64,8 +64,10 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
 
 New behavior gets coverage at the right layer: pure logic in
 `core/*.test.ts`, interaction in a story `play` function, and an
-`apps/web/tests/e2e/dnd-collections.spec.ts` test when trusted pointer input
-matters. Traps that have already cost diagnosis time:
+`apps/timeline-gstudio001/tests/e2e/graph-view.spec.ts` test when trusted
+pointer input matters (the package-dedicated `apps/web` e2e suite was
+removed along with that app — the graph-view suite drives this package
+inside the real app instead). Traps that have already cost diagnosis time:
 
 - Simulated `PointerEvent`s need `isPrimary: true` (see
   `stories-helpers.ts`) or PointerSensor ignores the sequence silently.
