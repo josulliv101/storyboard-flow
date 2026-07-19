@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useId, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
 import { ITEM_HEIGHTS, type ItemSize } from "../constants";
@@ -41,17 +41,22 @@ export function ToggleSwitch({
   onChange: (checked: boolean) => void;
   title?: string;
 }) {
+  // Namespace the DOM id per instance: multiple timelines mount this toolbar
+  // on one page, and duplicate ids leave every switch after the first without
+  // its label association (no accessible name).
+  const instanceId = useId();
+  const domId = `${id}-${instanceId}`;
   return (
     <div className="flex items-center gap-2">
       <label
-        htmlFor={id}
+        htmlFor={domId}
         className="cursor-pointer select-none text-[10px] font-semibold uppercase text-zinc-400"
         title={title}
       >
         {label}
       </label>
       <button
-        id={id}
+        id={domId}
         type="button"
         role="switch"
         aria-checked={checked}

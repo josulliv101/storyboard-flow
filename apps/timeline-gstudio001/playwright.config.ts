@@ -5,16 +5,20 @@ export default defineConfig({
   fullyParallel: true,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
-    baseURL: "http://127.0.0.1:6007",
+    baseURL: "http://127.0.0.1:6006",
     screenshot: "only-on-failure",
     trace: "on-first-retry",
   },
   webServer: [
     {
-      command: "npm run storybook -- --host 127.0.0.1",
+      // The chromium project's specs (dnd-collections, timeline-interactions)
+      // target packages/ui story ids, which only the SHARED storybook
+      // workspace serves — the app's own storybook (:6007) indexes app
+      // component stories exclusively and cannot run these suites.
+      command: "npm --prefix ../storybook run storybook -- --host 127.0.0.1",
       reuseExistingServer: !process.env.CI,
-      timeout: 120000,
-      url: "http://127.0.0.1:6007",
+      timeout: 180000,
+      url: "http://127.0.0.1:6006",
     },
     {
       // The graph-view suite runs against the real Next app: its API surface

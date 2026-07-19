@@ -434,6 +434,7 @@ export function PassiveVideoFilmStrip({
     <div
       data-testid="timeline-passive-filmstrip"
       data-clip-index={clip.index}
+      data-filmstrip={showFilmstrip}
       className={cn(
         "absolute left-0 top-0 touch-none overflow-hidden rounded-md border shadow-[0_6px_18px_rgba(0,0,0,0.28)] transition-all duration-200 group/playbar",
         showFilmstrip 
