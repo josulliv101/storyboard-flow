@@ -32,7 +32,12 @@ export async function loadGraphBootstrapPayloads(
     const project = await serveTimelineDocument(projectId, requesterUid);
     if (!project) return null;
     const trash = await serveTrashDocument(`trash-${requesterUid}`, requesterUid);
-    return [project, trash];
+    // forUid lets the client's prime refuse payloads that survive an auth
+    // transition in the router cache.
+    return [
+      { ...project, forUid: requesterUid },
+      { ...trash, forUid: requesterUid },
+    ];
   } catch {
     return null;
   }
@@ -63,8 +68,10 @@ export async function loadFocusPathPayloads(
     seen.add(id);
     try {
       const served = await serveTimelineDocument(id, requesterUid);
-      if (served) payloads.push(served);
-      return served;
+      if (!served) return null;
+      const payload: GraphServerPayload = { ...served, forUid: requesterUid };
+      payloads.push(payload);
+      return payload;
     } catch {
       return null;
     }

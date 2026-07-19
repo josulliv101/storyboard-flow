@@ -9,6 +9,8 @@ import {
   type CollectionItemNode,
 } from "@storyboard/ui/dnd-collections";
 
+import type { ClipDetail } from "@storyboard/timeline-domain";
+
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { uploadTimelineMedia } from "@/lib/timeline-media-client";
 
@@ -262,29 +264,27 @@ export function NativeDropStrip({
       setUpload({ status: "uploading", count: media.length });
 
       try {
-        const results: readonly { node: CollectionItemNode | null; error: string | null }[] =
-          await Promise.all(
-            media.map(async (file) => {
+        type UploadResult = Readonly<{
+          node: CollectionItemNode | null;
+          detail: ClipDetail | null;
+          error: string | null;
+        }>;
+        const results: readonly UploadResult[] = await Promise.all(
+          media.map(async (file): Promise<UploadResult> => {
             const isVideo = file.type.startsWith("video/");
             const duration = await mediaFileDuration(file);
             let hosted: Awaited<ReturnType<typeof uploadTimelineMedia>>;
             try {
               hosted = await uploadTimelineMedia(file.name, file);
             } catch {
-              return { node: null, error: `"${file.name}" could not be uploaded.` };
+              return { node: null, detail: null, error: `"${file.name}" could not be uploaded.` };
             }
             if (isVideo && !hosted.thumbnailUrl) {
-              return { node: null, error: `"${file.name}" has no video thumbnail.` };
+              return { node: null, detail: null, error: `"${file.name}" has no video thumbnail.` };
             }
 
             const id = mintId(isVideo ? "video" : "image");
             if (isVideo) {
-              parkPendingDetail(id, {
-                alt: file.name,
-                aspect: 16 / 9,
-                trackIndex: 0,
-                poster: hosted.thumbnailUrl,
-              });
               const node: CollectionItemNode = {
                 id: parseNodeId(id),
                 kind: "media",
@@ -297,16 +297,12 @@ export function NativeDropStrip({
                 // Match the legacy drop: long videos start showing 12s.
                 trimOutSeconds: Math.max(0, duration - 12),
               };
-              return { node, error: null };
+              return {
+                node,
+                detail: { alt: file.name, aspect: 16 / 9, trackIndex: 0, poster: hosted.thumbnailUrl },
+                error: null,
+              };
             }
-            parkPendingDetail(id, {
-              alt: file.name,
-              aspect: 16 / 9,
-              trackIndex: 0,
-              sourceDuration: 4,
-              trimIn: 0,
-              trimOut: 0,
-            });
             const node: CollectionItemNode = {
               id: parseNodeId(id),
               kind: "media",
@@ -315,17 +311,34 @@ export function NativeDropStrip({
               src: hosted.url,
               durationSeconds: 4,
             };
-            return { node, error: null };
+            return {
+              node,
+              detail: { alt: file.name, aspect: 16 / 9, trackIndex: 0, sourceDuration: 4, trimIn: 0, trimOut: 0 },
+              error: null,
+            };
           }),
         );
 
         const failure = results.find((result) => result.error)?.error ?? null;
-        const nodes = results
-          .map((result) => result.node)
-          .filter((node): node is CollectionItemNode => node !== null);
-        // ONE dispatch for the whole file set: a multi-file drop is a single
-        // undoable step and a single persisted batch.
-        if (nodes.length > 0) addNodes(nodes, toIndex);
+        const landed = results.filter(
+          (result): result is UploadResult & { node: CollectionItemNode; detail: ClipDetail } =>
+            result.node !== null && result.detail !== null,
+        );
+        // Park and dispatch in the SAME synchronous tick: a concurrent
+        // palette drag clears every pending detail at drag start, so
+        // parking during the (async) uploads left a window where completed
+        // files lost their metadata before the commit could claim it.
+        if (landed.length > 0) {
+          for (const result of landed) {
+            parkPendingDetail(result.node.id as string, result.detail);
+          }
+          // ONE dispatch for the whole file set: a multi-file drop is a
+          // single undoable step and a single persisted batch.
+          addNodes(
+            landed.map((result) => result.node),
+            toIndex,
+          );
+        }
         setUpload(failure ? { status: "error", message: failure } : null);
       } catch {
         setUpload({ status: "error", message: "The dropped files could not be added." });

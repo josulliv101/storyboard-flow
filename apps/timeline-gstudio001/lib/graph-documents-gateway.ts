@@ -26,16 +26,23 @@ import type { DocumentsById } from "@storyboard/timeline-domain";
 //     re-persists their intent against the fresh revision.
 
 const SAVE_DEBOUNCE_MS = 900;
+// Retry cadence for writes that failed for non-conflict reasons — slower
+// than the edit debounce so a struggling server isn't hammered.
+const SAVE_RETRY_MS = 5000;
 // How long an ensure waits for a declared-incoming RSC prime before
 // fetching itself — roughly a streamed payload's round trip.
 const PRIME_WAIT_MS = 1000;
 
 /** A server-read document + revision, delivered by RSC (layout bootstrap /
  *  focus-path streams) and fed to `prime`. Defined HERE (client-safe) so
- *  the server-only loader module and the client share one shape. */
+ *  the server-only loader module and the client share one shape. `forUid`
+ *  stamps WHO the server read it for: `prime` refuses payloads for anyone
+ *  but the bound user, so a stale RSC prop (router cache across an auth
+ *  transition) can never seed another user's session. */
 export type GraphServerPayload = Readonly<{
   document: TimelineDocument;
   revision: number;
+  forUid: string;
 }>;
 
 export type GraphDocumentsGateway = Readonly<{
@@ -70,7 +77,7 @@ export type GraphDocumentsGateway = Readonly<{
    * flight) and never regressing the revision ledger; a skipped prime just
    * leaves the existing fetch paths to do their job.
    */
-  prime: (document: TimelineDocument, revision: number) => void;
+  prime: (document: TimelineDocument, revision: number, forUid: string) => void;
   /**
    * Declare that primes for these ids are INCOMING (the server is streaming
    * this navigation's payloads): an `ensure` for a missing/stale id waits a
@@ -81,6 +88,17 @@ export type GraphDocumentsGateway = Readonly<{
    * KNOWN to be server-primed, or every miss pays the window for nothing.
    */
   expectPrimes: (ids: readonly string[], windowMs?: number) => void;
+  /**
+   * Bind this cache to an authenticated user. The FIRST bind (or a re-bind
+   * to the same uid) is free; binding a DIFFERENT uid resets everything —
+   * documents, revisions, dirty state, errors, in-flight work — because the
+   * module singleton outlives soft logout/login, and the next user must
+   * never read the previous user's documents from memory. Call before any
+   * prime/ensure in an authenticated session.
+   */
+  bindUser: (uid: string) => void;
+  /** The compare-and-set ledger's revision for a document, if known. */
+  revisionOf: (timelineId: string) => number | undefined;
   /** Cache-change notifications (documents landing, clips written). */
   subscribe: (listener: () => void) => () => void;
   /** Outstanding load/save failures, for a status banner. Null when every
@@ -134,14 +152,48 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   // in-flight batch could reach the server after a newer one and win.
   let saveInFlight: Promise<void> | null = null;
   let saveQueued = false;
+  // A queued trailing batch remembers whether any flush that requested it
+  // needed keepalive (pagehide) — dropping that bit would send the trailing
+  // batch as an ordinary fetch during page teardown.
+  let saveQueuedKeepalive = false;
   // Ids whose cached content predates the current graph session (see
   // `refresh`) or lost a revision conflict: readable, but `ensure`
   // refetches them.
   let staleIds = new Set<string>();
   const listeners = new Set<() => void>();
 
+  // The AUTH BOUNDARY: which user's documents this cache holds. The module
+  // singleton outlives soft logout/login, so binding a DIFFERENT uid must
+  // reset everything — otherwise the next user reads the previous user's
+  // documents straight from memory, bypassing every server-side ownership
+  // check. `generation` invalidates async work that started before a
+  // reset: a late fetch or batch response from the previous user's session
+  // must not repopulate the new one.
+  let boundUid: string | null = null;
+  let generation = 0;
+
   const notify = () => {
     for (const listener of listeners) listener();
+  };
+
+  const reset = () => {
+    generation += 1;
+    documents = {};
+    revisions.clear();
+    errors.clear();
+    errorBanner = null;
+    inflight.clear();
+    dirtyIds.clear();
+    if (saveTimer !== null) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    saveInFlight = null;
+    saveQueued = false;
+    saveQueuedKeepalive = false;
+    staleIds = new Set();
+    expectedPrimes.clear();
+    notify();
   };
 
   const setError = (timelineId: string, next: string | null) => {
@@ -156,12 +208,17 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   };
 
   const fetchDocument = async (timelineId: string): Promise<TimelineDocument | null> => {
+    const gen = generation;
     try {
       const response = await fetch(`/api/timelines/${encodeURIComponent(timelineId)}`, {
         cache: "no-store",
       });
+      // A reset (auth rebind) happened while this was in flight: the
+      // response belongs to the previous session and must not land.
+      if (gen !== generation) return null;
       if (!response.ok) {
         const result = (await response.json().catch(() => ({}))) as { error?: string };
+        if (gen !== generation) return null;
         setError(
           timelineId,
           result.error || `Timeline "${timelineId}" failed to load (${response.status}).`,
@@ -172,6 +229,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
         document?: TimelineDocument;
         revision?: number;
       };
+      if (gen !== generation) return null;
       if (!result.document || result.document.id !== timelineId) {
         setError(timelineId, `Timeline "${timelineId}" returned an unexpected document.`);
         return null;
@@ -188,6 +246,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       notify();
       return result.document;
     } catch (cause) {
+      if (gen !== generation) return null;
       setError(
         timelineId,
         cause instanceof Error ? cause.message : `Timeline "${timelineId}" failed to load.`,
@@ -250,17 +309,21 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     return request;
   };
 
-  const scheduleFlush = () => {
+  const scheduleFlush = (delayMs: number = SAVE_DEBOUNCE_MS) => {
     if (saveTimer !== null) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
       persistBatch();
-    }, SAVE_DEBOUNCE_MS);
+    }, delayMs);
   };
 
   const persistBatch = (options?: { keepalive?: boolean }) => {
     if (saveInFlight !== null) {
       saveQueued = true;
+      // The trailing batch must keep the strongest delivery requirement any
+      // caller asked for — a pagehide flush queued behind a running save
+      // still needs keepalive or the browser may kill it on teardown.
+      if (options?.keepalive) saveQueuedKeepalive = true;
       return;
     }
     if (dirtyIds.size === 0) return;
@@ -277,13 +340,19 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     dirtyIds.clear();
     if (writes.length === 0) return;
 
+    const gen = generation;
     const settle = () => {
+      // A reset (auth rebind) happened mid-flight: this batch belongs to
+      // the previous session — don't touch the new one's state.
+      if (gen !== generation) return;
       saveInFlight = null;
       // Trailing batch: edits that landed mid-flight go out now, from the
-      // latest cache.
+      // latest cache — carrying a queued keepalive requirement forward.
       if (saveQueued) {
         saveQueued = false;
-        persistBatch();
+        const keepalive = saveQueuedKeepalive;
+        saveQueuedKeepalive = false;
+        persistBatch(keepalive ? { keepalive: true } : undefined);
       }
     };
 
@@ -297,10 +366,12 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     })
       .then(
         async (response) => {
+          if (gen !== generation) return;
           if (response.ok) {
             const result = (await response.json().catch(() => ({}))) as {
               results?: { id: string; revision: number }[];
             };
+            if (gen !== generation) return;
             for (const write of writes) setError(write.document.id, null);
             for (const entry of result.results ?? []) {
               if (typeof entry.revision === "number") revisions.set(entry.id, entry.revision);
@@ -311,6 +382,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
             error?: string;
             conflicts?: { id: string; actualRevision: number }[];
           };
+          if (gen !== generation) return;
           const conflictIds = new Set((result.conflicts ?? []).map((entry) => entry.id));
           if (response.status === 409 && conflictIds.size > 0) {
             // Compare-and-set lost: someone else wrote these documents since
@@ -343,20 +415,31 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
             if (dirtyIds.size > 0) scheduleFlush();
             return;
           }
+          // Non-conflict failure (5xx, 400…): surface it AND re-queue —
+          // clearing dirtyIds before the request must not permanently drop
+          // the change when the server balks. The slower retry cadence
+          // keeps a struggling server from being hammered, and re-dirtied
+          // ids ride any later unload flush.
           for (const write of writes) {
             setError(
               write.document.id,
               result.error ?? `Saving "${write.document.title}" failed (${response.status}).`,
             );
+            dirtyIds.add(write.document.id);
           }
+          scheduleFlush(SAVE_RETRY_MS);
         },
         (cause: unknown) => {
+          if (gen !== generation) return;
+          // Network failure: same re-queue + slow retry as above.
           for (const write of writes) {
             setError(
               write.document.id,
               cause instanceof Error ? cause.message : `Saving "${write.document.title}" failed.`,
             );
+            dirtyIds.add(write.document.id);
           }
+          scheduleFlush(SAVE_RETRY_MS);
         },
       )
       .then(settle, settle);
@@ -403,8 +486,13 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       revisions.set(document.id, 0);
       notify();
     },
-    prime: (document, revision) => {
+    prime: (document, revision, forUid) => {
       const timelineId = document.id;
+      // Auth guard: a payload served for anyone but the BOUND user is
+      // refused — a stale RSC prop surviving an auth transition (router
+      // cache) must never seed another user's session. Unbound = refuse
+      // too; the caller re-primes after binding.
+      if (boundUid === null || forUid !== boundUid) return;
       // Local edits win: a dirty document (or any batch mid-flight, whose
       // write set isn't inspectable here) must not be replaced by a server
       // read that predates it.
@@ -430,6 +518,13 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
         expectedPrimes.set(id, deadline);
       }
     },
+    bindUser: (uid) => {
+      if (boundUid === uid) return;
+      const hadUser = boundUid !== null;
+      boundUid = uid;
+      if (hadUser) reset();
+    },
+    revisionOf: (timelineId) => revisions.get(timelineId),
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {

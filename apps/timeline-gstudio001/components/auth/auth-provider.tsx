@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 export type AuthUser = {
   uid: string;
@@ -38,6 +39,7 @@ async function readAuthResponse(response: Response) {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -80,12 +82,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ email, oobCode }),
     });
     setUser(await readAuthResponse(response));
-  }, []);
+    // The RSC router cache was rendered with the PREVIOUS session (or none):
+    // server components must re-run with the new cookie, or stale payloads
+    // (another user's bootstrap) linger in the cache.
+    router.refresh();
+  }, [router]);
 
   const logout = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     setUser(null);
-  }, []);
+    // Same reasoning as login: drop RSC output rendered under the old
+    // session so nothing authenticated survives in the router cache.
+    router.refresh();
+  }, [router]);
 
   const value = useMemo(
     () => ({ user, isLoading, sendSignInLink, completeSignInLink, logout, refreshUser }),

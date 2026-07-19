@@ -21,7 +21,7 @@ export function GraphGatewayPrimer({
 }: Readonly<{ payloads: readonly GraphServerPayload[] }>) {
   useEffect(() => {
     for (const payload of payloads) {
-      graphDocumentsGateway.prime(payload.document, payload.revision);
+      graphDocumentsGateway.prime(payload.document, payload.revision, payload.forUid);
     }
   }, [payloads]);
 

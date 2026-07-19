@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
-import type { TimelineDocument } from "@storyboard/timeline-model/types";
-import { isUnsavedProjectPlaceholder } from "@storyboard/timeline-model";
+import { isStoredTimelineDocument, isUnsavedProjectPlaceholder } from "@storyboard/timeline-model";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import {
   saveFirebaseTimelineDocumentsAtomic,
@@ -20,17 +19,6 @@ const MAX_BATCH_WRITES = 25;
 
 function isValidTimelineId(id: string) {
   return /^[a-zA-Z0-9_-]+$/.test(id);
-}
-
-function isTimelineDocument(value: unknown): value is TimelineDocument {
-  if (!value || typeof value !== "object") return false;
-  const document = value as Partial<TimelineDocument>;
-
-  return (
-    typeof document.id === "string" &&
-    typeof document.title === "string" &&
-    Array.isArray(document.clips)
-  );
 }
 
 /**
@@ -63,7 +51,10 @@ export async function POST(request: Request) {
 
     const writes: TimelineBatchWrite[] = [];
     for (const write of body.writes) {
-      if (!isTimelineDocument(write.document)) {
+      // Full runtime validation (every clip, discriminated by kind): a
+      // malformed client payload must never persist under a TimelineClip
+      // assertion — it would break hydration and packing at read time.
+      if (!isStoredTimelineDocument(write.document)) {
         return NextResponse.json(
           { error: "Every batch write needs a valid timeline document." },
           { status: 400 },
