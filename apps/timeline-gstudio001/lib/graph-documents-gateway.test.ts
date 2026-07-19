@@ -378,6 +378,23 @@ describe("graph-documents-gateway", () => {
     expect(batchesOf(calls)[0].writes?.[0].expectedRevision).toBe(7);
   });
 
+  it("holds primes that arrive before bind and replays them for the bound user only", () => {
+    const gateway = createGraphDocumentsGateway();
+
+    // Primed while UNBOUND — the focus-path primer renders before
+    // GraphTimelineView (a dynamic import) calls bindUser. These must be held,
+    // not dropped, or the child docs never warm the cache.
+    gateway.prime(doc("a", [clip("a1")]), 3, "user-a");
+    gateway.prime(doc("b", [clip("b1")]), 3, "user-b"); // a different user
+    expect(gateway.peek("a")).toBeNull();
+    expect(gateway.peek("b")).toBeNull();
+
+    // Binding replays the held payloads — but only the ones for THIS user.
+    gateway.bindUser("user-a");
+    expect(clipIds(gateway.peek("a"))).toEqual(["a1"]);
+    expect(gateway.peek("b")).toBeNull();
+  });
+
   it("prime never applies over local edits or a regressed revision", async () => {
     const calls = installFetch((call) =>
       call.method === "POST"

@@ -1,6 +1,7 @@
 "use client";
 
 import { memo } from "react";
+import { Folder } from "lucide-react";
 
 import {
   mediaDurationSeconds,
@@ -14,7 +15,7 @@ import {
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
-import { useClipDetail } from "./graph-details-context";
+import { useClipDetail, useTimelineTitle } from "./graph-details-context";
 
 /** Leaf subscription: only the clip being trimmed re-renders per pointer move. */
 function LiveDurationPill({ id, node }: { id: NodeId; node: MediaNode }) {
@@ -39,11 +40,14 @@ const GraphClipContent = memo(function GraphClipContent({
   trimEnabled,
 }: CollectionItemContentProps) {
   const detail = useClipDetail(id as string);
+  // Same source of truth as the tree/breadcrumb, so a rename shows here too.
+  const title = useTimelineTitle(id as string);
 
   if (node.kind === "collection") {
     const hydrated = detail?.hydrated === true;
     const count = hydrated ? childCount : (detail?.itemCount ?? childCount);
     const previews = detail?.previewItems?.slice(0, 3) ?? [];
+    const displayName = title ?? node.name;
     // Opening is the SHELL's job now: a plain click on a collection card
     // routes through the provider's onOpenNode (see graph-timeline-view) —
     // no double-click handler here. The title is just the affordance hint.
@@ -76,8 +80,11 @@ const GraphClipContent = memo(function GraphClipContent({
             ))
           )}
         </span>
-        <span className="mt-1 flex items-baseline justify-between gap-1">
-          <span className="truncate text-[10px] font-semibold text-zinc-100">{node.name}</span>
+        <span className="mt-1 flex items-center justify-between gap-1">
+          <span className="flex min-w-0 items-center gap-1">
+            <Folder aria-hidden="true" className="h-3 w-3 shrink-0 text-sky-400" />
+            <span className="truncate text-[10px] font-semibold text-zinc-100">{displayName}</span>
+          </span>
           <span className="shrink-0 font-mono text-[9px] text-zinc-400">{count}</span>
         </span>
       </span>

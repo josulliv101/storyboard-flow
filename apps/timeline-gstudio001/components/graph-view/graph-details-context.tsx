@@ -5,6 +5,7 @@ import { createContext, useContext, useSyncExternalStore } from "react";
 import type { ClipDetail } from "@storyboard/timeline-domain";
 
 import type { GraphDetailsStore } from "@/lib/graph-details-store";
+import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 const GraphDetailsStoreContext = createContext<GraphDetailsStore | null>(null);
 
@@ -37,5 +38,18 @@ export function useClipDetail(id: string): ClipDetail | undefined {
     store.subscribe,
     () => store.get(id),
     () => store.get(id),
+  );
+}
+
+/** A timeline's display NAME, read from its gateway document title — the
+ *  app's source of truth for a collection's name (the chrome breadcrumb reads
+ *  the same field, and the server derives parent clip titles from it).
+ *  Undefined until the document is cached; callers fall back to the graph
+ *  node name. Re-renders only when THIS id's title changes. */
+export function useTimelineTitle(id: string): string | undefined {
+  return useSyncExternalStore(
+    graphDocumentsGateway.subscribe,
+    () => graphDocumentsGateway.peek(id)?.title,
+    () => graphDocumentsGateway.peek(id)?.title,
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useState } from "react";
-import { Folder, FolderOpen } from "lucide-react";
+import { CornerDownRight, Folder, FolderOpen } from "lucide-react";
 
 import {
   VirtualStrip,
@@ -12,18 +12,13 @@ import {
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
-import { Button } from "@/components/core/button";
+import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
-import { useClipDetail, useGraphDetailsStore } from "./graph-details-context";
+import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import { hydrateTimeline } from "./graph-hydration";
 import { NativeDropStrip } from "./graph-native-drop";
 import { GraphViewNavContext } from "./graph-navigation";
-import {
-  MAX_INDENT_DEPTH,
-  MAX_SUBTREE_DEPTH,
-  SUBTIMELINE_INDENT_PX,
-  TIMELINE_PPS,
-} from "./graph-view-config";
+import { MAX_SUBTREE_DEPTH, SUBTIMELINE_INDENT_PX, TIMELINE_PPS } from "./graph-view-config";
 
 /** The focused collection's direct collection child ids, as a stable joined
  *  key so a node subscribes only to ITS OWN child-set identity — a selector
@@ -54,11 +49,16 @@ function SubTimelineNode({
   const id = collectionId as string;
 
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
 
-  // Primitive subscriptions only (see useCollectionChildIds).
-  const name = useCollectionsSelector(
+  // Primitive subscriptions only (see useCollectionChildIds). The display
+  // name is the gateway document title (source of truth), with the graph node
+  // name as a fallback until the document is cached.
+  const nodeName = useCollectionsSelector(
     (snapshot) => snapshot.graph.nodesById.get(collectionId)?.name ?? id,
   );
+  const name = useTimelineTitle(id) ?? nodeName;
   const detail = useClipDetail(id);
   const hydrated = detail?.hydrated === true;
   const liveCount = useCollectionsSelector((snapshot) =>
@@ -75,14 +75,18 @@ function SubTimelineNode({
     setExpanded((current) => !current);
   };
 
-  const indentPx = Math.min(depth, MAX_INDENT_DEPTH) * SUBTIMELINE_INDENT_PX;
+  const startEditing = () => {
+    setDraft(name);
+    setEditing(true);
+  };
+  const commitEditing = () => {
+    setEditing(false);
+    const next = draft.trim();
+    if (next && next !== name) void graphDocumentsGateway.renameTimeline(id, next);
+  };
 
   return (
-    <section
-      aria-label={`Sub-timeline: ${name}`}
-      className="min-w-0"
-      style={{ paddingLeft: indentPx }}
-    >
+    <section aria-label={`Sub-timeline: ${name}`} className="min-w-0">
       <div className="mb-1.5 flex items-center gap-2">
         <button
           type="button"
@@ -97,7 +101,28 @@ function SubTimelineNode({
             <Folder aria-hidden="true" className="h-4 w-4" />
           )}
         </button>
-        <h3 className="truncate text-sm font-semibold text-zinc-100">{name}</h3>
+        {editing ? (
+          <input
+            aria-label="Timeline name"
+            value={draft}
+            autoFocus
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={commitEditing}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commitEditing();
+              else if (event.key === "Escape") setEditing(false);
+            }}
+            className="min-w-0 flex-1 rounded border border-sky-500/60 bg-zinc-900 px-1.5 py-0.5 text-sm font-semibold text-zinc-100 outline-none"
+          />
+        ) : (
+          <h3
+            onDoubleClick={startEditing}
+            title="Double-click to rename"
+            className="cursor-text truncate text-sm font-semibold text-zinc-100"
+          >
+            {name}
+          </h3>
+        )}
         <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
           {hydrated ? liveCount : (detail?.itemCount ?? 0)} clips
         </span>
@@ -107,18 +132,26 @@ function SubTimelineNode({
           </span>
         )}
         <span className="grow" />
-        <Button
+        <button
           type="button"
-          variant="outline"
-          size="sm"
+          aria-label="Focus"
+          title="Focus this timeline"
           onClick={() => nav?.openTimeline(collectionId)}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
         >
-          Focus
-        </Button>
+          <CornerDownRight aria-hidden="true" className="h-4 w-4" />
+        </button>
       </div>
 
       {expanded && hydrated && (
-        <div className="flex flex-col gap-3">
+        // Indent the body so the strip's left edge lines up with the LABEL
+        // (past the folder icon), and nested rows nest structurally under it.
+        // The indent sits here, NOT on the NativeDropStrip wrapper (its drop
+        // math is clientX-vs-own-rect; padding there would drift the indicator).
+        <div
+          className="flex min-w-0 flex-col gap-3"
+          style={{ paddingLeft: SUBTIMELINE_INDENT_PX }}
+        >
           <NativeDropStrip collectionId={id}>
             <VirtualStrip
               collectionId={collectionId}

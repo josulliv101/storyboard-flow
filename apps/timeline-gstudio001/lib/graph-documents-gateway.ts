@@ -63,6 +63,14 @@ export type GraphDocumentsGateway = Readonly<{
    */
   writeClips: (timelineId: string, clips: TimelineClip[]) => void;
   /**
+   * Persist a new TITLE for a timeline document — a collection's display
+   * name. The server derives every parent's collection-clip title from the
+   * child document's title, so the child document IS the source of truth;
+   * writing only the parent clip would be overwritten on the next read.
+   * Ensures the document is loaded first, then joins the debounce window.
+   */
+  renameTimeline: (timelineId: string, title: string) => Promise<void>;
+  /**
    * Insert a BRAND-NEW document into the cache (a collection minted
    * client-side, e.g. a sidebar-tool drop) with an expected revision of 0 —
    * the first write is a compare-and-set CREATE, so it can never clobber a
@@ -171,6 +179,12 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   // must not repopulate the new one.
   let boundUid: string | null = null;
   let generation = 0;
+  // Primes (RSC payloads) that arrived BEFORE the user was bound. The
+  // focus-path primer renders before GraphTimelineView (a `dynamic`, ssr:false
+  // import) mounts and calls `bindUser`, so its payloads reach `prime` while
+  // `boundUid` is still null — dropping them there left every child doc
+  // un-warmed. Held here and replayed on bind (foreign uids discarded then).
+  let pendingPrimes: { document: TimelineDocument; revision: number; forUid: string }[] = [];
 
   const notify = () => {
     for (const listener of listeners) listener();
@@ -193,6 +207,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     saveQueuedKeepalive = false;
     staleIds = new Set();
     expectedPrimes.clear();
+    pendingPrimes = [];
     notify();
   };
 
@@ -465,6 +480,30 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     });
   }
 
+  // The guarded install shared by `prime` (once bound) and `bindUser`'s
+  // replay of held payloads. Refuses anything not for the bound user, and
+  // never clobbers a local edit or regresses the revision ledger.
+  const installPrime = (document: TimelineDocument, revision: number, forUid: string) => {
+    const timelineId = document.id;
+    if (boundUid === null || forUid !== boundUid) return;
+    // Local edits win: a dirty document (or any batch mid-flight, whose write
+    // set isn't inspectable here) must not be replaced by a server read that
+    // predates it.
+    if (dirtyIds.has(timelineId) || saveInFlight !== null) return;
+    const known = revisions.get(timelineId);
+    if (known !== undefined && revision < known) return;
+    if (documents[timelineId] !== undefined && known === revision) {
+      // Same version already cached — just confirm freshness.
+      staleIds.delete(timelineId);
+      return;
+    }
+    documents = { ...documents, [timelineId]: document };
+    revisions.set(timelineId, revision);
+    staleIds.delete(timelineId);
+    setError(timelineId, null);
+    notify();
+  };
+
   return {
     read: () => documents,
     peek: (timelineId) => documents[timelineId] ?? null,
@@ -473,6 +512,20 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       const document = documents[timelineId];
       if (!document) return;
       documents = { ...documents, [timelineId]: { ...document, clips } };
+      notify();
+      dirtyIds.add(timelineId);
+      scheduleFlush();
+    },
+    renameTimeline: async (timelineId, title) => {
+      const gen = generation;
+      // The child document is the source of truth for the name — load it if
+      // this row hasn't been hydrated yet, so the title write actually lands.
+      if (!documents[timelineId]) await ensure(timelineId);
+      // A reset (auth rebind) happened mid-load: don't resurrect a stale doc.
+      if (gen !== generation) return;
+      const current = documents[timelineId];
+      if (!current || current.title === title) return;
+      documents = { ...documents, [timelineId]: { ...current, title } };
       notify();
       dirtyIds.add(timelineId);
       scheduleFlush();
@@ -487,28 +540,14 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       notify();
     },
     prime: (document, revision, forUid) => {
-      const timelineId = document.id;
-      // Auth guard: a payload served for anyone but the BOUND user is
-      // refused — a stale RSC prop surviving an auth transition (router
-      // cache) must never seed another user's session. Unbound = refuse
-      // too; the caller re-primes after binding.
-      if (boundUid === null || forUid !== boundUid) return;
-      // Local edits win: a dirty document (or any batch mid-flight, whose
-      // write set isn't inspectable here) must not be replaced by a server
-      // read that predates it.
-      if (dirtyIds.has(timelineId) || saveInFlight !== null) return;
-      const known = revisions.get(timelineId);
-      if (known !== undefined && revision < known) return;
-      if (documents[timelineId] !== undefined && known === revision) {
-        // Same version already cached — just confirm freshness.
-        staleIds.delete(timelineId);
+      // Not bound yet: hold the payload rather than dropping it (a stale RSC
+      // prop surviving an auth transition would otherwise never warm the
+      // cache). bindUser replays these, discarding any not for the new user.
+      if (boundUid === null) {
+        pendingPrimes.push({ document, revision, forUid });
         return;
       }
-      documents = { ...documents, [timelineId]: document };
-      revisions.set(timelineId, revision);
-      staleIds.delete(timelineId);
-      setError(timelineId, null);
-      notify();
+      installPrime(document, revision, forUid);
     },
     expectPrimes: (ids, windowMs = PRIME_WAIT_MS) => {
       const deadline = Date.now() + windowMs;
@@ -522,7 +561,12 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       if (boundUid === uid) return;
       const hadUser = boundUid !== null;
       boundUid = uid;
+      // A DIFFERENT user resets everything (reset() also clears pendingPrimes);
+      // the first bind keeps the payloads that arrived while unbound.
       if (hadUser) reset();
+      const held = pendingPrimes;
+      pendingPrimes = [];
+      for (const payload of held) installPrime(payload.document, payload.revision, payload.forUid);
     },
     revisionOf: (timelineId) => revisions.get(timelineId),
     subscribe: (listener) => {

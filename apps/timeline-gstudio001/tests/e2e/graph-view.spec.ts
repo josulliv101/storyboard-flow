@@ -394,6 +394,14 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
       .toEqual(["c1", "c2"]);
+
+    // The strip's left edge lines up with the LABEL (past the folder icon),
+    // not with the section's left edge.
+    const labelBox = await section.getByRole("heading", { name: "Scene A" }).boundingBox();
+    const stripBox = await strip(page, CHILD_ID).boundingBox();
+    expect(labelBox).not.toBeNull();
+    expect(stripBox).not.toBeNull();
+    expect(Math.abs(stripBox!.x - labelBox!.x)).toBeLessThanOrEqual(2);
   });
 
   test("sub-graphs nest recursively: expanding a child reveals its own collapsed children", async ({
@@ -433,6 +441,27 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => stripOrder(page, GRANDCHILD_ID), { timeout: 15000 })
       .toEqual(["g1"]);
+  });
+
+  test("renaming a sub-graph in place persists to the child document title", async ({ page }) => {
+    const api = await installGraphApi(page);
+    await openGraph(page);
+
+    // Double-click the (collapsed) row's name → inline edit; commit with Enter.
+    const section = page.locator('section[aria-label="Sub-timeline: Scene A"]');
+    await section.getByRole("heading", { name: "Scene A" }).dblclick();
+    const input = page.getByRole("textbox", { name: "Timeline name" });
+    await input.fill("Opening Scene");
+    await input.press("Enter");
+
+    // The label updates immediately (display name reads the gateway title).
+    await expect(page.locator('section[aria-label="Sub-timeline: Opening Scene"]')).toBeVisible();
+
+    // The CHILD document — the source of truth the server derives parents from
+    // — is persisted with the new title.
+    await expect
+      .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
+      .toBe("Opening Scene");
   });
 
   test("hold-drag reorder persists a patch-scoped write to only the touched document", async ({
