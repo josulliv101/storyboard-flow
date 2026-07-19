@@ -44,6 +44,7 @@ import {
   useCollectionsStore,
   type CollectionsChange,
   type CollectionsStore,
+  type CommandPolicy,
 } from "./collections-store";
 import {
   CollectionsComponentsContext,
@@ -124,6 +125,14 @@ export type DndCollectionsProps = Readonly<{
    * handles.
    */
   trimRequiresSelection?: boolean;
+  /**
+   * Pre-commit application veto (see `CommandPolicy`). Consulted on EVERY
+   * dispatch — pointer drop, keyboard move, trash, palette add — so a rule
+   * the pure reducer cannot express ("that collection is still loading") is
+   * enforced in one place, before anything commits. Blocked commands are
+   * announced with the rejection's `message`.
+   */
+  commandPolicy?: CommandPolicy;
   children: ReactNode;
 }>;
 
@@ -190,6 +199,7 @@ export function DndCollections({
   onOpenNode,
   openOnClick,
   trimRequiresSelection,
+  commandPolicy,
   children,
 }: DndCollectionsProps) {
   const componentsValue = useCollectionsComponentsValue(components);
@@ -213,16 +223,23 @@ export function DndCollections({
   // alternative is a render-phase ref write, which is unsound under
   // concurrent rendering.
   const onChangeRef = useRef(onChange);
+  const commandPolicyRef = useRef(commandPolicy);
   useLayoutEffect(() => {
     onChangeRef.current = onChange;
+    commandPolicyRef.current = commandPolicy;
   });
 
   // One store per component lifetime; the graph prop and history cap are
   // intentionally initial-only (the store is the source of truth thereafter).
+  // `commandPolicy` rides the same ref indirection as `onChange` (and inherits
+  // its documented staleness limit) — a policy should read its live source at
+  // call time rather than closing over render-time state, which makes the
+  // closure's identity irrelevant.
   const [store] = useState<CollectionsStore>(() =>
     createCollectionsStore(initialGraph, {
       onChange: (change) => onChangeRef.current?.(change),
       maxHistoryEntries,
+      commandPolicy: (command, graph) => commandPolicyRef.current?.(command, graph) ?? null,
     })
   );
   useEffect(() => () => store.destroy(), [store]);
@@ -528,6 +545,13 @@ function DndCollectionsContext({
       if (dispatched.error.reason === "would-create-cycle") {
         store.flashRejection(activeIds);
         announce("Cannot move a collection into itself or one of its nested collections.");
+        return;
+      }
+      if (dispatched.error.reason === "blocked-by-policy") {
+        // Refused before it committed, so the cards never moved — the flash
+        // is the whole visible feedback.
+        store.flashRejection(activeIds);
+        if (dispatched.error.message) announce(dispatched.error.message);
         return;
       }
       if (dispatched.error.reason === "same-position") {

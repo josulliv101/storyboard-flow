@@ -13,6 +13,7 @@ export {
   mediaDurationSeconds,
   parseNodeId,
   type CollectionItemNode,
+  type CollectionsCommand,
   type CollectionsGraph,
   type CollectionsPatch,
   type GraphNodeSpec,

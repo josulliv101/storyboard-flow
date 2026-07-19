@@ -295,6 +295,10 @@ export function useCollectionsKeyboard(args: {
           store.flashRejection([nodeId]);
           announce("Cannot move a collection into itself or one of its nested collections.");
         }
+        if (dispatched.error.reason === "blocked-by-policy") {
+          store.flashRejection([nodeId]);
+          if (dispatched.error.message) announce(dispatched.error.message);
+        }
         return;
       }
       announce(`Moved "${name}" to trash.`);
@@ -409,6 +413,10 @@ export function useCollectionsKeyboard(args: {
         if (dispatched.error.reason === "would-create-cycle") {
           store.flashRejection([nodeId]);
           announce("Cannot move a collection into itself or one of its nested collections.");
+        }
+        if (dispatched.error.reason === "blocked-by-policy") {
+          store.flashRejection([nodeId]);
+          if (dispatched.error.message) announce(dispatched.error.message);
         }
         return;
       }

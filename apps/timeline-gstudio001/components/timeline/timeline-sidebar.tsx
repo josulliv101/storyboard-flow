@@ -19,7 +19,12 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { AssetLibraryDrawer } from "@/components/assets/asset-library-drawer";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
-import { GRAPH_ASSETS_TOGGLE_EVENT, isGraphViewRoute } from "@/lib/graph-view-events";
+import {
+  GRAPH_ASSETS_TOGGLE_EVENT,
+  isGraphInsertTool,
+  isGraphViewRoute,
+  requestGraphToolInsert,
+} from "@/lib/graph-view-events";
 import { cn } from "@/lib/utils";
 import type { ProjectViewMode } from "@storyboard/ui/timeline/timeline-view-state";
 
@@ -237,6 +242,24 @@ export function TimelineSidebar() {
     window.dispatchEvent(new CustomEvent("gstudio-drag-end"));
   };
 
+  // Dragging a tool onto a strip is POINTER-only (native HTML5 drag with a
+  // custom DataTransfer), so on the graph route activation appends it to the
+  // open timeline instead — the keyboard, screen-reader, and touch route to
+  // the same result. Drag remains the way to choose a POSITION.
+  const canInsertTools = isGraphViewRoute(pathname);
+
+  const handleToolActivate = (item: DraggableItem) => {
+    if (canInsertTools && isGraphInsertTool(item.type)) {
+      requestGraphToolInsert(item.type);
+      // The graph view announces the authoritative result on its own
+      // aria-live channel (it knows the target and whether it landed); this
+      // is the visible half, for everyone else.
+      setToastMessage(`Added a ${item.label} to the end of the open timeline.`);
+      return;
+    }
+    showDragToast(item.label);
+  };
+
   const showDragToast = (label: string) => {
     setToastMessage(`Drag this "${label}" block onto the workspace to add it!`);
   };
@@ -293,30 +316,32 @@ export function TimelineSidebar() {
               const tooltipId = `sidebar-tooltip-new-${item.type}`;
 
               return (
-                <div
+                <button
                   key={item.type}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={item.label}
+                  type="button"
+                  aria-label={
+                    canInsertTools
+                      ? `Add ${item.label} to the open timeline`
+                      : item.label
+                  }
                   aria-describedby={tooltipId}
                   draggable
                   onDragStart={(e) => handleDragStart(e, item.type)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => showDragToast(item.label)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    showDragToast(item.label);
-                  }}
+                  onClick={() => handleToolActivate(item)}
                   className="group/sidebar-item relative flex size-11 cursor-grab select-none items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900/40 text-zinc-400 transition-all duration-200 hover:border-sky-500 hover:bg-sky-950/20 hover:text-sky-400 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
                 >
                   <Icon className="h-4 w-4 transition-colors" />
                   <TooltipLabel
                     id={tooltipId}
                     label={item.label}
-                    description={item.description}
+                    description={
+                      canInsertTools
+                        ? `${item.description} · click to append, drag to place`
+                        : item.description
+                    }
                   />
-                </div>
+                </button>
               );
             })}
           </div>
@@ -488,6 +513,8 @@ export function TimelineSidebar() {
 
       {toastMessage && (
         <div
+          role="status"
+          aria-live="polite"
           style={{
             position: "fixed",
             top: "24px",
@@ -497,7 +524,7 @@ export function TimelineSidebar() {
           }}
           className="timeline-toast-animate flex h-10 items-center gap-2.5 rounded-full border border-sky-500/30 bg-zinc-900/95 px-5 text-xs font-medium text-zinc-100 shadow-2xl backdrop-blur-md select-none"
         >
-          <Layers className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+          <Layers className="h-3.5 w-3.5 text-sky-400 shrink-0" aria-hidden="true" />
           <span className="text-zinc-200">
             {toastMessage}
           </span>

@@ -97,6 +97,9 @@ export {
   type CollectionsInteraction,
   type CollectionsSnapshot,
   type CollectionsStore,
+  type CommandPolicy,
+  type CommandPolicyRejection,
+  type DispatchRejection,
 } from "./react/collections-store";
 export { DndCollections, type DndCollectionsProps } from "./react/DndCollections";
 export {

@@ -21,6 +21,13 @@ export function clearPendingDetails(): void {
   pendingDetails.clear();
 }
 
+/** Drop one parked entry whose add was REFUSED, so the node it described
+ *  can never exist. Targeted twin of `clearPendingDetails` for the
+ *  imperative paths that park before dispatching. */
+export function unparkPendingDetail(id: string): void {
+  pendingDetails.delete(id);
+}
+
 /** Claim parked metadata for every node an add-nodes patch committed. */
 export function claimPendingPaletteDetails(
   patch: CollectionsPatch,

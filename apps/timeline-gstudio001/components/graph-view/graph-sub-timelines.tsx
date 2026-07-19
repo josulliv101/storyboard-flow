@@ -1,6 +1,6 @@
 "use client";
 
-import { useContext, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 import { CornerDownRight, Folder, FolderOpen } from "lucide-react";
 
 import {
@@ -30,17 +30,38 @@ import {
   type FocusSurface,
 } from "./graph-view-config";
 
-/** The focused collection's direct collection child ids, as a stable joined
- *  key so a node subscribes only to ITS OWN child-set identity — a selector
- *  returning a fresh array would re-render on every unrelated graph change. */
-function useCollectionChildIds(collectionId: NodeId): NodeId[] {
-  const joined = useCollectionsSelector((snapshot) =>
-    getChildren(snapshot.graph, collectionId)
-      .filter((childId) => snapshot.graph.nodesById.get(childId)?.kind === "collection")
-      .map((childId) => childId as string)
-      .join(","),
+/**
+ * The focused collection's direct COLLECTION child ids.
+ *
+ * The subscription is the raw children array, which the reducer shares
+ * structurally: its identity survives every change that doesn't touch THIS
+ * collection's children, so the selector returns a stable reference (what
+ * `useCollectionsSelector` requires) without allocating.
+ *
+ * This used to subscribe to `ids.join(",")` and rebuild the list with
+ * `split(",")`. That worked only for ids containing no comma — but the core
+ * explicitly allows ANY non-whitespace string as a `NodeId` (see graph.ts),
+ * so an id like `client,a` would have been torn into two ids that address
+ * nothing. Nothing in the app mints such an id today, which is precisely why
+ * it would have failed the first time some other id source did.
+ *
+ * The kind filter reads the store WITHOUT subscribing to it, which is sound
+ * because a node's `kind` is fixed for its lifetime — no command changes it
+ * (`update-media` only rewrites media fields), so this derivation is a pure
+ * function of the children array it is keyed on.
+ */
+function useCollectionChildIds(collectionId: NodeId): readonly NodeId[] {
+  const store = useCollectionsStore();
+  const children = useCollectionsSelector((snapshot) =>
+    getChildren(snapshot.graph, collectionId),
   );
-  return joined === "" ? [] : joined.split(",").map((id) => parseNodeId(id));
+  return useMemo(
+    () =>
+      children.filter(
+        (childId) => store.getSnapshot().graph.nodesById.get(childId)?.kind === "collection",
+      ),
+    [children, store],
+  );
 }
 
 /** One collection row in the sub-graph tree: collapsed by default, expands to

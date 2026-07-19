@@ -61,6 +61,43 @@ export type CollectionsChange = Readonly<{
   origin: "command" | "undo" | "redo";
 }>;
 
+/**
+ * Rejection produced by a `commandPolicy` — kept OUT of the core's
+ * `CommandRejection` union because the reducer never produces it: it is an
+ * application veto, not a graph-validity failure.
+ */
+export type CommandPolicyRejection = Readonly<{
+  reason: "blocked-by-policy";
+  /** Ids the policy blames (e.g. the collections that refused the drop). */
+  blockedIds: readonly NodeId[];
+  /** Consumer-authored explanation, suitable for announcing to assistive tech. */
+  message?: string;
+}>;
+
+/**
+ * A consumer veto consulted BEFORE the reducer runs — the seam for
+ * APPLICATION policy the pure command layer cannot know about ("this
+ * collection's clips haven't loaded yet, so don't accept drops into it").
+ * Return `null` to allow the command, or a rejection to block it.
+ *
+ * Must be a pure predicate over the command and the CURRENT committed graph;
+ * it runs inside `dispatch`, so it must not dispatch reentrantly.
+ *
+ * This exists instead of the obvious "commit, inspect, undo if invalid"
+ * because that sequence is NOT a no-op. `history.push` discards the redo
+ * branch, so bouncing a drop that way destroys whatever the user had left to
+ * redo AND leaves the refused command itself sitting on the redo stack,
+ * ready to replay the very move that was just rejected. A refused command
+ * must never reach history — which means it must never reach the reducer.
+ */
+export type CommandPolicy = (
+  command: CollectionsCommand,
+  graph: CollectionsGraph
+) => CommandPolicyRejection | null;
+
+/** Everything `dispatch` can refuse with: reducer rejections plus a policy veto. */
+export type DispatchRejection = CommandRejection | CommandPolicyRejection;
+
 /** Thrown when store construction receives a malformed normalized graph. */
 export class InvalidInitialGraphError extends Error {
   readonly validationError: GraphValidationError;
@@ -89,7 +126,7 @@ export type CollectionsStore = Readonly<{
    */
   subscribeToChanges: (listener: (change: CollectionsChange) => void) => () => void;
 
-  dispatch: (command: CollectionsCommand) => Result<CollectionsPatch, CommandRejection>;
+  dispatch: (command: CollectionsCommand) => Result<CollectionsPatch, DispatchRejection>;
   undo: () => boolean;
   redo: () => boolean;
   /**
@@ -147,6 +184,8 @@ export function createCollectionsStore(
     onChange?: (change: CollectionsChange) => void;
     /** Cap the undo stack (oldest entries fall off). Positive integer; default unbounded. */
     maxHistoryEntries?: number;
+    /** Pre-commit application veto — see `CommandPolicy`. */
+    commandPolicy?: CommandPolicy;
   }>
 ): CollectionsStore {
   const initialValidation = validateGraph(initialGraph);
@@ -167,6 +206,7 @@ export function createCollectionsStore(
   const listeners = new Set<() => void>();
   const changeListeners = new Set<(change: CollectionsChange) => void>();
   const onChange = options?.onChange;
+  const commandPolicy = options?.commandPolicy;
   const pendingChanges: CollectionsChange[] = [];
   let notificationDepth = 0;
   let emittingChanges = false;
@@ -252,7 +292,13 @@ export function createCollectionsStore(
 
   function dispatch(
     command: CollectionsCommand
-  ): Result<CollectionsPatch, CommandRejection> {
+  ): Result<CollectionsPatch, DispatchRejection> {
+    // Pre-commit veto, BEFORE the reducer: a refused command must leave no
+    // trace — no graph mutation, no history entry, and above all no cleared
+    // redo branch (see `CommandPolicy`).
+    const vetoed = commandPolicy?.(command, graph);
+    if (vetoed) return { ok: false, error: vetoed };
+
     const result = applyCommand(graph, command);
     if (!result.ok) return { ok: false, error: result.error };
 

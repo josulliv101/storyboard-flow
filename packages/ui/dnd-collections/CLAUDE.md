@@ -34,6 +34,11 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
   `resolveKeyboardCommand` do that math; don't reimplement it elsewhere.
 - **Roots are unmovable** (`cannot-move-root`); `rootIds` is not part of the
   patch model.
+- **A refused command never enters history.** Application gates go through
+  the store's pre-commit `commandPolicy`, never through "commit, inspect in
+  an `onChange` subscriber, `store.undo()` it back out" — that reverts the
+  graph but clears the user's redo branch and leaves the refused command
+  itself redoable. See ARCHITECTURE.md § "Application policy".
 - **Snapshot-field identity is a contract.** Store snapshot fields keep
   their reference unless they actually changed (see the cached
   `historyEntries` — `history.entries()` allocates per call and must not run

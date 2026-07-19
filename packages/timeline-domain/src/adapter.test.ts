@@ -308,16 +308,10 @@ describe("collectUnhydratedDropTargets", () => {
     expect(
       collectUnhydratedDropTargets(
         {
-          type: "nodes-moved",
-          moves: [
-            {
-              nodeId: parseNodeId("img-1"),
-              fromParentId: parseNodeId("focus-root"),
-              fromIndex: 0,
-              toParentId: parseNodeId("grandchild"),
-              toIndex: 0,
-            },
-          ],
+          type: "move-nodes",
+          nodeIds: [parseNodeId("img-1")],
+          toParentId: parseNodeId("grandchild"),
+          toIndex: 0,
         },
         details,
       ),
@@ -326,47 +320,30 @@ describe("collectUnhydratedDropTargets", () => {
     expect(
       collectUnhydratedDropTargets(
         {
-          type: "nodes-added",
-          adds: [
-            {
-              parentId: parseNodeId("grandchild"),
-              index: 0,
-              node: { id: parseNodeId("new-1"), kind: "media", name: "New", durationSeconds: 2 },
-            },
-          ],
+          type: "add-nodes",
+          nodes: [{ id: parseNodeId("new-1"), kind: "media", name: "New", durationSeconds: 2 }],
+          toParentId: parseNodeId("grandchild"),
+          toIndex: 0,
         },
         details,
       ),
     ).toEqual(["grandchild"]);
   });
 
-  it("passes hydrated destinations, roots without details, and non-placing patches", () => {
+  it("passes hydrated destinations, roots without details, and non-placing commands", () => {
     const result = buildFocusedGraph(DOCUMENTS, "focus-root");
     if (!result.ok) throw new Error(result.error);
-    const { graph, details } = result.value;
+    const { details } = result.value;
 
     // "child" is hydrated: true; "focus-root" has no detail entry at all —
     // both are legitimate destinations.
     expect(
       collectUnhydratedDropTargets(
         {
-          type: "nodes-moved",
-          moves: [
-            {
-              nodeId: parseNodeId("img-1"),
-              fromParentId: parseNodeId("focus-root"),
-              fromIndex: 0,
-              toParentId: parseNodeId("child"),
-              toIndex: 0,
-            },
-            {
-              nodeId: parseNodeId("c-img"),
-              fromParentId: parseNodeId("child"),
-              fromIndex: 0,
-              toParentId: parseNodeId("focus-root"),
-              toIndex: 0,
-            },
-          ],
+          type: "move-nodes",
+          nodeIds: [parseNodeId("img-1")],
+          toParentId: parseNodeId("child"),
+          toIndex: 0,
         },
         details,
       ),
@@ -375,14 +352,21 @@ describe("collectUnhydratedDropTargets", () => {
     expect(
       collectUnhydratedDropTargets(
         {
-          type: "nodes-updated",
-          updates: [
-            {
-              nodeId: parseNodeId("vid-1"),
-              before: graph.nodesById.get(parseNodeId("vid-1"))!,
-              after: graph.nodesById.get(parseNodeId("vid-1"))!,
-            },
-          ],
+          type: "move-nodes",
+          nodeIds: [parseNodeId("c-img")],
+          toParentId: parseNodeId("focus-root"),
+          toIndex: 0,
+        },
+        details,
+      ),
+    ).toEqual([]);
+
+    expect(
+      collectUnhydratedDropTargets(
+        {
+          type: "update-media",
+          nodeId: parseNodeId("vid-1"),
+          update: { mediaKind: "video", trimInSeconds: 1 },
         },
         details,
       ),
