@@ -105,16 +105,23 @@ export function GraphTimelineView({
   const { user } = useAuth();
   const trashDocumentId = user ? `trash-${user.uid}` : null;
 
-  // RSC payloads prime the gateway on EVERY layout render (each navigation
-  // re-serves fresh boot documents server-side — a free freshness signal).
-  // Priming is guarded inside the gateway: never over local edits, never
-  // regressing the revision ledger. Declared BEFORE the boot effect so a
-  // first-render bootstrap is in the cache when boot runs.
+  // AUTH BINDING first: the gateway is a module singleton that outlives
+  // soft logout/login, so a different signed-in user must reset it before
+  // anything reads or primes. Declared before the prime and boot effects
+  // so mount-order runs bind → prime → boot.
+  useEffect(() => {
+    if (user) graphDocumentsGateway.bindUser(user.uid);
+  }, [user]);
+
+  // RSC payloads prime the gateway (guarded inside it: only for the bound
+  // user, never over local edits, never regressing the revision ledger).
+  // `user` is a dep so payloads that arrived before the client-side auth
+  // resolved get re-applied once the binding exists.
   useEffect(() => {
     for (const payload of bootstrap ?? []) {
-      graphDocumentsGateway.prime(payload.document, payload.revision);
+      graphDocumentsGateway.prime(payload.document, payload.revision, payload.forUid);
     }
-  }, [bootstrap]);
+  }, [bootstrap, user]);
   // Whether THIS mount booted from server payloads — captured once: the
   // boot effect must not re-run when later layout renders replace the
   // bootstrap array's identity.

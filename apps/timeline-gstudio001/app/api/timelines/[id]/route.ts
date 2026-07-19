@@ -11,6 +11,7 @@ import {
   decodeFolderPath,
   encodeFolderPath,
   getFolderPathFromTimelineId,
+  isStoredTimelineDocument,
   isUnsavedProjectPlaceholder,
 } from "@storyboard/timeline-model";
 // Demo-content seed for the GET fallback — deliberately still the UI
@@ -51,17 +52,6 @@ function storageErrorResponse(error: unknown, fallback: string) {
 
   console.error("[GSTUDIO_TIMELINE_STORAGE_ERROR]", error);
   return NextResponse.json({ error: message }, { status: 500 });
-}
-
-function isTimelineDocument(value: unknown): value is TimelineDocument {
-  if (!value || typeof value !== "object") return false;
-  const document = value as Partial<TimelineDocument>;
-
-  return (
-    typeof document.id === "string" &&
-    typeof document.title === "string" &&
-    Array.isArray(document.clips)
-  );
 }
 
 export async function GET(
@@ -279,7 +269,10 @@ export async function PATCH(
       document?: unknown;
     };
 
-    if (!isTimelineDocument(body.document) || body.document.id !== id) {
+    // Full runtime validation (every clip, discriminated by kind) — the
+    // same guard the batch endpoint uses; a malformed payload must never
+    // persist under a TimelineClip assertion.
+    if (!isStoredTimelineDocument(body.document) || body.document.id !== id) {
       return NextResponse.json({ error: "A valid timeline document is required." }, { status: 400 });
     }
 

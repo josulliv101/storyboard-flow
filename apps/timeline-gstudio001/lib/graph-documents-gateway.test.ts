@@ -366,8 +366,9 @@ describe("graph-documents-gateway", () => {
       call.method === "POST" ? okResults(call.writes) : jsonResponse({}, 500),
     );
     const gateway = createGraphDocumentsGateway();
+    gateway.bindUser("user-a");
 
-    gateway.prime(doc("a", [clip("server-1")]), 7);
+    gateway.prime(doc("a", [clip("server-1")]), 7, "user-a");
     // Served straight from cache — no GET.
     expect(clipIds(await gateway.ensure("a"))).toEqual(["server-1"]);
     expect(getsOf(calls)).toHaveLength(0);
@@ -384,16 +385,17 @@ describe("graph-documents-gateway", () => {
         : jsonResponse({ document: doc("a", [clip("a1")]), revision: 5 }),
     );
     const gateway = createGraphDocumentsGateway();
+    gateway.bindUser("user-a");
     await gateway.ensure("a");
 
     // Older server read: the ledger (5) wins.
-    gateway.prime(doc("a", [clip("older")]), 3);
+    gateway.prime(doc("a", [clip("older")]), 3, "user-a");
     expect(clipIds(gateway.peek("a"))).toEqual(["a1"]);
 
     // A dirty document is a local edit in flight to the server — a fresh
     // server read must not clobber it.
     gateway.writeClips("a", [clip("local")]);
-    gateway.prime(doc("a", [clip("newer")]), 9);
+    gateway.prime(doc("a", [clip("newer")]), 9, "user-a");
     expect(clipIds(gateway.peek("a"))).toEqual(["local"]);
 
     // Same-revision confirm on a clean cache: the cached content (which IS
@@ -401,9 +403,14 @@ describe("graph-documents-gateway", () => {
     // clears, and no refetch happens.
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS); // flush the write → revision 6
     gateway.refresh(); // marks stale
-    gateway.prime(doc("a", [clip("server-echo")]), 6);
+    gateway.prime(doc("a", [clip("server-echo")]), 6, "user-a");
     expect(clipIds(await gateway.ensure("a"))).toEqual(["local"]);
     expect(getsOf(calls)).toHaveLength(1); // only the original seed GET
+
+    // A payload served for ANYONE ELSE is refused outright.
+    gateway.refresh();
+    gateway.prime(doc("a", [clip("foreign")]), 20, "user-b");
+    expect(clipIds(gateway.peek("a"))).toEqual(["local"]);
   });
 
   it("ensure waits for a declared-incoming prime instead of fetching", async () => {
@@ -413,13 +420,14 @@ describe("graph-documents-gateway", () => {
         : jsonResponse({ document: doc("a", [clip("fetched")]), revision: 1 }),
     );
     const gateway = createGraphDocumentsGateway();
+    gateway.bindUser("user-a");
 
     gateway.expectPrimes(["a"]);
     const pending = gateway.ensure("a");
     await vi.advanceTimersByTimeAsync(0);
     expect(getsOf(calls)).toHaveLength(0); // waiting, not fetching
 
-    gateway.prime(doc("a", [clip("primed")]), 4);
+    gateway.prime(doc("a", [clip("primed")]), 4, "user-a");
     expect(clipIds(await pending)).toEqual(["primed"]);
     expect(getsOf(calls)).toHaveLength(0); // the prime won — no fetch at all
 

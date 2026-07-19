@@ -495,12 +495,15 @@ function useManifestClips(enabled: boolean, focusedId: string): TimelineClip[] |
   const [state, setState] = useState<ManifestClipsState>(null);
   const [staleAt, setStaleAt] = useState(0);
 
-  // Committed changes invalidate the stored manifest — coalesce into one
-  // delayed refetch so a burst of edits refreshes once, after persisting.
+  // A committed change makes the held manifest STALE — discard it
+  // immediately (the live projection is correct the instant the commit
+  // lands and takes over), then refetch once the writes have settled. A
+  // burst of edits coalesces into one delayed refetch.
   useEffect(() => {
     if (!enabled) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = store.subscribeToChanges(() => {
+      setState(null);
       if (timer !== null) clearTimeout(timer);
       timer = setTimeout(() => setStaleAt(Date.now()), MANIFEST_REFRESH_DELAY_MS);
     });
@@ -513,6 +516,7 @@ function useManifestClips(enabled: boolean, focusedId: string): TimelineClip[] |
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     void (async () => {
       try {
         const response = await fetch(
@@ -524,6 +528,15 @@ function useManifestClips(enabled: boolean, focusedId: string): TimelineClip[] |
           manifest?: PlaybackManifest;
         } | null;
         if (cancelled || !result?.manifest) return;
+        // Install guard: a manifest compiled BEFORE this session's latest
+        // accepted write (its revision trails the compare-and-set ledger)
+        // is pre-write server state — never install it over the live
+        // projection; poll again once the write has landed server-side.
+        const ledger = graphDocumentsGateway.revisionOf(focusedId);
+        if (ledger !== undefined && result.manifest.projectRevision < ledger) {
+          retryTimer = setTimeout(() => setStaleAt(Date.now()), MANIFEST_REFRESH_DELAY_MS);
+          return;
+        }
         setState({ clips: manifestToClips(result.manifest), forId: focusedId });
       } catch {
         /* projection fallback stands */
@@ -531,6 +544,7 @@ function useManifestClips(enabled: boolean, focusedId: string): TimelineClip[] |
     })();
     return () => {
       cancelled = true;
+      if (retryTimer !== null) clearTimeout(retryTimer);
     };
   }, [enabled, focusedId, staleAt]);
 
