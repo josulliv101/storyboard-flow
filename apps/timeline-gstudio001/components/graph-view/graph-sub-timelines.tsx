@@ -24,16 +24,16 @@ import {
   GraphGridScrubSurface,
   GraphPlayhead,
   PlayheadScrubBand,
+  collectionCardWidth,
   usePreviewCardSpans,
   type PreviewTimeChannel,
 } from "./graph-preview";
 import {
-  GRID_CELL_WIDTH,
   GRID_GAP,
-  ITEM_SIZE_HEIGHTS,
+  GRID_UNCAPPED_HEIGHT,
+  ITEM_SIZE_DIMENSIONS,
   MAX_SUBTREE_DEPTH,
   SUBTIMELINE_INDENT_PX,
-  SUBTIMELINE_GRID_MAX_HEIGHT,
   type FocusSurface,
   type ItemSize,
 } from "./graph-view-config";
@@ -104,6 +104,7 @@ function SubTimelineNode({
   // global clock, so the marker would lie — better absent for that ~2.5s.
   const window = spans?.get(id);
   const showPlayhead = previewOn && window !== undefined;
+  const dims = ITEM_SIZE_DIMENSIONS[itemSize];
 
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -222,16 +223,16 @@ function SubTimelineNode({
             <div className="relative">
               <VirtualGrid
                 collectionId={collectionId}
-                cellWidth={GRID_CELL_WIDTH}
-                cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
+                cellWidth={dims.gridWidth}
+                cellHeight={dims.gridHeight}
                 gap={GRID_GAP}
-                height={SUBTIMELINE_GRID_MAX_HEIGHT}
+                height={GRID_UNCAPPED_HEIGHT}
                 overlay={
                   showPlayhead ? (
                     <GraphGridPlayhead
                       focusedId={id}
                       channel={timeChannel}
-                      cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
+                      cellHeight={dims.gridHeight}
                       pixelsPerSecond={pixelsPerSecond}
                       activeWindow={window}
                     />
@@ -243,7 +244,7 @@ function SubTimelineNode({
                 <GraphGridScrubSurface
                   focusedId={id}
                   channel={timeChannel}
-                  cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
+                  cellHeight={dims.gridHeight}
                   pixelsPerSecond={pixelsPerSecond}
                 />
               )}
@@ -253,7 +254,8 @@ function SubTimelineNode({
               <VirtualStrip
                 collectionId={collectionId}
                 pixelsPerSecond={pixelsPerSecond}
-                itemHeight={ITEM_SIZE_HEIGHTS[itemSize].strip}
+                itemWidth={collectionCardWidth(pixelsPerSecond)}
+                itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
                   showPlayhead ? (

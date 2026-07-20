@@ -1,6 +1,6 @@
 "use client";
 
-import { EllipsisVertical, TvMinimal } from "lucide-react";
+import { EllipsisVertical, FolderTree, TvMinimal } from "lucide-react";
 
 import {
   TrashTarget,
@@ -30,16 +30,18 @@ import {
   GraphPlayhead,
   PlayheadScrubBand,
   PreviewShell,
+  collectionCardWidth,
   type PreviewTimeChannel,
 } from "./graph-preview";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
-  GRID_CELL_WIDTH,
   GRID_GAP,
-  ITEM_SIZE_HEIGHTS,
+  GRID_UNCAPPED_HEIGHT,
+  ITEM_SIZE_DIMENSIONS,
   ITEM_SIZES,
   MAX_TIMELINE_PPS,
   MIN_TIMELINE_PPS,
+  stepDownItemSize,
   type FocusSurface,
   type ItemSize,
 } from "./graph-view-config";
@@ -161,6 +163,8 @@ export function GraphBoard({
   onPixelsPerSecondChange,
   previewOn,
   onTogglePreview,
+  childrenShown,
+  onToggleChildren,
   timeChannel,
   trashRootId,
   syncEntries,
@@ -177,14 +181,16 @@ export function GraphBoard({
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
   previewOn: boolean;
   onTogglePreview: () => void;
+  childrenShown: boolean;
+  onToggleChildren: () => void;
   timeChannel: PreviewTimeChannel;
   trashRootId: string | null;
   syncEntries: readonly SyncEntry[];
 }>) {
-  const heights = ITEM_SIZE_HEIGHTS[itemSize];
+  const dims = ITEM_SIZE_DIMENSIONS[itemSize];
 
   return (
-    <OpenKeyBoundary>
+    <OpenKeyBoundary trashId={trashRootId}>
       <PreviewShell enabled={previewOn} focusedId={focusedId} channel={timeChannel}>
         {/* Outside the surface branch on purpose: the sidebar's tool buttons
             must insert in grid mode too, where no NativeDropStrip exists. */}
@@ -208,6 +214,21 @@ export function GraphBoard({
               >
                 <TvMinimal aria-hidden="true" className="h-4 w-4" />
               </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-pressed={childrenShown}
+                aria-label={childrenShown ? "Hide children timelines" : "Show children timelines"}
+                title={childrenShown ? "Hide children timelines" : "Show children timelines"}
+                onClick={onToggleChildren}
+                className={[
+                  "h-8 w-8",
+                  childrenShown ? "bg-zinc-800 text-zinc-100" : "text-zinc-500",
+                ].join(" ")}
+              >
+                <FolderTree aria-hidden="true" className="h-4 w-4" />
+              </Button>
               <ScaleSlider
                 pixelsPerSecond={pixelsPerSecond}
                 onChange={onPixelsPerSecondChange}
@@ -223,7 +244,8 @@ export function GraphBoard({
               <VirtualStrip
                 collectionId={parseNodeId(focusedId)}
                 pixelsPerSecond={pixelsPerSecond}
-                itemHeight={heights.strip}
+                itemWidth={collectionCardWidth(pixelsPerSecond)}
+                itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
                   previewOn ? (
@@ -248,16 +270,16 @@ export function GraphBoard({
             <div className="relative">
               <VirtualGrid
                 collectionId={parseNodeId(focusedId)}
-                cellWidth={GRID_CELL_WIDTH}
-                cellHeight={heights.gridCell}
+                cellWidth={dims.gridWidth}
+                cellHeight={dims.gridHeight}
                 gap={GRID_GAP}
-                height={420}
+                height={GRID_UNCAPPED_HEIGHT}
                 overlay={
                   previewOn ? (
                     <GraphGridPlayhead
                       focusedId={focusedId}
                       channel={timeChannel}
-                      cellHeight={heights.gridCell}
+                      cellHeight={dims.gridHeight}
                       pixelsPerSecond={pixelsPerSecond}
                     />
                   ) : undefined
@@ -268,21 +290,27 @@ export function GraphBoard({
                 <GraphGridScrubSurface
                   focusedId={focusedId}
                   channel={timeChannel}
-                  cellHeight={heights.gridCell}
+                  cellHeight={dims.gridHeight}
                   pixelsPerSecond={pixelsPerSecond}
                 />
               )}
             </div>
           )}
 
-          <SubTimelines
-            focusedId={focusedId}
-            surface={surface}
-            itemSize={itemSize}
-            pixelsPerSecond={pixelsPerSecond}
-            previewOn={previewOn}
-            timeChannel={timeChannel}
-          />
+          {/* Children render one size step below the focused timeline (flat —
+              every descendant is this one size, see stepDownItemSize). The
+              FolderTree toggle unmounts them entirely rather than hiding with
+              CSS, so their strips/grids and sub-row playheads leave the DOM. */}
+          {childrenShown && (
+            <SubTimelines
+              focusedId={focusedId}
+              surface={surface}
+              itemSize={stepDownItemSize(itemSize)}
+              pixelsPerSecond={pixelsPerSecond}
+              previewOn={previewOn}
+              timeChannel={timeChannel}
+            />
+          )}
 
           {trashRootId !== null && (
             <div className="flex items-end justify-end">

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useContext } from "react";
 import { FolderDown } from "lucide-react";
 
 import {
@@ -16,6 +16,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { useClipDetail, useTimelineTitle } from "./graph-details-context";
+import { GraphViewNavContext } from "./graph-navigation";
 
 /** Leaf subscription: only the clip being trimmed re-renders per pointer move. */
 function LiveDurationPill({ id, node }: { id: NodeId; node: MediaNode }) {
@@ -42,6 +43,7 @@ const GraphClipContent = memo(function GraphClipContent({
   const detail = useClipDetail(id as string);
   // Same source of truth as the tree/breadcrumb, so a rename shows here too.
   const title = useTimelineTitle(id as string);
+  const nav = useContext(GraphViewNavContext);
 
   if (node.kind === "collection") {
     const hydrated = detail?.hydrated === true;
@@ -53,12 +55,13 @@ const GraphClipContent = memo(function GraphClipContent({
     const all = detail?.previewItems ?? [];
     const previews = all.length > 1 ? [all[0], all[all.length - 1]] : all;
     const displayName = title ?? node.name;
-    // Opening is the SHELL's job now: a plain click on a collection card
-    // routes through the provider's onOpenNode (see graph-timeline-view) —
-    // no double-click handler here. The title is just the affordance hint.
+    // Interaction split: the card BODY selects (like any clip — see
+    // openOnClick in graph-timeline-view no longer opening collections), and
+    // the big folder button is the ONE thing that drills in. Selected cards
+    // can then be trashed with Delete alongside media.
     return (
       <span
-        title="Click (or press O) to open this timeline"
+        title="Click to select · click the folder to open · press O to open"
         className={[
           "relative flex h-full w-full flex-col justify-between overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.08] p-1.5",
           selected ? "ring-2 ring-amber-400" : "",
@@ -66,7 +69,7 @@ const GraphClipContent = memo(function GraphClipContent({
           isDragSource ? "opacity-40" : "",
         ].join(" ")}
       >
-        {/* `relative` so the folder mark can centre itself over the seam
+        {/* `relative` so the folder button can centre itself over the seam
             between the two frames rather than sitting in the label strip. */}
         <span className="relative flex min-h-0 flex-1 gap-0.5 overflow-hidden">
           {previews.length === 0 ? (
@@ -86,14 +89,24 @@ const GraphClipContent = memo(function GraphClipContent({
               />
             ))
           )}
-          {previews.length > 0 && (
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute left-1/2 top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-zinc-950/70 text-sky-300 ring-1 ring-sky-400/40 backdrop-blur-[2px]"
-            >
-              <FolderDown className="h-3.5 w-3.5" />
-            </span>
-          )}
+          {/* The drill affordance: a large button, sized as a fraction of the
+              card so it stays prominent at every item size. stopPropagation on
+              pointerdown keeps a press on it from starting the card's drag or
+              selecting it — the button opens, the body selects. */}
+          <button
+            type="button"
+            aria-label={`Open ${displayName}`}
+            title="Open this timeline"
+            data-collections-keyboard-ignore
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              nav?.openTimeline(id as NodeId);
+            }}
+            className="absolute left-1/2 top-1/2 flex aspect-square h-[46%] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+          >
+            <FolderDown className="h-[55%] w-[55%]" />
+          </button>
         </span>
         <span className="mt-1 flex items-center justify-between gap-1">
           <span className="truncate text-[10px] font-semibold text-zinc-100">{displayName}</span>

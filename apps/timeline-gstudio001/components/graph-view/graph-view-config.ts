@@ -19,7 +19,6 @@ export const MIN_TIMELINE_PPS = 6;
 export const MAX_TIMELINE_PPS = 200;
 export const DEFAULT_TIMELINE_PPS = TIMELINE_PPS;
 
-export const GRID_CELL_WIDTH = 160;
 export const GRID_GAP = 8;
 
 /** The five steps of the page-wide item size control. */
@@ -28,28 +27,52 @@ export type ItemSize = "xs" | "sm" | "md" | "lg" | "xl";
 export const ITEM_SIZES = ["xs", "sm", "md", "lg", "xl"] as const;
 
 /**
- * Item size scales HEIGHT ONLY — the strip's row height and the grid's cell
- * height. Widths stay where they were: a strip clip's width is its duration at
- * TIMELINE_PPS, so the horizontal time scale is identical at every step and a
- * size change never moves the playhead. The grid keeps GRID_CELL_WIDTH for the
- * same reason (its column count, and so its time→x mapping, is width-derived).
+ * Per-size dimensions for the two surfaces.
  *
- * `md` reproduces the sizes the page used before the control existed.
+ * STRIP scales height only: a strip clip's WIDTH is its duration at the live
+ * pixels-per-second, so the horizontal time scale is the zoom slider's job,
+ * not the size control's — a size change must never move the playhead there.
+ *
+ * GRID scales BOTH dimensions, proportionally: a grid cell's width is unrelated
+ * to duration (it is a wrapped 2-D layout), so scaling only its height stretched
+ * cells into wide-short rectangles. Width and height move together now, keeping
+ * a ~16:10 thumbnail at every step. The column count is width-derived, so bigger
+ * cells simply wrap into fewer columns.
+ *
+ * `md` is the default; the ladder was rescaled up so the smallest step is a
+ * usable "sm-like" size rather than a cramped one.
  */
-export const ITEM_SIZE_HEIGHTS = {
-  xs: { strip: 44, gridCell: 56 },
-  sm: { strip: 64, gridCell: 76 },
-  md: { strip: 88, gridCell: 96 },
-  lg: { strip: 120, gridCell: 132 },
-  xl: { strip: 156, gridCell: 172 },
-} as const satisfies Record<ItemSize, { strip: number; gridCell: number }>;
+export const ITEM_SIZE_DIMENSIONS = {
+  xs: { strip: 56, gridWidth: 90, gridHeight: 56 },
+  sm: { strip: 76, gridWidth: 122, gridHeight: 76 },
+  md: { strip: 100, gridWidth: 160, gridHeight: 100 },
+  lg: { strip: 132, gridWidth: 211, gridHeight: 132 },
+  xl: { strip: 172, gridWidth: 275, gridHeight: 172 },
+} as const satisfies Record<
+  ItemSize,
+  { strip: number; gridWidth: number; gridHeight: number }
+>;
 
 export const DEFAULT_ITEM_SIZE: ItemSize = "md";
 
-/** Max viewport height of a sub-graph row's GRID (it hugs content up to this
- *  cap, then scrolls) — smaller than the focused grid so nested rows stay
- *  compact. */
-export const SUBTIMELINE_GRID_MAX_HEIGHT = 280;
+/**
+ * The size one step SMALLER, clamped at the floor. Children timelines render a
+ * step below the focused timeline (a flat rule — every descendant is this one
+ * size, it does not compound with depth).
+ */
+export function stepDownItemSize(size: ItemSize): ItemSize {
+  const index = ITEM_SIZES.indexOf(size);
+  return ITEM_SIZES[Math.max(0, index - 1)];
+}
+
+/**
+ * The grid `height` prop is a MAXIMUM: VirtualGrid is content-height until its
+ * rows exceed this, then scrolls. Graph view never wants that internal scroll —
+ * every item should get room and the PAGE scrolls instead — so both the focused
+ * and sub-row grids pass this effectively-unbounded cap. (A finite sentinel, not
+ * Infinity: the prop contract wants a finite positive number.)
+ */
+export const GRID_UNCAPPED_HEIGHT = 100_000;
 /** Sub-graph tree: left indent of a row's body (strip + nested rows) so the
  *  strip lines up with the LABEL, past the folder icon. Matches the header's
  *  folder button (h-5 = 20px) + gap-2 (8px). Applied structurally per level,
