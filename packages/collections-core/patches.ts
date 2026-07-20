@@ -1,4 +1,9 @@
-import { type CollectionItemNode, type CollectionsGraph, type NodeId } from "./graph";
+import {
+  type CollectionItemNode,
+  type CollectionsGraph,
+  type NodeId,
+  type Result,
+} from "./graph";
 
 // Patches are the reversible, serializable record of every graph mutation:
 // the same primitive backs undo/redo (apply the inverse), persistence
@@ -84,13 +89,91 @@ export function invertPatch(patch: CollectionsPatch): CollectionsPatch {
   }
 }
 
+/** Why a historical patch can no longer be applied to the current graph. */
+export type ReplayRejection = Readonly<
+  | { reason: "add-id-exists"; nodeId: NodeId }
+  | { reason: "add-parent-missing"; parentId: NodeId }
+  | { reason: "remove-node-missing"; nodeId: NodeId }
+  | { reason: "remove-node-not-childless"; nodeId: NodeId }
+  | { reason: "move-node-missing"; nodeId: NodeId }
+  | { reason: "move-parent-mismatch"; nodeId: NodeId }
+  | { reason: "update-node-missing"; nodeId: NodeId }
+>;
+
+/**
+ * Whether a patch still applies cleanly to THIS graph.
+ *
+ * History assumed every dormant patch stays applicable — true under pure
+ * linear history, and false the moment hydration grows the graph while
+ * entries sleep on either stack. Two corruptions both reproduced before this
+ * existed:
+ *
+ * - REDO an add whose id was meanwhile hydrated in: `applyAdds` overwrote
+ *   `nodesById` and inserted the id into a second children array — one node
+ *   in two collections, `parentById` naming only one (duplicate-child).
+ * - UNDO an add of a collection that was hydrated AFTER being added:
+ *   `applyRemovals` deleted it children-and-all, orphaning the hydrated
+ *   children (missing-node parents).
+ *
+ * The checks mirror what each apply function assumes and does not verify.
+ * `nodes-updated` checks existence only: hydration rejects id collisions
+ * with the host graph and cannot remove nodes, so a surviving node is the
+ * node the patch was recorded against.
+ */
+export function verifyPatchApplies(
+  graph: CollectionsGraph,
+  patch: CollectionsPatch
+): Result<void, ReplayRejection> {
+  const ok = { ok: true, value: undefined } as const;
+  switch (patch.type) {
+    case "nodes-added":
+      for (const add of patch.adds) {
+        if (graph.nodesById.has(add.node.id)) {
+          return { ok: false, error: { reason: "add-id-exists", nodeId: add.node.id } };
+        }
+        if (graph.nodesById.get(add.parentId)?.kind !== "collection") {
+          return { ok: false, error: { reason: "add-parent-missing", parentId: add.parentId } };
+        }
+      }
+      return ok;
+    case "nodes-removed":
+      for (const removal of patch.removals) {
+        const id = removal.node.id;
+        if (!graph.nodesById.has(id)) {
+          return { ok: false, error: { reason: "remove-node-missing", nodeId: id } };
+        }
+        if ((graph.childrenById.get(id) ?? []).length > 0) {
+          return { ok: false, error: { reason: "remove-node-not-childless", nodeId: id } };
+        }
+      }
+      return ok;
+    case "nodes-moved":
+      for (const move of patch.moves) {
+        if (!graph.nodesById.has(move.nodeId)) {
+          return { ok: false, error: { reason: "move-node-missing", nodeId: move.nodeId } };
+        }
+        if (graph.parentById.get(move.nodeId) !== move.fromParentId) {
+          return { ok: false, error: { reason: "move-parent-mismatch", nodeId: move.nodeId } };
+        }
+      }
+      return ok;
+    case "nodes-updated":
+      for (const update of patch.updates) {
+        if (!graph.nodesById.has(update.nodeId)) {
+          return { ok: false, error: { reason: "update-node-missing", nodeId: update.nodeId } };
+        }
+      }
+      return ok;
+  }
+}
+
 /**
  * Applies a patch to the graph — the single index-rewriting code path
  * (forward apply, undo, and redo all run through it). Structural sharing:
  * moves never re-allocate `nodesById`; adds/removals touch it but leave
- * unaffected children arrays alone. Does not validate — apply patches only
- * to the graph state they were produced against (or its inverse-adjacent
- * state).
+ * unaffected children arrays alone. Does not validate — callers replaying
+ * HISTORICAL patches must gate on `verifyPatchApplies` first, because the
+ * graph may have grown (hydration) since the patch was recorded.
  */
 export function applyPatch(
   graph: CollectionsGraph,

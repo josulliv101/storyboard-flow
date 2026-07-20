@@ -40,6 +40,12 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
   first. The compound primitives promise interactive controls INSIDE cards,
   so stealing arrows from an `<input>` breaks a documented contract.
   Consumers opt custom widgets out with `data-collections-keyboard-ignore`.
+- **Replay verifies before it applies.** `undo()`/`redo()` gate every dormant
+  entry through `verifyPatchApplies` — hydration can grow the graph while
+  entries sleep, making a patch that was valid when recorded corrupting now
+  (id collisions, no-longer-childless removals). A refused entry drops its
+  side of history and returns false. Never call `applyPatch` on a historical
+  patch without this check.
 - **A refused command never enters history.** Application gates go through
   the store's pre-commit `commandPolicy`, never through "commit, inspect in
   an `onChange` subscriber, `store.undo()` it back out" — that reverts the

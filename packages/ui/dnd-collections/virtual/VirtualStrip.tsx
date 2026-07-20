@@ -206,8 +206,21 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       () => new Map(childIds.map((id, index) => [id, index])),
       [childIds]
     );
-    // nodesById is never re-allocated by moves, so this subscription is inert.
-    const nodesById = useCollectionsSelector((s) => s.graph.nodesById);
+    // Data-change subscriptions, deliberately NOT `s.graph.nodesById`: the
+    // map's identity changes on every data commit ANYWHERE (trim, rename,
+    // undo/redo), so subscribing to it re-rendered every mounted strip for
+    // one clip's trim. (The old comment here — "never re-allocated by moves,
+    // so this subscription is inert" — was true and beside the point: moves
+    // were never the cost.) The per-parent version bumps only for THIS
+    // collection's children plus its own hydration; the generation bumps
+    // only on a wholesale `replaceGraph`. Both are primitives. The map
+    // itself is read imperatively below — any change that matters to this
+    // strip re-renders it through one of these two or the childIds identity.
+    const dataVersion = useCollectionsSelector(
+      (s) => s.dataVersionByParent.get(collectionId) ?? 0
+    );
+    const graphGeneration = useCollectionsSelector((s) => s.graphGeneration);
+    const nodesById = store.getSnapshot().graph.nodesById;
     // The selected video (if any) drives the TrimOverview band above the row.
     const selectedVideo = useCollectionsSelector((s) => {
       for (const id of s.interaction.selectedIds) {
@@ -333,19 +346,25 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         }
       });
     }, [store, sizingFromData, collectionId]);
-    // replaceGraph deliberately emits NO change event: a nodesById identity
-    // the feed never saw is a wholesale swap, and surviving ids may carry
-    // stale key-based sizes — drop the whole measurement cache. The mount
-    // run only SEEDS the baseline (the initial layout measures itself).
+    // replaceGraph and hydrate deliberately emit NO change event: a nodesById
+    // identity the feed never saw is data that arrived outside the command
+    // pipeline, and surviving ids may carry stale key-based sizes — drop the
+    // whole measurement cache. The mount run only SEEDS the baseline (the
+    // initial layout measures itself). Keyed on the narrowed signals (this
+    // collection's data version + the graph generation) rather than the map:
+    // the inner identity compare is unchanged, only WHEN it runs narrowed —
+    // an unrelated collection's hydration used to run this in every mounted
+    // strip just to conclude "nothing to do".
     useEffect(() => {
       if (!sizingFromData) return;
-      if (feedNodesRef.current === null || feedNodesRef.current === nodesById) {
-        feedNodesRef.current = nodesById;
+      const currentNodes = store.getSnapshot().graph.nodesById;
+      if (feedNodesRef.current === null || feedNodesRef.current === currentNodes) {
+        feedNodesRef.current = currentNodes;
         return;
       }
-      feedNodesRef.current = nodesById;
+      feedNodesRef.current = currentNodes;
       virtualizer.measure();
-    }, [nodesById, sizingFromData, virtualizer]);
+    }, [dataVersion, graphGeneration, store, sizingFromData, virtualizer]);
     // A scale/layout config change re-derives every width (mount run skipped
     // for the same reason).
     const configMeasuredRef = useRef(false);
@@ -443,29 +462,31 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     }, []);
     const trimPreview = useMemo<TrimPreview>(() => ({ previewTrim }), [previewTrim]);
 
-    // On a COMMIT (nodesById gets a new identity — trim release, undo/redo,
-    // any edit; never a move/drag) convert the drag's anchor transform into a
-    // real scroll, so clearing the transform below doesn't jump the anchored
+    // On a data COMMIT in THIS collection (trim release, undo/redo, rename;
+    // never a move/drag) convert the drag's anchor transform into a real
+    // scroll, so clearing the transform below doesn't jump the anchored
     // clip. Where scrollLeft has no room (a clip near the strip start), this
     // clamps and the final position snaps by the shortfall — the known limit
     // of native-scroll anchoring; the DRAG itself stayed consistent because a
     // transform isn't clamped.
     useEffect(() => {
-      // An UNRELATED commit landing mid-gesture (e.g. a keyboard trim on a
-      // DIFFERENT card) must not settle this gesture: the trimmed node's
-      // identity is preserved by structural sharing, the drag stays live, and
+      // A commit to a DIFFERENT card mid-gesture (e.g. a keyboard trim on a
+      // sibling) must not settle this gesture: the trimmed node's identity
+      // is preserved by structural sharing, the drag stays live, and
       // converting the transform now would double-compensate — the next
       // pointer move re-applies the transform with no offsetting scroll, and
       // the release converts it again, leaving the strip displaced. The
       // gesture's own settling commits (its release, a same-node keyboard
       // trim, undo) always change the node's identity and fall through.
+      // Commits in OTHER collections no longer even run this effect (the
+      // narrowed keys) — they always hit this early-return before.
       // (liveTrim is read from this commit's render on purpose — adding it to
       // the deps would run the conversion on every preview move.)
       const gesture = gestureNodeRef.current;
       if (
         liveTrim &&
         gesture?.nodeId === liveTrim.nodeId &&
-        nodesById.get(liveTrim.nodeId) === gesture.node
+        store.getSnapshot().graph.nodesById.get(liveTrim.nodeId) === gesture.node
       ) {
         return;
       }
@@ -476,7 +497,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       gestureNodeRef.current = null;
       setLiveTrim(null);
       // eslint-disable-next-line react-hooks/exhaustive-deps -- liveTrim intentionally omitted (see comment)
-    }, [nodesById, scrollRef]);
+    }, [dataVersion, graphGeneration, store, scrollRef]);
 
     // Pointer -> visible boundary index from the virtualizer's measurements
     // (O(log n), variable widths included) — never from card rects, since

@@ -133,6 +133,14 @@ export type DndCollectionsProps = Readonly<{
    * announced with the rejection's `message`.
    */
   commandPolicy?: CommandPolicy;
+  /**
+   * Fires when a palette drag's factory-created nodes will NEVER commit —
+   * cancelled, refused (including by `commandPolicy`), or orphaned by a
+   * mid-drag graph replacement. Factories mint node ids and often park
+   * app-side metadata under them; this is the app's only signal that those
+   * ids are dead and the metadata can be released.
+   */
+  onPaletteDiscard?: (nodes: readonly CollectionItemNode[]) => void;
   children: ReactNode;
 }>;
 
@@ -200,6 +208,7 @@ export function DndCollections({
   openOnClick,
   trimRequiresSelection,
   commandPolicy,
+  onPaletteDiscard,
   children,
 }: DndCollectionsProps) {
   const componentsValue = useCollectionsComponentsValue(components);
@@ -224,10 +233,18 @@ export function DndCollections({
   // concurrent rendering.
   const onChangeRef = useRef(onChange);
   const commandPolicyRef = useRef(commandPolicy);
+  const onPaletteDiscardRef = useRef(onPaletteDiscard);
   useLayoutEffect(() => {
     onChangeRef.current = onChange;
     commandPolicyRef.current = commandPolicy;
+    onPaletteDiscardRef.current = onPaletteDiscard;
   });
+  // Stable identity so the palette controller (and everything depending on
+  // it) never rebuilds because the consumer passed an inline closure.
+  const handlePaletteDiscard = useCallback(
+    (nodes: readonly CollectionItemNode[]) => onPaletteDiscardRef.current?.(nodes),
+    []
+  );
 
   // One store per component lifetime; the graph prop and history cap are
   // intentionally initial-only (the store is the source of truth thereafter).
@@ -249,7 +266,12 @@ export function DndCollections({
       <CollectionsComponentsContext.Provider value={componentsValue}>
         <CollectionsInteractionPolicyContext.Provider value={interactionPolicy}>
           <LiveTrimChannelContext.Provider value={liveTrimChannel}>
-            <DndCollectionsContext animateMoves={animateMoves}>{children}</DndCollectionsContext>
+            <DndCollectionsContext
+              animateMoves={animateMoves}
+              onPaletteDiscard={handlePaletteDiscard}
+            >
+              {children}
+            </DndCollectionsContext>
           </LiveTrimChannelContext.Provider>
         </CollectionsInteractionPolicyContext.Provider>
       </CollectionsComponentsContext.Provider>
@@ -271,9 +293,11 @@ function FlipAnimator({ containerRef }: { containerRef: RefObject<HTMLElement | 
 function DndCollectionsContext({
   children,
   animateMoves,
+  onPaletteDiscard,
 }: {
   children: ReactNode;
   animateMoves: boolean;
+  onPaletteDiscard: (nodes: readonly CollectionItemNode[]) => void;
 }) {
   const store = useCollectionsStore();
   // Ref-backed channel: speaking must never set state HERE — this component
@@ -298,7 +322,7 @@ function DndCollectionsContext({
   // from onDragMove/onDragOver.
   const intentRef = useRef<DropIntent | null>(null);
 
-  const palette = usePaletteDrag({ store, intentRef, announce });
+  const palette = usePaletteDrag({ store, intentRef, announce, onDiscard: onPaletteDiscard });
 
   const containerRef = useRef<HTMLDivElement>(null);
   // A mounted <TrashTarget> registers its collection id here (see

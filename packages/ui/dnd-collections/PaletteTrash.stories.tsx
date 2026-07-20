@@ -164,6 +164,80 @@ export const PaletteDropAddsNewNode: Story = {
   },
 };
 
+// A policy veto used to be announced as a bare "Cannot add here." — node
+// drags and the keyboard paths speak the policy's own message, and the
+// palette path was the one place that threw it away. The discard callback is
+// the companion: palette factories mint ids at pick-up and often park
+// app-side metadata under them, and a vetoed drop was the one ending that
+// never told the app those ids are dead.
+const discardedIds: string[] = [];
+
+function VetoedPaletteBoard() {
+  return (
+    <DndCollections
+      initialGraph={paletteGraph()}
+      animateMoves={false}
+      commandPolicy={(command) =>
+        command.type === "add-nodes"
+          ? {
+              reason: "blocked-by-policy",
+              blockedIds: [parseNodeId("panel-a")],
+              message: "Panel A is still loading — drop again once its clips appear.",
+            }
+          : null
+      }
+      onPaletteDiscard={(nodes) => discardedIds.push(...nodes.map((node) => node.id as string))}
+    >
+      <div className="flex w-[640px] flex-col gap-4">
+        <div className="flex gap-2" data-testid="palette">
+          <PaletteItem
+            paletteId="new-image"
+            createNode={() => {
+              nextImageId += 1;
+              return {
+                id: parseNodeId(`img-${nextImageId}`),
+                kind: "media",
+                name: `Image ${nextImageId}`,
+                durationSeconds: 4,
+              };
+            }}
+          >
+            + New image
+          </PaletteItem>
+        </div>
+        <CollectionPanels collectionIds={[parseNodeId("panel-a")]} />
+      </div>
+    </DndCollections>
+  );
+}
+
+export const PaletteVetoSpeaksThePolicyMessage: Story = {
+  render: () => <VetoedPaletteBoard />,
+  play: async ({ canvasElement }) => {
+    discardedIds.length = 0;
+    const palette = canvasElement.querySelector<HTMLElement>('[data-palette-item="new-image"]')!;
+    const bravo = nodeCard(canvasElement, "bravo");
+    await waitForLayout(bravo);
+
+    await dragToPoint(palette, rectPoint(bravo, 0.15));
+
+    // The policy's own explanation reaches the live region — not the generic
+    // "Cannot add here." that hides what the user can do about it. (The
+    // announcer alternates between TWO status regions, so match across them.)
+    await waitFor(() => {
+      const spoken = within(canvasElement)
+        .getAllByRole("status")
+        .map((region) => region.textContent ?? "")
+        .join(" ");
+      expect(spoken).toContain("Panel A is still loading — drop again once its clips appear.");
+    });
+    // Nothing was added, and the app was told the minted id is dead.
+    expect(panelOrder(canvasElement, "panel-a")).toEqual(["alpha", "bravo", "charlie"]);
+    expect(discardedIds).toHaveLength(1);
+    expect(discardedIds[0]).toMatch(/^img-/);
+  },
+};
+
 export const PaletteDropAddsNewCollection: Story = {
   // §11: a brand-new COLLECTION dragged in from the palette becomes a
   // sibling card — empty, and immediately a functional drop target (the

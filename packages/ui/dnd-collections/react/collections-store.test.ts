@@ -320,6 +320,122 @@ describe("createCollectionsStore", () => {
     expect(store.undo()).toBe(false); // stack exhausted
   });
 
+  // Per-parent data versions: what lets a virtual view subscribe to "MY
+  // children's data changed" instead of `graph.nodesById`, whose identity
+  // changes on every data commit anywhere. A selector re-renders iff its
+  // selected primitive changes, so these ARE the render-scoping proof.
+  test("a media update bumps only its parent's data version", () => {
+    const store = createCollectionsStore(graphFixture());
+    const before = store.getSnapshot().dataVersionByParent.get(id("root-b")) ?? 0;
+
+    const result = store.dispatch({
+      type: "update-media",
+      nodeId: id("x"), // child of root-a
+      update: { mediaKind: "image", durationSeconds: 7 },
+    });
+    expect(result.ok).toBe(true);
+
+    const versions = store.getSnapshot().dataVersionByParent;
+    expect(versions.get(id("root-a"))).toBe(1);
+    expect(versions.get(id("root-b")) ?? 0).toBe(before); // bystander untouched
+    expect(store.getSnapshot().graphGeneration).toBe(0);
+
+    // Undo and redo are data commits too — each bumps again, so a view
+    // keyed on the version re-renders for replayed trims exactly like
+    // forward ones.
+    expect(store.undo()).toBe(true);
+    expect(store.getSnapshot().dataVersionByParent.get(id("root-a"))).toBe(2);
+    expect(store.redo()).toBe(true);
+    expect(store.getSnapshot().dataVersionByParent.get(id("root-a"))).toBe(3);
+  });
+
+  test("moves do not bump data versions — structure announces itself via children identity", () => {
+    const store = createCollectionsStore(graphFixture());
+    expect(store.dispatch(moveX).ok).toBe(true);
+    expect(store.getSnapshot().dataVersionByParent.get(id("root-a")) ?? 0).toBe(0);
+    expect(store.getSnapshot().dataVersionByParent.get(id("root-b")) ?? 0).toBe(0);
+  });
+
+  test("hydration bumps the hydrated collection; replaceGraph bumps the generation", () => {
+    const store = createCollectionsStore(graphFixture());
+    expect(
+      store.hydrate(id("root-b"), [
+        { kind: "media", id: "h1", name: "h1", durationSeconds: 2 },
+      ]).ok
+    ).toBe(true);
+    expect(store.getSnapshot().dataVersionByParent.get(id("root-b"))).toBe(1);
+
+    expect(store.replaceGraph(graphFixture()).ok).toBe(true);
+    expect(store.getSnapshot().graphGeneration).toBe(1);
+    // The old world's counters describe nodes that may be gone — reset.
+    expect(store.getSnapshot().dataVersionByParent.get(id("root-b")) ?? 0).toBe(0);
+  });
+
+  // The replay guard. Hydration deliberately preserves history — but that
+  // made history assume every dormant patch stays applicable, which hydration
+  // itself can break. Both cases below were reproduced as real graph
+  // corruption (duplicate-child / orphaned children) before the guard.
+  test("redo of an add whose id was hydrated in meanwhile is refused, not applied", () => {
+    const store = createCollectionsStore(graphFixture());
+
+    // 1. Add "n" to root-a; 2. undo it — "n" now sleeps on the redo stack.
+    expect(
+      store.dispatch({
+        type: "add-nodes",
+        nodes: [{ id: id("n"), kind: "media", name: "n", durationSeconds: 2 }],
+        toParentId: id("root-a"),
+        toIndex: 0,
+      }).ok
+    ).toBe(true);
+    expect(store.undo()).toBe(true);
+    expect(store.getSnapshot().canRedo).toBe(true);
+
+    // 3. A lazy collection hydrates, and the stored document happens to
+    //    contain a node with the same id. No collision with the CURRENT
+    //    graph, so hydrate rightly accepts it.
+    expect(
+      store.hydrate(id("root-b"), [
+        { kind: "media", id: "n", name: "n from storage", durationSeconds: 9 },
+      ]).ok
+    ).toBe(true);
+
+    // 4. Redo used to blindly apply: one "n" in two collections, parentById
+    //    naming only one. Now the entry is refused and the dead branch drops.
+    expect(store.redo()).toBe(false);
+    const { graph, canRedo } = store.getSnapshot();
+    expect(canRedo).toBe(false);
+    expect([...(graph.childrenById.get(id("root-a")) ?? [])]).toEqual(["x", "y", "z"]);
+    expect([...(graph.childrenById.get(id("root-b")) ?? [])]).toEqual(["n"]);
+    expect(graph.parentById.get(id("n"))).toBe(id("root-b"));
+    expect(graph.nodesById.get(id("n"))?.name).toBe("n from storage");
+  });
+
+  test("undo of an add is refused once hydration filled the added collection", () => {
+    const store = createCollectionsStore(graphFixture());
+
+    // Palette-add an empty collection, then hydrate it — the exact lifecycle
+    // of a brand-new sub-timeline whose document loads afterwards.
+    expect(
+      store.dispatch({
+        type: "add-nodes",
+        nodes: [{ id: id("c"), kind: "collection", name: "c" }],
+        toParentId: id("root-a"),
+        toIndex: 0,
+      }).ok
+    ).toBe(true);
+    expect(
+      store.hydrate(id("c"), [{ kind: "media", id: "m1", name: "m1", durationSeconds: 2 }]).ok
+    ).toBe(true);
+
+    // Undo used to delete "c" children-and-all, orphaning m1 (parentById
+    // pointing at a node that no longer exists).
+    expect(store.undo()).toBe(false);
+    const { graph, canUndo } = store.getSnapshot();
+    expect(canUndo).toBe(false); // the unreachable stack is dropped, not left corrupting
+    expect(graph.nodesById.has(id("c"))).toBe(true);
+    expect([...(graph.childrenById.get(id("c")) ?? [])]).toEqual(["m1"]);
+  });
+
   // The commandPolicy contract. These pin WHY the guard is pre-commit: the
   // "just undo it back out" alternative passes a naive graph assertion but
   // corrupts history, which is exactly the bug this seam replaced.
