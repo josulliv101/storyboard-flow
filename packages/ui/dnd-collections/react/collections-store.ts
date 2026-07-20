@@ -51,6 +51,28 @@ export type CollectionsSnapshot = Readonly<{
   canUndo: boolean;
   canRedo: boolean;
   historyEntries: readonly HistoryEntry[];
+  /**
+   * Bumped by `replaceGraph` only — the one mutation after which every
+   * derived cache (virtualizer measurements especially) is garbage. A
+   * primitive, so views can subscribe to "the world was swapped" without
+   * subscribing to every commit.
+   */
+  graphGeneration: number;
+  /**
+   * Per-PARENT data-change counters: the version for a collection bumps when
+   * a `nodes-updated` patch touches one of ITS children (trim, rename —
+   * commit, undo, or redo alike) or when the collection is hydrated. Moves,
+   * adds, and removals deliberately do NOT bump — structure changes already
+   * announce themselves through the children array's identity.
+   *
+   * This exists so a view can re-render when ITS OWN children's data changed
+   * without subscribing to `graph.nodesById`, whose identity changes on
+   * every data commit ANYWHERE — one trim used to re-render every mounted
+   * virtual strip. Subscribe per key (`s.dataVersionByParent.get(id) ?? 0`
+   * is a primitive); never select the MAP itself — its reference is stable
+   * by design and will not trigger re-renders.
+   */
+  dataVersionByParent: ReadonlyMap<NodeId, number>;
 }>;
 
 export type CollectionsChange = Readonly<{
@@ -227,6 +249,25 @@ export function createCollectionsStore(
     historyEntries = history.entries();
   }
 
+  // See the snapshot fields' doc comments. The map is deliberately ONE
+  // stable instance mutated in place: re-allocating per commit would put a
+  // per-collection cost back on every data commit, and per-key readers
+  // return primitives so Object.is still bails correctly.
+  let graphGeneration = 0;
+  const dataVersionByParent = new Map<NodeId, number>();
+  function bumpDataVersion(parentId: NodeId) {
+    dataVersionByParent.set(parentId, (dataVersionByParent.get(parentId) ?? 0) + 1);
+  }
+  /** Bump the parents whose CHILDREN's data a patch changed. Reads the
+   *  post-apply graph — updates never move nodes, so parents are unchanged. */
+  function bumpDataVersionsFor(patch: CollectionsPatch) {
+    if (patch.type !== "nodes-updated") return;
+    for (const update of patch.updates) {
+      const parent = graph.parentById.get(update.nodeId);
+      if (parent !== undefined && parent !== null) bumpDataVersion(parent);
+    }
+  }
+
   // The snapshot is rebuilt (new identity) on every notify so
   // useSyncExternalStore consumers re-run their selectors; the FIELDS keep
   // their identities unless they actually changed, which is what lets those
@@ -240,6 +281,8 @@ export function createCollectionsStore(
       canUndo: history.canUndo(),
       canRedo: history.canRedo(),
       historyEntries,
+      graphGeneration,
+      dataVersionByParent,
     };
   }
 
@@ -310,6 +353,7 @@ export function createCollectionsStore(
     graph = result.value.graph;
     history.push({ command, patch: result.value.patch, at: Date.now() });
     refreshHistoryEntries();
+    bumpDataVersionsFor(result.value.patch);
     pruneMissingSelection();
     notify({ graph, command, patch: result.value.patch, origin: "command" });
     return { ok: true, value: result.value.patch };
@@ -335,6 +379,7 @@ export function createCollectionsStore(
     history.undo();
     graph = applyPatch(graph, inverse);
     refreshHistoryEntries();
+    bumpDataVersionsFor(inverse);
     pruneMissingSelection();
     notify({ graph, patch: inverse, origin: "undo" });
     return true;
@@ -352,6 +397,7 @@ export function createCollectionsStore(
     history.redo();
     graph = applyPatch(graph, patch);
     refreshHistoryEntries();
+    bumpDataVersionsFor(patch);
     pruneMissingSelection();
     notify({ graph, patch, origin: "redo" });
     return true;
@@ -368,6 +414,11 @@ export function createCollectionsStore(
     // on this one, so undo/redo starts fresh.
     history.clear();
     refreshHistoryEntries();
+    // Every derived cache (virtualizer measurements above all) is garbage
+    // after a wholesale swap; the generation is the views' one signal for it.
+    // Per-parent versions reset with the world they described.
+    graphGeneration += 1;
+    dataVersionByParent.clear();
     // A wholesale swap invalidates every transient interaction. Reset drag,
     // preview, and any pending rejection flash; keep the selection but prune
     // it to ids the new graph still contains (pruneMissingSelection reads the
@@ -403,6 +454,9 @@ export function createCollectionsStore(
     // to notify anyone about.
     if (result.value === graph) return { ok: true, value: undefined };
     graph = result.value;
+    // The hydrated collection's children went from none to some without a
+    // change-feed event — its data version is how views keyed off it learn.
+    bumpDataVersion(collectionId);
     // Nothing was removed and nothing moved: history, selection, and any
     // live drag/preview all remain valid — notify with no change payload
     // (no history entry, no change-feed event; see the type's doc comment).

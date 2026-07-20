@@ -719,7 +719,23 @@ type CollectionsSnapshot = {
   canUndo: boolean;
   canRedo: boolean;
   historyEntries: readonly HistoryEntry[]; // cached; new identity only on dispatch/undo/redo
+  graphGeneration: number;                 // bumps ONLY on replaceGraph — "every derived cache is garbage"
+  dataVersionByParent: ReadonlyMap<NodeId, number>; // per-collection child-DATA counters; see below
 };
+```
+
+`dataVersionByParent` is the narrow alternative to subscribing to
+`graph.nodesById`, whose identity changes on every data commit anywhere in
+the graph. A collection's version bumps when a `nodes-updated` patch touches
+one of ITS children (trim/rename — commit, undo, redo alike) or when it is
+hydrated; moves/adds/removals do not bump (structure already announces
+itself through the children array's identity). Subscribe per key —
+`s.dataVersionByParent.get(id) ?? 0` is a primitive — and never select the
+MAP itself: its reference is intentionally stable (mutated in place, so a
+data commit doesn't pay a per-collection clone) and will not trigger
+re-renders.
+
+```ts
 
 type CollectionsInteraction = {
   isDragging: boolean;                 // any live drag — node or palette
