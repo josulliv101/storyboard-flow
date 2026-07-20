@@ -26,14 +26,10 @@ import {
   requestGraphToolInsert,
 } from "@/lib/graph-view-events";
 import { cn } from "@/lib/utils";
-import type { ProjectViewMode } from "@storyboard/ui/timeline/timeline-view-state";
 
-type DraggableItem = {
-  type: "timeline" | "collection" | "image" | "video";
-  label: string;
-  description: string;
-  icon: React.ComponentType<{ className?: string }>;
-};
+import { SidebarToolPalette, type SidebarToolItem } from "./sidebar-tool-palette";
+import { SidebarTooltipLabel } from "./sidebar-tooltip-label";
+import type { ProjectViewMode } from "@storyboard/ui/timeline/timeline-view-state";
 
 type UtilityItem = {
   id: "assets" | "trash" | "settings";
@@ -41,31 +37,6 @@ type UtilityItem = {
   description: string;
   icon: React.ComponentType<{ className?: string }>;
 };
-
-type TooltipLabelProps = {
-  id: string;
-  label: string;
-  description?: string;
-};
-
-function TooltipLabel({ id, label, description }: TooltipLabelProps) {
-  return (
-    <span
-      id={id}
-      role="tooltip"
-      className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 min-w-max -translate-y-1/2 rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-left opacity-0 shadow-xl shadow-black/30 transition-opacity duration-150 group-hover/sidebar-item:opacity-100 group-focus-visible/sidebar-item:opacity-100"
-    >
-      <span className="block whitespace-nowrap text-xs font-semibold text-zinc-100">
-        {label}
-      </span>
-      {description ? (
-        <span className="mt-0.5 block whitespace-nowrap text-[10px] font-medium text-zinc-500">
-          {description}
-        </span>
-      ) : null}
-    </span>
-  );
-}
 
 const SIDEBAR_ICON_BASE =
   "group/sidebar-item relative flex size-11 items-center justify-center rounded-lg border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400";
@@ -103,31 +74,10 @@ function IconLink({
       )}
     >
       <Icon className="h-4 w-4 transition-colors" />
-      <TooltipLabel id={tooltipId} label={label} description={description} />
+      <SidebarTooltipLabel id={tooltipId} label={label} description={description} />
     </Link>
   );
 }
-
-const ITEMS: DraggableItem[] = [
-  {
-    type: "collection",
-    label: "Collection",
-    description: "Nested timeline beat",
-    icon: FolderPlus,
-  },
-  {
-    type: "image",
-    label: "Image Clip",
-    description: "Image timeline clip",
-    icon: Image,
-  },
-  {
-    type: "video",
-    label: "Video Clip",
-    description: "Video timeline clip",
-    icon: Video,
-  },
-];
 
 const UTILITY_ITEMS: UtilityItem[] = [
   {
@@ -248,7 +198,7 @@ export function TimelineSidebar() {
   // the same result. Drag remains the way to choose a POSITION.
   const canInsertTools = isGraphViewRoute(pathname);
 
-  const handleToolActivate = (item: DraggableItem) => {
+  const handleToolActivate = (item: SidebarToolItem) => {
     if (canInsertTools && isGraphInsertTool(item.type)) {
       requestGraphToolInsert(item.type);
       // The graph view announces the authoritative result on its own
@@ -310,41 +260,12 @@ export function TimelineSidebar() {
         <>
           <div className="h-px w-10 shrink-0 bg-zinc-800/80" />
 
-          <div className="flex flex-col items-center gap-2">
-            {ITEMS.map((item) => {
-              const Icon = item.icon;
-              const tooltipId = `sidebar-tooltip-new-${item.type}`;
-
-              return (
-                <button
-                  key={item.type}
-                  type="button"
-                  aria-label={
-                    canInsertTools
-                      ? `Add ${item.label} to the open timeline`
-                      : item.label
-                  }
-                  aria-describedby={tooltipId}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, item.type)}
-                  onDragEnd={handleDragEnd}
-                  onClick={() => handleToolActivate(item)}
-                  className="group/sidebar-item relative flex size-11 cursor-grab select-none items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900/40 text-zinc-400 transition-all duration-200 hover:border-sky-500 hover:bg-sky-950/20 hover:text-sky-400 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-                >
-                  <Icon className="h-4 w-4 transition-colors" />
-                  <TooltipLabel
-                    id={tooltipId}
-                    label={item.label}
-                    description={
-                      canInsertTools
-                        ? `${item.description} · click to append, drag to place`
-                        : item.description
-                    }
-                  />
-                </button>
-              );
-            })}
-          </div>
+          <SidebarToolPalette
+            canInsert={canInsertTools}
+            onActivate={handleToolActivate}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          />
         </>
       )}
 
@@ -390,7 +311,7 @@ export function TimelineSidebar() {
               )}
             >
               <Icon className="h-4 w-4 transition-colors" />
-              <TooltipLabel
+              <SidebarTooltipLabel
                 id={tooltipId}
                 label={item.label}
                 description={item.description}
@@ -422,7 +343,7 @@ export function TimelineSidebar() {
               {user?.name ? user.name[0].toUpperCase() : (user?.email ? user.email[0].toUpperCase() : "U")}
             </div>
           )}
-          <TooltipLabel
+          <SidebarTooltipLabel
             id="sidebar-tooltip-utility-account"
             label="Account"
             description={user?.email ? `Signed in as ${user.email}` : "Signed in"}
