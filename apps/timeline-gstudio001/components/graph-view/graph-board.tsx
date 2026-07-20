@@ -109,7 +109,7 @@ function ScaleSlider({
   onChange: (pixelsPerSecond: number) => void;
 }>) {
   return (
-    <div className="flex w-28 shrink-0 items-center gap-2" title="Timeline scale">
+    <div className="flex w-36 shrink-0 items-center gap-2" title="Timeline scale">
       <Slider
         aria-label="Timeline scale"
         min={MIN_TIMELINE_PPS}
@@ -118,6 +118,12 @@ function ScaleSlider({
         value={[pixelsPerSecond]}
         onValueChange={([next]) => onChange(next)}
       />
+      <span
+        aria-hidden="true"
+        className="w-11 shrink-0 font-mono text-[10px] tabular-nums text-zinc-500"
+      >
+        {`${Math.round(pixelsPerSecond)} px/s`}
+      </span>
     </div>
   );
 }
