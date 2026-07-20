@@ -258,6 +258,7 @@ export function GraphBoard({
                       focusedId={focusedId}
                       channel={timeChannel}
                       cellHeight={heights.gridCell}
+                      pixelsPerSecond={pixelsPerSecond}
                     />
                   ) : undefined
                 }
@@ -268,6 +269,7 @@ export function GraphBoard({
                   focusedId={focusedId}
                   channel={timeChannel}
                   cellHeight={heights.gridCell}
+                  pixelsPerSecond={pixelsPerSecond}
                 />
               )}
             </div>
@@ -278,6 +280,8 @@ export function GraphBoard({
             surface={surface}
             itemSize={itemSize}
             pixelsPerSecond={pixelsPerSecond}
+            previewOn={previewOn}
+            timeChannel={timeChannel}
           />
 
           {trashRootId !== null && (
