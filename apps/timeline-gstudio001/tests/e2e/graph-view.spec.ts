@@ -380,10 +380,25 @@ async function holdDrag(
 const undoButton = (page: Page): Locator => page.getByRole("button", { name: /undo/i });
 const redoButton = (page: Page): Locator => page.getByRole("button", { name: /redo/i });
 
-// The sidebar ALSO has an "Assets" button (the drawer-handoff one) — scope
-// to the main region to hit the graph header's own toggles.
+// Scope header toggles to the main region so sidebar buttons never match.
 const headerToggle = (page: Page, label: string): Locator =>
   page.getByRole("main").getByRole("button", { name: label, exact: true });
+
+// The preview toggle is an ICON button whose accessible name flips with
+// state ("Show preview" / "Hide preview") — a fixed exact label can't find it.
+const previewToggle = (page: Page): Locator =>
+  page.getByRole("main").getByRole("button", { name: /(show|hide) preview/i });
+
+// The board's own "Assets" button is gone — the SIDEBAR button is the one
+// affordance, and on graph routes it hands off to the palette drawer.
+const assetsButton = (page: Page): Locator =>
+  page.getByRole("button", { name: "Assets", exact: true });
+
+// Each sub-graph row's drill-in control (formerly labelled "Focus").
+const drillButton = (page: Page, sectionName: string): Locator =>
+  page
+    .locator(`section[aria-label="Sub-timeline: ${sectionName}"]`)
+    .getByRole("button", { name: "Drill into timeline" });
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -507,10 +522,7 @@ test.describe("graph view E2E", () => {
     });
 
     await openGraph(page);
-    await page
-      .locator('section[aria-label="Sub-timeline: Scene Slash"]')
-      .getByRole("button", { name: "Focus" })
-      .click();
+    await drillButton(page, "Scene Slash").click();
 
     // One encoded segment in the URL, not two.
     await page.waitForURL(`**${GRAPH_URL}/${encodeURIComponent(SLASH_ID)}`);
@@ -588,7 +600,7 @@ test.describe("graph view E2E", () => {
   }) => {
     await installGraphApi(page);
     await openGraph(page);
-    await headerToggle(page, "Preview").click();
+    await previewToggle(page).click();
 
     const divider = page.getByRole("separator", { name: "Resize workbench display" });
     await expect(divider).toBeVisible();
@@ -622,9 +634,9 @@ test.describe("graph view E2E", () => {
     expect(await main.evaluate((element) => element.scrollTop)).toBe(0);
 
     // Closing and reopening the preview restores the same height.
-    await headerToggle(page, "Preview").click();
+    await previewToggle(page).click();
     await expect(divider).toHaveCount(0);
-    await headerToggle(page, "Preview").click();
+    await previewToggle(page).click();
     await expect(divider).toBeVisible();
     await expect.poll(heightOf).toBe(initial);
   });
@@ -678,10 +690,7 @@ test.describe("graph view E2E", () => {
 
     // Drill into Scene A: a real App Router navigation — the page remounts,
     // the LAYOUT (provider, graph, history) persists.
-    await page
-      .locator('section[aria-label="Sub-timeline: Scene A"]')
-      .getByRole("button", { name: "Focus" })
-      .click();
+    await drillButton(page, "Scene A").click();
     await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
 
@@ -704,7 +713,7 @@ test.describe("graph view E2E", () => {
   test("palette drag mints a fresh node from an asset and persists it", async ({ page }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
-    await headerToggle(page, "Assets").click();
+    await assetsButton(page).click();
     const drawer = page.getByRole("dialog", { name: "Asset palette" });
     await expect(drawer).toBeVisible();
 
@@ -886,7 +895,7 @@ test.describe("graph view E2E", () => {
   }) => {
     await installGraphApi(page);
     await openGraph(page);
-    await headerToggle(page, "Preview").click();
+    await previewToggle(page).click();
 
     // The pane upgrades to the server-compiled full-depth manifest read
     // model once it lands (until then the live projection plays).
@@ -956,7 +965,7 @@ test.describe("graph view E2E", () => {
       .getByRole("group", { name: "Timeline layout" })
       .getByRole("button", { name: "grid" })
       .click();
-    await headerToggle(page, "Preview").click();
+    await previewToggle(page).click();
 
     const playhead = page.locator("[data-graph-grid-playhead]");
     await expect(playhead).toBeVisible();
@@ -977,11 +986,12 @@ test.describe("graph view E2E", () => {
     // grid exactly — so its interior offsets are layout-independent (the
     // preview pane above settles asynchronously and shifts absolute page
     // coords). scrub.hover() also waits for a stable box before pressing.
-    // Content geometry: 9px border+padding, cell 160×96, 8px gap → row pitch
-    // 104, a cell's vertical center ≈ 9 + 48 = 57 below the scrub top.
+    // Content geometry at the default MD size: 9px border+padding, cell
+    // 160×100, 8px gap → row pitch 108, a cell's vertical center ≈ 9 + 50 =
+    // 59 below the scrub top.
     const scrub = page.locator("[data-grid-scrub]");
-    const ROW0_Y = 57;
-    const ROW1_Y = 57 + 104;
+    const ROW0_Y = 59;
+    const ROW1_Y = 59 + 108;
 
     // Horizontal scrub across row 0 → x advances, still on row 0.
     await scrub.hover({ position: { x: 30, y: ROW0_Y } });
@@ -1000,12 +1010,13 @@ test.describe("graph view E2E", () => {
     await page.mouse.up();
     await expect.poll(async () => (await translate()).y).toBeGreaterThan(80);
 
-    // Wheel over the scrub surface scrolls the GRID and consumes the event
-    // (preventDefault), so the browser doesn't ALSO scroll the surrounding
-    // page — the double-scroll regression. At the grid's boundary the
-    // handler stands down and the event keeps its default action. Asserted
-    // via defaultPrevented observed at window (the app scrolls in an inner
-    // container, so window.scrollY can't witness the default either way).
+    // Grids are CONTENT-HEIGHT now (the `height` prop is only a max): every
+    // row gets room and the PAGE owns vertical scroll, so there is no
+    // internal scroll for the scrub surface's wheel handler to feed. It must
+    // stand down — a consumed wheel here would scroll nothing and dead-zone
+    // the page. Asserted via defaultPrevented observed at window.
+    expect(await grid.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
+
     await page.evaluate(() => {
       const log: boolean[] = [];
       (window as unknown as { __wheelLog: boolean[] }).__wheelLog = log;
@@ -1015,21 +1026,13 @@ test.describe("graph view E2E", () => {
     });
     const wheelLog = () =>
       page.evaluate(() => (window as unknown as { __wheelLog: boolean[] }).__wheelLog);
-    const gridScrollTop = () => grid.evaluate((el) => el.scrollTop);
 
     await scrub.hover({ position: { x: 89, y: ROW0_Y } });
     await page.mouse.wheel(0, 100);
-    await expect.poll(gridScrollTop).toBeGreaterThan(0);
-    await expect
-      .poll(async () => {
-        const log = await wheelLog();
-        return log.length > 0 && log.every(Boolean);
-      })
-      .toBe(true); // consumed: grid scrolled, default prevented
-
-    // Grid is at its boundary now: the next wheel is NOT consumed.
-    await page.mouse.wheel(0, 400);
+    // NOT consumed: the event keeps its default (the page scroll), and the
+    // grid itself never moved.
     await expect.poll(async () => (await wheelLog()).includes(false)).toBe(true);
+    expect(await grid.evaluate((el) => el.scrollTop)).toBe(0);
   });
 
   test("crafted focus URLs are rejected; valid deep links still work", async ({ page }) => {
@@ -1280,16 +1283,14 @@ test.describe("graph view E2E", () => {
       .toMatch(/^image-/);
   });
 
-  test("keyboard insertion works in grid mode, where no drop strip is mounted", async ({
-    page,
-  }) => {
-    // The native-drop wrapper only wraps the STRIP. An accessible control
-    // that silently does nothing on the other surface would be worse than
-    // no control at all, so the insert bridge is mounted for both.
+  test("keyboard insertion works in grid mode too", async ({ page }) => {
+    // Grid mode has its own native drop target now (NativeDropGrid), but the
+    // sidebar tools must ALSO insert via plain keyboard activation — the
+    // insert bridge is mounted for both surfaces either way.
     await installGraphApi(page);
     await openGraph(page);
     await headerToggle(page, "grid").click();
-    await expect(page.locator(`[data-native-drop="${PROJECT_ID}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-native-drop="${PROJECT_ID}"]`)).toHaveCount(1);
 
     await page.getByRole("button", { name: /add collection/i }).focus();
     await page.keyboard.press("Enter");
