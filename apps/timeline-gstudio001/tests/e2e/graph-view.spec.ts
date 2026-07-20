@@ -1550,6 +1550,53 @@ test.describe("graph view E2E", () => {
     expect(wroteWithoutRemote).toBe(false);
   });
 
+  test("a failed drop reports alongside later progress, then expires", async ({ page }) => {
+    // Errors used to be recorded and never removed, and to beat progress
+    // outright in aggregation — so one failure pinned a red banner for the
+    // life of the component and hid every upload after it.
+    await installGraphApi(page);
+    let uploads = 0;
+    let holdSecond: (() => void) | undefined;
+    const secondHeld = new Promise<void>((resolve) => {
+      holdSecond = resolve;
+    });
+    await page.route("**/api/timeline-media/upload", async (route) => {
+      const index = uploads++;
+      if (index === 0) return route.fulfill({ status: 500, body: "nope" });
+      await secondHeld;
+      return route.fulfill({ json: { pathname: `ok-${index}.png`, url: PIXEL } });
+    });
+    await openGraph(page);
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+    const status = page.locator("[data-native-drop-status]");
+
+    const transfer = (name: string) =>
+      page.evaluateHandle((fileName) => {
+        const t = new DataTransfer();
+        t.items.add(new File([new Uint8Array([137, 80, 78, 71])], fileName, { type: "image/png" }));
+        return t;
+      }, name);
+
+    // Drop 1 fails.
+    await dropZone.dispatchEvent("drop", { dataTransfer: await transfer("bad.png"), clientX: 0 });
+    await expect(status).toContainText(/could not be uploaded/i);
+
+    // Drop 2 starts while the failure is still showing: BOTH are reported,
+    // so the new upload is not hidden behind the old error.
+    await dropZone.dispatchEvent("drop", { dataTransfer: await transfer("good.png"), clientX: 0 });
+    await expect(status).toContainText(/Uploading 1 file/i);
+    await expect(status).toContainText(/could not be uploaded/i);
+
+    holdSecond!();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length), { timeout: 15000 })
+      .toBe(5);
+
+    // And the failure clears itself rather than living until unmount.
+    await expect(status).not.toContainText(/could not be uploaded/i, { timeout: 15000 });
+    await expect(status).toHaveText("");
+  });
+
   test("sidebar tools are still drag sources after becoming real buttons", async ({ page }) => {
     // Adding the keyboard path must not cost the pointer one. Playwright's
     // synthetic mouse cannot drive a native HTML5 drag, so this asserts the

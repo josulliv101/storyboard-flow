@@ -105,27 +105,37 @@ type DropAnchor = Readonly<{
 /** One live drop's contribution to the status line. */
 type DropStatus =
   | Readonly<{ status: "uploading"; count: number }>
-  | Readonly<{ status: "error"; message: string }>;
+  /** `at` drives expiry — see ERROR_LINGER_MS. */
+  | Readonly<{ status: "error"; message: string; at: number }>;
+
+/** How long a failure stays on screen. An error with no expiry outlived its
+ *  drop forever: the banner never went away and, because errors used to beat
+ *  progress outright, every later upload was invisible behind it. */
+const ERROR_LINGER_MS = 8000;
+
+/** What the strip actually renders — composed in ONE place. */
+type DropSummary = Readonly<{ tone: "progress" | "error"; message: string }>;
 
 /**
- * Collapse every live drop into the single line the strip renders.
+ * Collapse every live drop into the single status line.
  *
- * ERRORS WIN over progress: a finished drop that failed must stay visible
- * while another drop is still uploading — the old single-slot state let the
- * later drop's success wipe the earlier one's error. Counts sum so "3 files"
- * means three, not "whichever drop wrote the slot last".
+ * Progress and failures are shown TOGETHER rather than one winning: several
+ * drops can be live at once, so "errors win" hid active uploads behind a
+ * stale failure, while "latest wins" hid failures behind a later success.
+ * Counts sum, so "3 files" means three.
  */
-function aggregateDropStatus(drops: ReadonlyMap<number, DropStatus>): DropStatus | null {
+function aggregateDropStatus(drops: ReadonlyMap<number, DropStatus>): DropSummary | null {
   const messages: string[] = [];
   let uploading = 0;
   for (const entry of drops.values()) {
     if (entry.status === "error") messages.push(entry.message);
     else uploading += entry.count;
   }
-  if (messages.length > 0) {
-    return { status: "error", message: [...new Set(messages)].join(" · ") };
-  }
-  return uploading > 0 ? { status: "uploading", count: uploading } : null;
+  const parts: string[] = [];
+  if (uploading > 0) parts.push(`Uploading ${uploading} file${uploading === 1 ? "" : "s"}…`);
+  parts.push(...new Set(messages));
+  if (parts.length === 0) return null;
+  return { tone: messages.length > 0 ? "error" : "progress", message: parts.join(" · ") };
 }
 
 /**
@@ -353,6 +363,23 @@ export function NativeDropStrip({
   }, []);
 
   const upload = useMemo(() => aggregateDropStatus(drops), [drops]);
+
+  // Expire failures. The deadline is computed from each error's own `at`, not
+  // from when this effect last ran, so a burst of unrelated drop activity
+  // cannot keep resetting an error's clock and pin it on screen.
+  useEffect(() => {
+    const now = Date.now();
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (const [token, entry] of drops) {
+      if (entry.status !== "error") continue;
+      timers.push(
+        setTimeout(() => setDropStatus(token, null), Math.max(0, entry.at + ERROR_LINGER_MS - now)),
+      );
+    }
+    return () => {
+      for (const timer of timers) clearTimeout(timer);
+    };
+  }, [drops, setDropStatus]);
 
   // Drag-session geometry (see measureDragGeometry) plus the rAF coalescing
   // state for the drop indicator. All refs: none of it should drive a render.
@@ -674,12 +701,13 @@ export function NativeDropStrip({
         }
         // The commit failure dominates: it means NOTHING from this drop landed.
         const message = commitError ?? (uploadErrors.length > 0 ? uploadErrors.join(" · ") : null);
-        setDropStatus(token, message ? { status: "error", message } : null);
+        setDropStatus(token, message ? { status: "error", message, at: Date.now() } : null);
       } catch {
         if (signal.aborted) return;
         setDropStatus(token, {
           status: "error",
           message: "The dropped files could not be added.",
+          at: Date.now(),
         });
       } finally {
         dropAbortsRef.current.delete(controller);
@@ -737,16 +765,12 @@ export function NativeDropStrip({
           "pointer-events-none absolute bottom-1 left-1 z-20 rounded px-2 py-1 text-[10px]",
           upload === null
             ? "sr-only"
-            : upload.status === "uploading"
+            : upload.tone === "progress"
               ? "bg-zinc-900/90 text-zinc-200"
               : "bg-red-950/90 text-red-200",
         ].join(" ")}
       >
-        {upload === null
-          ? ""
-          : upload.status === "uploading"
-            ? `Uploading ${upload.count} file${upload.count === 1 ? "" : "s"}…`
-            : upload.message}
+        {upload?.message ?? ""}
       </p>
     </div>
   );
