@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from "react";
 
 import {
   getChildren,
@@ -93,6 +101,32 @@ type DropAnchor = Readonly<{
   /** Index at drop time — the last-resort fallback if neither survives. */
   index: number;
 }>;
+
+/** One live drop's contribution to the status line. */
+type DropStatus =
+  | Readonly<{ status: "uploading"; count: number }>
+  | Readonly<{ status: "error"; message: string }>;
+
+/**
+ * Collapse every live drop into the single line the strip renders.
+ *
+ * ERRORS WIN over progress: a finished drop that failed must stay visible
+ * while another drop is still uploading — the old single-slot state let the
+ * later drop's success wipe the earlier one's error. Counts sum so "3 files"
+ * means three, not "whichever drop wrote the slot last".
+ */
+function aggregateDropStatus(drops: ReadonlyMap<number, DropStatus>): DropStatus | null {
+  const messages: string[] = [];
+  let uploading = 0;
+  for (const entry of drops.values()) {
+    if (entry.status === "error") messages.push(entry.message);
+    else uploading += entry.count;
+  }
+  if (messages.length > 0) {
+    return { status: "error", message: [...new Set(messages)].join(" · ") };
+  }
+  return uploading > 0 ? { status: "uploading", count: uploading } : null;
+}
 
 /**
  * `Promise.all` with a worker pool. Results stay in INPUT order — the drop
@@ -300,11 +334,25 @@ export function NativeDropStrip({
   const { addNodes, insertTool } = useToolInsertion(collectionId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicatorX, setIndicatorX] = useState<number | null>(null);
-  const [upload, setUpload] = useState<
-    | Readonly<{ status: "uploading"; count: number }>
-    | Readonly<{ status: "error"; message: string }>
-    | null
-  >(null);
+  // Keyed BY DROP, not one shared slot. Several drops can be live at once
+  // (the abort set below exists precisely for that), and a single value made
+  // them clobber each other: whichever finished first cleared the banner
+  // while another was still uploading, and a later success erased an earlier
+  // drop's error. The rendered status is derived from all of them.
+  const [drops, setDrops] = useState<ReadonlyMap<number, DropStatus>>(() => new Map());
+  const dropTokenRef = useRef(0);
+
+  const setDropStatus = useCallback((token: number, status: DropStatus | null) => {
+    setDrops((current) => {
+      if (status === null && !current.has(token)) return current;
+      const next = new Map(current);
+      if (status === null) next.delete(token);
+      else next.set(token, status);
+      return next;
+    });
+  }, []);
+
+  const upload = useMemo(() => aggregateDropStatus(drops), [drops]);
 
   // Drag-session geometry (see measureDragGeometry) plus the rAF coalescing
   // state for the drop indicator. All refs: none of it should drive a render.
@@ -504,7 +552,8 @@ export function NativeDropStrip({
         (file) => file.type.startsWith("image/") || file.type.startsWith("video/"),
       );
       if (media.length === 0) return;
-      setUpload({ status: "uploading", count: media.length });
+      const token = ++dropTokenRef.current;
+      setDropStatus(token, { status: "uploading", count: media.length });
 
       const controller = new AbortController();
       const signal = controller.signal;
@@ -625,15 +674,18 @@ export function NativeDropStrip({
         }
         // The commit failure dominates: it means NOTHING from this drop landed.
         const message = commitError ?? (uploadErrors.length > 0 ? uploadErrors.join(" · ") : null);
-        setUpload(message ? { status: "error", message } : null);
+        setDropStatus(token, message ? { status: "error", message } : null);
       } catch {
         if (signal.aborted) return;
-        setUpload({ status: "error", message: "The dropped files could not be added." });
+        setDropStatus(token, {
+          status: "error",
+          message: "The dropped files could not be added.",
+        });
       } finally {
         dropAbortsRef.current.delete(controller);
       }
     },
-    [addNodes, resolveAnchoredIndex],
+    [addNodes, resolveAnchoredIndex, setDropStatus],
   );
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {

@@ -1460,6 +1460,47 @@ test.describe("graph view E2E", () => {
       .toEqual(["bravo", expect.stringMatching(/^image-/), CHILD_ID, "charlie", "alpha"]);
   });
 
+  test("a failed drop's error survives a later drop succeeding", async ({ page }) => {
+    // Several drops can be live at once, but they used to share ONE status
+    // slot: whichever finished last wrote it, so a successful second drop
+    // erased the first drop's error and the user never learned it failed.
+    await installGraphApi(page);
+    let uploads = 0;
+    await page.route("**/api/timeline-media/upload", async (route) => {
+      const index = uploads++;
+      // Order matters: the failure must settle FIRST and the success AFTER,
+      // so the success is what would overwrite the error. (Reversed, a shared
+      // slot also ends up showing the error and the test proves nothing.)
+      if (index === 0) return route.fulfill({ status: 500, body: "nope" });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return route.fulfill({ json: { pathname: `ok-${index}.png`, url: PIXEL } });
+    });
+    await openGraph(page);
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+
+    const makeTransfer = (name: string) =>
+      page.evaluateHandle((fileName) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(
+          new File([new Uint8Array([137, 80, 78, 71])], fileName, { type: "image/png" }),
+        );
+        return transfer;
+      }, name);
+
+    await dropZone.dispatchEvent("drop", { dataTransfer: await makeTransfer("bad.png"), clientX: 0 });
+    await dropZone.dispatchEvent("drop", { dataTransfer: await makeTransfer("good.png"), clientX: 0 });
+
+    // The good file lands...
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length), { timeout: 15000 })
+      .toBe(5);
+
+    // ...and the failure is STILL reported rather than being cleared by it.
+    await expect(page.locator("[data-native-drop-status]")).toContainText(
+      /could not be uploaded/i,
+    );
+  });
+
   test("sidebar tools are still drag sources after becoming real buttons", async ({ page }) => {
     // Adding the keyboard path must not cost the pointer one. Playwright's
     // synthetic mouse cannot drive a native HTML5 drag, so this asserts the
