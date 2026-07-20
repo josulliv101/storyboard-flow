@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useMemo, useState } from "react";
-import { ChevronsRight, Folder, FolderOpen } from "lucide-react";
+import { FolderDown, Folder, FolderOpen } from "lucide-react";
 
 import {
   VirtualGrid,
@@ -73,11 +73,13 @@ function SubTimelineNode({
   depth,
   surface,
   itemSize,
+  pixelsPerSecond,
 }: Readonly<{
   collectionId: NodeId;
   depth: number;
   surface: FocusSurface;
   itemSize: ItemSize;
+  pixelsPerSecond: number;
 }>) {
   const nav = useContext(GraphViewNavContext);
   const store = useCollectionsStore();
@@ -181,7 +183,7 @@ function SubTimelineNode({
           onClick={() => nav?.openTimeline(collectionId)}
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
         >
-          <ChevronsRight aria-hidden="true" className="h-4 w-4" />
+          <FolderDown aria-hidden="true" className="h-4 w-4" />
         </button>
       </div>
 
@@ -210,7 +212,7 @@ function SubTimelineNode({
             <NativeDropStrip collectionId={id}>
               <VirtualStrip
                 collectionId={collectionId}
-                pixelsPerSecond={TIMELINE_PPS}
+                pixelsPerSecond={pixelsPerSecond}
                 itemHeight={ITEM_SIZE_HEIGHTS[itemSize].strip}
                 itemDragActivation="hold"
                 className="bg-black/20"
@@ -226,6 +228,7 @@ function SubTimelineNode({
                 depth={depth + 1}
                 surface={surface}
                 itemSize={itemSize}
+                pixelsPerSecond={pixelsPerSecond}
               />
             ))}
         </div>
@@ -238,7 +241,13 @@ export function SubTimelines({
   focusedId,
   surface,
   itemSize,
-}: Readonly<{ focusedId: string; surface: FocusSurface; itemSize: ItemSize }>) {
+  pixelsPerSecond,
+}: Readonly<{
+  focusedId: string;
+  surface: FocusSurface;
+  itemSize: ItemSize;
+  pixelsPerSecond: number;
+}>) {
   const childIds = useCollectionChildIds(parseNodeId(focusedId));
   if (childIds.length === 0) return null;
 
@@ -251,6 +260,7 @@ export function SubTimelines({
           depth={0}
           surface={surface}
           itemSize={itemSize}
+          pixelsPerSecond={pixelsPerSecond}
         />
       ))}
     </div>

@@ -126,13 +126,17 @@ function buildPlayheadCards(
   details: DetailsById,
   focusedId: string,
   spans: PreviewCardSpans | null,
+  pixelsPerSecond: number,
 ): PlayheadCard[] {
   const childIds = getChildren(graph, parseNodeId(focusedId));
   return graphChildrenToClips(graph, details, focusedId).map((clip, index) => {
+    // Must use the LIVE scale, not the TIMELINE_PPS default: the strip lays
+    // clips out at whatever the zoom slider says, so a hardcoded constant
+    // would drift the marker from the cards at every non-default zoom.
     const width =
       clip.kind === "collection"
         ? Math.max(MIN_ITEM_WIDTH, COLLECTION_CARD_PX)
-        : durationToWidth(clip.duration, TIMELINE_PPS);
+        : durationToWidth(clip.duration, pixelsPerSecond);
     // A card with no manifest span is one contributing no playback time (an
     // empty collection). Its projection span is the only thing left to say,
     // and it is bounded by the neighbours that DO carry manifest times.
@@ -247,9 +251,11 @@ function buildGridPlayheadMap(
 export function GraphPlayhead({
   focusedId,
   channel,
+  pixelsPerSecond,
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
+  pixelsPerSecond: number;
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
@@ -266,7 +272,9 @@ export function GraphPlayhead({
       if (graph !== lastGraph || details !== lastDetails) {
         lastGraph = graph;
         lastDetails = details;
-        map = buildPlayheadMap(buildPlayheadCards(graph, details, focusedId, spans));
+        map = buildPlayheadMap(
+          buildPlayheadCards(graph, details, focusedId, spans, pixelsPerSecond),
+        );
       }
       const line = lineRef.current;
       if (line && map) line.style.transform = `translateX(${map.xAt(channel.get())}px)`;
@@ -280,7 +288,7 @@ export function GraphPlayhead({
       unsubscribeStore();
       unsubscribeDetails();
     };
-  }, [store, detailsStore, focusedId, channel, spans]);
+  }, [store, detailsStore, focusedId, channel, spans, pixelsPerSecond]);
 
   return (
     <div
@@ -296,9 +304,11 @@ export function GraphPlayhead({
 export function PlayheadScrubBand({
   focusedId,
   channel,
+  pixelsPerSecond,
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
+  pixelsPerSecond: number;
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
@@ -320,7 +330,9 @@ export function PlayheadScrubBand({
       if (graph !== mapGraph || details !== mapDetails || !map) {
         mapGraph = graph;
         mapDetails = details;
-        map = buildPlayheadMap(buildPlayheadCards(graph, details, focusedId, spans));
+        map = buildPlayheadMap(
+          buildPlayheadCards(graph, details, focusedId, spans, pixelsPerSecond),
+        );
       }
       const rect = scroller.getBoundingClientRect();
       const styles = getComputedStyle(scroller);
@@ -365,7 +377,7 @@ export function PlayheadScrubBand({
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
-  }, [store, detailsStore, focusedId, channel, spans]);
+  }, [store, detailsStore, focusedId, channel, spans, pixelsPerSecond]);
 
   return (
     <div

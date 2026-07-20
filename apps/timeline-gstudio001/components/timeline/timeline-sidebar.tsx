@@ -25,6 +25,7 @@ import {
   isGraphViewRoute,
   requestGraphToolInsert,
 } from "@/lib/graph-view-events";
+import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
 
 import { SidebarToolPalette, type SidebarToolItem } from "./sidebar-tool-palette";
@@ -214,10 +215,6 @@ export function TimelineSidebar() {
     setToastMessage(`Drag this "${label}" block onto the workspace to add it!`);
   };
 
-  const showUtilityToast = (label: string) => {
-    setToastMessage(`${label} controls are not available yet.`);
-  };
-
   const handleLogout = async () => {
     try {
       await logout();
@@ -295,7 +292,13 @@ export function TimelineSidebar() {
                     setIsTrashOpen(!isTrashOpen);
                     setIsAssetLibraryOpen(false);
                   }
-                : () => showUtilityToast(item.label);
+                : // Placeholder until real settings exist — and the app's
+                  // first sonner-driven surface, next to the legacy
+                  // `gstudio-toast` pill the trash drawer still uses.
+                  () =>
+                    toast("Settings", {
+                      description: "App-wide settings aren’t wired up yet.",
+                    });
 
           return (
             <button
