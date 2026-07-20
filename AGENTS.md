@@ -72,3 +72,5 @@ Mechanics the workflows depend on:
 - Filing the next issue (the "scout") stays manual — owner-seeded, or a Codex
   cloud task — because subscription Codex cannot do it in CI and an unattended
   auto-scout is the most likely thing to run away.
+
+<!-- Codex auto-review enabled on this repo (native GitHub integration, advisory). -->
