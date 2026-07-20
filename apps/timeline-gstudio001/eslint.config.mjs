@@ -8,7 +8,17 @@ const __dirname = path.dirname(__filename);
 
 export default defineConfig([
     {
-        ignores: ["storybook-static/**", "test-results/**", "playwright-report/**", "coverage/**"],
+        // .next-dev is this app's DEV distDir (see next.config) — generated
+        // webpack output, never lintable. .next is covered by the Next preset,
+        // but the custom name is not.
+        ignores: [
+            ".next-dev/**",
+            ".next/**",
+            "storybook-static/**",
+            "test-results/**",
+            "playwright-report/**",
+            "coverage/**",
+        ],
     },
     {
         extends: [...next],

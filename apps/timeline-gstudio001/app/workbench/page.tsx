@@ -53,6 +53,20 @@ function WorkbenchPageContent() {
     };
   }, [timelineId]);
 
+  // Above the early return: hooks must run on EVERY render, and this
+  // component can bail before rendering when the document is missing.
+  const handlePreviewTimeChange = useCallback((
+    time: number,
+    clips?: TimelineClip[],
+    activeClipId?: string,
+  ) => {
+    setPreviewTime(time);
+    if (clips) {
+      setPreviewClips(clips);
+    }
+    setPreviewClipId(activeClipId ?? null);
+  }, []);
+
   if (!document) return null;
 
   const path = getTimelinePath(timelineId);
@@ -72,18 +86,6 @@ function WorkbenchPageContent() {
   const handleOpenCollection = (nextId: string) => {
     router.push(`${pathname}?timelineId=${nextId}`);
   };
-
-  const handlePreviewTimeChange = useCallback((
-    time: number,
-    clips?: TimelineClip[],
-    activeClipId?: string,
-  ) => {
-    setPreviewTime(time);
-    if (clips) {
-      setPreviewClips(clips);
-    }
-    setPreviewClipId(activeClipId ?? null);
-  }, []);
 
   const timelineChrome = (
     <div className="flex items-center justify-between gap-3">

@@ -20,6 +20,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const didHandleEmailLink = useRef(false);
 
+  // A one-shot URL handshake: Firebase's email link lands with ?oobCode, and
+  // the code plus the locally stored email exist only in window (URL +
+  // localStorage), so SSR forces this read into an effect. Deriving the
+  // initial state instead would need useSearchParams, whose Suspense
+  // envelope would have to wrap the entire app (AuthGate mounts in the root
+  // layout) — a bigger render-boundary change than this one-shot deserves.
+  /* eslint-disable react-hooks/set-state-in-effect -- see above: SSR-constrained one-shot URL/localStorage read */
   useEffect(() => {
     if (didHandleEmailLink.current || user) return;
 
@@ -53,6 +60,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         setIsSubmitting(false);
       });
   }, [completeSignInLink, user]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (isLoading) {
     return (
