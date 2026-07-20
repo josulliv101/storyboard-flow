@@ -117,6 +117,13 @@ export type GraphDocumentsGateway = Readonly<{
   bindUser: (uid: string) => void;
   /** The compare-and-set ledger's revision for a document, if known. */
   revisionOf: (timelineId: string) => number | undefined;
+  /**
+   * True when this document lost a revision conflict and the live graph has
+   * not been reconciled with the reloaded content. `writeClips` refuses these
+   * ids outright; callers can read this to avoid reporting a write they did
+   * not get, or to surface the state in their own UI.
+   */
+  isConflicted: (timelineId: string) => boolean;
   /** Cache-change notifications (documents landing, clips written). */
   subscribe: (listener: () => void) => () => void;
   /** Outstanding load/save failures, for a status banner. Null when every
@@ -188,6 +195,14 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   // `refresh`) or lost a revision conflict: readable, but `ensure`
   // refetches them.
   let staleIds = new Set<string>();
+  // Ids that LOST a revision conflict and whose live graph has not been
+  // reconciled with the reloaded document. Reloading fixes this cache; it
+  // does NOT fix the graph, which still holds the pre-conflict local edit.
+  // Any further clip write for such an id would be a whole-collection
+  // projection of that stale graph — landing against the fresh revision and
+  // silently deleting whatever the other writer added. Blocked until the
+  // graph is rebuilt from documents (`refresh`, a remount, or a rebind).
+  let conflictedIds = new Set<string>();
   const listeners = new Set<() => void>();
 
   // The AUTH BOUNDARY: which user's documents this cache holds. The module
@@ -233,6 +248,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     saveInFlightKeepalive = false;
     saveInFlightIds = [];
     staleIds = new Set();
+    conflictedIds = new Set();
     expectedPrimes.clear();
     pendingPrimes = [];
     notify();
@@ -486,14 +502,25 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
             // Compare-and-set lost: someone else wrote these documents since
             // this session read them, and NOTHING in the batch was applied.
             // Conflicted documents are reloaded (fresh content + revision) —
-            // the stale local write is NOT forced over the newer server
-            // state. The graph still holds the local edit, so the user's
-            // next change re-persists their intent against the fresh
-            // revision. Unconflicted writes from the batch re-queue as-is.
+            // the stale local write is NOT forced over the newer server state.
+            //
+            // Reloading fixes THIS CACHE ONLY. The live graph still holds the
+            // pre-conflict local edit, and clip writes are whole-collection
+            // projections of that graph — so "the user's next change
+            // re-persists their intent", which is what this comment used to
+            // claim, actually re-persists the entire stale collection against
+            // the fresh revision and silently deletes the other writer's
+            // additions. Further clip writes are therefore BLOCKED for these
+            // ids until the graph is rebuilt from documents. Unconflicted
+            // writes from the batch re-queue as-is.
             for (const write of writes) {
               const timelineId = write.document.id;
               if (conflictIds.has(timelineId)) {
                 staleIds.add(timelineId);
+                conflictedIds.add(timelineId);
+                // Anything already queued for this id was projected from the
+                // stale graph too.
+                dirtyIds.delete(timelineId);
                 // The message lands AFTER the reload (a successful fetch
                 // clears that document's error slot — set before, it would
                 // flash and vanish); it then stands until the document next
@@ -502,7 +529,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
                   if (document !== null) {
                     setError(
                       timelineId,
-                      `"${write.document.title}" changed in another view — reloaded it; the last edit here was not saved.`,
+                      `"${write.document.title}" changed in another view. Your unsaved edits to it are not being saved — reopen this timeline to continue editing.`,
                     );
                   }
                 });
@@ -597,6 +624,12 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     writeClips: (timelineId, clips) => {
       const document = documents[timelineId];
       if (!document) return;
+      // THE chokepoint for the conflict gate — every clip writer goes through
+      // here, so blocking at the caller alone would leave the next one to
+      // rediscover the hazard. A conflicted document's cache is fresh but the
+      // GRAPH these clips were projected from is not; writing them would
+      // overwrite the other writer's content with a stale full collection.
+      if (conflictedIds.has(timelineId)) return;
       documents = { ...documents, [timelineId]: { ...document, clips } };
       notify();
       dirtyIds.add(timelineId);
@@ -655,6 +688,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       for (const payload of held) installPrime(payload.document, payload.revision, payload.forUid);
     },
     revisionOf: (timelineId) => revisions.get(timelineId),
+    isConflicted: (timelineId) => conflictedIds.has(timelineId),
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {
@@ -667,6 +701,10 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     refresh: () => {
       flushPendingWrites();
       staleIds = new Set(Object.keys(documents));
+      // Entering the graph view rebuilds the graph from freshly fetched
+      // documents, which is exactly the reconciliation the conflict gate was
+      // waiting for — so the block lifts here and nowhere else.
+      conflictedIds = new Set();
     },
   };
 }

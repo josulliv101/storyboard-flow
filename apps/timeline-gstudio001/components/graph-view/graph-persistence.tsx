@@ -48,7 +48,13 @@ export function PersistenceBridge({
 
         const current = detailsStore.read();
         const affected = collectAffectedCollectionIds(change.graph, change.patch).filter(
-          (id) => graphDocumentsGateway.peek(id) !== null && current[id]?.hydrated !== false,
+          (id) =>
+            graphDocumentsGateway.peek(id) !== null &&
+            current[id]?.hydrated !== false &&
+            // A conflicted document's graph is stale: `writeClips` refuses it
+            // anyway, and filtering here keeps the sync log from reporting a
+            // write that did not happen.
+            !graphDocumentsGateway.isConflicted(id),
         );
         for (const id of affected) {
           graphDocumentsGateway.writeClips(id, graphChildrenToClips(change.graph, current, id));

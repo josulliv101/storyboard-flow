@@ -168,6 +168,9 @@ type RecordedPatch = { id: string; clipIds: string[] };
 
 type GraphApi = {
   documents: Map<string, FixtureDocument>;
+  /** Live compare-and-set ledger — a test can bump it to stand in for another
+   *  writer having saved since this session read the document. */
+  revisions: Map<string, number>;
   /** One entry per document write, in arrival order (batch writes fan out). */
   patches: RecordedPatch[];
   patchesFor: (id: string) => RecordedPatch[];
@@ -299,6 +302,7 @@ async function installGraphApi(
 
   return {
     documents,
+    revisions,
     patches,
     patchesFor: (id) => patches.filter((patch) => patch.id === id),
     batches,
@@ -1499,6 +1503,51 @@ test.describe("graph view E2E", () => {
     await expect(page.locator("[data-native-drop-status]")).toContainText(
       /could not be uploaded/i,
     );
+  });
+
+  test("a remote clip survives the local edit that follows a write conflict", async ({ page }) => {
+    // The data-loss path this guards: clip writes are whole-collection
+    // projections of the LIVE GRAPH. On a 409 the gateway reloads the
+    // document, but the graph keeps the pre-conflict local edit — so the next
+    // edit used to re-project that stale collection against the now-fresh
+    // revision, which the server accepts, deleting the other writer's clip.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+
+    // Another writer saves first: a new clip lands and the revision moves on.
+    api.documents.get(PROJECT_ID)!.clips.push(mediaClip("remote-clip", "image", 4, 4));
+    api.revisions.set(PROJECT_ID, (api.revisions.get(PROJECT_ID) ?? 1) + 1);
+
+    // Local edit #1 → save → loses compare-and-set.
+    await holdDrag(
+      page,
+      projectStrip.locator('[data-node-id="alpha"]'),
+      projectStrip.locator('[data-node-id="charlie"]'),
+      0.85,
+    );
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["bravo", CHILD_ID, "charlie", "alpha"]);
+    await expect(page.getByText(/changed in another view/i)).toBeVisible({ timeout: 15000 });
+
+    // Local edit #2, after the conflict. This is the write that used to
+    // clobber the remote clip.
+    await holdDrag(
+      page,
+      projectStrip.locator('[data-node-id="bravo"]'),
+      projectStrip.locator('[data-node-id="charlie"]'),
+      0.85,
+    );
+    await page.waitForTimeout(2000); // outlast the debounce and any retry
+
+    // The stored document still holds the other writer's clip.
+    expect(api.documents.get(PROJECT_ID)!.clips.map((clip) => clip.id)).toContain("remote-clip");
+    // And no write for the project landed after the conflict.
+    const wroteWithoutRemote = api
+      .patchesFor(PROJECT_ID)
+      .some((patch) => !patch.clipIds.includes("remote-clip"));
+    expect(wroteWithoutRemote).toBe(false);
   });
 
   test("sidebar tools are still drag sources after becoming real buttons", async ({ page }) => {
