@@ -1,0 +1,95 @@
+name: Codex gate — feature PRs
+
+# The human-optional review gate for FEATURE pull requests.
+#
+# Bug/polish PRs auto-merge in ~90s — faster than Codex can review, so its
+# opinion only ever lands as an after-the-fact record there. Features deserve
+# a real review window, so claude-implement.yml labels a feature PR `feature`
+# instead of arming auto-merge, and THIS workflow decides the merge:
+#
+#   * Codex approves (👍 reaction, or a formal APPROVED review) -> arm
+#     auto-merge. It lands on green CI with nobody in the loop.
+#   * Codex leaves findings (a CHANGES_REQUESTED review, or inline code
+#     comments) -> leave the PR open and ping. You address or overrule.
+#   * No verdict within the window -> leave open and ping. Your call.
+#   * `hold` label present -> stand down; you merge manually.
+#
+# Codex's signals are informal (a reaction / review comments), NOT a formal
+# GitHub approval that branch protection could require — so this POLLS for the
+# verdict rather than gating on a required check. The poll runs in one job for
+# up to ~12 min (public repo = free minutes); `timeout-minutes` caps it.
+
+on:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: codex-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Codex verdict gate
+    # Only the `feature` label, and only on PRs the owner authored (the loop's
+    # PRs are opened via LOOP_PAT = the owner). A non-owner PR never reaches the
+    # gate, so it cannot be used to arm auto-merge on someone else's branch.
+    if: >-
+      github.event.label.name == 'feature' &&
+      github.event.pull_request.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Wait for Codex verdict, then arm auto-merge or hold
+        env:
+          GH_TOKEN: ${{ secrets.LOOP_PAT }}
+          PR: ${{ github.event.pull_request.number }}
+          BOT: "chatgpt-codex-connector[bot]"
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          deadline=$(( $(date +%s) + 12 * 60 ))   # give Codex up to 12 minutes
+
+          note() { gh pr comment "$PR" --repo "$repo" --body "$1"; }
+
+          while :; do
+            # Owner veto always wins, checked every pass so a late `hold` still stops it.
+            if gh pr view "$PR" --repo "$repo" --json labels --jq '.labels[].name' | grep -qx hold; then
+              note "🔒 \`hold\` present — Codex gate standing down. Merge manually when ready."
+              exit 0
+            fi
+
+            # Approval: Codex's 👍 reaction, OR a formal APPROVED review.
+            up="$(gh api "repos/$repo/issues/$PR/reactions" \
+              --jq "[.[] | select(.user.login==\"$BOT\" and .content==\"+1\")] | length" 2>/dev/null || echo 0)"
+            okrev="$(gh api "repos/$repo/pulls/$PR/reviews" \
+              --jq "[.[] | select(.user.login==\"$BOT\" and .state==\"APPROVED\")] | length" 2>/dev/null || echo 0)"
+
+            # Findings: a changes-requested review, or any inline code comments.
+            # (General summary comments go to the issue thread and are NOT treated
+            # as blocking — only line-anchored review comments are.)
+            changes="$(gh api "repos/$repo/pulls/$PR/reviews" \
+              --jq "[.[] | select(.user.login==\"$BOT\" and .state==\"CHANGES_REQUESTED\")] | length" 2>/dev/null || echo 0)"
+            inline="$(gh api "repos/$repo/pulls/$PR/comments" \
+              --jq "[.[] | select(.user.login==\"$BOT\")] | length" 2>/dev/null || echo 0)"
+
+            if [ "${up:-0}" != "0" ] || [ "${okrev:-0}" != "0" ]; then
+              gh pr merge "$PR" --repo "$repo" --auto --merge
+              note "✅ Codex approved — auto-merge armed; lands once CI is green."
+              exit 0
+            fi
+
+            if [ "${changes:-0}" != "0" ] || [ "${inline:-0}" != "0" ]; then
+              note "⚠️ Codex left review findings — auto-merge **not** armed. Address them (push to this branch) or merge manually if you disagree. Re-apply the \`feature\` label to re-run the gate."
+              exit 0
+            fi
+
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              note "⌛ No Codex verdict within 12 min — auto-merge **not** armed. Merge manually, or re-apply the \`feature\` label to wait again."
+              exit 0
+            fi
+            sleep 20
+          done
