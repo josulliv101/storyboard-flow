@@ -1110,6 +1110,42 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 
+  test("Delete moves the whole selection to trash as ONE undoable step", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+    const alpha = projectStrip.locator('[data-node-id="alpha"]');
+    const bravo = projectStrip.locator('[data-node-id="bravo"]');
+
+    // Build a two-card selection: plain click selects, Ctrl+click adds.
+    // (Retried like the interaction-model test: under load a press can
+    // outlast the 250ms hold threshold and become a grab, whose click is —
+    // correctly — suppressed.)
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await expect(async () => {
+      await bravo.click({ modifiers: ["Control"] });
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    await page.keyboard.press("Delete");
+    await expect.poll(() => stripOrder(page, PROJECT_ID)).toEqual([CHILD_ID, "charlie"]);
+    await expect(page.getByText("Moved 2 items to trash.").first()).toBeVisible();
+    await expect(page.getByRole("group", { name: /^Trash, 2 items/ })).toBeVisible();
+
+    // ONE undo restores the whole selection — the delete was a single
+    // command, not one history entry per card.
+    await undoButton(page).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+    // Empty again: the target's label drops the count entirely at zero.
+    await expect(page.getByRole("group", { name: /^Trash\. Drop items/ })).toBeVisible();
+    await expect(undoButton(page)).toBeDisabled();
+  });
+
   test("interaction model: click toggles selection + trim handles, hold-grab release does neither, collection body selects and its folder button drills", async ({
     page,
   }) => {

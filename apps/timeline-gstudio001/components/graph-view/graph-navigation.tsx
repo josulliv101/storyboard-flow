@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, type MutableRefObject } 
 import { useRouter } from "next/navigation";
 
 import {
+  getChildren,
   isEditableKeyboardTarget,
   parseNodeId,
   resolveTrashCommand,
@@ -107,26 +108,38 @@ export function OpenKeyBoundary({
   // Plain Delete/Backspace trashes EVERY selected card — the pointer twin of
   // dragging a multi-selection onto the trash target, and the unmodified
   // sibling of the package's Alt+Delete (which trashes only the focused card).
-  // Moves go one command at a time against a fresh snapshot so the toIndex and
-  // per-node validation (roots, already-in-trash, cycle) stay correct as the
-  // graph shrinks; each is undoable.
+  //
+  // ONE command for the whole selection, not a per-node loop: parity with the
+  // drag path means one UNDO reverses the whole delete (a loop left N entries
+  // behind one keypress), and the reducer's own multi-node handling prunes
+  // descendants of other moved nodes (a selected clip inside a selected
+  // collection travels with its parent instead of being yanked to the trash
+  // root separately) and re-sorts into graph order.
   const trashSelection = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (trashId === null || store.getSnapshot().interaction.isDragging) return;
-    const selected = [...store.getSnapshot().interaction.selectedIds];
+    const { graph, interaction } = store.getSnapshot();
+    const selected = [...interaction.selectedIds];
     if (selected.length === 0) return;
 
     event.preventDefault();
     const trash = parseNodeId(trashId);
-    let moved = 0;
-    for (const nodeId of selected) {
-      const command = resolveTrashCommand(store.getSnapshot().graph, nodeId, trash);
-      if (command.ok && store.dispatch(command.value).ok) moved += 1;
-    }
-    if (moved > 0) {
-      toast(`Moved ${moved} item${moved === 1 ? "" : "s"} to trash.`, {
-        id: "graph-delete-to-trash",
-      });
-    }
+    // Per-node validation (missing, root, already-in-trash) keeps the loop's
+    // semantics: invalid picks drop out silently, the rest still move.
+    const movable = selected.filter((nodeId) => resolveTrashCommand(graph, nodeId, trash).ok);
+    if (movable.length === 0) return;
+
+    const dispatched = store.dispatch({
+      type: "move-nodes",
+      nodeIds: movable,
+      toParentId: trash,
+      toIndex: getChildren(graph, trash).length,
+    });
+    // A refusal (the un-hydrated-target policy, a cycle) already speaks
+    // through the commandPolicy's own toast — announce only what landed.
+    if (!dispatched.ok) return;
+    toast(`Moved ${movable.length} item${movable.length === 1 ? "" : "s"} to trash.`, {
+      id: "graph-delete-to-trash",
+    });
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {

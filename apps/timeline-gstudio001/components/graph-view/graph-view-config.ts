@@ -71,6 +71,13 @@ export function stepDownItemSize(size: ItemSize): ItemSize {
  * every item should get room and the PAGE scrolls instead — so both the focused
  * and sub-row grids pass this effectively-unbounded cap. (A finite sentinel, not
  * Infinity: the prop contract wants a finite positive number.)
+ *
+ * KNOWN COST: fit-all currently means RENDER-all. VirtualGrid windows against
+ * its own scroll container, and a container that never scrolls has a viewport
+ * the size of its content — every row mounts. Fine at today's collection
+ * sizes; if collections grow to hundreds of clips, grid mode needs a
+ * window-scroll virtualizer (the page owns scrolling now) rather than a
+ * bigger cap.
  */
 export const GRID_UNCAPPED_HEIGHT = 100_000;
 /** Sub-graph tree: left indent of a row's body (strip + nested rows) so the
