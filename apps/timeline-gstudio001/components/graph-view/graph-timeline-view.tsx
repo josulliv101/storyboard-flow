@@ -36,7 +36,9 @@ import {
 import { GRAPH_ASSETS_TOGGLE_EVENT } from "@/lib/graph-view-events";
 
 import { AssetPaletteDrawer } from "./graph-asset-palette";
-import { GraphBoard, type FocusSurface } from "./graph-board";
+import { Toaster, toast } from "@/components/core/sonner";
+
+import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { HydrationController } from "./graph-hydration";
 import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
@@ -48,7 +50,7 @@ import {
 } from "./graph-persistence";
 import { unparkPendingDetail } from "./graph-pending-details";
 import { createPreviewTimeChannel } from "./graph-preview";
-import { FALLBACK_DETAIL } from "./graph-view-config";
+import { DEFAULT_ITEM_SIZE, FALLBACK_DETAIL } from "./graph-view-config";
 import { GraphViewChrome } from "./graph-view-chrome";
 
 type BootState =
@@ -93,6 +95,7 @@ export function GraphTimelineView({
   const [focusError, setFocusError] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<readonly SyncEntry[]>([]);
   const [surface, setSurface] = useState<FocusSurface>("strip");
+  const [itemSize, setItemSize] = useState<ItemSize>(DEFAULT_ITEM_SIZE);
   const [previewOn, setPreviewOn] = useState(false);
   const [timeChannel] = useState(createPreviewTimeChannel);
   const [assetsOpen, setAssetsOpen] = useState(false);
@@ -252,10 +255,15 @@ export function GraphTimelineView({
         collections: blocked,
         bounced: true,
       });
+      // The SyncPanel entry above is developer telemetry. This is the part the
+      // USER sees: without it a refused drop just silently snapped back, with
+      // the explanation buried in a debug panel.
+      const message = "That collection is still loading — drop again once its clips appear.";
+      toast.error(message, { id: `blocked-${blocked.join(",")}` });
       return {
         reason: "blocked-by-policy",
         blockedIds: blocked.map(parseNodeId),
-        message: "That collection is still loading — drop again once its clips appear.",
+        message,
       };
     },
     [detailsStore, onSync],
@@ -313,6 +321,10 @@ export function GraphTimelineView({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Outside <DndCollections> on purpose: a toast must survive the tree
+          that raised it (a rejected drop unmounts nothing, but a focus change
+          remounts the board). */}
+      <Toaster />
       <GraphViewChrome projectId={projectId} timelinePath={timelinePath} />
       {gatewayError !== null && (
         <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -368,10 +380,10 @@ export function GraphTimelineView({
                 focusedId={focusedId}
                 surface={surface}
                 onSurfaceChange={setSurface}
+                itemSize={itemSize}
+                onItemSizeChange={setItemSize}
                 previewOn={previewOn}
                 onTogglePreview={() => setPreviewOn((current) => !current)}
-                assetsOpen={assetsOpen}
-                onToggleAssets={() => setAssetsOpen((current) => !current)}
                 timeChannel={timeChannel}
                 trashRootId={boot.trashRootId}
                 syncEntries={syncLog}

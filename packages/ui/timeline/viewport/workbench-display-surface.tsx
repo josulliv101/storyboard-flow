@@ -177,6 +177,13 @@ function clipContainsPlaybackTime(clip: TimelineClip, currentTime: number) {
   return currentTime >= playbackStart && currentTime <= playbackStart + playbackDuration;
 }
 
+/** The clip that literally covers this time — never one held over from
+ *  earlier. Callers deciding whether a time is INSIDE playable material (as
+ *  opposed to what to draw at it) must use this. */
+function getContainingClip(clips: TimelineClip[], currentTime: number) {
+  return clips.find((clip) => clipContainsPlaybackTime(clip, currentTime)) ?? null;
+}
+
 function getActiveClip(
   clips: TimelineClip[],
   currentTime: number,
@@ -190,14 +197,25 @@ function getActiveClip(
     return preferredClip;
   }
 
-  const lastClip = clips[clips.length - 1];
-  if (lastClip && currentTime >= getClipPlaybackStart(lastClip) + getClipPlaybackDuration(lastClip)) {
-    return lastClip;
-  }
+  const containing = getContainingClip(clips, currentTime);
+  if (containing) return containing;
 
-  return clips.find((clip) => {
-    return clipContainsPlaybackTime(clip, currentTime);
-  }) ?? null;
+  // Nothing covers this time: the playhead sits in a GAP between clips, or
+  // past the last one. Hold the clip that most recently started instead of
+  // returning null — null renders the empty surface, so a gap flashed to
+  // black mid-timeline. A gap carries no NEW frame; it is not an instruction
+  // to blank what a real clip last showed. (The old special case for "past
+  // the final clip" was this same rule, applied only at the tail.)
+  //
+  // Scans for the greatest start rather than trusting array order, so it
+  // holds the right frame even for a caller that has not sorted. A leading
+  // gap — before any clip has started — correctly still yields null.
+  let held: TimelineClip | null = null;
+  for (const clip of clips) {
+    if (getClipPlaybackStart(clip) > currentTime) continue;
+    if (!held || getClipPlaybackStart(clip) > getClipPlaybackStart(held)) held = clip;
+  }
+  return held;
 }
 
 function getTimelineDuration(clips: TimelineClip[]) {
@@ -209,7 +227,11 @@ function getTimelineDuration(clips: TimelineClip[]) {
 
 function normalizePlaybackTime(clips: TimelineClip[], time: number, duration: number) {
   const boundedTime = clamp(time, 0, duration);
-  if (getActiveClip(clips, boundedTime)) return boundedTime;
+  // Containment, NOT getActiveClip: this decides whether the time needs
+  // snapping forward to real material, and getActiveClip now answers "what
+  // should the surface draw" — which holds a frame across gaps and would
+  // make every gap look like a legitimate resting place.
+  if (getContainingClip(clips, boundedTime)) return boundedTime;
 
   const nextClip = clips.find((clip) => getClipPlaybackStart(clip) > boundedTime);
   return nextClip ? clamp(getClipPlaybackStart(nextClip), 0, duration) : duration;
@@ -942,7 +964,12 @@ export function WorkbenchSplitPane({
           aria-valuemin={MIN_SURFACE_HEIGHT}
           aria-valuenow={Math.round(surfaceHeight)}
           aria-label="Resize workbench display"
-          className="group flex h-5 w-full cursor-row-resize items-center justify-center bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400 focus-visible:outline-offset-2"
+          // The divider's OWN height is the only source of the gap on either
+          // side of the rule: it centres the 1px line, so the space above and
+          // below is h/2 each. Nothing else may add padding against it — the
+          // lower pane used to carry a pt-3 that made the bottom gap 22px
+          // against the top's 10px, which read as a misaligned rule.
+          className="group flex h-6 w-full cursor-row-resize items-center justify-center bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400 focus-visible:outline-offset-2"
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
           onPointerUp={handleDividerPointerUp}
@@ -951,7 +978,7 @@ export function WorkbenchSplitPane({
           <span className="h-px w-full bg-zinc-800 transition-colors group-hover:bg-amber-400/70 group-active:bg-amber-400" />
         </button>
       </div>
-      <div ref={lowerPaneRef} className="min-h-0 pt-3">
+      <div ref={lowerPaneRef} className="min-h-0">
         {children}
       </div>
     </div>

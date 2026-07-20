@@ -7,8 +7,31 @@ export type FocusSurface = "strip" | "grid";
 export const TIMELINE_PPS = 40;
 
 export const GRID_CELL_WIDTH = 160;
-export const GRID_CELL_HEIGHT = 96;
 export const GRID_GAP = 8;
+
+/** The five steps of the page-wide item size control. */
+export type ItemSize = "xs" | "sm" | "md" | "lg" | "xl";
+
+export const ITEM_SIZES = ["xs", "sm", "md", "lg", "xl"] as const;
+
+/**
+ * Item size scales HEIGHT ONLY — the strip's row height and the grid's cell
+ * height. Widths stay where they were: a strip clip's width is its duration at
+ * TIMELINE_PPS, so the horizontal time scale is identical at every step and a
+ * size change never moves the playhead. The grid keeps GRID_CELL_WIDTH for the
+ * same reason (its column count, and so its time→x mapping, is width-derived).
+ *
+ * `md` reproduces the sizes the page used before the control existed.
+ */
+export const ITEM_SIZE_HEIGHTS = {
+  xs: { strip: 44, gridCell: 56 },
+  sm: { strip: 64, gridCell: 76 },
+  md: { strip: 88, gridCell: 96 },
+  lg: { strip: 120, gridCell: 132 },
+  xl: { strip: 156, gridCell: 172 },
+} as const satisfies Record<ItemSize, { strip: number; gridCell: number }>;
+
+export const DEFAULT_ITEM_SIZE: ItemSize = "md";
 
 /** Max viewport height of a sub-graph row's GRID (it hugs content up to this
  *  cap, then scrolls) — smaller than the focused grid so nested rows stay
