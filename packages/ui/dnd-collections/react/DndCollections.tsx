@@ -65,6 +65,7 @@ import { CollectionsPointerSensor } from "./pointer-sensors";
 import { LiveAnnouncementRegion, useAnnounceChannel } from "./use-announcements";
 import { useCollectionsKeyboard } from "./use-keyboard-controller";
 import { usePaletteDrag } from "./use-palette-drag";
+import { createEdgeAutoScrollCoordinator } from "./edge-autoscroll-coordinator";
 import { VIRTUAL_INSERT_DATA_KEY, isVirtualInsertTarget } from "./virtual-droppable";
 
 // Provider wiring: dnd-kit supplies the sensors, collision built-ins, and
@@ -336,9 +337,23 @@ function DndCollectionsContext({
   });
   const instructionsId = useId();
   const paletteInstructionsId = useId();
+  // ONE edge auto-scroll driver for every virtual view under this provider —
+  // views enroll their containers through the context; the coordinator owns
+  // the single pointer tracker and drag-gated frame loop. Construction is
+  // side-effect-free; the window listeners attach in the effect (StrictMode's
+  // double-invoke and SSR both stay clean).
+  const [edgeAutoScroll] = useState(() => createEdgeAutoScrollCoordinator(store));
+  useEffect(() => edgeAutoScroll.attach(), [edgeAutoScroll]);
   const containerValue = useMemo(
-    () => ({ containerRef, instructionsId, paletteInstructionsId, trashRef, announce }),
-    [instructionsId, paletteInstructionsId, announce]
+    () => ({
+      containerRef,
+      instructionsId,
+      paletteInstructionsId,
+      trashRef,
+      announce,
+      registerEdgeAutoScroll: edgeAutoScroll.register,
+    }),
+    [instructionsId, paletteInstructionsId, announce, edgeAutoScroll]
   );
 
   const collisionDetection = useCallback<CollisionDetection>(

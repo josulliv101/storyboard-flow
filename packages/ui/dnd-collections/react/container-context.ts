@@ -19,6 +19,9 @@ import { type NodeId } from "../core/graph";
 // - announce: the instance's aria-live channel, so views outside the
 //   provider's own controllers (UndoRedoControls) can speak outcomes through
 //   the one live region instead of growing their own.
+// - registerEdgeAutoScroll: enrolls a scroll container with the instance's
+//   ONE edge auto-scroll coordinator (one pointer tracker + one frame loop
+//   per provider, instead of one per mounted virtual view).
 
 export type CollectionsContainerValue = Readonly<{
   containerRef: RefObject<HTMLElement | null>;
@@ -26,6 +29,11 @@ export type CollectionsContainerValue = Readonly<{
   paletteInstructionsId: string;
   trashRef: MutableRefObject<NodeId | null>;
   announce: (message: string) => void;
+  registerEdgeAutoScroll: (
+    el: HTMLElement,
+    axis: "x" | "y",
+    options?: Readonly<{ edge?: number; maxSpeed?: number }>
+  ) => () => void;
 }>;
 
 export const CollectionsContainerContext =
