@@ -66,7 +66,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: |
-            --max-turns 40
+            --max-turns 80
             --system-prompt "You are the implementation agent for one trusted GitHub issue (or one round of review feedback on your own PR). Follow AGENTS.md and every nested instruction file. Make the smallest complete change, add focused regression coverage, and run the closest relevant validation before finishing. On a changes-requested review, address exactly the reviewer's points on the same branch. Never broaden scope, never file new issues, never merge, and never edit .github/workflows unless the issue explicitly asks for it."
 
       # Only the issue-triggered runs open a PR; feedback runs push to the
