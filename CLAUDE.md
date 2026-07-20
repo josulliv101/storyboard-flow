@@ -59,6 +59,8 @@ Hard-won traps, all previously lost time:
 - Simulated `PointerEvent`s must set `isPrimary: true` or dnd-kit's PointerSensor silently ignores the whole sequence.
 - Playwright e2e must target **play-less** stories: Storybook auto-runs `play()` on iframe load, and its synthetic `pointerup` kills a concurrently running real-mouse drag.
 - A held modifier across multiple `userEvent` clicks requires one `userEvent.setup()` session (the static API resets keyboard state per call).
+- dnd-kit keeps a document-capture click SUPPRESSOR armed for **50ms after a drop** (`AbstractPointerSensor.detach` defers its listener removal). A button clicked inside that window is silently eaten — its click passes `window` but never reaches React. Wait ~80ms after `mouse.up` before clicking anything (the e2e `holdDrag` helper does).
+- Never measure card geometry mid-FLIP: commits (drop/undo/redo) animate displaced cards for 180ms and `getBoundingClientRect` includes the transform, so a drag measured then releases at a stale coordinate and resolves the wrong intent. Settle move animations first (see `settleMoveAnimations` in the e2e spec).
 
 ## Rules (from AGENTS.md files — follow these)
 
