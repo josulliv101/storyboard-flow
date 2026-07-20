@@ -67,6 +67,45 @@ export function cardSpansOf(manifest: PlaybackManifest): PreviewCardSpans {
   return spans;
 }
 
+/**
+ * Whether a fetched manifest is STALE against this session's own writes — it
+ * was compiled from a document version older than one the session has already
+ * saved. Installing it would play pre-edit content and, because refetches are
+ * commit-driven, it would STICK until the next unrelated edit.
+ *
+ * Checks every document the compile read (`documentRevisions`), not just the
+ * root: a child edit bumps only the CHILD's revision, so the root check alone
+ * let a pre-edit compile through. Manifests without the field (hand-built
+ * fixtures, older servers) fall back to the root-only check.
+ *
+ * The revision comparison alone still loses one race: a write UNSETTLED when
+ * the compile ran (debounced, or batch response not yet landed) hasn't bumped
+ * the ledger, so a pre-write compile passes `revisionOf` and installs anyway.
+ * `hasPendingWrite` closes it — any document in the read set with an
+ * unsettled write makes the manifest untrusted, and the caller's retry simply
+ * waits the write out. Conservative on purpose: a compile that in fact read
+ * post-write content is also deferred one cycle, which only delays install,
+ * never wrongs it.
+ */
+export function manifestTrailsLedger(
+  manifest: Pick<PlaybackManifest, "projectRevision" | "documentRevisions">,
+  projectId: string,
+  revisionOf: (id: string) => number | undefined,
+  hasPendingWrite?: (id: string) => boolean,
+): boolean {
+  const revisions = manifest.documentRevisions;
+  if (revisions !== undefined) {
+    for (const [id, compiled] of Object.entries(revisions)) {
+      if (hasPendingWrite?.(id)) return true;
+      const ledger = revisionOf(id);
+      if (ledger !== undefined && compiled < ledger) return true;
+    }
+  }
+  if (hasPendingWrite?.(projectId)) return true;
+  const rootLedger = revisionOf(projectId);
+  return rootLedger !== undefined && manifest.projectRevision < rootLedger;
+}
+
 export type ChildSpan = Readonly<{ startTime: number; endTime: number; width: number }>;
 
 /**
