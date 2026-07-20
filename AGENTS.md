@@ -62,13 +62,23 @@ Mechanics the workflows depend on:
 - PRs are opened with `LOOP_PAT` (not the default Actions token) so CI and the
   merge guard actually fire — a token-created PR triggers no downstream
   workflow.
-- Auto-merge lands a PR once CI is green and the merge guard passes; `hold`
-  holds it. There is deliberately no required approval: the veto label is the
-  brake, which keeps the loop computer-off on subscriptions alone.
-- Codex review is the NATIVE GitHub integration (chatgpt.com/codex), which
-  runs on the Codex subscription and leaves advisory comments — it informs the
-  next round but does not gate the merge. There is no API-billed Codex in CI:
-  `OPENAI_API_KEY` is never created or stored (hard constraint).
+- Two merge lanes, chosen by the source issue's `feature` label:
+  - **bug/polish** (no `feature`): auto-merge is armed at PR open and lands on
+    green CI + merge guard. Codex's review is a post-hoc record here (the PR
+    merges in ~90s, faster than Codex reviews). `hold` vetoes.
+  - **feature** (`feature` label): claude-implement does NOT arm auto-merge;
+    it labels the PR `feature`, which fires `codex-gate.yml`. That gate waits
+    up to 12 min for Codex's verdict, then arms auto-merge **only** on approval
+    (👍 reaction or a formal APPROVED review). Findings, or silence past the
+    window, leave the PR open and ping you. `hold` stands the gate down. This
+    is the "give Codex time, be out of the loop only when it approves" path.
+- There is deliberately no branch-protection-required approval: Codex's signal
+  is informal (reaction/comments), so the gate POLLS for it rather than gating
+  a required check. The `hold` label is the universal brake.
+- Codex review is the NATIVE GitHub integration (chatgpt.com/codex), on the
+  Codex subscription. "Enable credits use" stays OFF so it can never spill into
+  paid credits. There is no API-billed Codex in CI: `OPENAI_API_KEY` is never
+  created or stored (hard constraint).
 - Filing the next issue (the "scout") stays manual — owner-seeded, or a Codex
   cloud task — because subscription Codex cannot do it in CI and an unattended
   auto-scout is the most likely thing to run away.
