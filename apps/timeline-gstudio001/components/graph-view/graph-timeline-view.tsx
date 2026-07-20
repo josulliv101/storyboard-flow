@@ -46,6 +46,7 @@ import {
   PersistenceBridge,
   type SyncEntry,
 } from "./graph-persistence";
+import { unparkPendingDetail } from "./graph-pending-details";
 import { createPreviewTimeChannel } from "./graph-preview";
 import { FALLBACK_DETAIL } from "./graph-view-config";
 import { GraphViewChrome } from "./graph-view-chrome";
@@ -260,6 +261,14 @@ export function GraphTimelineView({
     [detailsStore, onSync],
   );
 
+  // A palette drag's factory parks a ClipDetail under each minted id (see
+  // graph-asset-palette.tsx). When the drag dies uncommitted — cancelled,
+  // vetoed, orphaned — those ids can never exist, so release the metadata now
+  // instead of leaving it until the NEXT palette drag happens to clear it.
+  const handlePaletteDiscard = useCallback((nodes: readonly CollectionItemNode[]) => {
+    for (const node of nodes) unparkPendingDetail(node.id as string);
+  }, []);
+
   // Click-to-open (the pointer twin of the O key): the provider's
   // onOpenNode fires on a plain click on an open-target card — after the
   // package's gesture arbitration, so a drag, a hold-grab, or a pan never
@@ -325,6 +334,7 @@ export function GraphTimelineView({
         onOpenNode={handleOpenNode}
         openOnClick={openOnClick}
         commandPolicy={commandPolicy}
+        onPaletteDiscard={handlePaletteDiscard}
       >
         <GraphDetailsProvider store={detailsStore}>
           <PersistenceBridge onSync={onSync} />

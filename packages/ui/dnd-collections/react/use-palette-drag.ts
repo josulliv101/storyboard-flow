@@ -18,6 +18,14 @@ export function usePaletteDrag(args: {
   store: CollectionsStore;
   intentRef: { current: DropIntent | null };
   announce: (message: string) => void;
+  /**
+   * Fires when factory-created nodes will NEVER commit — cancelled drop,
+   * refused command, graph replaced mid-drag. Factories often park app-side
+   * metadata keyed by the minted ids (the ids are minted inside the factory,
+   * so the app has no other moment to learn they are dead); without this the
+   * metadata lingers until some later event happens to clear it.
+   */
+  onDiscard?: (nodes: readonly CollectionItemNode[]) => void;
 }): Readonly<{
   /** Nodes riding the current palette drag (null when none) — feeds the ghost. */
   paletteNodes: readonly CollectionItemNode[] | null;
@@ -25,9 +33,18 @@ export function usePaletteDrag(args: {
   endPaletteDrag: () => boolean;
   clearPaletteDrag: () => void;
 }> {
-  const { store, intentRef, announce } = args;
-  // State (not a ref) so the overlay ghost renders.
-  const [paletteNodes, setPaletteNodes] = useState<readonly CollectionItemNode[] | null>(null);
+  const { store, intentRef, announce, onDiscard } = args;
+  // State (not a ref) so the overlay ghost renders. The ref mirror lets
+  // clearPaletteDrag (the provider's cancel path) discard the current nodes
+  // without depending on render state.
+  const [paletteNodes, setPaletteNodesState] = useState<
+    readonly CollectionItemNode[] | null
+  >(null);
+  const paletteNodesRef = useRef<readonly CollectionItemNode[] | null>(null);
+  const setPaletteNodes = useCallback((nodes: readonly CollectionItemNode[] | null) => {
+    paletteNodesRef.current = nodes;
+    setPaletteNodesState(nodes);
+  }, []);
   // Whether the LIVE drag is a palette drag — tracked independently of
   // paletteNodes, which stays null when the factory fails. Without this, a
   // failed factory would leave endPaletteDrag unable to tell the gesture was a
@@ -65,7 +82,7 @@ export function usePaletteDrag(args: {
       announce(`Picked up new "${node.name}".`);
       return true;
     },
-    [store, intentRef, announce]
+    [store, intentRef, announce, setPaletteNodes]
   );
 
   const endPaletteDrag = useCallback((): boolean => {
@@ -88,30 +105,45 @@ export function usePaletteDrag(args: {
     // gesture silently — no second "Cancelled drag".
     if (!nodes) return true;
 
-    if (!storeDragLive) {
-      announce("Cancelled drag.");
-      return true;
-    }
-
-    if (!intent) {
+    if (!storeDragLive || !intent) {
+      onDiscard?.(nodes);
       announce("Cancelled drag.");
       return true;
     }
     const { graph } = store.getSnapshot();
     const resolved = resolveAddCommandFromIntent(graph, intent, nodes);
-    if (!resolved.ok || !store.dispatch(resolved.value).ok) {
+    if (!resolved.ok) {
+      onDiscard?.(nodes);
       announce("Cannot add here.");
+      return true;
+    }
+    const dispatched = store.dispatch(resolved.value);
+    if (!dispatched.ok) {
+      onDiscard?.(nodes);
+      // A policy veto carries the consumer's own explanation ("that
+      // collection is still loading…") — node drags and the keyboard paths
+      // announce it, and collapsing it to "Cannot add here." here threw away
+      // the one message that tells the user what to do about it.
+      announce(
+        dispatched.error.reason === "blocked-by-policy" && dispatched.error.message
+          ? dispatched.error.message
+          : "Cannot add here."
+      );
       return true;
     }
     const targetName = graph.nodesById.get(resolved.value.toParentId)?.name ?? "collection";
     announce(`Added "${nodes[0].name}" to "${targetName}".`);
     return true;
-  }, [paletteNodes, store, intentRef, announce]);
+  }, [paletteNodes, store, intentRef, announce, onDiscard, setPaletteNodes]);
 
   const clearPaletteDrag = useCallback(() => {
     paletteSessionRef.current = false;
+    // The provider's CANCEL path (Escape, dnd-kit cancellation) lands here
+    // without endPaletteDrag — the nodes die with the gesture.
+    const nodes = paletteNodesRef.current;
+    if (nodes) onDiscard?.(nodes);
     setPaletteNodes(null);
-  }, []);
+  }, [onDiscard, setPaletteNodes]);
 
   // Stable identity: the provider's drag handlers depend on this object, so
   // a fresh literal per render would rebuild them on every announcement.
