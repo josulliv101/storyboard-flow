@@ -46,8 +46,8 @@ export function GraphViewNavProvider({
   const value = useMemo<GraphViewNav>(
     () => ({
       openTimeline: (nodeId) => {
-        const timelineId =
-          detailsStore.get(nodeId as string)?.duplicateOfTimelineId ?? (nodeId as string);
+        const id = nodeId as string;
+        const timelineId = detailsStore.get(id)?.duplicateOfTimelineId ?? id;
         if (timelineId === focusedId) return;
 
         const base = `/timeline/${encodeURIComponent(projectId)}/graph`;
@@ -58,12 +58,16 @@ export function GraphViewNavProvider({
 
         const { graph } = store.getSnapshot();
         const chain: string[] = [timelineId];
+        // Parse `projectId` to `NodeId` ONCE and compare `parent` against it
+        // directly, rather than casting `parent` back to `string` at every
+        // step of the walk.
+        const projectNodeId = parseNodeId(projectId);
         let parent = graph.parentById.get(parseNodeId(timelineId)) ?? null;
-        while (parent !== null && (parent as string) !== projectId) {
-          chain.unshift(parent as string);
+        while (parent !== null && parent !== projectNodeId) {
+          chain.unshift(parent);
           parent = graph.parentById.get(parent) ?? null;
         }
-        if ((parent as string | null) !== projectId) return;
+        if (parent !== projectNodeId) return;
         router.push(`${base}/${chain.map(encodeURIComponent).join("/")}`);
       },
     }),
@@ -96,13 +100,14 @@ export function OpenKeyBoundary({
     const id = target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
     if (!id) return;
 
-    const node = store.getSnapshot().graph.nodesById.get(parseNodeId(id));
+    const nodeId = parseNodeId(id);
+    const node = store.getSnapshot().graph.nodesById.get(nodeId);
     const opensTimeline =
       node?.kind === "collection" || detailsStore.get(id)?.duplicateOfTimelineId !== undefined;
     if (!opensTimeline) return;
 
     event.preventDefault();
-    nav?.openTimeline(parseNodeId(id));
+    nav?.openTimeline(nodeId);
   };
 
   // Plain Delete/Backspace trashes EVERY selected card — the pointer twin of

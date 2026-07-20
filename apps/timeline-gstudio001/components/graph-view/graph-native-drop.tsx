@@ -16,6 +16,7 @@ import {
   useCollectionsContainer,
   useCollectionsStore,
   type CollectionItemNode,
+  type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
 import type { ClipDetail } from "@storyboard/timeline-domain";
@@ -101,6 +102,28 @@ type DropAnchor = Readonly<{
   /** Index at drop time — the last-resort fallback if neither survives. */
   index: number;
 }>;
+
+/**
+ * Index of the child whose id equals `nodeId`. Matches by VALUE rather than
+ * reconstructing a `NodeId` — an id may be any non-whitespace string, and
+ * `NodeId` is structurally a string, so no cast is needed either side of the
+ * comparison. Shared by every anchor resolver below instead of each closing
+ * over its own copy.
+ */
+function indexOfChildId(children: readonly NodeId[], nodeId: string): number {
+  return children.findIndex((childId) => childId === nodeId);
+}
+
+/** The `DropAnchor` neighbour ids that bracket `index` within `children`. */
+function neighborsAt(
+  children: readonly NodeId[],
+  index: number,
+): Pick<DropAnchor, "beforeId" | "afterId"> {
+  return {
+    beforeId: index > 0 ? children[index - 1] : null,
+    afterId: index < children.length ? children[index] : null,
+  };
+}
 
 /** One live drop's contribution to the status line. */
 type DropStatus =
@@ -409,16 +432,14 @@ function useNativeDrop(collectionId: string) {
   const resolveAnchoredIndex = useCallback(
     (anchor: DropAnchor): number => {
       const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
-      const indexOf = (nodeId: string) =>
-        children.findIndex((childId) => (childId as string) === nodeId);
       // Prefer the successor: "before whatever followed the gap" survives the
       // predecessor being removed, which is the commoner edit.
       if (anchor.afterId !== null) {
-        const at = indexOf(anchor.afterId);
+        const at = indexOfChildId(children, anchor.afterId);
         if (at >= 0) return at;
       }
       if (anchor.beforeId !== null) {
-        const at = indexOf(anchor.beforeId);
+        const at = indexOfChildId(children, anchor.beforeId);
         if (at >= 0) return at + 1;
       }
       // Both neighbors are gone (or there were none): fall back to the
@@ -666,10 +687,7 @@ export function NativeDropStrip({
       // Reuse the drag session's measurements; fall back to measuring for a
       // drop that arrived without a preceding dragover (programmatic drops).
       const geometry = dragGeometryRef.current ?? measureDragGeometry();
-      // An id may be any non-whitespace string, so match by value rather than
-      // reconstructing one — `parseNodeId` throws on an empty attribute.
-      const indexOfCard = (card: CardGeometry) =>
-        children.findIndex((childId) => (childId as string) === card.nodeId);
+      const indexOfCard = (card: CardGeometry) => indexOfChildId(children, card.nodeId);
 
       let index = children.length;
       if (geometry) {
@@ -691,11 +709,7 @@ export function NativeDropStrip({
         if (resolved >= 0) index = resolved;
       }
 
-      return {
-        index,
-        beforeId: index > 0 ? (children[index - 1] as string) : null,
-        afterId: index < children.length ? (children[index] as string) : null,
-      };
+      return { index, ...neighborsAt(children, index) };
     },
     [store, collectionId, measureDragGeometry],
   );
@@ -885,22 +899,16 @@ export function NativeDropGrid({
     (clientX: number, clientY: number): DropAnchor => {
       const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
       const geometry = dragGeometryRef.current ?? measureDragGeometry();
-      const indexOfId = (nodeId: string) =>
-        children.findIndex((childId) => (childId as string) === nodeId);
 
       let index = children.length;
       if (geometry) {
         const before = cellBeforeWhichPointerFalls(geometry, clientX, clientY);
         if (before) {
-          const at = indexOfId(before.nodeId);
+          const at = indexOfChildId(children, before.nodeId);
           if (at >= 0) index = at;
         }
       }
-      return {
-        index,
-        beforeId: index > 0 ? (children[index - 1] as string) : null,
-        afterId: index < children.length ? (children[index] as string) : null,
-      };
+      return { index, ...neighborsAt(children, index) };
     },
     [store, collectionId, measureDragGeometry, cellBeforeWhichPointerFalls],
   );
