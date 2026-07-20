@@ -101,6 +101,9 @@ export function GraphTimelineView({
   const [surface, setSurface] = useState<FocusSurface>("strip");
   const [itemSize, setItemSize] = useState<ItemSize>(DEFAULT_ITEM_SIZE);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_TIMELINE_PPS);
+  // Children timelines render by default (their absence would hide the tree);
+  // the FolderTree toggle unmounts them.
+  const [childrenShown, setChildrenShown] = useState(true);
   const [previewOn, setPreviewOn] = useState(false);
   const [timeChannel] = useState(createPreviewTimeChannel);
   const [assetsOpen, setAssetsOpen] = useState(false);
@@ -290,11 +293,14 @@ export function GraphTimelineView({
   // registers itself into this ref.
   const openNodeRef = useRef<(nodeId: NodeId) => void>(() => {});
   const handleOpenNode = useCallback((nodeId: NodeId) => openNodeRef.current(nodeId), []);
-  // Collections open — and so do duplicate-reference cards (media cards
-  // standing in for a timeline referenced twice; same set the O key uses).
+  // A plain click on a COLLECTION now SELECTS it (so it can be trashed with
+  // Delete like any clip); its own folder button is the only pointer path
+  // that drills in (see GraphClipContent). Duplicate-reference cards — media
+  // standing in for a twice-referenced timeline — have no such button, so a
+  // plain click still opens those. The O key opens both regardless
+  // (OpenKeyBoundary), so keyboard drill-in is unchanged.
   const openOnClick = useCallback(
-    (nodeId: NodeId, node: CollectionItemNode) =>
-      node.kind === "collection" ||
+    (nodeId: NodeId) =>
       detailsStore.get(nodeId as string)?.duplicateOfTimelineId !== undefined,
     [detailsStore],
   );
@@ -393,6 +399,8 @@ export function GraphTimelineView({
                 onPixelsPerSecondChange={setPixelsPerSecond}
                 previewOn={previewOn}
                 onTogglePreview={() => setPreviewOn((current) => !current)}
+                childrenShown={childrenShown}
+                onToggleChildren={() => setChildrenShown((current) => !current)}
                 timeChannel={timeChannel}
                 trashRootId={boot.trashRootId}
                 syncEntries={syncLog}

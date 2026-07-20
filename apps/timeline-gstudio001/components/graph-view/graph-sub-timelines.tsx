@@ -17,23 +17,23 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import { hydrateTimeline } from "./graph-hydration";
-import { NativeDropStrip } from "./graph-native-drop";
+import { NativeDropGrid, NativeDropStrip } from "./graph-native-drop";
 import { GraphViewNavContext } from "./graph-navigation";
 import {
   GraphGridPlayhead,
   GraphGridScrubSurface,
   GraphPlayhead,
   PlayheadScrubBand,
+  collectionCardWidth,
   usePreviewCardSpans,
   type PreviewTimeChannel,
 } from "./graph-preview";
 import {
-  GRID_CELL_WIDTH,
   GRID_GAP,
-  ITEM_SIZE_HEIGHTS,
+  GRID_UNCAPPED_HEIGHT,
+  ITEM_SIZE_DIMENSIONS,
   MAX_SUBTREE_DEPTH,
   SUBTIMELINE_INDENT_PX,
-  SUBTIMELINE_GRID_MAX_HEIGHT,
   type FocusSurface,
   type ItemSize,
 } from "./graph-view-config";
@@ -104,6 +104,7 @@ function SubTimelineNode({
   // global clock, so the marker would lie — better absent for that ~2.5s.
   const window = spans?.get(id);
   const showPlayhead = previewOn && window !== undefined;
+  const dims = ITEM_SIZE_DIMENSIONS[itemSize];
 
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -216,44 +217,47 @@ function SubTimelineNode({
           style={{ paddingLeft: SUBTIMELINE_INDENT_PX }}
         >
           {surface === "grid" ? (
-            // Grid mode is page-wide: mirror the focused grid (no NativeDropStrip
-            // wrapper — the focused grid has none either, so native drops are a
-            // strip-mode affordance).
-            <div className="relative">
-              <VirtualGrid
-                collectionId={collectionId}
-                cellWidth={GRID_CELL_WIDTH}
-                cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
-                gap={GRID_GAP}
-                height={SUBTIMELINE_GRID_MAX_HEIGHT}
-                overlay={
-                  showPlayhead ? (
-                    <GraphGridPlayhead
-                      focusedId={id}
-                      channel={timeChannel}
-                      cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
-                      pixelsPerSecond={pixelsPerSecond}
-                      activeWindow={window}
-                    />
-                  ) : undefined
-                }
-                className="bg-black/20"
-              />
-              {showPlayhead && (
-                <GraphGridScrubSurface
-                  focusedId={id}
-                  channel={timeChannel}
-                  cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
-                  pixelsPerSecond={pixelsPerSecond}
+            // Grid mode now accepts native drops too (a NativeDropGrid), matching
+            // the strip. It wraps the scrub surface so a drag over that overlay
+            // still bubbles to the drop target.
+            <NativeDropGrid collectionId={id}>
+              <div className="relative">
+                <VirtualGrid
+                  collectionId={collectionId}
+                  cellWidth={dims.gridWidth}
+                  cellHeight={dims.gridHeight}
+                  gap={GRID_GAP}
+                  height={GRID_UNCAPPED_HEIGHT}
+                  overlay={
+                    showPlayhead ? (
+                      <GraphGridPlayhead
+                        focusedId={id}
+                        channel={timeChannel}
+                        cellHeight={dims.gridHeight}
+                        pixelsPerSecond={pixelsPerSecond}
+                        activeWindow={window}
+                      />
+                    ) : undefined
+                  }
+                  className="bg-black/20"
                 />
-              )}
-            </div>
+                {showPlayhead && (
+                  <GraphGridScrubSurface
+                    focusedId={id}
+                    channel={timeChannel}
+                    cellHeight={dims.gridHeight}
+                    pixelsPerSecond={pixelsPerSecond}
+                  />
+                )}
+              </div>
+            </NativeDropGrid>
           ) : (
             <NativeDropStrip collectionId={id}>
               <VirtualStrip
                 collectionId={collectionId}
                 pixelsPerSecond={pixelsPerSecond}
-                itemHeight={ITEM_SIZE_HEIGHTS[itemSize].strip}
+                itemWidth={collectionCardWidth(pixelsPerSecond)}
+                itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
                   showPlayhead ? (

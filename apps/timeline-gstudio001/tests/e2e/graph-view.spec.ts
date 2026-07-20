@@ -933,9 +933,12 @@ test.describe("graph view E2E", () => {
     // Drill-in RESETS the persistent preview clock: the layout (and with it
     // the time channel) survives navigation, but a different focused
     // timeline is a different clock — without the reset the transport would
-    // park at "long-timeline-time / short-timeline-duration". A plain click
-    // on the collection card drills (the interaction model's pointer path).
-    await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).click();
+    // park at "long-timeline-time / short-timeline-duration". The collection
+    // card's folder button drills (the interaction model's pointer path).
+    await strip(page, PROJECT_ID)
+      .locator(`[data-node-id="${CHILD_ID}"]`)
+      .getByRole("button", { name: /^Open / })
+      .click();
     await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
     await expect.poll(translateX).toBeLessThan(20);
   });
@@ -1063,7 +1066,7 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 
-  test("interaction model: click toggles selection + trim handles, hold-grab release does neither, collection click drills", async ({
+  test("interaction model: click toggles selection + trim handles, hold-grab release does neither, collection body selects and its folder button drills", async ({
     page,
   }) => {
     await installGraphApi(page);
@@ -1102,9 +1105,20 @@ test.describe("graph view E2E", () => {
     }).toPass({ timeout: 10000 });
     await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(0);
 
-    // A plain click on a collection card DRILLS IN (the pointer twin of O).
+    // A collection card's BODY selects (like any clip); only its folder
+    // button drills in. Click the label strip (below the centred button) to
+    // hit the body, and confirm it selects WITHOUT navigating.
+    const collectionCard = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
+    const cardBox = (await collectionCard.boundingBox())!;
     await expect(async () => {
-      await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).click();
+      await collectionCard.click({ position: { x: cardBox.width / 2, y: cardBox.height - 4 } });
+      await expect(collectionCard).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}$`));
+
+    // The folder button is the pointer twin of O: it DRILLS IN.
+    await expect(async () => {
+      await collectionCard.getByRole("button", { name: /^Open / }).click();
       await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 3000 });
     }).toPass({ timeout: 15000 });
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);

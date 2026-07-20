@@ -1,6 +1,6 @@
 "use client";
 
-import { EllipsisVertical, TvMinimal } from "lucide-react";
+import { EllipsisVertical, FolderTree, TvMinimal } from "lucide-react";
 
 import {
   TrashTarget,
@@ -21,7 +21,7 @@ import {
 } from "@/components/core/dropdown-menu";
 import { Slider } from "@/components/core/slider";
 
-import { NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
+import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
 import { SyncPanel, type SyncEntry } from "./graph-persistence";
 import {
@@ -30,16 +30,18 @@ import {
   GraphPlayhead,
   PlayheadScrubBand,
   PreviewShell,
+  collectionCardWidth,
   type PreviewTimeChannel,
 } from "./graph-preview";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
-  GRID_CELL_WIDTH,
   GRID_GAP,
-  ITEM_SIZE_HEIGHTS,
+  GRID_UNCAPPED_HEIGHT,
+  ITEM_SIZE_DIMENSIONS,
   ITEM_SIZES,
   MAX_TIMELINE_PPS,
   MIN_TIMELINE_PPS,
+  stepDownItemSize,
   type FocusSurface,
   type ItemSize,
 } from "./graph-view-config";
@@ -161,6 +163,8 @@ export function GraphBoard({
   onPixelsPerSecondChange,
   previewOn,
   onTogglePreview,
+  childrenShown,
+  onToggleChildren,
   timeChannel,
   trashRootId,
   syncEntries,
@@ -177,20 +181,33 @@ export function GraphBoard({
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
   previewOn: boolean;
   onTogglePreview: () => void;
+  childrenShown: boolean;
+  onToggleChildren: () => void;
   timeChannel: PreviewTimeChannel;
   trashRootId: string | null;
   syncEntries: readonly SyncEntry[];
 }>) {
-  const heights = ITEM_SIZE_HEIGHTS[itemSize];
+  const dims = ITEM_SIZE_DIMENSIONS[itemSize];
 
   return (
-    <OpenKeyBoundary>
+    <OpenKeyBoundary trashId={trashRootId}>
       <PreviewShell enabled={previewOn} focusedId={focusedId} channel={timeChannel}>
         {/* Outside the surface branch on purpose: the sidebar's tool buttons
             must insert in grid mode too, where no NativeDropStrip exists. */}
         <SidebarToolInsertBridge collectionId={focusedId} />
         <div className="flex flex-col gap-5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
-          <div className="flex items-center justify-between gap-3">
+          {/* Pinned so the controls stay reachable while scrolling the
+              surfaces. It sticks just BELOW the sticky preview via the offset
+              the split pane publishes (0 when the preview is closed). The
+              opaque background is load-bearing twice over: it reads as a
+              toolbar, and it OCCLUDES the strip/grid scrolling underneath —
+              which is what stops a playhead marker from bleeding up into the
+              preview. The negative margins let that background span the card's
+              full width past its p-4 padding. */}
+          <div
+            className="sticky z-20 -mx-4 -mt-4 flex items-center justify-between gap-3 rounded-t-xl border-b border-zinc-800/70 bg-zinc-950/95 px-4 py-3 backdrop-blur-sm"
+            style={{ top: "var(--workbench-preview-offset, 0px)" }}
+          >
             {breadcrumb}
             <div className="flex shrink-0 items-center gap-3">
               <Button
@@ -208,6 +225,21 @@ export function GraphBoard({
               >
                 <TvMinimal aria-hidden="true" className="h-4 w-4" />
               </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-pressed={childrenShown}
+                aria-label={childrenShown ? "Hide children timelines" : "Show children timelines"}
+                title={childrenShown ? "Hide children timelines" : "Show children timelines"}
+                onClick={onToggleChildren}
+                className={[
+                  "h-8 w-8",
+                  childrenShown ? "bg-zinc-800 text-zinc-100" : "text-zinc-500",
+                ].join(" ")}
+              >
+                <FolderTree aria-hidden="true" className="h-4 w-4" />
+              </Button>
               <ScaleSlider
                 pixelsPerSecond={pixelsPerSecond}
                 onChange={onPixelsPerSecondChange}
@@ -223,7 +255,8 @@ export function GraphBoard({
               <VirtualStrip
                 collectionId={parseNodeId(focusedId)}
                 pixelsPerSecond={pixelsPerSecond}
-                itemHeight={heights.strip}
+                itemWidth={collectionCardWidth(pixelsPerSecond)}
+                itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
                   previewOn ? (
@@ -245,44 +278,54 @@ export function GraphBoard({
               )}
             </NativeDropStrip>
           ) : (
-            <div className="relative">
-              <VirtualGrid
-                collectionId={parseNodeId(focusedId)}
-                cellWidth={GRID_CELL_WIDTH}
-                cellHeight={heights.gridCell}
-                gap={GRID_GAP}
-                height={420}
-                overlay={
-                  previewOn ? (
-                    <GraphGridPlayhead
-                      focusedId={focusedId}
-                      channel={timeChannel}
-                      cellHeight={heights.gridCell}
-                      pixelsPerSecond={pixelsPerSecond}
-                    />
-                  ) : undefined
-                }
-                className="bg-black/25"
-              />
-              {previewOn && (
-                <GraphGridScrubSurface
-                  focusedId={focusedId}
-                  channel={timeChannel}
-                  cellHeight={heights.gridCell}
-                  pixelsPerSecond={pixelsPerSecond}
+            // NativeDropGrid wraps the scrub surface too, so a native drag over
+            // the (preview-only) scrub overlay still bubbles to the drop target.
+            <NativeDropGrid collectionId={focusedId}>
+              <div className="relative">
+                <VirtualGrid
+                  collectionId={parseNodeId(focusedId)}
+                  cellWidth={dims.gridWidth}
+                  cellHeight={dims.gridHeight}
+                  gap={GRID_GAP}
+                  height={GRID_UNCAPPED_HEIGHT}
+                  overlay={
+                    previewOn ? (
+                      <GraphGridPlayhead
+                        focusedId={focusedId}
+                        channel={timeChannel}
+                        cellHeight={dims.gridHeight}
+                        pixelsPerSecond={pixelsPerSecond}
+                      />
+                    ) : undefined
+                  }
+                  className="bg-black/25"
                 />
-              )}
-            </div>
+                {previewOn && (
+                  <GraphGridScrubSurface
+                    focusedId={focusedId}
+                    channel={timeChannel}
+                    cellHeight={dims.gridHeight}
+                    pixelsPerSecond={pixelsPerSecond}
+                  />
+                )}
+              </div>
+            </NativeDropGrid>
           )}
 
-          <SubTimelines
-            focusedId={focusedId}
-            surface={surface}
-            itemSize={itemSize}
-            pixelsPerSecond={pixelsPerSecond}
-            previewOn={previewOn}
-            timeChannel={timeChannel}
-          />
+          {/* Children render one size step below the focused timeline (flat —
+              every descendant is this one size, see stepDownItemSize). The
+              FolderTree toggle unmounts them entirely rather than hiding with
+              CSS, so their strips/grids and sub-row playheads leave the DOM. */}
+          {childrenShown && (
+            <SubTimelines
+              focusedId={focusedId}
+              surface={surface}
+              itemSize={stepDownItemSize(itemSize)}
+              pixelsPerSecond={pixelsPerSecond}
+              previewOn={previewOn}
+              timeChannel={timeChannel}
+            />
+          )}
 
           {trashRootId !== null && (
             <div className="flex items-end justify-end">

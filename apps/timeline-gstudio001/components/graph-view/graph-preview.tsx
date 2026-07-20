@@ -70,7 +70,22 @@ type PlayheadMap = Readonly<{
 }>;
 
 const STRIP_GAP_PX = 8;
-const COLLECTION_CARD_PX = 128;
+
+/**
+ * A collection card's width, scaled by the zoom slider like every media clip
+ * beside it. Collections carry no single duration to lay out by, so they keep a
+ * UNIFORM width — but that width now tracks pixels-per-second so a collection no
+ * longer sits frozen while the clips around it grow and shrink. 128px at the
+ * default scale (a ~3.2s-equivalent slot), floored so it stays clickable when
+ * zoomed all the way out.
+ *
+ * Exported so the strip's `itemWidth` prop and the playhead's own width model
+ * read the SAME number — the two must agree or the marker drifts off the cards.
+ */
+const COLLECTION_CARD_BASE_PX = 128;
+export function collectionCardWidth(pixelsPerSecond: number): number {
+  return Math.max(MIN_ITEM_WIDTH, COLLECTION_CARD_BASE_PX * (pixelsPerSecond / TIMELINE_PPS));
+}
 
 /**
  * Where each focused-level CARD begins and ends in the clock the preview pane
@@ -161,7 +176,7 @@ function childSpans(
   return graphChildrenToClips(graph, details, collectionId).map((clip, index) => {
     const width =
       clip.kind === "collection"
-        ? Math.max(MIN_ITEM_WIDTH, COLLECTION_CARD_PX)
+        ? collectionCardWidth(pixelsPerSecond)
         : durationToWidth(clip.duration, pixelsPerSecond);
     // A child with no manifest span contributes no playback time (an empty
     // collection); its projection span is all that is left to say.
