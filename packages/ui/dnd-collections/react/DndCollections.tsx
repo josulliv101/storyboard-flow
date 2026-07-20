@@ -17,6 +17,7 @@ import {
   KeyboardSensor,
   closestCenter,
   pointerWithin,
+  useDndContext,
   useSensor,
   useSensors,
   type Announcements,
@@ -26,6 +27,7 @@ import {
   type ScreenReaderInstructions,
   type UniqueIdentifier,
 } from "@dnd-kit/core";
+import { getEventCoordinates } from "@dnd-kit/utilities";
 
 import { getChildren, type CollectionItemNode, type CollectionsGraph, type NodeId } from "../core/graph";
 import {
@@ -142,6 +144,18 @@ export type DndCollectionsProps = Readonly<{
    * ids are dead and the metadata can be released.
    */
   onPaletteDiscard?: (nodes: readonly CollectionItemNode[]) => void;
+  /**
+   * Scale the drag ghost to this fraction of the card's size on pickup,
+   * default `1` (no scaling — every existing consumer is unchanged). A value
+   * below 1 shrinks the ghost so the drop target underneath stays visible —
+   * the difference between "can I see the collection I'm aiming at" and not.
+   *
+   * The shrink animates, and grows FROM the grab point: transform-origin is
+   * the pointer's offset within the card, so the exact pixel under the cursor
+   * at pickup stays under the cursor at every size. No positional jump, and
+   * drop accuracy is unchanged.
+   */
+  dragGhostScale?: number;
   children: ReactNode;
 }>;
 
@@ -210,6 +224,7 @@ export function DndCollections({
   trimRequiresSelection,
   commandPolicy,
   onPaletteDiscard,
+  dragGhostScale = 1,
   children,
 }: DndCollectionsProps) {
   const componentsValue = useCollectionsComponentsValue(components);
@@ -270,6 +285,7 @@ export function DndCollections({
             <DndCollectionsContext
               animateMoves={animateMoves}
               onPaletteDiscard={handlePaletteDiscard}
+              dragGhostScale={dragGhostScale}
             >
               {children}
             </DndCollectionsContext>
@@ -295,10 +311,12 @@ function DndCollectionsContext({
   children,
   animateMoves,
   onPaletteDiscard,
+  dragGhostScale,
 }: {
   children: ReactNode;
   animateMoves: boolean;
   onPaletteDiscard: (nodes: readonly CollectionItemNode[]) => void;
+  dragGhostScale: number;
 }) {
   const store = useCollectionsStore();
   // Ref-backed channel: speaking must never set state HERE — this component
@@ -661,7 +679,10 @@ function DndCollectionsContext({
         Press Enter to pick up a new item, then use the Arrow keys to choose where it goes and
         Enter to drop it, or Escape to cancel.
       </p>
-      <CollectionsDragOverlay paletteNodes={palette.paletteNodes} />
+      <CollectionsDragOverlay
+        paletteNodes={palette.paletteNodes}
+        ghostScale={dragGhostScale}
+      />
       <LiveAnnouncementRegion channel={announceChannel} />
     </DndContext>
   );
@@ -669,8 +690,10 @@ function DndCollectionsContext({
 
 function CollectionsDragOverlay({
   paletteNodes,
+  ghostScale,
 }: {
   paletteNodes: readonly CollectionItemNode[] | null;
+  ghostScale: number;
 }) {
   const activeIds = useCollectionsSelector((s) => s.interaction.activeIds);
   const primaryId = activeIds[0] ?? null;
@@ -683,7 +706,55 @@ function CollectionsDragOverlay({
   // the provider so cards and their drag preview stay in sync in one place.
   const GhostContent = useCollectionsComponents().GhostContent ?? NodeCardGhost;
 
+  const ghost = node ? <GhostContent node={node} extraCount={extraCount} /> : null;
+
   return (
-    <DragOverlay>{node ? <GhostContent node={node} extraCount={extraCount} /> : null}</DragOverlay>
+    <DragOverlay>
+      {ghostScale < 1 ? <ScaledGhost scale={ghostScale}>{ghost}</ScaledGhost> : ghost}
+    </DragOverlay>
+  );
+}
+
+/**
+ * Shrinks the ghost to `scale`, growing FROM the pixel the pointer grabbed.
+ *
+ * dnd-kit sizes the DragOverlay to the source card and keeps its top-left
+ * pinned to (card top-left + pointer delta). So the pointer sits at a fixed
+ * offset inside this box for the whole drag — set that offset as the
+ * transform-origin and the grabbed pixel stays under the cursor at any scale,
+ * with no positional jump to correct. A first-frame 1→scale transition makes
+ * the shrink a motion, not a snap; reduced-motion users get the end state
+ * with no animation.
+ */
+function ScaledGhost({ scale, children }: { scale: number; children: ReactNode }) {
+  const { activatorEvent, activeNodeRect } = useDndContext();
+  const [engaged, setEngaged] = useState(false);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setEngaged(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  const origin = (() => {
+    const point = activatorEvent ? getEventCoordinates(activatorEvent) : null;
+    if (!point || !activeNodeRect) return "center";
+    // Clamp into the card: a grab exactly on the edge still reads as inside.
+    const x = Math.min(Math.max(point.x - activeNodeRect.left, 0), activeNodeRect.width);
+    const y = Math.min(Math.max(point.y - activeNodeRect.top, 0), activeNodeRect.height);
+    return `${x}px ${y}px`;
+  })();
+
+  return (
+    <div
+      data-drag-ghost-scale={scale}
+      style={{
+        transformOrigin: origin,
+        transform: `scale(${engaged ? scale : 1})`,
+        transition: "transform 160ms cubic-bezier(0.16, 1, 0.3, 1)",
+      }}
+      className="motion-reduce:transition-none"
+    >
+      {children}
+    </div>
   );
 }

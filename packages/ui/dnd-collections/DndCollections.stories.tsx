@@ -298,6 +298,45 @@ export const CycleRejectionFlash: Story = {
   },
 };
 
+export const DragGhostScales: Story = {
+  // dragGhostScale shrinks the drag ghost so the drop target under it stays
+  // visible. Default (unset) is 1 — every other story asserts the ghost is
+  // full size implicitly by never seeing this wrapper.
+  render: () => (
+    <DndCollections initialGraph={standardGraph()} dragGhostScale={0.5}>
+      <CollectionPanels collectionIds={[parseNodeId("panel-a"), parseNodeId("panel-b")]} />
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const alpha = nodeCard(canvasElement, "alpha");
+    await waitForLayout(alpha);
+
+    // Hold mid-drag: the overlay is live, so the scaled wrapper exists.
+    await dragHoldAt(alpha, rectPoint(nodeCard(canvasElement, "bravo"), 0.5));
+
+    const wrapper = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>("[data-drag-ghost-scale]");
+      expect(el).toBeTruthy();
+      return el!;
+    });
+    expect(wrapper.dataset.dragGhostScale).toBe("0.5");
+
+    // The shrink is a real transition (1 -> 0.5), so it lands on scale(0.5)
+    // after its 160ms — not an instant swap and not stuck at 1.
+    await waitFor(() => {
+      expect(wrapper.style.transform).toBe("scale(0.5)");
+    });
+    // Grows FROM the grab point, not the element's own centre.
+    expect(wrapper.style.transformOrigin).not.toBe("center");
+
+    await releaseAt(rectPoint(nodeCard(canvasElement, "bravo"), 0.5));
+    // Ghost gone once the drag ends.
+    await waitFor(() => {
+      expect(document.querySelector("[data-drag-ghost-scale]")).toBeNull();
+    });
+  },
+};
+
 export const MultiSelectDrag: Story = {
   render: () => <StandardBoard />,
   play: async ({ canvasElement }) => {

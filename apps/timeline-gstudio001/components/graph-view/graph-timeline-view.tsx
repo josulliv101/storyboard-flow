@@ -36,7 +36,7 @@ import {
 import { GRAPH_ASSETS_TOGGLE_EVENT } from "@/lib/graph-view-events";
 
 import { AssetPaletteDrawer } from "./graph-asset-palette";
-import { Toaster, toast } from "@/components/core/sonner";
+import { toast } from "@/components/core/sonner";
 
 import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
 import { GraphDetailsProvider } from "./graph-details-context";
@@ -50,8 +50,12 @@ import {
 } from "./graph-persistence";
 import { unparkPendingDetail } from "./graph-pending-details";
 import { createPreviewTimeChannel } from "./graph-preview";
-import { DEFAULT_ITEM_SIZE, FALLBACK_DETAIL } from "./graph-view-config";
-import { GraphViewChrome } from "./graph-view-chrome";
+import {
+  DEFAULT_ITEM_SIZE,
+  DEFAULT_TIMELINE_PPS,
+  FALLBACK_DETAIL,
+} from "./graph-view-config";
+import { GraphBreadcrumb, GraphViewChrome } from "./graph-view-chrome";
 
 type BootState =
   | Readonly<{ status: "loading" }>
@@ -96,6 +100,7 @@ export function GraphTimelineView({
   const [syncLog, setSyncLog] = useState<readonly SyncEntry[]>([]);
   const [surface, setSurface] = useState<FocusSurface>("strip");
   const [itemSize, setItemSize] = useState<ItemSize>(DEFAULT_ITEM_SIZE);
+  const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_TIMELINE_PPS);
   const [previewOn, setPreviewOn] = useState(false);
   const [timeChannel] = useState(createPreviewTimeChannel);
   const [assetsOpen, setAssetsOpen] = useState(false);
@@ -321,10 +326,6 @@ export function GraphTimelineView({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Outside <DndCollections> on purpose: a toast must survive the tree
-          that raised it (a rejected drop unmounts nothing, but a focus change
-          remounts the board). */}
-      <Toaster />
       <GraphViewChrome projectId={projectId} timelinePath={timelinePath} />
       {gatewayError !== null && (
         <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -343,6 +344,9 @@ export function GraphTimelineView({
         // from ever colliding.
         clickSelection="toggle"
         trimRequiresSelection
+        // Shrink the drag ghost so the drop target underneath stays visible —
+        // aiming a clip into a collection needs to see the collection.
+        dragGhostScale={0.5}
         onOpenNode={handleOpenNode}
         openOnClick={openOnClick}
         commandPolicy={commandPolicy}
@@ -378,10 +382,15 @@ export function GraphTimelineView({
             ) : (
               <GraphBoard
                 focusedId={focusedId}
+                breadcrumb={
+                  <GraphBreadcrumb projectId={projectId} timelinePath={timelinePath} />
+                }
                 surface={surface}
                 onSurfaceChange={setSurface}
                 itemSize={itemSize}
                 onItemSizeChange={setItemSize}
+                pixelsPerSecond={pixelsPerSecond}
+                onPixelsPerSecondChange={setPixelsPerSecond}
                 previewOn={previewOn}
                 onTogglePreview={() => setPreviewOn((current) => !current)}
                 timeChannel={timeChannel}

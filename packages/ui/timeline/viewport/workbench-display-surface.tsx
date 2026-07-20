@@ -808,26 +808,33 @@ export function WorkbenchSplitPane({
     return clamp(height, MIN_SURFACE_HEIGHT, maxFromViewport);
   }, [getManualMaxSurfaceHeight]);
 
-  const fitSurfaceToViewport = useCallback(() => {
+  /**
+   * The height the surface OPENS at: a flat third of the viewport.
+   *
+   * This deliberately replaces a measure-and-fill pass that took whatever
+   * space the lower pane left over. That produced a surface whose opening
+   * size depended on how much content happened to be below it — a tall
+   * timeline opened a squashed preview, a nearly empty one opened a giant
+   * preview, and neither proportion was one anybody chose. A fixed fraction
+   * is predictable, and the moment the user drags the divider their height
+   * takes over for good (see the restore path in the mount effect).
+   */
+  const initialSurfaceHeight = useCallback(() => {
     if (dragStartRef.current) return;
+    if (typeof window === "undefined") return;
 
-    const root = rootRef.current;
     const divider = dividerRef.current;
-    const lowerPane = lowerPaneRef.current;
-    if (!root || !divider || !lowerPane || typeof window === "undefined") return;
+    if (!divider) return;
 
-    const rootTop = Math.max(0, root.getBoundingClientRect().top);
-    const availableHeight = getViewportBoundaryBottom() - rootTop;
     const dividerHeight = divider.getBoundingClientRect().height;
-    const lowerPaneHeight = lowerPane.getBoundingClientRect().height;
-    const maxSurfaceHeight = Math.max(
-      MIN_SURFACE_HEIGHT,
-      availableHeight - dividerHeight,
-    );
-    const nextHeight = clampSurfaceHeight(
-      availableHeight - dividerHeight - lowerPaneHeight,
-      maxSurfaceHeight,
-    );
+    // A third of what the user can actually SEE, not of a <main> that may
+    // run far below the fold — getViewportBoundaryBottom already resolves
+    // that, and measuring from the root's top keeps the fraction honest
+    // when the board sits below other chrome.
+    const rootTop = Math.max(0, rootRef.current?.getBoundingClientRect().top ?? 0);
+    const availableHeight = getViewportBoundaryBottom() - rootTop;
+    const maxSurfaceHeight = Math.max(MIN_SURFACE_HEIGHT, availableHeight - dividerHeight);
+    const nextHeight = clampSurfaceHeight(availableHeight / 3, maxSurfaceHeight);
 
     setSurfaceHeight((height) =>
       Math.abs(height - nextHeight) < 0.5 ? height : nextHeight,
@@ -859,7 +866,7 @@ export function WorkbenchSplitPane({
     if (!didInitialSizeRef.current) {
       didInitialSizeRef.current = true;
       if (restoredSurfaceHeight !== undefined) clampToViewport();
-      else fitSurfaceToViewport();
+      else initialSurfaceHeight();
     }
 
     const root = rootRef.current;
@@ -883,7 +890,7 @@ export function WorkbenchSplitPane({
         clampFrameRef.current = null;
       }
     };
-  }, [fitSurfaceToViewport, clampToViewport, scheduleClamp, restoredSurfaceHeight]);
+  }, [initialSurfaceHeight, clampToViewport, scheduleClamp, restoredSurfaceHeight]);
 
   // Report the height so a consumer can restore it after an unmount.
   useEffect(() => {

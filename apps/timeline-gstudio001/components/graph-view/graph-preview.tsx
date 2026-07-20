@@ -88,54 +88,83 @@ export type PreviewCardSpans = ReadonlyMap<string, Readonly<{ start: number; end
 
 const PreviewCardSpansContext = createContext<PreviewCardSpans | null>(null);
 
+/** The global-clock windows the pane is playing, or null when it is on the
+ *  live projection (no manifest yet). Sub-rows use it both to gate their
+ *  playhead — only shown when a manifest exists, since only then do their
+ *  local times line up with the global clock — and to find their own window. */
+export function usePreviewCardSpans(): PreviewCardSpans | null {
+  return useContext(PreviewCardSpansContext);
+}
+
+/**
+ * The global-clock window of every node the manifest touches, keyed by node
+ * id — each media leaf by its own id, AND every collection on a leaf's path
+ * by the union of the leaves beneath it.
+ *
+ * This is what lets ONE clock drive a playhead on every row of the tree, not
+ * just the focused strip: a sub-timeline row for collection C looks up C's
+ * children here (media by id, nested collections by their aggregated window)
+ * and maps the same channel time onto its own layout.
+ *
+ * At the focused level this agrees exactly with the older depth-1-only map it
+ * replaces: a focused child collection D keyed here by D aggregates precisely
+ * the leaves that had D at path index 1, and a direct media child keys by its
+ * own id either way.
+ */
 function cardSpansOf(manifest: PlaybackManifest): PreviewCardSpans {
   const spans = new Map<string, { start: number; end: number }>();
-  for (const leaf of manifest.leaves) {
-    // collectionPath[0] is the focused collection itself; [1] is the child
-    // whose CARD the strip draws. A leaf that is a direct media child of the
-    // focused collection has no [1] — that leaf IS its own card.
-    const key = leaf.collectionPath[1] ?? leaf.id;
-    const end = leaf.timelineStart + leaf.timelineDuration;
+  const widen = (key: string, start: number, end: number) => {
     const current = spans.get(key);
     spans.set(
       key,
       current
-        ? { start: Math.min(current.start, leaf.timelineStart), end: Math.max(current.end, end) }
-        : { start: leaf.timelineStart, end },
+        ? { start: Math.min(current.start, start), end: Math.max(current.end, end) }
+        : { start, end },
     );
+  };
+  for (const leaf of manifest.leaves) {
+    const end = leaf.timelineStart + leaf.timelineDuration;
+    widen(leaf.id, leaf.timelineStart, end);
+    // Every collection ANCESTOR on the path gets this leaf folded into its
+    // window (collectionPath[0] is the focused root; deeper entries are the
+    // nested collections whose sub-rows need their own window).
+    for (const collectionId of leaf.collectionPath) widen(collectionId, leaf.timelineStart, end);
   }
   return spans;
 }
 
-type PlayheadCard = Readonly<{ width: number; startTime: number; endTime: number }>;
+type ChildSpan = Readonly<{ startTime: number; endTime: number; width: number }>;
 
 /**
- * One card per focused-level child: WIDTH from the projection (that is the
- * strip's own layout, which the pane has no say in) and TIME from the model
- * the pane is playing, so the marker can never point at a card the surface
- * is not showing.
+ * Each direct child of `collectionId`, with its time window in the clock the
+ * pane is playing and the strip WIDTH the child is drawn at. The single source
+ * both the strip and grid markers build from — and, because it is parameterised
+ * on any collection id, the same thing a nested sub-row uses for its own
+ * children. That is what makes the playhead one continuous clock across the
+ * tree rather than a per-surface affordance.
  *
- * Zips by INDEX against `getChildren` rather than matching clip ids: a
+ * TIME comes from the manifest spans when present (the model the pane plays),
+ * WIDTH always from the projection (the strip's own layout, which the pane has
+ * no say in). Zips by INDEX against `getChildren` rather than clip id: a
  * projection clip reports `detail.sourceClipId` when one exists, which is not
- * the node id the manifest paths are built from. `graphChildrenToClips` maps
- * over the same `getChildren` array, so index alignment is guaranteed where
- * id equality is not.
+ * the node id the manifest paths are built from, but `graphChildrenToClips`
+ * maps over the same `getChildren` array, so index alignment holds.
  */
-function buildPlayheadCards(
+function childSpans(
   graph: CollectionsGraph,
   details: DetailsById,
-  focusedId: string,
+  collectionId: string,
   spans: PreviewCardSpans | null,
-): PlayheadCard[] {
-  const childIds = getChildren(graph, parseNodeId(focusedId));
-  return graphChildrenToClips(graph, details, focusedId).map((clip, index) => {
+  pixelsPerSecond: number,
+): ChildSpan[] {
+  const childIds = getChildren(graph, parseNodeId(collectionId));
+  return graphChildrenToClips(graph, details, collectionId).map((clip, index) => {
     const width =
       clip.kind === "collection"
         ? Math.max(MIN_ITEM_WIDTH, COLLECTION_CARD_PX)
-        : durationToWidth(clip.duration, TIMELINE_PPS);
-    // A card with no manifest span is one contributing no playback time (an
-    // empty collection). Its projection span is the only thing left to say,
-    // and it is bounded by the neighbours that DO carry manifest times.
+        : durationToWidth(clip.duration, pixelsPerSecond);
+    // A child with no manifest span contributes no playback time (an empty
+    // collection); its projection span is all that is left to say.
     const span = spans?.get(childIds[index] as string);
     return {
       width,
@@ -145,7 +174,7 @@ function buildPlayheadCards(
   });
 }
 
-function buildPlayheadMap(cards: readonly PlayheadCard[]): PlayheadMap {
+function buildPlayheadMap(cards: readonly ChildSpan[]): PlayheadMap {
   const times: number[] = [];
   const xs: number[] = [];
   let x = 0;
@@ -188,7 +217,7 @@ type GridPlayheadMap = Readonly<{
 }>;
 
 function buildGridPlayheadMap(
-  clips: readonly TimelineClip[],
+  cells: readonly ChildSpan[],
   cols: number,
   cellWidth: number,
   cellHeight: number,
@@ -196,11 +225,11 @@ function buildGridPlayheadMap(
   const columns = Math.max(1, cols);
   const starts: number[] = [];
   const ends: number[] = [];
-  for (const clip of clips) {
-    starts.push(clip.startTime);
-    ends.push(clip.startTime + clip.duration);
+  for (const cell of cells) {
+    starts.push(cell.startTime);
+    ends.push(cell.endTime);
   }
-  const count = clips.length;
+  const count = cells.length;
   const total = count > 0 ? ends[count - 1] : 0;
   const cellX = (index: number) => (index % columns) * (cellWidth + GRID_GAP);
   const cellY = (index: number) =>
@@ -247,9 +276,17 @@ function buildGridPlayheadMap(
 export function GraphPlayhead({
   focusedId,
   channel,
+  pixelsPerSecond,
+  activeWindow,
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
+  pixelsPerSecond: number;
+  /** When set (sub-rows), the marker is hidden while the global clock is
+   *  outside this collection's window — only the row the clock is currently
+   *  inside shows it, so one clock appears to sweep through the tree. The
+   *  focused row passes none and always shows it. */
+  activeWindow?: Readonly<{ start: number; end: number }>;
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
@@ -266,10 +303,17 @@ export function GraphPlayhead({
       if (graph !== lastGraph || details !== lastDetails) {
         lastGraph = graph;
         lastDetails = details;
-        map = buildPlayheadMap(buildPlayheadCards(graph, details, focusedId, spans));
+        map = buildPlayheadMap(childSpans(graph, details, focusedId, spans, pixelsPerSecond));
       }
       const line = lineRef.current;
-      if (line && map) line.style.transform = `translateX(${map.xAt(channel.get())}px)`;
+      if (!line || !map) return;
+      const time = channel.get();
+      // 40ms of slack so the marker doesn't blink off at the exact seam
+      // between two adjacent collections.
+      const inside =
+        !activeWindow || (time >= activeWindow.start - 0.04 && time <= activeWindow.end + 0.04);
+      line.style.display = inside ? "" : "none";
+      if (inside) line.style.transform = `translateX(${map.xAt(time)}px)`;
     };
     paint();
     const unsubscribeTime = channel.subscribe(paint);
@@ -280,7 +324,7 @@ export function GraphPlayhead({
       unsubscribeStore();
       unsubscribeDetails();
     };
-  }, [store, detailsStore, focusedId, channel, spans]);
+  }, [store, detailsStore, focusedId, channel, spans, pixelsPerSecond, activeWindow]);
 
   return (
     <div
@@ -296,9 +340,11 @@ export function GraphPlayhead({
 export function PlayheadScrubBand({
   focusedId,
   channel,
+  pixelsPerSecond,
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
+  pixelsPerSecond: number;
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
@@ -320,7 +366,7 @@ export function PlayheadScrubBand({
       if (graph !== mapGraph || details !== mapDetails || !map) {
         mapGraph = graph;
         mapDetails = details;
-        map = buildPlayheadMap(buildPlayheadCards(graph, details, focusedId, spans));
+        map = buildPlayheadMap(childSpans(graph, details, focusedId, spans, pixelsPerSecond));
       }
       const rect = scroller.getBoundingClientRect();
       const styles = getComputedStyle(scroller);
@@ -365,7 +411,7 @@ export function PlayheadScrubBand({
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
-  }, [store, detailsStore, focusedId, channel, spans]);
+  }, [store, detailsStore, focusedId, channel, spans, pixelsPerSecond]);
 
   return (
     <div
@@ -381,13 +427,18 @@ export function GraphGridPlayhead({
   focusedId,
   channel,
   cellHeight,
+  pixelsPerSecond,
+  activeWindow,
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
   cellHeight: number;
+  pixelsPerSecond: number;
+  activeWindow?: Readonly<{ start: number; end: number }>;
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
   const lineRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -419,14 +470,19 @@ export function GraphGridPlayhead({
         lastColumns = columns;
         lastCellWidth = cellWidth;
         map = buildGridPlayheadMap(
-          graphChildrenToClips(graph, details, focusedId),
+          childSpans(graph, details, focusedId, spans, pixelsPerSecond),
           columns,
           cellWidth,
           cellHeight,
         );
       }
       if (!map) return;
-      const { x, y } = map.posAt(channel.get());
+      const time = channel.get();
+      const inside =
+        !activeWindow || (time >= activeWindow.start - 0.04 && time <= activeWindow.end + 0.04);
+      line.style.display = inside ? "" : "none";
+      if (!inside) return;
+      const { x, y } = map.posAt(time);
       line.style.transform = `translate(${x}px, ${y}px)`;
       line.style.height = `${map.rowHeight}px`;
     };
@@ -443,7 +499,7 @@ export function GraphGridPlayhead({
       unsubscribeDetails();
       observer?.disconnect();
     };
-  }, [store, detailsStore, focusedId, channel, cellHeight]);
+  }, [store, detailsStore, focusedId, channel, cellHeight, spans, pixelsPerSecond, activeWindow]);
 
   return (
     <div
@@ -460,13 +516,16 @@ export function GraphGridScrubSurface({
   focusedId,
   channel,
   cellHeight,
+  pixelsPerSecond,
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
   cellHeight: number;
+  pixelsPerSecond: number;
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
   const surfaceRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -498,7 +557,7 @@ export function GraphGridScrubSurface({
         mapColumns = columns;
         mapCellWidth = cellWidth;
         map = buildGridPlayheadMap(
-          graphChildrenToClips(graph, details, focusedId),
+          childSpans(graph, details, focusedId, spans, pixelsPerSecond),
           columns,
           cellWidth,
           cellHeight,
@@ -553,7 +612,7 @@ export function GraphGridScrubSurface({
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
-  }, [store, detailsStore, focusedId, channel, cellHeight]);
+  }, [store, detailsStore, focusedId, channel, cellHeight, spans, pixelsPerSecond]);
 
   return (
     <div

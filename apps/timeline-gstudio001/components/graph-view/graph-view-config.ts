@@ -6,6 +6,19 @@ export type FocusSurface = "strip" | "grid";
 
 export const TIMELINE_PPS = 40;
 
+/**
+ * Horizontal zoom: the pixels-per-second a strip lays duration-derived clips
+ * out at. Independent of ITEM_SIZE_HEIGHTS, which scales height only — this
+ * is the axis that makes a 0.4s clip and a 40s clip legible at once.
+ *
+ * Collection cards are deliberately NOT affected: they render at a fixed
+ * COLLECTION_CARD_PX because their width stands for "a nested timeline", not
+ * for elapsed time.
+ */
+export const MIN_TIMELINE_PPS = 6;
+export const MAX_TIMELINE_PPS = 200;
+export const DEFAULT_TIMELINE_PPS = TIMELINE_PPS;
+
 export const GRID_CELL_WIDTH = 160;
 export const GRID_GAP = 8;
 

@@ -4,6 +4,7 @@ import { AuthGate } from '@/components/auth/auth-gate';
 import { AuthProvider } from '@/components/auth/auth-provider';
 import { TimelineRouteFadeController } from '@/components/timeline/timeline-route-fade';
 import { TimelineSidebar } from '@/components/timeline/timeline-sidebar';
+import { Toaster } from '@/components/core/sonner';
 import './globals.css'; // Global styles
 
 export const metadata: Metadata = {
@@ -15,6 +16,9 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
     <html lang="en">
       <body suppressHydrationWarning>
+        {/* App-wide: the sidebar renders on every route, so anything it
+            toasts needs a surface here rather than inside one view. */}
+        <Toaster />
         <TimelineRouteFadeController />
         <AuthProvider>
           <AuthGate>

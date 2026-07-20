@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useMemo, useState } from "react";
-import { ChevronsRight, Folder, FolderOpen } from "lucide-react";
+import { FolderDown, Folder, FolderOpen } from "lucide-react";
 
 import {
   VirtualGrid,
@@ -20,13 +20,20 @@ import { hydrateTimeline } from "./graph-hydration";
 import { NativeDropStrip } from "./graph-native-drop";
 import { GraphViewNavContext } from "./graph-navigation";
 import {
+  GraphGridPlayhead,
+  GraphGridScrubSurface,
+  GraphPlayhead,
+  PlayheadScrubBand,
+  usePreviewCardSpans,
+  type PreviewTimeChannel,
+} from "./graph-preview";
+import {
   GRID_CELL_WIDTH,
   GRID_GAP,
   ITEM_SIZE_HEIGHTS,
   MAX_SUBTREE_DEPTH,
   SUBTIMELINE_INDENT_PX,
   SUBTIMELINE_GRID_MAX_HEIGHT,
-  TIMELINE_PPS,
   type FocusSurface,
   type ItemSize,
 } from "./graph-view-config";
@@ -73,16 +80,30 @@ function SubTimelineNode({
   depth,
   surface,
   itemSize,
+  pixelsPerSecond,
+  previewOn,
+  timeChannel,
 }: Readonly<{
   collectionId: NodeId;
   depth: number;
   surface: FocusSurface;
   itemSize: ItemSize;
+  pixelsPerSecond: number;
+  previewOn: boolean;
+  timeChannel: PreviewTimeChannel;
 }>) {
   const nav = useContext(GraphViewNavContext);
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
+  const spans = usePreviewCardSpans();
   const id = collectionId as string;
+
+  // This row shows a playhead only when the pane is on the manifest (spans
+  // present) AND the clock actually visits this collection (it has a window).
+  // On the projection fallback a sub-row's local times don't line up with the
+  // global clock, so the marker would lie — better absent for that ~2.5s.
+  const window = spans?.get(id);
+  const showPlayhead = previewOn && window !== undefined;
 
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -181,7 +202,7 @@ function SubTimelineNode({
           onClick={() => nav?.openTimeline(collectionId)}
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
         >
-          <ChevronsRight aria-hidden="true" className="h-4 w-4" />
+          <FolderDown aria-hidden="true" className="h-4 w-4" />
         </button>
       </div>
 
@@ -198,23 +219,61 @@ function SubTimelineNode({
             // Grid mode is page-wide: mirror the focused grid (no NativeDropStrip
             // wrapper — the focused grid has none either, so native drops are a
             // strip-mode affordance).
-            <VirtualGrid
-              collectionId={collectionId}
-              cellWidth={GRID_CELL_WIDTH}
-              cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
-              gap={GRID_GAP}
-              height={SUBTIMELINE_GRID_MAX_HEIGHT}
-              className="bg-black/20"
-            />
+            <div className="relative">
+              <VirtualGrid
+                collectionId={collectionId}
+                cellWidth={GRID_CELL_WIDTH}
+                cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
+                gap={GRID_GAP}
+                height={SUBTIMELINE_GRID_MAX_HEIGHT}
+                overlay={
+                  showPlayhead ? (
+                    <GraphGridPlayhead
+                      focusedId={id}
+                      channel={timeChannel}
+                      cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
+                      pixelsPerSecond={pixelsPerSecond}
+                      activeWindow={window}
+                    />
+                  ) : undefined
+                }
+                className="bg-black/20"
+              />
+              {showPlayhead && (
+                <GraphGridScrubSurface
+                  focusedId={id}
+                  channel={timeChannel}
+                  cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
+                  pixelsPerSecond={pixelsPerSecond}
+                />
+              )}
+            </div>
           ) : (
             <NativeDropStrip collectionId={id}>
               <VirtualStrip
                 collectionId={collectionId}
-                pixelsPerSecond={TIMELINE_PPS}
+                pixelsPerSecond={pixelsPerSecond}
                 itemHeight={ITEM_SIZE_HEIGHTS[itemSize].strip}
                 itemDragActivation="hold"
+                overlay={
+                  showPlayhead ? (
+                    <GraphPlayhead
+                      focusedId={id}
+                      channel={timeChannel}
+                      pixelsPerSecond={pixelsPerSecond}
+                      activeWindow={window}
+                    />
+                  ) : undefined
+                }
                 className="bg-black/20"
               />
+              {showPlayhead && (
+                <PlayheadScrubBand
+                  focusedId={id}
+                  channel={timeChannel}
+                  pixelsPerSecond={pixelsPerSecond}
+                />
+              )}
             </NativeDropStrip>
           )}
 
@@ -226,6 +285,9 @@ function SubTimelineNode({
                 depth={depth + 1}
                 surface={surface}
                 itemSize={itemSize}
+                pixelsPerSecond={pixelsPerSecond}
+                previewOn={previewOn}
+                timeChannel={timeChannel}
               />
             ))}
         </div>
@@ -238,7 +300,17 @@ export function SubTimelines({
   focusedId,
   surface,
   itemSize,
-}: Readonly<{ focusedId: string; surface: FocusSurface; itemSize: ItemSize }>) {
+  pixelsPerSecond,
+  previewOn,
+  timeChannel,
+}: Readonly<{
+  focusedId: string;
+  surface: FocusSurface;
+  itemSize: ItemSize;
+  pixelsPerSecond: number;
+  previewOn: boolean;
+  timeChannel: PreviewTimeChannel;
+}>) {
   const childIds = useCollectionChildIds(parseNodeId(focusedId));
   if (childIds.length === 0) return null;
 
@@ -251,6 +323,9 @@ export function SubTimelines({
           depth={0}
           surface={surface}
           itemSize={itemSize}
+          pixelsPerSecond={pixelsPerSecond}
+          previewOn={previewOn}
+          timeChannel={timeChannel}
         />
       ))}
     </div>

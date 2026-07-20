@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { Folder } from "lucide-react";
+import { FolderDown } from "lucide-react";
 
 import {
   mediaDurationSeconds,
@@ -46,7 +46,12 @@ const GraphClipContent = memo(function GraphClipContent({
   if (node.kind === "collection") {
     const hydrated = detail?.hydrated === true;
     const count = hydrated ? childCount : (detail?.itemCount ?? childCount);
-    const previews = detail?.previewItems?.slice(0, 3) ?? [];
+    // FIRST and LAST only — the card says "a timeline runs from here to
+    // there", which two frames tell and three do not. A single-item
+    // collection has no "last" distinct from its first, so it shows one
+    // frame across the full width rather than the same image twice.
+    const all = detail?.previewItems ?? [];
+    const previews = all.length > 1 ? [all[0], all[all.length - 1]] : all;
     const displayName = title ?? node.name;
     // Opening is the SHELL's job now: a plain click on a collection card
     // routes through the provider's onOpenNode (see graph-timeline-view) —
@@ -61,7 +66,9 @@ const GraphClipContent = memo(function GraphClipContent({
           isDragSource ? "opacity-40" : "",
         ].join(" ")}
       >
-        <span className="flex min-h-0 flex-1 gap-0.5 overflow-hidden">
+        {/* `relative` so the folder mark can centre itself over the seam
+            between the two frames rather than sitting in the label strip. */}
+        <span className="relative flex min-h-0 flex-1 gap-0.5 overflow-hidden">
           {previews.length === 0 ? (
             <span className="flex flex-1 items-center justify-center text-[9px] text-zinc-500">
               {hydrated ? "Empty" : "Open to load"}
@@ -79,12 +86,17 @@ const GraphClipContent = memo(function GraphClipContent({
               />
             ))
           )}
+          {previews.length > 0 && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute left-1/2 top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-zinc-950/70 text-sky-300 ring-1 ring-sky-400/40 backdrop-blur-[2px]"
+            >
+              <FolderDown className="h-3.5 w-3.5" />
+            </span>
+          )}
         </span>
         <span className="mt-1 flex items-center justify-between gap-1">
-          <span className="flex min-w-0 items-center gap-1">
-            <Folder aria-hidden="true" className="h-3 w-3 shrink-0 text-sky-400" />
-            <span className="truncate text-[10px] font-semibold text-zinc-100">{displayName}</span>
-          </span>
+          <span className="truncate text-[10px] font-semibold text-zinc-100">{displayName}</span>
           <span className="shrink-0 font-mono text-[9px] text-zinc-400">{count}</span>
         </span>
       </span>
