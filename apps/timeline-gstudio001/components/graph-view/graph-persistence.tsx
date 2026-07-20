@@ -46,9 +46,29 @@ export function PersistenceBridge({
         const claimed = claimPendingPaletteDetails(change.patch);
         if (claimed) detailsStore.merge(claimed);
 
+        // A rename rides a `nodes-updated` patch. The child document is the
+        // source of truth for a collection's title (the server derives every
+        // parent's collection-clip title from it), so the graph rename is
+        // persisted as a TITLE write here — including when it arrives via
+        // undo/redo, which is what keeps the two representations from
+        // diverging again the moment someone undoes a rename.
+        if (change.patch.type === "nodes-updated") {
+          for (const update of change.patch.updates) {
+            if (update.after.kind !== "collection") continue;
+            if (update.after.name === update.before.name) continue;
+            void graphDocumentsGateway.renameTimeline(update.nodeId as string, update.after.name);
+          }
+        }
+
         const current = detailsStore.read();
         const affected = collectAffectedCollectionIds(change.graph, change.patch).filter(
-          (id) => graphDocumentsGateway.peek(id) !== null && current[id]?.hydrated !== false,
+          (id) =>
+            graphDocumentsGateway.peek(id) !== null &&
+            current[id]?.hydrated !== false &&
+            // A conflicted document's graph is stale: `writeClips` refuses it
+            // anyway, and filtering here keeps the sync log from reporting a
+            // write that did not happen.
+            !graphDocumentsGateway.isConflicted(id),
         );
         for (const id of affected) {
           graphDocumentsGateway.writeClips(id, graphChildrenToClips(change.graph, current, id));

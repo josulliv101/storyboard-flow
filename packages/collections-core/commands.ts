@@ -52,6 +52,13 @@ export type CollectionsCommand =
       /** A media node to re-trim; structure is untouched. */
       nodeId: NodeId;
       update: MediaUpdate;
+    }>
+  | Readonly<{
+      type: "rename-node";
+      /** Any node — media or collection. Structure is untouched. */
+      nodeId: NodeId;
+      /** Non-blank; callers trim. */
+      name: string;
     }>;
 
 export type CommandRejection =
@@ -70,6 +77,8 @@ export type CommandRejection =
     }>
   /** `update-media` targeted a collection (not a media node). */
   | Readonly<{ reason: "not-media-node"; nodeId: NodeId }>
+  /** `rename-node` was given a blank name. */
+  | Readonly<{ reason: "invalid-node-name"; nodeId: NodeId }>
   /** `update-media`'s payload doesn't match the node's mediaKind, or carries non-finite values. */
   | Readonly<{ reason: "invalid-media-update"; nodeId: NodeId }>
   | Readonly<{ reason: "nothing-to-move" }>
@@ -94,9 +103,12 @@ export function applyCommand(
   graph: CollectionsGraph,
   command: CollectionsCommand
 ): Result<ApplyCommandSuccess, CommandRejection> {
-  // Data mutation (media trim) — no target parent/index, so handle it first.
+  // Data mutations — no target parent/index, so handle them first.
   if (command.type === "update-media") {
     return applyMediaUpdate(graph, command.nodeId, command.update);
+  }
+  if (command.type === "rename-node") {
+    return applyRename(graph, command.nodeId, command.name);
   }
 
   const { toParentId, toIndex } = command;
@@ -305,6 +317,36 @@ function childrenEqualForParents(
     }
   }
   return true;
+}
+
+/**
+ * A node's display name is graph DATA, and until this existed there was no
+ * way to change it — so an app that let users rename a collection had to keep
+ * the new name somewhere else, leaving `node.name` stale for everything that
+ * reads it: card `aria-label`s, the drag ghost, and every pickup/drop
+ * announcement. Renaming rides the same `nodes-updated` patch as a media
+ * trim, so it inherits undo/redo, the change feed, and structural sharing.
+ */
+function applyRename(
+  graph: CollectionsGraph,
+  nodeId: NodeId,
+  name: string
+): Result<ApplyCommandSuccess, CommandRejection> {
+  const node = graph.nodesById.get(nodeId);
+  if (!node) return { ok: false, error: { reason: "missing-node", nodeId } };
+  // Names are shown to people; a blank one leaves a nameless card and an
+  // announcement that says "Moved "" to …". Callers trim before dispatching.
+  if (name.trim().length === 0) {
+    return { ok: false, error: { reason: "invalid-node-name", nodeId } };
+  }
+  if (node.name === name) return { ok: false, error: { reason: "same-position" } };
+
+  const after: CollectionItemNode = { ...node, name };
+  const patch: CollectionsPatch = {
+    type: "nodes-updated",
+    updates: [{ nodeId, before: node, after }],
+  };
+  return { ok: true, value: { graph: applyPatch(graph, patch), patch } };
 }
 
 function applyMediaUpdate(

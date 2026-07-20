@@ -448,13 +448,55 @@ describe("graph-documents-gateway", () => {
     expect(second.writes?.map((write) => write.document.id)).toEqual(["b"]);
     expect(second.writes?.[0].expectedRevision).toBe(1);
 
-    // The next edit to "a" writes against the reloaded revision and clears
-    // the conflict message on success.
+    // The next edit to "a" is BLOCKED, and this expectation is the fix.
+    //
+    // It used to assert the opposite — that the edit goes out against the
+    // reloaded revision — which reads reasonable and is precisely the data
+    // loss: clip writes are whole-collection projections of the LIVE GRAPH,
+    // and the reload updated only this cache. Letting that write through
+    // means replacing the other writer's content with a stale collection,
+    // against a revision fresh enough that the server accepts it.
     gateway.writeClips("a", [clip("a3")]);
     await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
-    const third = batchesOf(calls)[2];
-    expect(third.writes?.[0].expectedRevision).toBe(5);
-    expect(gateway.lastError()).toBeNull();
+    expect(batchesOf(calls)).toHaveLength(2); // no third batch
+    expect(clipIds(gateway.peek("a"))).toEqual(["a-server"]); // cache untouched
+    expect(gateway.lastError()).toContain("not being saved");
+  });
+
+  it("lifts the conflict block when the graph is rebuilt via refresh", async () => {
+    let conflictOnce = true;
+    const calls = installFetch((call) => {
+      if (call.method === "GET") {
+        return jsonResponse({ document: doc(call.id, [clip(`${call.id}-server`)]), revision: 5 });
+      }
+      if (conflictOnce && call.writes?.some((write) => write.document.id === "a")) {
+        conflictOnce = false;
+        return jsonResponse({ error: "conflict", conflicts: [{ id: "a", actualRevision: 5 }] }, 409);
+      }
+      return okResults(call.writes);
+    });
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+
+    gateway.writeClips("a", [clip("a2")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gateway.isConflicted("a")).toBe(true);
+
+    // Blocked while conflicted.
+    gateway.writeClips("a", [clip("a3")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(1);
+
+    // `refresh` is what re-enters the graph view and rebuilds the graph from
+    // freshly fetched documents — the reconciliation the gate waits for.
+    gateway.refresh();
+    expect(gateway.isConflicted("a")).toBe(false);
+    await gateway.ensure("a");
+    gateway.writeClips("a", [clip("a4")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(2);
+    expect(clipIds(batchesOf(calls)[1].writes?.[0].document)).toEqual(["a4"]);
   });
 
   it("reportIssue surfaces app-reported problems in the banner without touching gateway errors", async () => {

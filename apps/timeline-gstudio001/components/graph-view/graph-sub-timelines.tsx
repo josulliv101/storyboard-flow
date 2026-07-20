@@ -115,7 +115,13 @@ function SubTimelineNode({
   const commitEditing = () => {
     setEditing(false);
     const next = draft.trim();
-    if (next && next !== name) void graphDocumentsGateway.renameTimeline(id, next);
+    if (!next || next === name) return;
+    // Rename the GRAPH node, not just the document. The card's visible title
+    // reads the gateway, but its aria-label, the drag ghost, and every pickup
+    // and drop announcement read `node.name` — updating only the document
+    // left those speaking the old name indefinitely. The PersistenceBridge
+    // turns this patch into the document write (and does the same on undo).
+    store.dispatch({ type: "rename-node", nodeId: collectionId, name: next });
   };
 
   return (

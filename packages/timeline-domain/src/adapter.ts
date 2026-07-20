@@ -400,8 +400,11 @@ export function collectUnhydratedDropTargets(
   command: CollectionsCommand,
   details: DetailsById,
 ): readonly string[] {
-  // update-media places nothing anywhere; it only re-trims in place.
-  if (command.type === "update-media") return [];
+  // Only the PLACING commands can land content somewhere. Checked positively
+  // rather than by excluding the data commands one at a time, so a new
+  // command type defaults to "places nothing" instead of failing to compile
+  // (or worse, being forgotten).
+  if (command.type !== "move-nodes" && command.type !== "add-nodes") return [];
   const target = command.toParentId as string;
   return details[target]?.hydrated === false ? [target] : [];
 }

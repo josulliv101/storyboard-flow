@@ -168,6 +168,9 @@ type RecordedPatch = { id: string; clipIds: string[] };
 
 type GraphApi = {
   documents: Map<string, FixtureDocument>;
+  /** Live compare-and-set ledger — a test can bump it to stand in for another
+   *  writer having saved since this session read the document. */
+  revisions: Map<string, number>;
   /** One entry per document write, in arrival order (batch writes fan out). */
   patches: RecordedPatch[];
   patchesFor: (id: string) => RecordedPatch[];
@@ -299,6 +302,7 @@ async function installGraphApi(
 
   return {
     documents,
+    revisions,
     patches,
     patchesFor: (id) => patches.filter((patch) => patch.id === id),
     batches,
@@ -536,6 +540,20 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
       .toBe("Opening Scene");
+
+    // The GRAPH node was renamed too, which is what the card's accessible
+    // name, the drag ghost, and every DnD announcement read. Renaming used to
+    // update only the document, so the visible title changed while screen
+    // readers kept hearing "Scene A" indefinitely.
+    const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
+    await expect(card).toHaveAttribute("aria-label", /^Opening Scene \(collection/);
+
+    // Undo restores BOTH representations rather than splitting them again.
+    await undoButton(page).click();
+    await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
+    await expect
+      .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
+      .toBe("Scene A");
   });
 
   test("surface toggle is page-wide: sub-graph rows follow grid/strip mode", async ({ page }) => {
@@ -1499,6 +1517,98 @@ test.describe("graph view E2E", () => {
     await expect(page.locator("[data-native-drop-status]")).toContainText(
       /could not be uploaded/i,
     );
+  });
+
+  test("a remote clip survives the local edit that follows a write conflict", async ({ page }) => {
+    // The data-loss path this guards: clip writes are whole-collection
+    // projections of the LIVE GRAPH. On a 409 the gateway reloads the
+    // document, but the graph keeps the pre-conflict local edit — so the next
+    // edit used to re-project that stale collection against the now-fresh
+    // revision, which the server accepts, deleting the other writer's clip.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+
+    // Another writer saves first: a new clip lands and the revision moves on.
+    api.documents.get(PROJECT_ID)!.clips.push(mediaClip("remote-clip", "image", 4, 4));
+    api.revisions.set(PROJECT_ID, (api.revisions.get(PROJECT_ID) ?? 1) + 1);
+
+    // Local edit #1 → save → loses compare-and-set.
+    await holdDrag(
+      page,
+      projectStrip.locator('[data-node-id="alpha"]'),
+      projectStrip.locator('[data-node-id="charlie"]'),
+      0.85,
+    );
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["bravo", CHILD_ID, "charlie", "alpha"]);
+    await expect(page.getByText(/changed in another view/i)).toBeVisible({ timeout: 15000 });
+
+    // Local edit #2, after the conflict. This is the write that used to
+    // clobber the remote clip.
+    await holdDrag(
+      page,
+      projectStrip.locator('[data-node-id="bravo"]'),
+      projectStrip.locator('[data-node-id="charlie"]'),
+      0.85,
+    );
+    await page.waitForTimeout(2000); // outlast the debounce and any retry
+
+    // The stored document still holds the other writer's clip.
+    expect(api.documents.get(PROJECT_ID)!.clips.map((clip) => clip.id)).toContain("remote-clip");
+    // And no write for the project landed after the conflict.
+    const wroteWithoutRemote = api
+      .patchesFor(PROJECT_ID)
+      .some((patch) => !patch.clipIds.includes("remote-clip"));
+    expect(wroteWithoutRemote).toBe(false);
+  });
+
+  test("a failed drop reports alongside later progress, then expires", async ({ page }) => {
+    // Errors used to be recorded and never removed, and to beat progress
+    // outright in aggregation — so one failure pinned a red banner for the
+    // life of the component and hid every upload after it.
+    await installGraphApi(page);
+    let uploads = 0;
+    let holdSecond: (() => void) | undefined;
+    const secondHeld = new Promise<void>((resolve) => {
+      holdSecond = resolve;
+    });
+    await page.route("**/api/timeline-media/upload", async (route) => {
+      const index = uploads++;
+      if (index === 0) return route.fulfill({ status: 500, body: "nope" });
+      await secondHeld;
+      return route.fulfill({ json: { pathname: `ok-${index}.png`, url: PIXEL } });
+    });
+    await openGraph(page);
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+    const status = page.locator("[data-native-drop-status]");
+
+    const transfer = (name: string) =>
+      page.evaluateHandle((fileName) => {
+        const t = new DataTransfer();
+        t.items.add(new File([new Uint8Array([137, 80, 78, 71])], fileName, { type: "image/png" }));
+        return t;
+      }, name);
+
+    // Drop 1 fails.
+    await dropZone.dispatchEvent("drop", { dataTransfer: await transfer("bad.png"), clientX: 0 });
+    await expect(status).toContainText(/could not be uploaded/i);
+
+    // Drop 2 starts while the failure is still showing: BOTH are reported,
+    // so the new upload is not hidden behind the old error.
+    await dropZone.dispatchEvent("drop", { dataTransfer: await transfer("good.png"), clientX: 0 });
+    await expect(status).toContainText(/Uploading 1 file/i);
+    await expect(status).toContainText(/could not be uploaded/i);
+
+    holdSecond!();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length), { timeout: 15000 })
+      .toBe(5);
+
+    // And the failure clears itself rather than living until unmount.
+    await expect(status).not.toContainText(/could not be uploaded/i, { timeout: 15000 });
+    await expect(status).toHaveText("");
   });
 
   test("sidebar tools are still drag sources after becoming real buttons", async ({ page }) => {
