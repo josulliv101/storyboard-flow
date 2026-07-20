@@ -227,7 +227,13 @@ replacement, never by big-bang rewrite.
    parent (containment). If the product ever needs the *same* collection
    instanced under multiple parents, that is a different model — flag now.
 2. **Hydration ↔ undo policy details:** settled in full. Undo history
-   survives focus navigation via `store.hydrate` (see § 4). Drops into
+   survives focus navigation via `store.hydrate` (see § 4), with a replay
+   guard for the residual hazard: a dormant history entry can stop applying
+   once hydration grows the graph (a hydrated-in id colliding with a
+   sleeping redo, or a filled collection whose add a sleeping undo would
+   remove). `verifyPatchApplies` refuses such entries at undo/redo time and
+   drops the unreachable side of history rather than corrupting the graph.
+   Drops into
    un-hydrated collections are handled by two cooperating layers: every
    VISIBLE placeholder collection hydrates eagerly (the focused timeline's
    children plus the grandchild cards inside their strips — the working set

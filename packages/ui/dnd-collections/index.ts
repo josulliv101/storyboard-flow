@@ -50,10 +50,12 @@ export { hydrateCollection, type HydrateRejection } from "./core/hydrate";
 export {
   applyPatch,
   invertPatch,
+  verifyPatchApplies,
   type CollectionsPatch,
   type NodeAdd,
   type NodeMove,
   type NodeUpdate,
+  type ReplayRejection,
 } from "./core/patches";
 export {
   decodeDropTarget,

@@ -19,6 +19,16 @@ export type CollectionsHistory = Readonly<{
   undo: () => CollectionsPatch | null;
   /** The patch that re-applies the most recently undone entry, or null. */
   redo: () => CollectionsPatch | null;
+  /** What `undo()` WOULD apply, without moving anything — so callers can
+   *  verify a dormant patch still applies before committing to the pop. */
+  peekUndo: () => CollectionsPatch | null;
+  /** What `redo()` would apply, without moving anything. */
+  peekRedo: () => CollectionsPatch | null;
+  /** Drop only the redo branch — it no longer applies to this graph. */
+  clearFuture: () => void;
+  /** Drop only the undo stack. Entries replay in order, so one inapplicable
+   *  entry makes everything beneath it unreachable too. */
+  clearPast: () => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
   /** Oldest-first log of applied entries (undone entries excluded). */
@@ -63,6 +73,20 @@ export function createHistory(
       if (!entry) return null;
       past.push(entry);
       return entry.patch;
+    },
+    peekUndo: () => {
+      const entry = past[past.length - 1];
+      return entry ? invertPatch(entry.patch) : null;
+    },
+    peekRedo: () => {
+      const entry = future[future.length - 1];
+      return entry ? entry.patch : null;
+    },
+    clearFuture: () => {
+      future.length = 0;
+    },
+    clearPast: () => {
+      past.length = 0;
     },
     canUndo: () => past.length > 0,
     canRedo: () => future.length > 0,

@@ -284,11 +284,19 @@ for a document that hadn't loaded yet — with a denormalized subtree. It sits
 between `initialGraph` (initial-only) and `replaceGraph` (wholesale swap
 that must clear history):
 
-- **Undo/redo survives.** Hydration only ADDS nodes under a childless
-  collection, so every history patch still references nodes that exist, in
-  children arrays hydration never rewrites — the stack replays fine. This is
-  what lets an app keep ONE provider (one graph, one undo stack) alive
-  across drill-in navigation while documents hydrate on focus.
+- **Undo/redo survives — with a replay guard.** Hydration only ADDS nodes
+  under a childless collection, so history almost always still replays. This
+  is what lets an app keep ONE provider (one graph, one undo stack) alive
+  across drill-in navigation while documents hydrate on focus. But "almost":
+  hydration can install an id a dormant redo also wants to add (one node in
+  two collections), or fill a collection whose add a dormant undo would
+  remove (orphaned children) — both were reproduced as invariant violations.
+  So `undo()`/`redo()` run each entry through `verifyPatchApplies` first; a
+  refused entry drops its whole side of history (entries replay in order —
+  an inapplicable top makes everything beneath unreachable) and returns
+  false. `applyPatch` itself stays validation-free; the GUARD is at the
+  replay boundary, which is the only place patches meet a graph that may
+  have grown since they were recorded.
 - **Invisible to history and the change feed.** No history entry (undoing
   "the data loaded" is nonsense) and no `onChange`/`subscribeToChanges`
   event (the data came FROM storage; echoing it back invites write loops —

@@ -15,7 +15,7 @@ import {
   type CollectionsCommand,
   type CommandRejection,
 } from "../core/commands";
-import { applyPatch, type CollectionsPatch } from "../core/patches";
+import { applyPatch, verifyPatchApplies, type CollectionsPatch } from "../core/patches";
 import { createHistory, type HistoryEntry } from "../core/history";
 import { isIntentInvalid, type DropIntent } from "../core/intents";
 
@@ -142,9 +142,14 @@ export type CollectionsStore = Readonly<{
   /**
    * Fill an EMPTY collection (a lazy-loaded placeholder) with a denormalized
    * subtree — `replaceGraph`'s incremental sibling for hydrate-on-focus.
-   * Because hydration only ADDS nodes under a childless collection, every
-   * history patch stays replayable, so — unlike `replaceGraph` — undo/redo
-   * SURVIVES. Hydration is IO landing, not user intent: it pushes no history
+   * Because hydration only ADDS nodes under a childless collection, history
+   * ALMOST always stays replayable, so — unlike `replaceGraph` — undo/redo
+   * SURVIVES. Almost: hydration can install an id a dormant redo also wants
+   * to add, or fill a collection whose add a dormant undo would remove.
+   * Undo/redo verify each entry against the live graph before applying
+   * (`verifyPatchApplies`) and drop the side of history a refused entry
+   * makes unreachable — returning false instead of corrupting the graph.
+   * Hydration is IO landing, not user intent: it pushes no history
    * entry and emits nothing on `onChange`/`subscribeToChanges` (undoing "the
    * data loaded", or writing it back to the storage it came from, would both
    * be nonsense). Snapshot subscribers are notified so views re-render.
@@ -310,9 +315,24 @@ export function createCollectionsStore(
     return { ok: true, value: result.value.patch };
   }
 
+  // History assumed every dormant patch stays applicable. That holds under
+  // pure linear history and breaks the moment `hydrate` grows the graph while
+  // entries sleep on either stack: redoing an add whose id was hydrated in
+  // meanwhile put one node in two collections, and undoing the add of a
+  // collection that was hydrated AFTER being added orphaned its children.
+  // So replay VERIFIES before it commits — and when the top entry no longer
+  // applies, that whole side of history is unreachable (entries replay in
+  // order) and is dropped rather than left as a button that corrupts.
   function undo(): boolean {
-    const inverse = history.undo();
+    const inverse = history.peekUndo();
     if (!inverse) return false;
+    if (!verifyPatchApplies(graph, inverse).ok) {
+      history.clearPast();
+      refreshHistoryEntries();
+      notify();
+      return false;
+    }
+    history.undo();
     graph = applyPatch(graph, inverse);
     refreshHistoryEntries();
     pruneMissingSelection();
@@ -321,8 +341,15 @@ export function createCollectionsStore(
   }
 
   function redo(): boolean {
-    const patch = history.redo();
+    const patch = history.peekRedo();
     if (!patch) return false;
+    if (!verifyPatchApplies(graph, patch).ok) {
+      history.clearFuture();
+      refreshHistoryEntries();
+      notify();
+      return false;
+    }
+    history.redo();
     graph = applyPatch(graph, patch);
     refreshHistoryEntries();
     pruneMissingSelection();
