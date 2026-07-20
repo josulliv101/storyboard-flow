@@ -213,9 +213,16 @@ export function applyCommand(
   }
 
   // Multi-node moves preserve the dragged nodes' relative document order,
-  // regardless of selection order.
-  const order = getDocumentOrder(graph);
-  const moving = [...pruned].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+  // regardless of selection order. `getDocumentOrder` is a DFS over the WHOLE
+  // graph, so it is skipped for the single-node case — which is every ordinary
+  // drag — where there is no relative order to preserve.
+  const moving =
+    pruned.length === 1
+      ? pruned
+      : (() => {
+          const order = getDocumentOrder(graph);
+          return [...pruned].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+        })();
   const movingSet = new Set(moving);
 
   // Clamp the post-removal insertion index against the target's children
@@ -257,9 +264,12 @@ export function applyCommand(
 
   // No-op detection AFTER applying: same-position moves (including
   // multi-node arrangements that happen to land where they started) produce
-  // an identical children layout. Cheap check — only affected parents can
-  // differ, and applyPatch shares structure for everything else.
-  if (graphChildrenEqual(graph, nextGraph)) {
+  // an identical children layout. Only the parents this patch TOUCHED can
+  // differ — applyPatch shares every other array by reference — so the
+  // comparison is scoped to them instead of walking every collection.
+  const touchedParents = new Set<NodeId>([toParentId]);
+  for (const parentId of parentByMovingId.values()) touchedParents.add(parentId);
+  if (childrenEqualForParents(graph, nextGraph, touchedParents)) {
     return { ok: false, error: { reason: "same-position" } };
   }
 
@@ -271,12 +281,25 @@ function getRuntimeNodeId(value: unknown): NodeId | null {
   return typeof value.id === "string" ? (value.id as NodeId) : null;
 }
 
-function graphChildrenEqual(a: CollectionsGraph, b: CollectionsGraph): boolean {
+/**
+ * Whether the given parents hold identical children in both graphs.
+ *
+ * Scoped deliberately: a move only rewrites the arrays of the parents it
+ * touched, and `applyPatch` hands every other array through by reference, so
+ * comparing the whole map made a single drag O(collections) for no added
+ * information.
+ */
+function childrenEqualForParents(
+  a: CollectionsGraph,
+  b: CollectionsGraph,
+  parentIds: ReadonlySet<NodeId>
+): boolean {
   if (a.childrenById === b.childrenById) return true;
-  for (const [id, childrenA] of a.childrenById) {
+  for (const id of parentIds) {
+    const childrenA = a.childrenById.get(id);
     const childrenB = b.childrenById.get(id);
     if (childrenA === childrenB) continue;
-    if (!childrenB || childrenA.length !== childrenB.length) return false;
+    if (!childrenA || !childrenB || childrenA.length !== childrenB.length) return false;
     for (let i = 0; i < childrenA.length; i++) {
       if (childrenA[i] !== childrenB[i]) return false;
     }

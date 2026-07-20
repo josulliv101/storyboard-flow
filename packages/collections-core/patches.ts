@@ -126,7 +126,18 @@ function applyMoves(graph: CollectionsGraph, moves: readonly NodeMove[]): Collec
   if (moves.length === 0) return graph;
 
   const nextChildren = new Map(graph.childrenById);
-  const nextParent = new Map(graph.parentById);
+  // A REORDER within one parent leaves every parent link untouched, so the
+  // map can be shared instead of copied. This matters because `parentById`
+  // holds an entry per NODE — cloning it made the commonest drag in the app
+  // (dragging a clip along its own strip) allocate a map the size of the
+  // whole graph. `childrenById` is per-collection and genuinely rewritten, so
+  // it is still copied.
+  // Null when nothing is reparented — the types then make it impossible to
+  // write through to the shared map by accident.
+  const mutableParent = moves.some((move) => move.fromParentId !== move.toParentId)
+    ? new Map(graph.parentById)
+    : null;
+  const nextParent = mutableParent ?? graph.parentById;
 
   // Phase 1: remove from source parents (batch per parent to avoid
   // re-allocating one parent's array once per node).
@@ -156,7 +167,13 @@ function applyMoves(graph: CollectionsGraph, moves: readonly NodeMove[]): Collec
     for (const move of inserts) {
       const index = Math.max(0, Math.min(move.toIndex, children.length));
       children.splice(index, 0, move.nodeId);
-      nextParent.set(move.nodeId, parentId);
+      // Only write when the link actually changes. In the shared-map case
+      // above there is nothing to write, and writing anyway — even the value
+      // it already holds — would be mutating a map the PREVIOUS graph still
+      // references.
+      if (mutableParent && move.fromParentId !== parentId) {
+        mutableParent.set(move.nodeId, parentId);
+      }
     }
     nextChildren.set(parentId, children);
   }
