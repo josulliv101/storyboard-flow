@@ -1,0 +1,99 @@
+name: Claude — implement issue
+
+# Claude's half of the two-agent loop: it implements ONE trusted issue and
+# opens a pull request, then addresses review feedback on that PR.
+#
+# Triggers (all owner-gated — a bot cannot start this, per the "no bot triggers
+# a bot automatically" rule; you introduce work by labeling or mentioning):
+#   * an issue gets the `claude` label
+#   * you comment `@claude` on an issue
+#   * a review requests changes on a Claude-authored PR (feedback loop)
+#
+# The PR is opened with LOOP_PAT, NOT github.token, on purpose: a PR created by
+# github.token does not trigger `pull_request` workflows, so the CI gate and
+# merge guard would never report and auto-merge would hang forever. LOOP_PAT
+# creates a real PR that fires those checks.
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    name: Implement / address feedback
+    # Owner-authored triggers only. The three shapes: labeled `claude`,
+    # `@claude` comment on an issue (not a PR), or a changes-requested review
+    # on a PR. github.repository_owner is the single source of "is this me".
+    if: >-
+      github.actor == github.repository_owner &&
+      (
+        (github.event_name == 'issues' && github.event.label.name == 'claude') ||
+        (github.event_name == 'issue_comment' &&
+         github.event.issue.pull_request == null &&
+         contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' &&
+         github.event.review.state == 'changes_requested')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          branch_name_template: "claude/issue-{{entityNumber}}-{{timestamp}}"
+          use_commit_signing: true
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --max-turns 40
+            --system-prompt "You are the implementation agent for one trusted GitHub issue (or one round of review feedback on your own PR). Follow AGENTS.md and every nested instruction file. Make the smallest complete change, add focused regression coverage, and run the closest relevant validation before finishing. On a changes-requested review, address exactly the reviewer's points on the same branch. Never broaden scope, never file new issues, never merge, and never edit .github/workflows unless the issue explicitly asks for it."
+
+      # Only the issue-triggered runs open a PR; feedback runs push to the
+      # existing branch and stop.
+      - name: Open pull request and arm auto-merge
+        if: github.event_name != 'pull_request_review' && steps.claude.outputs.branch_name != ''
+        env:
+          GH_TOKEN: ${{ secrets.LOOP_PAT }}
+          BRANCH: ${{ steps.claude.outputs.branch_name }}
+          BASE: ${{ github.event.repository.default_branch }}
+          ISSUE: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+        run: |
+          set -euo pipefail
+
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "PR #$existing already open for $BRANCH."
+            pr="$existing"
+          else
+            body="$(printf 'Implemented by Claude from #%s. Closes #%s.\n\nAuto-merge is armed: this PR lands on its own once CI is green and the merge guard passes. Add the `hold` label to veto.' "$ISSUE" "$ISSUE")"
+            pr="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE" --head "$BRANCH" \
+              --title "$TITLE" --body "$body" | grep -oE '[0-9]+$')"
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "Opened PR #${pr} — auto-merge armed (add \`hold\` to veto)."
+          fi
+
+          # Arm auto-merge. It completes only when every required check is green
+          # (CI + merge guard) and any required approvals are satisfied.
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --auto --merge || \
+            echo "::warning::Could not arm auto-merge (enable it in repo settings and add required checks)."

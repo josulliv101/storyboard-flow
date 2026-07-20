@@ -1,0 +1,48 @@
+name: CI
+
+# The validation gate every PR must pass before auto-merge can complete.
+# Kept to the fast, deterministic checks (typecheck + lint + unit); the
+# Playwright e2e suite is intentionally excluded here — it needs a dev server
+# and real browsers, too slow/flaky to gate every merge on. Run it locally or
+# in a separate manual workflow when a change warrants it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Typecheck, lint, unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm install
+
+      - name: Typecheck UI package
+        working-directory: packages/ui
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Lint app
+        working-directory: apps/timeline-gstudio001
+        run: npm run lint
+
+      - name: Unit tests (pure logic)
+        working-directory: apps/storybook
+        run: npx vitest run --project=unit
+
+      - name: App tests (routes, gateway, model)
+        working-directory: apps/timeline-gstudio001
+        run: npx vitest run
