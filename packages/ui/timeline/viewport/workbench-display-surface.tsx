@@ -47,6 +47,9 @@ const BUFFER_WINDOW_SIZE = 4;
 const DEFAULT_SURFACE_HEIGHT = 380;
 const MIN_SURFACE_HEIGHT = 120;
 const MIN_TIMELINE_SPACE = 260;
+/** The resize divider's own height (Tailwind h-6). Part of the sticky preview
+ *  region, so the published sticky offset must include it. */
+const DIVIDER_HEIGHT_PX = 24;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -939,6 +942,16 @@ export function WorkbenchSplitPane({
       // panes at the container's width; children overflow-scroll inside it.
       className="grid min-h-0 w-full grid-cols-[minmax(0,1fr)] gap-0"
       data-testid="workbench-split-pane"
+      // The sticky preview region's height (surface + divider), published so a
+      // descendant that wants to pin BELOW it — e.g. a sticky board header —
+      // has a live offset to stick to as the divider resizes. Absent when the
+      // preview is closed (this component isn't mounted then), so consumers
+      // fall back to 0.
+      style={
+        {
+          "--workbench-preview-offset": `${surfaceHeight + DIVIDER_HEIGHT_PX}px`,
+        } as React.CSSProperties
+      }
     >
       <div
         className="sticky top-0 z-30 min-w-0 bg-zinc-950"

@@ -196,7 +196,18 @@ export function GraphBoard({
             must insert in grid mode too, where no NativeDropStrip exists. */}
         <SidebarToolInsertBridge collectionId={focusedId} />
         <div className="flex flex-col gap-5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
-          <div className="flex items-center justify-between gap-3">
+          {/* Pinned so the controls stay reachable while scrolling the
+              surfaces. It sticks just BELOW the sticky preview via the offset
+              the split pane publishes (0 when the preview is closed). The
+              opaque background is load-bearing twice over: it reads as a
+              toolbar, and it OCCLUDES the strip/grid scrolling underneath —
+              which is what stops a playhead marker from bleeding up into the
+              preview. The negative margins let that background span the card's
+              full width past its p-4 padding. */}
+          <div
+            className="sticky z-20 -mx-4 -mt-4 flex items-center justify-between gap-3 rounded-t-xl border-b border-zinc-800/70 bg-zinc-950/95 px-4 py-3 backdrop-blur-sm"
+            style={{ top: "var(--workbench-preview-offset, 0px)" }}
+          >
             {breadcrumb}
             <div className="flex shrink-0 items-center gap-3">
               <Button

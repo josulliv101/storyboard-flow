@@ -89,12 +89,17 @@ const GraphClipContent = memo(function GraphClipContent({
               />
             ))
           )}
-          {/* The drill affordance: a large button, sized as a fraction of the
-              card so it stays prominent at every item size. stopPropagation on
+          {/* The drill affordance: a large control, sized as a fraction of the
+              card so it stays prominent at every item size. A span with
+              role=button, NOT a <button> — the NodeCard shell is itself a
+              <button>, and nesting one is invalid HTML. stopPropagation on
               pointerdown keeps a press on it from starting the card's drag or
-              selecting it — the button opens, the body selects. */}
-          <button
-            type="button"
+              selecting it (the control opens, the body selects); keyboard
+              drill-in stays on the O key (OpenKeyBoundary), so this is a
+              pointer affordance and sits outside the tab order. */}
+          <span
+            role="button"
+            tabIndex={-1}
             aria-label={`Open ${displayName}`}
             title="Open this timeline"
             data-collections-keyboard-ignore
@@ -103,10 +108,10 @@ const GraphClipContent = memo(function GraphClipContent({
               event.stopPropagation();
               nav?.openTimeline(id as NodeId);
             }}
-            className="absolute left-1/2 top-1/2 flex aspect-square h-[46%] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            className="absolute left-1/2 top-1/2 flex aspect-square h-[46%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300"
           >
             <FolderDown className="h-[55%] w-[55%]" />
-          </button>
+          </span>
         </span>
         <span className="mt-1 flex items-center justify-between gap-1">
           <span className="truncate text-[10px] font-semibold text-zinc-100">{displayName}</span>
