@@ -94,6 +94,30 @@ function ClipItem({ id }: { id: NodeId }) {
   );
 }
 
+/** The same item, plus the TEXT INPUT the compound API's docblock promises is
+ *  allowed inside a card. Its keys must reach it, not the collection. */
+function EditableClipItem({ id }: { id: NodeId }) {
+  const [name, setName] = useState("take one");
+  return (
+    <CollectionItem.Root id={id} trimPixelsPerSecond={24} className="h-24 w-40 shrink-0">
+      <CollectionItem.SelectionSurface className="flex h-full w-full flex-col justify-between rounded-md border border-border bg-background p-2 pt-6 text-xs">
+        <ClipLabel />
+      </CollectionItem.SelectionSurface>
+      <input
+        data-rename={id}
+        aria-label={`Rename ${id}`}
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+        className="absolute inset-x-1 bottom-1 z-10 rounded border border-border bg-background px-1 text-[10px]"
+      />
+      <CollectionItem.DragHandle className="absolute top-1 left-1 z-10 rounded bg-muted px-1.5 py-0.5 text-[10px]">
+        ⠿
+      </CollectionItem.DragHandle>
+      <CollectionItem.DropIndicators />
+    </CollectionItem.Root>
+  );
+}
+
 /** A consumer-owned container: no CollectionPanel, just a mapped list. */
 function CompoundList() {
   const childIds = useCollectionsSelector((s) => getChildren(s.graph, parseNodeId("panel-c")));
@@ -269,5 +293,48 @@ export const CompoundKeyboardGrab: Story = {
       ).toBeNull();
     });
     expect(listOrder(canvasElement)).toEqual(["alpha", "bravo", "charlie"]);
+  },
+};
+
+/**
+ * The compound API promises interactive controls inside cards, but the
+ * package's keyboard delegation used to contradict it: the Alt chords walk to
+ * the nearest card wrapper, so Alt+Arrow in an <input> REORDERED the card
+ * instead of moving the caret by word. Both handlers now bail on editable
+ * targets.
+ */
+export const EditableControlsKeepTheirKeys: Story = {
+  // The input is on BRAVO, the middle card: Alt+ArrowLeft is a legal move for
+  // it, so an unguarded handler visibly reorders. (On the first card the
+  // command is rejected anyway, and the test would pass either way — which is
+  // exactly the mistake this comment exists to prevent.)
+  render: () => (
+    <DndCollections initialGraph={compoundGraph()} animateMoves={false}>
+      <div data-testid="compound-list" className="flex gap-3">
+        <ClipItem id={parseNodeId("alpha")} />
+        <EditableClipItem id={parseNodeId("bravo")} />
+        <ClipItem id={parseNodeId("charlie")} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "bravo"));
+    const user = userEvent.setup();
+    const input = canvasElement.querySelector<HTMLInputElement>("[data-rename]");
+    expect(input).not.toBeNull();
+
+    input!.focus();
+    input!.setSelectionRange(input!.value.length, input!.value.length);
+
+    // Alt+Arrow is the package's move chord AND a word-wise caret move.
+    await user.keyboard("{Alt>}{ArrowLeft}{/Alt}");
+
+    // Bravo did not move, and focus stayed in the control.
+    expect(listOrder(canvasElement)).toEqual(["alpha", "bravo", "charlie"]);
+    expect(canvasElement.ownerDocument.activeElement).toBe(input);
+
+    // And the input still edits normally.
+    await user.keyboard("X");
+    expect(input!.value).toContain("X");
   },
 };

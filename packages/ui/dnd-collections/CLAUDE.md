@@ -34,6 +34,12 @@ Repo-wide rules live in the root CLAUDE.md and `packages/ui/AGENTS.md`.
   `resolveKeyboardCommand` do that math; don't reimplement it elsewhere.
 - **Roots are unmovable** (`cannot-move-root`); `rootIds` is not part of the
   patch model.
+- **Keyboard delegation stops at editable targets.** Every handler that
+  delegates from a card subtree (the Alt chords, virtual roving focus, and
+  any app-level key boundary) must call `isEditableKeyboardTarget(e.target)`
+  first. The compound primitives promise interactive controls INSIDE cards,
+  so stealing arrows from an `<input>` breaks a documented contract.
+  Consumers opt custom widgets out with `data-collections-keyboard-ignore`.
 - **A refused command never enters history.** Application gates go through
   the store's pre-commit `commandPolicy`, never through "commit, inspect in
   an `onChange` subscriber, `store.undo()` it back out" — that reverts the

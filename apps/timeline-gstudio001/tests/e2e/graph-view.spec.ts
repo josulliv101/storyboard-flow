@@ -483,6 +483,40 @@ test.describe("graph view E2E", () => {
       .toEqual(["k1"]);
   });
 
+  test("drilling into a collection id containing a slash hydrates it", async ({ page }) => {
+    // HydrationController used to round-trip the focus path through
+    // `segments.join("/")` / `.split("/")`. A NodeId may contain any
+    // non-whitespace character, so "scene/a" was torn into "scene" + "a" —
+    // neither of which is in the graph — and the drill-in reported an unknown
+    // timeline while priming the wrong documents. Navigation itself was
+    // always fine: it encodes each segment, so the id rides the URL as
+    // "scene%2Fa" and is one path segment.
+    const SLASH_ID = "scene/a";
+    const api = await installGraphApi(page);
+    api.documents
+      .get(PROJECT_ID)!
+      .clips.push(collectionClip("clip-slash", SLASH_ID, 3, "Scene Slash", 1));
+    api.documents.set(SLASH_ID, {
+      id: SLASH_ID,
+      title: "Scene Slash",
+      clips: [mediaClip("s1", "image", 0, 4)],
+    });
+
+    await openGraph(page);
+    await page
+      .locator('section[aria-label="Sub-timeline: Scene Slash"]')
+      .getByRole("button", { name: "Focus" })
+      .click();
+
+    // One encoded segment in the URL, not two.
+    await page.waitForURL(`**${GRAPH_URL}/${encodeURIComponent(SLASH_ID)}`);
+
+    // The focused timeline actually hydrated — the old code surfaced an
+    // "Unknown timeline" panel here instead.
+    await expect(page.getByText("Unknown timeline")).toHaveCount(0);
+    await expect.poll(() => stripOrder(page, SLASH_ID), { timeout: 15000 }).toEqual(["s1"]);
+  });
+
   test("renaming a sub-graph in place persists to the child document title", async ({ page }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
@@ -1373,6 +1407,98 @@ test.describe("graph view E2E", () => {
 
     // And it still works: the indicator is showing.
     await expect(page.locator("[data-native-drop-indicator]")).toHaveCount(1);
+  });
+
+  test("a slow drop lands at the boundary the user chose, not a stale index", async ({ page }) => {
+    // The insertion point is captured at DROP but committed after the upload
+    // finishes. If the strip is edited meanwhile, a bare numeric index names
+    // a different gap than the one the user dropped into — so the drop is
+    // anchored to its neighbouring node ids instead.
+    await installGraphApi(page);
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/timeline-media/upload", async (route) => {
+      await held; // hold the upload open while we reorder underneath it
+      return route.fulfill({ json: { pathname: "p.png", url: PIXEL } });
+    });
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+
+    // Drop between bravo (index 1) and the child collection (index 2).
+    const bravoBox = (await projectStrip.locator('[data-node-id="bravo"]').boundingBox())!;
+    const dropX = bravoBox.x + bravoBox.width - 2;
+    const fileTransfer = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(
+        new File([new Uint8Array([137, 80, 78, 71])], "late.png", { type: "image/png" }),
+      );
+      return transfer;
+    });
+    await page
+      .locator(`[data-native-drop="${PROJECT_ID}"]`)
+      .dispatchEvent("drop", { dataTransfer: fileTransfer, clientX: dropX });
+
+    // While the upload is held, move alpha to the END. Every index shifts
+    // down by one, so a stale index 2 would now point AFTER the collection.
+    await holdDrag(
+      page,
+      projectStrip.locator('[data-node-id="alpha"]'),
+      projectStrip.locator('[data-node-id="charlie"]'),
+      0.85,
+    );
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["bravo", CHILD_ID, "charlie", "alpha"]);
+
+    release!();
+
+    // Anchored: still immediately after bravo, which is where it was dropped.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID), { timeout: 15000 })
+      .toEqual(["bravo", expect.stringMatching(/^image-/), CHILD_ID, "charlie", "alpha"]);
+  });
+
+  test("a failed drop's error survives a later drop succeeding", async ({ page }) => {
+    // Several drops can be live at once, but they used to share ONE status
+    // slot: whichever finished last wrote it, so a successful second drop
+    // erased the first drop's error and the user never learned it failed.
+    await installGraphApi(page);
+    let uploads = 0;
+    await page.route("**/api/timeline-media/upload", async (route) => {
+      const index = uploads++;
+      // Order matters: the failure must settle FIRST and the success AFTER,
+      // so the success is what would overwrite the error. (Reversed, a shared
+      // slot also ends up showing the error and the test proves nothing.)
+      if (index === 0) return route.fulfill({ status: 500, body: "nope" });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return route.fulfill({ json: { pathname: `ok-${index}.png`, url: PIXEL } });
+    });
+    await openGraph(page);
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+
+    const makeTransfer = (name: string) =>
+      page.evaluateHandle((fileName) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(
+          new File([new Uint8Array([137, 80, 78, 71])], fileName, { type: "image/png" }),
+        );
+        return transfer;
+      }, name);
+
+    await dropZone.dispatchEvent("drop", { dataTransfer: await makeTransfer("bad.png"), clientX: 0 });
+    await dropZone.dispatchEvent("drop", { dataTransfer: await makeTransfer("good.png"), clientX: 0 });
+
+    // The good file lands...
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length), { timeout: 15000 })
+      .toBe(5);
+
+    // ...and the failure is STILL reported rather than being cleared by it.
+    await expect(page.locator("[data-native-drop-status]")).toContainText(
+      /could not be uploaded/i,
+    );
   });
 
   test("sidebar tools are still drag sources after becoming real buttons", async ({ page }) => {

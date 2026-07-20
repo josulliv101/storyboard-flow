@@ -104,11 +104,16 @@ export function HydrationController({
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
-  const pathKey = segments.join("/");
 
   useEffect(() => {
     let cancelled = false;
-    const path = pathKey === "" ? [] : pathKey.split("/");
+    // `segments` IS the path. It used to be round-tripped through
+    // `segments.join("/")` and split back apart to get a primitive effect
+    // dependency — but a NodeId may contain any non-whitespace character, so
+    // an id like "scene/a" was torn into two ids that address nothing: the
+    // drill-in reported a nonexistent path and primed the wrong documents.
+    // The parent memoizes this array, so it is already a stable dependency.
+    const path = segments;
 
     // The page is streaming these documents right now: give the primes a
     // grace window so the RSC payload wins the race instead of every
@@ -152,7 +157,7 @@ export function HydrationController({
     return () => {
       cancelled = true;
     };
-  }, [pathKey, projectId, store, detailsStore, serverPrimed, onFocusError]);
+  }, [segments, projectId, store, detailsStore, serverPrimed, onFocusError]);
 
   return null;
 }

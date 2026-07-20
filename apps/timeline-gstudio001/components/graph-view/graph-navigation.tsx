@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, type MutableRefObject } 
 import { useRouter } from "next/navigation";
 
 import {
+  isEditableKeyboardTarget,
   parseNodeId,
   useCollectionsStore,
   type NodeId,
@@ -83,8 +84,11 @@ export function OpenKeyBoundary({ children }: Readonly<{ children: React.ReactNo
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (store.getSnapshot().interaction.isDragging) return;
 
+    // One policy, owned by the package: this used to be a local selector that
+    // the package's own delegation didn't share, so the O key was guarded
+    // while Alt chords and virtual arrow navigation were not.
+    if (isEditableKeyboardTarget(event.target)) return;
     const target = event.target as HTMLElement;
-    if (target.closest("input, textarea, [contenteditable=true]")) return;
     const id = target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
     if (!id) return;
 
