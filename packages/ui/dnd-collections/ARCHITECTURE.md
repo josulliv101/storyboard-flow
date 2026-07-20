@@ -52,9 +52,15 @@ react/
   use-keyboard-controller.ts Alt+key semantic moves, Alt+Shift+key media
                             trims, grid row moves (data-grid-columns scope),
                             focus restoration.
-  use-edge-autoscroll.ts    Deterministic edge auto-scroll for virtualized
-                            containers (dnd-kit's built-in never engaged
-                            for them — probed e2e).
+  use-edge-autoscroll.ts    Registration hook: enrolls a virtualized
+                            container with the provider's edge auto-scroll
+                            coordinator (dnd-kit's built-in never engaged
+                            for these containers — probed e2e).
+  edge-autoscroll-coordinator.ts
+                            The instance's ONE pointer tracker + drag-gated
+                            rAF loop serving every registered container —
+                            per-view loops made one drag cost O(mounted
+                            views) schedulers per frame.
   container-context.ts      The provider wrapper ref, for instance-scoped
                             DOM work (FLIP sweep).
   virtual-droppable.ts      Droppable-data contract virtualized containers
