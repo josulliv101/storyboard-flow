@@ -26,7 +26,7 @@ import {
 } from "../core/keyboard";
 import { type CollectionsStore } from "./collections-store";
 import { roundSecondsForDisplay } from "./duration-format";
-import { findNodeElement, focusNodeWhenMounted } from "./node-dom";
+import { findNodeElement, focusNodeWhenMounted, isEditableKeyboardTarget } from "./node-dom";
 
 // Semantic keyboard moves (Alt+key on a focused card), by event delegation
 // on the provider wrapper so no per-card wiring is needed. Alt combos
@@ -324,6 +324,10 @@ export function useCollectionsKeyboard(args: {
   const handleKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent) => {
       if (!event.altKey || event.ctrlKey || event.metaKey) return;
+      // A control inside the card owns its own keys — see
+      // `isEditableKeyboardTarget`. Without this, Alt+Arrow in an <input>
+      // reordered the card instead of moving the caret by word.
+      if (isEditableKeyboardTarget(event.target)) return;
       // The focused element is either the card button (data-node-id) or its
       // grip bar — a sibling inside the data-node-wrapper host.
       const card = (event.target as HTMLElement).closest?.(

@@ -12,7 +12,7 @@ import {
 import { useDroppable } from "@dnd-kit/core";
 
 import { type NodeId } from "../core/graph";
-import { focusNodeWhenMounted } from "../react/node-dom";
+import { focusNodeWhenMounted, isEditableKeyboardTarget } from "../react/node-dom";
 import { VIRTUAL_INSERT_DATA_KEY, type VirtualInsertTarget } from "../react/virtual-droppable";
 
 // Shared plumbing for virtualized collection views (strip + grid): the
@@ -163,6 +163,10 @@ export function useVirtualRovingFocus(args: {
       // Alt = item move; Ctrl/Meta reserved; during a keyboard drag the sensor
       // owns the arrows.
       if (event.altKey || event.ctrlKey || event.metaKey || isDragging()) return;
+      // These are BARE arrows bubbling from anywhere in the view, so an
+      // <input> or contenteditable inside a card would have had its caret
+      // movement swallowed by roving focus (this handler preventDefaults).
+      if (isEditableKeyboardTarget(event.target)) return;
       const count = itemIds.length;
       if (count === 0) return;
       const currentId = focusedIdRef.current;

@@ -102,6 +102,14 @@ export {
   type DispatchRejection,
 } from "./react/collections-store";
 export { DndCollections, type DndCollectionsProps } from "./react/DndCollections";
+// The keyboard-delegation boundary. `KEYBOARD_IGNORE_ATTRIBUTE` is the escape
+// hatch consumers put in their markup; the predicate is exported so an app
+// wrapping the views in its own key handlers can apply the SAME policy rather
+// than maintaining a second copy of the selector.
+export {
+  KEYBOARD_IGNORE_ATTRIBUTE,
+  isEditableKeyboardTarget,
+} from "./react/node-dom";
 export {
   type CollectionsClickSelection,
   type CollectionsInteractionPolicy,

@@ -434,6 +434,30 @@ The store wraps this — reach for it directly only outside a store.
 
 ---
 
+### The keyboard-delegation boundary
+
+Both key surfaces the package installs — the Alt chords (delegated from the
+provider wrapper) and virtual roving focus (bare arrows, bubbling from
+anywhere in the view) — stand down when the event came from something the
+user is typing in:
+
+```ts
+isEditableKeyboardTarget(target: EventTarget | null): boolean
+KEYBOARD_IGNORE_ATTRIBUTE // "data-collections-keyboard-ignore"
+```
+
+It matches `input`, `textarea`, `select`, any `contenteditable`, and anything
+inside an element carrying `KEYBOARD_IGNORE_ATTRIBUTE` — checking ANCESTORS,
+not just the target, because focus often sits on a child of the editable
+host. This is what makes the compound primitives' promise of interactive
+controls inside cards true; without it an `<input>` in a card had Alt+Arrow
+reorder the card and bare arrows move roving focus instead of the caret.
+
+Put `data-collections-keyboard-ignore` on any wrapper whose keys are yours —
+a custom combobox, a canvas editor, a third-party widget the selector cannot
+recognize. Apps adding their own key handlers over the views should call the
+same predicate rather than keeping a second copy of the rule.
+
 ## Core: keyboard (`core/keyboard.ts`)
 
 ### `resolveKeyboardCommand(graph, nodeId, action): Result<CollectionsCommand, KeyboardRejection>`
