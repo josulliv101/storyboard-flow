@@ -7,6 +7,7 @@ import {
   buildPlayheadMap,
   cardSpansOf,
   childSpans,
+  manifestTrailsLedger,
   mediaSpanKey,
   type PreviewCardSpans,
 } from "./graph-playhead-model";
@@ -159,5 +160,43 @@ describe("cardSpansOf", () => {
     // sceneA's card gets ITS occurrence's window, not the 0..14 union.
     const cards = childSpans(graph, {}, "sceneA", spans, flatWidth);
     expect(cards.map((card) => [card.startTime, card.endTime])).toEqual([[0, 4]]);
+  });
+});
+
+describe("manifestTrailsLedger", () => {
+  const revisionOf = (ledger: Record<string, number>) => (id: string) => ledger[id];
+
+  it("flags a manifest whose CHILD compile predates the session's write", () => {
+    // The root's revision is current — only per-document checking catches it.
+    const manifest = { projectRevision: 5, documentRevisions: { root: 5, kid: 2 } };
+    expect(manifestTrailsLedger(manifest, "root", revisionOf({ root: 5, kid: 3 }))).toBe(true);
+  });
+
+  it("accepts a manifest at or ahead of every known revision", () => {
+    const manifest = { projectRevision: 5, documentRevisions: { root: 5, kid: 3 } };
+    expect(manifestTrailsLedger(manifest, "root", revisionOf({ root: 5, kid: 3 }))).toBe(false);
+    expect(manifestTrailsLedger(manifest, "root", revisionOf({}))).toBe(false);
+  });
+
+  it("falls back to the root-only check when documentRevisions is absent", () => {
+    expect(manifestTrailsLedger({ projectRevision: 4 }, "root", revisionOf({ root: 5 }))).toBe(true);
+    expect(manifestTrailsLedger({ projectRevision: 5 }, "root", revisionOf({ root: 5 }))).toBe(false);
+  });
+
+  // The race the revision comparison alone cannot see: a write still in the
+  // debounce window (or in a batch whose response hasn't landed) has not
+  // bumped the ledger, so a manifest compiled server-side BEFORE the write
+  // carries revisions that look current. A pending write on any document the
+  // compile read must veto the install until the write settles.
+  it("rejects a revision-current manifest while a read-set document has a pending write", () => {
+    const manifest = { projectRevision: 5, documentRevisions: { root: 5, kid: 3 } };
+    const ledger = revisionOf({ root: 5, kid: 3 });
+    expect(manifestTrailsLedger(manifest, "root", ledger, (id) => id === "kid")).toBe(true);
+    expect(manifestTrailsLedger(manifest, "root", ledger, () => false)).toBe(false);
+  });
+
+  it("waits on a pending ROOT write even without documentRevisions", () => {
+    const manifest = { projectRevision: 5 };
+    expect(manifestTrailsLedger(manifest, "root", revisionOf({ root: 5 }), (id) => id === "root")).toBe(true);
   });
 });

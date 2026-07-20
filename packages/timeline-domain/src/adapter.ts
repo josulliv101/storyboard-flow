@@ -291,6 +291,46 @@ export function buildFocusedGraph(
 }
 
 /**
+ * Content length of a HYDRATED collection, derived from its live children
+ * with the projection's own packing (leading padding, fixed gaps) — media by
+ * the engine's trims, nested collections recursively when hydrated, else by
+ * their stored summary.
+ *
+ * This exists because a stored summary goes stale the moment the CHILD
+ * document is edited: writes are patch-scoped, so editing inside a child
+ * never rewrites the parent, and the parent's collection clip keeps the old
+ * `duration` indefinitely. Parroting it did two kinds of damage — the
+ * preview clock drifted off the manifest (which derives from child content),
+ * and, because the write path persists documents THROUGH this projection,
+ * the parent's next unrelated write RE-PERSISTED the stale number. Deriving
+ * from the live graph makes the projection agree with the manifest wherever
+ * the session has real knowledge, and writes become self-healing.
+ */
+function hydratedCollectionDuration(
+  graph: CollectionsGraph,
+  details: DetailsById,
+  collectionId: NodeId,
+): number {
+  let total = TIMELINE_LEADING_PADDING_SECONDS;
+  let first = true;
+  for (const childId of getChildren(graph, collectionId)) {
+    const node = graph.nodesById.get(childId);
+    if (!node) continue;
+    if (!first) total += CLIP_GAP_SECONDS;
+    first = false;
+    if (node.kind === "media") {
+      total += mediaDurationSeconds(node);
+      continue;
+    }
+    const detail = details[childId as string];
+    total += detail?.hydrated
+      ? hydratedCollectionDuration(graph, details, childId)
+      : (detail?.duration ?? 3);
+  }
+  return total;
+}
+
+/**
  * Project a collection's children back to TimelineClip[] — the persistence
  * write path. `startTime`/`index` are DERIVED with the same packing math as
  * `packTimelineClips` (leading padding, fixed gap); durations come from the
@@ -352,7 +392,13 @@ export function graphChildrenToClips(
     }
 
     // Collection node → collection clip referencing it as the child timeline.
-    const duration = detail?.duration ?? 3;
+    // Hydrated collections DERIVE their duration from live children (see
+    // hydratedCollectionDuration) — the same stale-summary rule itemCount
+    // below already follows; placeholders keep the stored summary, it is all
+    // anyone knows about them.
+    const duration = detail?.hydrated
+      ? hydratedCollectionDuration(graph, details, node.id)
+      : (detail?.duration ?? 3);
     nextStartTime += duration + CLIP_GAP_SECONDS;
     return {
       id: detail?.sourceClipId ?? (node.id as string),
@@ -412,29 +458,41 @@ export function collectUnhydratedDropTargets(
 /**
  * The collections whose stored documents a committed change touches — the
  * patch-scoped persistence write set.
+ *
+ * Includes every ANCESTOR of a directly-touched collection, because the
+ * write path derives a hydrated collection's summary (duration, itemCount)
+ * from its live children: an edit inside C changes the projected clips of
+ * C's parent, and transitively every document up to the focused root. Before
+ * this closure, a child-only trim never rewrote the parent, so the stored
+ * summary stayed stale and the server manifest — compiled from stored parent
+ * spans — kept playing the pre-edit total no matter how fresh its compile.
  */
 export function collectAffectedCollectionIds(
   graph: CollectionsGraph,
   patch: CollectionsPatch,
 ): readonly string[] {
   const ids = new Set<string>();
-  const parentOf = (nodeId: NodeId) => {
-    const parent = graph.parentById.get(nodeId);
-    if (parent !== undefined && parent !== null) ids.add(parent as string);
+  const addWithAncestors = (nodeId: NodeId | null | undefined) => {
+    let current = nodeId;
+    while (current !== undefined && current !== null && !ids.has(current as string)) {
+      ids.add(current as string);
+      current = graph.parentById.get(current);
+    }
   };
+  const parentOf = (nodeId: NodeId) => addWithAncestors(graph.parentById.get(nodeId));
 
   switch (patch.type) {
     case "nodes-moved":
       for (const move of patch.moves) {
-        ids.add(move.fromParentId as string);
-        ids.add(move.toParentId as string);
+        addWithAncestors(move.fromParentId);
+        addWithAncestors(move.toParentId);
       }
       break;
     case "nodes-added":
-      for (const add of patch.adds) ids.add(add.parentId as string);
+      for (const add of patch.adds) addWithAncestors(add.parentId);
       break;
     case "nodes-removed":
-      for (const removal of patch.removals) ids.add(removal.parentId as string);
+      for (const removal of patch.removals) addWithAncestors(removal.parentId);
       break;
     case "nodes-updated":
       for (const update of patch.updates) parentOf(update.nodeId);

@@ -42,15 +42,17 @@ export async function GET(
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }
 
-    const { documents, missing } = await loadTimelineClosure(id, user.uid);
+    const { documents, missing, revisions } = await loadTimelineClosure(id, user.uid);
     // The root just loaded through the entry read; serve that version.
     documents[id] = entry.document;
+    revisions[id] = entry.revision;
 
     const manifest = compilePlaybackManifest(
       documents,
       id,
       entry.revision,
       new Date().toISOString(),
+      revisions,
     );
     return NextResponse.json({ manifest, missing });
   } catch (error) {

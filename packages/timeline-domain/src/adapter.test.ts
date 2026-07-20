@@ -105,7 +105,11 @@ const ROOT_DOC: TimelineDocument = {
   clips: packTimelineClips([
     image("img-1", 4),
     video("vid-1", 10, 2, 3),
-    collectionClip("col-clip-1", "child", "Child timeline"),
+    // duration matches the child's actual content (c-img 2 + gap 0.12 +
+    // grandchild summary 3): hydrated collections DERIVE their duration from
+    // live children, so byte-for-byte round-trip parity holds only for a
+    // FRESH summary. The stale-summary cases have their own suite below.
+    { ...collectionClip("col-clip-1", "child", "Child timeline"), duration: 5.12 },
   ]),
 };
 
@@ -408,6 +412,51 @@ describe("collectAffectedCollectionIds", () => {
       }),
     ).toEqual(["focus-root"]);
   });
+
+  // The write path derives a hydrated collection's summary from its live
+  // children, so an edit INSIDE a nested collection changes the projected
+  // clips of every ancestor document too. Without the ancestor closure, a
+  // child-only trim never rewrote the parent — the stored summary stayed
+  // stale, and the server manifest (compiled from stored parent spans) kept
+  // playing the pre-edit total no matter how fresh its compile was.
+  it("closes the write set over ancestors of every touched collection", () => {
+    const result = buildFocusedGraph(DOCUMENTS, "focus-root");
+    if (!result.ok) throw new Error(result.error);
+    const { graph } = result.value;
+
+    // A trim on "c-img" (inside "child", inside the root) rewrites BOTH.
+    expect(
+      collectAffectedCollectionIds(graph, {
+        type: "nodes-updated",
+        updates: [
+          {
+            nodeId: parseNodeId("c-img"),
+            before: graph.nodesById.get(parseNodeId("c-img"))!,
+            after: graph.nodesById.get(parseNodeId("c-img"))!,
+          },
+        ],
+      }),
+    ).toEqual(["child", "focus-root"]);
+
+    // A reorder WITHIN "child" also propagates: itemCount is unchanged but
+    // the parent's projected clip content is the child's summary, and the
+    // closure is deliberately unconditional — writes are debounced into one
+    // batch, so the extra document costs nothing.
+    expect(
+      collectAffectedCollectionIds(graph, {
+        type: "nodes-moved",
+        moves: [
+          {
+            nodeId: parseNodeId("c-img"),
+            fromParentId: parseNodeId("child"),
+            fromIndex: 0,
+            toParentId: parseNodeId("child"),
+            toIndex: 1,
+          },
+        ],
+      }),
+    ).toEqual(["child", "focus-root"]);
+  });
 });
 
 describe("duplicate media-id demotion", () => {
@@ -451,5 +500,76 @@ describe("duplicate media-id demotion", () => {
     // reference keeps its own sourceClipId round-trip.
     expect(clips.map((clip) => clip.id)).toEqual(["c-img", "c-nested-clip"]);
     expect(clips[0].src).toBe("https://example.com/c-img.jpg");
+  });
+});
+
+describe("hydrated collection durations", () => {
+  // A stored summary goes stale the moment the CHILD document is edited —
+  // writes are patch-scoped, so the parent's collection clip keeps the old
+  // duration until the parent itself is rewritten. The projection must
+  // therefore DERIVE a hydrated collection's duration from live children
+  // (like itemCount already does) instead of parroting the summary, or the
+  // preview clock drifts off the manifest AND the parent's next write
+  // re-persists the stale number.
+  function docsWithStaleSummary(): Record<string, TimelineDocument> {
+    return {
+      "stale-root": {
+        id: "stale-root",
+        title: "Stale root",
+        clips: [{ ...collectionClip("clip-kid", "kid", "Kid"), duration: 999 }],
+      },
+      kid: {
+        id: "kid",
+        title: "Kid",
+        clips: packTimelineClips([image("k-a", 4), image("k-b", 5)]),
+      },
+    };
+  }
+
+  it("derives a hydrated collection's duration from live children, not the stale summary", () => {
+    const focused = buildFocusedGraph(docsWithStaleSummary(), "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clips = graphChildrenToClips(focused.value.graph, focused.value.details, "stale-root");
+    // 4 + gap(0.12) + 5 — the child's actual content, not the stored 999.
+    expect(clips[0].kind).toBe("collection");
+    expect(clips[0].duration).toBeCloseTo(9.12, 5);
+  });
+
+  it("keeps the stored summary for an UNHYDRATED placeholder", () => {
+    const documents = docsWithStaleSummary();
+    delete documents.kid; // the child document never loads
+    const focused = buildFocusedGraph(documents, "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clips = graphChildrenToClips(focused.value.graph, focused.value.details, "stale-root");
+    // All anyone knows about a placeholder is its summary.
+    expect(clips[0].duration).toBe(999);
+  });
+
+  it("recurses through hydrated nesting and stops at placeholders", () => {
+    const documents: Record<string, TimelineDocument> = {
+      "nest-root": {
+        id: "nest-root",
+        title: "Nest root",
+        clips: [{ ...collectionClip("clip-mid", "mid", "Mid"), duration: 999 }],
+      },
+      mid: {
+        id: "mid",
+        title: "Mid",
+        clips: packTimelineClips([
+          image("m-a", 2),
+          { ...collectionClip("clip-deep", "deep", "Deep"), duration: 50 },
+        ]),
+      },
+      // "deep" has no document: it stays a placeholder inside mid.
+    };
+    const focused = buildFocusedGraph(documents, "nest-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clips = graphChildrenToClips(focused.value.graph, focused.value.details, "nest-root");
+    // mid is hydrated: derived = 2 + gap + deep's SUMMARY 50 (deep is a
+    // placeholder — its stored word is all anyone has).
+    expect(clips[0].duration).toBeCloseTo(2 + 0.12 + 50, 5);
   });
 });

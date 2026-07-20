@@ -33,6 +33,14 @@ export type PlaybackManifest = Readonly<{
   durationSeconds: number;
   leaves: readonly PlaybackLeaf[];
   compiledAt: string;
+  /** Save revision of EVERY document the compile read, keyed by id. The
+   *  client's install guard compares each against its own write ledger:
+   *  `projectRevision` alone could only catch a stale ROOT, so a manifest
+   *  compiled before a CHILD edit landed installed fine and stuck — playing
+   *  pre-edit content until the next unrelated commit. Optional so
+   *  hand-built fixtures and older payloads keep working (absent = only the
+   *  root check applies). */
+  documentRevisions?: Readonly<Record<string, number>>;
 }>;
 
 type DocumentMap = Readonly<Record<string, TimelineDocument>>;
@@ -134,6 +142,7 @@ export function compilePlaybackManifest(
   projectId: string,
   projectRevision: number,
   compiledAt: string,
+  documentRevisions?: Readonly<Record<string, number>>,
 ): PlaybackManifest {
   const root = documents[projectId];
   if (!root) throw new Error(`Unknown project timeline "${projectId}".`);
@@ -160,6 +169,7 @@ export function compilePlaybackManifest(
     durationSeconds,
     leaves: leaves.sort((a, b) => a.timelineStart - b.timelineStart),
     compiledAt,
+    ...(documentRevisions === undefined ? {} : { documentRevisions }),
   };
 }
 

@@ -118,6 +118,15 @@ export type GraphDocumentsGateway = Readonly<{
   /** The compare-and-set ledger's revision for a document, if known. */
   revisionOf: (timelineId: string) => number | undefined;
   /**
+   * True while a write for this document is UNSETTLED — still in the debounce
+   * window or in a batch whose response hasn't landed. During that window the
+   * ledger cannot yet name the revision the write will produce, so a manifest
+   * compiled server-side in the gap passes a pure `revisionOf` comparison even
+   * when it read pre-write content. Install guards check this alongside the
+   * ledger and simply wait the write out.
+   */
+  hasPendingWrite: (timelineId: string) => boolean;
+  /**
    * True when this document lost a revision conflict and the live graph has
    * not been reconciled with the reloaded content. `writeClips` refuses these
    * ids outright; callers can read this to avoid reporting a write they did
@@ -688,6 +697,8 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       for (const payload of held) installPrime(payload.document, payload.revision, payload.forUid);
     },
     revisionOf: (timelineId) => revisions.get(timelineId),
+    hasPendingWrite: (timelineId) =>
+      dirtyIds.has(timelineId) || saveInFlightIds.includes(timelineId),
     isConflicted: (timelineId) => conflictedIds.has(timelineId),
     subscribe: (listener) => {
       listeners.add(listener);

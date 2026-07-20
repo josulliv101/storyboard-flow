@@ -30,6 +30,7 @@ import {
   buildPlayheadMap,
   cardSpansOf,
   childSpans,
+  manifestTrailsLedger,
   type GridPlayheadMap,
   type PlayheadMap,
   type PreviewCardSpans,
@@ -548,11 +549,22 @@ function useManifestClips(
         } | null;
         if (controller.signal.aborted || !result?.manifest) return;
         // Install guard: a manifest compiled BEFORE this session's latest
-        // accepted write (its revision trails the compare-and-set ledger)
-        // is pre-write server state — never install it over the live
-        // projection; poll again once the write has landed server-side.
-        const ledger = graphDocumentsGateway.revisionOf(focusedId);
-        if (ledger !== undefined && result.manifest.projectRevision < ledger) {
+        // accepted write to ANY document in the closure is pre-write server
+        // state — never install it over the live projection; poll again once
+        // the write has landed server-side. Per-document, not just the root:
+        // a child edit bumps only the child's revision, and a stale compile
+        // that installed here used to STICK until the next unrelated commit.
+        // Pending writes count too: until the batch response lands, the
+        // ledger can't name the revision the write will produce, so a compile
+        // racing the write would pass the pure comparison — wait it out.
+        if (
+          manifestTrailsLedger(
+            result.manifest,
+            focusedId,
+            (id) => graphDocumentsGateway.revisionOf(id),
+            (id) => graphDocumentsGateway.hasPendingWrite(id),
+          )
+        ) {
           retryTimer = setTimeout(() => setStaleAt(Date.now()), MANIFEST_REFRESH_DELAY_MS);
           return;
         }
