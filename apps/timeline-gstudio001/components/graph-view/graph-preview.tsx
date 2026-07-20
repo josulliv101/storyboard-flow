@@ -200,7 +200,10 @@ export function PlayheadScrubBand({
   useEffect(() => {
     const band = bandRef.current;
     if (!band) return;
-    const scroller = band.parentElement?.querySelector<HTMLElement>(".overflow-x-auto") ?? null;
+    // The strip element IS its own scroll container, and [data-virtual-strip]
+    // is the package's documented selector contract — unlike the Tailwind
+    // class this used to query, which any restyle would silently break.
+    const scroller = band.parentElement?.querySelector<HTMLElement>("[data-virtual-strip]") ?? null;
     if (!scroller) return;
 
     let map: PlayheadMap | null = null;
@@ -438,22 +441,13 @@ export function GraphGridScrubSurface({
       window.addEventListener("pointerup", end);
       window.addEventListener("pointercancel", end);
     };
-    const handleWheel = (event: WheelEvent) => {
-      const scale = event.deltaMode === 1 ? 32 : 1;
-      const before = grid.scrollTop;
-      const maximum = grid.scrollHeight - grid.clientHeight;
-      const next = Math.max(0, Math.min(before + event.deltaY * scale, maximum));
-      if (next !== before) {
-        grid.scrollTop = next;
-        event.preventDefault();
-      }
-    };
-
+    // No wheel handler: grids are content-height (GRID_UNCAPPED_HEIGHT), so
+    // there is no internal scroll to feed — the wheel keeps its default and
+    // the PAGE scrolls, which the e2e suite pins. The forwarding handler this
+    // surface used to carry could only ever no-op.
     surface.addEventListener("pointerdown", handleDown);
-    surface.addEventListener("wheel", handleWheel, { passive: false });
     return () => {
       surface.removeEventListener("pointerdown", handleDown);
-      surface.removeEventListener("wheel", handleWheel);
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
@@ -537,19 +531,22 @@ function useManifestClips(
 
   useEffect(() => {
     if (!enabled) return;
-    let cancelled = false;
+    // Abort, not just a flag: the flag only protected state, leaving the
+    // request itself running after unmount/refocus. Abort also rejects the
+    // in-flight json() parse, so the signal check below is the single guard.
+    const controller = new AbortController();
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     void (async () => {
       try {
         const response = await fetch(
           `/api/timelines/${encodeURIComponent(focusedId)}/preview-manifest`,
-          { cache: "no-store" },
+          { cache: "no-store", signal: controller.signal },
         );
         if (!response.ok) return; // projection fallback stands
         const result = (await response.json().catch(() => null)) as {
           manifest?: PlaybackManifest;
         } | null;
-        if (cancelled || !result?.manifest) return;
+        if (controller.signal.aborted || !result?.manifest) return;
         // Install guard: a manifest compiled BEFORE this session's latest
         // accepted write (its revision trails the compare-and-set ledger)
         // is pre-write server state — never install it over the live
@@ -565,11 +562,11 @@ function useManifestClips(
           forId: focusedId,
         });
       } catch {
-        /* projection fallback stands */
+        /* projection fallback stands (including our own abort) */
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
       if (retryTimer !== null) clearTimeout(retryTimer);
     };
   }, [enabled, focusedId, staleAt]);

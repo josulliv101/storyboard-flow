@@ -29,6 +29,21 @@ export const STRIP_GAP_PX = 8;
  */
 export type PreviewCardSpans = ReadonlyMap<string, Readonly<{ start: number; end: number }>>;
 
+/**
+ * A media leaf's span key, qualified by its parent collection. Leaf ids can
+ * repeat across documents (one clip referenced from two collections), and a
+ * flat id key MERGED both occurrences into one span covering both — so the
+ * card in either row mapped time across the union window. The length prefix
+ * makes the key unambiguous for ANY id contents: a NodeId may contain any
+ * non-whitespace character, including a would-be delimiter.
+ *
+ * Collections stay bare-id keyed — the graph demotes duplicate collection
+ * references, so a collection id names exactly one node.
+ */
+export function mediaSpanKey(parentId: string, leafId: string): string {
+  return `${parentId.length}#${parentId}${leafId}`;
+}
+
 export function cardSpansOf(manifest: PlaybackManifest): PreviewCardSpans {
   const spans = new Map<string, { start: number; end: number }>();
   const widen = (key: string, start: number, end: number) => {
@@ -42,7 +57,8 @@ export function cardSpansOf(manifest: PlaybackManifest): PreviewCardSpans {
   };
   for (const leaf of manifest.leaves) {
     const end = leaf.timelineStart + leaf.timelineDuration;
-    widen(leaf.id, leaf.timelineStart, end);
+    const parentId = leaf.collectionPath[leaf.collectionPath.length - 1] ?? "";
+    widen(mediaSpanKey(parentId, leaf.id), leaf.timelineStart, end);
     // Every collection ANCESTOR on the path gets this leaf folded into its
     // window (collectionPath[0] is the focused root; deeper entries are the
     // nested collections whose sub-rows need their own window).
@@ -87,7 +103,12 @@ export function childSpans(
   const childIds = getChildren(graph, parseNodeId(collectionId));
   let previousEnd = 0;
   return graphChildrenToClips(graph, details, collectionId).map((clip, index) => {
-    const span = spans?.get(childIds[index] as string);
+    const childId = childIds[index] as string;
+    // Media first (parent-qualified — see mediaSpanKey), then the bare id a
+    // collection child is keyed under. A demoted duplicate's `dup:`-prefixed
+    // node id matches neither and falls through to projection times, which
+    // is the honest degradation for a card the manifest can't name.
+    const span = spans?.get(mediaSpanKey(collectionId, childId)) ?? spans?.get(childId);
     const startTime = Math.max(span ? span.start : clip.startTime, previousEnd);
     const endTime = Math.max(span ? span.end : clip.startTime + clip.duration, startTime);
     previousEnd = endTime;

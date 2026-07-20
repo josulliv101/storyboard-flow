@@ -7,6 +7,7 @@ import {
   buildPlayheadMap,
   cardSpansOf,
   childSpans,
+  mediaSpanKey,
   type PreviewCardSpans,
 } from "./graph-playhead-model";
 
@@ -72,8 +73,8 @@ describe("childSpans", () => {
       collection("root", [media("a", 4), collection("e"), media("b", 4)]),
     ]);
     const spans: PreviewCardSpans = new Map([
-      ["a", { start: 0, end: 4 }],
-      ["b", { start: 4.62, end: 8.62 }],
+      [mediaSpanKey("root", "a"), { start: 0, end: 4 }],
+      [mediaSpanKey("root", "b"), { start: 4.62, end: 8.62 }],
     ]);
 
     const cards = childSpans(graph, {}, "root", spans, flatWidth);
@@ -91,8 +92,8 @@ describe("childSpans", () => {
   it("passes manifest spans through untouched when they are already ordered", () => {
     const graph = graphOf([collection("root", [media("a", 4), media("b", 4)])]);
     const spans: PreviewCardSpans = new Map([
-      ["a", { start: 0, end: 3.9 }],
-      ["b", { start: 3.95, end: 7.9 }],
+      [mediaSpanKey("root", "a"), { start: 0, end: 3.9 }],
+      [mediaSpanKey("root", "b"), { start: 3.95, end: 7.9 }],
     ]);
 
     const cards = childSpans(graph, {}, "root", spans, flatWidth);
@@ -108,8 +109,8 @@ describe("childSpans", () => {
       collection("root", [media("a", 4), collection("e"), media("b", 4)]),
     ]);
     const spans: PreviewCardSpans = new Map([
-      ["a", { start: 0, end: 4 }],
-      ["b", { start: 4.62, end: 8.62 }],
+      [mediaSpanKey("root", "a"), { start: 0, end: 4 }],
+      [mediaSpanKey("root", "b"), { start: 4.62, end: 8.62 }],
     ]);
     const map = buildPlayheadMap(childSpans(graph, {}, "root", spans, flatWidth));
 
@@ -123,7 +124,7 @@ describe("childSpans", () => {
 });
 
 describe("cardSpansOf", () => {
-  it("keys each leaf by id and folds it into every collection on its path", () => {
+  it("keys each leaf under its parent and folds it into every collection on its path", () => {
     const spans = cardSpansOf(
       manifestOf([
         leaf("m1", ["root", "sceneA"], 0, 4),
@@ -132,9 +133,31 @@ describe("cardSpansOf", () => {
       ]),
     );
 
-    expect(spans.get("m1")).toEqual({ start: 0, end: 4 });
+    expect(spans.get(mediaSpanKey("sceneA", "m1"))).toEqual({ start: 0, end: 4 });
     expect(spans.get("sceneA")).toEqual({ start: 0, end: 7.12 });
     expect(spans.get("root")).toEqual({ start: 0, end: 12.24 });
-    expect(spans.get("m3")).toEqual({ start: 7.24, end: 12.24 });
+    expect(spans.get(mediaSpanKey("root", "m3"))).toEqual({ start: 7.24, end: 12.24 });
+  });
+
+  // Leaf ids repeat across documents (one clip referenced from two
+  // collections). A flat id key merged both occurrences into one span
+  // covering both, so either row's card mapped time across the union window.
+  it("keeps a duplicated leaf id distinct per parent collection", () => {
+    const graph = graphOf([
+      collection("root", [
+        collection("sceneA", [media("shared", 4)]),
+        collection("sceneB", []),
+      ]),
+    ]);
+    const spans = cardSpansOf(
+      manifestOf([
+        leaf("shared", ["root", "sceneA"], 0, 4),
+        leaf("shared", ["root", "sceneB"], 10, 4),
+      ]),
+    );
+
+    // sceneA's card gets ITS occurrence's window, not the 0..14 union.
+    const cards = childSpans(graph, {}, "sceneA", spans, flatWidth);
+    expect(cards.map((card) => [card.startTime, card.endTime])).toEqual([[0, 4]]);
   });
 });
