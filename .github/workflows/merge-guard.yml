@@ -1,0 +1,30 @@
+name: Merge guard
+
+# The veto brake for auto-merge. GitHub's auto-merge waits on required status
+# checks but has no native "block on a label" — so this publishes a check that
+# is GREEN normally and RED whenever a `hold` label is on the PR. Make
+# `Merge guard / guard` a required check on main and auto-merge will pause the
+# moment you slap `hold` on a PR, and resume when you take it off.
+#
+# Runs on label changes AND on sync/open so the check is always freshly
+# reported for the current label set.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+jobs:
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fail while the PR is held
+        env:
+          HELD: ${{ contains(github.event.pull_request.labels.*.name, 'hold') }}
+        run: |
+          if [ "$HELD" = "true" ]; then
+            echo "::error::This PR carries the 'hold' label — auto-merge is vetoed. Remove 'hold' to release."
+            exit 1
+          fi
+          echo "No hold label — merge permitted."
