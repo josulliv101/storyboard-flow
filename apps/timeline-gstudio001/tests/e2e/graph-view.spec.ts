@@ -347,6 +347,33 @@ async function expandSubGraph(page: Page, name: string): Promise<void> {
     .click();
 }
 
+/**
+ * Wait for FLIP move animations to finish before measuring card geometry.
+ *
+ * Commits (drop, undo, redo) animate every displaced card for 180ms via
+ * element.animate — and getBoundingClientRect INCLUDES the transform, so a
+ * drag measured mid-FLIP reads boxes up to a full slot away from where the
+ * cards land. That was a real ~1-in-2 flake: a drop aimed at a card's
+ * dead-center released at a stale coordinate and resolved to a different
+ * intent entirely. CSS animations/transitions are excluded — spinners and
+ * pulses are infinite and would never settle.
+ */
+async function settleMoveAnimations(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () =>
+      !document
+        .getAnimations()
+        .some(
+          (animation) =>
+            !(animation instanceof CSSAnimation) &&
+            !(animation instanceof CSSTransition) &&
+            animation.playState === "running",
+        ),
+    undefined,
+    { timeout: 3000 },
+  );
+}
+
 /** Press-and-hold drag: hold past the 250ms activation delay, travel, dwell,
  *  release. Used for strip cards AND palette thumbnails (both hold-marked). */
 async function holdDrag(
@@ -357,6 +384,7 @@ async function holdDrag(
 ): Promise<void> {
   await source.waitFor({ state: "visible" });
   await target.waitFor({ state: "visible" });
+  await settleMoveAnimations(page);
   const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
   expect(sourceBox).not.toBeNull();
@@ -375,6 +403,13 @@ async function holdDrag(
   );
   await page.waitForTimeout(150); // dwell: let collision/intent settle
   await page.mouse.up();
+  // dnd-kit's pointer sensor keeps a document-capture click SUPPRESSOR armed
+  // for 50ms after release (AbstractPointerSensor.detach defers
+  // documentListeners.removeAll) so the drag's own trailing click cannot
+  // select/open. Any button clicked inside that window is silently eaten —
+  // its click propagates past window but is stopped before React's root
+  // handler. Outlast the window before handing control back.
+  await page.waitForTimeout(80);
 }
 
 const undoButton = (page: Page): Locator => page.getByRole("button", { name: /undo/i });
@@ -874,6 +909,12 @@ test.describe("graph view E2E", () => {
       projectStrip.locator(`[data-node-id="${CHILD_ID}"]`),
       0.5,
     );
+    // Pin the premise: the VETO fired (its message reaches both the live
+    // region and the toast — .first() tolerates either), not some other
+    // rejection that would leave redo intact for the wrong reason.
+    await expect(
+      page.getByText(/drop again once its clips appear/i).first(),
+    ).toBeVisible();
     // The refusal itself is covered by the bounce test above; here the point
     // is only that nothing landed (the flash is a 600ms window — too racy to
     // assert after the extra interactions this test needs).
