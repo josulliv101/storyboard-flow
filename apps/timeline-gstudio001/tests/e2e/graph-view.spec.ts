@@ -540,6 +540,20 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
       .toBe("Opening Scene");
+
+    // The GRAPH node was renamed too, which is what the card's accessible
+    // name, the drag ghost, and every DnD announcement read. Renaming used to
+    // update only the document, so the visible title changed while screen
+    // readers kept hearing "Scene A" indefinitely.
+    const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
+    await expect(card).toHaveAttribute("aria-label", /^Opening Scene \(collection/);
+
+    // Undo restores BOTH representations rather than splitting them again.
+    await undoButton(page).click();
+    await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
+    await expect
+      .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
+      .toBe("Scene A");
   });
 
   test("surface toggle is page-wide: sub-graph rows follow grid/strip mode", async ({ page }) => {

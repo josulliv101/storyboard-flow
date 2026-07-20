@@ -197,9 +197,14 @@ type CollectionsCommand =
       toIndex: number;
     }
   | {
-      type: "update-media";        // the one DATA mutation: image duration / video trim
+      type: "update-media";        // DATA mutation: image duration / video trim
       nodeId: NodeId;
       update: MediaUpdate;
+    }
+  | {
+      type: "rename-node";         // DATA mutation: display name (media or collection)
+      nodeId: NodeId;
+      name: string;                // non-blank; callers trim
     };
 
 // Discriminated to match the node. Video omitted trim fields keep their value
@@ -211,10 +216,16 @@ type MediaUpdate =
 type ApplyCommandSuccess = { graph: CollectionsGraph; patch: CollectionsPatch };
 ```
 
-`move-nodes` and `add-nodes` change STRUCTURE; `update-media` changes node
-DATA only (structure untouched, `nodesById` re-allocated with structural
-sharing). It's reversible like the rest — its patch is `nodes-updated`
-(carries before/after; invert swaps them).
+`move-nodes` and `add-nodes` change STRUCTURE; `update-media` and
+`rename-node` change node DATA only (structure untouched, `nodesById`
+re-allocated with structural sharing). Both are reversible like the rest —
+they share the `nodes-updated` patch (carries before/after; invert swaps
+them).
+
+`node.name` is what the package shows and SAYS: card `aria-label`s, the drag
+ghost, and every pickup/drop announcement read it. An app that stores display
+names elsewhere and never dispatches `rename-node` will keep announcing the
+old name after a rename, however current its own UI looks.
 
 `toIndex` is the insertion index in the target's children **after the moved
 nodes have been removed from it**. `resolveCommandFromIntent` and
@@ -234,6 +245,7 @@ Rejections (`CommandRejection.reason`):
 | `invalid-node-id` | (add-nodes) An added node's id is empty or whitespace-only — it can't be addressed or encoded as a droppable. |
 | `invalid-node` | (add-nodes) A node failed runtime validation. Includes its batch `index` and a `validationError` with the precise value path. |
 | `not-media-node` | (update-media) `nodeId` is a collection, not a media node. |
+| `invalid-node-name` | (rename-node) The name is blank or whitespace-only. |
 | `invalid-media-update` | (update-media) The payload's `mediaKind` doesn't match the node, or it carries non-finite values. |
 | `nothing-to-add` | `add-nodes` with an empty `nodes` array. |
 | `invalid-index` | `toIndex` is not an integer (NaN/±Infinity splice at 0; a fraction desyncs forward apply from patch replay). |

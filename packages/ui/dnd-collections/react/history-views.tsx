@@ -19,6 +19,8 @@ function describeCommand(command: CollectionsCommand): string {
       return `add [${command.nodes.map((node) => node.id).join(", ")}] → ${command.toParentId}@${command.toIndex}`;
     case "update-media":
       return `trim ${command.nodeId} (${command.update.mediaKind})`;
+    case "rename-node":
+      return `rename ${command.nodeId} → "${command.name}"`;
   }
 }
 
