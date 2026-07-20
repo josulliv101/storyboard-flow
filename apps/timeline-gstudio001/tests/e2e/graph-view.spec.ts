@@ -1409,6 +1409,57 @@ test.describe("graph view E2E", () => {
     await expect(page.locator("[data-native-drop-indicator]")).toHaveCount(1);
   });
 
+  test("a slow drop lands at the boundary the user chose, not a stale index", async ({ page }) => {
+    // The insertion point is captured at DROP but committed after the upload
+    // finishes. If the strip is edited meanwhile, a bare numeric index names
+    // a different gap than the one the user dropped into — so the drop is
+    // anchored to its neighbouring node ids instead.
+    await installGraphApi(page);
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/timeline-media/upload", async (route) => {
+      await held; // hold the upload open while we reorder underneath it
+      return route.fulfill({ json: { pathname: "p.png", url: PIXEL } });
+    });
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+
+    // Drop between bravo (index 1) and the child collection (index 2).
+    const bravoBox = (await projectStrip.locator('[data-node-id="bravo"]').boundingBox())!;
+    const dropX = bravoBox.x + bravoBox.width - 2;
+    const fileTransfer = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(
+        new File([new Uint8Array([137, 80, 78, 71])], "late.png", { type: "image/png" }),
+      );
+      return transfer;
+    });
+    await page
+      .locator(`[data-native-drop="${PROJECT_ID}"]`)
+      .dispatchEvent("drop", { dataTransfer: fileTransfer, clientX: dropX });
+
+    // While the upload is held, move alpha to the END. Every index shifts
+    // down by one, so a stale index 2 would now point AFTER the collection.
+    await holdDrag(
+      page,
+      projectStrip.locator('[data-node-id="alpha"]'),
+      projectStrip.locator('[data-node-id="charlie"]'),
+      0.85,
+    );
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["bravo", CHILD_ID, "charlie", "alpha"]);
+
+    release!();
+
+    // Anchored: still immediately after bravo, which is where it was dropped.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID), { timeout: 15000 })
+      .toEqual(["bravo", expect.stringMatching(/^image-/), CHILD_ID, "charlie", "alpha"]);
+  });
+
   test("sidebar tools are still drag sources after becoming real buttons", async ({ page }) => {
     // Adding the keyboard path must not cost the pointer one. Playwright's
     // synthetic mouse cannot drive a native HTML5 drag, so this asserts the

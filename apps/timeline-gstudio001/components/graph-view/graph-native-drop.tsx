@@ -78,6 +78,23 @@ type DragGeometry = Readonly<{
 }>;
 
 /**
+ * A drop position expressed by its NEIGHBOURS rather than by a number.
+ *
+ * A file drop does not commit until its uploads finish, and the graph is
+ * fully editable during that window — a bare index captured at drop time
+ * silently comes to mean a different boundary. The neighbouring ids still
+ * name the same gap after the rest of the strip moves around them.
+ */
+type DropAnchor = Readonly<{
+  /** Child immediately before the gap at drop time, if any. */
+  beforeId: string | null;
+  /** Child immediately after it, if any. */
+  afterId: string | null;
+  /** Index at drop time — the last-resort fallback if neither survives. */
+  index: number;
+}>;
+
+/**
  * `Promise.all` with a worker pool. Results stay in INPUT order — the drop
  * adds nodes in file order, so completion order must not leak through.
  */
@@ -341,31 +358,72 @@ export function NativeDropStrip({
   }, []);
 
   /** Graph child index for a drop at clientX, via mounted-card midpoints. */
-  const resolveInsertIndex = useCallback(
-    (clientX: number): number => {
-      const children_ = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
+  const resolveDropAnchor = useCallback(
+    (clientX: number): DropAnchor => {
+      const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
       // Reuse the drag session's measurements; fall back to measuring for a
       // drop that arrived without a preceding dragover (programmatic drops).
       const geometry = dragGeometryRef.current ?? measureDragGeometry();
-      if (!geometry) return children_.length;
       // An id may be any non-whitespace string, so match by value rather than
       // reconstructing one — `parseNodeId` throws on an empty attribute.
       const indexOfCard = (card: CardGeometry) =>
-        children_.findIndex((childId) => (childId as string) === card.nodeId);
-      for (const card of geometry.cards) {
-        if (clientX < card.mid) {
-          const index = indexOfCard(card);
-          if (index >= 0) return index;
+        children.findIndex((childId) => (childId as string) === card.nodeId);
+
+      let index = children.length;
+      if (geometry) {
+        let resolved = -1;
+        for (const card of geometry.cards) {
+          if (clientX < card.mid) {
+            const at = indexOfCard(card);
+            if (at >= 0) {
+              resolved = at;
+              break;
+            }
+          }
         }
+        if (resolved < 0) {
+          const last = geometry.cards[geometry.cards.length - 1];
+          const at = last ? indexOfCard(last) : -1;
+          if (at >= 0) resolved = at + 1;
+        }
+        if (resolved >= 0) index = resolved;
       }
-      const last = geometry.cards[geometry.cards.length - 1];
-      if (last) {
-        const index = indexOfCard(last);
-        if (index >= 0) return index + 1;
-      }
-      return children_.length;
+
+      return {
+        index,
+        beforeId: index > 0 ? (children[index - 1] as string) : null,
+        afterId: index < children.length ? (children[index] as string) : null,
+      };
     },
     [store, collectionId, measureDragGeometry],
+  );
+
+  /**
+   * Where the anchor points NOW. A file drop commits after its uploads
+   * finish, and the user can reorder, delete, or nest clips in the meantime —
+   * a numeric index captured at drop time then names a different boundary
+   * than the one they dropped at.
+   */
+  const resolveAnchoredIndex = useCallback(
+    (anchor: DropAnchor): number => {
+      const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
+      const indexOf = (nodeId: string) =>
+        children.findIndex((childId) => (childId as string) === nodeId);
+      // Prefer the successor: "before whatever followed the gap" survives the
+      // predecessor being removed, which is the commoner edit.
+      if (anchor.afterId !== null) {
+        const at = indexOf(anchor.afterId);
+        if (at >= 0) return at;
+      }
+      if (anchor.beforeId !== null) {
+        const at = indexOf(anchor.beforeId);
+        if (at >= 0) return at + 1;
+      }
+      // Both neighbors are gone (or there were none): fall back to the
+      // original index, clamped to what the collection holds now.
+      return Math.max(0, Math.min(anchor.index, children.length));
+    },
+    [store, collectionId],
   );
 
   const invalidateDragGeometry = useCallback(() => {
@@ -441,7 +499,7 @@ export function NativeDropStrip({
   };
 
   const dropFiles = useCallback(
-    async (files: readonly File[], toIndex: number) => {
+    async (files: readonly File[], anchor: DropAnchor) => {
       const media = files.filter(
         (file) => file.type.startsWith("image/") || file.type.startsWith("video/"),
       );
@@ -548,10 +606,12 @@ export function NativeDropStrip({
             parkPendingDetail(result.node.id as string, result.detail);
           }
           // ONE dispatch for the whole file set: a multi-file drop is a
-          // single undoable step and a single persisted batch.
+          // single undoable step and a single persisted batch. The index is
+          // resolved HERE, from the anchor, because the strip may have been
+          // edited while the uploads ran.
           const added = addNodes(
             landed.map((result) => result.node),
-            toIndex,
+            resolveAnchoredIndex(anchor),
           );
           // The dispatch can be REFUSED (the un-hydrated-target veto). Ignoring
           // it left the user with successfully uploaded files, no cards, and
@@ -573,7 +633,7 @@ export function NativeDropStrip({
         dropAbortsRef.current.delete(controller);
       }
     },
-    [addNodes],
+    [addNodes, resolveAnchoredIndex],
   );
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -582,16 +642,18 @@ export function NativeDropStrip({
     // Resolve BEFORE ending the session: the index comes from the same
     // measurements the indicator was drawn from, so where the user saw the
     // line is where the node lands.
-    const toIndex = resolveInsertIndex(event.clientX);
+    const anchor = resolveDropAnchor(event.clientX);
     endDragSession();
 
     const tool = event.dataTransfer.getData(TOOL_MIME);
     if (tool && isSidebarTool(tool)) {
-      insertTool(tool, toIndex);
+      // Synchronous: nothing can move between resolving and committing.
+      insertTool(tool, anchor.index);
       return;
     }
+    // Files commit LATER (after upload), so hand over the anchor, not a number.
     const files = [...event.dataTransfer.files];
-    if (files.length > 0) void dropFiles(files, toIndex);
+    if (files.length > 0) void dropFiles(files, anchor);
   };
 
   return (
