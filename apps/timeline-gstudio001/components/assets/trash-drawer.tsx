@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   Trash2,
@@ -18,45 +18,71 @@ type TrashDrawerProps = {
   onClose: () => void;
 };
 
+// "Am I on the client?" as an external-store read: the server snapshot says
+// no, the client snapshot says yes, and nothing ever notifies — React swaps
+// the value at hydration. Replaces the setIsMounted(true)-in-an-effect flag,
+// which cost an extra post-mount render.
+const emptySubscribe = () => () => {};
+const useIsMounted = () =>
+  useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false,
+  );
+
 export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   const { user } = useAuth();
   const [clips, setClips] = useState<TimelineClip[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isMounted, setIsMounted] = useState(false);
+  const isMounted = useIsMounted();
 
-  const loadTrash = useCallback(async () => {
-    if (!user) return;
-    setIsLoading(true);
-    setError(null);
-    try {
-      const trashId = `trash-${user.uid}`;
-      const response = await fetch(`/api/timelines/${encodeURIComponent(trashId)}`, {
-        cache: "no-store",
-      });
-      if (response.ok) {
-        const result = await response.json();
-        setClips(result.document?.clips || []);
-      } else {
-        setClips([]);
-      }
-    } catch (err) {
-      console.error(err);
-      setError("Failed to load trash items.");
-    } finally {
-      setIsLoading(false);
+  // Opening resets the loading/error surface DURING the render that opens
+  // (the documented adjust-state-on-prop-change pattern), so the spinner is
+  // up before the fetch below even starts — the effect itself then only
+  // touches state from the request's own callbacks.
+  const [prevOpen, setPrevOpen] = useState(isOpen);
+  if (isOpen !== prevOpen) {
+    setPrevOpen(isOpen);
+    if (isOpen && user) {
+      setIsLoading(true);
+      setError(null);
     }
-  }, [user]);
+  }
 
-  useEffect(() => {
-    setIsMounted(true);
+  // Pure request: resolves to the trash clips and never touches state, so
+  // the open effect can consume it through promise CALLBACKS — state changes
+  // only when the request answers, never synchronously in the effect body.
+  const requestTrashClips = useCallback(async (uid: string): Promise<TimelineClip[]> => {
+    const trashId = `trash-${uid}`;
+    const response = await fetch(`/api/timelines/${encodeURIComponent(trashId)}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) return [];
+    const result = await response.json();
+    return result.document?.clips || [];
   }, []);
 
   useEffect(() => {
-    if (isOpen) {
-      loadTrash();
-    }
-  }, [isOpen, loadTrash]);
+    if (!isOpen || !user) return;
+    let cancelled = false;
+    requestTrashClips(user.uid)
+      .then((next) => {
+        if (cancelled) return;
+        setClips(next);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        console.error(err);
+        if (!cancelled) setError("Failed to load trash items.");
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, user, requestTrashClips]);
 
   const handleEmptyTrash = async () => {
     const confirmed = window.confirm(

@@ -43,25 +43,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Pure request: resolves to the session user (or null) and never touches
+  // state — so the mount effect can consume it through promise CALLBACKS
+  // (state changes only when the external request answers), and refreshUser
+  // wraps it for event-handler callers who want the loading flag re-raised.
+  const requestUser = useCallback(async (): Promise<AuthUser | null> => {
+    const response = await fetch("/api/auth/me", { cache: "no-store" });
+    const result = (await response.json().catch(() => ({}))) as {
+      user?: AuthUser | null;
+    };
+    return result.user ?? null;
+  }, []);
+
   const refreshUser = useCallback(async () => {
     setIsLoading(true);
-
     try {
-      const response = await fetch("/api/auth/me", { cache: "no-store" });
-      const result = (await response.json().catch(() => ({}))) as {
-        user?: AuthUser | null;
-      };
-      setUser(result.user ?? null);
+      setUser(await requestUser());
     } catch {
       setUser(null);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [requestUser]);
 
   useEffect(() => {
-    void refreshUser();
-  }, [refreshUser]);
+    // Mount needs no sync loading reset — isLoading INITIALIZES true. The
+    // cancelled flag keeps a slow answer from writing into an unmounted tree.
+    let cancelled = false;
+    requestUser()
+      .then((next) => {
+        if (!cancelled) setUser(next);
+      })
+      .catch(() => {
+        if (!cancelled) setUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requestUser]);
 
   const sendSignInLink = useCallback(async ({ email }: AuthCredentials) => {
     const response = await fetch("/api/auth/login", {

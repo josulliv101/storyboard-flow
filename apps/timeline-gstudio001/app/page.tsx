@@ -48,32 +48,61 @@ export default function Home() {
   const [isCreating, setIsCreating] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const loadProjects = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError(null);
+  // Pure request: resolves to the project list or throws — it never touches
+  // state, so the mount effect can consume it through promise CALLBACKS
+  // (state changes only when the external request answers) and Refresh can
+  // wrap it with its own synchronous loading reset.
+  const requestProjects = useCallback(async (): Promise<TimelineProjectSummary[]> => {
+    const response = await fetch("/api/timelines", { cache: "no-store" });
+    const result = (await response.json().catch(() => ({}))) as {
+      projects?: TimelineProjectSummary[];
+      error?: string;
+    };
 
-    try {
-      const response = await fetch("/api/timelines", { cache: "no-store" });
-      const result = (await response.json().catch(() => ({}))) as {
-        projects?: TimelineProjectSummary[];
-        error?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(result.error || "Unable to load projects.");
-      }
-
-      setProjects(result.projects || []);
-    } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Unable to load projects.");
-    } finally {
-      setIsLoading(false);
+    if (!response.ok) {
+      throw new Error(result.error || "Unable to load projects.");
     }
+
+    return result.projects || [];
   }, []);
 
   useEffect(() => {
-    void loadProjects();
-  }, [loadProjects]);
+    // Mount needs no sync loading reset — isLoading INITIALIZES true. The
+    // cancelled flag keeps a slow answer from writing into an unmounted tree.
+    let cancelled = false;
+    requestProjects()
+      .then((next) => {
+        if (cancelled) return;
+        setProjects(next);
+        setLoadError(null);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setLoadError(error instanceof Error ? error.message : "Unable to load projects.");
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requestProjects]);
+
+  // Refresh (an event handler) re-raises the loading flag before refetching.
+  const reloadProjects = useCallback(() => {
+    setIsLoading(true);
+    setLoadError(null);
+    requestProjects()
+      .then((next) => {
+        setProjects(next);
+      })
+      .catch((error: unknown) => {
+        setLoadError(error instanceof Error ? error.message : "Unable to load projects.");
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
+  }, [requestProjects]);
 
   const handleDeleteProject = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -192,7 +221,7 @@ export default function Home() {
             variant="outline"
             size="sm"
             className="gap-2 border-zinc-800 bg-zinc-950 text-zinc-300 hover:bg-zinc-900"
-            onClick={() => void loadProjects()}
+            onClick={reloadProjects}
             disabled={isLoading}
           >
             <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
