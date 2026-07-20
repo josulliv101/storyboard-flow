@@ -330,20 +330,26 @@ export function SidebarToolInsertBridge({
   return null;
 }
 
+function acceptsNativeDrag(event: DragEvent<HTMLElement>): boolean {
+  const types = event.dataTransfer.types;
+  return types.includes(TOOL_MIME) || types.includes("Files");
+}
+
 /**
- * Wraps a strip and accepts native drops into the given collection.
- * Insertion position follows the legacy midpoint rule, resolved against the
- * MOUNTED cards (virtualization: DOM order matches child order, but indexes
- * must come from the graph, not the DOM position).
+ * The surface-agnostic native-drop ENGINE: sidebar TOOL insertion, OS FILE
+ * upload, the parked-detail bookkeeping, and the aggregated status line. A
+ * strip or a grid supplies only its own geometry, hit-testing, and indicator;
+ * everything that talks to the store and the upload pipeline lives here so the
+ * two surfaces cannot drift (the exact drift #30 was: only the strip ever
+ * wired a drop target, so grid mode silently accepted nothing).
+ *
+ * `resolveAnchoredIndex` and the DropAnchor it consumes are children-based, so
+ * they are shared unchanged: only turning a POINTER into an anchor (1-D for a
+ * strip, 2-D for a grid) and drawing the indicator are surface-specific.
  */
-export function NativeDropStrip({
-  collectionId,
-  children,
-}: Readonly<{ collectionId: string; children: ReactNode }>) {
+function useNativeDrop(collectionId: string) {
   const store = useCollectionsStore();
   const { addNodes, insertTool } = useToolInsertion(collectionId);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const [indicatorX, setIndicatorX] = useState<number | null>(null);
   // Keyed BY DROP, not one shared slot. Several drops can be live at once
   // (the abort set below exists precisely for that), and a single value made
   // them clobber each other: whichever finished first cleared the banner
@@ -381,14 +387,6 @@ export function NativeDropStrip({
     };
   }, [drops, setDropStatus]);
 
-  // Drag-session geometry (see measureDragGeometry) plus the rAF coalescing
-  // state for the drop indicator. All refs: none of it should drive a render.
-  const dragGeometryRef = useRef<DragGeometry | null>(null);
-  const dragSessionRef = useRef(false);
-  const pointerXRef = useRef(0);
-  const indicatorFrameRef = useRef<number | null>(null);
-  const indicatorXRef = useRef<number | null>(null);
-
   // Live drops, so unmount (drill-in, route change, surface toggle) can stop
   // their decodes and uploads instead of leaving media elements and requests
   // running for a view nobody is looking at. A Set, not one controller: a
@@ -401,77 +399,6 @@ export function NativeDropStrip({
       pending.clear();
     };
   }, []);
-
-  const acceptsDrag = (event: DragEvent) => {
-    const types = event.dataTransfer.types;
-    return types.includes(TOOL_MIME) || types.includes("Files");
-  };
-
-  /**
-   * Measure the wrapper and every mounted card ONCE per drag session.
-   *
-   * `dragover` fires continuously, and reading `getBoundingClientRect` per
-   * card per event forces layout on each one. Cards do not move while a
-   * native drag is in progress — nothing commits until drop — so the geometry
-   * is stable, and the only things that invalidate it are scrolling (which
-   * also swaps which cards are virtualized in) and resizing.
-   */
-  const measureDragGeometry = useCallback((): DragGeometry | null => {
-    const wrapper = wrapperRef.current;
-    if (!wrapper) return null;
-    const wrapperLeft = wrapper.getBoundingClientRect().left;
-    const cards = [...wrapper.querySelectorAll<HTMLElement>("[data-node-id]")].map((card) => {
-      const rect = card.getBoundingClientRect();
-      return {
-        nodeId: card.dataset.nodeId ?? "",
-        left: rect.left,
-        right: rect.right,
-        mid: rect.left + rect.width / 2,
-      };
-    });
-    return { wrapperLeft, cards };
-  }, []);
-
-  /** Graph child index for a drop at clientX, via mounted-card midpoints. */
-  const resolveDropAnchor = useCallback(
-    (clientX: number): DropAnchor => {
-      const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
-      // Reuse the drag session's measurements; fall back to measuring for a
-      // drop that arrived without a preceding dragover (programmatic drops).
-      const geometry = dragGeometryRef.current ?? measureDragGeometry();
-      // An id may be any non-whitespace string, so match by value rather than
-      // reconstructing one — `parseNodeId` throws on an empty attribute.
-      const indexOfCard = (card: CardGeometry) =>
-        children.findIndex((childId) => (childId as string) === card.nodeId);
-
-      let index = children.length;
-      if (geometry) {
-        let resolved = -1;
-        for (const card of geometry.cards) {
-          if (clientX < card.mid) {
-            const at = indexOfCard(card);
-            if (at >= 0) {
-              resolved = at;
-              break;
-            }
-          }
-        }
-        if (resolved < 0) {
-          const last = geometry.cards[geometry.cards.length - 1];
-          const at = last ? indexOfCard(last) : -1;
-          if (at >= 0) resolved = at + 1;
-        }
-        if (resolved >= 0) index = resolved;
-      }
-
-      return {
-        index,
-        beforeId: index > 0 ? (children[index - 1] as string) : null,
-        afterId: index < children.length ? (children[index] as string) : null,
-      };
-    },
-    [store, collectionId, measureDragGeometry],
-  );
 
   /**
    * Where the anchor points NOW. A file drop commits after its uploads
@@ -500,78 +427,6 @@ export function NativeDropStrip({
     },
     [store, collectionId],
   );
-
-  const invalidateDragGeometry = useCallback(() => {
-    dragGeometryRef.current = null;
-  }, []);
-
-  /** Resolve and paint the indicator for the latest pointer x, once a frame. */
-  const flushIndicator = useCallback(() => {
-    indicatorFrameRef.current = null;
-    const geometry = (dragGeometryRef.current ??= measureDragGeometry());
-    if (!geometry) return;
-    const clientX = pointerXRef.current;
-    // Snap to the resolved insertion edge when a card anchors it, else follow
-    // the pointer (empty strip / trailing whitespace).
-    let x = clientX - geometry.wrapperLeft;
-    for (const card of geometry.cards) {
-      if (clientX < card.mid) {
-        x = card.left - geometry.wrapperLeft - 3;
-        break;
-      }
-      x = card.right - geometry.wrapperLeft + 3;
-    }
-    // Most frames of a drag resolve to the SAME edge — re-rendering for them
-    // is pure waste.
-    if (indicatorXRef.current === x) return;
-    indicatorXRef.current = x;
-    setIndicatorX(x);
-  }, [measureDragGeometry]);
-
-  const endDragSession = useCallback(() => {
-    if (!dragSessionRef.current) return;
-    dragSessionRef.current = false;
-    window.removeEventListener("scroll", invalidateDragGeometry, true);
-    window.removeEventListener("resize", invalidateDragGeometry);
-    if (indicatorFrameRef.current !== null) {
-      cancelAnimationFrame(indicatorFrameRef.current);
-      indicatorFrameRef.current = null;
-    }
-    dragGeometryRef.current = null;
-    indicatorXRef.current = null;
-    setIndicatorX(null);
-  }, [invalidateDragGeometry]);
-
-  // A drag can end anywhere (dropped on another target, cancelled with Esc),
-  // and `dragend` fires on the drag SOURCE — which is the sidebar, not us. A
-  // window-level listener is what actually guarantees the session closes.
-  useEffect(() => endDragSession, [endDragSession]);
-
-  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!acceptsDrag(event)) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-
-    if (!dragSessionRef.current) {
-      dragSessionRef.current = true;
-      // Capture phase: the strip scrolls in its own container, not the window.
-      window.addEventListener("scroll", invalidateDragGeometry, true);
-      window.addEventListener("resize", invalidateDragGeometry);
-      window.addEventListener("dragend", endDragSession, { once: true });
-    }
-    // Coalesce to one resolve+paint per frame, no matter the event rate.
-    pointerXRef.current = event.clientX;
-    if (indicatorFrameRef.current === null) {
-      indicatorFrameRef.current = requestAnimationFrame(flushIndicator);
-    }
-  };
-
-  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
-    // Only clear when the pointer truly left the wrapper (dragleave fires
-    // for every child boundary crossing).
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-    endDragSession();
-  };
 
   const dropFiles = useCallback(
     async (files: readonly File[], anchor: DropAnchor) => {
@@ -716,24 +571,216 @@ export function NativeDropStrip({
     [addNodes, resolveAnchoredIndex, setDropStatus],
   );
 
+  /** Commit a drop whose insert boundary the surface already resolved. Tools
+   *  land synchronously; files hand the anchor over to the async upload. */
+  const commitDrop = useCallback(
+    (event: DragEvent<HTMLElement>, anchor: DropAnchor) => {
+      const tool = event.dataTransfer.getData(TOOL_MIME);
+      if (tool && isSidebarTool(tool)) {
+        insertTool(tool, anchor.index);
+        return;
+      }
+      const files = [...event.dataTransfer.files];
+      if (files.length > 0) void dropFiles(files, anchor);
+    },
+    [insertTool, dropFiles],
+  );
+
+  return { commitDrop, upload };
+}
+
+/** The shared drop status line — a live region mounted at all times so its
+ *  text is announced when it appears. Empty and invisible while idle. */
+function NativeDropStatus({ upload }: Readonly<{ upload: DropSummary | null }>) {
+  return (
+    <p
+      data-native-drop-status
+      role="status"
+      aria-live="polite"
+      className={[
+        "pointer-events-none absolute bottom-1 left-1 z-20 rounded px-2 py-1 text-[10px]",
+        upload === null
+          ? "sr-only"
+          : upload.tone === "progress"
+            ? "bg-zinc-900/90 text-zinc-200"
+            : "bg-red-950/90 text-red-200",
+      ].join(" ")}
+    >
+      {upload?.message ?? ""}
+    </p>
+  );
+}
+
+/**
+ * Wraps a strip and accepts native drops into the given collection.
+ * Insertion position follows the legacy midpoint rule, resolved against the
+ * MOUNTED cards (virtualization: DOM order matches child order, but indexes
+ * must come from the graph, not the DOM position).
+ */
+export function NativeDropStrip({
+  collectionId,
+  children,
+}: Readonly<{ collectionId: string; children: ReactNode }>) {
+  const store = useCollectionsStore();
+  const { commitDrop, upload } = useNativeDrop(collectionId);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [indicatorX, setIndicatorX] = useState<number | null>(null);
+
+  // Drag-session geometry (see measureDragGeometry) plus the rAF coalescing
+  // state for the drop indicator. All refs: none of it should drive a render.
+  const dragGeometryRef = useRef<DragGeometry | null>(null);
+  const dragSessionRef = useRef(false);
+  const pointerXRef = useRef(0);
+  const indicatorFrameRef = useRef<number | null>(null);
+  const indicatorXRef = useRef<number | null>(null);
+
+  /**
+   * Measure the wrapper and every mounted card ONCE per drag session.
+   *
+   * `dragover` fires continuously, and reading `getBoundingClientRect` per
+   * card per event forces layout on each one. Cards do not move while a
+   * native drag is in progress — nothing commits until drop — so the geometry
+   * is stable, and the only things that invalidate it are scrolling (which
+   * also swaps which cards are virtualized in) and resizing.
+   */
+  const measureDragGeometry = useCallback((): DragGeometry | null => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return null;
+    const wrapperLeft = wrapper.getBoundingClientRect().left;
+    const cards = [...wrapper.querySelectorAll<HTMLElement>("[data-node-id]")].map((card) => {
+      const rect = card.getBoundingClientRect();
+      return {
+        nodeId: card.dataset.nodeId ?? "",
+        left: rect.left,
+        right: rect.right,
+        mid: rect.left + rect.width / 2,
+      };
+    });
+    return { wrapperLeft, cards };
+  }, []);
+
+  /** Graph child index for a drop at clientX, via mounted-card midpoints. */
+  const resolveDropAnchor = useCallback(
+    (clientX: number): DropAnchor => {
+      const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
+      // Reuse the drag session's measurements; fall back to measuring for a
+      // drop that arrived without a preceding dragover (programmatic drops).
+      const geometry = dragGeometryRef.current ?? measureDragGeometry();
+      // An id may be any non-whitespace string, so match by value rather than
+      // reconstructing one — `parseNodeId` throws on an empty attribute.
+      const indexOfCard = (card: CardGeometry) =>
+        children.findIndex((childId) => (childId as string) === card.nodeId);
+
+      let index = children.length;
+      if (geometry) {
+        let resolved = -1;
+        for (const card of geometry.cards) {
+          if (clientX < card.mid) {
+            const at = indexOfCard(card);
+            if (at >= 0) {
+              resolved = at;
+              break;
+            }
+          }
+        }
+        if (resolved < 0) {
+          const last = geometry.cards[geometry.cards.length - 1];
+          const at = last ? indexOfCard(last) : -1;
+          if (at >= 0) resolved = at + 1;
+        }
+        if (resolved >= 0) index = resolved;
+      }
+
+      return {
+        index,
+        beforeId: index > 0 ? (children[index - 1] as string) : null,
+        afterId: index < children.length ? (children[index] as string) : null,
+      };
+    },
+    [store, collectionId, measureDragGeometry],
+  );
+
+  const invalidateDragGeometry = useCallback(() => {
+    dragGeometryRef.current = null;
+  }, []);
+
+  /** Resolve and paint the indicator for the latest pointer x, once a frame. */
+  const flushIndicator = useCallback(() => {
+    indicatorFrameRef.current = null;
+    const geometry = (dragGeometryRef.current ??= measureDragGeometry());
+    if (!geometry) return;
+    const clientX = pointerXRef.current;
+    // Snap to the resolved insertion edge when a card anchors it, else follow
+    // the pointer (empty strip / trailing whitespace).
+    let x = clientX - geometry.wrapperLeft;
+    for (const card of geometry.cards) {
+      if (clientX < card.mid) {
+        x = card.left - geometry.wrapperLeft - 3;
+        break;
+      }
+      x = card.right - geometry.wrapperLeft + 3;
+    }
+    // Most frames of a drag resolve to the SAME edge — re-rendering for them
+    // is pure waste.
+    if (indicatorXRef.current === x) return;
+    indicatorXRef.current = x;
+    setIndicatorX(x);
+  }, [measureDragGeometry]);
+
+  const endDragSession = useCallback(() => {
+    if (!dragSessionRef.current) return;
+    dragSessionRef.current = false;
+    window.removeEventListener("scroll", invalidateDragGeometry, true);
+    window.removeEventListener("resize", invalidateDragGeometry);
+    if (indicatorFrameRef.current !== null) {
+      cancelAnimationFrame(indicatorFrameRef.current);
+      indicatorFrameRef.current = null;
+    }
+    dragGeometryRef.current = null;
+    indicatorXRef.current = null;
+    setIndicatorX(null);
+  }, [invalidateDragGeometry]);
+
+  // A drag can end anywhere (dropped on another target, cancelled with Esc),
+  // and `dragend` fires on the drag SOURCE — which is the sidebar, not us. A
+  // window-level listener is what actually guarantees the session closes.
+  useEffect(() => endDragSession, [endDragSession]);
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsNativeDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+
+    if (!dragSessionRef.current) {
+      dragSessionRef.current = true;
+      // Capture phase: the strip scrolls in its own container, not the window.
+      window.addEventListener("scroll", invalidateDragGeometry, true);
+      window.addEventListener("resize", invalidateDragGeometry);
+      window.addEventListener("dragend", endDragSession, { once: true });
+    }
+    // Coalesce to one resolve+paint per frame, no matter the event rate.
+    pointerXRef.current = event.clientX;
+    if (indicatorFrameRef.current === null) {
+      indicatorFrameRef.current = requestAnimationFrame(flushIndicator);
+    }
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    // Only clear when the pointer truly left the wrapper (dragleave fires
+    // for every child boundary crossing).
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    endDragSession();
+  };
+
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
-    if (!acceptsDrag(event)) return;
+    if (!acceptsNativeDrag(event)) return;
     event.preventDefault();
     // Resolve BEFORE ending the session: the index comes from the same
     // measurements the indicator was drawn from, so where the user saw the
     // line is where the node lands.
     const anchor = resolveDropAnchor(event.clientX);
     endDragSession();
-
-    const tool = event.dataTransfer.getData(TOOL_MIME);
-    if (tool && isSidebarTool(tool)) {
-      // Synchronous: nothing can move between resolving and committing.
-      insertTool(tool, anchor.index);
-      return;
-    }
-    // Files commit LATER (after upload), so hand over the anchor, not a number.
-    const files = [...event.dataTransfer.files];
-    if (files.length > 0) void dropFiles(files, anchor);
+    commitDrop(event, anchor);
   };
 
   return (
@@ -754,24 +801,204 @@ export function NativeDropStrip({
           style={{ transform: `translateX(${indicatorX}px)` }}
         />
       )}
-      {/* Always MOUNTED, so it is a live region the moment the page renders:
-          a role="status" element that appears at the same time as its text
-          is unreliably announced. Empty and visually gone while idle. */}
-      <p
-        data-native-drop-status
-        role="status"
-        aria-live="polite"
-        className={[
-          "pointer-events-none absolute bottom-1 left-1 z-20 rounded px-2 py-1 text-[10px]",
-          upload === null
-            ? "sr-only"
-            : upload.tone === "progress"
-              ? "bg-zinc-900/90 text-zinc-200"
-              : "bg-red-950/90 text-red-200",
-        ].join(" ")}
-      >
-        {upload?.message ?? ""}
-      </p>
+      <NativeDropStatus upload={upload} />
+    </div>
+  );
+}
+
+/** Client-space geometry of one mounted GRID cell, measured once per drag. */
+type GridCellGeometry = Readonly<{
+  nodeId: string;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  midX: number;
+}>;
+
+type GridDragGeometry = Readonly<{
+  wrapperLeft: number;
+  wrapperTop: number;
+  cells: readonly GridCellGeometry[];
+}>;
+
+/** Where the grid indicator draws — a vertical bar at the resolved boundary. */
+type GridIndicator = Readonly<{ x: number; y: number; height: number }>;
+
+/**
+ * Wraps a GRID and accepts the same native drops the strip does — which grid
+ * mode used to swallow, having no drop target at all (#30). The insert index
+ * comes from 2-D hit-testing: the boundary falls before the first mounted cell
+ * that follows the pointer in reading order (a row below the pointer, or the
+ * pointer's own row and to the pointer's right). Indexes still come from the
+ * GRAPH, matched to mounted cells by id, exactly as the strip does.
+ */
+export function NativeDropGrid({
+  collectionId,
+  children,
+}: Readonly<{ collectionId: string; children: ReactNode }>) {
+  const store = useCollectionsStore();
+  const { commitDrop, upload } = useNativeDrop(collectionId);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [indicator, setIndicator] = useState<GridIndicator | null>(null);
+
+  const dragGeometryRef = useRef<GridDragGeometry | null>(null);
+  const dragSessionRef = useRef(false);
+  const pointerRef = useRef({ x: 0, y: 0 });
+  const indicatorFrameRef = useRef<number | null>(null);
+
+  const measureDragGeometry = useCallback((): GridDragGeometry | null => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return null;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const cells = [...wrapper.querySelectorAll<HTMLElement>("[data-node-id]")].map((cell) => {
+      const rect = cell.getBoundingClientRect();
+      return {
+        nodeId: cell.dataset.nodeId ?? "",
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        midX: rect.left + rect.width / 2,
+      };
+    });
+    return { wrapperLeft: wrapperRect.left, wrapperTop: wrapperRect.top, cells };
+  }, []);
+
+  /** The mounted cell the insertion boundary sits BEFORE, or null to append. */
+  const cellBeforeWhichPointerFalls = useCallback(
+    (geometry: GridDragGeometry, x: number, y: number): GridCellGeometry | null => {
+      for (const cell of geometry.cells) {
+        // Reading order: a cell FOLLOWS the pointer if it starts on a row below
+        // the pointer, or shares the pointer's row and lies to its right.
+        const rowBelow = y < cell.top;
+        const sameRow = y >= cell.top && y <= cell.bottom;
+        const follows = rowBelow || (sameRow && x < cell.midX);
+        if (follows) return cell;
+      }
+      return null;
+    },
+    [],
+  );
+
+  const resolveDropAnchor = useCallback(
+    (clientX: number, clientY: number): DropAnchor => {
+      const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
+      const geometry = dragGeometryRef.current ?? measureDragGeometry();
+      const indexOfId = (nodeId: string) =>
+        children.findIndex((childId) => (childId as string) === nodeId);
+
+      let index = children.length;
+      if (geometry) {
+        const before = cellBeforeWhichPointerFalls(geometry, clientX, clientY);
+        if (before) {
+          const at = indexOfId(before.nodeId);
+          if (at >= 0) index = at;
+        }
+      }
+      return {
+        index,
+        beforeId: index > 0 ? (children[index - 1] as string) : null,
+        afterId: index < children.length ? (children[index] as string) : null,
+      };
+    },
+    [store, collectionId, measureDragGeometry, cellBeforeWhichPointerFalls],
+  );
+
+  const invalidateDragGeometry = useCallback(() => {
+    dragGeometryRef.current = null;
+  }, []);
+
+  const flushIndicator = useCallback(() => {
+    indicatorFrameRef.current = null;
+    const geometry = (dragGeometryRef.current ??= measureDragGeometry());
+    if (!geometry || geometry.cells.length === 0) {
+      setIndicator(null);
+      return;
+    }
+    const { x: clientX, y: clientY } = pointerRef.current;
+    const before = cellBeforeWhichPointerFalls(geometry, clientX, clientY);
+    // Draw at the left edge of the cell the boundary precedes, else at the
+    // right edge of the last cell (append). Spans that cell's row height.
+    const anchorCell = before ?? geometry.cells[geometry.cells.length - 1];
+    const x =
+      (before ? anchorCell.left - 3 : anchorCell.right + 3) - geometry.wrapperLeft;
+    const y = anchorCell.top - geometry.wrapperTop;
+    const height = anchorCell.bottom - anchorCell.top;
+    setIndicator((current) =>
+      current && current.x === x && current.y === y && current.height === height
+        ? current
+        : { x, y, height },
+    );
+  }, [measureDragGeometry, cellBeforeWhichPointerFalls]);
+
+  const endDragSession = useCallback(() => {
+    if (!dragSessionRef.current) return;
+    dragSessionRef.current = false;
+    window.removeEventListener("scroll", invalidateDragGeometry, true);
+    window.removeEventListener("resize", invalidateDragGeometry);
+    if (indicatorFrameRef.current !== null) {
+      cancelAnimationFrame(indicatorFrameRef.current);
+      indicatorFrameRef.current = null;
+    }
+    dragGeometryRef.current = null;
+    setIndicator(null);
+  }, [invalidateDragGeometry]);
+
+  useEffect(() => endDragSession, [endDragSession]);
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsNativeDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+
+    if (!dragSessionRef.current) {
+      dragSessionRef.current = true;
+      window.addEventListener("scroll", invalidateDragGeometry, true);
+      window.addEventListener("resize", invalidateDragGeometry);
+      window.addEventListener("dragend", endDragSession, { once: true });
+    }
+    pointerRef.current = { x: event.clientX, y: event.clientY };
+    if (indicatorFrameRef.current === null) {
+      indicatorFrameRef.current = requestAnimationFrame(flushIndicator);
+    }
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    endDragSession();
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsNativeDrag(event)) return;
+    event.preventDefault();
+    const anchor = resolveDropAnchor(event.clientX, event.clientY);
+    endDragSession();
+    commitDrop(event, anchor);
+  };
+
+  return (
+    <div
+      ref={wrapperRef}
+      data-native-drop={collectionId}
+      className="relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {children}
+      {indicator !== null && (
+        <div
+          data-native-drop-indicator
+          aria-hidden="true"
+          className="pointer-events-none absolute z-20 w-0.5 rounded bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)]"
+          style={{
+            transform: `translate(${indicator.x}px, ${indicator.y}px)`,
+            height: `${indicator.height}px`,
+          }}
+        />
+      )}
+      <NativeDropStatus upload={upload} />
     </div>
   );
 }

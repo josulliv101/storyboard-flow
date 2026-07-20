@@ -21,7 +21,7 @@ import {
 } from "@/components/core/dropdown-menu";
 import { Slider } from "@/components/core/slider";
 
-import { NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
+import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
 import { SyncPanel, type SyncEntry } from "./graph-persistence";
 import {
@@ -278,34 +278,38 @@ export function GraphBoard({
               )}
             </NativeDropStrip>
           ) : (
-            <div className="relative">
-              <VirtualGrid
-                collectionId={parseNodeId(focusedId)}
-                cellWidth={dims.gridWidth}
-                cellHeight={dims.gridHeight}
-                gap={GRID_GAP}
-                height={GRID_UNCAPPED_HEIGHT}
-                overlay={
-                  previewOn ? (
-                    <GraphGridPlayhead
-                      focusedId={focusedId}
-                      channel={timeChannel}
-                      cellHeight={dims.gridHeight}
-                      pixelsPerSecond={pixelsPerSecond}
-                    />
-                  ) : undefined
-                }
-                className="bg-black/25"
-              />
-              {previewOn && (
-                <GraphGridScrubSurface
-                  focusedId={focusedId}
-                  channel={timeChannel}
+            // NativeDropGrid wraps the scrub surface too, so a native drag over
+            // the (preview-only) scrub overlay still bubbles to the drop target.
+            <NativeDropGrid collectionId={focusedId}>
+              <div className="relative">
+                <VirtualGrid
+                  collectionId={parseNodeId(focusedId)}
+                  cellWidth={dims.gridWidth}
                   cellHeight={dims.gridHeight}
-                  pixelsPerSecond={pixelsPerSecond}
+                  gap={GRID_GAP}
+                  height={GRID_UNCAPPED_HEIGHT}
+                  overlay={
+                    previewOn ? (
+                      <GraphGridPlayhead
+                        focusedId={focusedId}
+                        channel={timeChannel}
+                        cellHeight={dims.gridHeight}
+                        pixelsPerSecond={pixelsPerSecond}
+                      />
+                    ) : undefined
+                  }
+                  className="bg-black/25"
                 />
-              )}
-            </div>
+                {previewOn && (
+                  <GraphGridScrubSurface
+                    focusedId={focusedId}
+                    channel={timeChannel}
+                    cellHeight={dims.gridHeight}
+                    pixelsPerSecond={pixelsPerSecond}
+                  />
+                )}
+              </div>
+            </NativeDropGrid>
           )}
 
           {/* Children render one size step below the focused timeline (flat —
