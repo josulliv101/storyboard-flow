@@ -41,6 +41,7 @@ import {
   ITEM_SIZES,
   MAX_TIMELINE_PPS,
   MIN_TIMELINE_PPS,
+  isItemSize,
   stepDownItemSize,
   type FocusSurface,
   type ItemSize,
@@ -79,7 +80,9 @@ function BoardMenu({
         <DropdownMenuLabel>Thumbnail size</DropdownMenuLabel>
         <DropdownMenuRadioGroup
           value={itemSize}
-          onValueChange={(value) => onItemSizeChange(value as ItemSize)}
+          onValueChange={(value) => {
+            if (isItemSize(value)) onItemSizeChange(value);
+          }}
         >
           {ITEM_SIZES.map((option) => (
             <DropdownMenuRadioItem key={option} value={option}>
