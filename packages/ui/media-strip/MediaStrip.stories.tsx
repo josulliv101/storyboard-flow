@@ -49,11 +49,18 @@ type StoryMediaItem = {
     }
   );
 
-// Real local fixture video — keeps stories deterministic and offline (no
-// Cloudinary/live calls, per the Storybook rules). The strip renders video
-// items from their poster PNGs, so this src is the underlying clip, not what
-// the thumbnail loads.
-const storyVideoSrc = new URL("./fixtures/dog.mp4", import.meta.url).href;
+// INERT fixture data, deliberately not an asset reference. Nothing loads it:
+// the strip renders video items from their poster PNGs, and
+// media-strip-thumbnail.tsx explicitly refuses to put a video url in an <img>
+// fallback. This used to be `new URL("./fixtures/dog.mp4", import.meta.url)`,
+// but `*.mp4` is gitignored — the file resolved only on machines that happened
+// to have it locally and was missing from every fresh clone, so the "real local
+// fixture" it claimed to be did not exist in the repo. A plain string is what
+// MediaStrip.edge-cases.stories.tsx already uses for the same items.
+const storyVideoSrc = "fixtures/dog.mp4";
+
+// The poster PNGs are the opposite case: tracked, really loaded, and what
+// makes these stories deterministic and offline per the Storybook rules.
 const dogVideoThumbnails = {
   "00:02": new URL("./fixtures/dog-tracking-2s.png", import.meta.url).href,
   "00:04": new URL("./fixtures/dog-exit-4s.png", import.meta.url).href,

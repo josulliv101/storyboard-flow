@@ -483,6 +483,40 @@ test.describe("graph view E2E", () => {
       .toEqual(["k1"]);
   });
 
+  test("drilling into a collection id containing a slash hydrates it", async ({ page }) => {
+    // HydrationController used to round-trip the focus path through
+    // `segments.join("/")` / `.split("/")`. A NodeId may contain any
+    // non-whitespace character, so "scene/a" was torn into "scene" + "a" —
+    // neither of which is in the graph — and the drill-in reported an unknown
+    // timeline while priming the wrong documents. Navigation itself was
+    // always fine: it encodes each segment, so the id rides the URL as
+    // "scene%2Fa" and is one path segment.
+    const SLASH_ID = "scene/a";
+    const api = await installGraphApi(page);
+    api.documents
+      .get(PROJECT_ID)!
+      .clips.push(collectionClip("clip-slash", SLASH_ID, 3, "Scene Slash", 1));
+    api.documents.set(SLASH_ID, {
+      id: SLASH_ID,
+      title: "Scene Slash",
+      clips: [mediaClip("s1", "image", 0, 4)],
+    });
+
+    await openGraph(page);
+    await page
+      .locator('section[aria-label="Sub-timeline: Scene Slash"]')
+      .getByRole("button", { name: "Focus" })
+      .click();
+
+    // One encoded segment in the URL, not two.
+    await page.waitForURL(`**${GRAPH_URL}/${encodeURIComponent(SLASH_ID)}`);
+
+    // The focused timeline actually hydrated — the old code surfaced an
+    // "Unknown timeline" panel here instead.
+    await expect(page.getByText("Unknown timeline")).toHaveCount(0);
+    await expect.poll(() => stripOrder(page, SLASH_ID), { timeout: 15000 }).toEqual(["s1"]);
+  });
+
   test("renaming a sub-graph in place persists to the child document title", async ({ page }) => {
     const api = await installGraphApi(page);
     await openGraph(page);

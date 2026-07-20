@@ -44,11 +44,15 @@ export default async function GraphViewPage({
 
   return (
     <Suspense fallback={null}>
-      <FocusPathStream
-        path={activeTimelinePath.map(decodeURIComponent)}
-        uid={user.uid}
-        focusedOnly={softNavigation}
-      />
+      {/* `params` segments arrive ALREADY DECODED — decoding them again here
+          corrupted any id that survives a round trip through the URL. An id
+          may be any non-whitespace string (see collections-core/graph.ts), so
+          a literal "%" is encoded to "%25", handed back as "%", and a second
+          decodeURIComponent on it throws URIError and fails the page. The
+          CLIENT twin in graph-timeline-view.tsx does decode, correctly:
+          `usePathname()` returns the raw encoded pathname. Different sources,
+          different rules. */}
+      <FocusPathStream path={activeTimelinePath} uid={user.uid} focusedOnly={softNavigation} />
     </Suspense>
   );
 }
