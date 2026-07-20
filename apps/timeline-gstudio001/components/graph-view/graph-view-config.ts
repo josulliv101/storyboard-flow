@@ -26,6 +26,12 @@ export type ItemSize = "xs" | "sm" | "md" | "lg" | "xl";
 
 export const ITEM_SIZES = ["xs", "sm", "md", "lg", "xl"] as const;
 
+/** Narrows an arbitrary string (e.g. a Radix radio-group value) to `ItemSize`,
+ *  validating against `ITEM_SIZES` instead of asserting the type. */
+export function isItemSize(value: string): value is ItemSize {
+  return (ITEM_SIZES as readonly string[]).includes(value);
+}
+
 /**
  * Per-size dimensions for the two surfaces.
  *
