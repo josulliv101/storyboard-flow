@@ -63,8 +63,12 @@ Mechanics the workflows depend on:
   merge guard actually fire — a token-created PR triggers no downstream
   workflow.
 - Auto-merge lands a PR once CI is green and the merge guard passes; `hold`
-  holds it. Adding a required approval (Codex's) is the later, closed-loop
-  upgrade and needs a reviewer identity distinct from the PR author.
-- The Codex review and scout workflows are the PAID tier — dormant until
-  `CODEX_ENABLED=true` and `OPENAI_API_KEY` exist, because `openai/codex-action`
-  is API-billed (no ChatGPT-subscription auth in CI).
+  holds it. There is deliberately no required approval: the veto label is the
+  brake, which keeps the loop computer-off on subscriptions alone.
+- Codex review is the NATIVE GitHub integration (chatgpt.com/codex), which
+  runs on the Codex subscription and leaves advisory comments — it informs the
+  next round but does not gate the merge. There is no API-billed Codex in CI:
+  `OPENAI_API_KEY` is never created or stored (hard constraint).
+- Filing the next issue (the "scout") stays manual — owner-seeded, or a Codex
+  cloud task — because subscription Codex cannot do it in CI and an unattended
+  auto-scout is the most likely thing to run away.
