@@ -14,8 +14,6 @@ import {
 import {
   MIN_ITEM_WIDTH,
   durationToWidth,
-  getChildren,
-  parseNodeId,
   useCollectionsSelector,
   useCollectionsStore,
   type CollectionsGraph,
@@ -26,6 +24,18 @@ import {
   type DetailsById,
   type PlaybackManifest,
 } from "@storyboard/timeline-domain";
+
+import {
+  buildGridPlayheadMap,
+  buildPlayheadMap,
+  cardSpansOf,
+  childSpans,
+  type GridPlayheadMap,
+  type PlayheadMap,
+  type PreviewCardSpans,
+} from "./graph-playhead-model";
+
+export type { PreviewCardSpans } from "./graph-playhead-model";
 import { WorkbenchSplitPane } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
 import {
   TimelineDocumentsProvider,
@@ -63,14 +73,6 @@ export function createPreviewTimeChannel(): PreviewTimeChannel {
   };
 }
 
-type PlayheadMap = Readonly<{
-  xAt: (time: number) => number;
-  timeAt: (x: number) => number;
-  totalDurationSeconds: number;
-}>;
-
-const STRIP_GAP_PX = 8;
-
 /**
  * A collection card's width, scaled by the zoom slider like every media clip
  * beside it. Collections carry no single duration to lay out by, so they keep a
@@ -88,19 +90,24 @@ export function collectionCardWidth(pixelsPerSecond: number): number {
 }
 
 /**
- * Where each focused-level CARD begins and ends in the clock the preview pane
- * is actually playing, keyed by the child's graph node id.
- *
- * The pane plays the server manifest whenever it has one, and the live
- * projection only in the ~2.5s window after an edit. Those two disagree: the
- * projection re-derives collection-card durations from read-time summaries,
- * which drift from the stored document the manifest is compiled off. The
- * playhead used to map ALWAYS off the projection, so in the steady state it
- * placed the marker on a 75s clock over a pane playing 72s — far enough in
- * to sit over the wrong collection entirely.
+ * The strip's width resolution at a given zoom, injected into the pure
+ * playhead model so its cards use EXACTLY the widths the strip renders —
+ * collections at the shared fixed-per-zoom width, media by duration.
  */
-export type PreviewCardSpans = ReadonlyMap<string, Readonly<{ start: number; end: number }>>;
+function clipWidthAt(pixelsPerSecond: number): (clip: TimelineClip) => number {
+  return (clip) =>
+    clip.kind === "collection"
+      ? collectionCardWidth(pixelsPerSecond)
+      : durationToWidth(clip.duration, pixelsPerSecond);
+}
 
+// The per-card time windows (and the maps built from them) live in
+// graph-playhead-model.ts — pure and unit-tested; this file only carries the
+// React seams. The context publishes the manifest's windows to every playhead
+// under the pane: the pane plays the manifest whenever it has one, and the
+// live projection only in the ~2.5s window after an edit, so the markers must
+// map time→x on the SAME clock the pane is playing or they point at the
+// wrong cards (the round-1 #6 bug).
 const PreviewCardSpansContext = createContext<PreviewCardSpans | null>(null);
 
 /** The global-clock windows the pane is playing, or null when it is on the
@@ -111,182 +118,6 @@ export function usePreviewCardSpans(): PreviewCardSpans | null {
   return useContext(PreviewCardSpansContext);
 }
 
-/**
- * The global-clock window of every node the manifest touches, keyed by node
- * id — each media leaf by its own id, AND every collection on a leaf's path
- * by the union of the leaves beneath it.
- *
- * This is what lets ONE clock drive a playhead on every row of the tree, not
- * just the focused strip: a sub-timeline row for collection C looks up C's
- * children here (media by id, nested collections by their aggregated window)
- * and maps the same channel time onto its own layout.
- *
- * At the focused level this agrees exactly with the older depth-1-only map it
- * replaces: a focused child collection D keyed here by D aggregates precisely
- * the leaves that had D at path index 1, and a direct media child keys by its
- * own id either way.
- */
-function cardSpansOf(manifest: PlaybackManifest): PreviewCardSpans {
-  const spans = new Map<string, { start: number; end: number }>();
-  const widen = (key: string, start: number, end: number) => {
-    const current = spans.get(key);
-    spans.set(
-      key,
-      current
-        ? { start: Math.min(current.start, start), end: Math.max(current.end, end) }
-        : { start, end },
-    );
-  };
-  for (const leaf of manifest.leaves) {
-    const end = leaf.timelineStart + leaf.timelineDuration;
-    widen(leaf.id, leaf.timelineStart, end);
-    // Every collection ANCESTOR on the path gets this leaf folded into its
-    // window (collectionPath[0] is the focused root; deeper entries are the
-    // nested collections whose sub-rows need their own window).
-    for (const collectionId of leaf.collectionPath) widen(collectionId, leaf.timelineStart, end);
-  }
-  return spans;
-}
-
-type ChildSpan = Readonly<{ startTime: number; endTime: number; width: number }>;
-
-/**
- * Each direct child of `collectionId`, with its time window in the clock the
- * pane is playing and the strip WIDTH the child is drawn at. The single source
- * both the strip and grid markers build from — and, because it is parameterised
- * on any collection id, the same thing a nested sub-row uses for its own
- * children. That is what makes the playhead one continuous clock across the
- * tree rather than a per-surface affordance.
- *
- * TIME comes from the manifest spans when present (the model the pane plays),
- * WIDTH always from the projection (the strip's own layout, which the pane has
- * no say in). Zips by INDEX against `getChildren` rather than clip id: a
- * projection clip reports `detail.sourceClipId` when one exists, which is not
- * the node id the manifest paths are built from, but `graphChildrenToClips`
- * maps over the same `getChildren` array, so index alignment holds.
- */
-function childSpans(
-  graph: CollectionsGraph,
-  details: DetailsById,
-  collectionId: string,
-  spans: PreviewCardSpans | null,
-  pixelsPerSecond: number,
-): ChildSpan[] {
-  const childIds = getChildren(graph, parseNodeId(collectionId));
-  return graphChildrenToClips(graph, details, collectionId).map((clip, index) => {
-    const width =
-      clip.kind === "collection"
-        ? collectionCardWidth(pixelsPerSecond)
-        : durationToWidth(clip.duration, pixelsPerSecond);
-    // A child with no manifest span contributes no playback time (an empty
-    // collection); its projection span is all that is left to say.
-    const span = spans?.get(childIds[index] as string);
-    return {
-      width,
-      startTime: span ? span.start : clip.startTime,
-      endTime: span ? span.end : clip.startTime + clip.duration,
-    };
-  });
-}
-
-function buildPlayheadMap(cards: readonly ChildSpan[]): PlayheadMap {
-  const times: number[] = [];
-  const xs: number[] = [];
-  let x = 0;
-  for (const card of cards) {
-    times.push(card.startTime, card.endTime);
-    xs.push(x, x + card.width);
-    x += card.width + STRIP_GAP_PX;
-  }
-  const count = times.length;
-  const total = count > 0 ? times[count - 1] : 0;
-
-  const interpolate = (value: number, from: number[], to: number[]): number => {
-    if (count === 0) return 0;
-    if (value <= from[0]) return to[0];
-    if (value >= from[count - 1]) return to[count - 1];
-    let low = 0;
-    let high = count - 1;
-    while (low < high - 1) {
-      const middle = (low + high) >> 1;
-      if (from[middle] <= value) low = middle;
-      else high = middle;
-    }
-    const span = from[high] - from[low];
-    const fraction = span > 0 ? (value - from[low]) / span : 0;
-    return to[low] + fraction * (to[high] - to[low]);
-  };
-
-  return {
-    xAt: (time) => interpolate(time, times, xs),
-    timeAt: (offset) => interpolate(offset, xs, times),
-    totalDurationSeconds: total,
-  };
-}
-
-type GridPlayheadMap = Readonly<{
-  posAt: (time: number) => { x: number; y: number };
-  timeAt: (x: number, y: number) => number;
-  totalDurationSeconds: number;
-  rowHeight: number;
-}>;
-
-function buildGridPlayheadMap(
-  cells: readonly ChildSpan[],
-  cols: number,
-  cellWidth: number,
-  cellHeight: number,
-): GridPlayheadMap {
-  const columns = Math.max(1, cols);
-  const starts: number[] = [];
-  const ends: number[] = [];
-  for (const cell of cells) {
-    starts.push(cell.startTime);
-    ends.push(cell.endTime);
-  }
-  const count = cells.length;
-  const total = count > 0 ? ends[count - 1] : 0;
-  const cellX = (index: number) => (index % columns) * (cellWidth + GRID_GAP);
-  const cellY = (index: number) =>
-    Math.floor(index / columns) * (cellHeight + GRID_GAP);
-  const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
-
-  return {
-    rowHeight: cellHeight,
-    totalDurationSeconds: total,
-    posAt: (time) => {
-      if (count === 0) return { x: 0, y: 0 };
-      let low = 0;
-      if (time >= starts[count - 1]) {
-        low = count - 1;
-      } else if (time > starts[0]) {
-        let high = count - 1;
-        while (low < high - 1) {
-          const middle = (low + high) >> 1;
-          if (starts[middle] <= time) low = middle;
-          else high = middle;
-        }
-      }
-      const span = ends[low] - starts[low];
-      const fraction = span > 0 ? clamp01((time - starts[low]) / span) : 0;
-      return { x: cellX(low) + fraction * cellWidth, y: cellY(low) };
-    },
-    timeAt: (x, y) => {
-      if (count === 0) return 0;
-      const row = Math.max(0, Math.floor(y / (cellHeight + GRID_GAP)));
-      const column = Math.max(
-        0,
-        Math.min(columns - 1, Math.floor(x / (cellWidth + GRID_GAP))),
-      );
-      const index = Math.max(0, Math.min(count - 1, row * columns + column));
-      const fraction = clamp01((x - cellX(index)) / cellWidth);
-      return Math.min(
-        total,
-        Math.max(0, starts[index] + fraction * (ends[index] - starts[index])),
-      );
-    },
-  };
-}
 
 export function GraphPlayhead({
   focusedId,
@@ -318,7 +149,7 @@ export function GraphPlayhead({
       if (graph !== lastGraph || details !== lastDetails) {
         lastGraph = graph;
         lastDetails = details;
-        map = buildPlayheadMap(childSpans(graph, details, focusedId, spans, pixelsPerSecond));
+        map = buildPlayheadMap(childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)));
       }
       const line = lineRef.current;
       if (!line || !map) return;
@@ -381,7 +212,7 @@ export function PlayheadScrubBand({
       if (graph !== mapGraph || details !== mapDetails || !map) {
         mapGraph = graph;
         mapDetails = details;
-        map = buildPlayheadMap(childSpans(graph, details, focusedId, spans, pixelsPerSecond));
+        map = buildPlayheadMap(childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)));
       }
       const rect = scroller.getBoundingClientRect();
       const styles = getComputedStyle(scroller);
@@ -485,7 +316,7 @@ export function GraphGridPlayhead({
         lastColumns = columns;
         lastCellWidth = cellWidth;
         map = buildGridPlayheadMap(
-          childSpans(graph, details, focusedId, spans, pixelsPerSecond),
+          childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
           columns,
           cellWidth,
           cellHeight,
@@ -572,7 +403,7 @@ export function GraphGridScrubSurface({
         mapColumns = columns;
         mapCellWidth = cellWidth;
         map = buildGridPlayheadMap(
-          childSpans(graph, details, focusedId, spans, pixelsPerSecond),
+          childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
           columns,
           cellWidth,
           cellHeight,
