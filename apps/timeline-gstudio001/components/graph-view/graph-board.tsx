@@ -1,5 +1,7 @@
 "use client";
 
+import { Eye } from "lucide-react";
+
 import {
   TrashTarget,
   UndoRedoControls,
@@ -23,14 +25,44 @@ import {
 } from "./graph-preview";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
-  GRID_CELL_HEIGHT,
   GRID_CELL_WIDTH,
   GRID_GAP,
+  ITEM_SIZE_HEIGHTS,
+  ITEM_SIZES,
   TIMELINE_PPS,
   type FocusSurface,
+  type ItemSize,
 } from "./graph-view-config";
 
-export type { FocusSurface };
+export type { FocusSurface, ItemSize };
+
+/** One page-wide control: every strip row and grid cell on the page — the
+ *  focused surface AND every sub-graph row — reads the same step. */
+function SizeSelect({
+  size,
+  onChange,
+}: Readonly<{
+  size: ItemSize;
+  onChange: (size: ItemSize) => void;
+}>) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-zinc-500">
+      <span className="sr-only">Item size</span>
+      <select
+        aria-label="Item size"
+        value={size}
+        onChange={(event) => onChange(event.target.value as ItemSize)}
+        className="rounded-md border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs uppercase text-zinc-300 outline-none transition-colors hover:border-zinc-700 focus-visible:border-amber-400"
+      >
+        {ITEM_SIZES.map((option) => (
+          <option key={option} value={option}>
+            {option.toUpperCase()}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 function SurfaceToggle({
   surface,
@@ -69,10 +101,10 @@ export function GraphBoard({
   focusedId,
   surface,
   onSurfaceChange,
+  itemSize,
+  onItemSizeChange,
   previewOn,
   onTogglePreview,
-  assetsOpen,
-  onToggleAssets,
   timeChannel,
   trashRootId,
   syncEntries,
@@ -80,14 +112,16 @@ export function GraphBoard({
   focusedId: string;
   surface: FocusSurface;
   onSurfaceChange: (surface: FocusSurface) => void;
+  itemSize: ItemSize;
+  onItemSizeChange: (size: ItemSize) => void;
   previewOn: boolean;
   onTogglePreview: () => void;
-  assetsOpen: boolean;
-  onToggleAssets: () => void;
   timeChannel: PreviewTimeChannel;
   trashRootId: string | null;
   syncEntries: readonly SyncEntry[];
 }>) {
+  const heights = ITEM_SIZE_HEIGHTS[itemSize];
+
   return (
     <OpenKeyBoundary>
       <PreviewShell enabled={previewOn} focusedId={focusedId} channel={timeChannel}>
@@ -105,21 +139,19 @@ export function GraphBoard({
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="icon"
                 aria-pressed={previewOn}
+                aria-label={previewOn ? "Hide preview" : "Show preview"}
+                title={previewOn ? "Hide preview" : "Show preview"}
                 onClick={onTogglePreview}
+                className={[
+                  "h-8 w-8",
+                  previewOn ? "bg-zinc-800 text-zinc-100" : "text-zinc-500",
+                ].join(" ")}
               >
-                Preview
+                <Eye aria-hidden="true" className="h-4 w-4" />
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-pressed={assetsOpen}
-                onClick={onToggleAssets}
-              >
-                Assets
-              </Button>
+              <SizeSelect size={itemSize} onChange={onItemSizeChange} />
               <SurfaceToggle surface={surface} onChange={onSurfaceChange} />
               <UndoRedoControls />
             </div>
@@ -130,7 +162,7 @@ export function GraphBoard({
               <VirtualStrip
                 collectionId={parseNodeId(focusedId)}
                 pixelsPerSecond={TIMELINE_PPS}
-                itemHeight={88}
+                itemHeight={heights.strip}
                 itemDragActivation="hold"
                 overlay={
                   previewOn ? (
@@ -148,23 +180,31 @@ export function GraphBoard({
               <VirtualGrid
                 collectionId={parseNodeId(focusedId)}
                 cellWidth={GRID_CELL_WIDTH}
-                cellHeight={GRID_CELL_HEIGHT}
+                cellHeight={heights.gridCell}
                 gap={GRID_GAP}
                 height={420}
                 overlay={
                   previewOn ? (
-                    <GraphGridPlayhead focusedId={focusedId} channel={timeChannel} />
+                    <GraphGridPlayhead
+                      focusedId={focusedId}
+                      channel={timeChannel}
+                      cellHeight={heights.gridCell}
+                    />
                   ) : undefined
                 }
                 className="bg-black/25"
               />
               {previewOn && (
-                <GraphGridScrubSurface focusedId={focusedId} channel={timeChannel} />
+                <GraphGridScrubSurface
+                  focusedId={focusedId}
+                  channel={timeChannel}
+                  cellHeight={heights.gridCell}
+                />
               )}
             </div>
           )}
 
-          <SubTimelines focusedId={focusedId} surface={surface} />
+          <SubTimelines focusedId={focusedId} surface={surface} itemSize={itemSize} />
 
           {trashRootId !== null && (
             <div className="flex items-end justify-end">

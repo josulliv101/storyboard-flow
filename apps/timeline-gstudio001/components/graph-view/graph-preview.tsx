@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -12,6 +14,8 @@ import {
 import {
   MIN_ITEM_WIDTH,
   durationToWidth,
+  getChildren,
+  parseNodeId,
   useCollectionsSelector,
   useCollectionsStore,
   type CollectionsGraph,
@@ -33,7 +37,7 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/typ
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useGraphDetailsStore } from "./graph-details-context";
-import { GRID_CELL_HEIGHT, GRID_GAP, TIMELINE_PPS } from "./graph-view-config";
+import { GRID_GAP, TIMELINE_PPS } from "./graph-view-config";
 
 export type PreviewTimeChannel = Readonly<{
   get: () => number;
@@ -68,18 +72,87 @@ type PlayheadMap = Readonly<{
 const STRIP_GAP_PX = 8;
 const COLLECTION_CARD_PX = 128;
 
-function buildPlayheadMap(clips: readonly TimelineClip[]): PlayheadMap {
-  const times: number[] = [];
-  const xs: number[] = [];
-  let x = 0;
-  for (const clip of clips) {
+/**
+ * Where each focused-level CARD begins and ends in the clock the preview pane
+ * is actually playing, keyed by the child's graph node id.
+ *
+ * The pane plays the server manifest whenever it has one, and the live
+ * projection only in the ~2.5s window after an edit. Those two disagree: the
+ * projection re-derives collection-card durations from read-time summaries,
+ * which drift from the stored document the manifest is compiled off. The
+ * playhead used to map ALWAYS off the projection, so in the steady state it
+ * placed the marker on a 75s clock over a pane playing 72s — far enough in
+ * to sit over the wrong collection entirely.
+ */
+export type PreviewCardSpans = ReadonlyMap<string, Readonly<{ start: number; end: number }>>;
+
+const PreviewCardSpansContext = createContext<PreviewCardSpans | null>(null);
+
+function cardSpansOf(manifest: PlaybackManifest): PreviewCardSpans {
+  const spans = new Map<string, { start: number; end: number }>();
+  for (const leaf of manifest.leaves) {
+    // collectionPath[0] is the focused collection itself; [1] is the child
+    // whose CARD the strip draws. A leaf that is a direct media child of the
+    // focused collection has no [1] — that leaf IS its own card.
+    const key = leaf.collectionPath[1] ?? leaf.id;
+    const end = leaf.timelineStart + leaf.timelineDuration;
+    const current = spans.get(key);
+    spans.set(
+      key,
+      current
+        ? { start: Math.min(current.start, leaf.timelineStart), end: Math.max(current.end, end) }
+        : { start: leaf.timelineStart, end },
+    );
+  }
+  return spans;
+}
+
+type PlayheadCard = Readonly<{ width: number; startTime: number; endTime: number }>;
+
+/**
+ * One card per focused-level child: WIDTH from the projection (that is the
+ * strip's own layout, which the pane has no say in) and TIME from the model
+ * the pane is playing, so the marker can never point at a card the surface
+ * is not showing.
+ *
+ * Zips by INDEX against `getChildren` rather than matching clip ids: a
+ * projection clip reports `detail.sourceClipId` when one exists, which is not
+ * the node id the manifest paths are built from. `graphChildrenToClips` maps
+ * over the same `getChildren` array, so index alignment is guaranteed where
+ * id equality is not.
+ */
+function buildPlayheadCards(
+  graph: CollectionsGraph,
+  details: DetailsById,
+  focusedId: string,
+  spans: PreviewCardSpans | null,
+): PlayheadCard[] {
+  const childIds = getChildren(graph, parseNodeId(focusedId));
+  return graphChildrenToClips(graph, details, focusedId).map((clip, index) => {
     const width =
       clip.kind === "collection"
         ? Math.max(MIN_ITEM_WIDTH, COLLECTION_CARD_PX)
         : durationToWidth(clip.duration, TIMELINE_PPS);
-    times.push(clip.startTime, clip.startTime + clip.duration);
-    xs.push(x, x + width);
-    x += width + STRIP_GAP_PX;
+    // A card with no manifest span is one contributing no playback time (an
+    // empty collection). Its projection span is the only thing left to say,
+    // and it is bounded by the neighbours that DO carry manifest times.
+    const span = spans?.get(childIds[index] as string);
+    return {
+      width,
+      startTime: span ? span.start : clip.startTime,
+      endTime: span ? span.end : clip.startTime + clip.duration,
+    };
+  });
+}
+
+function buildPlayheadMap(cards: readonly PlayheadCard[]): PlayheadMap {
+  const times: number[] = [];
+  const xs: number[] = [];
+  let x = 0;
+  for (const card of cards) {
+    times.push(card.startTime, card.endTime);
+    xs.push(x, x + card.width);
+    x += card.width + STRIP_GAP_PX;
   }
   const count = times.length;
   const total = count > 0 ? times[count - 1] : 0;
@@ -118,6 +191,7 @@ function buildGridPlayheadMap(
   clips: readonly TimelineClip[],
   cols: number,
   cellWidth: number,
+  cellHeight: number,
 ): GridPlayheadMap {
   const columns = Math.max(1, cols);
   const starts: number[] = [];
@@ -130,11 +204,11 @@ function buildGridPlayheadMap(
   const total = count > 0 ? ends[count - 1] : 0;
   const cellX = (index: number) => (index % columns) * (cellWidth + GRID_GAP);
   const cellY = (index: number) =>
-    Math.floor(index / columns) * (GRID_CELL_HEIGHT + GRID_GAP);
+    Math.floor(index / columns) * (cellHeight + GRID_GAP);
   const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
   return {
-    rowHeight: GRID_CELL_HEIGHT,
+    rowHeight: cellHeight,
     totalDurationSeconds: total,
     posAt: (time) => {
       if (count === 0) return { x: 0, y: 0 };
@@ -155,7 +229,7 @@ function buildGridPlayheadMap(
     },
     timeAt: (x, y) => {
       if (count === 0) return 0;
-      const row = Math.max(0, Math.floor(y / (GRID_CELL_HEIGHT + GRID_GAP)));
+      const row = Math.max(0, Math.floor(y / (cellHeight + GRID_GAP)));
       const column = Math.max(
         0,
         Math.min(columns - 1, Math.floor(x / (cellWidth + GRID_GAP))),
@@ -179,6 +253,7 @@ export function GraphPlayhead({
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
   const lineRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -191,7 +266,7 @@ export function GraphPlayhead({
       if (graph !== lastGraph || details !== lastDetails) {
         lastGraph = graph;
         lastDetails = details;
-        map = buildPlayheadMap(graphChildrenToClips(graph, details, focusedId));
+        map = buildPlayheadMap(buildPlayheadCards(graph, details, focusedId, spans));
       }
       const line = lineRef.current;
       if (line && map) line.style.transform = `translateX(${map.xAt(channel.get())}px)`;
@@ -205,7 +280,7 @@ export function GraphPlayhead({
       unsubscribeStore();
       unsubscribeDetails();
     };
-  }, [store, detailsStore, focusedId, channel]);
+  }, [store, detailsStore, focusedId, channel, spans]);
 
   return (
     <div
@@ -227,6 +302,7 @@ export function PlayheadScrubBand({
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
   const bandRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -244,7 +320,7 @@ export function PlayheadScrubBand({
       if (graph !== mapGraph || details !== mapDetails || !map) {
         mapGraph = graph;
         mapDetails = details;
-        map = buildPlayheadMap(graphChildrenToClips(graph, details, focusedId));
+        map = buildPlayheadMap(buildPlayheadCards(graph, details, focusedId, spans));
       }
       const rect = scroller.getBoundingClientRect();
       const styles = getComputedStyle(scroller);
@@ -289,7 +365,7 @@ export function PlayheadScrubBand({
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
-  }, [store, detailsStore, focusedId, channel]);
+  }, [store, detailsStore, focusedId, channel, spans]);
 
   return (
     <div
@@ -304,9 +380,11 @@ export function PlayheadScrubBand({
 export function GraphGridPlayhead({
   focusedId,
   channel,
+  cellHeight,
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
+  cellHeight: number;
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
@@ -344,6 +422,7 @@ export function GraphGridPlayhead({
           graphChildrenToClips(graph, details, focusedId),
           columns,
           cellWidth,
+          cellHeight,
         );
       }
       if (!map) return;
@@ -364,7 +443,7 @@ export function GraphGridPlayhead({
       unsubscribeDetails();
       observer?.disconnect();
     };
-  }, [store, detailsStore, focusedId, channel]);
+  }, [store, detailsStore, focusedId, channel, cellHeight]);
 
   return (
     <div
@@ -380,9 +459,11 @@ export function GraphGridPlayhead({
 export function GraphGridScrubSurface({
   focusedId,
   channel,
+  cellHeight,
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
+  cellHeight: number;
 }>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
@@ -420,6 +501,7 @@ export function GraphGridScrubSurface({
           graphChildrenToClips(graph, details, focusedId),
           columns,
           cellWidth,
+          cellHeight,
         );
       }
       const overlay = grid.querySelector<HTMLElement>("[data-virtual-grid-overlay]");
@@ -471,7 +553,7 @@ export function GraphGridScrubSurface({
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
-  }, [store, detailsStore, focusedId, channel]);
+  }, [store, detailsStore, focusedId, channel, cellHeight]);
 
   return (
     <div
@@ -508,7 +590,11 @@ function GatewayDocumentsBridge() {
 // write path has settled it server-side (900ms debounce + batch flight).
 const MANIFEST_REFRESH_DELAY_MS = 2500;
 
-type ManifestClipsState = Readonly<{ clips: TimelineClip[]; forId: string }> | null;
+type ManifestClipsState = Readonly<{
+  clips: TimelineClip[];
+  spans: PreviewCardSpans;
+  forId: string;
+}> | null;
 
 /**
  * The server-compiled playback read model for the focused timeline: the
@@ -518,7 +604,10 @@ type ManifestClipsState = Readonly<{ clips: TimelineClip[]; forId: string }> | n
  * the caller falls back to the live graph projection, which also covers the
  * refresh window after local edits.
  */
-function useManifestClips(enabled: boolean, focusedId: string): TimelineClip[] | null {
+function useManifestClips(
+  enabled: boolean,
+  focusedId: string,
+): Readonly<{ clips: TimelineClip[]; spans: PreviewCardSpans }> | null {
   const store = useCollectionsStore();
   const [state, setState] = useState<ManifestClipsState>(null);
   const [staleAt, setStaleAt] = useState(0);
@@ -565,7 +654,11 @@ function useManifestClips(enabled: boolean, focusedId: string): TimelineClip[] |
           retryTimer = setTimeout(() => setStaleAt(Date.now()), MANIFEST_REFRESH_DELAY_MS);
           return;
         }
-        setState({ clips: manifestToClips(result.manifest), forId: focusedId });
+        setState({
+          clips: manifestToClips(result.manifest),
+          spans: cardSpansOf(result.manifest),
+          forId: focusedId,
+        });
       } catch {
         /* projection fallback stands */
       }
@@ -576,7 +669,9 @@ function useManifestClips(enabled: boolean, focusedId: string): TimelineClip[] |
     };
   }, [enabled, focusedId, staleAt]);
 
-  return state !== null && state.forId === focusedId ? state.clips : null;
+  return state !== null && state.forId === focusedId
+    ? { clips: state.clips, spans: state.spans }
+    : null;
 }
 
 export function PreviewShell({
@@ -606,8 +701,11 @@ export function PreviewShell({
   // — the live focused-level projection plays. Same clock either way: the
   // projection's collection-card durations come from read-time summaries,
   // so both models agree on total time when the store is settled.
-  const manifestClips = useManifestClips(enabled, focusedId);
-  const clips = manifestClips ?? projectionClips;
+  const manifest = useManifestClips(enabled, focusedId);
+  const clips = manifest?.clips ?? projectionClips;
+  // Null while the pane is on the projection — the playhead's own projection
+  // map is already the same clock then, so there is nothing to reconcile.
+  const cardSpans = manifest?.spans ?? null;
   const [time, setTime] = useState(0);
 
   useEffect(() => channel.subscribe(() => setTime(channel.get())), [channel]);
@@ -651,7 +749,7 @@ export function PreviewShell({
     <TimelineDocumentsProvider initialState={initialDocumentsState}>
       <GatewayDocumentsBridge />
       {/* Test/debug witness for which read model the pane is playing. */}
-      <span data-preview-source={manifestClips !== null ? "manifest" : "projection"} hidden />
+      <span data-preview-source={manifest !== null ? "manifest" : "projection"} hidden />
       <WorkbenchSplitPane
         clips={clips}
         currentTime={time}
@@ -659,7 +757,11 @@ export function PreviewShell({
         getInitialSurfaceHeight={getInitialSurfaceHeight}
         onSurfaceHeightChange={handleSurfaceHeightChange}
       >
-        {children}
+        {/* The playhead and scrub band live in `children`; they read these
+            spans so their time↔x mapping is the pane's clock, not their own. */}
+        <PreviewCardSpansContext.Provider value={cardSpans}>
+          {children}
+        </PreviewCardSpansContext.Provider>
       </WorkbenchSplitPane>
     </TimelineDocumentsProvider>
   );

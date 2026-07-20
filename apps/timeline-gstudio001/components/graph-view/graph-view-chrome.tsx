@@ -41,14 +41,18 @@ export function GraphViewChrome({
           aria-label="Timeline focus path"
           className="flex items-center gap-2 text-xs text-zinc-400 select-none"
         >
-          <Link href="/" className="text-zinc-400 transition-colors hover:text-white">
-            Projects
-          </Link>
-          <span>/</span>
-          <Link href={base} className="text-zinc-400 transition-colors hover:text-white">
-            Graph
-          </Link>
-          <span>/</span>
+          {/* The project is the ROOT crumb, not a child of a "Projects / Graph"
+              chrome path: the trail reads as the timeline tree the user is
+              standing in. At the root the project IS the focused crumb, so it
+              renders once, as the current one. */}
+          {focusedId !== projectId && (
+            <>
+              <Link href={base} className="text-zinc-400 transition-colors hover:text-white">
+                {documents[projectId]?.title ?? projectId}
+              </Link>
+              <span>/</span>
+            </>
+          )}
           {timelinePath.slice(0, -1).map((segment, index) => (
             <span key={segment} className="flex items-center gap-2">
               <Link

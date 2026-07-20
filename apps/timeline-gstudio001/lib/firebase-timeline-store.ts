@@ -4,6 +4,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 import type { TimelineDocument, TimelineClip } from "@storyboard/timeline-model/types";
 import { getFirebaseDb } from "./firebase-admin";
+import { firstFrameUrl } from "./project-thumbnail";
 import { resolveOwnership, TimelineAccessDeniedError } from "./timeline-ownership";
 
 type TimelineDocumentRecord = {
@@ -178,15 +179,6 @@ function toIsoDate(value: unknown) {
   return undefined;
 }
 
-function getDocumentThumbnailUrl(document?: TimelineDocument) {
-  const mediaClip = document?.clips.find(
-    (clip) => clip.kind === "image" || clip.kind === "video",
-  );
-
-  if (!mediaClip) return undefined;
-  return mediaClip.kind === "video" ? mediaClip.poster || mediaClip.src : mediaClip.src;
-}
-
 function toProjectSummary(id: string, data: Partial<TimelineDocumentRecord>): TimelineProjectSummary {
   const document = toTimelineDocument(id, data);
 
@@ -195,7 +187,7 @@ function toProjectSummary(id: string, data: Partial<TimelineDocumentRecord>): Ti
     title: document.title,
     description: document.description,
     clipCount: document.clips.length,
-    thumbnailUrl: getDocumentThumbnailUrl(document),
+    thumbnailUrl: firstFrameUrl(document.clips),
     createdAt: toIsoDate(data.createdAt),
     updatedAt: toIsoDate(data.updatedAt),
   };

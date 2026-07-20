@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useMemo, useState } from "react";
-import { CornerDownRight, Folder, FolderOpen } from "lucide-react";
+import { ChevronsRight, Folder, FolderOpen } from "lucide-react";
 
 import {
   VirtualGrid,
@@ -20,14 +20,15 @@ import { hydrateTimeline } from "./graph-hydration";
 import { NativeDropStrip } from "./graph-native-drop";
 import { GraphViewNavContext } from "./graph-navigation";
 import {
-  GRID_CELL_HEIGHT,
   GRID_CELL_WIDTH,
   GRID_GAP,
+  ITEM_SIZE_HEIGHTS,
   MAX_SUBTREE_DEPTH,
   SUBTIMELINE_INDENT_PX,
   SUBTIMELINE_GRID_MAX_HEIGHT,
   TIMELINE_PPS,
   type FocusSurface,
+  type ItemSize,
 } from "./graph-view-config";
 
 /**
@@ -71,10 +72,12 @@ function SubTimelineNode({
   collectionId,
   depth,
   surface,
+  itemSize,
 }: Readonly<{
   collectionId: NodeId;
   depth: number;
   surface: FocusSurface;
+  itemSize: ItemSize;
 }>) {
   const nav = useContext(GraphViewNavContext);
   const store = useCollectionsStore();
@@ -173,12 +176,12 @@ function SubTimelineNode({
         <span className="grow" />
         <button
           type="button"
-          aria-label="Focus"
-          title="Focus this timeline"
+          aria-label="Drill into timeline"
+          title="Drill into this timeline"
           onClick={() => nav?.openTimeline(collectionId)}
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
         >
-          <CornerDownRight aria-hidden="true" className="h-4 w-4" />
+          <ChevronsRight aria-hidden="true" className="h-4 w-4" />
         </button>
       </div>
 
@@ -198,7 +201,7 @@ function SubTimelineNode({
             <VirtualGrid
               collectionId={collectionId}
               cellWidth={GRID_CELL_WIDTH}
-              cellHeight={GRID_CELL_HEIGHT}
+              cellHeight={ITEM_SIZE_HEIGHTS[itemSize].gridCell}
               gap={GRID_GAP}
               height={SUBTIMELINE_GRID_MAX_HEIGHT}
               className="bg-black/20"
@@ -208,7 +211,7 @@ function SubTimelineNode({
               <VirtualStrip
                 collectionId={collectionId}
                 pixelsPerSecond={TIMELINE_PPS}
-                itemHeight={64}
+                itemHeight={ITEM_SIZE_HEIGHTS[itemSize].strip}
                 itemDragActivation="hold"
                 className="bg-black/20"
               />
@@ -222,6 +225,7 @@ function SubTimelineNode({
                 collectionId={childId}
                 depth={depth + 1}
                 surface={surface}
+                itemSize={itemSize}
               />
             ))}
         </div>
@@ -233,7 +237,8 @@ function SubTimelineNode({
 export function SubTimelines({
   focusedId,
   surface,
-}: Readonly<{ focusedId: string; surface: FocusSurface }>) {
+  itemSize,
+}: Readonly<{ focusedId: string; surface: FocusSurface; itemSize: ItemSize }>) {
   const childIds = useCollectionChildIds(parseNodeId(focusedId));
   if (childIds.length === 0) return null;
 
@@ -245,6 +250,7 @@ export function SubTimelines({
           collectionId={collectionId}
           depth={0}
           surface={surface}
+          itemSize={itemSize}
         />
       ))}
     </div>
