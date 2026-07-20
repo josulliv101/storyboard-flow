@@ -102,8 +102,8 @@ function SubTimelineNode({
   // present) AND the clock actually visits this collection (it has a window).
   // On the projection fallback a sub-row's local times don't line up with the
   // global clock, so the marker would lie — better absent for that ~2.5s.
-  const window = spans?.get(id);
-  const showPlayhead = previewOn && window !== undefined;
+  const clockWindow = spans?.get(id);
+  const showPlayhead = previewOn && clockWindow !== undefined;
   const dims = ITEM_SIZE_DIMENSIONS[itemSize];
 
   const [expanded, setExpanded] = useState(false);
@@ -235,7 +235,7 @@ function SubTimelineNode({
                         channel={timeChannel}
                         cellHeight={dims.gridHeight}
                         pixelsPerSecond={pixelsPerSecond}
-                        activeWindow={window}
+                        activeWindow={clockWindow}
                       />
                     ) : undefined
                   }
@@ -265,7 +265,7 @@ function SubTimelineNode({
                       focusedId={id}
                       channel={timeChannel}
                       pixelsPerSecond={pixelsPerSecond}
-                      activeWindow={window}
+                      activeWindow={clockWindow}
                     />
                   ) : undefined
                 }
