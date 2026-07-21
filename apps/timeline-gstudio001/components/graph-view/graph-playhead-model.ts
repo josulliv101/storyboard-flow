@@ -123,6 +123,31 @@ export function nextManifestClipsState<T>(state: T | null, enabled: boolean): T 
   return enabled ? state : null;
 }
 
+/**
+ * How many consecutive failed manifest fetches to retry before giving up and
+ * letting the projection fallback stand silently. A transient 500 or network
+ * blip recovers within a couple of polls; a hard-down endpoint must not poll
+ * forever on an idle session.
+ */
+export const MAX_MANIFEST_FETCH_RETRIES = 5;
+
+/**
+ * Whether a failed manifest fetch should schedule another attempt, given how
+ * many consecutive failures have now accrued (the current one included). The
+ * caller resets its streak to 0 on any good response and passes the
+ * post-increment count here, so retries run for failures 1..`maxRetries` and
+ * stop once the cap is exceeded.
+ *
+ * Aborts are NOT failures and must be filtered by the caller BEFORE this — an
+ * aborted fetch (unmount/refocus/refetch) never counts and never retries.
+ */
+export function shouldRetryManifestFetch(
+  consecutiveFailures: number,
+  maxRetries: number = MAX_MANIFEST_FETCH_RETRIES,
+): boolean {
+  return consecutiveFailures > 0 && consecutiveFailures <= maxRetries;
+}
+
 export type ChildSpan = Readonly<{ startTime: number; endTime: number; width: number }>;
 
 /**
