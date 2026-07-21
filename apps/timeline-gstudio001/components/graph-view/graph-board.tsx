@@ -1,7 +1,16 @@
 "use client";
 
 import { useContext } from "react";
-import { EllipsisVertical, FolderTree, Redo2, Ruler, TvMinimal, Undo2 } from "lucide-react";
+import {
+  EllipsisVertical,
+  FolderTree,
+  GalleryHorizontalEnd,
+  LayoutGrid,
+  Redo2,
+  Ruler,
+  TvMinimal,
+  Undo2,
+} from "lucide-react";
 
 import {
   CollectionsContainerContext,
@@ -192,22 +201,29 @@ function SurfaceToggle({
       aria-label="Timeline layout"
       className="flex items-center rounded-md border border-zinc-800 p-0.5"
     >
-      {(["strip", "grid"] as const).map((option) => (
-        <button
-          key={option}
-          type="button"
-          aria-pressed={surface === option}
-          onClick={() => onChange(option)}
-          className={[
-            "rounded px-2 py-1 text-xs capitalize transition-colors",
-            surface === option
-              ? "bg-zinc-800 text-zinc-100"
-              : "text-zinc-500 hover:text-zinc-200",
-          ].join(" ")}
-        >
-          {option}
-        </button>
-      ))}
+      {(["strip", "grid"] as const).map((option) => {
+        const Icon = option === "strip" ? GalleryHorizontalEnd : LayoutGrid;
+        return (
+          <button
+            key={option}
+            type="button"
+            // Keep the accessible name the visible label used to carry, so the
+            // control (and its tests) still resolve by "strip"/"grid".
+            aria-label={option}
+            title={option === "strip" ? "Strip layout" : "Grid layout"}
+            aria-pressed={surface === option}
+            onClick={() => onChange(option)}
+            className={[
+              "flex items-center justify-center rounded px-2 py-1 transition-colors",
+              surface === option
+                ? "bg-zinc-800 text-zinc-100"
+                : "text-zinc-500 hover:text-zinc-200",
+            ].join(" ")}
+          >
+            <Icon aria-hidden="true" className="h-4 w-4" />
+          </button>
+        );
+      })}
     </div>
   );
 }
