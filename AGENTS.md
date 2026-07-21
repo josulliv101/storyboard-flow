@@ -87,8 +87,10 @@ Mechanics the workflows depend on:
     suite), which would otherwise strand a Codex-approved PR on a red required
     check.
   - Both share ONE 5-round cap (every request comment contains "autofix"); at
-    the cap the responsible workflow adds `hold` and pings the owner. `hold`
-    breaks the loop anytime.
+    the cap the responsible workflow adds `hold` (stops the merge) AND
+    `needs-human` (a filterable "the loop gave up" marker, distinct from a
+    manually-vetoed `hold`) and pings the owner. `hold` breaks the loop
+    anytime.
 - There is deliberately no branch-protection-required approval: Codex's signal
   is informal (reaction/comments), so the gate POLLS for it rather than gating
   a required check. The `hold` label is the universal brake.

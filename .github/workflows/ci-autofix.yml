@@ -72,8 +72,8 @@ jobs:
           rounds="$(gh api "repos/$repo/issues/$pr/comments" --paginate \
             --jq '[.[] | select(.body | contains("autofix"))] | length' 2>/dev/null || echo 0)"
           if [ "${rounds:-0}" -ge "$MAX_ROUNDS" ]; then
-            gh pr edit "$pr" --repo "$repo" --add-label hold
-            gh pr comment "$pr" --repo "$repo" --body "🛑 Auto-fix cap ($MAX_ROUNDS rounds) reached with CI still red — added \`hold\`. Over to you: read the failing check and fix or close."
+            gh pr edit "$pr" --repo "$repo" --add-label hold --add-label needs-human
+            gh pr comment "$pr" --repo "$repo" --body "🛑 Auto-fix cap ($MAX_ROUNDS rounds) reached with CI still red — added \`hold\` + \`needs-human\`. Over to you: read the failing check and fix or close."
             exit 0
           fi
 
