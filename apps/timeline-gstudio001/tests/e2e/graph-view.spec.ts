@@ -1769,5 +1769,25 @@ test.describe("graph view E2E", () => {
       return transfer.getData("application/x-gstudio-type");
     });
     expect(carried).toBe("image");
+
+    // ...and the button must actually RECEIVE that dragstart under a real
+    // pointer. dispatchEvent above bypasses hit-testing, so it can't catch the
+    // regression where the graph's trash slot (an absolute overlay covering
+    // the palette footprint) sits ON TOP of the tools and eats their gesture.
+    // Assert hit-testing: the element at each tool's own centre is that tool,
+    // not the slot. (The slot must stay pointer-events-none — R6 #9.)
+    for (const name of [/add collection/i, /add image clip/i, /add video clip/i]) {
+      const tool = page.getByRole("button", { name });
+      const hit = await tool.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return {
+          onThisTool: el.contains(top),
+          coveredBySlot: top?.closest("#graph-sidebar-trash-slot") != null,
+        };
+      });
+      expect(hit.coveredBySlot).toBe(false);
+      expect(hit.onThisTool).toBe(true);
+    }
   });
 });
