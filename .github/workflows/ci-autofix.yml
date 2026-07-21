@@ -1,0 +1,88 @@
+name: CI auto-fix — loop PRs
+
+# The second half of the auto-fix loop. codex-gate.yml handles Codex's
+# findings (correctness/design); THIS handles CI failures (the repo's hard
+# gates — types, lint, unit tests) that Codex structurally can't catch because
+# it doesn't run the suite. Without it, a PR that passes Codex but fails CI
+# dead-ends: auto-merge is armed but blocked on a red required check forever.
+#
+# On a failing CI run for a loop PR it asks Claude to fix it (@claude, which
+# fires claude-implement's PR path), then Claude pushes, CI re-runs, and — for
+# gated PRs — Codex re-reviews. Shared 5-round cap with the Codex auto-fixes
+# (both post a comment containing "autofix"), so CI-fail -> fix -> CI-fail
+# cannot loop forever; at the cap it adds `hold` and pings the owner.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+concurrency:
+  group: ci-autofix-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  autofix:
+    name: Ask Claude to fix CI
+    # Only a FAILED CI run, for a pull request, on a loop branch. The PR's
+    # owner/hold/cap checks that need an API lookup happen in the step.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      startsWith(github.event.workflow_run.head_branch, 'claude/issue-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
+
+    steps:
+      - name: Hand the CI failure to Claude
+        env:
+          # LOOP_PAT posts the @claude comment — a github.token comment would
+          # not trigger claude-implement (bot events don't start workflows).
+          GH_TOKEN: ${{ secrets.LOOP_PAT }}
+          # The workflow token can read the failed run's logs (actions: read);
+          # LOOP_PAT is not scoped to Actions.
+          RO_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          MAX_ROUNDS: "5"
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+
+          pr="$(gh pr list --repo "$repo" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          [ -n "$pr" ] || { echo "No open PR for $BRANCH — nothing to fix."; exit 0; }
+
+          # Owner-authored loop PR only (the loop opens PRs via LOOP_PAT = owner).
+          author="$(gh pr view "$pr" --repo "$repo" --json author --jq '.author.login')"
+          owner="$(gh api "repos/$repo" --jq '.owner.login')"
+          [ "$author" = "$owner" ] || { echo "PR #$pr not owner-authored — standing down."; exit 0; }
+
+          # `hold` vetoes.
+          if gh pr view "$pr" --repo "$repo" --json labels --jq '.labels[].name' | grep -qx hold; then
+            echo "hold present on #$pr — standing down."; exit 0
+          fi
+
+          # Shared cap across Codex + CI auto-fixes: any prior request comment
+          # (Codex or CI) contains "autofix".
+          rounds="$(gh api "repos/$repo/issues/$pr/comments" --paginate \
+            --jq '[.[] | select(.body | contains("autofix"))] | length' 2>/dev/null || echo 0)"
+          if [ "${rounds:-0}" -ge "$MAX_ROUNDS" ]; then
+            gh pr edit "$pr" --repo "$repo" --add-label hold
+            gh pr comment "$pr" --repo "$repo" --body "🛑 Auto-fix cap ($MAX_ROUNDS rounds) reached with CI still red — added \`hold\`. Over to you: read the failing check and fix or close."
+            exit 0
+          fi
+
+          # Concrete errors from the failed job, read with the workflow token.
+          errs="$(GH_TOKEN="$RO_TOKEN" gh run view "$RUN_ID" --repo "$repo" --log-failed 2>/dev/null \
+            | grep -iE 'error|failed|cannot find|type error|✕|✗|assert' \
+            | grep -viE 'no error|0 error' | head -20 || true)"
+          [ -n "$errs" ] || errs="(could not extract specific lines — read the failing 'Typecheck, lint, unit' job)"
+
+          n=$(( rounds + 1 ))
+          gh pr comment "$pr" --repo "$repo" --body "$(printf '<!-- ci-autofix -->\n\n@claude The required CI check **Typecheck, lint, unit** failed on this PR (auto-fix round %s of %s). Fix the errors on this branch — types, lint, or unit tests — then run the relevant checks to confirm clean. Do not broaden scope.\n\nFailing output:\n```\n%s\n```' "$n" "$MAX_ROUNDS" "$errs")"
+          echo "Asked Claude to fix CI on #$pr (round $n)."

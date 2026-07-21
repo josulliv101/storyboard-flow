@@ -85,10 +85,11 @@ jobs:
             # this commit — so a review that flagged something is never mistaken
             # for a clean pass.
             if [ "${changes:-0}" != "0" ] || [ "${inline:-0}" != "0" ]; then
-              # How many auto-fix rounds have we already asked for? (one marker
-              # comment per request.)
+              # How many auto-fix rounds already, across BOTH Codex and CI
+              # (every request comment — `codex-autofix` or `ci-autofix` —
+              # contains "autofix"), so the cap is shared and can't be doubled.
               rounds="$(gh api "repos/$repo/issues/$PR/comments" --paginate \
-                --jq "[.[] | select(.body | contains(\"$mark\"))] | length" 2>/dev/null || echo 0)"
+                --jq '[.[] | select(.body | contains("autofix"))] | length' 2>/dev/null || echo 0)"
               if [ "${rounds:-0}" -ge "$MAX_ROUNDS" ]; then
                 gh pr edit "$PR" --repo "$repo" --add-label hold
                 note "🛑 Codex and Claude did not converge after $MAX_ROUNDS auto-fix rounds — added \`hold\`. Over to you: review the thread and merge or close."
