@@ -184,6 +184,25 @@ html[data-timeline-endpoint-transition="active"]::view-transition-old(.timeline-
   animation: trash-arrival 650ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* Armed trash drop target: the glow breathes, NOT the element — pulsing the
+   element's opacity (animate-pulse) let the tool icons underneath bleed
+   through the morph. */
+@keyframes trash-armed-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 10px rgba(248, 113, 113, 0.25);
+    border-color: rgba(248, 113, 113, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(248, 113, 113, 0.6);
+    border-color: rgba(248, 113, 113, 0.9);
+  }
+}
+
+.animate-trash-armed-pulse {
+  animation: trash-armed-pulse 1.5s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html[data-timeline-route-fade] body {
     animation: none !important;
@@ -197,7 +216,8 @@ html[data-timeline-endpoint-transition="active"]::view-transition-old(.timeline-
     animation: none !important;
   }
 
-  .animate-trash-arrival {
+  .animate-trash-arrival,
+  .animate-trash-armed-pulse {
     animation: none;
   }
 }

@@ -94,13 +94,19 @@ function SidebarGraphTrashTarget({ trashId }: Readonly<{ trashId: NodeId }>) {
         // fades + scales it in over the tools. transition covers both ways.
         "transition-all duration-200 ease-out",
         isDragging ? "scale-100 opacity-100" : "pointer-events-none scale-90 opacity-0",
-        // Icon-only, but LOUD while armed: a pulsing red glow says "drop zone"
-        // from across the board; hover locks on — solid, steady, brighter.
+        // Icon-only, but LOUD while armed: a breathing red glow says "drop
+        // zone" from across the board; hover locks on — steady, brighter.
+        // Backgrounds are SOLID and the pulse animates only the glow (never
+        // element opacity), so the tool icons underneath stay fully hidden
+        // for the whole drag.
         state === "over"
-          ? "border-red-300 bg-red-500/35 shadow-[0_0_18px_rgba(248,113,113,0.55)]"
+          ? "border-red-300 bg-red-900 shadow-[0_0_20px_rgba(248,113,113,0.6)]"
           : state === "invalid"
-            ? "border-red-500 bg-red-500/40"
-            : "border-dashed border-red-400/70 bg-red-950/80 shadow-[0_0_14px_rgba(248,113,113,0.35)] motion-safe:animate-pulse",
+            ? "border-red-500 bg-red-950"
+            : // Plain class, no motion-safe: variant — that only composes with
+              // Tailwind-known utilities, and this one is hand-rolled in
+              // globals.css (its reduced-motion opt-out lives there too).
+              "border-dashed border-red-400/70 bg-red-950 animate-trash-armed-pulse",
       ].join(" ")}
     >
       <Trash2
