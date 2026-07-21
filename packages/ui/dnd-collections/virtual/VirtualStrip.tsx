@@ -677,11 +677,33 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // collection (positioned in content coordinates, so it scrolls along).
     const indicatorIndex = useCollectionsSelector((s) => {
       const intent = s.interaction.dropIntent;
-      return intent?.type === "insert-at-index" &&
-        intent.collectionId === collectionId &&
-        !s.interaction.dropIntentInvalid
-        ? intent.index
-        : null;
+      if (
+        intent?.type !== "insert-at-index" ||
+        intent.collectionId !== collectionId ||
+        s.interaction.dropIntentInvalid
+      ) {
+        return null;
+      }
+      // Hide the indicator on a NO-OP: dragging items that already live in this
+      // collection to a boundary that leaves them exactly where they are. Only
+      // when they form a contiguous run wholly inside this collection — dropping
+      // at any boundary from the run's start to just past its end is identity.
+      // (A non-contiguous multi-drag reorders the items between them, so it is a
+      // real move and keeps its indicator.)
+      const active = s.interaction.activeIds;
+      if (active.length > 0) {
+        const children = getChildren(s.graph, collectionId);
+        const positions = active.map((id) => children.indexOf(id));
+        if (positions.every((position) => position >= 0)) {
+          const lo = Math.min(...positions);
+          const hi = Math.max(...positions);
+          const contiguous = hi - lo + 1 === positions.length;
+          if (contiguous && intent.index >= lo && intent.index <= hi + 1) {
+            return null;
+          }
+        }
+      }
+      return intent.index;
     });
 
     // Boundary k's line sits in the gap before item k (measured offsets, so

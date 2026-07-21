@@ -112,6 +112,7 @@ export function GraphTimelineView({
   // the FolderTree toggle unmounts them.
   const [childrenShown, setChildrenShown] = useState(true);
   const [previewOn, setPreviewOn] = useState(false);
+  const [rulerOn, setRulerOn] = useState(false);
   const [timeChannel] = useState(createPreviewTimeChannel);
   const [assetsOpen, setAssetsOpen] = useState(false);
 
@@ -422,6 +423,8 @@ export function GraphTimelineView({
                 onPixelsPerSecondChange={setPixelsPerSecond}
                 previewOn={previewOn}
                 onTogglePreview={() => setPreviewOn((current) => !current)}
+                rulerOn={rulerOn}
+                onToggleRuler={() => setRulerOn((current) => !current)}
                 childrenShown={childrenShown}
                 onToggleChildren={() => setChildrenShown((current) => !current)}
                 timeChannel={timeChannel}

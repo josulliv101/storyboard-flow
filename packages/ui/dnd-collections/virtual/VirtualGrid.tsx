@@ -18,7 +18,10 @@ import {
   nonNegativeIntegerOr,
   positiveIntegerOrUndefined,
 } from "../core/numeric";
-import { type CollectionItemContentComponent } from "../react/collections-components";
+import {
+  type CollectionItemContentComponent,
+  type NodeCardDragActivation,
+} from "../react/collections-components";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { NodeCard } from "../react/node-views";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
@@ -64,6 +67,14 @@ export type VirtualGridProps = Readonly<{
   /** Per-view card pixels — overrides the provider `components` registry.
    *  MUST be identity-stable (module scope). */
   itemContent?: CollectionItemContentComponent;
+  /**
+   * How a cell drag starts. Default "body" — the card body drags instantly,
+   * which makes a plain click ambiguous with a drag (a press that nudges is a
+   * drag, and an in-card affordance's click can be eaten). "hold" mirrors the
+   * strip: a quick press is a CLICK (so in-card controls like a drill button
+   * work), a press-and-hold starts the reorder drag.
+   */
+  itemDragActivation?: NodeCardDragActivation;
   /** Presentational layer painted in CONTENT coordinates (inside the
    *  scrolling spacer), like VirtualStrip's `overlay`: a playhead, region
    *  markers. aria-hidden and pointer-events: none — scroll and the drop
@@ -88,6 +99,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       overscan: overscanOption,
       height: heightOption,
       itemContent,
+      itemDragActivation = "body",
       overlay,
       className,
     },
@@ -156,6 +168,16 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       estimateSize: () => rowSize,
       overscan,
     });
+
+    // The virtualizer caches each row's size and does NOT re-read estimateSize
+    // when its VALUE changes — only its identity/count. So a changed rowSize
+    // (the item-size control resizing cells) leaves getTotalSize() reporting
+    // the old height: the spacer stays short and the content-height container
+    // clips the now-taller cells. Reset the cache whenever rowSize changes.
+    // Layout effect so the corrected height lands before paint, no reflow flash.
+    useLayoutEffect(() => {
+      virtualizer.measure();
+    }, [virtualizer, rowSize]);
 
     // Pointer -> visible boundary index: row from y (floor — the row under
     // the pointer), column boundary from x (round — nearest gap between
@@ -253,11 +275,30 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
 
     const indicatorIndex = useCollectionsSelector((s) => {
       const intent = s.interaction.dropIntent;
-      return intent?.type === "insert-at-index" &&
-        intent.collectionId === collectionId &&
-        !s.interaction.dropIntentInvalid
-        ? intent.index
-        : null;
+      if (
+        intent?.type !== "insert-at-index" ||
+        intent.collectionId !== collectionId ||
+        s.interaction.dropIntentInvalid
+      ) {
+        return null;
+      }
+      // Hide the indicator on a NO-OP move: dragging items already in this
+      // collection to a boundary that leaves them where they are. Only for a
+      // contiguous run wholly inside this collection (see VirtualStrip).
+      const active = s.interaction.activeIds;
+      if (active.length > 0) {
+        const children = getChildren(s.graph, collectionId);
+        const positions = active.map((id) => children.indexOf(id));
+        if (positions.every((position) => position >= 0)) {
+          const lo = Math.min(...positions);
+          const hi = Math.max(...positions);
+          const contiguous = hi - lo + 1 === positions.length;
+          if (contiguous && intent.index >= lo && intent.index <= hi + 1) {
+            return null;
+          }
+        }
+      }
+      return intent.index;
     });
     // Boundary k -> a vertical line in row floor(k/cols) at column k%cols
     // (k at a row's end renders at the next row's left edge — the same
@@ -356,6 +397,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                         className="h-full w-full"
                         rovingTabIndex={absoluteIndex === rovingIndex ? 0 : -1}
                         itemContent={itemContent}
+                        dragActivation={itemDragActivation}
                       />
                     </div>
                   );

@@ -933,13 +933,34 @@ export function NativeDropGrid({
     }
     const { x: clientX, y: clientY } = pointerRef.current;
     const before = cellBeforeWhichPointerFalls(geometry, clientX, clientY);
-    // Draw at the left edge of the cell the boundary precedes, else at the
-    // right edge of the last cell (append). Spans that cell's row height.
-    const anchorCell = before ?? geometry.cells[geometry.cells.length - 1];
-    const x =
-      (before ? anchorCell.left - 3 : anchorCell.right + 3) - geometry.wrapperLeft;
-    const y = anchorCell.top - geometry.wrapperTop;
-    const height = anchorCell.bottom - anchorCell.top;
+    // Where the bar draws. The boundary before a cell that STARTS a new row is
+    // the same insertion point as "after the previous row's last cell" — so
+    // when the pointer is actually on that previous row (dragged past its right
+    // end), draw at the previous cell's RIGHT edge instead of jumping to the
+    // far left of the next row, which read as the indicator landing in the
+    // wrong place. Otherwise: left edge of the cell the boundary precedes, or
+    // the right edge of the last cell when appending at the very end.
+    const beforeIndex = before ? geometry.cells.indexOf(before) : -1;
+    const previous = beforeIndex > 0 ? geometry.cells[beforeIndex - 1] : null;
+    const boundaryStartsRow = before !== null && previous !== null && previous.top < before.top - 1;
+    const anchorPreviousRowEnd = boundaryStartsRow && previous !== null && clientY <= previous.bottom;
+    let x: number;
+    let y: number;
+    let height: number;
+    if (!before) {
+      const last = geometry.cells[geometry.cells.length - 1];
+      x = last.right + 3 - geometry.wrapperLeft;
+      y = last.top - geometry.wrapperTop;
+      height = last.bottom - last.top;
+    } else if (anchorPreviousRowEnd && previous) {
+      x = previous.right + 3 - geometry.wrapperLeft;
+      y = previous.top - geometry.wrapperTop;
+      height = previous.bottom - previous.top;
+    } else {
+      x = before.left - 3 - geometry.wrapperLeft;
+      y = before.top - geometry.wrapperTop;
+      height = before.bottom - before.top;
+    }
     setIndicator((current) =>
       current && current.x === x && current.y === y && current.height === height
         ? current
