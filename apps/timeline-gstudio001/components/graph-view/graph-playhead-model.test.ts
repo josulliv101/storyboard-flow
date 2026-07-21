@@ -8,8 +8,11 @@ import {
   cardSpansOf,
   childSpans,
   manifestTrailsLedger,
+  MAX_MANIFEST_FETCH_RETRIES,
   mediaSpanKey,
   nextManifestClipsState,
+  nextManifestFailureCount,
+  shouldRetryManifestFetch,
   type PreviewCardSpans,
 } from "./graph-playhead-model";
 
@@ -221,5 +224,58 @@ describe("nextManifestClipsState", () => {
   it("is a no-op on an already-empty cache either way", () => {
     expect(nextManifestClipsState(null, true)).toBeNull();
     expect(nextManifestClipsState(null, false)).toBeNull();
+  });
+});
+
+describe("nextManifestFailureCount", () => {
+  it("keeps the streak while preview stays enabled", () => {
+    expect(nextManifestFailureCount(MAX_MANIFEST_FETCH_RETRIES + 1, true)).toBe(
+      MAX_MANIFEST_FETCH_RETRIES + 1,
+    );
+    expect(nextManifestFailureCount(0, true)).toBe(0);
+  });
+
+  // The regression this guards: a session that reached the retry cap left the
+  // count past MAX_MANIFEST_FETCH_RETRIES. Reopening preview for the SAME
+  // focusedId does not trip the fetch effect's focusedId-change reset, so the
+  // capped count carried over and the first failed fetch after reopening
+  // scheduled no retry. Zeroing on disable means every reopen starts fresh.
+  it("resets the streak the instant preview disables", () => {
+    expect(nextManifestFailureCount(MAX_MANIFEST_FETCH_RETRIES + 1, false)).toBe(0);
+    expect(nextManifestFailureCount(3, false)).toBe(0);
+  });
+
+  // Disabling already zeroed it, so the enable flip only has to leave 0 alone.
+  it("leaves an already-reset streak at zero across a reopen", () => {
+    expect(nextManifestFailureCount(0, false)).toBe(0);
+    expect(nextManifestFailureCount(0, true)).toBe(0);
+  });
+});
+
+describe("shouldRetryManifestFetch", () => {
+  // The regression this guards: a transient 500/network blip left the pane on
+  // the shallow live projection forever because no failure path advanced the
+  // fetch. The caller now retries on failure — but only up to a cap, so a
+  // hard-down endpoint stops polling on an idle session.
+  it("retries every consecutive failure up to the cap", () => {
+    for (let attempt = 1; attempt <= MAX_MANIFEST_FETCH_RETRIES; attempt += 1) {
+      expect(shouldRetryManifestFetch(attempt)).toBe(true);
+    }
+  });
+
+  it("gives up once the failure streak exceeds the cap", () => {
+    expect(shouldRetryManifestFetch(MAX_MANIFEST_FETCH_RETRIES + 1)).toBe(false);
+    expect(shouldRetryManifestFetch(MAX_MANIFEST_FETCH_RETRIES + 5)).toBe(false);
+  });
+
+  // A reset streak (the caller zeroes its count on any good response, and an
+  // aborted fetch never increments) has nothing to retry.
+  it("does not retry with no accrued failures", () => {
+    expect(shouldRetryManifestFetch(0)).toBe(false);
+  });
+
+  it("honors a caller-supplied cap", () => {
+    expect(shouldRetryManifestFetch(2, 2)).toBe(true);
+    expect(shouldRetryManifestFetch(3, 2)).toBe(false);
   });
 });

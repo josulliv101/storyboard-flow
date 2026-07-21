@@ -32,6 +32,8 @@ import {
   childSpans,
   manifestTrailsLedger,
   nextManifestClipsState,
+  nextManifestFailureCount,
+  shouldRetryManifestFetch,
   type GridPlayheadMap,
   type PlayheadMap,
   type PreviewCardSpans,
@@ -512,6 +514,12 @@ function useManifestClips(
   const store = useCollectionsStore();
   const [state, setState] = useState<ManifestClipsState>(null);
   const [staleAt, setStaleAt] = useState(0);
+  // Consecutive failed fetches, so a hard-down endpoint stops polling after
+  // MAX_MANIFEST_FETCH_RETRIES (a good response resets it). A ref, not state:
+  // it must survive the effect re-runs a retry triggers WITHOUT being a
+  // dependency that would itself re-run the fetch.
+  const failureCountRef = useRef(0);
+  const lastFetchedIdRef = useRef(focusedId);
 
   // Disabling preview unsubscribes the effect below, so a commit made while
   // CLOSED would otherwise never clear the cached manifest — see
@@ -524,6 +532,18 @@ function useManifestClips(
     setPrevEnabled(enabled);
     setState((prev) => nextManifestClipsState(prev, enabled));
   }
+
+  // Reset the retry streak whenever preview toggles closed. Without this a
+  // session that hit MAX_MANIFEST_FETCH_RETRIES left the count past the cap,
+  // and reopening preview for the SAME focusedId (which does not trip the
+  // focusedId-change reset in the fetch effect) inherited it — so the first
+  // failed fetch after reopening scheduled no retry and the projection
+  // fallback stood indefinitely. Done in an effect, not during render, because
+  // the react-hooks rule forbids touching a ref while rendering; re-enabling
+  // keeps the already-zeroed count so every reopen starts a fresh session.
+  useEffect(() => {
+    failureCountRef.current = nextManifestFailureCount(failureCountRef.current, enabled);
+  }, [enabled]);
 
   // A committed change makes the held manifest STALE — discard it
   // immediately (the live projection is correct the instant the commit
@@ -550,17 +570,41 @@ function useManifestClips(
     // in-flight json() parse, so the signal check below is the single guard.
     const controller = new AbortController();
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    // Only a retry (staleAt bump) keeps counting — a switch to a different
+    // timeline starts its own streak, so timeline A's failures can't cap
+    // timeline B before it has even tried.
+    if (failureCountRef.current > 0 && lastFetchedIdRef.current !== focusedId) {
+      failureCountRef.current = 0;
+    }
+    lastFetchedIdRef.current = focusedId;
+    // A failed fetch (non-2xx or thrown) schedules the SAME delayed refetch as
+    // the install guard, so a transient 500/network blip recovers on its own
+    // while preview stays open — until the retry cap. An ABORT (our own
+    // cleanup) is not a failure and must not retry, so it is filtered first.
+    const scheduleRetryAfterFailure = () => {
+      if (controller.signal.aborted) return;
+      failureCountRef.current += 1;
+      if (shouldRetryManifestFetch(failureCountRef.current)) {
+        retryTimer = setTimeout(() => setStaleAt(Date.now()), MANIFEST_REFRESH_DELAY_MS);
+      }
+    };
     void (async () => {
       try {
         const response = await fetch(
           `/api/timelines/${encodeURIComponent(focusedId)}/preview-manifest`,
           { cache: "no-store", signal: controller.signal },
         );
-        if (!response.ok) return; // projection fallback stands
+        if (!response.ok) {
+          scheduleRetryAfterFailure(); // projection fallback stands meanwhile
+          return;
+        }
         const result = (await response.json().catch(() => null)) as {
           manifest?: PlaybackManifest;
         } | null;
         if (controller.signal.aborted || !result?.manifest) return;
+        // A good response ends the failure streak, whether it installs now or
+        // waits behind the install guard below.
+        failureCountRef.current = 0;
         // Install guard: a manifest compiled BEFORE this session's latest
         // accepted write to ANY document in the closure is pre-write server
         // state — never install it over the live projection; poll again once
@@ -587,7 +631,8 @@ function useManifestClips(
           forId: focusedId,
         });
       } catch {
-        /* projection fallback stands (including our own abort) */
+        // projection fallback stands; retry unless this was our own abort
+        scheduleRetryAfterFailure();
       }
     })();
     return () => {
