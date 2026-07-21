@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { compilePlaybackManifest } from "@storyboard/timeline-domain";
+import { deriveClosureSummaries } from "@/lib/derive-collection-summaries";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import { getFirebaseTimelineEntry } from "@/lib/firebase-timeline-store";
 import { loadTimelineClosure } from "@/lib/load-timeline-closure";
@@ -47,8 +48,17 @@ export async function GET(
     documents[id] = entry.document;
     revisions[id] = entry.revision;
 
+    // Stored collection summaries go stale by design: the graph view's
+    // writes are patch-scoped, so editing a child never rewrites the
+    // parents that reference it. Every other read path repairs that at read
+    // time (serveTimelineDocument); compiling from the raw closure made this
+    // route the one reader that did not, so the preview both reported a
+    // different total than the board and windowed a grown child's newest
+    // clips out of playback entirely.
+    const summarized = deriveClosureSummaries(documents, new Set(missing));
+
     const manifest = compilePlaybackManifest(
-      documents,
+      summarized,
       id,
       entry.revision,
       new Date().toISOString(),

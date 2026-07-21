@@ -6,7 +6,11 @@ import type {
   TimelineDocument,
 } from "@storyboard/timeline-model/types";
 
-import { collectionChildIds, deriveCollectionSummaries } from "./derive-collection-summaries";
+import {
+  collectionChildIds,
+  deriveClosureSummaries,
+  deriveCollectionSummaries,
+} from "./derive-collection-summaries";
 
 function mediaClip(
   id: string,
@@ -165,6 +169,73 @@ describe("deriveCollectionSummaries", () => {
     // duration + CLIP_GAP_SECONDS
     expect(document.clips[1].startTime).toBeCloseTo(11.12, 10);
     expect(document.clips.map((entry) => entry.index)).toEqual([0, 1]);
+  });
+});
+
+describe("deriveClosureSummaries", () => {
+  const closureOf = (...docs: TimelineDocument[]) =>
+    Object.fromEntries(docs.map((doc) => [doc.id, doc]));
+
+  it("propagates a deep child's growth up EVERY level in one pass", () => {
+    // The case one-level derivation cannot reach: "grandchild" grew, so
+    // "child"'s stored summary of it is short, so "root"'s summary of
+    // "child" — derived from that stored child — is short too.
+    const grandchild = docOf("grandchild", [mediaClip("g1", { startTime: 0, duration: 10 })]);
+    const child = docOf("child", [
+      collectionClip("gc-ref", "grandchild", { duration: 4, sourceDuration: 4 }),
+    ]);
+    const root = docOf("root", [collectionClip("c-ref", "child", { duration: 4, sourceDuration: 4 })]);
+
+    const closure = deriveClosureSummaries(closureOf(root, child, grandchild));
+
+    expect(closure.child.clips[0].duration).toBe(10);
+    expect(closure.root.clips[0].duration).toBe(10);
+  });
+
+  it("keeps the stored summary for ids the loader could not resolve", () => {
+    // The closure loader substitutes an unloadable branch with an EMPTY
+    // document so it falls silent; deriving from that would overwrite a real
+    // stored summary with "empty collection".
+    const ghost = docOf("ghost", [], "");
+    const root = docOf("root", [
+      collectionClip("ghost-ref", "ghost", { itemCount: 6, duration: 18, sourceDuration: 18 }),
+    ]);
+
+    const closure = deriveClosureSummaries(closureOf(root, ghost), new Set(["ghost"]));
+
+    const summary = closure.root.clips[0] as CollectionTimelineClip;
+    expect(summary.duration).toBe(18);
+    expect(summary.itemCount).toBe(6);
+    expect(closure.root).toBe(root);
+  });
+
+  it("resolves a reference cycle to the stored documents instead of looping", () => {
+    const a = docOf("a", [collectionClip("to-b", "b")]);
+    const b = docOf("b", [collectionClip("to-a", "a")]);
+
+    const closure = deriveClosureSummaries(closureOf(a, b));
+
+    expect(Object.keys(closure).sort()).toEqual(["a", "b"]);
+  });
+
+  it("leaves a closure whose summaries are already in sync untouched", () => {
+    const child = docOf("child", [mediaClip("m1", { startTime: 0, duration: 5 })], "Synced");
+    const root = docOf("root", [
+      collectionClip("c-ref", "child", {
+        title: "Synced",
+        itemCount: 1,
+        duration: 5,
+        sourceDuration: 5,
+        previewItems: [
+          { id: "m1", kind: "image", src: "https://cdn.test/m1.jpg", poster: undefined, alt: "m1" },
+        ],
+      }),
+    ]);
+
+    const closure = deriveClosureSummaries(closureOf(root, child));
+
+    expect(closure.root).toBe(root);
+    expect(closure.child).toBe(child);
   });
 });
 
