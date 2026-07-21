@@ -1,23 +1,23 @@
 name: Codex gate — gated PRs
 
-# The human-optional review gate. It runs for EVERY PR by default; only the
-# `chore` skip lane bypasses it (those PRs arm auto-merge directly and never
-# get the `gated` label).
+# The review gate + auto-fix loop. Runs for EVERY PR by default; only the
+# `chore` skip lane bypasses it (those arm auto-merge directly and never get
+# the `gated` label).
 #
-# claude-implement.yml labels a non-chore PR `gated` instead of arming
-# auto-merge, and THIS workflow decides the merge:
+# On each `gated` labeling it polls up to 12 min for Codex's verdict on the
+# CURRENT head commit, then:
+#   * approved (👍 reaction or APPROVED review) -> arm auto-merge. Out of the loop.
+#   * findings (CHANGES_REQUESTED review or inline code comments) -> ask Claude
+#     to address them (@claude comment), up to MAX_ROUNDS times. Claude pushes
+#     a fix, re-arms this gate, Codex re-reviews the new commit, repeat.
+#   * MAX_ROUNDS reached without convergence -> add `hold`, ping the owner.
+#   * no verdict in the window -> leave open, ping the owner.
+#   * `hold` label present -> stand down.
 #
-#   * Codex approves (👍 reaction, or a formal APPROVED review) -> arm
-#     auto-merge. It lands on green CI with nobody in the loop.
-#   * Codex leaves findings (a CHANGES_REQUESTED review, or inline code
-#     comments) -> leave the PR open and ping. You address or overrule.
-#   * No verdict within the window -> leave open and ping. Your call.
-#   * `hold` label present -> stand down; you merge manually.
-#
-# Codex's signals are informal (a reaction / review comments), NOT a formal
-# GitHub approval that branch protection could require — so this POLLS for the
-# verdict rather than gating on a required check. The poll runs in one job for
-# up to ~12 min (public repo = free minutes); `timeout-minutes` caps it.
+# Only signals NEWER than the head commit count, so a prior round's findings
+# never re-trigger a fix. Codex's signal is informal (reaction/comments), so
+# this polls rather than gating a branch-protection check. Owner-authored PRs
+# only (the loop's PRs are opened via LOOP_PAT = the owner).
 
 on:
   pull_request:
@@ -30,9 +30,6 @@ concurrency:
 jobs:
   gate:
     name: Codex verdict gate
-    # Only the `gated` label, and only on PRs the owner authored (the loop's
-    # PRs are opened via LOOP_PAT = the owner). A non-owner PR never reaches the
-    # gate, so it cannot be used to arm auto-merge on someone else's branch.
     if: >-
       github.event.label.name == 'gated' &&
       github.event.pull_request.user.login == github.repository_owner
@@ -41,40 +38,43 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: write
 
     steps:
-      - name: Wait for Codex verdict, then arm auto-merge or hold
+      - name: Wait for Codex verdict, then merge / auto-fix / hold
         env:
           GH_TOKEN: ${{ secrets.LOOP_PAT }}
           PR: ${{ github.event.pull_request.number }}
           BOT: "chatgpt-codex-connector[bot]"
+          MAX_ROUNDS: "5"
         run: |
           set -euo pipefail
           repo="$GITHUB_REPOSITORY"
+          mark="<!-- codex-autofix -->"
           deadline=$(( $(date +%s) + 12 * 60 ))   # give Codex up to 12 minutes
 
           note() { gh pr comment "$PR" --repo "$repo" --body "$1"; }
 
+          # Baseline: only Codex signals at/after the current head commit are
+          # THIS round's verdict. Codex re-reviews on every push, so a prior
+          # round's stale findings must not count.
+          commit_iso="$(gh pr view "$PR" --repo "$repo" --json commits --jq '.commits[-1].committedDate' 2>/dev/null || echo '')"
+          [ -n "$commit_iso" ] || commit_iso="1970-01-01T00:00:00Z"
+
           while :; do
-            # Owner veto always wins, checked every pass so a late `hold` still stops it.
             if gh pr view "$PR" --repo "$repo" --json labels --jq '.labels[].name' | grep -qx hold; then
               note "🔒 \`hold\` present — Codex gate standing down. Merge manually when ready."
               exit 0
             fi
 
-            # Approval: Codex's 👍 reaction, OR a formal APPROVED review.
             up="$(gh api "repos/$repo/issues/$PR/reactions" \
-              --jq "[.[] | select(.user.login==\"$BOT\" and .content==\"+1\")] | length" 2>/dev/null || echo 0)"
+              --jq "[.[] | select(.user.login==\"$BOT\" and .content==\"+1\" and .created_at >= \"$commit_iso\")] | length" 2>/dev/null || echo 0)"
             okrev="$(gh api "repos/$repo/pulls/$PR/reviews" \
-              --jq "[.[] | select(.user.login==\"$BOT\" and .state==\"APPROVED\")] | length" 2>/dev/null || echo 0)"
-
-            # Findings: a changes-requested review, or any inline code comments.
-            # (General summary comments go to the issue thread and are NOT treated
-            # as blocking — only line-anchored review comments are.)
+              --jq "[.[] | select(.user.login==\"$BOT\" and .state==\"APPROVED\" and .submitted_at >= \"$commit_iso\")] | length" 2>/dev/null || echo 0)"
             changes="$(gh api "repos/$repo/pulls/$PR/reviews" \
-              --jq "[.[] | select(.user.login==\"$BOT\" and .state==\"CHANGES_REQUESTED\")] | length" 2>/dev/null || echo 0)"
+              --jq "[.[] | select(.user.login==\"$BOT\" and .state==\"CHANGES_REQUESTED\" and .submitted_at >= \"$commit_iso\")] | length" 2>/dev/null || echo 0)"
             inline="$(gh api "repos/$repo/pulls/$PR/comments" \
-              --jq "[.[] | select(.user.login==\"$BOT\")] | length" 2>/dev/null || echo 0)"
+              --jq "[.[] | select(.user.login==\"$BOT\" and .created_at >= \"$commit_iso\")] | length" 2>/dev/null || echo 0)"
 
             if [ "${up:-0}" != "0" ] || [ "${okrev:-0}" != "0" ]; then
               gh pr merge "$PR" --repo "$repo" --auto --merge
@@ -83,7 +83,17 @@ jobs:
             fi
 
             if [ "${changes:-0}" != "0" ] || [ "${inline:-0}" != "0" ]; then
-              note "⚠️ Codex left review findings — auto-merge **not** armed. Address them (push to this branch) or merge manually if you disagree. Re-apply the \`gated\` label to re-run the gate."
+              # How many auto-fix rounds have we already asked for? (one marker
+              # comment per request.)
+              rounds="$(gh api "repos/$repo/issues/$PR/comments" --paginate \
+                --jq "[.[] | select(.body | contains(\"$mark\"))] | length" 2>/dev/null || echo 0)"
+              if [ "${rounds:-0}" -ge "$MAX_ROUNDS" ]; then
+                gh pr edit "$PR" --repo "$repo" --add-label hold
+                note "🛑 Codex and Claude did not converge after $MAX_ROUNDS auto-fix rounds — added \`hold\`. Over to you: review the thread and merge or close."
+                exit 0
+              fi
+              n=$(( rounds + 1 ))
+              note "$(printf '%s\n\n@claude Codex requested changes on this PR (auto-fix round %s of %s). Read Codex'\''s review comments above and address exactly those points on this branch — add or adjust tests, run the closest validation. Do not broaden scope.' "$mark" "$n" "$MAX_ROUNDS")"
               exit 0
             fi
 
