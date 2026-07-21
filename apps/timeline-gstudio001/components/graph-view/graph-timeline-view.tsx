@@ -38,6 +38,9 @@ import { GRAPH_ASSETS_TOGGLE_EVENT } from "@/lib/graph-view-events";
 import { AssetPaletteDrawer } from "./graph-asset-palette";
 import { toast } from "@/components/core/sonner";
 
+import { bootSessionKey } from "./boot-session-key";
+import { trashDocumentId as deriveTrashDocumentId } from "./trash-document-id";
+
 import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { HydrationController } from "./graph-hydration";
@@ -64,6 +67,10 @@ type BootState =
       status: "ready";
       graph: CollectionsGraph;
       trashRootId: string | null;
+      // Identity of the session this graph belongs to. Rides along with the
+      // graph so the <DndCollections> remount key changes atomically with the
+      // graph it consumes (initialGraph is initial-only), never before it.
+      sessionKey: string;
     }>;
 
 /**
@@ -121,7 +128,12 @@ export function GraphTimelineView({
   );
 
   const { user } = useAuth();
-  const trashDocumentId = user ? `trash-${user.uid}` : null;
+  const uid = user ? user.uid : null;
+  // Gate on presence (null = signed out), NOT truthiness: a signed-in user
+  // with an empty-string uid still owns a trash document, and the boot effect
+  // returns early when this is null — a truthiness check would strand that
+  // user on the loading screen.
+  const trashDocumentId = deriveTrashDocumentId(uid);
 
   // AUTH BINDING first: the gateway is a module singleton that outlives
   // soft logout/login, so a different signed-in user must reset it before
@@ -224,13 +236,18 @@ export function GraphTimelineView({
       }
 
       detailsStore.replaceAll(bootDetails);
-      setBoot({ status: "ready", graph: built.value, trashRootId });
+      setBoot({
+        status: "ready",
+        graph: built.value,
+        trashRootId,
+        sessionKey: bootSessionKey(uid, projectId),
+      });
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [projectId, trashDocumentId, detailsStore, bootedFromServer]);
+  }, [projectId, trashDocumentId, uid, detailsStore, bootedFromServer]);
 
   const onSync = useCallback((entry: SyncEntry) => {
     setSyncLog((log) => [entry, ...log].slice(0, 6));
@@ -340,6 +357,12 @@ export function GraphTimelineView({
       )}
 
       <DndCollections
+        // initialGraph is initial-only (the store is the source of truth
+        // thereafter), so a boot re-run for a new session must remount to
+        // adopt the freshly built graph. The key is stable across ordinary
+        // renders and route drill-in — only a different uid/project changes
+        // it — so undo history and selection survive navigation.
+        key={boot.sessionKey}
         initialGraph={boot.graph}
         components={GRAPH_VIEW_COMPONENTS}
         maxHistoryEntries={200}
