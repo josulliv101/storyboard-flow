@@ -844,6 +844,13 @@ test.describe("graph view E2E", () => {
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", CHILD_ID, "charlie"]);
 
+    // The arrival lands twice over: the trash DRAWER button (sidebar chrome)
+    // plays its one-shot pop — the class rides the drag→count-growth
+    // announcement, so it proves the whole seam fired.
+    await expect(
+      page.getByRole("button", { name: "Trash", exact: true }).locator(".animate-trash-arrival"),
+    ).toBeAttached();
+
     // A cross-root move is patch-scoped like any other: source AND target
     // documents both write.
     await expect

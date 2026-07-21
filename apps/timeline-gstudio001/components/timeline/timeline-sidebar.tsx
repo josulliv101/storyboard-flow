@@ -21,6 +21,7 @@ import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
   GRAPH_ASSETS_TOGGLE_EVENT,
+  GRAPH_TRASH_ARRIVAL_EVENT,
   isGraphInsertTool,
   isGraphViewRoute,
   requestGraphToolInsert,
@@ -174,6 +175,17 @@ export function TimelineSidebar() {
     return () => window.removeEventListener("gstudio-toast" as any, handleToastEvent);
   }, []);
 
+  // A drag just dropped items into the graph's sidebar trash target — play
+  // the arrival pop on the trash drawer button below. Keyed per arrival so a
+  // second drop mid-animation restarts it (the key remount re-triggers the
+  // one-shot CSS animation); cleared when the animation ends.
+  const [trashArrival, setTrashArrival] = useState(0);
+  useEffect(() => {
+    const handleArrival = () => setTrashArrival((n) => n + 1);
+    window.addEventListener(GRAPH_TRASH_ARRIVAL_EVENT, handleArrival);
+    return () => window.removeEventListener(GRAPH_TRASH_ARRIVAL_EVENT, handleArrival);
+  }, []);
+
   const handleDragStart = (e: React.DragEvent, type: string) => {
     e.dataTransfer.setData("application/x-gstudio-type", type);
     e.dataTransfer.effectAllowed = "copyMove";
@@ -319,7 +331,15 @@ export function TimelineSidebar() {
                 isPressed ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
               )}
             >
-              <Icon className="h-4 w-4 transition-colors" />
+              <Icon
+                // Remount per arrival so the one-shot pop animation replays
+                // even when drops land back-to-back.
+                key={item.id === "trash" ? trashArrival : undefined}
+                className={cn(
+                  "h-4 w-4 transition-colors",
+                  item.id === "trash" && trashArrival > 0 && "animate-trash-arrival",
+                )}
+              />
               <SidebarTooltipLabel
                 id={tooltipId}
                 label={item.label}
