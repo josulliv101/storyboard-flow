@@ -279,7 +279,16 @@ export function TimelineSidebar() {
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
             />
-            <div id="graph-sidebar-trash-slot" className="absolute inset-0" />
+            {/* pointer-events-none so the slot never covers the tool buttons'
+                own drag/click — it only hosts the portaled trash target, which
+                re-enables its OWN pointer-events while a card drag is live (a
+                child overriding a none parent), and whose dnd-kit drop is
+                rect-based regardless. Without this the slot ate the tools'
+                dragstart and sidebar tool-drag stopped working. */}
+            <div
+              id="graph-sidebar-trash-slot"
+              className="pointer-events-none absolute inset-0"
+            />
           </div>
         </>
       )}
