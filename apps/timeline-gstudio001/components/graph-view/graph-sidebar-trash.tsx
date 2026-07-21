@@ -94,26 +94,26 @@ function SidebarGraphTrashTarget({ trashId }: Readonly<{ trashId: NodeId }>) {
         // fades + scales it in over the tools. transition covers both ways.
         "transition-all duration-200 ease-out",
         isDragging ? "scale-100 opacity-100" : "pointer-events-none scale-90 opacity-0",
-        // Icon-only, but LOUD while armed: a breathing red glow says "drop
-        // zone" from across the board; hover locks on — steady, brighter.
-        // Backgrounds are SOLID and the pulse animates only the glow (never
-        // element opacity), so the tool icons underneath stay fully hidden
-        // for the whole drag.
+        // Icon-only, but LOUD while armed: a breathing glow says "drop zone"
+        // from across the board; hover locks on — steady, brighter. GRAY
+        // scheme throughout (no red — per review). Backgrounds are SOLID and
+        // the pulse animates only the glow (never element opacity), so the
+        // tool icons underneath stay fully hidden for the whole drag.
         state === "over"
-          ? "border-red-300 bg-red-900 shadow-[0_0_20px_rgba(248,113,113,0.6)]"
+          ? "border-zinc-200 bg-zinc-700 shadow-[0_0_20px_rgba(228,228,231,0.4)]"
           : state === "invalid"
-            ? "border-red-500 bg-red-950"
+            ? "border-zinc-600 bg-zinc-900"
             : // Plain class, no motion-safe: variant — that only composes with
               // Tailwind-known utilities, and this one is hand-rolled in
               // globals.css (its reduced-motion opt-out lives there too).
-              "border-dashed border-red-400/70 bg-red-950 animate-trash-armed-pulse",
+              "border-dashed border-zinc-400/80 bg-zinc-900 animate-trash-armed-pulse",
       ].join(" ")}
     >
       <Trash2
         aria-hidden="true"
         className={[
           "transition-transform duration-200",
-          state === "over" ? "h-7 w-7 scale-110 text-red-100" : "h-6 w-6 text-red-300",
+          state === "over" ? "h-7 w-7 scale-110 text-zinc-100" : "h-6 w-6 text-zinc-300",
         ].join(" ")}
       />
     </div>
