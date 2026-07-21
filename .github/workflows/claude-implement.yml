@@ -68,7 +68,13 @@ jobs:
           use_commit_signing: true
           additional_permissions: |
             actions: read
+          # Opus for gated work (the default lane, plus every auto-fix and
+          # review-feedback run — those only ever happen on gated PRs); Sonnet
+          # for the `chore` skip lane, where the change is trivial by definition.
+          # A chore is identifiable only on the issue-labeled trigger; the PR
+          # (@claude) and review triggers are always gated, so they fall to Opus.
           claude_args: |
+            --model ${{ (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'chore')) && 'claude-sonnet-5' || 'claude-opus-4-8' }}
             --max-turns 80
             --system-prompt "You are the implementation agent for one trusted GitHub issue (or one round of review feedback on your own PR). Follow AGENTS.md and every nested instruction file. Make the smallest complete change, add focused regression coverage, and run the closest relevant validation before finishing. On a changes-requested review, address exactly the reviewer's points on the same branch. Never broaden scope, never file new issues, never merge, and never edit .github/workflows unless the issue explicitly asks for it."
 
