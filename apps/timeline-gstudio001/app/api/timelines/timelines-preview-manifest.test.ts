@@ -82,6 +82,7 @@ vi.mock("@/lib/cloudinary-media-store", () => ({
 }));
 
 import { GET as getPreviewManifest } from "./[id]/preview-manifest/route";
+import { serveTimelineDocument } from "@/lib/serve-timeline";
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
@@ -152,10 +153,14 @@ describe("preview manifest route", () => {
 
     expect(body.missing).toEqual([]);
     expect(body.manifest.projectRevision).toBe(9);
-    expect(body.manifest.durationSeconds).toBe(8);
+    // Read-time summary derivation repacks, so the collection clip sits one
+    // CLIP_GAP_SECONDS after "intro" rather than at the un-gapped startTime
+    // this fixture stores — the same normalization the GET route already
+    // applies, which is the point: both read models report one timeline.
+    expect(body.manifest.durationSeconds).toBeCloseTo(8.12, 6);
     expect(body.manifest.leaves.map((leaf) => leaf.id)).toEqual(["intro", "a", "b"]);
     expect(body.manifest.leaves[1].collectionPath).toEqual(["root-1", "scene"]);
-    expect(body.manifest.leaves[1].timelineStart).toBeCloseTo(4, 6);
+    expect(body.manifest.leaves[1].timelineStart).toBeCloseTo(4.12, 6);
   });
 
   it("degrades unloadable branches to silence and reports them", async () => {
@@ -184,6 +189,32 @@ describe("preview manifest route", () => {
     seed("root-b", "user-b", [image("x", 0, 4)]);
     const response = await getPreviewManifest(new Request("http://test.local"), params("root-b"));
     expect(response.status).toBe(404);
+  });
+
+  it("summarizes stale parents from the child, matching what the GET route serves", async () => {
+    // The graph view's writes are patch-scoped: nesting a clip into "scene"
+    // rewrites ONLY "scene", leaving every referring parent's denormalized
+    // summary short. Every other read path repairs that at read time
+    // (serveTimelineDocument); the manifest must agree, or the preview plays
+    // a different timeline than the board shows.
+    seed("scene", "user-a", [image("a", 0, 2), image("b", 2.12, 2), image("c", 4.24, 2.65)]);
+    seed("root-1", "user-a", [
+      image("intro", 0, 4),
+      // Stale: written when "scene" was still two clips long.
+      collectionClip("scene-ref", "scene", 4.12, 4),
+    ]);
+
+    const served = await serveTimelineDocument("root-1", "user-a");
+    const servedClips = served?.document.clips ?? [];
+    const last = servedClips[servedClips.length - 1];
+    const servedDuration = last.startTime + last.duration;
+
+    const response = await getPreviewManifest(new Request("http://test.local"), params("root-1"));
+    const body = (await response.json()) as { manifest: PlaybackManifest; missing: string[] };
+
+    expect(body.manifest.durationSeconds).toBeCloseTo(servedDuration, 6);
+    // The stale span also windowed the child's newest clip out of playback.
+    expect(body.manifest.leaves.map((leaf) => leaf.id)).toEqual(["intro", "a", "b", "c"]);
   });
 
   it("reports a stored reference cycle as 409", async () => {

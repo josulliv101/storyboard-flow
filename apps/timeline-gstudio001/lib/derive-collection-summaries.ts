@@ -72,6 +72,58 @@ export function deriveCollectionSummaries(
   return { document: { ...document, clips: packTimelineClips(clips) }, changed: true };
 }
 
+/**
+ * Derive summaries across a whole loaded closure, BOTTOM-UP: a document is
+ * summarized from its already-derived children, so a change deep in the
+ * tree propagates up every level in one pass. `deriveCollectionSummaries`
+ * on its own is one level deep — it reads STORED children — which is enough
+ * for the single-document serve path but not for a reader that flattens the
+ * whole closure (the playback manifest): there, a stale grandchild would
+ * still window its parent's content out of the timeline.
+ *
+ * `unresolved` are the ids the loader could not actually read (missing, or
+ * another user's). They are typically substituted with EMPTY documents so a
+ * dangling branch falls silent — deriving from those would rewrite a real
+ * stored summary to "empty collection", so they are treated as absent and
+ * the stored summary stands ("stale beats blank").
+ *
+ * A reference CYCLE resolves to the stored document rather than looping;
+ * detecting it stays the manifest compiler's job, which reports it honestly
+ * instead of serving a half-derived closure.
+ */
+export function deriveClosureSummaries(
+  documents: Readonly<Record<string, TimelineDocument>>,
+  unresolved: ReadonlySet<string> = new Set(),
+): Record<string, TimelineDocument> {
+  const derived: Record<string, TimelineDocument> = {};
+  const visiting = new Set<string>();
+
+  const resolve = (id: string): TimelineDocument | null => {
+    const stored = documents[id];
+    if (!stored || unresolved.has(id)) return null;
+    const settled = derived[id];
+    if (settled) return settled;
+    if (visiting.has(id)) return stored;
+
+    visiting.add(id);
+    const children = new Map<string, TimelineDocument | null>(
+      collectionChildIds(stored).map((childId) => [childId, resolve(childId)]),
+    );
+    visiting.delete(id);
+
+    const result = deriveCollectionSummaries(stored, children).document;
+    derived[id] = result;
+    return result;
+  };
+
+  const closure: Record<string, TimelineDocument> = { ...documents };
+  for (const id of Object.keys(documents)) {
+    const result = resolve(id);
+    if (result) closure[id] = result;
+  }
+  return closure;
+}
+
 /** The child ids a derivation pass for this document would want loaded. */
 export function collectionChildIds(document: TimelineDocument): string[] {
   const ids = new Set<string>();
