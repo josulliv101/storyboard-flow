@@ -12,6 +12,7 @@ import {
   collectAffectedCollectionIds,
   collectUnhydratedDropTargets,
   graphChildrenToClips,
+  hydratedCollectionPreviews,
 } from "./adapter";
 import {
   buildGraph,
@@ -571,5 +572,153 @@ describe("hydrated collection durations", () => {
     // mid is hydrated: derived = 2 + gap + deep's SUMMARY 50 (deep is a
     // placeholder — its stored word is all anyone has).
     expect(clips[0].duration).toBeCloseTo(2 + 0.12 + 50, 5);
+  });
+});
+
+describe("hydrated collection previewItems", () => {
+  // Third leg of the stale-stored-summary family (after duration + itemCount):
+  // a collection clip's stored `previewItems` parrots the child's first/last
+  // frames at seed time, but the child document changes underneath. The
+  // projection must DERIVE previewItems from live children when hydrated (same
+  // rule as duration/itemCount), or the parent's collection card shows old
+  // frames AND the write path re-persists them.
+  function docsWithStalePreview(): Record<string, TimelineDocument> {
+    return {
+      "stale-root": {
+        id: "stale-root",
+        title: "Stale root",
+        clips: [collectionClip("clip-kid", "kid", "Kid")],
+      },
+      kid: {
+        id: "kid",
+        title: "Kid",
+        clips: packTimelineClips([image("k-a", 4), image("k-b", 5)]),
+      },
+    };
+  }
+
+  it("derives a hydrated collection's previewItems from live children, not the stale summary", () => {
+    const focused = buildFocusedGraph(docsWithStalePreview(), "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clip = graphChildrenToClips(focused.value.graph, focused.value.details, "stale-root")[0];
+    expect(clip.kind).toBe("collection");
+    if (clip.kind !== "collection") throw new Error("expected a collection clip");
+    // The stored summary was a single "p1" frame; live children are k-a, k-b.
+    expect(clip.previewItems?.map((p) => p.id)).toEqual(["k-a", "k-b"]);
+    expect(clip.previewItems?.[0]).toEqual({
+      id: "k-a",
+      kind: "image",
+      src: "https://example.com/k-a.jpg",
+      poster: "https://example.com/k-a-poster.jpg",
+      alt: "k-a alt",
+    });
+  });
+
+  it("reflects a front-insertion into the live child", () => {
+    const documents = docsWithStalePreview();
+    // Add an image to the FRONT of the child, as the failure scenario describes.
+    documents.kid = {
+      ...documents.kid,
+      clips: packTimelineClips([image("k-new", 1), image("k-a", 4), image("k-b", 5)]),
+    };
+    const focused = buildFocusedGraph(documents, "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clip = graphChildrenToClips(focused.value.graph, focused.value.details, "stale-root")[0];
+    if (clip.kind !== "collection") throw new Error("expected a collection clip");
+    // First/middle/last of three children — the new front frame leads.
+    expect(clip.previewItems?.map((p) => p.id)).toEqual(["k-new", "k-a", "k-b"]);
+  });
+
+  it("keeps the stored previewItems for an UNHYDRATED placeholder", () => {
+    const documents = docsWithStalePreview();
+    delete documents.kid; // the child document never loads
+    const focused = buildFocusedGraph(documents, "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clip = graphChildrenToClips(focused.value.graph, focused.value.details, "stale-root")[0];
+    if (clip.kind !== "collection") throw new Error("expected a collection clip");
+    // All anyone knows about a placeholder is its stored summary.
+    expect(clip.previewItems).toEqual([
+      { id: "p1", kind: "image", src: "https://example.com/p1.jpg", alt: "p1" },
+    ]);
+  });
+});
+
+describe("hydratedCollectionPreviews (card frames)", () => {
+  // The graph CARD renders its preview frames from the side-table, which the
+  // adapter seeds from the STORED collection clip — so a hydrated parent card
+  // showed the stored frames until a reload even after its loaded child was
+  // edited. This helper derives the card's frames from the live children so
+  // the visible card refreshes in step with the write path.
+  function docs(kidClips: TimelineClip[]): Record<string, TimelineDocument> {
+    return {
+      "stale-root": {
+        id: "stale-root",
+        title: "Stale root",
+        clips: [collectionClip("clip-kid", "kid", "Kid")],
+      },
+      kid: { id: "kid", title: "Kid", clips: packTimelineClips(kidClips) },
+    };
+  }
+
+  it("derives a hydrated collection's frames from live children, not the stale summary", () => {
+    const focused = buildFocusedGraph(docs([image("k-a", 4), image("k-b", 5)]), "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const previews = hydratedCollectionPreviews(focused.value.graph, "kid");
+    // The stored summary was a single "p1" frame; live children are k-a, k-b.
+    expect(previews.map((p) => p.id)).toEqual(["k-a", "k-b"]);
+    expect(previews[0]).toEqual({ id: "k-a", src: "https://example.com/k-a.jpg" });
+  });
+
+  it("reflects a front-insertion into the live child", () => {
+    const focused = buildFocusedGraph(
+      docs([image("k-new", 1), image("k-a", 4), image("k-b", 5)]),
+      "stale-root",
+    );
+    if (!focused.ok) throw new Error(focused.error);
+
+    // first/middle/last of three children — the new front frame leads.
+    expect(hydratedCollectionPreviews(focused.value.graph, "kid").map((p) => p.id)).toEqual([
+      "k-new",
+      "k-a",
+      "k-b",
+    ]);
+  });
+
+  it("samples first/middle/last for a long child and carries a video poster", () => {
+    const focused = buildFocusedGraph(
+      docs([
+        image("k-a", 1),
+        image("k-b", 1),
+        video("k-vid", 6, 0, 0),
+        image("k-d", 1),
+        image("k-e", 1),
+      ]),
+      "stale-root",
+    );
+    if (!focused.ok) throw new Error(focused.error);
+
+    const previews = hydratedCollectionPreviews(focused.value.graph, "kid");
+    // Five children → first, middle (the video), last.
+    expect(previews.map((p) => p.id)).toEqual(["k-a", "k-vid", "k-e"]);
+    // The video frame paints its poster, not the source url.
+    expect(previews[1]).toEqual({
+      id: "k-vid",
+      src: "https://example.com/k-vid.mp4",
+      poster: "https://example.com/k-vid-poster.jpg",
+    });
+  });
+
+  it("returns no frames for an UNHYDRATED placeholder (no live children)", () => {
+    const documents = docs([image("k-a", 4)]);
+    delete documents.kid; // never loads → placeholder with empty children
+    const focused = buildFocusedGraph(documents, "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    // Empty: the card keeps its stored summary for a placeholder.
+    expect(hydratedCollectionPreviews(focused.value.graph, "kid")).toEqual([]);
   });
 });

@@ -29,6 +29,7 @@ import {
   CLIP_GAP_SECONDS,
   TIMELINE_LEADING_PADDING_SECONDS,
 } from "@storyboard/timeline-model/constants";
+import { previewItemsFrom } from "@storyboard/timeline-model/documents";
 import type {
   CollectionTimelineClip,
   TimelineClip,
@@ -331,6 +332,68 @@ function hydratedCollectionDuration(
 }
 
 /**
+ * Preview frames of a HYDRATED collection, derived from its live children with
+ * the SAME `previewItemsFrom` the read-time summary derivation uses — so the
+ * projection and the served document agree byte-for-byte.
+ *
+ * This exists for the same reason `hydratedCollectionDuration` does: a stored
+ * summary's `previewItems` goes stale the moment the CHILD document is edited
+ * (add to the front, delete the first clip, reorder), and because the write
+ * path persists documents THROUGH this projection, an unrelated parent write
+ * RE-PERSISTED the stale frames — baking the wrong preview into storage.
+ * Deriving from the live children makes the UI's collection card and the
+ * stored document agree, and writes self-healing. Placeholders keep their
+ * stored summary — it is all anyone knows about them.
+ */
+function hydratedCollectionPreviewItems(
+  graph: CollectionsGraph,
+  details: DetailsById,
+  collectionId: NodeId,
+): CollectionTimelineClip["previewItems"] {
+  return previewItemsFrom(graphChildrenToClips(graph, details, collectionId as string));
+}
+
+/** A collection card's preview frame: exactly the fields the card paints. */
+export type CollectionPreviewFrame = Readonly<{ id: string; src: string; poster?: string }>;
+
+/**
+ * Preview frames for a HYDRATED collection CARD, derived from its LIVE media
+ * children instead of the stored summary in the side-table.
+ *
+ * The graph card renders `detail.previewItems`, which the adapter seeds from
+ * the stored collection clip — so once a loaded child is edited (add, delete,
+ * reorder) the parent card kept showing the stored frames until a reload,
+ * even though the write path (`graphChildrenToClips`) already re-derives them.
+ * Deriving the card's frames here from the live children closes that gap, the
+ * same way the card already prefers the live child COUNT over the stored
+ * `itemCount` once hydrated. Placeholders have no live children, so callers
+ * keep their stored summary.
+ *
+ * Graph-only (no side-table needed): a media node already carries the
+ * thumbnail the card paints — `posterSrcs` for video, `src` for an image —
+ * and the same first/middle/last selection `previewItemsFrom` uses keeps the
+ * card in step with the persisted preview.
+ */
+export function hydratedCollectionPreviews(
+  graph: CollectionsGraph,
+  collectionId: string,
+): readonly CollectionPreviewFrame[] {
+  const media: CollectionPreviewFrame[] = [];
+  for (const childId of getChildren(graph, parseNodeId(collectionId))) {
+    const node = graph.nodesById.get(childId);
+    if (!node || node.kind !== "media") continue;
+    const poster = node.mediaKind === "video" ? node.posterSrcs?.[0] : undefined;
+    media.push({
+      id: node.id as string,
+      src: node.src ?? "",
+      ...(poster === undefined ? {} : { poster }),
+    });
+  }
+  if (media.length <= 3) return media;
+  return [media[0], media[Math.floor(media.length / 2)], media[media.length - 1]];
+}
+
+/**
  * Project a collection's children back to TimelineClip[] — the persistence
  * write path. `startTime`/`index` are DERIVED with the same packing math as
  * `packTimelineClips` (leading padding, fixed gap); durations come from the
@@ -399,6 +462,12 @@ export function graphChildrenToClips(
     const duration = detail?.hydrated
       ? hydratedCollectionDuration(graph, details, node.id)
       : (detail?.duration ?? 3);
+    // Hydrated collections DERIVE their preview frames from live children (see
+    // hydratedCollectionPreviewItems) — same stale-summary rule duration and
+    // itemCount already follow; placeholders keep the stored summary.
+    const previewItems = detail?.hydrated
+      ? hydratedCollectionPreviewItems(graph, details, node.id)
+      : detail?.previewItems;
     nextStartTime += duration + CLIP_GAP_SECONDS;
     return {
       id: detail?.sourceClipId ?? (node.id as string),
@@ -412,7 +481,7 @@ export function graphChildrenToClips(
       itemCount: detail?.hydrated
         ? getChildren(graph, node.id).length
         : (detail?.itemCount ?? getChildren(graph, node.id).length),
-      ...(detail?.previewItems === undefined ? {} : { previewItems: detail.previewItems }),
+      ...(previewItems === undefined ? {} : { previewItems }),
       alt: detail?.alt ?? `${node.name} collection`,
       aspect: detail?.aspect ?? 16 / 9,
       trackIndex: detail?.trackIndex ?? 0,
