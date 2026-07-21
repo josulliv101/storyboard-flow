@@ -27,6 +27,7 @@ import {
   GraphGridPlayhead,
   GraphGridScrubSurface,
   GraphPlayhead,
+  GraphRuler,
   PlayheadScrubBand,
   collectionCardWidth,
   usePreviewCardSpans,
@@ -86,6 +87,7 @@ function SubTimelineNode({
   itemSize,
   pixelsPerSecond,
   previewOn,
+  rulerOn,
   timeChannel,
 }: Readonly<{
   collectionId: NodeId;
@@ -94,6 +96,7 @@ function SubTimelineNode({
   itemSize: ItemSize;
   pixelsPerSecond: number;
   previewOn: boolean;
+  rulerOn: boolean;
   timeChannel: PreviewTimeChannel;
 }>) {
   const nav = useContext(GraphViewNavContext);
@@ -290,13 +293,20 @@ function SubTimelineNode({
                 itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
-                  showPlayhead ? (
-                    <GraphPlayhead
-                      focusedId={id}
-                      channel={timeChannel}
-                      pixelsPerSecond={pixelsPerSecond}
-                      activeWindow={clockWindow}
-                    />
+                  showPlayhead || rulerOn ? (
+                    <>
+                      {rulerOn ? (
+                        <GraphRuler focusedId={id} pixelsPerSecond={pixelsPerSecond} />
+                      ) : null}
+                      {showPlayhead ? (
+                        <GraphPlayhead
+                          focusedId={id}
+                          channel={timeChannel}
+                          pixelsPerSecond={pixelsPerSecond}
+                          activeWindow={clockWindow}
+                        />
+                      ) : null}
+                    </>
                   ) : undefined
                 }
                 className="bg-black/20"
@@ -321,6 +331,7 @@ function SubTimelineNode({
                 itemSize={itemSize}
                 pixelsPerSecond={pixelsPerSecond}
                 previewOn={previewOn}
+                rulerOn={rulerOn}
                 timeChannel={timeChannel}
               />
             ))}
@@ -336,6 +347,7 @@ export function SubTimelines({
   itemSize,
   pixelsPerSecond,
   previewOn,
+  rulerOn,
   timeChannel,
 }: Readonly<{
   focusedId: string;
@@ -343,6 +355,7 @@ export function SubTimelines({
   itemSize: ItemSize;
   pixelsPerSecond: number;
   previewOn: boolean;
+  rulerOn: boolean;
   timeChannel: PreviewTimeChannel;
 }>) {
   const childIds = useCollectionChildIds(parseNodeId(focusedId));
@@ -359,6 +372,7 @@ export function SubTimelines({
           itemSize={itemSize}
           pixelsPerSecond={pixelsPerSecond}
           previewOn={previewOn}
+          rulerOn={rulerOn}
           timeChannel={timeChannel}
         />
       ))}
