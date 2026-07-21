@@ -17,6 +17,7 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import { hydrateTimeline } from "./graph-hydration";
+import { useInlineRename } from "./graph-inline-rename";
 import { NativeDropGrid, NativeDropStrip } from "./graph-native-drop";
 import {
   subTimelineRowStatus,
@@ -114,8 +115,6 @@ function SubTimelineNode({
   const dims = ITEM_SIZE_DIMENSIONS[itemSize];
 
   const [expanded, setExpanded] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
   // "Attempted and failed" flag: hydration has several paths that leave the
   // details store un-hydrated permanently (document fetch failed, spec build
   // refused, store rejected). Those report to the global banner but left THIS
@@ -131,6 +130,7 @@ function SubTimelineNode({
     (snapshot) => snapshot.graph.nodesById.get(collectionId)?.name ?? id,
   );
   const name = useTimelineTitle(id) ?? nodeName;
+  const rename = useInlineRename(collectionId, name);
   const detail = useClipDetail(id);
   const hydrated = detail?.hydrated === true;
   const liveCount = useCollectionsSelector((snapshot) =>
@@ -160,22 +160,6 @@ function SubTimelineNode({
     setExpanded((current) => !current);
   };
 
-  const startEditing = () => {
-    setDraft(name);
-    setEditing(true);
-  };
-  const commitEditing = () => {
-    setEditing(false);
-    const next = draft.trim();
-    if (!next || next === name) return;
-    // Rename the GRAPH node, not just the document. The card's visible title
-    // reads the gateway, but its aria-label, the drag ghost, and every pickup
-    // and drop announcement read `node.name` — updating only the document
-    // left those speaking the old name indefinitely. The PersistenceBridge
-    // turns this patch into the document write (and does the same on undo).
-    store.dispatch({ type: "rename-node", nodeId: collectionId, name: next });
-  };
-
   return (
     <section aria-label={`Sub-timeline: ${name}`} className="min-w-0">
       <div className="mb-1.5 flex items-center gap-2">
@@ -192,22 +176,22 @@ function SubTimelineNode({
             <Folder aria-hidden="true" className="h-4 w-4" />
           )}
         </button>
-        {editing ? (
+        {rename.editing ? (
           <input
             aria-label="Timeline name"
-            value={draft}
+            value={rename.draft}
             autoFocus
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={commitEditing}
+            onChange={(event) => rename.setDraft(event.target.value)}
+            onBlur={rename.commit}
             onKeyDown={(event) => {
-              if (event.key === "Enter") commitEditing();
-              else if (event.key === "Escape") setEditing(false);
+              if (event.key === "Enter") rename.commit();
+              else if (event.key === "Escape") rename.cancel();
             }}
             className="min-w-0 flex-1 rounded border border-sky-500/60 bg-zinc-900 px-1.5 py-0.5 text-sm font-semibold text-zinc-100 outline-none"
           />
         ) : (
           <h3
-            onDoubleClick={startEditing}
+            onDoubleClick={rename.begin}
             title="Double-click to rename"
             className="cursor-text truncate text-sm font-semibold text-zinc-100"
           >
