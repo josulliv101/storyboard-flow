@@ -121,12 +121,18 @@ function FloatingFramePanel({
 
   if (node.mediaKind !== "video" || !node.src) return null;
 
+  // Which panel edge mirrors the handle being dragged: the front/in handle
+  // ("left", and "move", which slides the in-point) marks the LEFT edge, the
+  // back/out handle the RIGHT — never both. Purely cosmetic: the bar echoes
+  // the amber trim-handle pixels so the panel reads as "this edge, up close".
+  const activeEdge = live.side === "right" ? "right" : "left";
+
   return createPortal(
     <div
       ref={panelRef}
       data-trim-frame-preview={live.side}
       aria-hidden="true"
-      className="pointer-events-none fixed z-[60] overflow-hidden rounded-md border border-amber-400/70 bg-zinc-950 shadow-xl shadow-black/50"
+      className="pointer-events-none fixed z-[60] overflow-hidden rounded-md border border-zinc-700 bg-zinc-950 shadow-xl shadow-black/50"
       style={{ left: -9999, top: -9999, width: PANEL_WIDTH }}
     >
       <video
@@ -142,6 +148,18 @@ function FloatingFramePanel({
         <span>{live.side === "right" ? "out" : "in"}</span>
         <span>{time.toFixed(2)}s</span>
       </div>
+      {/* The trim-handle look — amber bar with the dark center notch — laid
+          over the ACTIVE edge only (the container's overflow-hidden clips it
+          to the rounded corners). */}
+      <span
+        data-trim-frame-preview-edge={activeEdge}
+        className={[
+          "absolute inset-y-0 flex w-2 items-center justify-center bg-amber-400 opacity-95",
+          activeEdge === "right" ? "right-0" : "left-0",
+        ].join(" ")}
+      >
+        <span className="h-4 w-0.5 rounded bg-black/60" />
+      </span>
     </div>,
     document.body,
   );
