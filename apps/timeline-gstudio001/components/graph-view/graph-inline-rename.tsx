@@ -41,12 +41,18 @@ export function useInlineRename(nodeId: NodeId, currentName: string) {
 /**
  * The inline editor, as a `contentEditable` span rather than an `<input>`.
  *
- * A strip/grid card's content renders INSIDE the NodeCard `<button>` shell, and
- * an `<input>` nested in a button is invalid interactive content (the parser
- * hoists it out on hydration). A `contentEditable` span is phrasing content, so
- * it nests legally; `role="textbox"` keeps it an accessible, testable field.
- * The text is seeded once via the ref (never bound as React children, which
- * would reset the caret every keystroke) and read back through `onInput`.
+ * A strip/grid card's content renders INSIDE the NodeCard `<button>` shell. An
+ * `<input>` there is invalid interactive content and the parser hoists it OUT
+ * of the button on hydration; a `<span>` is phrasing content and stays put —
+ * which is why this is a contentEditable span. That dodges the hoist, but be
+ * honest: a focusable `role="textbox"` inside a `<button>` is still not clean
+ * a11y (nested interactive semantics). The correct fix is to render the editor
+ * OUTSIDE the button — a sibling of a selection surface — which needs an
+ * item-shell override on VirtualStrip/VirtualGrid that the graph does not have
+ * yet. Until then this is a pragmatic, edit-only (transient) editor; `role` +
+ * `aria-label` keep it testable and named. The text is seeded once via the ref
+ * (never bound as React children, which would reset the caret every keystroke)
+ * and read back through `onInput`.
  *
  * Placed within the card's drag sensor, so a press or click here must not start
  * a drag or toggle selection — hence the stopPropagation. The card's keyboard
