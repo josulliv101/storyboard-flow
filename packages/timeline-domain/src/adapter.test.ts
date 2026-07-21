@@ -573,3 +573,74 @@ describe("hydrated collection durations", () => {
     expect(clips[0].duration).toBeCloseTo(2 + 0.12 + 50, 5);
   });
 });
+
+describe("hydrated collection previewItems", () => {
+  // Third leg of the stale-stored-summary family (after duration + itemCount):
+  // a collection clip's stored `previewItems` parrots the child's first/last
+  // frames at seed time, but the child document changes underneath. The
+  // projection must DERIVE previewItems from live children when hydrated (same
+  // rule as duration/itemCount), or the parent's collection card shows old
+  // frames AND the write path re-persists them.
+  function docsWithStalePreview(): Record<string, TimelineDocument> {
+    return {
+      "stale-root": {
+        id: "stale-root",
+        title: "Stale root",
+        clips: [collectionClip("clip-kid", "kid", "Kid")],
+      },
+      kid: {
+        id: "kid",
+        title: "Kid",
+        clips: packTimelineClips([image("k-a", 4), image("k-b", 5)]),
+      },
+    };
+  }
+
+  it("derives a hydrated collection's previewItems from live children, not the stale summary", () => {
+    const focused = buildFocusedGraph(docsWithStalePreview(), "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clip = graphChildrenToClips(focused.value.graph, focused.value.details, "stale-root")[0];
+    expect(clip.kind).toBe("collection");
+    if (clip.kind !== "collection") throw new Error("expected a collection clip");
+    // The stored summary was a single "p1" frame; live children are k-a, k-b.
+    expect(clip.previewItems?.map((p) => p.id)).toEqual(["k-a", "k-b"]);
+    expect(clip.previewItems?.[0]).toEqual({
+      id: "k-a",
+      kind: "image",
+      src: "https://example.com/k-a.jpg",
+      poster: "https://example.com/k-a-poster.jpg",
+      alt: "k-a alt",
+    });
+  });
+
+  it("reflects a front-insertion into the live child", () => {
+    const documents = docsWithStalePreview();
+    // Add an image to the FRONT of the child, as the failure scenario describes.
+    documents.kid = {
+      ...documents.kid,
+      clips: packTimelineClips([image("k-new", 1), image("k-a", 4), image("k-b", 5)]),
+    };
+    const focused = buildFocusedGraph(documents, "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clip = graphChildrenToClips(focused.value.graph, focused.value.details, "stale-root")[0];
+    if (clip.kind !== "collection") throw new Error("expected a collection clip");
+    // First/middle/last of three children — the new front frame leads.
+    expect(clip.previewItems?.map((p) => p.id)).toEqual(["k-new", "k-a", "k-b"]);
+  });
+
+  it("keeps the stored previewItems for an UNHYDRATED placeholder", () => {
+    const documents = docsWithStalePreview();
+    delete documents.kid; // the child document never loads
+    const focused = buildFocusedGraph(documents, "stale-root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const clip = graphChildrenToClips(focused.value.graph, focused.value.details, "stale-root")[0];
+    if (clip.kind !== "collection") throw new Error("expected a collection clip");
+    // All anyone knows about a placeholder is its stored summary.
+    expect(clip.previewItems).toEqual([
+      { id: "p1", kind: "image", src: "https://example.com/p1.jpg", alt: "p1" },
+    ]);
+  });
+});
