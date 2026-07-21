@@ -729,8 +729,12 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
               ref={overlayRef}
               // Floats above the strip; positioned horizontally by
               // positionOverlay (transform set imperatively). An overlay, so
-              // it never displaces the clip row.
-              className="absolute left-0 z-30"
+              // it never displaces the clip row. z-50 so it floats above any
+              // sticky chrome a consumer pins over the strip (e.g. the graph
+              // board's z-40 header) rather than being clipped by it — unlike
+              // the playhead/consumer overlay (z-30), which is MEANT to scroll
+              // under that chrome.
+              className="absolute left-0 z-50"
               style={{ bottom: `calc(100% + ${OVERVIEW_GAP}px)` }}
             >
               <TrimOverviewStrip

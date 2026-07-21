@@ -257,12 +257,18 @@ export function TimelineSidebar() {
         <>
           <div className="h-px w-10 shrink-0 bg-zinc-800/80" />
 
-          <SidebarToolPalette
-            canInsert={canInsertTools}
-            onActivate={handleToolActivate}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          />
+          {/* `relative` so the graph board can portal its trash drop target
+              into the slot below, filling the palette's exact footprint and
+              morphing over the tools during a drag (see graph-sidebar-trash). */}
+          <div className="relative">
+            <SidebarToolPalette
+              canInsert={canInsertTools}
+              onActivate={handleToolActivate}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            />
+            <div id="graph-sidebar-trash-slot" className="absolute inset-0" />
+          </div>
         </>
       )}
 

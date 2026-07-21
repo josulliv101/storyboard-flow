@@ -5,7 +5,6 @@ import { EllipsisVertical, FolderTree, Redo2, Ruler, TvMinimal, Undo2 } from "lu
 
 import {
   CollectionsContainerContext,
-  TrashTarget,
   VirtualGrid,
   VirtualStrip,
   parseNodeId,
@@ -25,6 +24,7 @@ import {
 import { Slider } from "@/components/core/slider";
 
 import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
+import { SidebarGraphTrashPortal } from "./graph-sidebar-trash";
 import { OpenKeyBoundary } from "./graph-navigation";
 import { SyncPanel, type SyncEntry } from "./graph-persistence";
 import {
@@ -435,16 +435,11 @@ export function GraphBoard({
             />
           )}
 
-          {trashRootId !== null && (
-            <div className="flex items-end justify-end">
-              <div className="shrink-0">
-                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                  Trash
-                </h3>
-                <TrashTarget trashId={parseNodeId(trashRootId)} />
-              </div>
-            </div>
-          )}
+          {/* Trash is now the sidebar tool palette, which morphs into a drop
+              target while a card is being dragged (R5 #1) — the old fixed
+              bottom-right panel is gone (R5 #5). This portals into the sidebar
+              from inside the provider, so its droppable joins the DndContext. */}
+          <SidebarGraphTrashPortal trashId={trashRootId} />
 
           <SyncPanel entries={syncEntries} />
         </div>

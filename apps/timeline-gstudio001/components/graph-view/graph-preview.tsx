@@ -276,16 +276,27 @@ export function GraphRuler({
   }, [graph, details, spans, focusedId, pixelsPerSecond]);
 
   return (
-    <div aria-hidden="true" data-graph-ruler className="pointer-events-none absolute inset-x-0 top-0">
+    <div
+      aria-hidden="true"
+      data-graph-ruler
+      className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[18px]"
+    >
+      {/* Opaque band: the ticks used to be thin translucent lines painted over
+          the thumbnails and washed out against bright frames. A solid dark
+          strip with a bright baseline keeps the whole ruler legible over ANY
+          clip, at every zoom. */}
+      <div className="absolute inset-x-0 top-0 h-[18px] border-b border-sky-400/50 bg-zinc-950/90" />
       {ticks.map((tick, index) => (
-        <div
-          key={index}
-          className="absolute top-0 flex flex-col items-center"
-          style={{ transform: `translateX(${tick.x}px)` }}
-        >
-          <div className="h-2 w-px bg-sky-300/60" />
+        <div key={index} className="absolute top-0" style={{ transform: `translateX(${tick.x}px)` }}>
+          {/* Labeled ticks (media seconds) run the full band and are bright;
+              unlabeled collection-edge ticks are short and dim. */}
+          <div
+            className={
+              tick.label ? "h-[18px] w-px bg-sky-300" : "h-[9px] w-px bg-sky-400/60"
+            }
+          />
           {tick.label ? (
-            <span className="mt-px rounded-sm bg-zinc-950/70 px-0.5 font-mono text-[8px] leading-none text-sky-200/80">
+            <span className="absolute left-[3px] top-[2px] whitespace-nowrap font-mono text-[9px] font-medium leading-none text-sky-100">
               {tick.label}
             </span>
           ) : null}
