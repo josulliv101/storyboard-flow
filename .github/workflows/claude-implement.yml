@@ -123,10 +123,13 @@ jobs:
 
       # A PR-comment (@claude, e.g. the Codex gate's auto-fix request) or a
       # changes-requested review means Claude just pushed a fix to an EXISTING
-      # gated PR. Re-fire the gate (toggle the `gated` label) so it re-reads
-      # Codex's verdict on the new commit. Only gated PRs loop; chore/manual
-      # PRs are left alone.
-      - name: Re-arm Codex gate after a fix
+      # gated PR. Two things must happen for the loop to continue:
+      #   1. Explicitly ask Codex to re-review — its auto-review fires on OWNER
+      #      pushes but NOT on this bot's fix push, so relying on "on every push"
+      #      stalls the loop. `@codex review` forces it.
+      #   2. Re-fire the gate (toggle `gated`) so it polls for the new verdict.
+      # Only gated PRs loop; chore/manual PRs are left alone.
+      - name: Re-request Codex review and re-arm the gate after a fix
         if: >-
           (github.event_name == 'issue_comment' && github.event.issue.pull_request != null) ||
           github.event_name == 'pull_request_review'
@@ -137,6 +140,7 @@ jobs:
           set -euo pipefail
           repo="$GITHUB_REPOSITORY"
           if gh pr view "$PR" --repo "$repo" --json labels --jq '.labels[].name' | grep -qx gated; then
+            gh pr comment "$PR" --repo "$repo" --body "@codex review"
             gh pr edit "$PR" --repo "$repo" --remove-label gated || true
             sleep 2
             gh pr edit "$PR" --repo "$repo" --add-label gated
