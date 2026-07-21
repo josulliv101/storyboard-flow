@@ -106,6 +106,23 @@ export function manifestTrailsLedger(
   return rootLedger !== undefined && manifest.projectRevision < rootLedger;
 }
 
+/**
+ * The cached manifest must not survive a preview disable — `useManifestClips`
+ * calls this whenever `enabled` flips. The commit-driven discard effect in
+ * graph-preview.tsx (which clears the cache the instant a change lands and
+ * schedules a refetch) only runs while `enabled` is true, so a graph edit
+ * made while preview is CLOSED leaves the pre-edit manifest cached with
+ * nothing to clear it. Re-enabling would otherwise immediately return that
+ * stale manifest (its `forId` still matches) until a fresh fetch installs —
+ * which can fail (`!response.ok`) or sit behind the install guard
+ * (`manifestTrailsLedger`) for a while. Dropping the cache here on every
+ * disable means re-enabling always starts from the live projection and
+ * refetches fresh, never showing an earlier graph generation.
+ */
+export function nextManifestClipsState<T>(state: T | null, enabled: boolean): T | null {
+  return enabled ? state : null;
+}
+
 export type ChildSpan = Readonly<{ startTime: number; endTime: number; width: number }>;
 
 /**
