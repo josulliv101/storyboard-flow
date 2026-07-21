@@ -104,8 +104,21 @@ jobs:
             # review of this commit that left no inline findings (the clean
             # COMMENTED-review case, since Codex never emits APPROVED).
             if [ "${up:-0}" != "0" ] || [ "${okrev:-0}" != "0" ] || [ "${reviewed:-0}" != "0" ]; then
-              gh pr merge "$PR" --repo "$repo" --auto --merge
-              note "✅ Codex reviewed with no blocking findings — auto-merge armed; lands once CI is green."
+              # Prefer auto-merge (queues behind any still-pending required
+              # checks). But GitHub rejects enablePullRequestAutoMerge once no
+              # required check is left to wait on ("Pull request is in unstable
+              # status") — the common case here, since CI finishes long before
+              # Codex's verdict. Fall back to a direct merge; branch protection
+              # still blocks it unless the required checks are green (we don't
+              # pass --admin), so this can't land a red PR.
+              if gh pr merge "$PR" --repo "$repo" --auto --merge 2>/dev/null; then
+                note "✅ Codex reviewed with no blocking findings — auto-merge armed; lands once CI is green."
+              elif gh pr merge "$PR" --repo "$repo" --merge; then
+                note "✅ Codex reviewed with no blocking findings — merged."
+              else
+                gh pr edit "$PR" --repo "$repo" --add-label needs-human
+                note "⚠️ Codex approved, but the merge could not be completed automatically (required checks not green yet?) — added \`needs-human\`. Merge manually once CI passes."
+              fi
               exit 0
             fi
 
