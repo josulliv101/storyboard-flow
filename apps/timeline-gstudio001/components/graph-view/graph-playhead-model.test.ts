@@ -9,6 +9,7 @@ import {
   childSpans,
   manifestTrailsLedger,
   mediaSpanKey,
+  nextManifestClipsState,
   type PreviewCardSpans,
 } from "./graph-playhead-model";
 
@@ -198,5 +199,27 @@ describe("manifestTrailsLedger", () => {
   it("waits on a pending ROOT write even without documentRevisions", () => {
     const manifest = { projectRevision: 5 };
     expect(manifestTrailsLedger(manifest, "root", revisionOf({ root: 5 }), (id) => id === "root")).toBe(true);
+  });
+});
+
+describe("nextManifestClipsState", () => {
+  const cached = { forId: "timeline-1" };
+
+  it("keeps the cached manifest while preview stays enabled", () => {
+    expect(nextManifestClipsState(cached, true)).toBe(cached);
+  });
+
+  // The regression this guards: an edit made while preview is CLOSED never
+  // clears `state` (the commit-driven discard effect only subscribes while
+  // enabled), so re-enabling used to hand back a manifest compiled before
+  // that edit. Disabling must drop the cache so re-enabling always starts
+  // from the live projection.
+  it("drops the cached manifest the instant preview disables", () => {
+    expect(nextManifestClipsState(cached, false)).toBeNull();
+  });
+
+  it("is a no-op on an already-empty cache either way", () => {
+    expect(nextManifestClipsState(null, true)).toBeNull();
+    expect(nextManifestClipsState(null, false)).toBeNull();
   });
 });

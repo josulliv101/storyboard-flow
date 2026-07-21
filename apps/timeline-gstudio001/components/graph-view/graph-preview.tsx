@@ -31,6 +31,7 @@ import {
   cardSpansOf,
   childSpans,
   manifestTrailsLedger,
+  nextManifestClipsState,
   type GridPlayheadMap,
   type PlayheadMap,
   type PreviewCardSpans,
@@ -511,6 +512,13 @@ function useManifestClips(
   const store = useCollectionsStore();
   const [state, setState] = useState<ManifestClipsState>(null);
   const [staleAt, setStaleAt] = useState(0);
+
+  // Disabling preview unsubscribes the effect below, so a commit made while
+  // CLOSED would otherwise never clear the cached manifest — see
+  // nextManifestClipsState's doc comment for why re-enabling must drop it.
+  useEffect(() => {
+    setState((prev) => nextManifestClipsState(prev, enabled));
+  }, [enabled]);
 
   // A committed change makes the held manifest STALE — discard it
   // immediately (the live projection is correct the instant the commit
