@@ -59,7 +59,11 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ github.token }}
+          # LOOP_PAT (a PAT), NOT github.token: a fix commit pushed with
+          # github.token does not trigger `pull_request` workflows, so CI never
+          # runs on the fix and the required check stays absent — the PR blocks
+          # forever. Pushing as the PAT fires `synchronize` and CI runs.
+          github_token: ${{ secrets.LOOP_PAT }}
           branch_name_template: "claude/issue-{{entityNumber}}-{{timestamp}}"
           use_commit_signing: true
           additional_permissions: |
