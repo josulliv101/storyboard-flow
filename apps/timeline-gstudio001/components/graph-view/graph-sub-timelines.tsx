@@ -1,6 +1,6 @@
 "use client";
 
-import { useContext, useMemo, useState } from "react";
+import { useContext, useMemo, useRef, useState } from "react";
 import { FolderDown, Folder, FolderOpen } from "lucide-react";
 
 import {
@@ -18,6 +18,10 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import { hydrateTimeline } from "./graph-hydration";
 import { NativeDropGrid, NativeDropStrip } from "./graph-native-drop";
+import {
+  subTimelineRowStatus,
+  subTimelineRowStatusLabel,
+} from "./graph-sub-timeline-status";
 import { GraphViewNavContext } from "./graph-navigation";
 import {
   GraphGridPlayhead,
@@ -109,6 +113,13 @@ function SubTimelineNode({
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  // "Attempted and failed" flag: hydration has several paths that leave the
+  // details store un-hydrated permanently (document fetch failed, spec build
+  // refused, store rejected). Those report to the global banner but left THIS
+  // row stuck on "loading…". `attemptRef` fences stale resolutions so a slow
+  // failed attempt can't flip a newer, still-in-flight expand back to failed.
+  const [failed, setFailed] = useState(false);
+  const attemptRef = useRef(0);
 
   // Primitive subscriptions only (see useCollectionChildIds). The display
   // name is the gateway document title (source of truth), with the graph node
@@ -123,12 +134,25 @@ function SubTimelineNode({
     getChildren(snapshot.graph, collectionId).length,
   );
   const childIds = useCollectionChildIds(collectionId);
+  const status = subTimelineRowStatus({ expanded, hydrated, failed });
 
   const toggle = () => {
     if (!expanded && !hydrated) {
-      // Fire-and-forget: the store subscription re-renders this node once the
-      // children land, and the body is gated on `hydrated` until then.
-      void hydrateTimeline(store, detailsStore, id);
+      // Clear any prior failure for this fresh attempt, then hydrate. The store
+      // subscription re-renders this node once the children land; the body is
+      // gated on `hydrated` until then. If the attempt finishes WITHOUT
+      // hydrating (see graph-hydration's failure paths), flip the row to a
+      // "failed" badge instead of leaving it on "loading…" forever. Setting
+      // state from the resolved promise (not an effect) keeps clear of the
+      // repo's react-hooks/set-state-in-effect rule.
+      setFailed(false);
+      const attempt = ++attemptRef.current;
+      void hydrateTimeline(store, detailsStore, id)
+        .catch(() => undefined)
+        .then(() => {
+          if (attempt !== attemptRef.current) return; // superseded by a newer expand
+          if (detailsStore.get(id)?.hydrated !== true) setFailed(true);
+        });
     }
     setExpanded((current) => !current);
   };
@@ -190,9 +214,15 @@ function SubTimelineNode({
         <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
           {hydrated ? liveCount : (detail?.itemCount ?? 0)} clips
         </span>
-        {expanded && !hydrated && (
-          <span className="shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-500">
-            loading…
+        {status !== "idle" && (
+          <span
+            className={
+              status === "failed"
+                ? "shrink-0 rounded border border-red-700/60 px-1.5 py-0.5 text-[10px] text-red-400"
+                : "shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-500"
+            }
+          >
+            {subTimelineRowStatusLabel(status)}
           </span>
         )}
         <span className="grow" />
