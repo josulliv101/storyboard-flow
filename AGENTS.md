@@ -74,15 +74,21 @@ Mechanics the workflows depend on:
     and lands on green CI + merge guard, no Codex gate. For genuinely trivial
     changes (comment, version bump, rename); use it discriminately.
   - `hold` vetoes either lane.
-- Auto-fix loop on a gated PR: when Codex leaves findings (a changes-requested
-  review or inline code comments) instead of approving, `codex-gate.yml` posts
-  an `@claude` request instead of just pinging. That re-triggers
-  `claude-implement.yml` (its `@claude`-on-a-PR path) to address the findings
-  on the same branch and push; the workflow then re-applies the `gated` label,
-  Codex re-reviews the new commit, and the gate re-evaluates. This repeats up
-  to 5 rounds; if Codex and Claude still haven't converged, the gate adds
-  `hold` and pings the owner. The gate only counts Codex signals NEWER than the
-  head commit, so a prior round's findings never re-trigger a fix.
+- Auto-fix loop, from BOTH reviewers:
+  - **Codex findings** (`codex-gate.yml`): a changes-requested review or inline
+    comments → posts an `@claude` request → `claude-implement.yml`'s `@claude`-
+    on-a-PR path fixes on the branch and pushes → the workflow re-applies
+    `gated` and `@codex review`s → the gate re-evaluates the new commit. The
+    gate only counts Codex signals NEWER than the head commit, so a prior
+    round's findings never re-trigger.
+  - **CI failures** (`ci-autofix.yml`): a failing `CI` run on a loop PR →
+    posts an `@claude` request with the failing output → same fix path. This
+    catches types/lint/tests that Codex structurally can't (it doesn't run the
+    suite), which would otherwise strand a Codex-approved PR on a red required
+    check.
+  - Both share ONE 5-round cap (every request comment contains "autofix"); at
+    the cap the responsible workflow adds `hold` and pings the owner. `hold`
+    breaks the loop anytime.
 - There is deliberately no branch-protection-required approval: Codex's signal
   is informal (reaction/comments), so the gate POLLS for it rather than gating
   a required check. The `hold` label is the universal brake.
