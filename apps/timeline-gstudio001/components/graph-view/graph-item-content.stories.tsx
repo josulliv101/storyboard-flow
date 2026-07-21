@@ -2,9 +2,12 @@ import type { Decorator, Meta, StoryObj } from "@storybook/react";
 import { expect } from "storybook/test";
 
 import type { ClipDetail } from "@storyboard/timeline-domain";
-import type {
-  CollectionItemContentProps,
-  NodeId,
+import {
+  DndCollections,
+  buildGraph,
+  type CollectionItemContentComponent,
+  type CollectionItemContentProps,
+  type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
 import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
@@ -21,9 +24,20 @@ import { createGraphDetailsStore } from "@/lib/graph-details-store";
 // "repeated thumbnails" case the repo rules require and pin the fix: both
 // frames must render, with no duplicate-key collision.
 
-const ItemContent = GRAPH_VIEW_COMPONENTS.ItemContent;
+// The registry field is optional in the type; the graph view always registers
+// it, so narrow to the defined component for `Meta`.
+const ItemContent: CollectionItemContentComponent = GRAPH_VIEW_COMPONENTS.ItemContent!;
 
 const COLLECTION_ID = "col-1" as NodeId;
+
+/** A one-node graph so the card's collections-store hooks have a provider.
+ *  Its contents are irrelevant: the card renders un-hydrated here, so its
+ *  preview frames come from the stored `previewItems` below, not the graph. */
+const providerGraph = (() => {
+  const result = buildGraph([{ kind: "collection", id: COLLECTION_ID, name: "A timeline", children: [] }]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
 
 /** A deterministic, fully-offline poster (a solid-colour SVG data URI). */
 function poster(label: string, fill: string): string {
@@ -48,23 +62,29 @@ const ASSET_B: PreviewItem = {
   alt: "Asset B",
 };
 
-/** Wraps the card content in a details store so `useClipDetail` resolves. */
+/** Wraps the card content in a collections store (its preview-derivation hook
+ *  needs one) and a details store (so `useClipDetail` resolves). `hydrated:
+ *  false` keeps the frames coming from the stored `previewItems` here — a
+ *  hydrated card would instead derive them from live graph children, which
+ *  this offline fixture deliberately does not carry. */
 function renderWithDetail(previewItems: PreviewItem[]) {
   const detail: ClipDetail = {
     alt: "A timeline",
     aspect: 16 / 9,
     trackIndex: 0,
-    hydrated: true,
+    hydrated: false,
     itemCount: previewItems.length,
     previewItems,
   };
   const store = createGraphDetailsStore({ [COLLECTION_ID]: detail });
   const decorator: Decorator = (Story) => (
-    <GraphDetailsProvider store={store}>
-      <div className="h-32 w-40 bg-zinc-950 p-2">
-        <Story />
-      </div>
-    </GraphDetailsProvider>
+    <DndCollections initialGraph={providerGraph}>
+      <GraphDetailsProvider store={store}>
+        <div className="h-32 w-40 bg-zinc-950 p-2">
+          <Story />
+        </div>
+      </GraphDetailsProvider>
+    </DndCollections>
   );
   return decorator;
 }
