@@ -4,7 +4,10 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
+import { useCollectionsSelector, type NodeId } from "@storyboard/ui/dnd-collections";
+
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 
 function useGraphPathTitles() {
   return useSyncExternalStore(
@@ -38,6 +41,15 @@ export function GraphBreadcrumb({
   const documents = useGraphPathTitles();
   const base = graphBase(projectId);
   const focusedId = focusedIdOf(projectId, timelinePath);
+  // The current crumb is renamable in place (R6 #10). Fall back to the graph
+  // node name (not just the id) so the crumb reflects a rename immediately —
+  // the store updates optimistically before the document write lands, exactly
+  // as the collection card does.
+  const focusedNodeName = useCollectionsSelector(
+    (snapshot) => snapshot.graph.nodesById.get(focusedId as NodeId)?.name,
+  );
+  const focusedTitle = documents[focusedId]?.title ?? focusedNodeName ?? focusedId;
+  const rename = useInlineRename(focusedId as NodeId, focusedTitle);
   const parentHref =
     timelinePath.length > 1
       ? `${base}/${timelinePath.slice(0, -1).map(encodeURIComponent).join("/")}`
@@ -84,9 +96,23 @@ export function GraphBreadcrumb({
             <span>/</span>
           </span>
         ))}
-        <span className="max-w-[250px] truncate font-semibold text-zinc-100">
-          {documents[focusedId]?.title ?? focusedId}
-        </span>
+        {rename.editing ? (
+          <InlineNameEditor
+            initialValue={focusedTitle}
+            onInput={rename.setDraft}
+            onCommit={rename.commit}
+            onCancel={rename.cancel}
+            className="max-w-[250px] truncate rounded-sm bg-zinc-800 px-1 font-semibold text-zinc-100 outline-none ring-1 ring-sky-500/60"
+          />
+        ) : (
+          <span
+            onDoubleClick={rename.begin}
+            title="Double-click to rename"
+            className="max-w-[250px] cursor-text truncate font-semibold text-zinc-100"
+          >
+            {focusedTitle}
+          </span>
+        )}
       </nav>
     </div>
   );

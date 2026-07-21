@@ -156,6 +156,20 @@ export type DndCollectionsProps = Readonly<{
    * drop accuracy is unchanged.
    */
   dragGhostScale?: number;
+  /**
+   * Render the drag ghost at this FIXED width in px, independent of the source
+   * card's width. Strip cards are as wide as their clip is long, so dragging a
+   * long clip produced an enormous ghost that buried the drop targets below it;
+   * a fixed width keeps every ghost compact and legible regardless of duration.
+   * Takes precedence over `dragGhostScale` when both are set.
+   *
+   * The ghost re-centres horizontally on the grabbed pixel — the overlay box's
+   * top-left tracks (card top-left + pointer delta), so pinning the ghost's
+   * centre to the pointer's offset within it keeps the ghost under the cursor
+   * with no positional jump. Card height is kept (row height is not
+   * duration-relative). Omit to size the ghost to the whole card as before.
+   */
+  dragGhostWidth?: number;
   children: ReactNode;
 }>;
 
@@ -225,6 +239,7 @@ export function DndCollections({
   commandPolicy,
   onPaletteDiscard,
   dragGhostScale = 1,
+  dragGhostWidth,
   children,
 }: DndCollectionsProps) {
   const componentsValue = useCollectionsComponentsValue(components);
@@ -286,6 +301,7 @@ export function DndCollections({
               animateMoves={animateMoves}
               onPaletteDiscard={handlePaletteDiscard}
               dragGhostScale={dragGhostScale}
+              dragGhostWidth={dragGhostWidth}
             >
               {children}
             </DndCollectionsContext>
@@ -312,11 +328,13 @@ function DndCollectionsContext({
   animateMoves,
   onPaletteDiscard,
   dragGhostScale,
+  dragGhostWidth,
 }: {
   children: ReactNode;
   animateMoves: boolean;
   onPaletteDiscard: (nodes: readonly CollectionItemNode[]) => void;
   dragGhostScale: number;
+  dragGhostWidth: number | undefined;
 }) {
   const store = useCollectionsStore();
   // Ref-backed channel: speaking must never set state HERE — this component
@@ -682,6 +700,7 @@ function DndCollectionsContext({
       <CollectionsDragOverlay
         paletteNodes={palette.paletteNodes}
         ghostScale={dragGhostScale}
+        ghostWidth={dragGhostWidth ?? null}
       />
       <LiveAnnouncementRegion channel={announceChannel} />
     </DndContext>
@@ -691,9 +710,11 @@ function DndCollectionsContext({
 function CollectionsDragOverlay({
   paletteNodes,
   ghostScale,
+  ghostWidth,
 }: {
   paletteNodes: readonly CollectionItemNode[] | null;
   ghostScale: number;
+  ghostWidth: number | null;
 }) {
   const activeIds = useCollectionsSelector((s) => s.interaction.activeIds);
   const primaryId = activeIds[0] ?? null;
@@ -708,11 +729,18 @@ function CollectionsDragOverlay({
 
   const ghost = node ? <GhostContent node={node} extraCount={extraCount} /> : null;
 
-  return (
-    <DragOverlay>
-      {ghostScale < 1 ? <ScaledGhost scale={ghostScale}>{ghost}</ScaledGhost> : ghost}
-    </DragOverlay>
-  );
+  // A fixed ghost width wins over proportional scaling: it's the stronger
+  // remedy for the "long clip → giant ghost" problem, so honour it first.
+  const wrapped =
+    ghostWidth !== null ? (
+      <FixedWidthGhost width={ghostWidth}>{ghost}</FixedWidthGhost>
+    ) : ghostScale < 1 ? (
+      <ScaledGhost scale={ghostScale}>{ghost}</ScaledGhost>
+    ) : (
+      ghost
+    );
+
+  return <DragOverlay>{wrapped}</DragOverlay>;
 }
 
 /**
@@ -750,6 +778,57 @@ function ScaledGhost({ scale, children }: { scale: number; children: ReactNode }
       style={{
         transformOrigin: origin,
         transform: `scale(${engaged ? scale : 1})`,
+        transition: "transform 160ms cubic-bezier(0.16, 1, 0.3, 1)",
+      }}
+      className="motion-reduce:transition-none"
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Renders the ghost at a FIXED `width`, ignoring the source card's width.
+ *
+ * dnd-kit sizes the DragOverlay box to the source card and pins its top-left to
+ * (card top-left + pointer delta), so the pointer holds a constant offset
+ * inside the box for the whole drag. A strip card is as wide as its clip is
+ * long, so the box — and the old ghost — grew with duration and buried the drop
+ * targets. Here the ghost is absolutely positioned inside that box at the fixed
+ * width, horizontally centred on the pointer's offset: the compact ghost rides
+ * under the cursor with no positional jump, whatever the card's width. Height
+ * fills the box (row height is not duration-relative). A first-frame scale-in
+ * makes it a motion, not a snap; reduced-motion users get the end state.
+ */
+function FixedWidthGhost({ width, children }: { width: number; children: ReactNode }) {
+  const { activatorEvent, activeNodeRect } = useDndContext();
+  const [engaged, setEngaged] = useState(false);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setEngaged(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  // The pointer's x offset inside the (card-sized) overlay box. Centre the
+  // fixed-width ghost on it so the grabbed column stays under the cursor.
+  const grabX = (() => {
+    const point = activatorEvent ? getEventCoordinates(activatorEvent) : null;
+    if (!point || !activeNodeRect) return null;
+    return Math.min(Math.max(point.x - activeNodeRect.left, 0), activeNodeRect.width);
+  })();
+  const left = grabX === null ? 0 : grabX - width / 2;
+
+  return (
+    <div
+      data-drag-ghost-width={width}
+      style={{
+        position: "absolute",
+        top: 0,
+        left,
+        width,
+        height: "100%",
+        transformOrigin: `${width / 2}px 0`,
+        transform: `scale(${engaged ? 1 : 0.92})`,
         transition: "transform 160ms cubic-bezier(0.16, 1, 0.3, 1)",
       }}
       className="motion-reduce:transition-none"

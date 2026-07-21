@@ -603,6 +603,53 @@ test.describe("graph view E2E", () => {
       .toBe("Scene A");
   });
 
+  test("renaming a collection CARD in place persists and renames its graph node", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
+    await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
+
+    // Double-click the card's name label → inline editor; commit with Enter.
+    await card.getByText("Scene A", { exact: true }).dblclick();
+    const editor = page.getByRole("textbox", { name: "Timeline name" });
+    await editor.fill("Heist Plan");
+    await editor.press("Enter");
+
+    // node.name (the accessible name, ghost, and announcements) updates at once.
+    await expect(card).toHaveAttribute("aria-label", /^Heist Plan \(collection/);
+    // And the child document — the source of truth — is persisted.
+    await expect
+      .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
+      .toBe("Heist Plan");
+  });
+
+  test("renaming the focused BREADCRUMB crumb in place persists the collection title", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    // Drill into the child collection so it is the focused (current) crumb.
+    await strip(page, PROJECT_ID)
+      .locator(`[data-node-id="${CHILD_ID}"]`)
+      .getByRole("button", { name: "Open Scene A" })
+      .click();
+    const trail = page.getByRole("navigation", { name: "Timeline focus path" });
+    await expect(trail).toContainText("Scene A");
+
+    // Double-click the current crumb → inline editor; commit with Enter.
+    await trail.getByText("Scene A", { exact: true }).dblclick();
+    const editor = page.getByRole("textbox", { name: "Timeline name" });
+    await editor.fill("Getaway");
+    await editor.press("Enter");
+
+    await expect(trail).toContainText("Getaway");
+    await expect
+      .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
+      .toBe("Getaway");
+  });
+
   test("surface toggle is page-wide: sub-graph rows follow grid/strip mode", async ({ page }) => {
     await installGraphApi(page);
     await openGraph(page);
@@ -710,6 +757,51 @@ test.describe("graph view E2E", () => {
     expect(patch?.clipIds).toEqual(["bravo", "clip-scene", "charlie", "alpha"]);
     expect(api.patchesFor(CHILD_ID)).toHaveLength(0);
     expect(api.patchesFor(TRASH_ID)).toHaveLength(0);
+  });
+
+  test("the drag ghost is a fixed compact width, not the card's duration-relative one", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+
+    // alpha is the longest clip (6s), so its strip card is the widest — the
+    // exact case that used to spawn a giant ghost burying the drop targets.
+    const alpha = projectStrip.locator('[data-node-id="alpha"]');
+    await alpha.waitFor({ state: "visible" });
+    await settleMoveAnimations(page);
+    const alphaBox = (await alpha.boundingBox())!;
+
+    // Hold the drag OPEN (no release) so the live ghost can be measured. Grab
+    // the card's centre, activate past the hold delay, then travel right.
+    await page.mouse.move(
+      alphaBox.x + alphaBox.width / 2,
+      alphaBox.y + alphaBox.height / 2,
+    );
+    await page.mouse.down();
+    await page.waitForTimeout(400); // past the hold-activation delay
+    const cursorX = alphaBox.x + alphaBox.width / 2 + 60;
+    const cursorY = alphaBox.y + alphaBox.height / 2;
+    await page.mouse.move(cursorX, cursorY, { steps: 8 });
+    await page.waitForTimeout(200); // let the overlay mount + its scale-in settle
+
+    const ghost = page.locator("[data-drag-ghost-width]");
+    await expect(ghost).toBeVisible();
+    const ghostBox = (await ghost.boundingBox())!;
+
+    // Fixed ~144px regardless of the card, and materially narrower than the
+    // wide source card — proof the ghost is not sized to the clip's duration.
+    expect(ghostBox.width).toBeGreaterThan(140);
+    expect(ghostBox.width).toBeLessThan(150);
+    expect(alphaBox.width).toBeGreaterThan(ghostBox.width + 40);
+
+    // And it rides under the cursor: its horizontal centre tracks the pointer.
+    const ghostCentreX = ghostBox.x + ghostBox.width / 2;
+    expect(Math.abs(ghostCentreX - cursorX)).toBeLessThan(24);
+
+    await page.mouse.up();
+    await page.waitForTimeout(80);
   });
 
   test("grid mode: hold-drag reorders a cell, parity with the strip", async ({
