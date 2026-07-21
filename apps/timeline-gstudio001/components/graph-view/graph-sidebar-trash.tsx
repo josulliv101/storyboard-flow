@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useDroppable } from "@dnd-kit/core";
 import { Trash2 } from "lucide-react";
@@ -13,6 +13,8 @@ import {
   useCollectionsSelector,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
+
+import { announceGraphTrashArrival } from "@/lib/graph-view-events";
 
 // The graph's trash drop target lives in the SIDEBAR now, taking the tool
 // palette's place while a card is being dragged (the "add" tools are useless
@@ -49,6 +51,34 @@ function SidebarGraphTrashTarget({ trashId }: Readonly<{ trashId: NodeId }>) {
     disabled: !isCollection,
   });
 
+  // Arrival signal for the sidebar's trash DRAWER button: arm on drag start
+  // (snapshotting the count), announce on the first armed count GROWTH — the
+  // drop's commit — then disarm. Armed only across the drag lifecycle (plus a
+  // short grace after release, since the drop's commit and the drag-end flag
+  // can land in either order), so boot hydration growing the count (0 → N,
+  // no drag) never fires it.
+  const dragStartCountRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (isDragging) {
+      dragStartCountRef.current = count;
+      return;
+    }
+    if (dragStartCountRef.current === null) return;
+    const disarm = setTimeout(() => {
+      dragStartCountRef.current = null;
+    }, 400);
+    return () => clearTimeout(disarm);
+    // Snapshot only on the drag EDGE — count changing mid-drag must not
+    // re-snapshot (that would hide the very growth this watches for).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDragging]);
+  useEffect(() => {
+    if (dragStartCountRef.current !== null && count > dragStartCountRef.current) {
+      dragStartCountRef.current = null;
+      announceGraphTrashArrival();
+    }
+  }, [count]);
+
   return (
     <div
       ref={setNodeRef}
@@ -59,25 +89,27 @@ function SidebarGraphTrashTarget({ trashId }: Readonly<{ trashId: NodeId }>) {
       data-graph-sidebar-trash={trashId}
       data-trash-state={state}
       className={[
-        "absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed text-[10px] font-semibold uppercase tracking-wide",
+        "absolute inset-0 flex items-center justify-center rounded-lg border",
         // The morph: idle it is invisible and lets tool clicks through; a drag
         // fades + scales it in over the tools. transition covers both ways.
         "transition-all duration-200 ease-out",
         isDragging ? "scale-100 opacity-100" : "pointer-events-none scale-90 opacity-0",
+        // Icon-only, but LOUD while armed: a pulsing red glow says "drop zone"
+        // from across the board; hover locks on — solid, steady, brighter.
         state === "over"
-          ? "border-red-400 bg-red-500/20 text-red-200"
+          ? "border-red-300 bg-red-500/35 shadow-[0_0_18px_rgba(248,113,113,0.55)]"
           : state === "invalid"
-            ? "border-red-500 bg-red-500/30 text-red-200"
-            : "border-red-500/40 bg-zinc-950/90 text-zinc-400",
+            ? "border-red-500 bg-red-500/40"
+            : "border-dashed border-red-400/70 bg-red-950/80 shadow-[0_0_14px_rgba(248,113,113,0.35)] motion-safe:animate-pulse",
       ].join(" ")}
     >
       <Trash2
+        aria-hidden="true"
         className={[
-          "h-5 w-5 transition-transform duration-200",
-          state === "over" ? "scale-110 text-red-200" : "",
+          "transition-transform duration-200",
+          state === "over" ? "h-7 w-7 scale-110 text-red-100" : "h-6 w-6 text-red-300",
         ].join(" ")}
       />
-      <span>Trash{count > 0 ? ` ${count}` : ""}</span>
     </div>
   );
 }

@@ -35,3 +35,15 @@ export function requestGraphToolInsert(tool: GraphInsertTool): void {
     new CustomEvent<GraphInsertToolDetail>(GRAPH_INSERT_TOOL_EVENT, { detail: { tool } }),
   );
 }
+
+// The reverse hand-off: when a drag drops into the graph's sidebar trash
+// target (which lives in the graph provider's tree), the sidebar's own trash
+// DRAWER button — plain app chrome — plays an arrival animation. Same
+// window-event seam, opposite direction.
+
+export const GRAPH_TRASH_ARRIVAL_EVENT = "graph-view:trash-arrival";
+
+/** Announce that a drag just landed one or more items in the trash. */
+export function announceGraphTrashArrival(): void {
+  window.dispatchEvent(new CustomEvent(GRAPH_TRASH_ARRIVAL_EVENT));
+}
