@@ -1,11 +1,11 @@
-name: Codex gate — feature PRs
+name: Codex gate — gated PRs
 
-# The human-optional review gate for FEATURE pull requests.
+# The human-optional review gate. It runs for EVERY PR by default; only the
+# `chore` skip lane bypasses it (those PRs arm auto-merge directly and never
+# get the `gated` label).
 #
-# Bug/polish PRs auto-merge in ~90s — faster than Codex can review, so its
-# opinion only ever lands as an after-the-fact record there. Features deserve
-# a real review window, so claude-implement.yml labels a feature PR `feature`
-# instead of arming auto-merge, and THIS workflow decides the merge:
+# claude-implement.yml labels a non-chore PR `gated` instead of arming
+# auto-merge, and THIS workflow decides the merge:
 #
 #   * Codex approves (👍 reaction, or a formal APPROVED review) -> arm
 #     auto-merge. It lands on green CI with nobody in the loop.
@@ -30,11 +30,11 @@ concurrency:
 jobs:
   gate:
     name: Codex verdict gate
-    # Only the `feature` label, and only on PRs the owner authored (the loop's
+    # Only the `gated` label, and only on PRs the owner authored (the loop's
     # PRs are opened via LOOP_PAT = the owner). A non-owner PR never reaches the
     # gate, so it cannot be used to arm auto-merge on someone else's branch.
     if: >-
-      github.event.label.name == 'feature' &&
+      github.event.label.name == 'gated' &&
       github.event.pull_request.user.login == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -83,12 +83,12 @@ jobs:
             fi
 
             if [ "${changes:-0}" != "0" ] || [ "${inline:-0}" != "0" ]; then
-              note "⚠️ Codex left review findings — auto-merge **not** armed. Address them (push to this branch) or merge manually if you disagree. Re-apply the \`feature\` label to re-run the gate."
+              note "⚠️ Codex left review findings — auto-merge **not** armed. Address them (push to this branch) or merge manually if you disagree. Re-apply the \`gated\` label to re-run the gate."
               exit 0
             fi
 
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              note "⌛ No Codex verdict within 12 min — auto-merge **not** armed. Merge manually, or re-apply the \`feature\` label to wait again."
+              note "⌛ No Codex verdict within 12 min — auto-merge **not** armed. Merge manually, or re-apply the \`gated\` label to wait again."
               exit 0
             fi
             sleep 20

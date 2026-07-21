@@ -72,12 +72,15 @@ jobs:
       # Only the issue-triggered runs open a PR; feedback runs push to the
       # existing branch and stop.
       #
-      # Two lanes, decided by the SOURCE ISSUE's `feature` label:
-      #   * bug/polish (no `feature`) — arm auto-merge here; it lands on green CI.
-      #   * feature (`feature` label)  — DON'T arm; label the PR `feature`, which
-      #     fires codex-gate.yml. That gate waits for Codex's verdict and arms
-      #     auto-merge only on approval, so a feature never merges out from under
-      #     Codex's review. `hold` still vetoes either lane.
+      # Codex-gated by DEFAULT; the SOURCE ISSUE's `chore` label opts out:
+      #   * default (bug/feature/anything non-chore) — DON'T arm auto-merge;
+      #     label the PR `gated`, which fires codex-gate.yml. That gate waits
+      #     for Codex's verdict and arms auto-merge only on approval, so nothing
+      #     merges out from under Codex's review.
+      #   * chore (`chore` label) — the skip lane: arm auto-merge here so a
+      #     trivial change lands on green CI without waiting on Codex. Use it
+      #     discriminately.
+      # `hold` still vetoes either lane.
       - name: Open pull request
         if: github.event_name != 'pull_request_review' && steps.claude.outputs.branch_name != ''
         env:
@@ -86,7 +89,7 @@ jobs:
           BASE: ${{ github.event.repository.default_branch }}
           ISSUE: ${{ github.event.issue.number }}
           TITLE: ${{ github.event.issue.title }}
-          IS_FEATURE: ${{ contains(github.event.issue.labels.*.name, 'feature') }}
+          IS_CHORE: ${{ contains(github.event.issue.labels.*.name, 'chore') }}
         run: |
           set -euo pipefail
           repo="$GITHUB_REPOSITORY"
@@ -96,22 +99,23 @@ jobs:
             echo "PR #$existing already open for $BRANCH."
             pr="$existing"
           else
-            if [ "$IS_FEATURE" = "true" ]; then
-              body="$(printf 'Implemented by Claude from #%s. Closes #%s.\n\n**Feature PR — Codex-gated.** Auto-merge is NOT armed yet. The Codex gate waits for a review, then arms auto-merge only if Codex approves (👍). If Codex flags findings or is silent past the window, this stays open for you. Add the `hold` label to force manual merge.' "$ISSUE" "$ISSUE")"
+            if [ "$IS_CHORE" = "true" ]; then
+              body="$(printf 'Implemented by Claude from #%s. Closes #%s.\n\n**Chore — skip lane.** Auto-merge is armed: this lands on its own once CI is green and the merge guard passes (no Codex gate). Add the `hold` label to veto.' "$ISSUE" "$ISSUE")"
             else
-              body="$(printf 'Implemented by Claude from #%s. Closes #%s.\n\nAuto-merge is armed: this PR lands on its own once CI is green and the merge guard passes. Add the `hold` label to veto.' "$ISSUE" "$ISSUE")"
+              body="$(printf 'Implemented by Claude from #%s. Closes #%s.\n\n**Codex-gated.** Auto-merge is NOT armed yet. The Codex gate waits for a review, then arms auto-merge only if Codex approves (👍). If Codex flags findings or is silent past the window, this stays open for you. Add the `hold` label to force manual merge.' "$ISSUE" "$ISSUE")"
             fi
             pr="$(gh pr create --repo "$repo" --base "$BASE" --head "$BRANCH" \
               --title "$TITLE" --body "$body" | grep -oE '[0-9]+$')"
           fi
 
-          if [ "$IS_FEATURE" = "true" ]; then
-            # Hand off to the Codex gate. Adding the label via LOOP_PAT (not
-            # github.token) is what lets codex-gate.yml's pull_request trigger fire.
-            gh pr edit "$pr" --repo "$repo" --add-label feature
-            gh issue comment "$ISSUE" --repo "$repo" --body "Opened PR #${pr} — feature PR, Codex-gated (auto-merge armed only if Codex approves)."
-          else
-            gh issue comment "$ISSUE" --repo "$repo" --body "Opened PR #${pr} — auto-merge armed (add \`hold\` to veto)."
+          if [ "$IS_CHORE" = "true" ]; then
+            gh issue comment "$ISSUE" --repo "$repo" --body "Opened PR #${pr} — chore, auto-merge armed, Codex gate skipped (add \`hold\` to veto)."
             gh pr merge "$pr" --repo "$repo" --auto --merge || \
               echo "::warning::Could not arm auto-merge (enable it in repo settings and add required checks)."
+          else
+            # Hand off to the Codex gate. Adding the label via LOOP_PAT (not
+            # github.token) is what lets codex-gate.yml's pull_request trigger fire.
+            gh pr edit "$pr" --repo "$repo" --add-label gated
+            gh issue comment "$ISSUE" --repo "$repo" --body "Opened PR #${pr} — Codex-gated (auto-merge armed only if Codex approves)."
+          fi
           fi
