@@ -29,17 +29,23 @@ concurrency:
 jobs:
   implement:
     name: Implement / address feedback
-    # Owner-authored triggers only. The three shapes: labeled `claude`,
-    # `@claude` comment on an issue (not a PR), or a changes-requested review
-    # on a PR. github.repository_owner is the single source of "is this me".
+    # Who may start a run:
+    #   * `claude` label  — the OWNER, or the Codex bot (so Codex can file AND
+    #     label issues fully hands-off; its App token fires the event, and every
+    #     resulting PR still passes Codex review + CI before it can merge).
+    #   * `@claude` comment / changes-requested review — OWNER only (these are
+    #     the internal auto-fix and manual paths; no bot needs them).
     if: >-
-      github.actor == github.repository_owner &&
       (
-        (github.event_name == 'issues' && github.event.label.name == 'claude') ||
+        (github.event_name == 'issues' && github.event.label.name == 'claude' &&
+         (github.actor == github.repository_owner ||
+          github.actor == 'chatgpt-codex-connector[bot]')) ||
         (github.event_name == 'issue_comment' &&
-         contains(github.event.comment.body, '@claude')) ||
+         contains(github.event.comment.body, '@claude') &&
+         github.actor == github.repository_owner) ||
         (github.event_name == 'pull_request_review' &&
-         github.event.review.state == 'changes_requested')
+         github.event.review.state == 'changes_requested' &&
+         github.actor == github.repository_owner)
       )
     runs-on: ubuntu-latest
     timeout-minutes: 60
