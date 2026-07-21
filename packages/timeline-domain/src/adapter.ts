@@ -307,7 +307,7 @@ export function buildFocusedGraph(
  * from the live graph makes the projection agree with the manifest wherever
  * the session has real knowledge, and writes become self-healing.
  */
-function hydratedCollectionDuration(
+export function hydratedCollectionDuration(
   graph: CollectionsGraph,
   details: DetailsById,
   collectionId: NodeId,

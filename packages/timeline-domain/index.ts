@@ -8,6 +8,7 @@ export {
   collectAffectedCollectionIds,
   collectUnhydratedDropTargets,
   graphChildrenToClips,
+  hydratedCollectionDuration,
   hydratedCollectionPreviews,
   type BuildFocusedGraphResult,
   type BuildHydrationSpecsResult,

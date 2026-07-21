@@ -431,6 +431,7 @@ export function GraphBoard({
               itemSize={stepDownItemSize(itemSize)}
               pixelsPerSecond={pixelsPerSecond}
               previewOn={previewOn}
+              rulerOn={rulerOn}
               timeChannel={timeChannel}
             />
           )}

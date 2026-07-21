@@ -1790,4 +1790,20 @@ test.describe("graph view E2E", () => {
       expect(hit.onThisTool).toBe(true);
     }
   });
+
+  test("the ruler renders on EVERY displayed strip, not just the focused one", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    // Ruler is strip-only and off by default; turn it on.
+    await page.getByRole("button", { name: /show time ruler/i }).click();
+    await expect(page.locator("[data-graph-ruler]")).toHaveCount(1);
+
+    // Expand a sub-collection — its strip must get its OWN ruler (R6 #1), so a
+    // focused strip + one expanded child strip = two rulers.
+    await expandSubGraph(page, "Scene A");
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+    await expect.poll(() => page.locator("[data-graph-ruler]").count()).toBeGreaterThanOrEqual(2);
+  });
 });

@@ -188,13 +188,51 @@ export function GraphPlayhead({
   );
 }
 
-const RULER_MIN_TICK_GAP_PX = 46;
-const RULER_NICE_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+const RULER_LABEL_MIN_GAP_PX = 46;
+const RULER_MINOR_MIN_GAP_PX = 6;
+const RULER_NICE_SECONDS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+const RULER_MAX_SUBTIER = 3;
+/** Tick height per tier: 0 = labeled major (full band), then progressively
+ *  shorter minors (half / quarter / eighth). Index by `level`. */
+const RULER_TIER_HEIGHT_PX = [18, 11, 8, 5];
 
-/** Nicest second-interval whose on-screen gap clears the minimum, at this zoom. */
-function rulerTickInterval(pixelsPerSecond: number): number {
-  const target = RULER_MIN_TICK_GAP_PX / Math.max(1, pixelsPerSecond);
-  return RULER_NICE_STEPS.find((step) => step >= target) ?? RULER_NICE_STEPS[RULER_NICE_STEPS.length - 1];
+/** The labeled (major) tick interval — the nicest whole-second count whose
+ *  on-screen gap clears the label minimum at this zoom. */
+function rulerMajorSpacing(pixelsPerSecond: number): number {
+  const target = RULER_LABEL_MIN_GAP_PX / Math.max(1, pixelsPerSecond);
+  return (
+    RULER_NICE_SECONDS.find((step) => step >= target) ??
+    RULER_NICE_SECONDS[RULER_NICE_SECONDS.length - 1]
+  );
+}
+
+/** How many binary subdivisions of the major fit as MINOR ticks — major/2,
+ *  /4, /8 (half, quarter, eighth of the major; at a 1s major these are the
+ *  half/quarter/eighth SECOND ticks). Each tier is added only while its gap
+ *  still clears the minor minimum, so zooming out drops the finest tiers. */
+function rulerSubtierCount(majorSpacing: number, pixelsPerSecond: number): number {
+  let tiers = 0;
+  while (
+    tiers < RULER_MAX_SUBTIER &&
+    (majorSpacing / 2 ** (tiers + 1)) * pixelsPerSecond >= RULER_MINOR_MIN_GAP_PX
+  ) {
+    tiers += 1;
+  }
+  return tiers;
+}
+
+/** The tier a tick at finest-step index `n` belongs to: the COARSEST whose
+ *  spacing divides it (more trailing power-of-two factors = coarser tier).
+ *  0 is the labeled major. */
+function rulerTickLevel(index: number, maxTier: number): number {
+  if (index === 0) return 0;
+  let trailing = 0;
+  let value = index;
+  while (trailing < maxTier && value % 2 === 0) {
+    value /= 2;
+    trailing += 1;
+  }
+  return maxTier - trailing;
 }
 
 function formatRulerTick(seconds: number): string {
@@ -261,16 +299,25 @@ export function GraphRuler({
     const inCollectionInterior = (cx: number) =>
       ranges.some((range) => range.isCollection && cx > range.x0 + 1 && cx <= range.x1);
 
-    const interval = rulerTickInterval(pixelsPerSecond);
-    const out: Array<{ x: number; label: string }> = [];
-    for (let t = 0; t <= total + 1e-6; t += interval) {
+    // Tiered ticks: a labeled MAJOR every `major` seconds, plus half / quarter
+    // / eighth minors between them — as many tiers as clear the minor gap at
+    // this zoom (item R6 #2). Stepping by the FINEST spacing and assigning each
+    // step its coarsest tier keeps every tier aligned to the major grid.
+    const major = rulerMajorSpacing(pixelsPerSecond);
+    const maxTier = rulerSubtierCount(major, pixelsPerSecond);
+    const finest = major / 2 ** maxTier;
+    const steps = Math.floor((total + 1e-6) / finest);
+    const out: Array<{ x: number; level: number; label: string }> = [];
+    for (let n = 0; n <= steps; n += 1) {
+      const t = n * finest;
       const cx = map.xAt(t);
       if (inCollectionInterior(cx)) continue;
-      out.push({ x: cx, label: formatRulerTick(Math.round(t * 100) / 100) });
+      const level = rulerTickLevel(n, maxTier);
+      out.push({ x: cx, level, label: level === 0 ? formatRulerTick(Math.round(t * 1000) / 1000) : "" });
     }
-    // Unlabeled edge tick bracketing each collection's blank interior.
+    // A minor edge tick bracketing each collection's blank interior.
     for (const range of ranges) {
-      if (range.isCollection) out.push({ x: range.x0, label: "" });
+      if (range.isCollection) out.push({ x: range.x0, level: 1, label: "" });
     }
     return out;
   }, [graph, details, spans, focusedId, pixelsPerSecond]);
@@ -288,12 +335,17 @@ export function GraphRuler({
       <div className="absolute inset-x-0 top-0 h-[18px] border-b border-sky-400/50 bg-zinc-950/90" />
       {ticks.map((tick, index) => (
         <div key={index} className="absolute top-0" style={{ transform: `translateX(${tick.x}px)` }}>
-          {/* Labeled ticks (media seconds) run the full band and are bright;
-              unlabeled collection-edge ticks are short and dim. */}
+          {/* Tier drives height + brightness: labeled majors run the full band
+              and are brightest; each finer minor tier is shorter and dimmer. */}
           <div
             className={
-              tick.label ? "h-[18px] w-px bg-sky-300" : "h-[9px] w-px bg-sky-400/60"
+              tick.level === 0
+                ? "w-px bg-sky-300"
+                : tick.level === 1
+                  ? "w-px bg-sky-400/70"
+                  : "w-px bg-sky-400/45"
             }
+            style={{ height: RULER_TIER_HEIGHT_PX[tick.level] ?? RULER_TIER_HEIGHT_PX[3] }}
           />
           {tick.label ? (
             <span className="absolute left-[3px] top-[2px] whitespace-nowrap font-mono text-[9px] font-medium leading-none text-sky-100">
