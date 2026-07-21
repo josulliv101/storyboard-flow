@@ -19,7 +19,11 @@
  * the graph it describes, never before it.
  */
 export function bootSessionKey(uid: string | null, projectId: string): string {
-  // Encode both parts unambiguously so no uid/projectId pair can collide with
-  // another (a literal separator in either value can't fake a boundary).
-  return `${encodeURIComponent(uid ?? "")}:${encodeURIComponent(projectId)}`;
+  // Encode presence explicitly (`0` = signed-out, `1` + encoded uid =
+  // signed-in) so a signed-out (null) session never collapses onto a
+  // signed-in session whose uid happens to be the empty string. Both parts are
+  // encoded unambiguously so no uid/projectId pair can collide with another (a
+  // literal separator in either value can't fake a boundary).
+  const uidPart = uid === null ? "0" : `1${encodeURIComponent(uid)}`;
+  return `${uidPart}:${encodeURIComponent(projectId)}`;
 }
