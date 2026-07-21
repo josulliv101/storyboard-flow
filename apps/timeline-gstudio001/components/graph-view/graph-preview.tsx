@@ -32,6 +32,7 @@ import {
   childSpans,
   manifestTrailsLedger,
   nextManifestClipsState,
+  nextManifestFailureCount,
   shouldRetryManifestFetch,
   type GridPlayheadMap,
   type PlayheadMap,
@@ -530,6 +531,13 @@ function useManifestClips(
   if (prevEnabled !== enabled) {
     setPrevEnabled(enabled);
     setState((prev) => nextManifestClipsState(prev, enabled));
+    // Reset the retry streak on the same toggle that drops the cache. Without
+    // this a session that hit MAX_MANIFEST_FETCH_RETRIES left the count past
+    // the cap, and reopening preview for the SAME focusedId (which does not
+    // trip the focusedId-change reset in the fetch effect) inherited it — so
+    // the first failed fetch after reopening scheduled no retry and the
+    // projection fallback stood indefinitely.
+    failureCountRef.current = nextManifestFailureCount(failureCountRef.current, enabled);
   }
 
   // A committed change makes the held manifest STALE — discard it

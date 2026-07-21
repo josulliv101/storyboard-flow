@@ -132,6 +132,22 @@ export function nextManifestClipsState<T>(state: T | null, enabled: boolean): T 
 export const MAX_MANIFEST_FETCH_RETRIES = 5;
 
 /**
+ * The retry streak must not survive a preview disable — `useManifestClips`
+ * calls this whenever `enabled` flips, alongside dropping the cached manifest.
+ * The failure count caps retries WITHIN one open session; once a hard-down
+ * endpoint reaches the cap the count stays past it until a good response or a
+ * different `focusedId`. Closing and reopening preview for the same timeline
+ * only clears the cache, so a reopened session inherited the capped count and
+ * the first failed fetch after reopening scheduled no retry — the projection
+ * fallback then stood indefinitely. Zeroing on disable resets the streak so
+ * every reopen starts a fresh session (re-enabling keeps 0, since disabling
+ * already cleared it), exactly mirroring `nextManifestClipsState`.
+ */
+export function nextManifestFailureCount(count: number, enabled: boolean): number {
+  return enabled ? count : 0;
+}
+
+/**
  * Whether a failed manifest fetch should schedule another attempt, given how
  * many consecutive failures have now accrued (the current one included). The
  * caller resets its streak to 0 on any good response and passes the

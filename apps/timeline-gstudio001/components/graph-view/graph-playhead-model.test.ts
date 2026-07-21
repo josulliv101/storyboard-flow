@@ -11,6 +11,7 @@ import {
   MAX_MANIFEST_FETCH_RETRIES,
   mediaSpanKey,
   nextManifestClipsState,
+  nextManifestFailureCount,
   shouldRetryManifestFetch,
   type PreviewCardSpans,
 } from "./graph-playhead-model";
@@ -223,6 +224,31 @@ describe("nextManifestClipsState", () => {
   it("is a no-op on an already-empty cache either way", () => {
     expect(nextManifestClipsState(null, true)).toBeNull();
     expect(nextManifestClipsState(null, false)).toBeNull();
+  });
+});
+
+describe("nextManifestFailureCount", () => {
+  it("keeps the streak while preview stays enabled", () => {
+    expect(nextManifestFailureCount(MAX_MANIFEST_FETCH_RETRIES + 1, true)).toBe(
+      MAX_MANIFEST_FETCH_RETRIES + 1,
+    );
+    expect(nextManifestFailureCount(0, true)).toBe(0);
+  });
+
+  // The regression this guards: a session that reached the retry cap left the
+  // count past MAX_MANIFEST_FETCH_RETRIES. Reopening preview for the SAME
+  // focusedId does not trip the fetch effect's focusedId-change reset, so the
+  // capped count carried over and the first failed fetch after reopening
+  // scheduled no retry. Zeroing on disable means every reopen starts fresh.
+  it("resets the streak the instant preview disables", () => {
+    expect(nextManifestFailureCount(MAX_MANIFEST_FETCH_RETRIES + 1, false)).toBe(0);
+    expect(nextManifestFailureCount(3, false)).toBe(0);
+  });
+
+  // Disabling already zeroed it, so the enable flip only has to leave 0 alone.
+  it("leaves an already-reset streak at zero across a reopen", () => {
+    expect(nextManifestFailureCount(0, false)).toBe(0);
+    expect(nextManifestFailureCount(0, true)).toBe(0);
   });
 });
 
