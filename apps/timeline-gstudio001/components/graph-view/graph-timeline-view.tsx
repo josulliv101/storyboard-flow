@@ -39,6 +39,7 @@ import { AssetPaletteDrawer } from "./graph-asset-palette";
 import { toast } from "@/components/core/sonner";
 
 import { bootSessionKey } from "./boot-session-key";
+import { trashDocumentId as deriveTrashDocumentId } from "./trash-document-id";
 
 import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
 import { GraphDetailsProvider } from "./graph-details-context";
@@ -128,7 +129,11 @@ export function GraphTimelineView({
 
   const { user } = useAuth();
   const uid = user ? user.uid : null;
-  const trashDocumentId = uid ? `trash-${uid}` : null;
+  // Gate on presence (null = signed out), NOT truthiness: a signed-in user
+  // with an empty-string uid still owns a trash document, and the boot effect
+  // returns early when this is null — a truthiness check would strand that
+  // user on the loading screen.
+  const trashDocumentId = deriveTrashDocumentId(uid);
 
   // AUTH BINDING first: the gateway is a module singleton that outlives
   // soft logout/login, so a different signed-in user must reset it before
