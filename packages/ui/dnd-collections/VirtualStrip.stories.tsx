@@ -389,6 +389,40 @@ export const WidthCallbackStableDuringDrag: Story = {
   },
 };
 
+export const NoOpBoundaryHidesIndicator: Story = {
+  // Dragging an item to a boundary that leaves it exactly where it is (the gap
+  // on either side of itself) is a no-op — the drop indicator must hide. Any
+  // other boundary is a real move and keeps its indicator.
+  render: () => (
+    <DndCollections initialGraph={variableGraph()}>
+      <div className="w-[640px]">
+        <VirtualStrip collectionId={parseNodeId("strip")} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const m0handle = nodeHandle(canvasElement, "m0");
+    const m0 = nodeCard(canvasElement, "m0");
+    const m1 = nodeCard(canvasElement, "m1");
+    const m2 = nodeCard(canvasElement, "m2");
+    await waitForLayout(m2);
+
+    // Activate on a real boundary (m1|m2) — the indicator shows.
+    await dragHoldAt(m0handle, gapBetween(m1, m2));
+    await waitFor(() => {
+      expect(canvasElement.querySelector('[data-drop-indicator="virtual"]')).not.toBeNull();
+    });
+
+    // Move to the gap right after m0 itself (m0|m1): a no-op — indicator hides.
+    await moveHeldPointer(gapBetween(m0, m1));
+    await waitFor(() => {
+      expect(canvasElement.querySelector('[data-drop-indicator="virtual"]')).toBeNull();
+    });
+
+    await releaseAt(gapBetween(m0, m1));
+  },
+};
+
 /** Media strip with a collection card ("folder", 1 child) at index 5. */
 function mixedGraph() {
   const children: GraphNodeSpec[] = [];

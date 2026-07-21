@@ -56,15 +56,25 @@ export default function TimelineDocumentPage({
 
   const normalizedProjectSearch = normalizedProjectSearchParams.toString();
 
+  // Graph view is the default landing spot for a project. Bare `/timeline/{id}`
+  // only honors an EXPLICIT `?view=storyboard`/`?view=workbench`; anything else
+  // (including no `view` param at all) redirects into the graph view instead of
+  // falling back to `parseProjectViewMode`'s storyboard default.
+  const rawViewParam = Array.isArray(resolvedSearchParams.view)
+    ? resolvedSearchParams.view[0]
+    : resolvedSearchParams.view;
+  const redirectView =
+    rawViewParam === "storyboard" || rawViewParam === "workbench" ? rawViewParam : "graph";
+
   useEffect(() => {
     if (!isProjectTimeline) return;
 
     router.replace(
-      `/timeline/${encodeURIComponent(timelineId)}/${projectView}${
+      `/timeline/${encodeURIComponent(timelineId)}/${redirectView}${
         normalizedProjectSearch ? `?${normalizedProjectSearch}` : ""
       }`,
     );
-  }, [isProjectTimeline, normalizedProjectSearch, projectView, router, timelineId]);
+  }, [isProjectTimeline, normalizedProjectSearch, redirectView, router, timelineId]);
 
   if (isProjectTimeline) {
     return null;

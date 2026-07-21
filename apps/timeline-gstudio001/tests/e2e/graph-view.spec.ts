@@ -706,6 +706,39 @@ test.describe("graph view E2E", () => {
     expect(api.patchesFor(TRASH_ID)).toHaveLength(0);
   });
 
+  test("grid mode: hold-drag reorders a cell, parity with the strip", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    // Switch the surface to grid; the cards become grid cells (same NodeCard,
+    // now with "hold" drag activation so a press-and-hold reorders).
+    await page
+      .getByRole("group", { name: "Timeline layout" })
+      .getByRole("button", { name: "grid" })
+      .click();
+    const projectGrid = page.locator(`[data-virtual-grid="${PROJECT_ID}"]`);
+    await expect(projectGrid).toBeVisible();
+
+    // Hold-drag alpha onto charlie's right half — alpha lands after charlie,
+    // exactly as the strip reorder does.
+    await holdDrag(
+      page,
+      projectGrid.locator('[data-node-id="alpha"]'),
+      projectGrid.locator('[data-node-id="charlie"]'),
+      0.85,
+    );
+    await expect
+      .poll(() => gridOrder(page, PROJECT_ID))
+      .toEqual(["bravo", CHILD_ID, "charlie", "alpha"]);
+
+    // Same patch-scoped write as the strip: only the project document changes.
+    await expect
+      .poll(() => api.patchesFor(PROJECT_ID).length, { timeout: 5000 })
+      .toBeGreaterThan(0);
+    expect(api.patchesFor(CHILD_ID)).toHaveLength(0);
+  });
+
   test("undo history survives drill-in navigation (the layout-persistence invariant)", async ({
     page,
   }) => {

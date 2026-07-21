@@ -954,7 +954,11 @@ export function WorkbenchSplitPane({
       }
     >
       <div
-        className="sticky top-0 z-30 min-w-0 bg-zinc-950"
+        // z-40 (above the strip's z-30 consumer overlay) so a playhead marker
+        // in a timeline scrolling underneath is occluded by the sticky
+        // preview, not painted over it. At z-30 the marker tied the preview
+        // and, being later in the DOM, bled through into the preview area.
+        className="sticky top-0 z-40 min-w-0 bg-zinc-950"
         data-testid="workbench-preview-region"
       >
         <div

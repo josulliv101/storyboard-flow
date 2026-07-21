@@ -1,13 +1,16 @@
 "use client";
 
-import { EllipsisVertical, FolderTree, TvMinimal } from "lucide-react";
+import { useContext } from "react";
+import { EllipsisVertical, FolderTree, Redo2, Ruler, TvMinimal, Undo2 } from "lucide-react";
 
 import {
+  CollectionsContainerContext,
   TrashTarget,
-  UndoRedoControls,
   VirtualGrid,
   VirtualStrip,
   parseNodeId,
+  useCollectionsSelector,
+  useCollectionsStore,
 } from "@storyboard/ui/dnd-collections";
 
 import { Button } from "@/components/core/button";
@@ -28,6 +31,7 @@ import {
   GraphGridPlayhead,
   GraphGridScrubSurface,
   GraphPlayhead,
+  GraphRuler,
   PlayheadScrubBand,
   PreviewShell,
   collectionCardWidth,
@@ -128,6 +132,53 @@ function ScaleSlider({
   );
 }
 
+/**
+ * Undo/redo as ICON buttons, matching the toolbar's other ghost icon controls
+ * (preview, children) rather than the package's generic text-label
+ * `UndoRedoControls`. App-local on purpose: the icon styling is this toolbar's
+ * design, so it stays out of the framework-agnostic package — but the store
+ * wiring (and best-effort announce) is exactly the package control's.
+ */
+function GraphUndoRedo() {
+  const store = useCollectionsStore();
+  const canUndo = useCollectionsSelector((s) => s.canUndo);
+  const canRedo = useCollectionsSelector((s) => s.canRedo);
+  const announce = useContext(CollectionsContainerContext)?.announce;
+
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        disabled={!canUndo}
+        aria-label="Undo"
+        title="Undo"
+        onClick={() => {
+          if (store.undo()) announce?.("Change undone.");
+        }}
+        className="h-8 w-8 text-zinc-400 hover:text-zinc-100 disabled:opacity-40"
+      >
+        <Undo2 aria-hidden="true" className="h-4 w-4" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        disabled={!canRedo}
+        aria-label="Redo"
+        title="Redo"
+        onClick={() => {
+          if (store.redo()) announce?.("Change redone.");
+        }}
+        className="h-8 w-8 text-zinc-400 hover:text-zinc-100 disabled:opacity-40"
+      >
+        <Redo2 aria-hidden="true" className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
 function SurfaceToggle({
   surface,
   onChange,
@@ -172,6 +223,8 @@ export function GraphBoard({
   onPixelsPerSecondChange,
   previewOn,
   onTogglePreview,
+  rulerOn,
+  onToggleRuler,
   childrenShown,
   onToggleChildren,
   timeChannel,
@@ -190,6 +243,8 @@ export function GraphBoard({
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
   previewOn: boolean;
   onTogglePreview: () => void;
+  rulerOn: boolean;
+  onToggleRuler: () => void;
   childrenShown: boolean;
   onToggleChildren: () => void;
   timeChannel: PreviewTimeChannel;
@@ -211,14 +266,21 @@ export function GraphBoard({
               opaque background is load-bearing twice over: it reads as a
               toolbar, and it OCCLUDES the strip/grid scrolling underneath —
               which is what stops a playhead marker from bleeding up into the
-              preview. The negative margins let that background span the card's
-              full width past its p-4 padding. */}
+              breadcrumb row. z-40 to sit ABOVE the strip's z-30 playhead
+              overlay (z-20 was below it, so the marker bled through the
+              header); it matches the sticky preview's z-40. The negative
+              margins let that background span the card's full width past its
+              p-4 padding. */}
           <div
-            className="sticky z-20 -mx-4 -mt-4 flex items-center justify-between gap-3 rounded-t-xl border-b border-zinc-800/70 bg-zinc-950/95 px-4 py-3 backdrop-blur-sm"
+            className="sticky z-40 -mx-4 -mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-t-xl border-b border-zinc-800/70 bg-zinc-950/95 px-4 py-3 backdrop-blur-sm"
             style={{ top: "var(--workbench-preview-offset, 0px)" }}
           >
             {breadcrumb}
-            <div className="flex shrink-0 items-center gap-3">
+            {/* flex-wrap + wrap-capable controls so a narrow viewport folds the
+                toolbar onto a second line instead of pushing controls (the
+                Strip/Grid toggle especially) off-screen. No effect when it
+                fits. */}
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
                 type="button"
                 variant="ghost"
@@ -234,6 +296,25 @@ export function GraphBoard({
               >
                 <TvMinimal aria-hidden="true" className="h-4 w-4" />
               </Button>
+              {/* Ruler is a strip-only axis (grid has no single time axis), so
+                  the toggle drops out in grid mode like the scale slider. */}
+              {surface === "strip" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-pressed={rulerOn}
+                  aria-label={rulerOn ? "Hide time ruler" : "Show time ruler"}
+                  title={rulerOn ? "Hide time ruler" : "Show time ruler"}
+                  onClick={onToggleRuler}
+                  className={[
+                    "h-8 w-8",
+                    rulerOn ? "bg-zinc-800 text-zinc-100" : "text-zinc-500",
+                  ].join(" ")}
+                >
+                  <Ruler aria-hidden="true" className="h-4 w-4" />
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="ghost"
@@ -249,12 +330,18 @@ export function GraphBoard({
               >
                 <FolderTree aria-hidden="true" className="h-4 w-4" />
               </Button>
-              <ScaleSlider
-                pixelsPerSecond={pixelsPerSecond}
-                onChange={onPixelsPerSecondChange}
-              />
+              {/* px/s is a strip-only axis: grid cells are sized by thumbnail
+                  size, and the grid playhead ignores clip width, so the slider
+                  is a no-op in grid mode. Hidden there (state is preserved, so
+                  returning to strip restores the last zoom). */}
+              {surface === "strip" ? (
+                <ScaleSlider
+                  pixelsPerSecond={pixelsPerSecond}
+                  onChange={onPixelsPerSecondChange}
+                />
+              ) : null}
               <SurfaceToggle surface={surface} onChange={onSurfaceChange} />
-              <UndoRedoControls />
+              <GraphUndoRedo />
               <BoardMenu itemSize={itemSize} onItemSizeChange={onItemSizeChange} />
             </div>
           </div>
@@ -268,12 +355,19 @@ export function GraphBoard({
                 itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
-                  previewOn ? (
-                    <GraphPlayhead
-                      focusedId={focusedId}
-                      channel={timeChannel}
-                      pixelsPerSecond={pixelsPerSecond}
-                    />
+                  previewOn || rulerOn ? (
+                    <>
+                      {rulerOn ? (
+                        <GraphRuler focusedId={focusedId} pixelsPerSecond={pixelsPerSecond} />
+                      ) : null}
+                      {previewOn ? (
+                        <GraphPlayhead
+                          focusedId={focusedId}
+                          channel={timeChannel}
+                          pixelsPerSecond={pixelsPerSecond}
+                        />
+                      ) : null}
+                    </>
                   ) : undefined
                 }
                 className="bg-black/25"
@@ -297,6 +391,11 @@ export function GraphBoard({
                   cellHeight={dims.gridHeight}
                   gap={GRID_GAP}
                   height={GRID_UNCAPPED_HEIGHT}
+                  // Mirror the strip: a quick tap is a CLICK (so the in-card
+                  // drill button works) and a press-and-hold starts the reorder
+                  // drag. "body" (the default) drags instantly, which ate the
+                  // drill click and made drags ambiguous.
+                  itemDragActivation="hold"
                   overlay={
                     previewOn ? (
                       <GraphGridPlayhead

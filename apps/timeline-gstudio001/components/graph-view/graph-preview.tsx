@@ -26,6 +26,7 @@ import {
 } from "@storyboard/timeline-domain";
 
 import {
+  STRIP_GAP_PX,
   buildGridPlayheadMap,
   buildPlayheadMap,
   cardSpansOf,
@@ -183,6 +184,113 @@ export function GraphPlayhead({
       className="absolute inset-y-0 left-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
     >
       <div className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500" />
+    </div>
+  );
+}
+
+const RULER_MIN_TICK_GAP_PX = 46;
+const RULER_NICE_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+
+/** Nicest second-interval whose on-screen gap clears the minimum, at this zoom. */
+function rulerTickInterval(pixelsPerSecond: number): number {
+  const target = RULER_MIN_TICK_GAP_PX / Math.max(1, pixelsPerSecond);
+  return RULER_NICE_STEPS.find((step) => step >= target) ?? RULER_NICE_STEPS[RULER_NICE_STEPS.length - 1];
+}
+
+function formatRulerTick(seconds: number): string {
+  if (seconds < 60) return Number.isInteger(seconds) ? `${seconds}s` : `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+/**
+ * A second-ruler over the strip. It reads the SAME piecewise time↔x map the
+ * playhead uses (`buildPlayheadMap`), so a tick at t seconds lands exactly
+ * where the playhead sits at t — the strip is NOT a linear time axis (media
+ * width is duration·pps, but the inter-card gutter absorbs the pack gap and a
+ * collection card is a FIXED width holding an arbitrary duration), so a
+ * fixed-pixel-pitch ruler would drift off the cards.
+ *
+ * Media cards are ruled at nice second intervals. A collection card's interior
+ * is left blank — ruling an arbitrary duration across its fixed width would
+ * cram ticks into an unreadable smear — and only its start edge is ticked, so
+ * the card still reads as one bracketed block on the ruler.
+ *
+ * Works with preview OFF too: without a manifest `spans` is null and
+ * `childSpans` falls back to projection times, which is the honest clock then.
+ * Rides the strip overlay (content coordinates), so scroll/auto-scroll and the
+ * live-trim transform all apply for free.
+ */
+export function GraphRuler({
+  focusedId,
+  pixelsPerSecond,
+}: Readonly<{ focusedId: string; pixelsPerSecond: number }>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
+  const graph = useSyncExternalStore(
+    store.subscribe,
+    () => store.getSnapshot().graph,
+    () => store.getSnapshot().graph,
+  );
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    () => detailsStore.read(),
+    () => detailsStore.read(),
+  );
+
+  const ticks = useMemo(() => {
+    const clips = graphChildrenToClips(graph, details, focusedId);
+    const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
+    if (cards.length === 0) return [];
+    const map = buildPlayheadMap(cards);
+    const total = map.totalDurationSeconds;
+    if (total <= 0) return [];
+
+    // Card x-ranges + collection flag, in the SAME cumulative layout the map
+    // walks — so a tick's x can be tested against the collection interiors.
+    // Each card's left is the summed widths+gaps before it (no running
+    // accumulator to mutate — keeps the memo body free of reassignment).
+    const ranges = cards.map((card, index) => {
+      const x0 = cards
+        .slice(0, index)
+        .reduce((sum, previous) => sum + previous.width + STRIP_GAP_PX, 0);
+      return { x0, x1: x0 + card.width, isCollection: clips[index]?.kind === "collection" };
+    });
+    const inCollectionInterior = (cx: number) =>
+      ranges.some((range) => range.isCollection && cx > range.x0 + 1 && cx <= range.x1);
+
+    const interval = rulerTickInterval(pixelsPerSecond);
+    const out: Array<{ x: number; label: string }> = [];
+    for (let t = 0; t <= total + 1e-6; t += interval) {
+      const cx = map.xAt(t);
+      if (inCollectionInterior(cx)) continue;
+      out.push({ x: cx, label: formatRulerTick(Math.round(t * 100) / 100) });
+    }
+    // Unlabeled edge tick bracketing each collection's blank interior.
+    for (const range of ranges) {
+      if (range.isCollection) out.push({ x: range.x0, label: "" });
+    }
+    return out;
+  }, [graph, details, spans, focusedId, pixelsPerSecond]);
+
+  return (
+    <div aria-hidden="true" data-graph-ruler className="pointer-events-none absolute inset-x-0 top-0">
+      {ticks.map((tick, index) => (
+        <div
+          key={index}
+          className="absolute top-0 flex flex-col items-center"
+          style={{ transform: `translateX(${tick.x}px)` }}
+        >
+          <div className="h-2 w-px bg-sky-300/60" />
+          {tick.label ? (
+            <span className="mt-px rounded-sm bg-zinc-950/70 px-0.5 font-mono text-[8px] leading-none text-sky-200/80">
+              {tick.label}
+            </span>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }

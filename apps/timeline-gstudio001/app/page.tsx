@@ -158,7 +158,7 @@ export default function Home() {
         throw new Error(result.error || "Unable to create project.");
       }
 
-      router.push(`/timeline/${encodeURIComponent(result.project.id)}/storyboard`);
+      router.push(`/timeline/${encodeURIComponent(result.project.id)}/graph`);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "Unable to create project.");
     } finally {
@@ -264,7 +264,7 @@ export default function Home() {
               >
                 {/* Link overlay covering the whole card area */}
                 <Link
-                  href={`/timeline/${encodeURIComponent(project.id)}/storyboard`}
+                  href={`/timeline/${encodeURIComponent(project.id)}/graph`}
                   className="absolute inset-0 z-10"
                 />
 
