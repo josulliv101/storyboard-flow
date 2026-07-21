@@ -37,7 +37,6 @@ jobs:
       (
         (github.event_name == 'issues' && github.event.label.name == 'claude') ||
         (github.event_name == 'issue_comment' &&
-         github.event.issue.pull_request == null &&
          contains(github.event.comment.body, '@claude')) ||
         (github.event_name == 'pull_request_review' &&
          github.event.review.state == 'changes_requested')
@@ -69,8 +68,8 @@ jobs:
             --max-turns 80
             --system-prompt "You are the implementation agent for one trusted GitHub issue (or one round of review feedback on your own PR). Follow AGENTS.md and every nested instruction file. Make the smallest complete change, add focused regression coverage, and run the closest relevant validation before finishing. On a changes-requested review, address exactly the reviewer's points on the same branch. Never broaden scope, never file new issues, never merge, and never edit .github/workflows unless the issue explicitly asks for it."
 
-      # Only the issue-triggered runs open a PR; feedback runs push to the
-      # existing branch and stop.
+      # Only issue-origin runs open a PR; a PR-comment (@claude) or review-
+      # feedback run pushes to the existing branch, then re-arms the gate below.
       #
       # Codex-gated by DEFAULT; the SOURCE ISSUE's `chore` label opts out:
       #   * default (bug/feature/anything non-chore) — DON'T arm auto-merge;
@@ -82,7 +81,10 @@ jobs:
       #     discriminately.
       # `hold` still vetoes either lane.
       - name: Open pull request
-        if: github.event_name != 'pull_request_review' && steps.claude.outputs.branch_name != ''
+        if: >-
+          (github.event_name == 'issues' ||
+           (github.event_name == 'issue_comment' && github.event.issue.pull_request == null)) &&
+          steps.claude.outputs.branch_name != ''
         env:
           GH_TOKEN: ${{ secrets.LOOP_PAT }}
           BRANCH: ${{ steps.claude.outputs.branch_name }}
@@ -118,4 +120,24 @@ jobs:
             gh pr edit "$pr" --repo "$repo" --add-label gated
             gh issue comment "$ISSUE" --repo "$repo" --body "Opened PR #${pr} — Codex-gated (auto-merge armed only if Codex approves)."
           fi
+
+      # A PR-comment (@claude, e.g. the Codex gate's auto-fix request) or a
+      # changes-requested review means Claude just pushed a fix to an EXISTING
+      # gated PR. Re-fire the gate (toggle the `gated` label) so it re-reads
+      # Codex's verdict on the new commit. Only gated PRs loop; chore/manual
+      # PRs are left alone.
+      - name: Re-arm Codex gate after a fix
+        if: >-
+          (github.event_name == 'issue_comment' && github.event.issue.pull_request != null) ||
+          github.event_name == 'pull_request_review'
+        env:
+          GH_TOKEN: ${{ secrets.LOOP_PAT }}
+          PR: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          if gh pr view "$PR" --repo "$repo" --json labels --jq '.labels[].name' | grep -qx gated; then
+            gh pr edit "$PR" --repo "$repo" --remove-label gated || true
+            sleep 2
+            gh pr edit "$PR" --repo "$repo" --add-label gated
           fi
