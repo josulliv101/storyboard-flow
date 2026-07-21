@@ -77,10 +77,15 @@ const GraphClipContent = memo(function GraphClipContent({
               {hydrated ? "Empty" : "Open to load"}
             </span>
           ) : (
-            previews.map((preview) => (
+            previews.map((preview, index) => (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                key={preview.id}
+                // Positional key: `previews` is a fixed-length, order-stable
+                // first/last pair, and stored clip ids are NOT unique across
+                // positions (the same asset can be both the first and last
+                // preview item), so keying by `preview.id` collides. The slot
+                // is what this is, so key by the slot.
+                key={`${index}-${preview.id}`}
                 src={preview.poster ?? preview.src}
                 alt=""
                 draggable={false}
