@@ -62,16 +62,18 @@ Mechanics the workflows depend on:
 - PRs are opened with `LOOP_PAT` (not the default Actions token) so CI and the
   merge guard actually fire — a token-created PR triggers no downstream
   workflow.
-- Two merge lanes, chosen by the source issue's `feature` label:
-  - **bug/polish** (no `feature`): auto-merge is armed at PR open and lands on
-    green CI + merge guard. Codex's review is a post-hoc record here (the PR
-    merges in ~90s, faster than Codex reviews). `hold` vetoes.
-  - **feature** (`feature` label): claude-implement does NOT arm auto-merge;
-    it labels the PR `feature`, which fires `codex-gate.yml`. That gate waits
-    up to 12 min for Codex's verdict, then arms auto-merge **only** on approval
-    (👍 reaction or a formal APPROVED review). Findings, or silence past the
-    window, leave the PR open and ping you. `hold` stands the gate down. This
-    is the "give Codex time, be out of the loop only when it approves" path.
+- Codex-gated by DEFAULT; the source issue's `chore` label is the skip lane:
+  - **default** (bug, feature, anything non-`chore`): claude-implement does NOT
+    arm auto-merge; it labels the PR `gated`, which fires `codex-gate.yml`.
+    That gate waits up to 12 min for Codex's verdict, then arms auto-merge
+    **only** on approval (👍 reaction or a formal APPROVED review). Findings, or
+    silence past the window, leave the PR open and ping you. This is the "give
+    Codex time, be out of the loop only when it approves" path — a bug worth
+    filing is worth a review.
+  - **chore** (`chore` label): the skip lane — auto-merge is armed at PR open
+    and lands on green CI + merge guard, no Codex gate. For genuinely trivial
+    changes (comment, version bump, rename); use it discriminately.
+  - `hold` vetoes either lane.
 - There is deliberately no branch-protection-required approval: Codex's signal
   is informal (reaction/comments), so the gate POLLS for it rather than gating
   a required check. The `hold` label is the universal brake.
