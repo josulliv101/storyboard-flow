@@ -635,6 +635,12 @@ test.describe("graph view E2E", () => {
   }) => {
     await installGraphApi(page);
     await openGraph(page);
+    // A short viewport so the board content reliably overflows and the page can
+    // scroll PAST the preview (the sticky-pin assertion below needs that). The
+    // preview's own height is a fixed model value, independent of viewport, so
+    // the height-persistence checks are unaffected. (The old always-present
+    // bottom trash panel used to guarantee this height; it's gone now — R5 #5.)
+    await page.setViewportSize({ width: 1280, height: 560 });
     await previewToggle(page).click();
 
     const divider = page.getByRole("separator", { name: "Resize workbench display" });
@@ -828,7 +834,10 @@ test.describe("graph view E2E", () => {
   }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
-    const trash = page.locator(`[data-trash-target="${TRASH_ID}"]`);
+    // Trash is the sidebar tool palette now (R5 #1): invisible until a drag
+    // starts, then it morphs in over the tools. It is still laid out (opacity
+    // 0), so holdDrag can target it, and the drag activates it before the drop.
+    const trash = page.locator(`[data-graph-sidebar-trash="${TRASH_ID}"]`);
     await holdDrag(page, strip(page, PROJECT_ID).locator('[data-node-id="bravo"]'), trash);
 
     await expect
@@ -1165,8 +1174,10 @@ test.describe("graph view E2E", () => {
 
     await page.keyboard.press("Delete");
     await expect.poll(() => stripOrder(page, PROJECT_ID)).toEqual([CHILD_ID, "charlie"]);
+    // The toast is the trash confirmation now — the always-visible bottom-right
+    // count panel was removed (R5 #5); trash lives in the sidebar and only
+    // surfaces during a drag.
     await expect(page.getByText("Moved 2 items to trash.").first()).toBeVisible();
-    await expect(page.getByRole("group", { name: /^Trash, 2 items/ })).toBeVisible();
 
     // ONE undo restores the whole selection — the delete was a single
     // command, not one history entry per card.
@@ -1174,8 +1185,6 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
-    // Empty again: the target's label drops the count entirely at zero.
-    await expect(page.getByRole("group", { name: /^Trash\. Drop items/ })).toBeVisible();
     await expect(undoButton(page)).toBeDisabled();
   });
 
