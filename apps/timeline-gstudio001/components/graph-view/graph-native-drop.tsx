@@ -29,6 +29,7 @@ import {
 } from "@/lib/graph-view-events";
 import { probeVideoFile, uploadTimelineMedia } from "@/lib/timeline-media-client";
 
+import { classifyDroppedMedia, type DroppedMediaKind } from "./graph-dropped-media";
 import { parkPendingDetail, unparkPendingDetail } from "./graph-pending-details";
 
 // The NATIVE drag-and-drop seam for the graph strips. dnd-kit owns
@@ -451,9 +452,15 @@ function useNativeDrop(collectionId: string) {
 
   const dropFiles = useCallback(
     async (files: readonly File[], anchor: DropAnchor) => {
-      const media = files.filter(
-        (file) => file.type.startsWith("image/") || file.type.startsWith("video/"),
-      );
+      // Classify each file to its media kind (or drop it). The kind is carried
+      // forward so the upload path never re-derives it from the MIME type: a
+      // supported file can arrive with an empty or `application/octet-stream`
+      // type, which would misread a video as an image.
+      type ClassifiedFile = Readonly<{ file: File; kind: DroppedMediaKind }>;
+      const media: readonly ClassifiedFile[] = files.flatMap((file) => {
+        const kind = classifyDroppedMedia(file);
+        return kind ? [{ file, kind }] : [];
+      });
       if (media.length === 0) return;
       const token = ++dropTokenRef.current;
       setDropStatus(token, { status: "uploading", count: media.length });
@@ -471,8 +478,8 @@ function useNativeDrop(collectionId: string) {
         const results: readonly UploadResult[] = await mapWithConcurrency(
           media,
           MAX_CONCURRENT_MEDIA,
-          async (file): Promise<UploadResult> => {
-            const isVideo = file.type.startsWith("video/");
+          async ({ file, kind }): Promise<UploadResult> => {
+            const isVideo = kind === "video";
             // ONE decode per video: duration and poster frame together. The
             // probe is handed to the upload so it does not decode again.
             const probe = isVideo ? await probeVideoFile(file, { signal }) : null;
