@@ -483,7 +483,7 @@ export function GraphGridPlayhead({
     let lastCellWidth = 0;
     let map: GridPlayheadMap | null = null;
 
-    const ensureMap = (): GridPlayheadMap | null => {
+    const paint = () => {
       const graph = store.getSnapshot().graph;
       const details = detailsStore.read();
       const columns = Number(grid?.dataset.gridColumns) || 1;
@@ -508,67 +508,17 @@ export function GraphGridPlayhead({
           cellHeight,
         );
       }
-      return map;
-    };
-
-    const paint = () => {
-      const current = ensureMap();
-      if (!current) return;
+      if (!map) return;
       const time = channel.get();
       const inside =
         !activeWindow || (time >= activeWindow.start - 0.04 && time <= activeWindow.end + 0.04);
       line.style.display = inside ? "" : "none";
       if (!inside) return;
-      const { x, y } = current.posAt(time);
+      const { x, y } = map.posAt(time);
       line.style.transform = `translate(${x}px, ${y}px)`;
-      line.style.height = `${current.rowHeight}px`;
+      line.style.height = `${map.rowHeight}px`;
     };
 
-    // Scrub = DRAG THE PLAYHEAD (R7 #5/#6/#7). The full-cover scrub surface
-    // this grid used to carry ate every card pointerdown while preview was
-    // on — no select, no drill, no hold-drag. Now the cards own their
-    // pixels again and the playhead itself is the only scrub affordance:
-    // its (enlarged) handle captures the pointer and maps x/y through the
-    // same grid time map the old surface used, so cross-row scrubs still
-    // work — drag the handle onto another row and it jumps there.
-    const seek = (event: PointerEvent) => {
-      const current = ensureMap();
-      if (!current || !grid) return;
-      const overlay = grid.querySelector<HTMLElement>("[data-virtual-grid-overlay]");
-      const rect = (overlay ?? grid).getBoundingClientRect();
-      channel.set(current.timeAt(event.clientX - rect.left, event.clientY - rect.top));
-    };
-
-    let pointerId: number | null = null;
-    const handleMove = (event: PointerEvent) => {
-      if (event.pointerId === pointerId) seek(event);
-    };
-    const end = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      pointerId = null;
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-    };
-    const handleDown = (event: PointerEvent) => {
-      if (!event.isPrimary || event.button !== 0) return;
-      // The handle sits inside the aria-hidden overlay layer; nothing else
-      // must see this press (a card behind it would treat it as a select).
-      event.stopPropagation();
-      event.preventDefault();
-      pointerId = event.pointerId;
-      try {
-        line.setPointerCapture(event.pointerId);
-      } catch {
-        // Synthetic pointer: window listeners still own the lifecycle.
-      }
-      seek(event);
-      window.addEventListener("pointermove", handleMove);
-      window.addEventListener("pointerup", end);
-      window.addEventListener("pointercancel", end);
-    };
-
-    line.addEventListener("pointerdown", handleDown);
     paint();
     const unsubscribeTime = channel.subscribe(paint);
     const unsubscribeStore = store.subscribe(paint);
@@ -576,10 +526,6 @@ export function GraphGridPlayhead({
     const observer = grid ? new ResizeObserver(paint) : null;
     if (grid && observer) observer.observe(grid);
     return () => {
-      line.removeEventListener("pointerdown", handleDown);
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
       unsubscribeTime();
       unsubscribeStore();
       unsubscribeDetails();
@@ -587,20 +533,186 @@ export function GraphGridPlayhead({
     };
   }, [store, detailsStore, focusedId, channel, cellHeight, spans, pixelsPerSecond, activeWindow]);
 
+  // PASSIVE indicator: all scrubbing lives on the GraphSeekRail above the
+  // grid (one obvious control), so the line paints position and takes no
+  // pointer — cards keep every gesture underneath it.
   return (
-    // pointer-events re-enabled DELIBERATELY: the overlay wrapper is
-    // pointer-events-none so cards stay interactive; only this handle takes
-    // the pointer back. It stays pointer-only and unfocusable (the wrapper
-    // is aria-hidden — a focusable child there would be a keyboard trap).
     <div
       ref={lineRef}
       data-graph-grid-playhead
-      className="pointer-events-auto absolute left-0 top-0 w-0.5 cursor-ew-resize bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+      className="absolute left-0 top-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
     >
       <div className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500" />
-      {/* Invisible enlarged grab zone: the 2px line alone is unhittable.
-          Spans the cap and the full line height, ~17px wide. */}
-      <div data-graph-grid-playhead-handle className="absolute -inset-x-2 -top-2 bottom-0" />
+    </div>
+  );
+}
+
+/** Keyboard step for the seek rail: one nudge per arrow press. */
+const SEEK_RAIL_STEP_SECONDS = 1;
+
+/**
+ * The grid's one scrub control: a slim seek bar above the grid — the
+ * universal video-player idiom, so it needs no explanation. Pointer: press
+ * or drag anywhere on the rail (pointer capture keeps the drag smooth past
+ * its edges). Keyboard: it is a real `role="slider"` — Tab reaches it,
+ * arrows nudge by a second, Home/End jump to the ends. Clip boundaries show
+ * as faint ticks.
+ *
+ * The rail maps its width LINEARLY over the timeline's clock window
+ * ([first card start, last card end] of `childSpans` — the focused grid
+ * starts at 0; a sub-timeline's window sits inside the shared global clock,
+ * so its rail both summons the playhead into that row and scrubs it). The
+ * in-grid line (`GraphGridPlayhead`) is a passive twin reading the same
+ * channel. Cards are untouched: click selects, hold drags, the folder
+ * button drills.
+ *
+ * Renders as a normal sibling ABOVE the grid — not in the aria-hidden
+ * overlay (it is focusable) and not covering any card pixels.
+ */
+export function GraphSeekRail({
+  focusedId,
+  channel,
+  pixelsPerSecond,
+  ariaLabel = "Seek preview",
+}: Readonly<{
+  focusedId: string;
+  channel: PreviewTimeChannel;
+  pixelsPerSecond: number;
+  ariaLabel?: string;
+}>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
+  const railRef = useRef<HTMLDivElement>(null);
+  const fillRef = useRef<HTMLDivElement>(null);
+  const thumbRef = useRef<HTMLDivElement>(null);
+  const pointerIdRef = useRef<number | null>(null);
+
+  const graph = useSyncExternalStore(
+    store.subscribe,
+    () => store.getSnapshot().graph,
+    () => store.getSnapshot().graph,
+  );
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    () => detailsStore.read(),
+    () => detailsStore.read(),
+  );
+  const { start, end, boundaries } = useMemo(() => {
+    const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
+    if (cards.length === 0) return { start: 0, end: 0, boundaries: [] as number[] };
+    const first = cards[0].startTime;
+    const last = cards[cards.length - 1].endTime;
+    const span = Math.max(last - first, 1e-6);
+    // Interior clip boundaries as fractions of the rail (the outer edges ARE
+    // the rail's ends).
+    return {
+      start: first,
+      end: last,
+      boundaries: cards.slice(1).map((card) => (card.startTime - first) / span),
+    };
+  }, [graph, details, spans, focusedId, pixelsPerSecond]);
+
+  // Thumb/fill/aria track the channel imperatively — time moves at pointer
+  // rate during a scrub, which is no reason to re-render the rail.
+  useEffect(() => {
+    const rail = railRef.current;
+    const fill = fillRef.current;
+    const thumb = thumbRef.current;
+    if (!rail || !fill || !thumb) return;
+    const paint = () => {
+      const span = Math.max(end - start, 1e-6);
+      const fraction = Math.min(1, Math.max(0, (channel.get() - start) / span));
+      fill.style.width = `${fraction * 100}%`;
+      thumb.style.left = `${fraction * 100}%`;
+      rail.setAttribute("aria-valuenow", (fraction * (end - start)).toFixed(1));
+      rail.setAttribute(
+        "aria-valuetext",
+        `${(fraction * (end - start)).toFixed(1)} of ${(end - start).toFixed(1)} seconds`,
+      );
+    };
+    paint();
+    return channel.subscribe(paint);
+  }, [channel, start, end]);
+
+  const seekToPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const rail = railRef.current;
+    if (!rail) return;
+    const rect = rail.getBoundingClientRect();
+    const fraction = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
+    channel.set(start + fraction * (end - start));
+  };
+
+  return (
+    <div
+      ref={railRef}
+      data-graph-seek-rail
+      role="slider"
+      tabIndex={0}
+      aria-label={ariaLabel}
+      aria-orientation="horizontal"
+      aria-valuemin={0}
+      aria-valuemax={Number((end - start).toFixed(1))}
+      aria-valuenow={0}
+      title="Drag to preview"
+      onPointerDown={(event) => {
+        if (!event.isPrimary || event.button !== 0) return;
+        event.preventDefault();
+        pointerIdRef.current = event.pointerId;
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // Synthetic pointer without capture support: moves still arrive
+          // while the pointer stays over the rail, which tests rely on.
+        }
+        seekToPointer(event);
+      }}
+      onPointerMove={(event) => {
+        if (event.pointerId === pointerIdRef.current) seekToPointer(event);
+      }}
+      onPointerUp={(event) => {
+        if (event.pointerId === pointerIdRef.current) pointerIdRef.current = null;
+      }}
+      onPointerCancel={(event) => {
+        if (event.pointerId === pointerIdRef.current) pointerIdRef.current = null;
+      }}
+      onKeyDown={(event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        const current = channel.get();
+        if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+          channel.set(Math.max(start, current - SEEK_RAIL_STEP_SECONDS));
+        } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+          channel.set(Math.min(end, current + SEEK_RAIL_STEP_SECONDS));
+        } else if (event.key === "Home") {
+          channel.set(start);
+        } else if (event.key === "End") {
+          channel.set(end);
+        } else {
+          return;
+        }
+        event.preventDefault();
+      }}
+      className="group relative h-2.5 w-full cursor-ew-resize touch-none rounded-full bg-zinc-800/80 ring-1 ring-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+    >
+      {/* Elapsed fill, then boundary ticks, then the thumb on top. */}
+      <div
+        ref={fillRef}
+        aria-hidden="true"
+        className="absolute inset-y-0 left-0 rounded-full bg-red-500/25"
+      />
+      {boundaries.map((fraction, index) => (
+        <span
+          key={index}
+          aria-hidden="true"
+          className="absolute inset-y-0 w-px bg-white/25"
+          style={{ left: `${fraction * 100}%` }}
+        />
+      ))}
+      <div
+        ref={thumbRef}
+        aria-hidden="true"
+        className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
+      />
     </div>
   );
 }

@@ -1218,11 +1218,11 @@ test.describe("graph view E2E", () => {
     await expect.poll(translateX).toBeLessThan(20);
   });
 
-  test("grid mode with preview: scrub = drag the playhead; cards keep select, drill and hold-drag", async ({
+  test("grid mode with preview: seek rail scrubs (pointer + keyboard); cards keep select, drill and hold-drag", async ({
     page,
   }) => {
     // Narrow viewport → few responsive columns, so the 4 project clips wrap
-    // onto at least two rows (needed to exercise the cross-row scrub).
+    // onto at least two rows (needed to see the line change rows on seek).
     await page.setViewportSize({ width: 420, height: 900 });
     await installGraphApi(page);
     await openGraph(page);
@@ -1248,32 +1248,43 @@ test.describe("graph view E2E", () => {
         return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: 0, y: 0 };
       });
 
-    // The full-cover scrub surface is GONE (it ate every card pointerdown —
-    // R7 #5/#6/#7): the playhead itself is the scrub affordance now. Its
-    // enlarged handle spans the marker line; grab it and drag. hover() waits
-    // for a stable box first (the pane above settles asynchronously).
-    const handle = playhead.locator("[data-graph-grid-playhead-handle]");
-    // Content geometry at the default MD size: cell 160×100, 8px gap → row
-    // pitch 108.
-    const ROW_PITCH = 108;
+    // ONE scrub control: the seek rail above the grid — a real slider with
+    // clip-boundary ticks. Cards own all their pixels (the old full-cover
+    // surface ate every pointerdown — R7 #5/#6/#7); the in-grid line is a
+    // passive indicator of the rail's position.
+    const rail = page.getByRole("slider", { name: "Seek preview" });
+    await expect(rail).toBeVisible();
+    await expect(rail.locator("span")).toHaveCount(3); // 4 clips → 3 boundary ticks
 
-    // Horizontal scrub across row 0 → x advances, still on row 0.
-    await handle.hover();
+    // Press near the rail's start → the line lands on row 0; drag along the
+    // rail toward the end → time crosses into the later clips and the LINE
+    // CHANGES ROWS, no gesture on the grid itself.
+    await rail.hover({ position: { x: 30, y: 5 } });
     await page.mouse.down();
-    const start = (await playhead.boundingBox())!;
-    await page.mouse.move(start.x + 150, start.y + 50, { steps: 8 });
+    await expect.poll(async () => (await translate()).y).toBeLessThan(52); // row 0
+    const railBox = (await rail.boundingBox())!;
+    await page.mouse.move(railBox.x + railBox.width * 0.9, railBox.y + 5, { steps: 8 });
     await page.mouse.up();
-    await expect.poll(async () => (await translate()).x).toBeGreaterThan(100);
-    expect((await translate()).y).toBeLessThan(52); // still the first row
+    await expect.poll(async () => (await translate()).y).toBeGreaterThan(80); // a later row
 
-    // Cross-row scrub: drag the handle INTO the second row → the playhead
-    // jumps a row down (time lands on a later clip).
-    await handle.hover();
-    await page.mouse.down();
-    const mid = (await playhead.boundingBox())!;
-    await page.mouse.move(mid.x + 4, mid.y + 50 + ROW_PITCH, { steps: 4 });
-    await page.mouse.up();
-    await expect.poll(async () => (await translate()).y).toBeGreaterThan(80);
+    // The rail owns the whole gesture: nothing on the grid got selected.
+    await expect(grid.locator('[data-selected="true"]')).toHaveCount(0);
+
+    // KEYBOARD: the rail is a slider — Home rewinds, arrows nudge by a
+    // second, End jumps to the tail. aria-valuenow tracks the clock.
+    const valueNow = () => rail.evaluate((el) => Number(el.getAttribute("aria-valuenow")));
+    await rail.focus();
+    await page.keyboard.press("Home");
+    await expect.poll(valueNow).toBe(0);
+    await expect.poll(async () => (await translate()).x).toBeLessThan(5); // line rewound too
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(valueNow).toBe(2);
+    await page.keyboard.press("ArrowLeft");
+    await expect.poll(valueNow).toBe(1);
+    await page.keyboard.press("End");
+    const max = await rail.evaluate((el) => Number(el.getAttribute("aria-valuemax")));
+    await expect.poll(valueNow).toBe(max);
 
     // Grids are CONTENT-HEIGHT (the `height` prop is only a max): every row
     // gets room and the PAGE owns vertical scroll. Nothing may consume the
