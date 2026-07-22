@@ -348,6 +348,11 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           can then be trashed with Delete alongside media. */}
       <CollectionItem.SelectionSurface
         dragActivation={dragActivation === "hold" ? "hold" : "body"}
+        // Announce the count the card actually SHOWS — the stored summary for a
+        // placeholder, the live children once hydrated. The primitive's default
+        // reads live childCount alone, which speaks "0 items" over a card
+        // displaying "9" until its clips load.
+        ariaLabel={`${displayName} (collection, ${count} items)`}
         className={[
           "flex h-full w-full flex-col justify-between overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.08] p-1.5",
           selected ? "ring-2 ring-amber-400" : "",
@@ -367,12 +372,14 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             previews.map((preview, index) => (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                // Positional key: `previews` is a fixed-length, order-stable
-                // first/last pair, and stored clip ids are NOT unique across
-                // positions (the same asset can be both the first and last
-                // preview item), so keying by `preview.id` collides. The slot
-                // is what this is, so key by the slot.
-                key={`${index}-${preview.id}`}
+                // Key by the SLOT, not the content. `previews` is a
+                // fixed-length, order-stable first/last pair; keying by
+                // `preview.id` both collides (the same asset can be both the
+                // first and last frame) AND remounts the <img> whenever a child
+                // edit changes which clip is first/last — flashing an
+                // already-loaded frame. The slot is the stable identity, so the
+                // element persists and only its `src` swaps.
+                key={index}
                 src={preview.poster ?? preview.src}
                 alt=""
                 draggable={false}
@@ -410,14 +417,16 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           stays prominent at every item size. Pointer-only by design:
           tabIndex -1 keeps roving views at one tab stop per item, and
           keyboard drill-in stays on the O key (OpenKeyBoundary). The
-          stopPropagation keeps a press from starting a strip pan. */}
+          data-collections-keyboard-ignore marker also excludes it from the
+          strip's pan surface (see isPannableStripSurface), so a press here
+          drills without the strip scrolling under it — no pointerdown guard
+          needed. */}
       <button
         type="button"
         tabIndex={-1}
         aria-label={`Open ${displayName}`}
         title="Open this timeline"
         data-collections-keyboard-ignore
-        onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
           nav?.openTimeline(id);

@@ -1,7 +1,8 @@
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect } from "storybook/test";
 
+import { isEditableKeyboardTarget } from "./react/node-dom";
 import {
   usePanWithMomentum,
   type PanWithMomentumOptions,
@@ -77,6 +78,36 @@ const meta = {
 
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+/**
+ * A pan surface whose predicate is EXACTLY what VirtualStrip's
+ * `isPannableStripSurface` composes: a press that belongs to an editable
+ * control (or an opted-out widget) is not a pan. The strip reuses this helper
+ * so the graph's inline rename <input> can be drag-selected without the strip
+ * scrolling out from under the caret.
+ */
+function EditableTargetPanSurface() {
+  const ref = useRef<HTMLDivElement>(null);
+  const options = useMemo<PanWithMomentumOptions>(
+    () => ({ shouldStartPan: (target) => !isEditableKeyboardTarget(target), slop: 1 }),
+    [],
+  );
+  usePanWithMomentum(ref, "y", options);
+  return (
+    <div
+      ref={ref}
+      data-pan-surface="editable"
+      style={{ height: 120, overflow: "auto", width: 180 }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, height: 600 }}>
+        <input data-editable-target aria-label="rename" defaultValue="Scene A" />
+        <div data-plain-target style={{ height: 240 }}>
+          plain body
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export const BehaviorBranches: Story = {
   play: async ({ canvasElement }) => {
@@ -198,5 +229,39 @@ export const BehaviorBranches: Story = {
       { element: document, type: "pointerup", clientX: 40, clientY: 20 },
     ]);
     expect(guarded.scrollTop).toBe(0);
+  },
+};
+
+// The editable-target pan exclusion (P1 finding 1): a horizontal/vertical drag
+// that STARTS on an inline editor must not pan the surface it sits in — the
+// substance of the strip's isPannableStripSurface change, pinned here against
+// the real helper it now composes.
+export const EditableTargetsDoNotPan: Story = {
+  render: () => <EditableTargetPanSurface />,
+  play: async ({ canvasElement }) => {
+    const surface = canvasElement.querySelector<HTMLElement>('[data-pan-surface="editable"]')!;
+    const input = surface.querySelector<HTMLElement>("[data-editable-target]")!;
+    const plain = surface.querySelector<HTMLElement>("[data-plain-target]")!;
+    const inputBox = input.getBoundingClientRect();
+    const plainBox = plain.getBoundingClientRect();
+
+    // A press that STARTS on the editor and drags does NOT pan — the pointer
+    // stays with the caret (text selection), the surface holds still. Without
+    // the exclusion this dragged the surface out from under the field.
+    await dispatchPointerSequence([
+      { element: input, type: "pointerdown", clientX: inputBox.left + 8, clientY: inputBox.top + 8 },
+      { element: document, type: "pointermove", clientX: inputBox.left + 8, clientY: inputBox.top - 40 },
+      { element: document, type: "pointerup", clientX: inputBox.left + 8, clientY: inputBox.top - 40 },
+    ]);
+    expect(surface.scrollTop).toBe(0);
+
+    // Control: the SAME drag from plain body DOES pan — so the assertion above
+    // is real (the surface is genuinely pannable), not vacuously true.
+    await dispatchPointerSequence([
+      { element: plain, type: "pointerdown", clientX: plainBox.left + 8, clientY: plainBox.top + 8 },
+      { element: document, type: "pointermove", clientX: plainBox.left + 8, clientY: plainBox.top - 40 },
+      { element: document, type: "pointerup", clientX: plainBox.left + 8, clientY: plainBox.top - 40 },
+    ]);
+    expect(surface.scrollTop).toBeGreaterThan(0);
   },
 };

@@ -288,14 +288,21 @@ export function GraphRuler({
 
     // Card x-ranges + collection flag, in the SAME cumulative layout the map
     // walks — so a tick's x can be tested against the collection interiors.
-    // Each card's left is the summed widths+gaps before it (no running
-    // accumulator to mutate — keeps the memo body free of reassignment).
-    const ranges = cards.map((card, index) => {
-      const x0 = cards
-        .slice(0, index)
-        .reduce((sum, previous) => sum + previous.width + STRIP_GAP_PX, 0);
-      return { x0, x1: x0 + card.width, isCollection: clips[index]?.kind === "collection" };
-    });
+    // ONE pass carrying a running left edge: each card starts where the
+    // previous one ended plus the pack gap. (The prior version re-summed all
+    // preceding widths per card with slice+reduce — O(n²) over the strip, and
+    // rebuilt on every commit; the accumulator is a local `let`, still pure.)
+    const ranges: Array<{ x0: number; x1: number; isCollection: boolean }> = [];
+    let cursorX = 0;
+    for (let index = 0; index < cards.length; index += 1) {
+      const card = cards[index];
+      ranges.push({
+        x0: cursorX,
+        x1: cursorX + card.width,
+        isCollection: clips[index]?.kind === "collection",
+      });
+      cursorX += card.width + STRIP_GAP_PX;
+    }
     const inCollectionInterior = (cx: number) =>
       ranges.some((range) => range.isCollection && cx > range.x0 + 1 && cx <= range.x1);
 

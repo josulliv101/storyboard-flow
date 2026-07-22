@@ -125,6 +125,49 @@ export const ClickToggleSelection: Story = {
   },
 };
 
+export const DoubleClickDoesNotClearSelection: Story = {
+  // A double-click is the rename-in-place gesture on the graph's collection
+  // cards; its SECOND click must not re-run the toggle. Before the
+  // `event.detail > 1` guard, double-clicking a selected card collapsed on
+  // click 1 and CLEARED on click 2, leaving the user renaming with nothing
+  // selected. Here the card stays selected across the whole double-click.
+  render: () => (
+    <DndCollections initialGraph={mediaGraph()} animateMoves={false} clickSelection="toggle">
+      <BoardCards />
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "alpha"));
+    const user = userEvent.setup();
+
+    // A double-click leaves a card in the SAME state a single click would.
+    // From UNSELECTED, that is selected: click 1 selects, click 2 (detail ===
+    // 2) is ignored. Before the guard, click 2 re-ran the toggle and switched
+    // it straight back off — so a double-click on an unselected card selected
+    // then deselected in one gesture.
+    expect(isSelected(canvasElement, "alpha")).toBe(false);
+    await user.dblClick(nodeCard(canvasElement, "alpha"));
+    await waitFor(() => expect(isSelected(canvasElement, "alpha")).toBe(true));
+
+    // The case the guard exists for: from a MULTI-selection, double-click a
+    // member. Click 1 collapses the selection to that member; click 2 is
+    // ignored — so it STAYS selected instead of clearing to nothing (which is
+    // what left the user renaming with an empty selection).
+    await user.keyboard("{Control>}");
+    await user.click(nodeCard(canvasElement, "bravo"));
+    await user.keyboard("{/Control}");
+    await waitFor(() => {
+      expect(isSelected(canvasElement, "alpha")).toBe(true);
+      expect(isSelected(canvasElement, "bravo")).toBe(true);
+    });
+    await user.dblClick(nodeCard(canvasElement, "bravo"));
+    await waitFor(() => {
+      expect(isSelected(canvasElement, "alpha")).toBe(false);
+      expect(isSelected(canvasElement, "bravo")).toBe(true);
+    });
+  },
+};
+
 function OpenOnClickBoard() {
   const [opened, setOpened] = useState<string>("none");
   return (
