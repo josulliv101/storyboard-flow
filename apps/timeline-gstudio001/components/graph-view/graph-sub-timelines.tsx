@@ -17,7 +17,7 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import { hydrateTimeline } from "./graph-hydration";
-import { useInlineRename } from "./graph-inline-rename";
+import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { NativeDropGrid, NativeDropStrip } from "./graph-native-drop";
 import {
   subTimelineRowStatus,
@@ -177,16 +177,11 @@ function SubTimelineNode({
           )}
         </button>
         {rename.editing ? (
-          <input
-            aria-label="Timeline name"
-            value={rename.draft}
-            autoFocus
-            onChange={(event) => rename.setDraft(event.target.value)}
-            onBlur={rename.commit}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") rename.commit();
-              else if (event.key === "Escape") rename.cancel();
-            }}
+          <InlineNameEditor
+            initialValue={name}
+            onInput={rename.setDraft}
+            onCommit={rename.commit}
+            onCancel={rename.cancel}
             className="min-w-0 flex-1 rounded border border-sky-500/60 bg-zinc-900 px-1.5 py-0.5 text-sm font-semibold text-zinc-100 outline-none"
           />
         ) : (

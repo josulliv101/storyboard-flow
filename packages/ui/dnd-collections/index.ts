@@ -132,6 +132,8 @@ export {
   type CollectionGhostContentProps,
   type CollectionItemContentComponent,
   type CollectionItemContentProps,
+  type CollectionItemShellComponent,
+  type CollectionItemShellProps,
   type CollectionTrimHandleContentComponent,
   type CollectionTrimHandleContentProps,
   type CollectionTrimOverviewContentComponent,

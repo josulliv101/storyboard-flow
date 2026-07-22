@@ -19,7 +19,9 @@ import {
   positiveIntegerOrUndefined,
 } from "../core/numeric";
 import {
+  useCollectionsComponents,
   type CollectionItemContentComponent,
+  type CollectionItemShellComponent,
   type NodeCardDragActivation,
 } from "../react/collections-components";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
@@ -40,7 +42,8 @@ import {
 // WIDTH stretches to fill the container exactly (see `cellWidth` doc) — only
 // height is a fixed constant, so media letterboxes at a width:height ratio
 // that varies slightly with container width, by design (2026-07-19).
-// Cards are the standard NodeCard; the droppable contract is the same
+// Cards render through the item-shell resolution (per-view `itemShell` →
+// registry `ItemShell` → NodeCard); the droppable contract is the same
 // virtualInsert used by VirtualStrip, with 2D boundary math. NOTE: cards
 // moving BETWEEN rows re-parent (rows are keyed by index), so cross-row
 // moves recreate the card's DOM element — FLIP and held focus don't
@@ -67,6 +70,12 @@ export type VirtualGridProps = Readonly<{
   /** Per-view card pixels — overrides the provider `components` registry.
    *  MUST be identity-stable (module scope). */
   itemContent?: CollectionItemContentComponent;
+  /**
+   * Per-view item SHELL — replaces the whole per-cell renderer (NodeCard by
+   * default; registry `ItemShell` sits between). See VirtualStrip's prop of
+   * the same name. MUST be identity-stable (module scope).
+   */
+  itemShell?: CollectionItemShellComponent;
   /**
    * How a cell drag starts. Default "body" — the card body drags instantly,
    * which makes a plain click ambiguous with a drag (a press that nudges is a
@@ -99,12 +108,16 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       overscan: overscanOption,
       height: heightOption,
       itemContent,
+      itemShell,
       itemDragActivation = "body",
       overlay,
       className,
     },
     ref
   ) {
+    // The per-cell renderer: per-view override → provider registry → NodeCard.
+    const registeredShell = useCollectionsComponents().ItemShell;
+    const ItemShell: CollectionItemShellComponent = itemShell ?? registeredShell ?? NodeCard;
     const cellWidth = finitePositiveOr(cellWidthOption, 128);
     const cellHeight = finitePositiveOr(cellHeightOption, 96);
     const gap = finiteNonNegativeOr(gapOption, 8);
@@ -392,7 +405,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                       onFocus={() => onItemFocus(id)}
                       style={{ width: fillCellWidth, height: cellHeight }}
                     >
-                      <NodeCard
+                      <ItemShell
                         id={id}
                         className="h-full w-full"
                         rovingTabIndex={absoluteIndex === rovingIndex ? 0 : -1}

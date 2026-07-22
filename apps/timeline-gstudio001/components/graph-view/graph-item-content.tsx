@@ -4,16 +4,22 @@ import { memo, useCallback, useContext, useRef, useState, useSyncExternalStore }
 import { FolderDown, Image as ImageIcon, Video } from "lucide-react";
 
 import {
+  CollectionItem,
+  NodeCard,
   mediaDurationSeconds,
+  useCollectionItemState,
+  useCollectionsSelector,
   useCollectionsStore,
   useLiveTrim,
   videoFrameCount,
   type CollectionGhostContentProps,
   type CollectionItemContentProps,
+  type CollectionItemShellProps,
   type CollectionTrimHandleContentProps,
   type CollectionsComponents,
   type CollectionsGraph,
   type MediaNode,
+  type NodeCardDragActivation,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 import {
@@ -169,143 +175,21 @@ function LiveDurationPill({ id, node }: { id: NodeId; node: MediaNode }) {
 const GraphClipContent = memo(function GraphClipContent({
   id,
   node,
-  childCount,
   selected,
   rejected,
   isDragSource,
   trimEnabled,
 }: CollectionItemContentProps) {
-  const detail = useClipDetail(id as string);
-  // Same source of truth as the tree/breadcrumb, so a rename shows here too.
-  const title = useTimelineTitle(id as string);
-  // In-place rename of the collection name (media cards never edit; the hook
-  // is cheap and called unconditionally to satisfy the rules of hooks).
-  const rename = useInlineRename(id, title ?? node.name);
-  const nav = useContext(GraphViewNavContext);
-  // Hydrated collections derive their preview frames from live children (like
-  // the count below), so editing a loaded child refreshes this card without a
-  // reload; placeholders fall back to their stored summary.
-  const isHydratedCollection = node.kind === "collection" && detail?.hydrated === true;
-  const livePreviews = useHydratedCollectionPreviews(id as string, isHydratedCollection);
-  const liveSeconds = useHydratedCollectionSeconds(id as string, isHydratedCollection);
-  // Card geometry for the video filmstrip's frame count (media branch below).
+  // Card geometry for the video filmstrip's frame count.
   const [cardSizeRef, cardSize] = useElementSize();
 
-  if (node.kind === "collection") {
-    const hydrated = detail?.hydrated === true;
-    const count = hydrated ? childCount : (detail?.itemCount ?? childCount);
-    // Total content duration: live-derived when hydrated (tracks child edits),
-    // else the stored collection-clip duration. Absent only for a placeholder
-    // with no stored duration yet.
-    const totalSeconds = hydrated ? liveSeconds : detail?.duration;
-    // FIRST and LAST only — the card says "a timeline runs from here to
-    // there", which two frames tell and three do not. A single-item
-    // collection has no "last" distinct from its first, so it shows one
-    // frame across the full width rather than the same image twice.
-    const all: readonly CollectionPreviewFrame[] = hydrated
-      ? livePreviews
-      : (detail?.previewItems ?? []);
-    const previews = all.length > 1 ? [all[0], all[all.length - 1]] : all;
-    const displayName = title ?? node.name;
-    // Interaction split: the card BODY selects (like any clip — see
-    // openOnClick in graph-timeline-view no longer opening collections), and
-    // the big folder button is the ONE thing that drills in. Selected cards
-    // can then be trashed with Delete alongside media.
-    return (
-      <span
-        title="Click to select · click the folder to open · press O to open"
-        className={[
-          "relative flex h-full w-full flex-col justify-between overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.08] p-1.5",
-          selected ? "ring-2 ring-amber-400" : "",
-          rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
-          isDragSource ? "opacity-40" : "",
-        ].join(" ")}
-      >
-        {/* `relative` so the folder button can centre itself over the seam
-            between the two frames rather than sitting in the label strip. */}
-        <span className="relative flex min-h-0 flex-1 gap-0.5 overflow-hidden">
-          {previews.length === 0 ? (
-            <span className="flex flex-1 items-center justify-center text-[9px] text-zinc-500">
-              {/* Previews are direct MEDIA children only, so a collection of
-                  nothing but sub-collections has none — that is not "Empty"
-                  (count > 0). Reserve "Empty" for a truly childless collection. */}
-              {!hydrated ? "Open to load" : count === 0 ? "Empty" : "No media preview"}
-            </span>
-          ) : (
-            previews.map((preview, index) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                // Positional key: `previews` is a fixed-length, order-stable
-                // first/last pair, and stored clip ids are NOT unique across
-                // positions (the same asset can be both the first and last
-                // preview item), so keying by `preview.id` collides. The slot
-                // is what this is, so key by the slot.
-                key={`${index}-${preview.id}`}
-                src={preview.poster ?? preview.src}
-                alt=""
-                draggable={false}
-                loading="lazy"
-                className="h-full min-w-0 flex-1 rounded-sm object-cover"
-              />
-            ))
-          )}
-          {/* The drill affordance: a large control, sized as a fraction of the
-              card so it stays prominent at every item size. A span with
-              role=button, NOT a <button> — the NodeCard shell is itself a
-              <button>, and nesting one is invalid HTML. stopPropagation on
-              pointerdown keeps a press on it from starting the card's drag or
-              selecting it (the control opens, the body selects); keyboard
-              drill-in stays on the O key (OpenKeyBoundary), so this is a
-              pointer affordance and sits outside the tab order. */}
-          <span
-            role="button"
-            tabIndex={-1}
-            aria-label={`Open ${displayName}`}
-            title="Open this timeline"
-            data-collections-keyboard-ignore
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              nav?.openTimeline(id as NodeId);
-            }}
-            className="absolute left-1/2 top-1/2 flex aspect-square h-[46%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300"
-          >
-            <FolderDown className="h-[55%] w-[55%]" />
-          </span>
-        </span>
-        <span className="mt-1 flex items-center justify-between gap-1">
-          {rename.editing ? (
-            <InlineNameEditor
-              initialValue={displayName}
-              onInput={rename.setDraft}
-              onCommit={rename.commit}
-              onCancel={rename.cancel}
-              className="min-w-0 flex-1 truncate rounded-sm bg-zinc-950/80 px-1 text-[10px] font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
-            />
-          ) : (
-            <span
-              onDoubleClick={(event) => {
-                event.stopPropagation();
-                rename.begin();
-              }}
-              title="Double-click to rename"
-              className="min-w-0 flex-1 cursor-text truncate text-[10px] font-semibold text-zinc-100"
-            >
-              {displayName}
-            </span>
-          )}
-          <span className="flex shrink-0 items-center gap-1 font-mono text-[9px] text-zinc-400">
-            {typeof totalSeconds === "number" && totalSeconds > 0 ? (
-              <span className="text-sky-300/90" title="Total duration of contents">
-                {formatCollectionSeconds(totalSeconds)}
-              </span>
-            ) : null}
-            <span>{count}</span>
-          </span>
-        </span>
-      </span>
-    );
-  }
+  // MEDIA pixels only. Collections don't render through this seam anymore:
+  // their card carries interactive controls (folder drill-in, inline rename),
+  // which cannot legally nest inside NodeCard's <button> — so the registered
+  // ItemShell (GraphItemShell below) routes collections to the composed
+  // CollectionItem-based card instead. This guard is defensive: nothing in
+  // the graph view reaches it with a collection node.
+  if (node.kind === "collection") return null;
 
   const isVideo = node.mediaKind === "video";
   // Frame count follows the card's WIDTH (roughly one ~square frame per card
@@ -416,8 +300,184 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
   );
 });
 
+/**
+ * The composed collection ITEM, rendered through the package's item-shell
+ * seam instead of NodeCard (review finding 1). This card carries INTERACTIVE
+ * controls — the folder drill-in and the inline rename editor — and inside
+ * NodeCard they had to fake their semantics (`role="button"` span, a
+ * contentEditable "textbox") because real ones can't nest in the card
+ * <button>. Here the CollectionItem primitives keep the package behavior
+ * (drag, selection, keyboard grab, drop indicators, FLIP identity) and the
+ * controls compose as SIBLINGS of the selection surface: a real <button> and
+ * a real <input>, legally.
+ */
+const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
+  dragActivation,
+}: {
+  dragActivation: NodeCardDragActivation;
+}) {
+  const { id, node, childCount, selected, rejected, isDragSource } = useCollectionItemState();
+  const detail = useClipDetail(id as string);
+  // Same source of truth as the tree/breadcrumb, so a rename shows here too.
+  const title = useTimelineTitle(id as string);
+  const rename = useInlineRename(id, title ?? node.name);
+  const nav = useContext(GraphViewNavContext);
+  // Hydrated collections derive their preview frames and total duration from
+  // live children (like the count), so editing a loaded child refreshes this
+  // card without a reload; placeholders fall back to their stored summary.
+  const hydrated = detail?.hydrated === true;
+  const livePreviews = useHydratedCollectionPreviews(id as string, hydrated);
+  const liveSeconds = useHydratedCollectionSeconds(id as string, hydrated);
+
+  const count = hydrated ? childCount : (detail?.itemCount ?? childCount);
+  const totalSeconds = hydrated ? liveSeconds : detail?.duration;
+  // FIRST and LAST only — the card says "a timeline runs from here to
+  // there", which two frames tell and three do not. A single-item
+  // collection has no "last" distinct from its first, so it shows one
+  // frame across the full width rather than the same image twice.
+  const all: readonly CollectionPreviewFrame[] = hydrated
+    ? livePreviews
+    : (detail?.previewItems ?? []);
+  const previews = all.length > 1 ? [all[0], all[all.length - 1]] : all;
+  const displayName = title ?? node.name;
+
+  return (
+    <>
+      {/* Interaction split: the surface (card body) SELECTS — like any clip —
+          and drags; only the folder button below drills in. Selected cards
+          can then be trashed with Delete alongside media. */}
+      <CollectionItem.SelectionSurface
+        dragActivation={dragActivation === "hold" ? "hold" : "body"}
+        className={[
+          "flex h-full w-full flex-col justify-between overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.08] p-1.5",
+          selected ? "ring-2 ring-amber-400" : "",
+          rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
+          isDragSource ? "opacity-40" : "",
+        ].join(" ")}
+      >
+        <span className="flex min-h-0 flex-1 gap-0.5 overflow-hidden">
+          {previews.length === 0 ? (
+            <span className="flex flex-1 items-center justify-center text-[9px] text-zinc-500">
+              {/* Previews are direct MEDIA children only, so a collection of
+                  nothing but sub-collections has none — that is not "Empty"
+                  (count > 0). Reserve "Empty" for a truly childless collection. */}
+              {!hydrated ? "Open to load" : count === 0 ? "Empty" : "No media preview"}
+            </span>
+          ) : (
+            previews.map((preview, index) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                // Positional key: `previews` is a fixed-length, order-stable
+                // first/last pair, and stored clip ids are NOT unique across
+                // positions (the same asset can be both the first and last
+                // preview item), so keying by `preview.id` collides. The slot
+                // is what this is, so key by the slot.
+                key={`${index}-${preview.id}`}
+                src={preview.poster ?? preview.src}
+                alt=""
+                draggable={false}
+                loading="lazy"
+                className="h-full min-w-0 flex-1 rounded-sm object-cover"
+              />
+            ))
+          )}
+        </span>
+        <span className="mt-1 flex items-center justify-between gap-1">
+          <span
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              rename.begin();
+            }}
+            title="Double-click to rename"
+            className="min-w-0 flex-1 cursor-text truncate text-[10px] font-semibold text-zinc-100"
+          >
+            {displayName}
+          </span>
+          <span className="flex shrink-0 items-center gap-1 font-mono text-[9px] text-zinc-400">
+            {typeof totalSeconds === "number" && totalSeconds > 0 ? (
+              <span className="text-sky-300/90" title="Total duration of contents">
+                {formatCollectionSeconds(totalSeconds)}
+              </span>
+            ) : null}
+            <span>{count}</span>
+          </span>
+        </span>
+      </CollectionItem.SelectionSurface>
+
+      {/* The drill affordance — a REAL button now that it composes as a
+          SIBLING of the selection surface. Centred over the preview area (the
+          card minus its label row), sized as a fraction of the card so it
+          stays prominent at every item size. Pointer-only by design:
+          tabIndex -1 keeps roving views at one tab stop per item, and
+          keyboard drill-in stays on the O key (OpenKeyBoundary). The
+          stopPropagation keeps a press from starting a strip pan. */}
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label={`Open ${displayName}`}
+        title="Open this timeline"
+        data-collections-keyboard-ignore
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          nav?.openTimeline(id);
+        }}
+        className="absolute left-1/2 top-[41%] flex aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300"
+      >
+        <FolderDown className="h-[55%] w-[55%]" />
+      </button>
+
+      {/* The rename editor — a REAL input, overlaying the label row while
+          editing. A sibling of the surface, so it nests in no button. */}
+      {rename.editing && (
+        <InlineNameEditor
+          initialValue={displayName}
+          onInput={rename.setDraft}
+          onCommit={rename.commit}
+          onCancel={rename.cancel}
+          className="absolute inset-x-1.5 bottom-1.5 z-20 rounded-sm bg-zinc-950/95 px-1 py-0.5 text-[10px] font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
+        />
+      )}
+
+      <CollectionItem.DropIndicators />
+    </>
+  );
+});
+
+const GraphCollectionItem = memo(function GraphCollectionItem({
+  id,
+  className,
+  dragActivation = "body",
+  rovingTabIndex,
+}: CollectionItemShellProps) {
+  return (
+    <CollectionItem.Root
+      id={id}
+      rovingTabIndex={rovingTabIndex}
+      className={["h-full w-full", className ?? ""].join(" ")}
+    >
+      <GraphCollectionItemParts dragActivation={dragActivation} />
+    </CollectionItem.Root>
+  );
+});
+
+/**
+ * The graph's per-item renderer (registered as the provider `ItemShell`):
+ * media keeps the stock NodeCard shell (its content is presentational, so the
+ * single-button card is exactly right); collections get the composed card
+ * above. The kind subscription is a primitive, so the dispatcher re-renders
+ * only if a node changes kind — which never happens after creation.
+ */
+const GraphItemShell = memo(function GraphItemShell(props: CollectionItemShellProps) {
+  const isCollection = useCollectionsSelector(
+    (s) => s.graph.nodesById.get(props.id)?.kind === "collection",
+  );
+  return isCollection ? <GraphCollectionItem {...props} /> : <NodeCard {...props} />;
+});
+
 export const GRAPH_VIEW_COMPONENTS: CollectionsComponents = {
   ItemContent: GraphClipContent,
+  ItemShell: GraphItemShell,
   TrimHandleContent: GraphTrimHandle,
   GhostContent: GraphGhost,
 };

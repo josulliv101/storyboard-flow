@@ -27,7 +27,11 @@ import {
   finitePositiveOrUndefined,
   nonNegativeIntegerOr,
 } from "../core/numeric";
-import { type CollectionItemContentComponent } from "../react/collections-components";
+import {
+  useCollectionsComponents,
+  type CollectionItemContentComponent,
+  type CollectionItemShellComponent,
+} from "../react/collections-components";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { findNodeElement } from "../react/node-dom";
 import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
@@ -72,7 +76,8 @@ function resolveStripIndex(key: string, current: number, count: number): number 
 }
 
 // Horizontal virtualized strip: renders only visible cards + overscan out
-// of arbitrarily large collections. Cards ARE the standard NodeCard —
+// of arbitrarily large collections. Cards render through the item-shell
+// resolution (per-view `itemShell` → registry `ItemShell` → NodeCard) —
 // virtualization changes WHICH ids mount, never how a card works — so
 // selection, drag-source dimming, and store subscriptions come along
 // unchanged. DnD over gaps and unmounted regions resolves through the
@@ -145,6 +150,14 @@ export type VirtualStripProps = Readonly<{
    *  MUST be identity-stable (module scope). */
   itemContent?: CollectionItemContentComponent;
   /**
+   * Per-view item SHELL — replaces the whole per-item renderer (NodeCard by
+   * default; registry `ItemShell` sits between). The seam for items that
+   * need legally interactive controls: compose them with the CollectionItem
+   * primitives as SIBLINGS of the selection surface. MUST be identity-stable
+   * (module scope). Receives exactly NodeCard's props.
+   */
+  itemShell?: CollectionItemShellComponent;
+  /**
    * STRICTLY PRESENTATIONAL content rendered in CONTENT coordinates over the
    * whole strip (inside an `aria-hidden`, `pointer-events: none` layer above
    * the cards), so it rides scrolling, auto-scroll, and the live-trim
@@ -182,6 +195,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       itemDragActivation = "handle",
       trimPixelsPerSecond: trimPixelsPerSecondOption,
       itemContent,
+      itemShell,
       overlay,
       className,
     },
@@ -198,6 +212,9 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       finitePositiveOrUndefined(trimPixelsPerSecondOption) ?? pixelsPerSecond;
     const store = useCollectionsStore();
     const cardActivation: NodeCardDragActivation = panToScroll ? itemDragActivation : "body";
+    // The per-item renderer: per-view override → provider registry → NodeCard.
+    const registeredShell = useCollectionsComponents().ItemShell;
+    const ItemShell: CollectionItemShellComponent = itemShell ?? registeredShell ?? NodeCard;
 
     // Stable array reference between commits — the virtualizer's item keys
     // and index math stay coherent across drags for free.
@@ -810,10 +827,10 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                     transform: `translateX(${item.start}px)`,
                   }}
                 >
-                  {/* Explicit sizing: the card fills its (possibly variable) slot.
+                  {/* Explicit sizing: the item fills its (possibly variable) slot.
                       With panToScroll, item drags move to the grip bar or behind
                       a press-and-hold so the body is free to pan the strip. */}
-                  <NodeCard
+                  <ItemShell
                     id={childIds[item.index]}
                     className="h-full w-full"
                     dragActivation={cardActivation}

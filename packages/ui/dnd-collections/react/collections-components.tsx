@@ -67,6 +67,34 @@ export type CollectionItemContentProps = Readonly<{
  */
 export type CollectionItemContentComponent = ComponentType<CollectionItemContentProps>;
 
+/**
+ * What a virtual view passes to whatever renders each item. The default
+ * renderer is `NodeCard` (these are exactly its props), so a custom shell is
+ * drop-in: same id, same slot-filling `className`, same activation/roving/
+ * trim wiring to forward or reinterpret.
+ */
+export type CollectionItemShellProps = Readonly<{
+  id: NodeId;
+  /** Slot sizing from the view — virtual views pass "h-full w-full". */
+  className?: string;
+  dragActivation?: NodeCardDragActivation;
+  rovingTabIndex?: number;
+  trimPixelsPerSecond?: number;
+  itemContent?: CollectionItemContentComponent;
+}>;
+
+/**
+ * A full ITEM renderer for the virtual views — the shell seam one level up
+ * from `itemContent`. `ItemContent` swaps the pixels inside NodeCard's
+ * <button>; an item SHELL replaces NodeCard itself, which is the only way to
+ * put legally interactive controls (a real <button>, an <input>) on a card:
+ * compose them via the `CollectionItem` primitives as SIBLINGS of
+ * `CollectionItem.SelectionSurface` instead of nesting them in a button.
+ * Identity-stable (module scope), like every registry entry. Views that
+ * don't need it keep the NodeCard default.
+ */
+export type CollectionItemShellComponent = ComponentType<CollectionItemShellProps>;
+
 export type CollectionGhostContentProps = Readonly<{
   /** The primary dragged node (pressed card / palette factory result). */
   node: CollectionItemNode;
@@ -120,6 +148,10 @@ export type CollectionsComponents = Readonly<{
   /** Replaces the card pixels everywhere (panels, virtual views). Per-view
    *  `itemContent` props override this registry entry. */
   ItemContent?: CollectionItemContentComponent;
+  /** Replaces the whole item renderer in the VIRTUAL views (NodeCard by
+   *  default) — see CollectionItemShellComponent. Per-view `itemShell`
+   *  props override this registry entry. Panels keep NodeCard. */
+  ItemShell?: CollectionItemShellComponent;
   /** Replaces the drag-overlay ghost pixels. */
   GhostContent?: CollectionGhostContentComponent;
   /** Replaces the pixels INSIDE the trim-handle hit zones. */
@@ -150,15 +182,16 @@ export function useCollectionsComponentsValue(
   components?: CollectionsComponents
 ): CollectionsComponents {
   const ItemContent = components?.ItemContent;
+  const ItemShell = components?.ItemShell;
   const GhostContent = components?.GhostContent;
   const TrimHandleContent = components?.TrimHandleContent;
   const OverviewContent = components?.OverviewContent;
   const value = useMemo<CollectionsComponents>(
     () =>
-      ItemContent || GhostContent || TrimHandleContent || OverviewContent
-        ? { ItemContent, GhostContent, TrimHandleContent, OverviewContent }
+      ItemContent || ItemShell || GhostContent || TrimHandleContent || OverviewContent
+        ? { ItemContent, ItemShell, GhostContent, TrimHandleContent, OverviewContent }
         : EMPTY_COMPONENTS,
-    [ItemContent, GhostContent, TrimHandleContent, OverviewContent]
+    [ItemContent, ItemShell, GhostContent, TrimHandleContent, OverviewContent]
   );
 
   const previousRef = useRef(value);
@@ -173,9 +206,9 @@ export function useCollectionsComponentsValue(
     warnedRef.current = true;
     console.warn(
       "dnd-collections: a `components` entry changed identity between renders. " +
-        "Define ItemContent/GhostContent/TrimHandleContent/OverviewContent at module " +
-        "scope — a new component type per render remounts every card's content and " +
-        "defeats memoization."
+        "Define ItemContent/ItemShell/GhostContent/TrimHandleContent/OverviewContent " +
+        "at module scope — a new component type per render remounts every card's " +
+        "content and defeats memoization."
     );
   }, [value]);
 
