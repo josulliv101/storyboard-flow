@@ -248,6 +248,7 @@ const SelectionSurface = memo(function CollectionItemSelectionSurface({
   children,
   className,
   dragActivation = "none",
+  ariaLabel,
 }: {
   children?: ReactNode;
   className?: string;
@@ -261,6 +262,16 @@ const SelectionSurface = memo(function CollectionItemSelectionSurface({
    * mode — the surface is the one guaranteed tab stop.
    */
   dragActivation?: "none" | "body" | "hold";
+  /**
+   * Override the accessible name. The default —
+   * `<name> (collection, <live childCount> items)` — reads the LIVE graph
+   * child count, which is right for a fully-loaded collection but wrong for a
+   * card whose VISIBLE count comes from a stored summary: an un-hydrated
+   * placeholder shows "9" while its live children are still 0, and a screen
+   * reader would otherwise announce "0 items". Pass the same count the card
+   * paints so the two agree.
+   */
+  ariaLabel?: string;
 }) {
   const ctx = useCollectionItemContext("SelectionSurface");
   const { instructionsId } = useCollectionsContainer();
@@ -282,7 +293,10 @@ const SelectionSurface = memo(function CollectionItemSelectionSurface({
       data-node-kind={ctx.node.kind}
       {...(ctx.selected ? { "data-selected": "true" } : {})}
       {...(ctx.rejected ? { "data-rejected": "true" } : {})}
-      aria-label={`${ctx.node.name}${isCollection ? ` (collection, ${ctx.childCount} items)` : ""}`}
+      aria-label={
+        ariaLabel ??
+        `${ctx.node.name}${isCollection ? ` (collection, ${ctx.childCount} items)` : ""}`
+      }
       onClick={ctx.select}
       // The hold sensor picks press-and-hold activation by this marker on
       // the pressed target's ancestry (see CollectionsPointerSensor).

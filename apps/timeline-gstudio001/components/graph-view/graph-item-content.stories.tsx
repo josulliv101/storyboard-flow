@@ -151,6 +151,23 @@ export const SingleFrame: Story = {
 };
 
 /**
+ * The surface's accessible name reports the count the card SHOWS, not the live
+ * graph child count (review finding 4). This fixture is exactly the placeholder
+ * case: the provider graph carries zero children, but the stored summary says
+ * two — a screen reader must hear "2 items", matching the visible badge, rather
+ * than "0 items" from the un-hydrated live count.
+ */
+export const PlaceholderAriaCountMatchesBadge: Story = {
+  args: baseArgs,
+  decorators: [renderWithDetail([ASSET_A, ASSET_B])],
+  play: async ({ canvasElement }) => {
+    const surface = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
+    // The stored summary (itemCount 2), not the live childCount (0).
+    await expect(surface.getAttribute("aria-label")).toBe("A timeline (collection, 2 items)");
+  },
+};
+
+/**
  * The composed card's STRUCTURE (review finding 1): the selection surface is
  * a real <button> with zero interactive content inside it, the folder
  * drill-in is a real <button> sibling, and the rename editor is a real

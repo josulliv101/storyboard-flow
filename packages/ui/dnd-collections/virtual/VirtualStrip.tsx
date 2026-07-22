@@ -33,7 +33,7 @@ import {
   type CollectionItemShellComponent,
 } from "../react/collections-components";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
-import { findNodeElement } from "../react/node-dom";
+import { findNodeElement, isEditableKeyboardTarget } from "../react/node-dom";
 import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
 import { TrimOverviewStrip } from "../react/trim-overview";
 import { TrimPreviewContext, type LiveTrim, type TrimPreview } from "../react/trim-preview-context";
@@ -90,8 +90,18 @@ function resolveStripIndex(key: string, current: number, count: number): number 
 // the hold sensor's activation, and if the hold DOES fire first, the pan
 // yields via isGestureClaimed.) Module-level so option identities are
 // stable.
+//
+// A press that belongs to a control INSIDE a card must not pan either: the
+// compound primitives invite real interactive children (the graph's inline
+// rename <input>, a consumer's custom widget), and a horizontal drag to
+// select text in such a field would otherwise cross the pan slop, capture
+// the pointer, and scroll the strip out from under the caret. The same
+// editable/opted-out targets the keyboard delegation defers to (inputs,
+// contenteditable, and anything marked data-collections-keyboard-ignore —
+// e.g. the graph's drill button) own their pointer gestures too.
 const isPannableStripSurface = (target: Element): boolean =>
-  !target.closest("[data-drag-handle], [data-trim-handle], [data-trim-overview]");
+  !target.closest("[data-drag-handle], [data-trim-handle], [data-trim-overview]") &&
+  !isEditableKeyboardTarget(target);
 const STRIP_PAN_DISABLED: PanWithMomentumOptions = { disabled: true };
 
 // Gap between the floating overview tooltip and the top of the strip.

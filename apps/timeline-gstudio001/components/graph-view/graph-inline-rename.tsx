@@ -51,11 +51,18 @@ export function useInlineRename(nodeId: NodeId, currentName: string) {
  *
  * Uncontrolled on purpose: the value is seeded once (`defaultValue`) and
  * reported through `onInput`; select-on-focus lets the first keystroke replace
- * the old name. The card's editor sits inside drag-sensor/pan territory, so
- * presses must not start a drag, a pan, or toggle selection — hence the
- * stopPropagation trio. Keyboard chords already skip editable targets
- * (isEditableKeyboardTarget); the keydown stopPropagation is belt-and-braces.
- * Enter commits, Escape cancels, blur commits.
+ * the old name.
+ *
+ * What actually keeps a press here from starting a drag, a pan, or toggling
+ * selection is the composition, not these handlers: the editor renders as a
+ * SIBLING of any selection surface (never nested in its <button>), and the
+ * strip's pan surface excludes editable targets (isPannableStripSurface), so
+ * neither drag wiring nor the pan sensor sees this input. The pointer/click
+ * stopPropagation calls are therefore defensive isolation — cheap insurance
+ * that this shared editor stays inert in whatever host renders it (card,
+ * breadcrumb, sub-timeline row). Keyboard chords already skip editable targets
+ * (isEditableKeyboardTarget); the keydown stopPropagation is the same
+ * belt-and-braces. Enter commits, Escape cancels, blur commits.
  */
 export function InlineNameEditor({
   initialValue,

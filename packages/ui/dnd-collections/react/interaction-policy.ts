@@ -100,6 +100,16 @@ export function handleSelectionSurfaceClick(args: {
 }): void {
   const { event, id, node, store, policy } = args;
 
+  // Only the FIRST click of a sequence carries selection intent. A
+  // double-click's second click (detail === 2) is the residue of a
+  // rename-in-place gesture (dblclick), not a deliberate re-toggle — and in
+  // toggle mode letting it run was destructive: a double-click on a card in a
+  // multi-selection collapsed the selection to that card on click 1, then
+  // CLEARED it on click 2, so the user began renaming with nothing selected.
+  // Keyboard activation (detail === 0) and a plain single click (detail === 1)
+  // both fall through.
+  if (event.detail > 1) return;
+
   if (event.ctrlKey || event.metaKey) {
     store.toggleSelected(id);
     return;
