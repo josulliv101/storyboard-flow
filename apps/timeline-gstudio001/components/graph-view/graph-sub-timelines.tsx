@@ -28,7 +28,7 @@ import {
   GraphGridPlayhead,
   GraphPlayhead,
   GraphRuler,
-  GraphSeekRail,
+  GraphSeekRails,
   PlayheadScrubBand,
   collectionCardWidth,
   usePreviewCardSpans,
@@ -230,19 +230,12 @@ function SubTimelineNode({
         >
           {surface === "grid" ? (
             // Grid mode now accepts native drops too (a NativeDropGrid),
-            // matching the strip. Scrubbing is this row's SEEK RAIL — its
-            // window sits inside the shared clock, so pressing it SUMMONS
-            // the playhead into this timeline; cards keep every pointerdown
-            // and the in-grid line is a passive indicator.
-            <div className="flex min-w-0 flex-col gap-1.5">
-              {showPlayhead && (
-                <GraphSeekRail
-                  focusedId={id}
-                  channel={timeChannel}
-                  pixelsPerSecond={pixelsPerSecond}
-                  ariaLabel={`Seek preview in ${name}`}
-                />
-              )}
+            // matching the strip. Scrubbing is this timeline's per-row SEEK
+            // RAILS layer — its windows sit inside the shared clock, so
+            // pressing a rail SUMMONS the playhead into this timeline;
+            // cards keep every pointerdown and the in-grid line is a
+            // passive indicator.
+            <div className="relative min-w-0">
               <NativeDropGrid collectionId={id}>
                 <VirtualGrid
                   collectionId={collectionId}
@@ -264,6 +257,15 @@ function SubTimelineNode({
                   className="bg-black/20"
                 />
               </NativeDropGrid>
+              {showPlayhead && (
+                <GraphSeekRails
+                  focusedId={id}
+                  channel={timeChannel}
+                  cellHeight={dims.gridHeight}
+                  pixelsPerSecond={pixelsPerSecond}
+                  ariaLabel={`Seek preview in ${name}`}
+                />
+              )}
             </div>
           ) : (
             <NativeDropStrip collectionId={id}>

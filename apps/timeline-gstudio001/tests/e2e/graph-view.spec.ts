@@ -1248,42 +1248,80 @@ test.describe("graph view E2E", () => {
         return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: 0, y: 0 };
       });
 
-    // ONE scrub control: the seek rail above the grid — a real slider with
-    // clip-boundary ticks. Cards own all their pixels (the old full-cover
-    // surface ate every pointerdown — R7 #5/#6/#7); the in-grid line is a
-    // passive indicator of the rail's position.
-    const rail = page.getByRole("slider", { name: "Seek preview" });
-    await expect(rail).toBeVisible();
-    await expect(rail.locator("span")).toHaveCount(3); // 4 clips → 3 boundary ticks
+    // The scrub control: one seek rail PER ROW, each in the gap above its
+    // row, mapping exactly that row's cells — so the thumb rides in
+    // lockstep above the playhead line on EVERY row of a multi-row grid.
+    // Cards own all their pixels (the old full-cover surface ate every
+    // pointerdown — R7 #5/#6/#7); the line is a passive indicator.
+    const rows = Math.ceil(4 / cols);
+    expect(rows).toBeGreaterThanOrEqual(2); // multi-row is the case under test
+    const rails = page.locator("[data-graph-seek-rail]");
+    await expect(rails).toHaveCount(rows);
+    const rail0 = page.getByRole("slider", { name: "Seek preview, row 1" });
+    const lastRail = page.getByRole("slider", { name: `Seek preview, row ${rows}` });
+    await expect(rail0).toBeVisible();
 
-    // Press near the rail's start → the line lands on row 0; drag along the
-    // rail toward the end → time crosses into the later clips and the LINE
-    // CHANGES ROWS, no gesture on the grid itself.
-    await rail.hover({ position: { x: 30, y: 5 } });
+    // Each rail spans exactly ITS row's cells: row 0 is full (cols cells),
+    // the LAST row holds the remainder. Measure lands async
+    // (ResizeObserver + MutationObserver), hence polls.
+    const cellW = Number(await grid.getAttribute("data-grid-cell-width"));
+    const lastRowCells = 4 - cols * (rows - 1);
+    await expect
+      .poll(async () => (await rail0.boundingBox())!.width)
+      .toBeCloseTo(cols * (cellW + 8) - 8, 0);
+    await expect
+      .poll(async () => (await lastRail.boundingBox())!.width)
+      .toBeCloseTo(lastRowCells * (cellW + 8) - 8, 0);
+
+    // Press row 0's rail → the line lands on row 0, thumb IN LOCKSTEP
+    // directly above it (same content x — the whole point of per-row
+    // rails); the last row's rail shows no thumb (time is not inside it).
+    await rail0.hover({ position: { x: 30, y: 4 } });
     await page.mouse.down();
-    await expect.poll(async () => (await translate()).y).toBeLessThan(52); // row 0
-    const railBox = (await rail.boundingBox())!;
-    await page.mouse.move(railBox.x + railBox.width * 0.9, railBox.y + 5, { steps: 8 });
     await page.mouse.up();
-    await expect.poll(async () => (await translate()).y).toBeGreaterThan(80); // a later row
+    await expect.poll(async () => (await translate()).y).toBeLessThan(52); // row 0
+    const thumbOf = (rail: Locator) => rail.locator("div").last();
+    const lockstep = async () => {
+      const thumb = (await thumbOf(rail0).boundingBox())!;
+      const line = (await playhead.boundingBox())!;
+      return Math.abs(thumb.x + thumb.width / 2 - (line.x + 1));
+    };
+    await expect.poll(lockstep).toBeLessThanOrEqual(2);
+    await expect(thumbOf(lastRail)).not.toBeVisible(); // parked rows sit empty
 
-    // The rail owns the whole gesture: nothing on the grid got selected.
+    // Press the LAST row's rail → the playhead SUMMONS into that row and
+    // the thumbs swap; still nothing on the grid got selected.
+    const lastBox = (await lastRail.boundingBox())!;
+    await page.mouse.click(lastBox.x + lastBox.width / 2, lastBox.y + 4);
+    await expect.poll(async () => (await translate()).y).toBeGreaterThan(80);
+    await expect(thumbOf(lastRail)).toBeVisible();
+    await expect(thumbOf(rail0)).not.toBeVisible();
     await expect(grid.locator('[data-selected="true"]')).toHaveCount(0);
 
-    // KEYBOARD: the rail is a slider — Home rewinds, arrows nudge by a
-    // second, End jumps to the tail. aria-valuenow tracks the clock.
-    const valueNow = () => rail.evaluate((el) => Number(el.getAttribute("aria-valuenow")));
-    await rail.focus();
+    // Ticks sit on REAL cell edges: pressing row 0's first tick parks the
+    // line exactly at the second clip's cell origin, whatever that clip's
+    // duration. (Float coordinates on purpose: an integer-rounded press can
+    // slip off the 8px gap the tick centres on.) Row 0 has interior ticks
+    // only when it holds more than one cell.
+    if (cols > 1) {
+      const tickBox = (await rail0.locator("span").first().boundingBox())!;
+      await page.mouse.click(tickBox.x + tickBox.width / 2, tickBox.y + 3);
+      await expect.poll(async () => (await translate()).x).toBeCloseTo(cellW + 8, 0);
+      expect((await translate()).y).toBeCloseTo(0, 0);
+    }
+
+    // KEYBOARD: each rail is a slider over ITS row's time window — Home
+    // rewinds the row, arrows nudge by a second, End jumps to the row's
+    // tail. aria-valuenow tracks the clock, row-relative.
+    const valueNow = () => rail0.evaluate((el) => Number(el.getAttribute("aria-valuenow")));
+    await rail0.focus();
     await page.keyboard.press("Home");
     await expect.poll(valueNow).toBe(0);
     await expect.poll(async () => (await translate()).x).toBeLessThan(5); // line rewound too
+    const max = await rail0.evaluate((el) => Number(el.getAttribute("aria-valuemax")));
     await page.keyboard.press("ArrowRight");
-    await page.keyboard.press("ArrowRight");
-    await expect.poll(valueNow).toBe(2);
-    await page.keyboard.press("ArrowLeft");
-    await expect.poll(valueNow).toBe(1);
+    await expect.poll(valueNow).toBe(Math.min(1, max));
     await page.keyboard.press("End");
-    const max = await rail.evaluate((el) => Number(el.getAttribute("aria-valuemax")));
     await expect.poll(valueNow).toBe(max);
 
     // Grids are CONTENT-HEIGHT (the `height` prop is only a max): every row

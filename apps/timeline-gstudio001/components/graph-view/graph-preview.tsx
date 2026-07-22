@@ -547,112 +547,116 @@ export function GraphGridPlayhead({
   );
 }
 
-/** Keyboard step for the seek rail: one nudge per arrow press. */
+/** Keyboard step for the seek rails: one nudge per arrow press. */
 const SEEK_RAIL_STEP_SECONDS = 1;
 
+type SeekRailGeometry = Readonly<{
+  columns: number;
+  cellWidth: number;
+  /** The grid CONTENT origin relative to the rails' own root. */
+  left: number;
+  top: number;
+}>;
+
 /**
- * The grid's one scrub control: a slim seek bar above the grid — the
- * universal video-player idiom, so it needs no explanation. Pointer: press
- * or drag anywhere on the rail (pointer capture keeps the drag smooth past
- * its edges). Keyboard: it is a real `role="slider"` — Tab reaches it,
- * arrows nudge by a second, Home/End jump to the ends. Clip boundaries show
- * as faint ticks.
+ * One row's seek rail: a slim slider lying in the gap directly above its
+ * row of cells, mapping EXACTLY that row's cell geometry — so the thumb
+ * rides in lockstep above the in-grid playhead line whenever the time is
+ * inside this row, and the boundary ticks sit on the real cell edges
+ * below. Rows other than the one containing the current time render an
+ * empty track (no thumb/fill); pressing one summons the playhead into it.
  *
- * The rail maps its width LINEARLY over the timeline's clock window
- * ([first card start, last card end] of `childSpans` — the focused grid
- * starts at 0; a sub-timeline's window sits inside the shared global clock,
- * so its rail both summons the playhead into that row and scrubs it). The
- * in-grid line (`GraphGridPlayhead`) is a passive twin reading the same
- * channel. Cards are untouched: click selects, hold drags, the folder
- * button drills.
- *
- * Renders as a normal sibling ABOVE the grid — not in the aria-hidden
- * overlay (it is focusable) and not covering any card pixels.
+ * Pointer: press/drag anywhere (pointer capture keeps the drag smooth).
+ * Keyboard: a real `role="slider"` scoped to this row's time window —
+ * arrows nudge by a second, Home/End jump to the row's ends.
  */
-export function GraphSeekRail({
-  focusedId,
+function SeekRailRow({
+  rowCards,
+  isLastRow,
+  cellWidth,
+  x,
+  y,
   channel,
-  pixelsPerSecond,
-  ariaLabel = "Seek preview",
+  ariaLabel,
+  rowIndex,
 }: Readonly<{
-  focusedId: string;
+  rowCards: readonly ChildSpan[];
+  isLastRow: boolean;
+  cellWidth: number;
+  x: number;
+  y: number;
   channel: PreviewTimeChannel;
-  pixelsPerSecond: number;
-  ariaLabel?: string;
+  ariaLabel: string;
+  rowIndex: number;
 }>) {
-  const store = useCollectionsStore();
-  const detailsStore = useGraphDetailsStore();
-  const spans = useContext(PreviewCardSpansContext);
   const railRef = useRef<HTMLDivElement>(null);
   const fillRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<HTMLDivElement>(null);
   const pointerIdRef = useRef<number | null>(null);
 
-  const graph = useSyncExternalStore(
-    store.subscribe,
-    () => store.getSnapshot().graph,
-    () => store.getSnapshot().graph,
+  const cells = rowCards.length;
+  const pitch = cellWidth + GRID_GAP;
+  const extent = Math.max(1, cells * pitch - GRID_GAP);
+  const rowStart = rowCards[0].startTime;
+  const rowEnd = rowCards[cells - 1].endTime;
+  // The row's own piecewise map: its cells laid in one line — which they
+  // already are — so fraction·extent IS the in-grid x of the line.
+  const map = useMemo(
+    () => buildGridPlayheadMap(rowCards, cells, cellWidth, 1),
+    [rowCards, cells, cellWidth],
   );
-  const details = useSyncExternalStore(
-    detailsStore.subscribe,
-    () => detailsStore.read(),
-    () => detailsStore.read(),
-  );
-  const { start, end, boundaries } = useMemo(() => {
-    const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
-    if (cards.length === 0) return { start: 0, end: 0, boundaries: [] as number[] };
-    const first = cards[0].startTime;
-    const last = cards[cards.length - 1].endTime;
-    const span = Math.max(last - first, 1e-6);
-    // Interior clip boundaries as fractions of the rail (the outer edges ARE
-    // the rail's ends).
-    return {
-      start: first,
-      end: last,
-      boundaries: cards.slice(1).map((card) => (card.startTime - first) / span),
-    };
-  }, [graph, details, spans, focusedId, pixelsPerSecond]);
 
   // Thumb/fill/aria track the channel imperatively — time moves at pointer
-  // rate during a scrub, which is no reason to re-render the rail.
+  // rate during a scrub, no reason to re-render. Deps cover everything the
+  // closure reads, so map/window changes re-subscribe fresh.
   useEffect(() => {
     const rail = railRef.current;
     const fill = fillRef.current;
     const thumb = thumbRef.current;
     if (!rail || !fill || !thumb) return;
     const paint = () => {
-      const span = Math.max(end - start, 1e-6);
-      const fraction = Math.min(1, Math.max(0, (channel.get() - start) / span));
+      const time = channel.get();
+      // A time exactly on a row boundary belongs to the NEXT row (its
+      // cell's start), except the very end of the last row.
+      const active = time >= rowStart && (isLastRow ? time <= rowEnd : time < rowEnd);
+      fill.style.visibility = active ? "" : "hidden";
+      thumb.style.visibility = active ? "" : "hidden";
+      const clamped = Math.min(rowEnd, Math.max(rowStart, time));
+      const fraction = Math.min(1, Math.max(0, map.posAt(clamped).x / extent));
       fill.style.width = `${fraction * 100}%`;
       thumb.style.left = `${fraction * 100}%`;
-      rail.setAttribute("aria-valuenow", (fraction * (end - start)).toFixed(1));
+      rail.setAttribute("aria-valuenow", (clamped - rowStart).toFixed(1));
       rail.setAttribute(
         "aria-valuetext",
-        `${(fraction * (end - start)).toFixed(1)} of ${(end - start).toFixed(1)} seconds`,
+        `${(clamped - rowStart).toFixed(1)} of ${(rowEnd - rowStart).toFixed(1)} seconds`,
       );
     };
     paint();
     return channel.subscribe(paint);
-  }, [channel, start, end]);
+  }, [channel, map, extent, rowStart, rowEnd, isLastRow]);
 
   const seekToPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     const rail = railRef.current;
     if (!rail) return;
     const rect = rail.getBoundingClientRect();
-    const fraction = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
-    channel.set(start + fraction * (end - start));
+    const fraction = Math.min(
+      1,
+      Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)),
+    );
+    channel.set(map.timeAt(fraction * extent, 0));
   };
 
   return (
     <div
       ref={railRef}
       data-graph-seek-rail
+      data-row={rowIndex}
       role="slider"
       tabIndex={0}
       aria-label={ariaLabel}
       aria-orientation="horizontal"
       aria-valuemin={0}
-      aria-valuemax={Number((end - start).toFixed(1))}
+      aria-valuemax={Number((rowEnd - rowStart).toFixed(1))}
       aria-valuenow={0}
       title="Drag to preview"
       onPointerDown={(event) => {
@@ -678,21 +682,22 @@ export function GraphSeekRail({
       }}
       onKeyDown={(event) => {
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-        const current = channel.get();
+        const base = Math.min(rowEnd, Math.max(rowStart, channel.get()));
         if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
-          channel.set(Math.max(start, current - SEEK_RAIL_STEP_SECONDS));
+          channel.set(Math.max(rowStart, base - SEEK_RAIL_STEP_SECONDS));
         } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
-          channel.set(Math.min(end, current + SEEK_RAIL_STEP_SECONDS));
+          channel.set(Math.min(rowEnd, base + SEEK_RAIL_STEP_SECONDS));
         } else if (event.key === "Home") {
-          channel.set(start);
+          channel.set(rowStart);
         } else if (event.key === "End") {
-          channel.set(end);
+          channel.set(rowEnd);
         } else {
           return;
         }
         event.preventDefault();
       }}
-      className="group relative h-2.5 w-full cursor-ew-resize touch-none rounded-full bg-zinc-800/80 ring-1 ring-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      className="group pointer-events-auto absolute cursor-ew-resize touch-none rounded-full bg-zinc-800/80 ring-1 ring-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      style={{ left: x, top: y, width: extent, height: GRID_GAP }}
     >
       {/* Elapsed fill, then boundary ticks, then the thumb on top. */}
       <div
@@ -700,19 +705,156 @@ export function GraphSeekRail({
         aria-hidden="true"
         className="absolute inset-y-0 left-0 rounded-full bg-red-500/25"
       />
-      {boundaries.map((fraction, index) => (
+      {rowCards.slice(1).map((_, index) => (
         <span
           key={index}
           aria-hidden="true"
           className="absolute inset-y-0 w-px bg-white/25"
-          style={{ left: `${fraction * 100}%` }}
+          style={{ left: `${(((index + 1) * pitch - GRID_GAP / 2) / extent) * 100}%` }}
         />
       ))}
       <div
         ref={thumbRef}
         aria-hidden="true"
-        className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
+        className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
       />
+    </div>
+  );
+}
+
+/**
+ * The grid's scrub control: one slim seek rail PER ROW (the video-player
+ * idiom, one lane at a time), each lying in the 8px gap above its row —
+ * row 0's rides the grid's own top padding, so nothing shifts when the
+ * preview toggles. Per-row rails are what keep the thumb positionally in
+ * lockstep with the in-grid playhead line on EVERY row of a multi-row
+ * grid; a single bar over the grid could only ever align with row 0.
+ *
+ * Renders as an absolutely-positioned layer over the grid (a sibling, NOT
+ * inside the aria-hidden overlay — rails are focusable) with pointer
+ * events off everywhere except the rails themselves, so cards keep every
+ * gesture: click selects, hold drags, the folder button drills.
+ *
+ * Geometry comes from the sibling grid's dataset (live column count and
+ * exact rendered cell width) plus its border+padding, observed by BOTH a
+ * ResizeObserver and a MutationObserver — resize alone settles one layout
+ * stale, because it fires before VirtualGrid commits the fresh dataset
+ * (React renders a frame later).
+ */
+export function GraphSeekRails({
+  focusedId,
+  channel,
+  cellHeight,
+  pixelsPerSecond,
+  ariaLabel = "Seek preview",
+}: Readonly<{
+  focusedId: string;
+  channel: PreviewTimeChannel;
+  cellHeight: number;
+  pixelsPerSecond: number;
+  ariaLabel?: string;
+}>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const graph = useSyncExternalStore(
+    store.subscribe,
+    () => store.getSnapshot().graph,
+    () => store.getSnapshot().graph,
+  );
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    () => detailsStore.read(),
+    () => detailsStore.read(),
+  );
+  const cards = useMemo(
+    () => childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
+    [graph, details, spans, focusedId, pixelsPerSecond],
+  );
+  const cardCount = cards.length;
+
+  const [geometry, setGeometry] = useState<SeekRailGeometry | null>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const grid = root.parentElement?.querySelector<HTMLElement>("[data-virtual-grid]");
+    if (!grid) return;
+    const update = () => {
+      const columns = Number(grid.dataset.gridColumns) || 0;
+      const cellWidth = Number(grid.dataset.gridCellWidth) || 0;
+      if (columns <= 0 || cellWidth <= 0) {
+        setGeometry(null);
+        return;
+      }
+      const styles = getComputedStyle(grid);
+      const rootRect = root.getBoundingClientRect();
+      const gridRect = grid.getBoundingClientRect();
+      const left =
+        gridRect.left -
+        rootRect.left +
+        parseFloat(styles.borderLeftWidth) +
+        parseFloat(styles.paddingLeft);
+      const top =
+        gridRect.top -
+        rootRect.top +
+        parseFloat(styles.borderTopWidth) +
+        parseFloat(styles.paddingTop);
+      setGeometry((previous) =>
+        previous &&
+        previous.columns === columns &&
+        previous.cellWidth === cellWidth &&
+        previous.left === left &&
+        previous.top === top
+          ? previous
+          : { columns, cellWidth, left, top },
+      );
+    };
+    update();
+    const resizes = new ResizeObserver(update);
+    resizes.observe(grid);
+    const mutations = new MutationObserver(update);
+    mutations.observe(grid, {
+      attributes: true,
+      attributeFilter: ["data-grid-cell-width", "data-grid-columns"],
+    });
+    return () => {
+      resizes.disconnect();
+      mutations.disconnect();
+    };
+  }, [cardCount]);
+
+  const rows = useMemo(() => {
+    if (!geometry || cardCount === 0) return [] as (readonly ChildSpan[])[];
+    const out: (readonly ChildSpan[])[] = [];
+    for (let index = 0; index < cardCount; index += geometry.columns) {
+      out.push(cards.slice(index, index + geometry.columns));
+    }
+    return out;
+  }, [cards, cardCount, geometry]);
+
+  if (!geometry || rows.length === 0) {
+    // Pre-measure (or empty timeline): nothing to place yet — the observer
+    // pass lands within a frame of the grid reporting its layout.
+    return <div ref={rootRef} className="pointer-events-none absolute inset-0" />;
+  }
+
+  return (
+    <div ref={rootRef} data-graph-seek-rails className="pointer-events-none absolute inset-0 z-20">
+      {rows.map((rowCards, row) => (
+        <SeekRailRow
+          key={row}
+          rowCards={rowCards}
+          isLastRow={row === rows.length - 1}
+          cellWidth={geometry.cellWidth}
+          x={geometry.left}
+          y={geometry.top + row * (cellHeight + GRID_GAP) - GRID_GAP}
+          channel={channel}
+          rowIndex={row}
+          ariaLabel={rows.length > 1 ? `${ariaLabel}, row ${row + 1}` : ariaLabel}
+        />
+      ))}
     </div>
   );
 }

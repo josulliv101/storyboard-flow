@@ -41,7 +41,7 @@ import {
   GraphGridPlayhead,
   GraphPlayhead,
   GraphRuler,
-  GraphSeekRail,
+  GraphSeekRails,
   PlayheadScrubBand,
   PreviewShell,
   collectionCardWidth,
@@ -417,21 +417,15 @@ export function GraphBoard({
               )}
             </NativeDropStrip>
           ) : (
-            // Grid scrubbing is the SEEK RAIL above the grid — one slim,
-            // always-visible slider (the video-player idiom), so cards keep
+            // Grid scrubbing is the per-row SEEK RAILS layer — one slim
+            // slider in the gap above each row (the video-player idiom, in
+            // lockstep with the playhead line on every row), so cards keep
             // every pointerdown (the old full-cover surface ate them all —
             // R7 #5/#6/#7) and the in-grid playhead line stays a passive
-            // indicator. The rail sits OUTSIDE NativeDropGrid: its drop
-            // math measures its own wrapper, and the rail is not a drop
-            // surface.
-            <div className="flex flex-col gap-1.5">
-              {previewOn && (
-                <GraphSeekRail
-                  focusedId={focusedId}
-                  channel={timeChannel}
-                  pixelsPerSecond={deferredPixelsPerSecond}
-                />
-              )}
+            // indicator. The layer overlays the grid as a SIBLING (outside
+            // NativeDropGrid, whose drop math measures its own wrapper, and
+            // outside the aria-hidden overlay — rails are focusable).
+            <div className="relative">
               <NativeDropGrid collectionId={focusedId}>
                 <VirtualGrid
                   collectionId={parseNodeId(focusedId)}
@@ -457,6 +451,14 @@ export function GraphBoard({
                   className="bg-black/25"
                 />
               </NativeDropGrid>
+              {previewOn && (
+                <GraphSeekRails
+                  focusedId={focusedId}
+                  channel={timeChannel}
+                  cellHeight={dims.gridHeight}
+                  pixelsPerSecond={deferredPixelsPerSecond}
+                />
+              )}
             </div>
           )}
 
