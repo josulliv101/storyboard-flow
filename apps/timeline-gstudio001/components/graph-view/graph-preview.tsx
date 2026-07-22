@@ -182,14 +182,14 @@ export function GraphPlayhead({
     };
   }, [store, detailsStore, focusedId, channel, spans, pixelsPerSecond, activeWindow]);
 
+  // No cap on the line: the seek rail's circular thumb above IS the
+  // playhead's head now — the old triangle poked up over it.
   return (
     <div
       ref={lineRef}
       data-graph-playhead
       className="absolute inset-y-0 left-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
-    >
-      <div className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500" />
-    </div>
+    />
   );
 }
 
@@ -448,15 +448,14 @@ export function GraphGridPlayhead({
 
   // PASSIVE indicator: all scrubbing lives on the GraphSeekRail above the
   // grid (one obvious control), so the line paints position and takes no
-  // pointer — cards keep every gesture underneath it.
+  // pointer — cards keep every gesture underneath it. No cap on the line:
+  // the row rail's circular thumb above IS the head (same as the strip's).
   return (
     <div
       ref={lineRef}
       data-graph-grid-playhead
       className="absolute left-0 top-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
-    >
-      <div className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500" />
-    </div>
+    />
   );
 }
 
@@ -629,7 +628,7 @@ function SeekRailRow({
         ref={fillRef}
         data-rail-fill
         aria-hidden="true"
-        className="absolute inset-y-0 left-0 rounded-full bg-red-500/40"
+        className="absolute inset-y-0 left-0 rounded-full bg-sky-400/40"
       />
       {rowCards.slice(1).map((_, index) => (
         <span
@@ -1108,7 +1107,7 @@ export function GraphStripSeekRail({
           ref={fillRef}
           data-rail-fill
           aria-hidden="true"
-          className="absolute inset-y-0 left-0 rounded-full bg-red-500/40"
+          className="absolute inset-y-0 left-0 rounded-full bg-sky-400/40"
         />
         {ticks.map((x, index) => (
           <span

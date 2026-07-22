@@ -1168,7 +1168,7 @@ test.describe("graph view E2E", () => {
     await expect(redoButton(page)).toBeDisabled();
   });
 
-  test("preview mode: playhead with triangle cap, drag-to-scrub, no layout blowout", async ({
+  test("preview mode: capless playhead line, drag-to-scrub, no layout blowout", async ({
     page,
   }) => {
     await installGraphApi(page);
@@ -1182,11 +1182,12 @@ test.describe("graph view E2E", () => {
       "manifest",
     );
 
-    // Playhead visuals ride the strip's presentational overlay; the triangle
-    // cap is a zero-size bordered div (attached, not "visible").
+    // Playhead visuals ride the strip's presentational overlay. The line is
+    // a bare stem — no cap children: the seek rail's circular thumb above
+    // is the playhead's head.
     const playhead = page.locator("[data-graph-playhead]");
     await expect(playhead).toBeVisible();
-    await expect(playhead.locator("div")).toHaveCount(1);
+    await expect(playhead.locator("div")).toHaveCount(0);
 
     // The preview pane must not blow the page out horizontally (the
     // minmax(0,1fr) grid-track regression).
