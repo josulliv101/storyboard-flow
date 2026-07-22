@@ -1214,6 +1214,13 @@ test.describe("graph view E2E", () => {
       Math.abs(stripThumbBox.x + stripThumbBox.width / 2 - (lineBox.x + 1)),
     ).toBeLessThanOrEqual(2);
 
+    // And STRIP media cards inset their artwork like the grid's (~6px
+    // frame) — full-bleed pressed the pixels into the rail here too.
+    const stripMedia = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const stripImgBox = (await stripMedia.locator("img").first().boundingBox())!;
+    const stripCardBox = (await stripMedia.boundingBox())!;
+    expect(stripImgBox.y - stripCardBox.y).toBeGreaterThanOrEqual(5);
+
     // Drill-in RESETS the persistent preview clock: the layout (and with it
     // the time channel) survives navigation, but a different focused
     // timeline is a different clock — without the reset the transport would
@@ -1429,9 +1436,9 @@ test.describe("graph view E2E", () => {
 
     // With the surface gone the cards OWN their pixels again, preview on:
 
-    // Media cards in the GRID inset their artwork like collection cards do
-    // (~6px frame), so both card kinds read as the same height and the
-    // artwork stays clear of the rail above. (The strip keeps full-bleed.)
+    // Media cards inset their artwork like collection cards do (~6px
+    // frame, BOTH surfaces), so both card kinds read as the same height
+    // and the artwork stays clear of the rail above.
     const alpha = grid.locator('[data-node-id="alpha"]');
     const alphaImgBox = (await alpha.locator("img").first().boundingBox())!;
     const alphaBox = (await alpha.boundingBox())!;

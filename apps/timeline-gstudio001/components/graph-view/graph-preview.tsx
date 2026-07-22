@@ -1083,20 +1083,27 @@ export function GraphStripSeekRail({
         revealTime(next);
         event.preventDefault();
       }}
-      className="group absolute z-20 cursor-ew-resize touch-none overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      // The OUTER element wears the grid rail's exact chrome (rounded pill,
+      // solid track, groove, ring) so both surfaces read as one control —
+      // the window IS the visible track, and it ends at the LAST item when
+      // the timeline fits (min with the extent, exactly like a grid rail).
+      // When the timeline overflows, the pill spans the viewport and the
+      // content layer slides inside it.
+      className="group absolute z-20 cursor-ew-resize touch-none overflow-hidden rounded-full bg-zinc-700 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-white/25 transition-shadow hover:ring-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
       style={
         geometry
-          ? { left: geometry.left, top: geometry.top, width: geometry.width, height: 8 }
+          ? {
+              left: geometry.left,
+              top: geometry.top,
+              width: Math.min(extent, geometry.width),
+              height: 8,
+            }
           : { left: 9, top: 1, right: 9, height: 8 }
       }
     >
-      {/* Content-space strip: as wide as the timeline, translated against
-          the scroller so everything stays glued to its card. */}
-      <div
-        ref={innerRef}
-        className="relative h-full rounded-full bg-zinc-700 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-white/25 transition-shadow group-hover:ring-white/40"
-        style={{ width: extent }}
-      >
+      {/* Content-space layer: as wide as the timeline, translated against
+          the scroller so fill, ticks and thumb stay glued to their cards. */}
+      <div ref={innerRef} className="relative h-full" style={{ width: extent }}>
         <div
           ref={fillRef}
           data-rail-fill
