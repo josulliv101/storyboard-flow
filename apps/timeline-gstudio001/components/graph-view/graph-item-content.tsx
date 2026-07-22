@@ -257,13 +257,13 @@ const GraphClipContent = memo(function GraphClipContent({
     <span
       ref={cardSizeRef}
       className={[
-        "relative flex h-full w-full overflow-hidden rounded-md bg-zinc-900",
-        // GRID cells only: inset the artwork like the collection card does
-        // (its p-1.5 frame + label row keep its pixels off the cell edges),
+        // p-1.5 on BOTH surfaces: the artwork is inset like the collection
+        // card's (its frame + label row keep its pixels off the card edges),
         // so media and collections read as the SAME height and the artwork
-        // stays clear of the seek rail riding the gap above. The strip
-        // keeps its full-bleed filmstrip (width there IS duration).
-        "[[data-virtual-grid]_&]:p-1.5",
+        // stays clear of the seek rail riding above — the strip's rail has
+        // the identical adjacency, so full-bleed pressed into it there too.
+        // The card's outer box (and so width = duration) is unchanged.
+        "relative flex h-full w-full overflow-hidden rounded-md bg-zinc-900 p-1.5",
         selected ? "ring-2 ring-amber-400" : "ring-1 ring-white/15",
         rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
         isDragSource ? "opacity-40" : "",
@@ -274,7 +274,7 @@ const GraphClipContent = memo(function GraphClipContent({
           No preview
         </span>
       ) : (
-        <span className="flex h-full w-full [[data-virtual-grid]_&]:overflow-hidden [[data-virtual-grid]_&]:rounded-sm">
+        <span className="flex h-full w-full overflow-hidden rounded-sm">
           {frameSrcs.map((src, index) => (
             // eslint-disable-next-line @next/next/no-img-element
             <img

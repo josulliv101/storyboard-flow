@@ -280,11 +280,12 @@ export const FilmstripResampleSettles: Story = {
     // ResizeObserver + re-render, and well inside the settle delay)…
     host.style.width = "480px";
     await new Promise((resolve) => setTimeout(resolve, 80));
-    expect(previewImages(canvasElement).length).toBeLessThan(5);
+    expect(previewImages(canvasElement).length).toBeLessThan(6);
 
     // …and once the size holds still past the delay, ONE resample lands on
-    // the final count (480 / 96 = 5 frames).
-    await waitFor(() => expect(previewImages(canvasElement)).toHaveLength(5), {
+    // the final count. The measured contentRect excludes the card's p-1.5
+    // artwork frame: (480 − 12) / (96 − 12) ≈ 5.6 → 6 frames.
+    await waitFor(() => expect(previewImages(canvasElement)).toHaveLength(6), {
       timeout: 2000,
     });
   },
