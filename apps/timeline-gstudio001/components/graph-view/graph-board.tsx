@@ -42,7 +42,7 @@ import {
   GraphPlayhead,
   GraphRuler,
   GraphSeekRails,
-  PlayheadScrubBand,
+  GraphStripSeekRail,
   PreviewShell,
   collectionCardWidth,
   type PreviewTimeChannel,
@@ -408,8 +408,13 @@ export function GraphBoard({
                 }
                 className="bg-black/25"
               />
+              {/* The strip's scrub control — the same rail treatment as the
+                  grid's, riding the strip's top padding band and scrolling
+                  with the content; a drag held at the scroller's edge
+                  auto-pans to reveal more items mid-scrub. Replaces the old
+                  invisible PlayheadScrubBand. */}
               {previewOn && (
-                <PlayheadScrubBand
+                <GraphStripSeekRail
                   focusedId={focusedId}
                   channel={timeChannel}
                   pixelsPerSecond={deferredPixelsPerSecond}

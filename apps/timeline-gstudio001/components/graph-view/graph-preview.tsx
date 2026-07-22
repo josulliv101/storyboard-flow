@@ -37,6 +37,7 @@ import {
   nextManifestClipsState,
   nextManifestFailureCount,
   shouldRetryManifestFetch,
+  STRIP_GAP_PX,
   type ChildSpan,
   type GridPlayheadMap,
   type PlayheadMap,
@@ -367,95 +368,6 @@ export function GraphRuler({
   );
 }
 
-export function PlayheadScrubBand({
-  focusedId,
-  channel,
-  pixelsPerSecond,
-}: Readonly<{
-  focusedId: string;
-  channel: PreviewTimeChannel;
-  pixelsPerSecond: number;
-}>) {
-  const store = useCollectionsStore();
-  const detailsStore = useGraphDetailsStore();
-  const spans = useContext(PreviewCardSpansContext);
-  const bandRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const band = bandRef.current;
-    if (!band) return;
-    // The strip element IS its own scroll container, and [data-virtual-strip]
-    // is the package's documented selector contract — unlike the Tailwind
-    // class this used to query, which any restyle would silently break.
-    const scroller = band.parentElement?.querySelector<HTMLElement>("[data-virtual-strip]") ?? null;
-    if (!scroller) return;
-
-    let map: PlayheadMap | null = null;
-    let mapGraph: CollectionsGraph | null = null;
-    let mapDetails: DetailsById | null = null;
-    const seek = (event: PointerEvent) => {
-      const graph = store.getSnapshot().graph;
-      const details = detailsStore.read();
-      if (graph !== mapGraph || details !== mapDetails || !map) {
-        mapGraph = graph;
-        mapDetails = details;
-        map = buildPlayheadMap(childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)));
-      }
-      const rect = scroller.getBoundingClientRect();
-      const styles = getComputedStyle(scroller);
-      const contentX =
-        event.clientX -
-        rect.left -
-        parseFloat(styles.borderLeftWidth) -
-        parseFloat(styles.paddingLeft) +
-        scroller.scrollLeft;
-      channel.set(Math.max(0, Math.min(map.timeAt(contentX), map.totalDurationSeconds)));
-    };
-
-    let pointerId: number | null = null;
-    const handleMove = (event: PointerEvent) => {
-      if (event.pointerId === pointerId) seek(event);
-    };
-    const end = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      pointerId = null;
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-    };
-    const handleDown = (event: PointerEvent) => {
-      if (!event.isPrimary || event.button !== 0) return;
-      pointerId = event.pointerId;
-      try {
-        band.setPointerCapture(event.pointerId);
-      } catch {
-        // Synthetic pointer: window listeners still own the lifecycle.
-      }
-      seek(event);
-      window.addEventListener("pointermove", handleMove);
-      window.addEventListener("pointerup", end);
-      window.addEventListener("pointercancel", end);
-    };
-
-    band.addEventListener("pointerdown", handleDown);
-    return () => {
-      band.removeEventListener("pointerdown", handleDown);
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-    };
-  }, [store, detailsStore, focusedId, channel, spans, pixelsPerSecond]);
-
-  return (
-    <div
-      ref={bandRef}
-      data-playhead-scrub
-      aria-hidden="true"
-      className="absolute inset-x-0 top-0 z-10 h-3 cursor-ew-resize"
-    />
-  );
-}
-
 export function GraphGridPlayhead({
   focusedId,
   channel,
@@ -715,6 +627,7 @@ function SeekRailRow({
       {/* Elapsed fill, then boundary ticks, then the thumb on top. */}
       <div
         ref={fillRef}
+        data-rail-fill
         aria-hidden="true"
         className="absolute inset-y-0 left-0 rounded-full bg-red-500/40"
       />
@@ -732,6 +645,7 @@ function SeekRailRow({
           target anyway. */}
       <div
         ref={thumbRef}
+        data-rail-thumb
         aria-hidden="true"
         className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
       />
@@ -885,6 +799,327 @@ export function GraphSeekRails({
           ariaLabel={rows.length > 1 ? `${ariaLabel}, row ${row + 1}` : ariaLabel}
         />
       ))}
+    </div>
+  );
+}
+
+/** How close to the scroller's edge (px) a rail drag starts auto-panning,
+ *  and the fastest per-frame pan. Speed ramps with how deep into the edge
+ *  zone (or past it) the pointer sits. */
+const STRIP_RAIL_EDGE_PX = 32;
+const STRIP_RAIL_MAX_PAN_PER_FRAME_PX = 16;
+
+/**
+ * The strip's seek rail: the same treatment as the grid's per-row rails —
+ * a slim track in the strip's top padding band with fill, cell-boundary
+ * ticks and a thumb in exact lockstep with the playhead line — but in the
+ * STRIP's scrolling coordinate space: the rail's content is as wide as the
+ * timeline and translates with the scroller, so ticks and thumb stay glued
+ * to their cards.
+ *
+ * Because the timeline can be wider than the viewport, a drag that reaches
+ * the scroller's edge AUTO-PANS: a rAF loop scrolls the strip in that
+ * direction and re-seeks at the held pointer position each frame, so more
+ * items keep arriving under a stationary pointer mid-scrub (and the same
+ * leftward). Keyboard seeks pan the thumb back into view.
+ *
+ * Replaces the old invisible PlayheadScrubBand as the strip's scrub
+ * surface. Renders as a SIBLING of the strip (focusable, so it must not
+ * live in the aria-hidden overlay), viewport-fixed with a scroll-synced
+ * inner strip.
+ */
+export function GraphStripSeekRail({
+  focusedId,
+  channel,
+  pixelsPerSecond,
+  ariaLabel = "Seek preview",
+}: Readonly<{
+  focusedId: string;
+  channel: PreviewTimeChannel;
+  pixelsPerSecond: number;
+  ariaLabel?: string;
+}>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
+  const outerRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const fillRef = useRef<HTMLDivElement>(null);
+  const thumbRef = useRef<HTMLDivElement>(null);
+  const pointerIdRef = useRef<number | null>(null);
+  const lastClientXRef = useRef(0);
+  const panFrameRef = useRef<number | null>(null);
+
+  const graph = useSyncExternalStore(
+    store.subscribe,
+    () => store.getSnapshot().graph,
+    () => store.getSnapshot().graph,
+  );
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    () => detailsStore.read(),
+    () => detailsStore.read(),
+  );
+  const cards = useMemo(
+    () => childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
+    [graph, details, spans, focusedId, pixelsPerSecond],
+  );
+  const map = useMemo(() => buildPlayheadMap(cards), [cards]);
+  const start = cards.length > 0 ? cards[0].startTime : 0;
+  const end = cards.length > 0 ? cards[cards.length - 1].endTime : 0;
+  // The rail's content width ends at the LAST item's right edge, and the
+  // interior ticks sit at the gap centres between cards — the strip twin of
+  // the grid rails' cell-edge ticks.
+  const { extent, ticks } = useMemo(() => {
+    let cursor = 0;
+    const tickXs: number[] = [];
+    cards.forEach((card, index) => {
+      if (index > 0) tickXs.push(cursor - STRIP_GAP_PX / 2);
+      cursor += card.width + STRIP_GAP_PX;
+    });
+    return { extent: Math.max(1, cursor - STRIP_GAP_PX), ticks: tickXs };
+  }, [cards]);
+
+  // Window geometry over the scroller's padding band, measured like the
+  // grid rails' (ResizeObserver; the strip has no dataset race — the map is
+  // ours, not the virtualizer's).
+  const [geometry, setGeometry] = useState<Readonly<{
+    left: number;
+    top: number;
+    width: number;
+    padLeft: number;
+  }> | null>(null);
+  useEffect(() => {
+    const outer = outerRef.current;
+    if (!outer) return;
+    const wrapper = outer.parentElement;
+    const scroller = wrapper?.querySelector<HTMLElement>("[data-virtual-strip]");
+    if (!wrapper || !scroller) return;
+    const update = () => {
+      const styles = getComputedStyle(scroller);
+      const padLeft = parseFloat(styles.borderLeftWidth) + parseFloat(styles.paddingLeft);
+      const padRight = parseFloat(styles.borderRightWidth) + parseFloat(styles.paddingRight);
+      const scrollerRect = scroller.getBoundingClientRect();
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const left = scrollerRect.left - wrapperRect.left + padLeft;
+      const top =
+        scrollerRect.top - wrapperRect.top + parseFloat(styles.borderTopWidth);
+      const width = Math.max(0, scroller.clientWidth - padLeft - padRight + 1);
+      setGeometry((previous) =>
+        previous &&
+        previous.left === left &&
+        previous.top === top &&
+        previous.width === width &&
+        previous.padLeft === padLeft
+          ? previous
+          : { left, top, width, padLeft },
+      );
+    };
+    update();
+    const resizes = new ResizeObserver(update);
+    resizes.observe(scroller);
+    return () => resizes.disconnect();
+  }, [cards.length]);
+
+  // Scroll sync + paint, both imperative (scroll and time move at pointer
+  // rate). The inner strip translates against scrollLeft so its ticks,
+  // fill and thumb stay glued to the cards they mark.
+  useEffect(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    const fill = fillRef.current;
+    const thumb = thumbRef.current;
+    if (!outer || !inner || !fill || !thumb) return;
+    const scroller = outer.parentElement?.querySelector<HTMLElement>("[data-virtual-strip]");
+    if (!scroller) return;
+
+    const syncScroll = () => {
+      inner.style.transform = `translateX(${-scroller.scrollLeft}px)`;
+    };
+    const paint = () => {
+      const time = channel.get();
+      const active = time >= start && time <= end;
+      thumb.style.visibility = active ? "" : "hidden";
+      const clamped = Math.min(end, Math.max(start, time));
+      const x = map.xAt(clamped);
+      fill.style.width = `${x}px`;
+      thumb.style.left = `${x}px`;
+      outer.setAttribute("aria-valuenow", (clamped - start).toFixed(1));
+      outer.setAttribute(
+        "aria-valuetext",
+        `${(clamped - start).toFixed(1)} of ${(end - start).toFixed(1)} seconds`,
+      );
+    };
+    syncScroll();
+    paint();
+    const unsubscribe = channel.subscribe(paint);
+    scroller.addEventListener("scroll", syncScroll, { passive: true });
+    return () => {
+      unsubscribe();
+      scroller.removeEventListener("scroll", syncScroll);
+    };
+  }, [channel, map, start, end]);
+
+  const scrollerOf = (): HTMLElement | null =>
+    outerRef.current?.parentElement?.querySelector<HTMLElement>("[data-virtual-strip]") ?? null;
+
+  const seekAtClientX = (clientX: number) => {
+    const scroller = scrollerOf();
+    if (!scroller || !geometry) return;
+    const rect = scroller.getBoundingClientRect();
+    const contentX = clientX - rect.left - geometry.padLeft + scroller.scrollLeft;
+    channel.set(map.timeAt(Math.min(extent, Math.max(0, contentX))));
+  };
+
+  const stopPanLoop = () => {
+    if (panFrameRef.current !== null) cancelAnimationFrame(panFrameRef.current);
+    panFrameRef.current = null;
+  };
+  const startPanLoop = () => {
+    stopPanLoop();
+    const step = () => {
+      if (pointerIdRef.current === null) return;
+      const scroller = scrollerOf();
+      if (scroller) {
+        const rect = scroller.getBoundingClientRect();
+        const clientX = lastClientXRef.current;
+        const intoRight = clientX - (rect.right - STRIP_RAIL_EDGE_PX);
+        const intoLeft = rect.left + STRIP_RAIL_EDGE_PX - clientX;
+        let delta = 0;
+        if (intoRight > 0) {
+          delta = Math.min(STRIP_RAIL_MAX_PAN_PER_FRAME_PX, intoRight * 0.4);
+        } else if (intoLeft > 0) {
+          delta = -Math.min(STRIP_RAIL_MAX_PAN_PER_FRAME_PX, intoLeft * 0.4);
+        }
+        if (delta !== 0) {
+          const before = scroller.scrollLeft;
+          scroller.scrollLeft = before + delta;
+          // Content moved under the (possibly stationary) pointer — the
+          // scrub must keep following it, which is the whole point of
+          // panning mid-drag.
+          if (scroller.scrollLeft !== before) seekAtClientX(clientX);
+        }
+      }
+      panFrameRef.current = requestAnimationFrame(step);
+    };
+    panFrameRef.current = requestAnimationFrame(step);
+  };
+
+  /** Keyboard seeks pan the thumb back into view (the pointer path pans by
+   *  edge-holding instead). */
+  const revealTime = (time: number) => {
+    const scroller = scrollerOf();
+    if (!scroller || !geometry) return;
+    const x = map.xAt(time);
+    const viewWidth = scroller.clientWidth - geometry.padLeft * 2;
+    if (x < scroller.scrollLeft + 24) {
+      scroller.scrollLeft = Math.max(0, x - 24);
+    } else if (x > scroller.scrollLeft + viewWidth - 24) {
+      scroller.scrollLeft = x - viewWidth + 24;
+    }
+  };
+
+  if (cards.length === 0) return null;
+
+  return (
+    <div
+      ref={outerRef}
+      data-graph-seek-rail
+      data-strip-rail
+      role="slider"
+      tabIndex={0}
+      aria-label={ariaLabel}
+      aria-orientation="horizontal"
+      aria-valuemin={0}
+      aria-valuemax={Number((end - start).toFixed(1))}
+      aria-valuenow={0}
+      title="Drag to preview"
+      onPointerDown={(event) => {
+        if (!event.isPrimary || event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        pointerIdRef.current = event.pointerId;
+        lastClientXRef.current = event.clientX;
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // Synthetic pointer without capture support: moves still arrive
+          // while the pointer stays over the rail, which tests rely on.
+        }
+        seekAtClientX(event.clientX);
+        startPanLoop();
+      }}
+      onPointerMove={(event) => {
+        if (event.pointerId !== pointerIdRef.current) return;
+        lastClientXRef.current = event.clientX;
+        seekAtClientX(event.clientX);
+      }}
+      onPointerUp={(event) => {
+        if (event.pointerId !== pointerIdRef.current) return;
+        pointerIdRef.current = null;
+        stopPanLoop();
+      }}
+      onPointerCancel={(event) => {
+        if (event.pointerId !== pointerIdRef.current) return;
+        pointerIdRef.current = null;
+        stopPanLoop();
+      }}
+      onKeyDown={(event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        const base = Math.min(end, Math.max(start, channel.get()));
+        let next: number;
+        if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+          next = Math.max(start, base - SEEK_RAIL_STEP_SECONDS);
+        } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+          next = Math.min(end, base + SEEK_RAIL_STEP_SECONDS);
+        } else if (event.key === "Home") {
+          next = start;
+        } else if (event.key === "End") {
+          next = end;
+        } else {
+          return;
+        }
+        channel.set(next);
+        revealTime(next);
+        event.preventDefault();
+      }}
+      className="group absolute z-20 cursor-ew-resize touch-none overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      style={
+        geometry
+          ? { left: geometry.left, top: geometry.top, width: geometry.width, height: 8 }
+          : { left: 9, top: 1, right: 9, height: 8 }
+      }
+    >
+      {/* Content-space strip: as wide as the timeline, translated against
+          the scroller so everything stays glued to its card. */}
+      <div
+        ref={innerRef}
+        className="relative h-full rounded-full bg-zinc-700 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-white/25 transition-shadow group-hover:ring-white/40"
+        style={{ width: extent }}
+      >
+        <div
+          ref={fillRef}
+          data-rail-fill
+          aria-hidden="true"
+          className="absolute inset-y-0 left-0 rounded-full bg-red-500/40"
+        />
+        {ticks.map((x, index) => (
+          <span
+            key={index}
+            aria-hidden="true"
+            className="absolute inset-y-0 w-px bg-white/30"
+            style={{ left: x }}
+          />
+        ))}
+        {/* h-2.5 like the grid rails: 1px of kiss past the 8px band, no
+            overhang onto the cards. */}
+        <div
+          ref={thumbRef}
+          data-rail-thumb
+          aria-hidden="true"
+          className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
+        />
+      </div>
     </div>
   );
 }

@@ -29,7 +29,7 @@ import {
   GraphPlayhead,
   GraphRuler,
   GraphSeekRails,
-  PlayheadScrubBand,
+  GraphStripSeekRail,
   collectionCardWidth,
   usePreviewCardSpans,
   type PreviewTimeChannel,
@@ -295,10 +295,11 @@ function SubTimelineNode({
                 className="bg-black/20"
               />
               {showPlayhead && (
-                <PlayheadScrubBand
+                <GraphStripSeekRail
                   focusedId={id}
                   channel={timeChannel}
                   pixelsPerSecond={pixelsPerSecond}
+                  ariaLabel={`Seek preview in ${name}`}
                 />
               )}
             </NativeDropStrip>
