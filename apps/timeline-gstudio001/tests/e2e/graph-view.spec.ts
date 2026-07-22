@@ -12,7 +12,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 // Selector contract (documented in packages/ui/dnd-collections/API.md):
 //   [data-node-id] card buttons · [data-virtual-strip="<collectionId>"]
 //   scroll containers · [data-palette-item] · [data-trash-target] ·
-//   [data-graph-playhead] / [data-playhead-scrub] (app-side, graph view).
+//   [data-graph-playhead] / [data-graph-seek-rail] (app-side, graph view).
 //
 // Interaction contract: strip cards and palette thumbnails use press-and-hold
 // drag activation (250ms) so fast swipes pan instead — every drag here holds
@@ -1190,20 +1190,29 @@ test.describe("graph view E2E", () => {
       });
     const before = await translateX();
 
-    // Scrub: press the band over the strip's top edge and drag right — the
-    // playhead follows the pointer through the time↔x map. hover() first:
-    // the pane above settles its layout asynchronously, and hover waits for
-    // the band's bounding box to be STABLE before positioning the mouse
-    // (raw mouse coordinates measured earlier land on a card instead).
-    const band = page.locator("[data-playhead-scrub]");
-    await band.hover({ position: { x: 60, y: 6 } });
+    // Scrub: press the SEEK RAIL riding the strip's top padding band and
+    // drag right — the playhead follows the pointer through the time↔x
+    // map. hover() first: the pane above settles its layout asynchronously,
+    // and hover waits for the rail's bounding box to be STABLE before
+    // positioning the mouse (raw coordinates measured earlier land on a
+    // card instead).
+    const stripRail = page.getByRole("slider", { name: "Seek preview" });
+    await stripRail.hover({ position: { x: 60, y: 4 } });
     await page.mouse.down();
-    const bandBox = await band.boundingBox();
-    expect(bandBox).not.toBeNull();
-    await page.mouse.move(bandBox!.x + 260, bandBox!.y + 6, { steps: 10 });
+    const railBox = await stripRail.boundingBox();
+    expect(railBox).not.toBeNull();
+    await page.mouse.move(railBox!.x + 260, railBox!.y + 4, { steps: 10 });
     await page.mouse.up();
 
     await expect.poll(translateX).toBeGreaterThan(before + 100);
+
+    // LOCKSTEP: the rail scrolls with the strip's content, so its thumb
+    // (last div inside the rail) sits directly above the playhead line.
+    const stripThumbBox = (await stripRail.locator("[data-rail-thumb]").boundingBox())!;
+    const lineBox = (await playhead.boundingBox())!;
+    expect(
+      Math.abs(stripThumbBox.x + stripThumbBox.width / 2 - (lineBox.x + 1)),
+    ).toBeLessThanOrEqual(2);
 
     // Drill-in RESETS the persistent preview clock: the layout (and with it
     // the time channel) survives navigation, but a different focused
@@ -1216,6 +1225,50 @@ test.describe("graph view E2E", () => {
       .click();
     await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
     await expect.poll(translateX).toBeLessThan(20);
+  });
+
+  test("strip seek rail auto-pans at the scroller's edge while scrubbing", async ({
+    page,
+  }) => {
+    // Viewport narrow enough that the 4-clip strip overflows its scroller —
+    // without overflow the pan has nothing to reveal.
+    await page.setViewportSize({ width: 560, height: 800 });
+    await installGraphApi(page);
+    await openGraph(page);
+    await previewToggle(page).click();
+
+    const rail = page.getByRole("slider", { name: "Seek preview" });
+    await expect(rail).toBeVisible();
+    const scroller = strip(page, PROJECT_ID);
+    expect(
+      await scroller.evaluate((el) => el.scrollWidth - el.clientWidth),
+    ).toBeGreaterThan(150);
+
+    // Press the rail, then park the pointer at the scroller's RIGHT edge:
+    // the pan loop must keep scrolling the strip AND advancing the scrub
+    // while the pointer sits perfectly still — that is the "show more items
+    // and keep scrubbing" contract.
+    await rail.hover({ position: { x: 40, y: 4 } });
+    await page.mouse.down();
+    const scrollerBox = (await scroller.boundingBox())!;
+    await page.mouse.move(
+      scrollerBox.x + scrollerBox.width - 8,
+      scrollerBox.y + 5,
+      { steps: 6 },
+    );
+    const scrollAt = () => scroller.evaluate((el) => el.scrollLeft);
+    const valueNow = () => rail.evaluate((el) => Number(el.getAttribute("aria-valuenow")));
+    await expect.poll(scrollAt).toBeGreaterThan(60);
+    const midScroll = await scrollAt();
+    const midValue = await valueNow();
+    await expect.poll(scrollAt).toBeGreaterThan(midScroll + 40); // still panning
+    await expect.poll(valueNow).toBeGreaterThan(midValue); // still scrubbing
+
+    // Reverse: park at the LEFT edge — the strip pans back the other way.
+    await page.mouse.move(scrollerBox.x + 8, scrollerBox.y + 5, { steps: 6 });
+    const highScroll = await scrollAt();
+    await expect.poll(scrollAt).toBeLessThan(highScroll - 40);
+    await page.mouse.up();
   });
 
   test("grid mode with preview: seek rail scrubs (pointer + keyboard); cards keep select, drill and hold-drag", async ({
@@ -1280,7 +1333,7 @@ test.describe("graph view E2E", () => {
     await page.mouse.down();
     await page.mouse.up();
     await expect.poll(async () => (await translate()).y).toBeLessThan(52); // row 0
-    const thumbOf = (rail: Locator) => rail.locator("div").last();
+    const thumbOf = (rail: Locator) => rail.locator("[data-rail-thumb]");
     const lockstep = async () => {
       const thumb = (await thumbOf(rail0).boundingBox())!;
       const line = (await playhead.boundingBox())!;
@@ -1301,7 +1354,7 @@ test.describe("graph view E2E", () => {
     // CUMULATIVE fill: with the playhead on the last row, every EARLIER
     // row's rail reads fully scrubbed-through — the rails stack up into one
     // segmented progress bar. (The fill is the rail's first div child.)
-    const fillOf = (rail: Locator) => rail.locator("div").first();
+    const fillOf = (rail: Locator) => rail.locator("[data-rail-fill]");
     const rail0Box = (await rail0.boundingBox())!;
     await expect
       .poll(async () => (await fillOf(rail0).boundingBox())!.width)
