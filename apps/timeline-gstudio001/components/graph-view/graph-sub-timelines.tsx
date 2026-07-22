@@ -28,6 +28,7 @@ import {
   GraphGridPlayhead,
   GraphPlayhead,
   GraphRuler,
+  GraphSeekRails,
   PlayheadScrubBand,
   collectionCardWidth,
   usePreviewCardSpans,
@@ -229,30 +230,43 @@ function SubTimelineNode({
         >
           {surface === "grid" ? (
             // Grid mode now accepts native drops too (a NativeDropGrid),
-            // matching the strip. Scrubbing is drag-the-playhead (R7 #5-#7),
-            // so there is no scrub-surface sibling — cards keep their
-            // pointerdowns even with the preview on.
-            <NativeDropGrid collectionId={id}>
-              <VirtualGrid
-                collectionId={collectionId}
-                cellWidth={dims.gridWidth}
-                cellHeight={dims.gridHeight}
-                gap={GRID_GAP}
-                height={GRID_UNCAPPED_HEIGHT}
-                overlay={
-                  showPlayhead ? (
-                    <GraphGridPlayhead
-                      focusedId={id}
-                      channel={timeChannel}
-                      cellHeight={dims.gridHeight}
-                      pixelsPerSecond={pixelsPerSecond}
-                      activeWindow={clockWindow}
-                    />
-                  ) : undefined
-                }
-                className="bg-black/20"
-              />
-            </NativeDropGrid>
+            // matching the strip. Scrubbing is this timeline's per-row SEEK
+            // RAILS layer — its windows sit inside the shared clock, so
+            // pressing a rail SUMMONS the playhead into this timeline;
+            // cards keep every pointerdown and the in-grid line is a
+            // passive indicator.
+            <div className="relative min-w-0">
+              <NativeDropGrid collectionId={id}>
+                <VirtualGrid
+                  collectionId={collectionId}
+                  cellWidth={dims.gridWidth}
+                  cellHeight={dims.gridHeight}
+                  gap={GRID_GAP}
+                  height={GRID_UNCAPPED_HEIGHT}
+                  overlay={
+                    showPlayhead ? (
+                      <GraphGridPlayhead
+                        focusedId={id}
+                        channel={timeChannel}
+                        cellHeight={dims.gridHeight}
+                        pixelsPerSecond={pixelsPerSecond}
+                        activeWindow={clockWindow}
+                      />
+                    ) : undefined
+                  }
+                  className="bg-black/20"
+                />
+              </NativeDropGrid>
+              {showPlayhead && (
+                <GraphSeekRails
+                  focusedId={id}
+                  channel={timeChannel}
+                  cellHeight={dims.gridHeight}
+                  pixelsPerSecond={pixelsPerSecond}
+                  ariaLabel={`Seek preview in ${name}`}
+                />
+              )}
+            </div>
           ) : (
             <NativeDropStrip collectionId={id}>
               <VirtualStrip

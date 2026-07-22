@@ -37,6 +37,7 @@ import {
   nextManifestClipsState,
   nextManifestFailureCount,
   shouldRetryManifestFetch,
+  type ChildSpan,
   type GridPlayheadMap,
   type PlayheadMap,
   type PreviewCardSpans,
@@ -483,7 +484,7 @@ export function GraphGridPlayhead({
     let lastCellWidth = 0;
     let map: GridPlayheadMap | null = null;
 
-    const ensureMap = (): GridPlayheadMap | null => {
+    const paint = () => {
       const graph = store.getSnapshot().graph;
       const details = detailsStore.read();
       const columns = Number(grid?.dataset.gridColumns) || 1;
@@ -508,67 +509,17 @@ export function GraphGridPlayhead({
           cellHeight,
         );
       }
-      return map;
-    };
-
-    const paint = () => {
-      const current = ensureMap();
-      if (!current) return;
+      if (!map) return;
       const time = channel.get();
       const inside =
         !activeWindow || (time >= activeWindow.start - 0.04 && time <= activeWindow.end + 0.04);
       line.style.display = inside ? "" : "none";
       if (!inside) return;
-      const { x, y } = current.posAt(time);
+      const { x, y } = map.posAt(time);
       line.style.transform = `translate(${x}px, ${y}px)`;
-      line.style.height = `${current.rowHeight}px`;
+      line.style.height = `${map.rowHeight}px`;
     };
 
-    // Scrub = DRAG THE PLAYHEAD (R7 #5/#6/#7). The full-cover scrub surface
-    // this grid used to carry ate every card pointerdown while preview was
-    // on — no select, no drill, no hold-drag. Now the cards own their
-    // pixels again and the playhead itself is the only scrub affordance:
-    // its (enlarged) handle captures the pointer and maps x/y through the
-    // same grid time map the old surface used, so cross-row scrubs still
-    // work — drag the handle onto another row and it jumps there.
-    const seek = (event: PointerEvent) => {
-      const current = ensureMap();
-      if (!current || !grid) return;
-      const overlay = grid.querySelector<HTMLElement>("[data-virtual-grid-overlay]");
-      const rect = (overlay ?? grid).getBoundingClientRect();
-      channel.set(current.timeAt(event.clientX - rect.left, event.clientY - rect.top));
-    };
-
-    let pointerId: number | null = null;
-    const handleMove = (event: PointerEvent) => {
-      if (event.pointerId === pointerId) seek(event);
-    };
-    const end = (event: PointerEvent) => {
-      if (event.pointerId !== pointerId) return;
-      pointerId = null;
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-    };
-    const handleDown = (event: PointerEvent) => {
-      if (!event.isPrimary || event.button !== 0) return;
-      // The handle sits inside the aria-hidden overlay layer; nothing else
-      // must see this press (a card behind it would treat it as a select).
-      event.stopPropagation();
-      event.preventDefault();
-      pointerId = event.pointerId;
-      try {
-        line.setPointerCapture(event.pointerId);
-      } catch {
-        // Synthetic pointer: window listeners still own the lifecycle.
-      }
-      seek(event);
-      window.addEventListener("pointermove", handleMove);
-      window.addEventListener("pointerup", end);
-      window.addEventListener("pointercancel", end);
-    };
-
-    line.addEventListener("pointerdown", handleDown);
     paint();
     const unsubscribeTime = channel.subscribe(paint);
     const unsubscribeStore = store.subscribe(paint);
@@ -576,10 +527,6 @@ export function GraphGridPlayhead({
     const observer = grid ? new ResizeObserver(paint) : null;
     if (grid && observer) observer.observe(grid);
     return () => {
-      line.removeEventListener("pointerdown", handleDown);
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
       unsubscribeTime();
       unsubscribeStore();
       unsubscribeDetails();
@@ -587,20 +534,357 @@ export function GraphGridPlayhead({
     };
   }, [store, detailsStore, focusedId, channel, cellHeight, spans, pixelsPerSecond, activeWindow]);
 
+  // PASSIVE indicator: all scrubbing lives on the GraphSeekRail above the
+  // grid (one obvious control), so the line paints position and takes no
+  // pointer — cards keep every gesture underneath it.
   return (
-    // pointer-events re-enabled DELIBERATELY: the overlay wrapper is
-    // pointer-events-none so cards stay interactive; only this handle takes
-    // the pointer back. It stays pointer-only and unfocusable (the wrapper
-    // is aria-hidden — a focusable child there would be a keyboard trap).
     <div
       ref={lineRef}
       data-graph-grid-playhead
-      className="pointer-events-auto absolute left-0 top-0 w-0.5 cursor-ew-resize bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+      className="absolute left-0 top-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
     >
       <div className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500" />
-      {/* Invisible enlarged grab zone: the 2px line alone is unhittable.
-          Spans the cap and the full line height, ~17px wide. */}
-      <div data-graph-grid-playhead-handle className="absolute -inset-x-2 -top-2 bottom-0" />
+    </div>
+  );
+}
+
+/** Keyboard step for the seek rails: one nudge per arrow press. */
+const SEEK_RAIL_STEP_SECONDS = 1;
+
+type SeekRailGeometry = Readonly<{
+  columns: number;
+  cellWidth: number;
+  /** The grid CONTENT origin relative to the rails' own root. */
+  left: number;
+  top: number;
+}>;
+
+/**
+ * One row's seek rail: a slim slider lying in the gap directly above its
+ * row of cells, spanning EXACTLY that row's cell geometry — so the thumb
+ * rides in lockstep above the in-grid playhead line whenever the time is
+ * inside this row, and the boundary ticks sit on the real cell edges
+ * below. The rails together read as ONE segmented progress bar: rows the
+ * playhead has passed show a full fill, rows ahead sit empty, and only
+ * the row containing the current time carries the thumb. Pressing any
+ * rail summons the playhead into that row.
+ *
+ * Pointer: press/drag anywhere (pointer capture keeps the drag smooth) —
+ * and the drag CONTINUES past the rail's ends: seeking goes through the
+ * whole timeline's unwrapped map at this row's offset, so overshooting
+ * the row's tail scrubs on into the next row's clips (and dragging left
+ * past its head backs into the previous row) at the same pixel rate.
+ * Keyboard: a real `role="slider"` scoped to this row's time window —
+ * arrows nudge by a second, Home/End jump to the row's ends.
+ */
+function SeekRailRow({
+  rowCards,
+  isLastRow,
+  map,
+  offsetX,
+  cellWidth,
+  x,
+  y,
+  channel,
+  ariaLabel,
+  rowIndex,
+}: Readonly<{
+  rowCards: readonly ChildSpan[];
+  isLastRow: boolean;
+  /** The WHOLE timeline's unwrapped cell map (all cards in one line). */
+  map: GridPlayheadMap;
+  /** This row's left edge inside that unwrapped line, in px. */
+  offsetX: number;
+  cellWidth: number;
+  x: number;
+  y: number;
+  channel: PreviewTimeChannel;
+  ariaLabel: string;
+  rowIndex: number;
+}>) {
+  const railRef = useRef<HTMLDivElement>(null);
+  const fillRef = useRef<HTMLDivElement>(null);
+  const thumbRef = useRef<HTMLDivElement>(null);
+  const pointerIdRef = useRef<number | null>(null);
+
+  const cells = rowCards.length;
+  const pitch = cellWidth + GRID_GAP;
+  const extent = Math.max(1, cells * pitch - GRID_GAP);
+  const rowStart = rowCards[0].startTime;
+  const rowEnd = rowCards[cells - 1].endTime;
+
+  // Thumb/fill/aria track the channel imperatively — time moves at pointer
+  // rate during a scrub, no reason to re-render. Deps cover everything the
+  // closure reads, so map/window changes re-subscribe fresh.
+  useEffect(() => {
+    const rail = railRef.current;
+    const fill = fillRef.current;
+    const thumb = thumbRef.current;
+    if (!rail || !fill || !thumb) return;
+    const paint = () => {
+      const time = channel.get();
+      // A time exactly on a row boundary belongs to the NEXT row (its
+      // cell's start), except the very end of the last row.
+      const active = time >= rowStart && (isLastRow ? time <= rowEnd : time < rowEnd);
+      thumb.style.visibility = active ? "" : "hidden";
+      // Cumulative fill: clamping into the row's window paints a PASSED row
+      // full (clamped = rowEnd → fraction 1) and a not-yet-reached row
+      // empty (clamped = rowStart → fraction 0), so the stack of rails
+      // reads as one continuous progress bar.
+      const clamped = Math.min(rowEnd, Math.max(rowStart, time));
+      const fraction = Math.min(1, Math.max(0, (map.posAt(clamped).x - offsetX) / extent));
+      fill.style.width = `${fraction * 100}%`;
+      thumb.style.left = `${fraction * 100}%`;
+      rail.setAttribute("aria-valuenow", (clamped - rowStart).toFixed(1));
+      rail.setAttribute(
+        "aria-valuetext",
+        `${(clamped - rowStart).toFixed(1)} of ${(rowEnd - rowStart).toFixed(1)} seconds`,
+      );
+    };
+    paint();
+    return channel.subscribe(paint);
+  }, [channel, map, offsetX, extent, rowStart, rowEnd, isLastRow]);
+
+  const seekToPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const rail = railRef.current;
+    if (!rail) return;
+    const rect = rail.getBoundingClientRect();
+    // Deliberately UNCLAMPED to this rail: the pointer's x rides the whole
+    // timeline's unwrapped line at this row's offset, so a drag that
+    // overshoots either end keeps scrubbing into the neighbouring rows
+    // (timeAt clamps to the timeline's own bounds).
+    channel.set(map.timeAt(offsetX + (event.clientX - rect.left), 0));
+  };
+
+  return (
+    <div
+      ref={railRef}
+      data-graph-seek-rail
+      data-row={rowIndex}
+      role="slider"
+      tabIndex={0}
+      aria-label={ariaLabel}
+      aria-orientation="horizontal"
+      aria-valuemin={0}
+      aria-valuemax={Number((rowEnd - rowStart).toFixed(1))}
+      aria-valuenow={0}
+      title="Drag to preview"
+      onPointerDown={(event) => {
+        if (!event.isPrimary || event.button !== 0) return;
+        event.preventDefault();
+        pointerIdRef.current = event.pointerId;
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // Synthetic pointer without capture support: moves still arrive
+          // while the pointer stays over the rail, which tests rely on.
+        }
+        seekToPointer(event);
+      }}
+      onPointerMove={(event) => {
+        if (event.pointerId === pointerIdRef.current) seekToPointer(event);
+      }}
+      onPointerUp={(event) => {
+        if (event.pointerId === pointerIdRef.current) pointerIdRef.current = null;
+      }}
+      onPointerCancel={(event) => {
+        if (event.pointerId === pointerIdRef.current) pointerIdRef.current = null;
+      }}
+      onKeyDown={(event) => {
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        const base = Math.min(rowEnd, Math.max(rowStart, channel.get()));
+        if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+          channel.set(Math.max(rowStart, base - SEEK_RAIL_STEP_SECONDS));
+        } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+          channel.set(Math.min(rowEnd, base + SEEK_RAIL_STEP_SECONDS));
+        } else if (event.key === "Home") {
+          channel.set(rowStart);
+        } else if (event.key === "End") {
+          channel.set(rowEnd);
+        } else {
+          return;
+        }
+        event.preventDefault();
+      }}
+      // Solid track, not a translucency: the rail sits over the grid's own
+      // dark backdrop, where a see-through zinc melted away entirely — the
+      // user read row 1 as having "no rail" (R7 follow-up).
+      className="group pointer-events-auto absolute cursor-ew-resize touch-none rounded-full bg-zinc-700 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-white/25 transition-shadow hover:ring-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      style={{ left: x, top: y, width: extent, height: GRID_GAP }}
+    >
+      {/* Elapsed fill, then boundary ticks, then the thumb on top. */}
+      <div
+        ref={fillRef}
+        aria-hidden="true"
+        className="absolute inset-y-0 left-0 rounded-full bg-red-500/40"
+      />
+      {rowCards.slice(1).map((_, index) => (
+        <span
+          key={index}
+          aria-hidden="true"
+          className="absolute inset-y-0 w-px bg-white/30"
+          style={{ left: `${(((index + 1) * pitch - GRID_GAP / 2) / extent) * 100}%` }}
+        />
+      ))}
+      {/* h-2.5, not larger: the rail lives in the 8px row gap, and a taller
+          thumb overhangs onto the cards below — the "item overlaps rail"
+          complaint. 1px of kiss is invisible; the whole rail is the hit
+          target anyway. */}
+      <div
+        ref={thumbRef}
+        aria-hidden="true"
+        className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
+      />
+    </div>
+  );
+}
+
+/**
+ * The grid's scrub control: one slim seek rail PER ROW (the video-player
+ * idiom, one lane at a time), each lying in the 8px gap above its row —
+ * row 0's rides the grid's own top padding, so nothing shifts when the
+ * preview toggles. Per-row rails are what keep the thumb positionally in
+ * lockstep with the in-grid playhead line on EVERY row of a multi-row
+ * grid; a single bar over the grid could only ever align with row 0.
+ *
+ * Renders as an absolutely-positioned layer over the grid (a sibling, NOT
+ * inside the aria-hidden overlay — rails are focusable) with pointer
+ * events off everywhere except the rails themselves, so cards keep every
+ * gesture: click selects, hold drags, the folder button drills.
+ *
+ * Geometry comes from the sibling grid's dataset (live column count and
+ * exact rendered cell width) plus its border+padding, observed by BOTH a
+ * ResizeObserver and a MutationObserver — resize alone settles one layout
+ * stale, because it fires before VirtualGrid commits the fresh dataset
+ * (React renders a frame later).
+ */
+export function GraphSeekRails({
+  focusedId,
+  channel,
+  cellHeight,
+  pixelsPerSecond,
+  ariaLabel = "Seek preview",
+}: Readonly<{
+  focusedId: string;
+  channel: PreviewTimeChannel;
+  cellHeight: number;
+  pixelsPerSecond: number;
+  ariaLabel?: string;
+}>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const graph = useSyncExternalStore(
+    store.subscribe,
+    () => store.getSnapshot().graph,
+    () => store.getSnapshot().graph,
+  );
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    () => detailsStore.read(),
+    () => detailsStore.read(),
+  );
+  const cards = useMemo(
+    () => childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
+    [graph, details, spans, focusedId, pixelsPerSecond],
+  );
+  const cardCount = cards.length;
+
+  const [geometry, setGeometry] = useState<SeekRailGeometry | null>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const grid = root.parentElement?.querySelector<HTMLElement>("[data-virtual-grid]");
+    if (!grid) return;
+    const update = () => {
+      const columns = Number(grid.dataset.gridColumns) || 0;
+      const cellWidth = Number(grid.dataset.gridCellWidth) || 0;
+      if (columns <= 0 || cellWidth <= 0) {
+        setGeometry(null);
+        return;
+      }
+      const styles = getComputedStyle(grid);
+      const rootRect = root.getBoundingClientRect();
+      const gridRect = grid.getBoundingClientRect();
+      const left =
+        gridRect.left -
+        rootRect.left +
+        parseFloat(styles.borderLeftWidth) +
+        parseFloat(styles.paddingLeft);
+      const top =
+        gridRect.top -
+        rootRect.top +
+        parseFloat(styles.borderTopWidth) +
+        parseFloat(styles.paddingTop);
+      setGeometry((previous) =>
+        previous &&
+        previous.columns === columns &&
+        previous.cellWidth === cellWidth &&
+        previous.left === left &&
+        previous.top === top
+          ? previous
+          : { columns, cellWidth, left, top },
+      );
+    };
+    update();
+    const resizes = new ResizeObserver(update);
+    resizes.observe(grid);
+    const mutations = new MutationObserver(update);
+    mutations.observe(grid, {
+      attributes: true,
+      attributeFilter: ["data-grid-cell-width", "data-grid-columns"],
+    });
+    return () => {
+      resizes.disconnect();
+      mutations.disconnect();
+    };
+  }, [cardCount]);
+
+  const rows = useMemo(() => {
+    if (!geometry || cardCount === 0) return [] as (readonly ChildSpan[])[];
+    const out: (readonly ChildSpan[])[] = [];
+    for (let index = 0; index < cardCount; index += geometry.columns) {
+      out.push(cards.slice(index, index + geometry.columns));
+    }
+    return out;
+  }, [cards, cardCount, geometry]);
+
+  // ONE unwrapped map for the whole timeline (every card in a single line):
+  // each row's rail paints and seeks through it at its own offset, which is
+  // what lets a drag run PAST a rail's ends into the neighbouring rows.
+  const fullMap = useMemo(
+    () =>
+      geometry && cardCount > 0
+        ? buildGridPlayheadMap(cards, cardCount, geometry.cellWidth, 1)
+        : null,
+    [cards, cardCount, geometry],
+  );
+
+  if (!geometry || !fullMap || rows.length === 0) {
+    // Pre-measure (or empty timeline): nothing to place yet — the observer
+    // pass lands within a frame of the grid reporting its layout.
+    return <div ref={rootRef} className="pointer-events-none absolute inset-0" />;
+  }
+
+  return (
+    <div ref={rootRef} data-graph-seek-rails className="pointer-events-none absolute inset-0 z-20">
+      {rows.map((rowCards, row) => (
+        <SeekRailRow
+          key={row}
+          rowCards={rowCards}
+          isLastRow={row === rows.length - 1}
+          map={fullMap}
+          offsetX={row * geometry.columns * (geometry.cellWidth + GRID_GAP)}
+          cellWidth={geometry.cellWidth}
+          x={geometry.left}
+          y={geometry.top + row * (cellHeight + GRID_GAP) - GRID_GAP}
+          channel={channel}
+          rowIndex={row}
+          ariaLabel={rows.length > 1 ? `${ariaLabel}, row ${row + 1}` : ariaLabel}
+        />
+      ))}
     </div>
   );
 }

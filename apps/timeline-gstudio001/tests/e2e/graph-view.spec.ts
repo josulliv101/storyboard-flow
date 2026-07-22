@@ -1218,11 +1218,11 @@ test.describe("graph view E2E", () => {
     await expect.poll(translateX).toBeLessThan(20);
   });
 
-  test("grid mode with preview: scrub = drag the playhead; cards keep select, drill and hold-drag", async ({
+  test("grid mode with preview: seek rail scrubs (pointer + keyboard); cards keep select, drill and hold-drag", async ({
     page,
   }) => {
     // Narrow viewport → few responsive columns, so the 4 project clips wrap
-    // onto at least two rows (needed to exercise the cross-row scrub).
+    // onto at least two rows (needed to see the line change rows on seek).
     await page.setViewportSize({ width: 420, height: 900 });
     await installGraphApi(page);
     await openGraph(page);
@@ -1248,32 +1248,107 @@ test.describe("graph view E2E", () => {
         return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: 0, y: 0 };
       });
 
-    // The full-cover scrub surface is GONE (it ate every card pointerdown —
-    // R7 #5/#6/#7): the playhead itself is the scrub affordance now. Its
-    // enlarged handle spans the marker line; grab it and drag. hover() waits
-    // for a stable box first (the pane above settles asynchronously).
-    const handle = playhead.locator("[data-graph-grid-playhead-handle]");
-    // Content geometry at the default MD size: cell 160×100, 8px gap → row
-    // pitch 108.
-    const ROW_PITCH = 108;
+    // The scrub control: one seek rail PER ROW, each in the gap above its
+    // row, mapping exactly that row's cells — so the thumb rides in
+    // lockstep above the playhead line on EVERY row of a multi-row grid.
+    // Cards own all their pixels (the old full-cover surface ate every
+    // pointerdown — R7 #5/#6/#7); the line is a passive indicator.
+    const rows = Math.ceil(4 / cols);
+    expect(rows).toBeGreaterThanOrEqual(2); // multi-row is the case under test
+    const rails = page.locator("[data-graph-seek-rail]");
+    await expect(rails).toHaveCount(rows);
+    const rail0 = page.getByRole("slider", { name: "Seek preview, row 1" });
+    const lastRail = page.getByRole("slider", { name: `Seek preview, row ${rows}` });
+    await expect(rail0).toBeVisible();
 
-    // Horizontal scrub across row 0 → x advances, still on row 0.
-    await handle.hover();
-    await page.mouse.down();
-    const start = (await playhead.boundingBox())!;
-    await page.mouse.move(start.x + 150, start.y + 50, { steps: 8 });
-    await page.mouse.up();
-    await expect.poll(async () => (await translate()).x).toBeGreaterThan(100);
-    expect((await translate()).y).toBeLessThan(52); // still the first row
+    // Each rail spans exactly ITS row's cells: row 0 is full (cols cells),
+    // the LAST row holds the remainder. Measure lands async
+    // (ResizeObserver + MutationObserver), hence polls.
+    const cellW = Number(await grid.getAttribute("data-grid-cell-width"));
+    const lastRowCells = 4 - cols * (rows - 1);
+    await expect
+      .poll(async () => (await rail0.boundingBox())!.width)
+      .toBeCloseTo(cols * (cellW + 8) - 8, 0);
+    await expect
+      .poll(async () => (await lastRail.boundingBox())!.width)
+      .toBeCloseTo(lastRowCells * (cellW + 8) - 8, 0);
 
-    // Cross-row scrub: drag the handle INTO the second row → the playhead
-    // jumps a row down (time lands on a later clip).
-    await handle.hover();
+    // Press row 0's rail → the line lands on row 0, thumb IN LOCKSTEP
+    // directly above it (same content x — the whole point of per-row
+    // rails); the last row's rail shows no thumb (time is not inside it).
+    await rail0.hover({ position: { x: 30, y: 4 } });
     await page.mouse.down();
-    const mid = (await playhead.boundingBox())!;
-    await page.mouse.move(mid.x + 4, mid.y + 50 + ROW_PITCH, { steps: 4 });
     await page.mouse.up();
+    await expect.poll(async () => (await translate()).y).toBeLessThan(52); // row 0
+    const thumbOf = (rail: Locator) => rail.locator("div").last();
+    const lockstep = async () => {
+      const thumb = (await thumbOf(rail0).boundingBox())!;
+      const line = (await playhead.boundingBox())!;
+      return Math.abs(thumb.x + thumb.width / 2 - (line.x + 1));
+    };
+    await expect.poll(lockstep).toBeLessThanOrEqual(2);
+    await expect(thumbOf(lastRail)).not.toBeVisible(); // parked rows sit empty
+
+    // Press the LAST row's rail → the playhead SUMMONS into that row and
+    // the thumbs swap; still nothing on the grid got selected.
+    const lastBox = (await lastRail.boundingBox())!;
+    await page.mouse.click(lastBox.x + lastBox.width / 2, lastBox.y + 4);
     await expect.poll(async () => (await translate()).y).toBeGreaterThan(80);
+    await expect(thumbOf(lastRail)).toBeVisible();
+    await expect(thumbOf(rail0)).not.toBeVisible();
+    await expect(grid.locator('[data-selected="true"]')).toHaveCount(0);
+
+    // CUMULATIVE fill: with the playhead on the last row, every EARLIER
+    // row's rail reads fully scrubbed-through — the rails stack up into one
+    // segmented progress bar. (The fill is the rail's first div child.)
+    const fillOf = (rail: Locator) => rail.locator("div").first();
+    const rail0Box = (await rail0.boundingBox())!;
+    await expect
+      .poll(async () => (await fillOf(rail0).boundingBox())!.width)
+      .toBeCloseTo(rail0Box.width, 0);
+
+    // CONTINUATION: a drag is not caged by its rail. Dragging the LAST
+    // rail left PAST its head backs the scrub into earlier rows' clips…
+    await lastRail.hover({ position: { x: 10, y: 4 } });
+    await page.mouse.down();
+    await page.mouse.move(lastBox.x - cellW, lastBox.y + 4, { steps: 6 });
+    await expect
+      .poll(async () => (await translate()).y)
+      .toBeLessThan((rows - 1) * 108 - 20); // strictly above the last row
+    await page.mouse.up();
+
+    // …and overshooting row 0's tail runs forward into the next row.
+    await rail0.hover({ position: { x: 30, y: 4 } });
+    await page.mouse.down();
+    await page.mouse.move(rail0Box.x + rail0Box.width + 60, rail0Box.y + 4, { steps: 6 });
+    await expect.poll(async () => (await translate()).y).toBeGreaterThan(80);
+    await page.mouse.up();
+
+    // Ticks sit on REAL cell edges: pressing row 0's first tick parks the
+    // line exactly at the second clip's cell origin, whatever that clip's
+    // duration. (Float coordinates on purpose: an integer-rounded press can
+    // slip off the 8px gap the tick centres on.) Row 0 has interior ticks
+    // only when it holds more than one cell.
+    if (cols > 1) {
+      const tickBox = (await rail0.locator("span").first().boundingBox())!;
+      await page.mouse.click(tickBox.x + tickBox.width / 2, tickBox.y + 3);
+      await expect.poll(async () => (await translate()).x).toBeCloseTo(cellW + 8, 0);
+      expect((await translate()).y).toBeCloseTo(0, 0);
+    }
+
+    // KEYBOARD: each rail is a slider over ITS row's time window — Home
+    // rewinds the row, arrows nudge by a second, End jumps to the row's
+    // tail. aria-valuenow tracks the clock, row-relative.
+    const valueNow = () => rail0.evaluate((el) => Number(el.getAttribute("aria-valuenow")));
+    await rail0.focus();
+    await page.keyboard.press("Home");
+    await expect.poll(valueNow).toBe(0);
+    await expect.poll(async () => (await translate()).x).toBeLessThan(5); // line rewound too
+    const max = await rail0.evaluate((el) => Number(el.getAttribute("aria-valuemax")));
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(valueNow).toBe(Math.min(1, max));
+    await page.keyboard.press("End");
+    await expect.poll(valueNow).toBe(max);
 
     // Grids are CONTENT-HEIGHT (the `height` prop is only a max): every row
     // gets room and the PAGE owns vertical scroll. Nothing may consume the
@@ -1301,10 +1376,17 @@ test.describe("graph view E2E", () => {
 
     // With the surface gone the cards OWN their pixels again, preview on:
 
+    // Media cards in the GRID inset their artwork like collection cards do
+    // (~6px frame), so both card kinds read as the same height and the
+    // artwork stays clear of the rail above. (The strip keeps full-bleed.)
+    const alpha = grid.locator('[data-node-id="alpha"]');
+    const alphaImgBox = (await alpha.locator("img").first().boundingBox())!;
+    const alphaBox = (await alpha.boundingBox())!;
+    expect(alphaImgBox.y - alphaBox.y).toBeGreaterThanOrEqual(5);
+
     // SELECT (R7 #7): a plain click toggles selection. (Retried: under load
     // a press can outlast the 250ms hold threshold and become a grab, whose
     // click is — correctly — suppressed.)
-    const alpha = grid.locator('[data-node-id="alpha"]');
     await expect(async () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });

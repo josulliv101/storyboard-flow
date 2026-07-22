@@ -41,6 +41,7 @@ import {
   GraphGridPlayhead,
   GraphPlayhead,
   GraphRuler,
+  GraphSeekRails,
   PlayheadScrubBand,
   PreviewShell,
   collectionCardWidth,
@@ -416,34 +417,49 @@ export function GraphBoard({
               )}
             </NativeDropStrip>
           ) : (
-            // No scrub surface sibling anymore: grid scrubbing is DRAG THE
-            // PLAYHEAD (inside the overlay slot) — the old full-cover surface
-            // ate every card pointerdown while preview was on (R7 #5/#6/#7).
-            <NativeDropGrid collectionId={focusedId}>
-              <VirtualGrid
-                collectionId={parseNodeId(focusedId)}
-                cellWidth={dims.gridWidth}
-                cellHeight={dims.gridHeight}
-                gap={GRID_GAP}
-                height={GRID_UNCAPPED_HEIGHT}
-                // Mirror the strip: a quick tap is a CLICK (so the in-card
-                // drill button works) and a press-and-hold starts the reorder
-                // drag. "body" (the default) drags instantly, which ate the
-                // drill click and made drags ambiguous.
-                itemDragActivation="hold"
-                overlay={
-                  previewOn ? (
-                    <GraphGridPlayhead
-                      focusedId={focusedId}
-                      channel={timeChannel}
-                      cellHeight={dims.gridHeight}
-                      pixelsPerSecond={deferredPixelsPerSecond}
-                    />
-                  ) : undefined
-                }
-                className="bg-black/25"
-              />
-            </NativeDropGrid>
+            // Grid scrubbing is the per-row SEEK RAILS layer — one slim
+            // slider in the gap above each row (the video-player idiom, in
+            // lockstep with the playhead line on every row), so cards keep
+            // every pointerdown (the old full-cover surface ate them all —
+            // R7 #5/#6/#7) and the in-grid playhead line stays a passive
+            // indicator. The layer overlays the grid as a SIBLING (outside
+            // NativeDropGrid, whose drop math measures its own wrapper, and
+            // outside the aria-hidden overlay — rails are focusable).
+            <div className="relative">
+              <NativeDropGrid collectionId={focusedId}>
+                <VirtualGrid
+                  collectionId={parseNodeId(focusedId)}
+                  cellWidth={dims.gridWidth}
+                  cellHeight={dims.gridHeight}
+                  gap={GRID_GAP}
+                  height={GRID_UNCAPPED_HEIGHT}
+                  // Mirror the strip: a quick tap is a CLICK (so the in-card
+                  // drill button works) and a press-and-hold starts the reorder
+                  // drag. "body" (the default) drags instantly, which ate the
+                  // drill click and made drags ambiguous.
+                  itemDragActivation="hold"
+                  overlay={
+                    previewOn ? (
+                      <GraphGridPlayhead
+                        focusedId={focusedId}
+                        channel={timeChannel}
+                        cellHeight={dims.gridHeight}
+                        pixelsPerSecond={deferredPixelsPerSecond}
+                      />
+                    ) : undefined
+                  }
+                  className="bg-black/25"
+                />
+              </NativeDropGrid>
+              {previewOn && (
+                <GraphSeekRails
+                  focusedId={focusedId}
+                  channel={timeChannel}
+                  cellHeight={dims.gridHeight}
+                  pixelsPerSecond={deferredPixelsPerSecond}
+                />
+              )}
+            </div>
           )}
 
           {/* Children render one size step below the focused timeline (flat —

@@ -258,6 +258,12 @@ const GraphClipContent = memo(function GraphClipContent({
       ref={cardSizeRef}
       className={[
         "relative flex h-full w-full overflow-hidden rounded-md bg-zinc-900",
+        // GRID cells only: inset the artwork like the collection card does
+        // (its p-1.5 frame + label row keep its pixels off the cell edges),
+        // so media and collections read as the SAME height and the artwork
+        // stays clear of the seek rail riding the gap above. The strip
+        // keeps its full-bleed filmstrip (width there IS duration).
+        "[[data-virtual-grid]_&]:p-1.5",
         selected ? "ring-2 ring-amber-400" : "ring-1 ring-white/15",
         rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
         isDragSource ? "opacity-40" : "",
@@ -268,7 +274,7 @@ const GraphClipContent = memo(function GraphClipContent({
           No preview
         </span>
       ) : (
-        <span className="flex h-full w-full">
+        <span className="flex h-full w-full [[data-virtual-grid]_&]:overflow-hidden [[data-virtual-grid]_&]:rounded-sm">
           {frameSrcs.map((src, index) => (
             // eslint-disable-next-line @next/next/no-img-element
             <img
