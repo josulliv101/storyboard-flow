@@ -1,6 +1,6 @@
 "use client";
 
-import { useContext } from "react";
+import { useContext, useDeferredValue } from "react";
 import {
   EllipsisVertical,
   FolderTree,
@@ -268,6 +268,15 @@ export function GraphBoard({
   syncEntries: readonly SyncEntry[];
 }>) {
   const dims = ITEM_SIZE_DIMENSIONS[itemSize];
+  // Zoom splits urgency (round-4 polish item 8): the slider thumb must track
+  // the pointer, so its value stays URGENT — while the expensive work a zoom
+  // step triggers (strip relayout, ruler rebuild, per-card resize fan-out)
+  // renders at this DEFERRED value, interruptible by the next slider step.
+  // (Not startTransition on the onChange: that would defer the controlled
+  // thumb itself, making the handle lag the pointer.) Every time→x consumer
+  // below — strip, ruler, playheads, scrub bands, sub-rows — shares this ONE
+  // deferred value, so their geometry can never disagree mid-drag.
+  const deferredPixelsPerSecond = useDeferredValue(pixelsPerSecond);
 
   return (
     <OpenKeyBoundary trashId={trashRootId}>
@@ -366,21 +375,24 @@ export function GraphBoard({
             <NativeDropStrip collectionId={focusedId}>
               <VirtualStrip
                 collectionId={parseNodeId(focusedId)}
-                pixelsPerSecond={pixelsPerSecond}
-                itemWidth={collectionCardWidth(pixelsPerSecond)}
+                pixelsPerSecond={deferredPixelsPerSecond}
+                itemWidth={collectionCardWidth(deferredPixelsPerSecond)}
                 itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
                   previewOn || rulerOn ? (
                     <>
                       {rulerOn ? (
-                        <GraphRuler focusedId={focusedId} pixelsPerSecond={pixelsPerSecond} />
+                        <GraphRuler
+                          focusedId={focusedId}
+                          pixelsPerSecond={deferredPixelsPerSecond}
+                        />
                       ) : null}
                       {previewOn ? (
                         <GraphPlayhead
                           focusedId={focusedId}
                           channel={timeChannel}
-                          pixelsPerSecond={pixelsPerSecond}
+                          pixelsPerSecond={deferredPixelsPerSecond}
                         />
                       ) : null}
                     </>
@@ -392,7 +404,7 @@ export function GraphBoard({
                 <PlayheadScrubBand
                   focusedId={focusedId}
                   channel={timeChannel}
-                  pixelsPerSecond={pixelsPerSecond}
+                  pixelsPerSecond={deferredPixelsPerSecond}
                 />
               )}
             </NativeDropStrip>
@@ -418,7 +430,7 @@ export function GraphBoard({
                         focusedId={focusedId}
                         channel={timeChannel}
                         cellHeight={dims.gridHeight}
-                        pixelsPerSecond={pixelsPerSecond}
+                        pixelsPerSecond={deferredPixelsPerSecond}
                       />
                     ) : undefined
                   }
@@ -429,7 +441,7 @@ export function GraphBoard({
                     focusedId={focusedId}
                     channel={timeChannel}
                     cellHeight={dims.gridHeight}
-                    pixelsPerSecond={pixelsPerSecond}
+                    pixelsPerSecond={deferredPixelsPerSecond}
                   />
                 )}
               </div>
@@ -445,7 +457,7 @@ export function GraphBoard({
               focusedId={focusedId}
               surface={surface}
               itemSize={stepDownItemSize(itemSize)}
-              pixelsPerSecond={pixelsPerSecond}
+              pixelsPerSecond={deferredPixelsPerSecond}
               previewOn={previewOn}
               rulerOn={rulerOn}
               timeChannel={timeChannel}

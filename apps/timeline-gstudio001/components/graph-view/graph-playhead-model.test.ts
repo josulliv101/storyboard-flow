@@ -5,6 +5,7 @@ import type { PlaybackLeaf, PlaybackManifest } from "@storyboard/timeline-domain
 
 import {
   buildPlayheadMap,
+  buildRulerTicks,
   cardSpansOf,
   childSpans,
   manifestTrailsLedger,
@@ -12,8 +13,13 @@ import {
   mediaSpanKey,
   nextManifestClipsState,
   nextManifestFailureCount,
+  rulerMajorSpacing,
+  rulerSubtierCount,
   shouldRetryManifestFetch,
+  STRIP_GAP_PX,
+  type ChildSpan,
   type PreviewCardSpans,
+  type RulerTick,
 } from "./graph-playhead-model";
 
 const media = (id: string, durationSeconds: number): GraphNodeSpec => ({
@@ -249,6 +255,140 @@ describe("nextManifestFailureCount", () => {
   it("leaves an already-reset streak at zero across a reopen", () => {
     expect(nextManifestFailureCount(0, false)).toBe(0);
     expect(nextManifestFailureCount(0, true)).toBe(0);
+  });
+});
+
+describe("buildRulerTicks", () => {
+  const PPS = 40;
+  // At 40 px/s: major = 2s (first nice step ≥ 46/40), all three subtiers
+  // clear the 6px minor gap (2/8 · 40 = 10px), so finest = 0.25s.
+  const MAJOR = rulerMajorSpacing(PPS);
+  const FINEST = MAJOR / 2 ** rulerSubtierCount(MAJOR, PPS);
+
+  /** `count` back-to-back media cards of `seconds` each, laid out at PPS —
+   *  times start at 0 and are gapless, so t maps linearly onto x within a
+   *  card and the fixtures stay hand-checkable. */
+  function mediaCards(count: number, seconds: number): ChildSpan[] {
+    const cards: ChildSpan[] = [];
+    for (let index = 0; index < count; index += 1) {
+      cards.push({
+        startTime: index * seconds,
+        endTime: (index + 1) * seconds,
+        width: seconds * PPS,
+      });
+    }
+    return cards;
+  }
+
+  const noCollections = (cards: readonly ChildSpan[]) => cards.map(() => false);
+  const FULL_WINDOW = { startX: 0, endX: Number.MAX_SAFE_INTEGER };
+  const serialize = (tick: RulerTick) => `${tick.x.toFixed(3)}|${tick.level}|${tick.label}`;
+
+  it("builds the exact tier ladder on a small strip (full window)", () => {
+    const cards = mediaCards(1, 4);
+    const ticks = buildRulerTicks(cards, noCollections(cards), PPS, FULL_WINDOW);
+
+    // 4s at finest 0.25s = 17 ticks, t=n·0.25 at x=t·40.
+    expect(ticks).toHaveLength(17);
+    expect(ticks[0]).toEqual({ x: 0, level: 0, label: "0s" });
+    expect(ticks[8]).toEqual({ x: 80, level: 0, label: "2s" }); // major (2s grid)
+    expect(ticks[4]).toEqual({ x: 40, level: 1, label: "" }); // half-major
+    expect(ticks[2]).toEqual({ x: 20, level: 2, label: "" }); // quarter
+    expect(ticks[1]).toEqual({ x: 10, level: 3, label: "" }); // eighth
+  });
+
+  // The windowing contract: for ANY window, the output is exactly the full
+  // build filtered to that window — plus at most one tick of slack per side
+  // from the floor/ceil index widening. Nothing visible is ever missing.
+  it("windowed output equals the full build filtered to the window", () => {
+    const cards = mediaCards(500, 4); // 2000s ≈ 80,000px of content
+    const flags = noCollections(cards);
+    const windowRange = { startX: 8400, endX: 9424 };
+    const full = buildRulerTicks(cards, flags, PPS, FULL_WINDOW);
+    const windowed = buildRulerTicks(cards, flags, PPS, windowRange);
+
+    // Completeness: every full-build tick inside the window is present.
+    const windowedSet = new Set(windowed.map(serialize));
+    const fullInWindow = full.filter(
+      (tick) => tick.x >= windowRange.startX && tick.x <= windowRange.endX,
+    );
+    expect(fullInWindow.length).toBeGreaterThan(50); // non-vacuous window
+    for (const tick of fullInWindow) {
+      expect(windowedSet.has(serialize(tick))).toBe(true);
+    }
+
+    // Tightness: nothing further out than one finest-step of slack.
+    const slackPx = FINEST * PPS + STRIP_GAP_PX;
+    for (const tick of windowed) {
+      expect(tick.x).toBeGreaterThanOrEqual(windowRange.startX - slackPx);
+      expect(tick.x).toBeLessThanOrEqual(windowRange.endX + slackPx);
+    }
+
+    // And every windowed tick is byte-identical to its full-build twin
+    // (tiers keyed on the ABSOLUTE step index — windowing shifts nothing).
+    const fullSet = new Set(full.map(serialize));
+    for (const tick of windowed) {
+      expect(fullSet.has(serialize(tick))).toBe(true);
+    }
+  });
+
+  it("bounds tick count by the window, not the timeline duration", () => {
+    const cards = mediaCards(2000, 4); // 8000s — ~32,000 ticks unwindowed
+    const windowed = buildRulerTicks(cards, noCollections(cards), PPS, {
+      startX: 100_000,
+      endX: 101_024,
+    });
+
+    // ~1024px of window at ≥10px per finest tick, plus slack: two orders of
+    // magnitude under the unwindowed count.
+    expect(windowed.length).toBeGreaterThan(50);
+    expect(windowed.length).toBeLessThan(300);
+  });
+
+  // Every time at or before the first card's startTime clamps to x = 0 —
+  // including the "0s" origin label. `timeAt(0)` returns that startTime, so a
+  // naive floor from it would drop the pre-content pile; the startX <= 0
+  // branch keeps it whenever the window reaches the content origin.
+  it("keeps the t=0 origin tick when the window includes the content start", () => {
+    const cards: ChildSpan[] = [{ startTime: 1, endTime: 5, width: 160 }];
+    const ticks = buildRulerTicks(cards, [false], PPS, { startX: 0, endX: 1024 });
+
+    expect(ticks.some((tick) => tick.label === "0s" && tick.x === 0)).toBe(true);
+  });
+
+  it("skips collection interiors and windows their edge ticks like any other", () => {
+    // media(4s/160px) · gap · collection(128px holding 100s) · gap · media —
+    // then a second collection far to the right, outside the window.
+    const cards: ChildSpan[] = [
+      { startTime: 0, endTime: 4, width: 160 },
+      { startTime: 4, endTime: 104, width: 128 },
+      { startTime: 104, endTime: 108, width: 160 },
+      { startTime: 108, endTime: 208, width: 128 },
+    ];
+    const flags = [false, true, false, true];
+    const windowRange = { startX: 0, endX: 300 }; // covers the FIRST collection only
+    const ticks = buildRulerTicks(cards, flags, PPS, windowRange);
+
+    // No numbered tick lands strictly inside the first collection's card
+    // (x in (169, 296]); its edge tick at x0=168 is present.
+    const collectionX0 = 160 + STRIP_GAP_PX;
+    const collectionX1 = collectionX0 + 128;
+    const interior = ticks.filter(
+      (tick) => tick.x > collectionX0 + 1 && tick.x <= collectionX1,
+    );
+    expect(interior).toEqual([]);
+    expect(ticks.filter((tick) => tick.x === collectionX0 && tick.level === 1)).toHaveLength(1);
+
+    // The second collection sits beyond the window: no edge tick for it.
+    const secondX0 = collectionX1 + STRIP_GAP_PX + 160 + STRIP_GAP_PX;
+    expect(ticks.some((tick) => tick.x === secondX0)).toBe(false);
+  });
+
+  it("returns nothing for an empty or zero-duration strip", () => {
+    expect(buildRulerTicks([], [], PPS, FULL_WINDOW)).toEqual([]);
+    expect(
+      buildRulerTicks([{ startTime: 0, endTime: 0, width: 100 }], [false], PPS, FULL_WINDOW),
+    ).toEqual([]);
   });
 });
 

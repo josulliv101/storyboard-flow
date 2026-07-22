@@ -26,9 +26,9 @@ import {
 } from "@storyboard/timeline-domain";
 
 import {
-  STRIP_GAP_PX,
   buildGridPlayheadMap,
   buildPlayheadMap,
+  buildRulerTicks,
   cardSpansOf,
   childSpans,
   manifestTrailsLedger,
@@ -38,6 +38,7 @@ import {
   type GridPlayheadMap,
   type PlayheadMap,
   type PreviewCardSpans,
+  type RulerWindow,
 } from "./graph-playhead-model";
 
 export type { PreviewCardSpans } from "./graph-playhead-model";
@@ -188,58 +189,60 @@ export function GraphPlayhead({
   );
 }
 
-const RULER_LABEL_MIN_GAP_PX = 46;
-const RULER_MINOR_MIN_GAP_PX = 6;
-const RULER_NICE_SECONDS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
-const RULER_MAX_SUBTIER = 3;
 /** Tick height per tier: 0 = labeled major (full band), then progressively
  *  shorter minors (half / quarter / eighth). Index by `level`. */
 const RULER_TIER_HEIGHT_PX = [18, 11, 8, 5];
 
-/** The labeled (major) tick interval — the nicest whole-second count whose
- *  on-screen gap clears the label minimum at this zoom. */
-function rulerMajorSpacing(pixelsPerSecond: number): number {
-  const target = RULER_LABEL_MIN_GAP_PX / Math.max(1, pixelsPerSecond);
-  return (
-    RULER_NICE_SECONDS.find((step) => step >= target) ??
-    RULER_NICE_SECONDS[RULER_NICE_SECONDS.length - 1]
-  );
-}
+/** Window quantum for ruler ticks. Coarse on purpose: the window only
+ *  changes when scrolling crosses a chunk boundary, so the per-scroll-event
+ *  work is a compare-and-bail, and each re-render is amortized over ~512px
+ *  of travel. One chunk of overscan each side keeps ticks present under the
+ *  pointer during the between-chunks glide. */
+const RULER_WINDOW_CHUNK_PX = 512;
 
-/** How many binary subdivisions of the major fit as MINOR ticks — major/2,
- *  /4, /8 (half, quarter, eighth of the major; at a 1s major these are the
- *  half/quarter/eighth SECOND ticks). Each tier is added only while its gap
- *  still clears the minor minimum, so zooming out drops the finest tiers. */
-function rulerSubtierCount(majorSpacing: number, pixelsPerSecond: number): number {
-  let tiers = 0;
-  while (
-    tiers < RULER_MAX_SUBTIER &&
-    (majorSpacing / 2 ** (tiers + 1)) * pixelsPerSecond >= RULER_MINOR_MIN_GAP_PX
-  ) {
-    tiers += 1;
-  }
-  return tiers;
-}
+/** Pre-measure fallback: covers any plausible first paint from scroll 0 so
+ *  the ruler is never blank while the ResizeObserver's initial (async)
+ *  delivery is in flight; the first real measure then tightens it. */
+const INITIAL_RULER_WINDOW: RulerWindow = { startX: 0, endX: RULER_WINDOW_CHUNK_PX * 8 };
 
-/** The tier a tick at finest-step index `n` belongs to: the COARSEST whose
- *  spacing divides it (more trailing power-of-two factors = coarser tier).
- *  0 is the labeled major. */
-function rulerTickLevel(index: number, maxTier: number): number {
-  if (index === 0) return 0;
-  let trailing = 0;
-  let value = index;
-  while (trailing < maxTier && value % 2 === 0) {
-    value /= 2;
-    trailing += 1;
-  }
-  return maxTier - trailing;
-}
+/**
+ * The chunk-quantized visible content-x range of the strip this element
+ * renders inside — the ruler's tick window. Reads the scroll container via
+ * the package's documented `[data-virtual-strip]` selector contract (the
+ * ruler rides the strip's own overlay layer, so `closest` finds it). Updates
+ * ride the scroller's scroll event and a ResizeObserver — both async, so no
+ * synchronous setState-in-effect; the observer's initial delivery IS the
+ * first measurement.
+ */
+function useStripTickWindow(rulerEl: HTMLElement | null): RulerWindow {
+  const [tickWindow, setTickWindow] = useState<RulerWindow>(INITIAL_RULER_WINDOW);
 
-function formatRulerTick(seconds: number): string {
-  if (seconds < 60) return Number.isInteger(seconds) ? `${seconds}s` : `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = Math.round(seconds % 60);
-  return `${minutes}:${String(rest).padStart(2, "0")}`;
+  useEffect(() => {
+    if (!rulerEl) return;
+    const scroller = rulerEl.closest<HTMLElement>("[data-virtual-strip]");
+    // Not inside a strip (defensive): the initial window stands, degrading to
+    // the unwindowed behavior for the first few thousand pixels.
+    if (!scroller) return;
+    const update = () => {
+      const chunk = RULER_WINDOW_CHUNK_PX;
+      const startX = Math.max(0, (Math.floor(scroller.scrollLeft / chunk) - 1) * chunk);
+      const endX = (Math.ceil((scroller.scrollLeft + scroller.clientWidth) / chunk) + 1) * chunk;
+      setTickWindow((previous) =>
+        previous.startX === startX && previous.endX === endX
+          ? previous
+          : { startX, endX },
+      );
+    };
+    scroller.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(scroller);
+    return () => {
+      scroller.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, [rulerEl]);
+
+  return tickWindow;
 }
 
 /**
@@ -259,6 +262,11 @@ function formatRulerTick(seconds: number): string {
  * `childSpans` falls back to projection times, which is the honest clock then.
  * Rides the strip overlay (content coordinates), so scroll/auto-scroll and the
  * live-trim transform all apply for free.
+ *
+ * Ticks are WINDOWED to the strip's visible scroll range (chunk-quantized,
+ * one chunk of overscan each side — see useStripTickWindow): tick count
+ * follows the viewport, never the timeline's duration, so a thousands-of-
+ * clips strip at high zoom stops minting thousands of offscreen tick divs.
  */
 export function GraphRuler({
   focusedId,
@@ -267,6 +275,10 @@ export function GraphRuler({
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
   const spans = useContext(PreviewCardSpansContext);
+  // State, not a ref: the tick-window hook needs the element on the render
+  // pass after mount, and render-time ref reads are illegal.
+  const [rulerEl, setRulerEl] = useState<HTMLElement | null>(null);
+  const tickWindow = useStripTickWindow(rulerEl);
   const graph = useSyncExternalStore(
     store.subscribe,
     () => store.getSnapshot().graph,
@@ -278,59 +290,25 @@ export function GraphRuler({
     () => detailsStore.read(),
   );
 
+  // Tick building is windowed AND pure (graph-playhead-model): only the
+  // ticks inside the visible chunk range exist, so a long timeline at high
+  // zoom no longer mints thousands of offscreen tick elements per commit —
+  // tick count follows the VIEWPORT, not the duration. Scrolling recomputes
+  // only on chunk crossings (tickWindow identity is stable between them).
   const ticks = useMemo(() => {
     const clips = graphChildrenToClips(graph, details, focusedId);
     const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
-    if (cards.length === 0) return [];
-    const map = buildPlayheadMap(cards);
-    const total = map.totalDurationSeconds;
-    if (total <= 0) return [];
-
-    // Card x-ranges + collection flag, in the SAME cumulative layout the map
-    // walks — so a tick's x can be tested against the collection interiors.
-    // ONE pass carrying a running left edge: each card starts where the
-    // previous one ended plus the pack gap. (The prior version re-summed all
-    // preceding widths per card with slice+reduce — O(n²) over the strip, and
-    // rebuilt on every commit; the accumulator is a local `let`, still pure.)
-    const ranges: Array<{ x0: number; x1: number; isCollection: boolean }> = [];
-    let cursorX = 0;
-    for (let index = 0; index < cards.length; index += 1) {
-      const card = cards[index];
-      ranges.push({
-        x0: cursorX,
-        x1: cursorX + card.width,
-        isCollection: clips[index]?.kind === "collection",
-      });
-      cursorX += card.width + STRIP_GAP_PX;
-    }
-    const inCollectionInterior = (cx: number) =>
-      ranges.some((range) => range.isCollection && cx > range.x0 + 1 && cx <= range.x1);
-
-    // Tiered ticks: a labeled MAJOR every `major` seconds, plus half / quarter
-    // / eighth minors between them — as many tiers as clear the minor gap at
-    // this zoom (item R6 #2). Stepping by the FINEST spacing and assigning each
-    // step its coarsest tier keeps every tier aligned to the major grid.
-    const major = rulerMajorSpacing(pixelsPerSecond);
-    const maxTier = rulerSubtierCount(major, pixelsPerSecond);
-    const finest = major / 2 ** maxTier;
-    const steps = Math.floor((total + 1e-6) / finest);
-    const out: Array<{ x: number; level: number; label: string }> = [];
-    for (let n = 0; n <= steps; n += 1) {
-      const t = n * finest;
-      const cx = map.xAt(t);
-      if (inCollectionInterior(cx)) continue;
-      const level = rulerTickLevel(n, maxTier);
-      out.push({ x: cx, level, label: level === 0 ? formatRulerTick(Math.round(t * 1000) / 1000) : "" });
-    }
-    // A minor edge tick bracketing each collection's blank interior.
-    for (const range of ranges) {
-      if (range.isCollection) out.push({ x: range.x0, level: 1, label: "" });
-    }
-    return out;
-  }, [graph, details, spans, focusedId, pixelsPerSecond]);
+    return buildRulerTicks(
+      cards,
+      clips.map((clip) => clip.kind === "collection"),
+      pixelsPerSecond,
+      tickWindow,
+    );
+  }, [graph, details, spans, focusedId, pixelsPerSecond, tickWindow]);
 
   return (
     <div
+      ref={setRulerEl}
       aria-hidden="true"
       data-graph-ruler
       className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[18px]"

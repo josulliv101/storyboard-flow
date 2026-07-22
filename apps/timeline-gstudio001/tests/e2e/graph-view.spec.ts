@@ -1977,4 +1977,51 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
     await expect.poll(() => page.locator("[data-graph-ruler]").count()).toBeGreaterThanOrEqual(2);
   });
+
+  test("ruler ticks are windowed to the visible strip, not the whole timeline", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    // A LONG project: 300 clips ≈ 1,200s ≈ 50,000px of strip at the default
+    // zoom. Unwindowed, the ruler minted one div per finest step across the
+    // whole duration (~4,800 ticks); windowed, tick count follows the
+    // viewport. `alpha` stays first so openGraph's readiness wait holds.
+    const project = api.documents.get(PROJECT_ID)!;
+    project.clips = [
+      mediaClip("alpha", "video", 0, 6, 8),
+      ...Array.from({ length: 299 }, (_, i) => mediaClip(`long-${i}`, "image", i + 1, 4)),
+    ];
+    await openGraph(page);
+    await page.getByRole("button", { name: /show time ruler/i }).click();
+    const ruler = page.locator("[data-graph-ruler]");
+    await expect(ruler).toHaveCount(1);
+
+    // Ticks translate within the strip's content coordinates; read each
+    // tick's x off its transform.
+    const tickXsInRange = (fromX: number, toX: number) =>
+      ruler.locator("> div").evaluateAll(
+        (els, range) =>
+          els.filter((el) => {
+            const match = /translateX\(([\d.]+)px\)/.exec((el as HTMLElement).style.transform);
+            return match !== null && +match[1] >= range.fromX && +match[1] <= range.toX;
+          }).length,
+        { fromX, toX },
+      );
+
+    // Near the origin: ticks exist. Far to the right (x ≈ 30,000, ~750s in):
+    // NONE exist yet — the unwindowed ruler had them all.
+    await expect.poll(() => tickXsInRange(0, 600)).toBeGreaterThan(5);
+    await expect.poll(() => tickXsInRange(30_000, 32_000)).toBe(0);
+    const beforeScroll = await ruler.locator("> div").count();
+    expect(beforeScroll).toBeLessThan(800);
+
+    // Scroll the strip deep into the timeline: the window follows and ticks
+    // materialize under the new viewport — still bounded, never the full set.
+    await strip(page, PROJECT_ID).evaluate((el) => {
+      el.scrollLeft = 30_000;
+    });
+    await expect.poll(() => tickXsInRange(30_000, 32_000)).toBeGreaterThan(5);
+    const afterScroll = await ruler.locator("> div").count();
+    expect(afterScroll).toBeLessThan(800);
+  });
 });
