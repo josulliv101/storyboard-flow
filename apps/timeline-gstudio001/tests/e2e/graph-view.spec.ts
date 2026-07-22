@@ -772,6 +772,18 @@ test.describe("graph view E2E", () => {
     await expect.poll(heightOf).toBeGreaterThan(0);
     const initial = await heightOf();
 
+    // Divider restyle: a slim 12px band with a centred grip pill; hovering
+    // tints the WHOLE band gray (the old amber line highlight is gone).
+    expect(
+      await divider.evaluate((el) => Math.round(el.getBoundingClientRect().height)),
+    ).toBe(12);
+    await expect(divider.locator("[data-divider-grip]")).toHaveCount(1);
+    const dividerBg = () => divider.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const restBg = await dividerBg();
+    await divider.hover();
+    await expect.poll(dividerBg).not.toBe(restBg);
+    await page.mouse.move(0, 0); // unhover before the resize steps below
+
     // Expanding a sub-graph grows the content BELOW the preview. The preview
     // used to be fitted to whatever the lower pane left over, so it shrank —
     // its height must now be untouched by content changes.

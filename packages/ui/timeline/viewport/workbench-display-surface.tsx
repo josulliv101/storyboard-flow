@@ -47,9 +47,9 @@ const BUFFER_WINDOW_SIZE = 4;
 const DEFAULT_SURFACE_HEIGHT = 380;
 const MIN_SURFACE_HEIGHT = 120;
 const MIN_TIMELINE_SPACE = 260;
-/** The resize divider's own height (Tailwind h-6). Part of the sticky preview
+/** The resize divider's own height (Tailwind h-3). Part of the sticky preview
  *  region, so the published sticky offset must include it. */
-const DIVIDER_HEIGHT_PX = 24;
+const DIVIDER_HEIGHT_PX = 12;
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -990,16 +990,28 @@ export function WorkbenchSplitPane({
           aria-label="Resize workbench display"
           // The divider's OWN height is the only source of the gap on either
           // side of the rule: it centres the 1px line, so the space above and
-          // below is h/2 each. Nothing else may add padding against it — the
-          // lower pane used to carry a pt-3 that made the bottom gap 22px
-          // against the top's 10px, which read as a misaligned rule.
-          className="group flex h-6 w-full cursor-row-resize items-center justify-center bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400 focus-visible:outline-offset-2"
+          // below is h/2 each (h-3 — kept in sync with DIVIDER_HEIGHT_PX).
+          // Nothing else may add padding against it — the lower pane used to
+          // carry a pt-3 that made the bottom gap 22px against the top's
+          // 10px, which read as a misaligned rule. Affordance: a centred
+          // grip pill says "draggable" at rest, and hovering tints the whole
+          // band gray (the old amber line highlight is gone; focus ring is
+          // sky, matching the seek rails).
+          className="group relative flex h-3 w-full cursor-row-resize items-center justify-center bg-transparent transition-colors hover:bg-zinc-800/70 active:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
           onPointerUp={handleDividerPointerUp}
           onPointerCancel={handleDividerPointerUp}
         >
-          <span className="h-px w-full bg-zinc-800 transition-colors group-hover:bg-amber-400/70 group-active:bg-amber-400" />
+          <span
+            aria-hidden="true"
+            className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-zinc-800"
+          />
+          <span
+            aria-hidden="true"
+            data-divider-grip
+            className="relative h-1 w-10 rounded-full bg-zinc-600 transition-colors group-hover:bg-zinc-400 group-active:bg-zinc-300"
+          />
         </button>
       </div>
       <div ref={lowerPaneRef} className="min-h-0">
