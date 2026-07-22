@@ -625,14 +625,88 @@ test.describe("graph view E2E", () => {
       .toBe("Heist Plan");
   });
 
+  test("composed collection card: interactive controls are siblings of the surface, never nested", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
+    const wrapper = strip(page, PROJECT_ID).locator(`[data-node-wrapper="${CHILD_ID}"]`);
+    await surface.waitFor({ state: "visible" });
+
+    // The selection surface is a real <button> with NO interactive content
+    // inside it — nested interactive semantics are invalid HTML and read as
+    // an ambiguous a11y tree (review finding 1). The folder control and the
+    // rename editor compose as SIBLINGS via the package's item-shell seam.
+    await expect(surface).toHaveJSProperty("tagName", "BUTTON");
+    await expect(
+      surface.locator("button, [role='button'], input, textarea, select, a[href], [tabindex]"),
+    ).toHaveCount(0);
+
+    // The drill affordance is a REAL button (not a role="button" span).
+    const folder = wrapper.getByRole("button", { name: /^Open / });
+    await expect(folder).toHaveJSProperty("tagName", "BUTTON");
+
+    // The rename editor is a REAL input, and it never lands inside the surface.
+    await surface.getByText("Scene A", { exact: true }).dblclick();
+    const editor = wrapper.getByRole("textbox", { name: "Timeline name" });
+    await expect(editor).toHaveJSProperty("tagName", "INPUT");
+    await expect(surface.locator("input")).toHaveCount(0);
+    await editor.press("Escape");
+    await expect(editor).toHaveCount(0);
+  });
+
+  test("a collection card hold-drags to reorder, like any clip", async ({ page }) => {
+    // The composed collection item routes its pointer drag through the
+    // selection surface (SelectionSurface dragActivation="hold") instead of
+    // NodeCard's body — this pins that the hold sensor wiring survived the
+    // recomposition end to end, persistence included. Press the LABEL strip
+    // at the bottom of the card, not the centre: the centre is the folder
+    // button, which is click-only territory (its press has never been able
+    // to start a card drag) — the body around it is what drags.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+    const card = projectStrip.locator(`[data-node-id="${CHILD_ID}"]`);
+    const target = projectStrip.locator('[data-node-id="charlie"]');
+    await card.waitFor({ state: "visible" });
+    await settleMoveAnimations(page);
+    const cardBox = (await card.boundingBox())!;
+    const targetBox = (await target.boundingBox())!;
+
+    await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height - 8);
+    await page.mouse.down();
+    await page.waitForTimeout(400); // past the hold-activation delay
+    // Drop on charlie's right half: the collection lands after it.
+    await page.mouse.move(
+      targetBox.x + targetBox.width * 0.85,
+      targetBox.y + targetBox.height / 2,
+      { steps: 12 },
+    );
+    await page.waitForTimeout(150); // dwell: let collision/intent settle
+    await page.mouse.up();
+    await page.waitForTimeout(80); // outlast dnd-kit's click suppressor
+
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", "charlie", CHILD_ID]);
+    await expect
+      .poll(() => api.patchesFor(PROJECT_ID).length, { timeout: 5000 })
+      .toBeGreaterThan(0);
+    const patch = api.patchesFor(PROJECT_ID).at(-1);
+    expect(patch?.clipIds).toEqual(["alpha", "bravo", "charlie", "clip-scene"]);
+  });
+
   test("renaming the focused BREADCRUMB crumb in place persists the collection title", async ({
     page,
   }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
     // Drill into the child collection so it is the focused (current) crumb.
+    // The folder button is a SIBLING of the card's selection surface (a real
+    // <button> can't nest in a button), so scope at the item wrapper.
     await strip(page, PROJECT_ID)
-      .locator(`[data-node-id="${CHILD_ID}"]`)
+      .locator(`[data-node-wrapper="${CHILD_ID}"]`)
       .getByRole("button", { name: "Open Scene A" })
       .click();
     const trail = page.getByRole("navigation", { name: "Timeline focus path" });
@@ -1127,7 +1201,7 @@ test.describe("graph view E2E", () => {
     // park at "long-timeline-time / short-timeline-duration". The collection
     // card's folder button drills (the interaction model's pointer path).
     await strip(page, PROJECT_ID)
-      .locator(`[data-node-id="${CHILD_ID}"]`)
+      .locator(`[data-node-wrapper="${CHILD_ID}"]`)
       .getByRole("button", { name: /^Open / })
       .click();
     await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
@@ -1337,9 +1411,14 @@ test.describe("graph view E2E", () => {
     }).toPass({ timeout: 10000 });
     await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}$`));
 
-    // The folder button is the pointer twin of O: it DRILLS IN.
+    // The folder button is the pointer twin of O: it DRILLS IN. It is a real
+    // <button> SIBLING of the selection surface (nesting one in the card
+    // button would be invalid HTML), so find it via the item wrapper.
+    const collectionWrapper = strip(page, PROJECT_ID).locator(
+      `[data-node-wrapper="${CHILD_ID}"]`,
+    );
     await expect(async () => {
-      await collectionCard.getByRole("button", { name: /^Open / }).click();
+      await collectionWrapper.getByRole("button", { name: /^Open / }).click();
       await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 3000 });
     }).toPass({ timeout: 15000 });
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);

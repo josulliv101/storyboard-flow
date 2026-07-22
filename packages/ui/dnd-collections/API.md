@@ -804,13 +804,35 @@ type CollectionTrimOverviewContentProps = Readonly<{
 }>;
 type CollectionTrimOverviewContentComponent = ComponentType<CollectionTrimOverviewContentProps>;
 
+type CollectionItemShellProps = Readonly<{
+  id: NodeId;
+  className?: string;                      // slot sizing — virtual views pass "h-full w-full"
+  dragActivation?: NodeCardDragActivation;
+  rovingTabIndex?: number;
+  trimPixelsPerSecond?: number;
+  itemContent?: CollectionItemContentComponent;
+}>;
+type CollectionItemShellComponent = ComponentType<CollectionItemShellProps>;
+
 type CollectionsComponents = Readonly<{
   ItemContent?: CollectionItemContentComponent;  // every card, all views
+  ItemShell?: CollectionItemShellComponent;      // the whole per-item renderer in the VIRTUAL views (default NodeCard)
   GhostContent?: CollectionGhostContentComponent; // the drag-overlay ghost
   TrimHandleContent?: CollectionTrimHandleContentComponent; // pixels INSIDE the trim hit zones
   OverviewContent?: CollectionTrimOverviewContentComponent; // the overview's filmstrip/label pixels
 }>;
 ```
+
+**The item SHELL** is the seam one level up from `ItemContent`: where
+`ItemContent` swaps the pixels inside NodeCard's `<button>`, an `ItemShell`
+replaces NodeCard itself in the virtual views (`VirtualStrip`/`VirtualGrid`;
+panels keep NodeCard). Its props are exactly NodeCard's, so NodeCard is the
+default and a custom shell can fall back to it per node. This is the only
+way to put LEGALLY interactive controls (a real `<button>`, an `<input>`) on
+a card: compose them with the `CollectionItem` primitives as SIBLINGS of
+`CollectionItem.SelectionSurface` instead of nesting them inside a button
+(see "Compound items" below). Resolution: per-view `itemShell` → provider
+registry → `NodeCard`.
 
 **The source-window overview** splits the same way: `OverviewContent`
 replaces its BACKGROUND pixels (the full-source filmstrip and labels —
@@ -854,8 +876,9 @@ Rules, all load-bearing for the efficiency model:
   stable.
 - **Presentational only**: content renders inside a `<button>` — no
   interactive elements (buttons, links, inputs). Interactivity (selection,
-  drag, trim) is the shell's job; compound primitives for custom interactive
-  placement are a planned escape hatch.
+  drag, trim) is the shell's job; an item that genuinely needs its own
+  interactive controls renders through the `ItemShell` seam and composes
+  them with the compound primitives as siblings of the selection surface.
 - Nothing per-frame ever reaches content: every prop is a rarely-changing
   primitive plus the structurally-shared `node`. Content may subscribe to
   its own stores — that re-renders only the subscribed content, never the
@@ -882,7 +905,7 @@ every pixel AND the DOM shape:
 | Primitive | Owns |
 | --- | --- |
 | `Root` | `id`, `className?`, `trimPixelsPerSecond?`, `rovingTabIndex?`. The draggable node AND droppable (ghost/collision rects = the whole item), the narrow selector subscriptions (same as NodeCard — the efficiency story holds), `data-node-wrapper`/`data-render-count`. Renders null for missing ids. |
-| `SelectionSurface` | The focusable `<button>`: `data-node-id` (FLIP, keyboard delegation, roving focus, and e2e key off it), selection clicks (Ctrl/Cmd toggles), `aria-label`/`aria-pressed`/instructions `describedby`, and the KEYBOARD grab (Enter) — always the tab stop. |
+| `SelectionSurface` | The focusable `<button>`: `data-node-id` (FLIP, keyboard delegation, roving focus, and e2e key off it), selection clicks (Ctrl/Cmd toggles), `aria-label`/`aria-pressed`/instructions `describedby`, and the KEYBOARD grab (Enter) — always the tab stop. `dragActivation?: "none" \| "body" \| "hold"` (default "none") opts the surface in as the POINTER drag activator too — "body" drags instantly, "hold" is press-and-hold with fast movement handed to surface gestures — for items that want NodeCard's whole-body drag without a grip. |
 | `DragHandle` | Pointer-only drag activator (`data-drag-handle`, `touch-action: none`, aria-hidden) — place it anywhere; keyboard drag stays on the SelectionSurface. |
 | `TrimHandle` | `side: "left" \| "right"` + your grip pixels as children. The hit zone (default edge geometry, override via `className`), the pointer gesture, `data-trim-handle` (the strip's pan filter skips it). Renders null for collections, images' left side, or without `Root trimPixelsPerSecond`. |
 | `DropIndicators` | The stock nest overlay + before/after bars. Or draw your own from `useCollectionItemState()` (`{ id, node, childCount, selected, rejected, isDragSource, dropSide, nestState }`). |
@@ -968,6 +991,7 @@ type VirtualStripProps = {
   itemDragActivation?: "handle" | "hold";                // default "handle" (grip bar); "hold" = press-and-hold the body. Ignored when panToScroll is off (bodies drag instantly)
   trimPixelsPerSecond?: number;                          // override the trim conversion; DEFAULTS to pixelsPerSecond. Handles render when either is set; commits update-media on release. LIVE resize follows the strip's OWN width resolution (a synthesized node with the live trims runs through itemWidthFor/pixelsPerSecond) — so consumer floors hold mid-drag, and a fixed-width strip's card keeps its width (data trims, geometry doesn't)
   itemContent?: CollectionItemContentComponent;          // per-view card pixels; overrides the provider registry
+  itemShell?: CollectionItemShellComponent;              // per-view ITEM renderer (default NodeCard; registry ItemShell in between) — see "Custom item content"
   overlay?: ReactNode;                                   // STRICTLY PRESENTATIONAL content-coordinate layer over the strip (playhead, markers): rides scroll + live-trim transform. aria-hidden + pointer-events none — no interactive/focusable children (focusable-inside-aria-hidden is an a11y violation); interactive scrubbers belong in your own layer outside the strip
   className?: string;
 };
@@ -1043,6 +1067,7 @@ type VirtualGridProps = {
   overscan?: number;    // default 2 (rows)
   height?: number;      // default 480 — MAXIMUM viewport height: the grid hugs its content while the rows fit and scrolls past the cap. An empty grid keeps one row's worth of drop area
   itemContent?: CollectionItemContentComponent; // per-view card pixels; overrides the provider registry
+  itemShell?: CollectionItemShellComponent; // per-view ITEM renderer (default NodeCard; registry ItemShell in between) — see "Custom item content"
   overlay?: ReactNode;  // STRICTLY PRESENTATIONAL content-coordinate layer inside the scrolling spacer (playhead, region markers): rides vertical scroll and the drop-spacer height. aria-hidden + pointer-events none — no interactive/focusable children; interactive scrubbers belong in your own layer outside the grid. Position children in content coords: col c → left c*(cellWidth+gap), row r → top r*(cellHeight+gap) — but use the LIVE cellWidth off data-grid-cell-width, not the cellWidth prop (which is only a target, not the rendered size); read the live column count off data-grid-columns
   className?: string;
 };

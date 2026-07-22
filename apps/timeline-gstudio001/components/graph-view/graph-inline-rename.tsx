@@ -39,25 +39,23 @@ export function useInlineRename(nodeId: NodeId, currentName: string) {
 }
 
 /**
- * The inline editor, as a `contentEditable` span rather than an `<input>`.
+ * The inline editor: one real `<input>` shared by every rename site — the
+ * collection card, the breadcrumb crumb, and the sub-timeline row heading.
  *
- * A strip/grid card's content renders INSIDE the NodeCard `<button>` shell. An
- * `<input>` there is invalid interactive content and the parser hoists it OUT
- * of the button on hydration; a `<span>` is phrasing content and stays put —
- * which is why this is a contentEditable span. That dodges the hoist, but be
- * honest: a focusable `role="textbox"` inside a `<button>` is still not clean
- * a11y (nested interactive semantics). The correct fix is to render the editor
- * OUTSIDE the button — a sibling of a selection surface — which needs an
- * item-shell override on VirtualStrip/VirtualGrid that the graph does not have
- * yet. Until then this is a pragmatic, edit-only (transient) editor; `role` +
- * `aria-label` keep it testable and named. The text is seeded once via the ref
- * (never bound as React children, which would reset the caret every keystroke)
- * and read back through `onInput`.
+ * It used to be a `contentEditable` span because the card's editor rendered
+ * INSIDE the NodeCard `<button>` shell, where an `<input>` is invalid
+ * interactive content. The graph now renders its collection items through the
+ * package's item-shell seam (see GraphCollectionItem), which composes this
+ * editor as a SIBLING of the selection surface — so a native input is legal
+ * everywhere it appears, with real caret/selection/IME behavior for free.
  *
- * Placed within the card's drag sensor, so a press or click here must not start
- * a drag or toggle selection — hence the stopPropagation. The card's keyboard
- * chords already skip editable targets, so typing is safe; Enter commits (no
- * newline) and Escape cancels.
+ * Uncontrolled on purpose: the value is seeded once (`defaultValue`) and
+ * reported through `onInput`; select-on-focus lets the first keystroke replace
+ * the old name. The card's editor sits inside drag-sensor/pan territory, so
+ * presses must not start a drag, a pan, or toggle selection — hence the
+ * stopPropagation trio. Keyboard chords already skip editable targets
+ * (isEditableKeyboardTarget); the keydown stopPropagation is belt-and-braces.
+ * Enter commits, Escape cancels, blur commits.
  */
 export function InlineNameEditor({
   initialValue,
@@ -72,42 +70,27 @@ export function InlineNameEditor({
   onCancel: () => void;
   className?: string;
 }>) {
-  const setRef = useCallback(
-    (element: HTMLSpanElement | null) => {
-      if (!element) return;
-      element.textContent = initialValue;
-      element.focus();
-      // Select all so the first keystroke replaces the old name.
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-    },
-    [initialValue],
-  );
+  const setRef = useCallback((element: HTMLInputElement | null) => {
+    if (!element) return;
+    element.focus();
+    // Select all so the first keystroke replaces the old name.
+    element.select();
+  }, []);
 
   return (
-    <span
+    <input
       ref={setRef}
-      role="textbox"
       aria-label="Timeline name"
-      contentEditable
-      suppressContentEditableWarning
+      defaultValue={initialValue}
       spellCheck={false}
-      onInput={(event) => onInput(event.currentTarget.textContent ?? "")}
+      onChange={(event) => onInput(event.target.value)}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
         event.stopPropagation();
-        if (event.key === "Enter") {
-          event.preventDefault(); // commit instead of inserting a newline
-          onCommit();
-        } else if (event.key === "Escape") {
-          event.preventDefault();
-          onCancel();
-        }
+        if (event.key === "Enter") onCommit();
+        else if (event.key === "Escape") onCancel();
       }}
       onBlur={onCommit}
       className={className}

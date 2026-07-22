@@ -7,6 +7,7 @@ import {
   useContext,
   useMemo,
   useRef,
+  type ButtonHTMLAttributes,
   type KeyboardEventHandler,
   type MouseEvent,
   type PointerEventHandler,
@@ -246,13 +247,34 @@ const Root = memo(function CollectionItemRoot({
 const SelectionSurface = memo(function CollectionItemSelectionSurface({
   children,
   className,
+  dragActivation = "none",
 }: {
   children?: ReactNode;
   className?: string;
+  /**
+   * Opt the surface itself in as the POINTER drag activator: "body" drags
+   * instantly from anywhere on it, "hold" requires the press-and-hold (fast
+   * movement is handed to surface gestures like strip panning) — the same
+   * modes NodeCard's body supports, for compound items that want NodeCard's
+   * whole-body drag without a grip. The default "none" keeps DragHandle as
+   * the only pointer path. The keyboard grab (Enter) lives here in EVERY
+   * mode — the surface is the one guaranteed tab stop.
+   */
+  dragActivation?: "none" | "body" | "hold";
 }) {
   const ctx = useCollectionItemContext("SelectionSurface");
   const { instructionsId } = useCollectionsContainer();
   const isCollection = ctx.node.kind === "collection";
+  const bodyDrag = dragActivation !== "none";
+  // Localized cast, same as DragHandle's: dnd-kit types its listener map as
+  // Record<string, Function>; these are the button's synthetic handlers.
+  const dragListeners = bodyDrag
+    ? (ctx.listeners as ButtonHTMLAttributes<HTMLButtonElement> | undefined)
+    : {
+        onKeyDown: ctx.listeners?.onKeyDown as
+          | KeyboardEventHandler<HTMLButtonElement>
+          | undefined,
+      };
   return (
     <button
       type="button"
@@ -261,15 +283,25 @@ const SelectionSurface = memo(function CollectionItemSelectionSurface({
       {...(ctx.selected ? { "data-selected": "true" } : {})}
       {...(ctx.rejected ? { "data-rejected": "true" } : {})}
       aria-label={`${ctx.node.name}${isCollection ? ` (collection, ${ctx.childCount} items)` : ""}`}
-      aria-pressed={ctx.selected}
-      aria-describedby={joinAriaIds(instructionsId)}
       onClick={ctx.select}
-      // The KEYBOARD grab (Enter) always lives on the selection button — the
-      // one guaranteed tab stop — matching NodeCard's grammar. (Localized
-      // cast: dnd-kit types its listener map as Record<string, Function>.)
-      onKeyDown={ctx.listeners?.onKeyDown as KeyboardEventHandler<HTMLButtonElement> | undefined}
+      // The hold sensor picks press-and-hold activation by this marker on
+      // the pressed target's ancestry (see CollectionsPointerSensor).
+      {...(dragActivation === "hold" ? { "data-drag-activation": "hold" } : {})}
+      {...(bodyDrag ? ctx.attributes : {})}
+      {...dragListeners}
+      // After dnd-kit's attribute spread, mirroring NodeCard: the pressed
+      // semantic is SELECTION, and roving tabindex must win over dnd-kit's.
+      aria-pressed={ctx.selected}
+      aria-describedby={joinAriaIds(
+        bodyDrag ? ctx.attributes["aria-describedby"] : undefined,
+        instructionsId
+      )}
       {...(ctx.rovingTabIndex !== undefined ? { tabIndex: ctx.rovingTabIndex } : {})}
-      className={twMerge("select-none text-left", className)}
+      className={twMerge(
+        "select-none text-left",
+        bodyDrag ? "cursor-grab active:cursor-grabbing" : "",
+        className
+      )}
     >
       {children}
     </button>
