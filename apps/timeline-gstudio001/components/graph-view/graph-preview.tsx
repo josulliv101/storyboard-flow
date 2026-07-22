@@ -28,9 +28,11 @@ import {
 import {
   buildGridPlayheadMap,
   buildPlayheadMap,
+  buildRulerCollectionSpans,
   buildRulerTicks,
   cardSpansOf,
   childSpans,
+  formatRulerTick,
   manifestTrailsLedger,
   nextManifestClipsState,
   nextManifestFailureCount,
@@ -193,6 +195,10 @@ export function GraphPlayhead({
  *  shorter minors (half / quarter / eighth). Index by `level`. */
 const RULER_TIER_HEIGHT_PX = [18, 11, 8, 5];
 
+/** Narrowest collection card that still fits its centred duration label —
+ *  below this the band stays empty rather than overflowing the neighbours. */
+const RULER_COLLECTION_LABEL_MIN_WIDTH_PX = 34;
+
 /** Window quantum for ruler ticks. Coarse on purpose: the window only
  *  changes when scrolling crosses a chunk boundary, so the per-scroll-event
  *  work is a compare-and-bail, and each re-render is amortized over ~512px
@@ -295,15 +301,17 @@ export function GraphRuler({
   // zoom no longer mints thousands of offscreen tick elements per commit —
   // tick count follows the VIEWPORT, not the duration. Scrolling recomputes
   // only on chunk crossings (tickWindow identity is stable between them).
-  const ticks = useMemo(() => {
+  const { ticks, collectionSpans } = useMemo(() => {
     const clips = graphChildrenToClips(graph, details, focusedId);
     const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
-    return buildRulerTicks(
-      cards,
-      clips.map((clip) => clip.kind === "collection"),
-      pixelsPerSecond,
-      tickWindow,
-    );
+    const isCollection = clips.map((clip) => clip.kind === "collection");
+    return {
+      ticks: buildRulerTicks(cards, isCollection, pixelsPerSecond, tickWindow),
+      // A collection's interior gets no ticks (its width is not a time axis)
+      // — fill its stretch of the band with the content duration instead
+      // (R7 #4), same live-derived total the card badge shows.
+      collectionSpans: buildRulerCollectionSpans(cards, isCollection, tickWindow),
+    };
   }, [graph, details, spans, focusedId, pixelsPerSecond, tickWindow]);
 
   return (
@@ -339,6 +347,21 @@ export function GraphRuler({
           ) : null}
         </div>
       ))}
+      {/* Collections carry no ticks, so their stretch of the band shows the
+          content duration instead of sitting empty (R7 #4). Centred in the
+          card's range; skipped when the card is too narrow for the label. */}
+      {collectionSpans.map((span, index) =>
+        span.width >= RULER_COLLECTION_LABEL_MIN_WIDTH_PX ? (
+          <span
+            key={`collection-${index}`}
+            data-ruler-collection-duration
+            className="absolute top-[2px] -translate-x-1/2 whitespace-nowrap font-mono text-[9px] font-medium leading-none text-sky-200/90"
+            style={{ left: span.x + span.width / 2 }}
+          >
+            {formatRulerTick(Math.round(span.seconds * 10) / 10)}
+          </span>
+        ) : null,
+      )}
     </div>
   );
 }
@@ -460,7 +483,7 @@ export function GraphGridPlayhead({
     let lastCellWidth = 0;
     let map: GridPlayheadMap | null = null;
 
-    const paint = () => {
+    const ensureMap = (): GridPlayheadMap | null => {
       const graph = store.getSnapshot().graph;
       const details = detailsStore.read();
       const columns = Number(grid?.dataset.gridColumns) || 1;
@@ -485,96 +508,35 @@ export function GraphGridPlayhead({
           cellHeight,
         );
       }
-      if (!map) return;
+      return map;
+    };
+
+    const paint = () => {
+      const current = ensureMap();
+      if (!current) return;
       const time = channel.get();
       const inside =
         !activeWindow || (time >= activeWindow.start - 0.04 && time <= activeWindow.end + 0.04);
       line.style.display = inside ? "" : "none";
       if (!inside) return;
-      const { x, y } = map.posAt(time);
+      const { x, y } = current.posAt(time);
       line.style.transform = `translate(${x}px, ${y}px)`;
-      line.style.height = `${map.rowHeight}px`;
+      line.style.height = `${current.rowHeight}px`;
     };
 
-    paint();
-    const unsubscribeTime = channel.subscribe(paint);
-    const unsubscribeStore = store.subscribe(paint);
-    const unsubscribeDetails = detailsStore.subscribe(paint);
-    const observer = grid ? new ResizeObserver(paint) : null;
-    if (grid && observer) observer.observe(grid);
-    return () => {
-      unsubscribeTime();
-      unsubscribeStore();
-      unsubscribeDetails();
-      observer?.disconnect();
-    };
-  }, [store, detailsStore, focusedId, channel, cellHeight, spans, pixelsPerSecond, activeWindow]);
-
-  return (
-    <div
-      ref={lineRef}
-      data-graph-grid-playhead
-      className="absolute left-0 top-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
-    >
-      <div className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500" />
-    </div>
-  );
-}
-
-export function GraphGridScrubSurface({
-  focusedId,
-  channel,
-  cellHeight,
-  pixelsPerSecond,
-}: Readonly<{
-  focusedId: string;
-  channel: PreviewTimeChannel;
-  cellHeight: number;
-  pixelsPerSecond: number;
-}>) {
-  const store = useCollectionsStore();
-  const detailsStore = useGraphDetailsStore();
-  const spans = useContext(PreviewCardSpansContext);
-  const surfaceRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const surface = surfaceRef.current;
-    if (!surface) return;
-    const grid = surface.parentElement?.querySelector<HTMLElement>("[data-virtual-grid]") ?? null;
-    if (!grid) return;
-
-    let map: GridPlayheadMap | null = null;
-    let mapGraph: CollectionsGraph | null = null;
-    let mapDetails: DetailsById | null = null;
-    let mapColumns = 0;
-    let mapCellWidth = 0;
+    // Scrub = DRAG THE PLAYHEAD (R7 #5/#6/#7). The full-cover scrub surface
+    // this grid used to carry ate every card pointerdown while preview was
+    // on — no select, no drill, no hold-drag. Now the cards own their
+    // pixels again and the playhead itself is the only scrub affordance:
+    // its (enlarged) handle captures the pointer and maps x/y through the
+    // same grid time map the old surface used, so cross-row scrubs still
+    // work — drag the handle onto another row and it jumps there.
     const seek = (event: PointerEvent) => {
-      const graph = store.getSnapshot().graph;
-      const details = detailsStore.read();
-      const columns = Number(grid.dataset.gridColumns) || 1;
-      // Live rendered cell width (post fill-stretch) — see GraphGridPlayhead.
-      const cellWidth = Number(grid.dataset.gridCellWidth) || 1;
-      if (
-        graph !== mapGraph ||
-        details !== mapDetails ||
-        columns !== mapColumns ||
-        cellWidth !== mapCellWidth ||
-        !map
-      ) {
-        mapGraph = graph;
-        mapDetails = details;
-        mapColumns = columns;
-        mapCellWidth = cellWidth;
-        map = buildGridPlayheadMap(
-          childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
-          columns,
-          cellWidth,
-          cellHeight,
-        );
-      }
+      const current = ensureMap();
+      if (!current || !grid) return;
       const overlay = grid.querySelector<HTMLElement>("[data-virtual-grid-overlay]");
       const rect = (overlay ?? grid).getBoundingClientRect();
-      channel.set(map.timeAt(event.clientX - rect.left, event.clientY - rect.top));
+      channel.set(current.timeAt(event.clientX - rect.left, event.clientY - rect.top));
     };
 
     let pointerId: number | null = null;
@@ -590,9 +552,13 @@ export function GraphGridScrubSurface({
     };
     const handleDown = (event: PointerEvent) => {
       if (!event.isPrimary || event.button !== 0) return;
+      // The handle sits inside the aria-hidden overlay layer; nothing else
+      // must see this press (a card behind it would treat it as a select).
+      event.stopPropagation();
+      event.preventDefault();
       pointerId = event.pointerId;
       try {
-        surface.setPointerCapture(event.pointerId);
+        line.setPointerCapture(event.pointerId);
       } catch {
         // Synthetic pointer: window listeners still own the lifecycle.
       }
@@ -601,26 +567,41 @@ export function GraphGridScrubSurface({
       window.addEventListener("pointerup", end);
       window.addEventListener("pointercancel", end);
     };
-    // No wheel handler: grids are content-height (GRID_UNCAPPED_HEIGHT), so
-    // there is no internal scroll to feed — the wheel keeps its default and
-    // the PAGE scrolls, which the e2e suite pins. The forwarding handler this
-    // surface used to carry could only ever no-op.
-    surface.addEventListener("pointerdown", handleDown);
+
+    line.addEventListener("pointerdown", handleDown);
+    paint();
+    const unsubscribeTime = channel.subscribe(paint);
+    const unsubscribeStore = store.subscribe(paint);
+    const unsubscribeDetails = detailsStore.subscribe(paint);
+    const observer = grid ? new ResizeObserver(paint) : null;
+    if (grid && observer) observer.observe(grid);
     return () => {
-      surface.removeEventListener("pointerdown", handleDown);
+      line.removeEventListener("pointerdown", handleDown);
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
+      unsubscribeTime();
+      unsubscribeStore();
+      unsubscribeDetails();
+      observer?.disconnect();
     };
-  }, [store, detailsStore, focusedId, channel, cellHeight, spans, pixelsPerSecond]);
+  }, [store, detailsStore, focusedId, channel, cellHeight, spans, pixelsPerSecond, activeWindow]);
 
   return (
+    // pointer-events re-enabled DELIBERATELY: the overlay wrapper is
+    // pointer-events-none so cards stay interactive; only this handle takes
+    // the pointer back. It stays pointer-only and unfocusable (the wrapper
+    // is aria-hidden — a focusable child there would be a keyboard trap).
     <div
-      ref={surfaceRef}
-      data-grid-scrub
-      aria-hidden="true"
-      className="absolute inset-0 z-10 cursor-crosshair"
-    />
+      ref={lineRef}
+      data-graph-grid-playhead
+      className="pointer-events-auto absolute left-0 top-0 w-0.5 cursor-ew-resize bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+    >
+      <div className="absolute -left-[5px] -top-2 h-0 w-0 border-x-[6px] border-t-[8px] border-x-transparent border-t-red-500" />
+      {/* Invisible enlarged grab zone: the 2px line alone is unhittable.
+          Spans the cap and the full line height, ~17px wide. */}
+      <div data-graph-grid-playhead-handle className="absolute -inset-x-2 -top-2 bottom-0" />
+    </div>
   );
 }
 

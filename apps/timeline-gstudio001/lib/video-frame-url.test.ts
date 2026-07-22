@@ -47,7 +47,7 @@ describe("cloudinaryVideoFrameUrl", () => {
 });
 
 describe("videoFrameUrls", () => {
-  it("samples `count` frames at slot centres across the visible range", () => {
+  it("samples interior frames at slot centres and pins the LAST to the range end", () => {
     // A recording builder just captures the times it was asked for.
     const times: number[] = [];
     const record: VideoFrameUrlBuilder = (url, t) => {
@@ -56,8 +56,10 @@ describe("videoFrameUrls", () => {
     };
     const urls = videoFrameUrls(["poster"], 4, { trimInSeconds: 0, effectiveSeconds: 8 }, record);
     expect(urls).toHaveLength(4);
-    // (i + 0.5)/4 * 8 = 1, 3, 5, 7 — centres, never the exact 0 or 8 edge.
-    expect(times).toEqual([1, 3, 5, 7]);
+    // Interior: (i + 0.5)/4 * 8 = 1, 3, 5 — centres, never the exact 0 edge.
+    // Last: the end of the range minus the 0.05s back-off (R7 #3), so the
+    // strip finishes on the clip's final frame instead of slot centre 7.
+    expect(times).toEqual([1, 3, 5, 7.95]);
   });
 
   it("offsets sample times by the trim-in so it reads the VISIBLE window", () => {
@@ -67,8 +69,21 @@ describe("videoFrameUrls", () => {
       return "x";
     };
     videoFrameUrls(["poster"], 2, { trimInSeconds: 10, effectiveSeconds: 4 }, record);
-    // (0.5/2)*4 + 10 = 11 ; (1.5/2)*4 + 10 = 13
-    expect(times).toEqual([11, 13]);
+    // First at centre (0.5/2)*4 + 10 = 11 ; last pinned to 10 + (4 - 0.05).
+    expect(times).toEqual([11, 13.95]);
+  });
+
+  it("never pins the last slot below the range midpoint on tiny clips", () => {
+    const times: number[] = [];
+    const record: VideoFrameUrlBuilder = (_url, t) => {
+      times.push(t);
+      return "x";
+    };
+    // effective 0.06s: end - 0.05 = 0.01 would land BEFORE the first slot's
+    // centre — the midpoint floor keeps the pair ordered.
+    videoFrameUrls(["poster"], 2, { trimInSeconds: 0, effectiveSeconds: 0.06 }, record);
+    expect(times[1]).toBeGreaterThanOrEqual(times[0]);
+    expect(times[1]).toBeCloseTo(0.03);
   });
 
   it("returns nothing without a poster or with a non-positive count", () => {

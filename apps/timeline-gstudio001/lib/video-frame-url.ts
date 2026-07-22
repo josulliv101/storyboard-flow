@@ -43,12 +43,19 @@ export const cloudinaryVideoFrameUrl: VideoFrameUrlBuilder = (frameUrl, timeSeco
  *  another provider — nothing above the seam names Cloudinary. */
 export const defaultVideoFrameUrlBuilder: VideoFrameUrlBuilder = cloudinaryVideoFrameUrl;
 
+/** How far short of the range's exact end the LAST slot samples. The very
+ *  final frame of an encode is often black or a fade-out remnant; a beat
+ *  before it is the frame a person means by "the end of the clip". */
+const LAST_FRAME_BACKOFF_SECONDS = 0.05;
+
 /**
  * `count` frame URLs sampled at even times across the clip's VISIBLE range
- * — [trimInSeconds, trimInSeconds + effectiveSeconds]. Frames are read at slot
- * CENTERS ((i + 0.5) / count) so the first isn't the exact in-cut and the last
- * isn't the very tail (both often black). Falls back to the base poster when
- * there is no usable frame URL to transform.
+ * — [trimInSeconds, trimInSeconds + effectiveSeconds]. Interior frames are
+ * read at slot CENTERS ((i + 0.5) / count) so the first isn't the exact
+ * in-cut (often black); the LAST slot is pinned to the range's end (minus a
+ * small back-off) so the strip always finishes on the clip's final frame
+ * (R7 #3). Falls back to the base poster when there is no usable frame URL
+ * to transform.
  */
 export function videoFrameUrls(
   posters: readonly string[],
@@ -62,7 +69,12 @@ export function videoFrameUrls(
   const effective = Math.max(0, range.effectiveSeconds);
   const urls: string[] = [];
   for (let index = 0; index < slots; index += 1) {
-    const time = range.trimInSeconds + ((index + 0.5) / slots) * effective;
+    // Single-slot strips keep the center sample — pinning them to the end
+    // would represent a whole clip by its final frame.
+    const time =
+      index === slots - 1 && slots > 1
+        ? range.trimInSeconds + Math.max(effective / 2, effective - LAST_FRAME_BACKOFF_SECONDS)
+        : range.trimInSeconds + ((index + 0.5) / slots) * effective;
     urls.push(build(base, time));
   }
   return urls;

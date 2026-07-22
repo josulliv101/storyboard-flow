@@ -1,6 +1,7 @@
 "use client";
 
 import { useContext, useDeferredValue } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   EllipsisVertical,
   FolderTree,
@@ -38,7 +39,6 @@ import { OpenKeyBoundary } from "./graph-navigation";
 import { SyncPanel, type SyncEntry } from "./graph-persistence";
 import {
   GraphGridPlayhead,
-  GraphGridScrubSurface,
   GraphPlayhead,
   GraphRuler,
   PlayheadScrubBand,
@@ -268,6 +268,13 @@ export function GraphBoard({
   syncEntries: readonly SyncEntry[];
 }>) {
   const dims = ITEM_SIZE_DIMENSIONS[itemSize];
+  // Developer telemetry (the SyncPanel below) is opt-in via a truthy `dev`
+  // query param — `?dev=1`, `?dev=true`, … — so regular use never shows it
+  // (R7 #1). Read here, not threaded from the page: the graph tree mounts
+  // client-only (`ssr: false` in client-graph-view), so useSearchParams has
+  // no prerender/Suspense implications.
+  const devParam = useSearchParams().get("dev");
+  const devPanelsOn = devParam !== null && !["", "0", "false"].includes(devParam);
   // Zoom splits urgency (round-4 polish item 8): the slider thumb must track
   // the pointer, so its value stays URGENT — while the expensive work a zoom
   // step triggers (strip relayout, ruler rebuild, per-card resize fan-out)
@@ -409,42 +416,33 @@ export function GraphBoard({
               )}
             </NativeDropStrip>
           ) : (
-            // NativeDropGrid wraps the scrub surface too, so a native drag over
-            // the (preview-only) scrub overlay still bubbles to the drop target.
+            // No scrub surface sibling anymore: grid scrubbing is DRAG THE
+            // PLAYHEAD (inside the overlay slot) — the old full-cover surface
+            // ate every card pointerdown while preview was on (R7 #5/#6/#7).
             <NativeDropGrid collectionId={focusedId}>
-              <div className="relative">
-                <VirtualGrid
-                  collectionId={parseNodeId(focusedId)}
-                  cellWidth={dims.gridWidth}
-                  cellHeight={dims.gridHeight}
-                  gap={GRID_GAP}
-                  height={GRID_UNCAPPED_HEIGHT}
-                  // Mirror the strip: a quick tap is a CLICK (so the in-card
-                  // drill button works) and a press-and-hold starts the reorder
-                  // drag. "body" (the default) drags instantly, which ate the
-                  // drill click and made drags ambiguous.
-                  itemDragActivation="hold"
-                  overlay={
-                    previewOn ? (
-                      <GraphGridPlayhead
-                        focusedId={focusedId}
-                        channel={timeChannel}
-                        cellHeight={dims.gridHeight}
-                        pixelsPerSecond={deferredPixelsPerSecond}
-                      />
-                    ) : undefined
-                  }
-                  className="bg-black/25"
-                />
-                {previewOn && (
-                  <GraphGridScrubSurface
-                    focusedId={focusedId}
-                    channel={timeChannel}
-                    cellHeight={dims.gridHeight}
-                    pixelsPerSecond={deferredPixelsPerSecond}
-                  />
-                )}
-              </div>
+              <VirtualGrid
+                collectionId={parseNodeId(focusedId)}
+                cellWidth={dims.gridWidth}
+                cellHeight={dims.gridHeight}
+                gap={GRID_GAP}
+                height={GRID_UNCAPPED_HEIGHT}
+                // Mirror the strip: a quick tap is a CLICK (so the in-card
+                // drill button works) and a press-and-hold starts the reorder
+                // drag. "body" (the default) drags instantly, which ate the
+                // drill click and made drags ambiguous.
+                itemDragActivation="hold"
+                overlay={
+                  previewOn ? (
+                    <GraphGridPlayhead
+                      focusedId={focusedId}
+                      channel={timeChannel}
+                      cellHeight={dims.gridHeight}
+                      pixelsPerSecond={deferredPixelsPerSecond}
+                    />
+                  ) : undefined
+                }
+                className="bg-black/25"
+              />
             </NativeDropGrid>
           )}
 
@@ -470,7 +468,7 @@ export function GraphBoard({
               from inside the provider, so its droppable joins the DndContext. */}
           <SidebarGraphTrashPortal trashId={trashRootId} />
 
-          <SyncPanel entries={syncEntries} />
+          {devPanelsOn && <SyncPanel entries={syncEntries} />}
         </div>
       </PreviewShell>
     </OpenKeyBoundary>

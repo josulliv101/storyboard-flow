@@ -236,8 +236,14 @@ export function TimelineSidebar() {
     }
   };
 
+  // z-50, not z-40: the aside is sticky, so it IS a stacking context and
+  // every child z-index (the fly-out tooltips' z-50 included) is trapped
+  // inside it. The preview region + graph header sit at z-40 later in the
+  // DOM, which painted over the tooltips at equal z — the whole column must
+  // outrank them (R7 #8). Nothing overlaps the 72px rail itself, so raising
+  // it hides nothing.
   return (
-    <aside className="sticky top-0 z-40 flex h-screen w-[72px] shrink-0 flex-col items-center gap-5 overflow-visible border-r border-zinc-800 bg-zinc-900/50 px-3 py-5 backdrop-blur-md">
+    <aside className="sticky top-0 z-50 flex h-screen w-[72px] shrink-0 flex-col items-center gap-5 overflow-visible border-r border-zinc-800 bg-zinc-900/50 px-3 py-5 backdrop-blur-md">
       <Link
         href="/"
         aria-label="Storyboard Workbench home"

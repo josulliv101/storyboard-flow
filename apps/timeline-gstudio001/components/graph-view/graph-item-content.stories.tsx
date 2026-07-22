@@ -8,7 +8,9 @@ import {
   buildGraph,
   type CollectionItemShellComponent,
   type CollectionItemShellProps,
+  type CollectionTrimOverviewContentComponent,
   type NodeId,
+  type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
 
 import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
@@ -285,5 +287,77 @@ export const FilmstripResampleSettles: Story = {
     await waitFor(() => expect(previewImages(canvasElement)).toHaveLength(5), {
       timeout: 2000,
     });
+  },
+};
+
+// ── Trim overview sampling (R7 #2/#3) ───────────────────────────────────────
+
+/** A frame-addressable source URL: `.invalid` is an IETF-reserved TLD that
+ *  can never resolve, so nothing is fetched — while the `/video/upload/`
+ *  path shape lets the Cloudinary builder rewrite per-frame `so_` offsets,
+ *  which is exactly what this story asserts on. */
+const OVERVIEW_POSTER = "https://cdn.invalid/video/upload/so_0.35,f_jpg/scene.jpg";
+
+const OVERVIEW_NODE: VideoMediaNode = {
+  id: "vid-overview" as NodeId,
+  kind: "media",
+  mediaKind: "video",
+  name: "A video",
+  posterSrcs: [OVERVIEW_POSTER],
+  fullDurationSeconds: 10,
+  trimInSeconds: 1,
+  trimOutSeconds: 2,
+};
+
+/**
+ * The registered OverviewContent (the "sequence above" a selected video)
+ * SAMPLES its frames — the package default tiles the 1–2 stored posters by
+ * modulo, so a one-poster clip painted the same still into every slot (R7
+ * #2). Each slot must carry its own source time, the last one pinned to the
+ * source's end (R7 #3), and the default's "full clip x.xs" readout must be
+ * gone (R7 #3).
+ */
+export const TrimOverviewSamplesDistinctFrames: Story = {
+  args: baseArgs,
+  render: () => {
+    const Overview =
+      GRAPH_VIEW_COMPONENTS.OverviewContent as CollectionTrimOverviewContentComponent;
+    return (
+      <div className="relative h-11 w-[440px] overflow-hidden bg-zinc-950">
+        <Overview
+          node={OVERVIEW_NODE}
+          pixelsPerSecond={44}
+          trimInSeconds={1}
+          trimOutSeconds={2}
+          fullWidth={440}
+        />
+      </div>
+    );
+  },
+  play: async ({ canvasElement }) => {
+    // 440px of strip at 44px square frames → 10 slots.
+    const images = previewImages(canvasElement);
+    await expect(images).toHaveLength(10);
+
+    // Every slot samples its OWN time: all so_ offsets distinct, ascending.
+    const offsets = images.map((img) => {
+      const match = /[/,]so_([\d.]+)/.exec(img.getAttribute("src") ?? "");
+      return match ? Number(match[1]) : NaN;
+    });
+    expect(new Set(offsets).size).toBe(offsets.length);
+    for (let i = 1; i < offsets.length; i += 1) {
+      expect(offsets[i]).toBeGreaterThan(offsets[i - 1]);
+    }
+
+    // The last slot is pinned to the source's end (10s − 0.05 back-off) —
+    // not its slot centre (9.5s).
+    expect(offsets[offsets.length - 1]).toBeCloseTo(9.95);
+
+    // The overview covers the FULL source, not the trimmed window: the
+    // first slot's centre lives in the leading trimmed-away region.
+    expect(offsets[0]).toBeLessThan(1);
+
+    // The stock "full clip x.xs" readout is dropped (R7 #3).
+    expect(canvasElement.textContent).not.toContain("full clip");
   },
 };
