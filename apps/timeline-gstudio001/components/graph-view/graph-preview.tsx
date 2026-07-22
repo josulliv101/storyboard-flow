@@ -37,6 +37,7 @@ import {
   nextManifestClipsState,
   nextManifestFailureCount,
   shouldRetryManifestFetch,
+  type ChildSpan,
   type GridPlayheadMap,
   type PlayheadMap,
   type PreviewCardSpans,
@@ -560,19 +561,27 @@ type SeekRailGeometry = Readonly<{
 
 /**
  * One row's seek rail: a slim slider lying in the gap directly above its
- * row of cells, mapping EXACTLY that row's cell geometry — so the thumb
+ * row of cells, spanning EXACTLY that row's cell geometry — so the thumb
  * rides in lockstep above the in-grid playhead line whenever the time is
  * inside this row, and the boundary ticks sit on the real cell edges
- * below. Rows other than the one containing the current time render an
- * empty track (no thumb/fill); pressing one summons the playhead into it.
+ * below. The rails together read as ONE segmented progress bar: rows the
+ * playhead has passed show a full fill, rows ahead sit empty, and only
+ * the row containing the current time carries the thumb. Pressing any
+ * rail summons the playhead into that row.
  *
- * Pointer: press/drag anywhere (pointer capture keeps the drag smooth).
+ * Pointer: press/drag anywhere (pointer capture keeps the drag smooth) —
+ * and the drag CONTINUES past the rail's ends: seeking goes through the
+ * whole timeline's unwrapped map at this row's offset, so overshooting
+ * the row's tail scrubs on into the next row's clips (and dragging left
+ * past its head backs into the previous row) at the same pixel rate.
  * Keyboard: a real `role="slider"` scoped to this row's time window —
  * arrows nudge by a second, Home/End jump to the row's ends.
  */
 function SeekRailRow({
   rowCards,
   isLastRow,
+  map,
+  offsetX,
   cellWidth,
   x,
   y,
@@ -582,6 +591,10 @@ function SeekRailRow({
 }: Readonly<{
   rowCards: readonly ChildSpan[];
   isLastRow: boolean;
+  /** The WHOLE timeline's unwrapped cell map (all cards in one line). */
+  map: GridPlayheadMap;
+  /** This row's left edge inside that unwrapped line, in px. */
+  offsetX: number;
   cellWidth: number;
   x: number;
   y: number;
@@ -599,12 +612,6 @@ function SeekRailRow({
   const extent = Math.max(1, cells * pitch - GRID_GAP);
   const rowStart = rowCards[0].startTime;
   const rowEnd = rowCards[cells - 1].endTime;
-  // The row's own piecewise map: its cells laid in one line — which they
-  // already are — so fraction·extent IS the in-grid x of the line.
-  const map = useMemo(
-    () => buildGridPlayheadMap(rowCards, cells, cellWidth, 1),
-    [rowCards, cells, cellWidth],
-  );
 
   // Thumb/fill/aria track the channel imperatively — time moves at pointer
   // rate during a scrub, no reason to re-render. Deps cover everything the
@@ -619,10 +626,13 @@ function SeekRailRow({
       // A time exactly on a row boundary belongs to the NEXT row (its
       // cell's start), except the very end of the last row.
       const active = time >= rowStart && (isLastRow ? time <= rowEnd : time < rowEnd);
-      fill.style.visibility = active ? "" : "hidden";
       thumb.style.visibility = active ? "" : "hidden";
+      // Cumulative fill: clamping into the row's window paints a PASSED row
+      // full (clamped = rowEnd → fraction 1) and a not-yet-reached row
+      // empty (clamped = rowStart → fraction 0), so the stack of rails
+      // reads as one continuous progress bar.
       const clamped = Math.min(rowEnd, Math.max(rowStart, time));
-      const fraction = Math.min(1, Math.max(0, map.posAt(clamped).x / extent));
+      const fraction = Math.min(1, Math.max(0, (map.posAt(clamped).x - offsetX) / extent));
       fill.style.width = `${fraction * 100}%`;
       thumb.style.left = `${fraction * 100}%`;
       rail.setAttribute("aria-valuenow", (clamped - rowStart).toFixed(1));
@@ -633,17 +643,17 @@ function SeekRailRow({
     };
     paint();
     return channel.subscribe(paint);
-  }, [channel, map, extent, rowStart, rowEnd, isLastRow]);
+  }, [channel, map, offsetX, extent, rowStart, rowEnd, isLastRow]);
 
   const seekToPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     const rail = railRef.current;
     if (!rail) return;
     const rect = rail.getBoundingClientRect();
-    const fraction = Math.min(
-      1,
-      Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)),
-    );
-    channel.set(map.timeAt(fraction * extent, 0));
+    // Deliberately UNCLAMPED to this rail: the pointer's x rides the whole
+    // timeline's unwrapped line at this row's offset, so a drag that
+    // overshoots either end keeps scrubbing into the neighbouring rows
+    // (timeAt clamps to the timeline's own bounds).
+    channel.set(map.timeAt(offsetX + (event.clientX - rect.left), 0));
   };
 
   return (
@@ -696,27 +706,34 @@ function SeekRailRow({
         }
         event.preventDefault();
       }}
-      className="group pointer-events-auto absolute cursor-ew-resize touch-none rounded-full bg-zinc-800/80 ring-1 ring-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      // Solid track, not a translucency: the rail sits over the grid's own
+      // dark backdrop, where a see-through zinc melted away entirely — the
+      // user read row 1 as having "no rail" (R7 follow-up).
+      className="group pointer-events-auto absolute cursor-ew-resize touch-none rounded-full bg-zinc-700 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-white/25 transition-shadow hover:ring-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
       style={{ left: x, top: y, width: extent, height: GRID_GAP }}
     >
       {/* Elapsed fill, then boundary ticks, then the thumb on top. */}
       <div
         ref={fillRef}
         aria-hidden="true"
-        className="absolute inset-y-0 left-0 rounded-full bg-red-500/25"
+        className="absolute inset-y-0 left-0 rounded-full bg-red-500/40"
       />
       {rowCards.slice(1).map((_, index) => (
         <span
           key={index}
           aria-hidden="true"
-          className="absolute inset-y-0 w-px bg-white/25"
+          className="absolute inset-y-0 w-px bg-white/30"
           style={{ left: `${(((index + 1) * pitch - GRID_GAP / 2) / extent) * 100}%` }}
         />
       ))}
+      {/* h-2.5, not larger: the rail lives in the 8px row gap, and a taller
+          thumb overhangs onto the cards below — the "item overlaps rail"
+          complaint. 1px of kiss is invisible; the whole rail is the hit
+          target anyway. */}
       <div
         ref={thumbRef}
         aria-hidden="true"
-        className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
+        className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
       />
     </div>
   );
@@ -834,7 +851,18 @@ export function GraphSeekRails({
     return out;
   }, [cards, cardCount, geometry]);
 
-  if (!geometry || rows.length === 0) {
+  // ONE unwrapped map for the whole timeline (every card in a single line):
+  // each row's rail paints and seeks through it at its own offset, which is
+  // what lets a drag run PAST a rail's ends into the neighbouring rows.
+  const fullMap = useMemo(
+    () =>
+      geometry && cardCount > 0
+        ? buildGridPlayheadMap(cards, cardCount, geometry.cellWidth, 1)
+        : null,
+    [cards, cardCount, geometry],
+  );
+
+  if (!geometry || !fullMap || rows.length === 0) {
     // Pre-measure (or empty timeline): nothing to place yet — the observer
     // pass lands within a frame of the grid reporting its layout.
     return <div ref={rootRef} className="pointer-events-none absolute inset-0" />;
@@ -847,6 +875,8 @@ export function GraphSeekRails({
           key={row}
           rowCards={rowCards}
           isLastRow={row === rows.length - 1}
+          map={fullMap}
+          offsetX={row * geometry.columns * (geometry.cellWidth + GRID_GAP)}
           cellWidth={geometry.cellWidth}
           x={geometry.left}
           y={geometry.top + row * (cellHeight + GRID_GAP) - GRID_GAP}

@@ -1298,6 +1298,32 @@ test.describe("graph view E2E", () => {
     await expect(thumbOf(rail0)).not.toBeVisible();
     await expect(grid.locator('[data-selected="true"]')).toHaveCount(0);
 
+    // CUMULATIVE fill: with the playhead on the last row, every EARLIER
+    // row's rail reads fully scrubbed-through — the rails stack up into one
+    // segmented progress bar. (The fill is the rail's first div child.)
+    const fillOf = (rail: Locator) => rail.locator("div").first();
+    const rail0Box = (await rail0.boundingBox())!;
+    await expect
+      .poll(async () => (await fillOf(rail0).boundingBox())!.width)
+      .toBeCloseTo(rail0Box.width, 0);
+
+    // CONTINUATION: a drag is not caged by its rail. Dragging the LAST
+    // rail left PAST its head backs the scrub into earlier rows' clips…
+    await lastRail.hover({ position: { x: 10, y: 4 } });
+    await page.mouse.down();
+    await page.mouse.move(lastBox.x - cellW, lastBox.y + 4, { steps: 6 });
+    await expect
+      .poll(async () => (await translate()).y)
+      .toBeLessThan((rows - 1) * 108 - 20); // strictly above the last row
+    await page.mouse.up();
+
+    // …and overshooting row 0's tail runs forward into the next row.
+    await rail0.hover({ position: { x: 30, y: 4 } });
+    await page.mouse.down();
+    await page.mouse.move(rail0Box.x + rail0Box.width + 60, rail0Box.y + 4, { steps: 6 });
+    await expect.poll(async () => (await translate()).y).toBeGreaterThan(80);
+    await page.mouse.up();
+
     // Ticks sit on REAL cell edges: pressing row 0's first tick parks the
     // line exactly at the second clip's cell origin, whatever that clip's
     // duration. (Float coordinates on purpose: an integer-rounded press can
@@ -1350,10 +1376,17 @@ test.describe("graph view E2E", () => {
 
     // With the surface gone the cards OWN their pixels again, preview on:
 
+    // Media cards in the GRID inset their artwork like collection cards do
+    // (~6px frame), so both card kinds read as the same height and the
+    // artwork stays clear of the rail above. (The strip keeps full-bleed.)
+    const alpha = grid.locator('[data-node-id="alpha"]');
+    const alphaImgBox = (await alpha.locator("img").first().boundingBox())!;
+    const alphaBox = (await alpha.boundingBox())!;
+    expect(alphaImgBox.y - alphaBox.y).toBeGreaterThanOrEqual(5);
+
     // SELECT (R7 #7): a plain click toggles selection. (Retried: under load
     // a press can outlast the 250ms hold threshold and become a grab, whose
     // click is — correctly — suppressed.)
-    const alpha = grid.locator('[data-node-id="alpha"]');
     await expect(async () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
