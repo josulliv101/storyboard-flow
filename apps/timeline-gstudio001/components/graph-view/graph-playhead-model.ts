@@ -254,6 +254,171 @@ export function buildPlayheadMap(cards: readonly ChildSpan[]): PlayheadMap {
   };
 }
 
+// ── Ruler ticks ─────────────────────────────────────────────────────────────
+
+const RULER_LABEL_MIN_GAP_PX = 46;
+const RULER_MINOR_MIN_GAP_PX = 6;
+const RULER_NICE_SECONDS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+const RULER_MAX_SUBTIER = 3;
+
+/** The labeled (major) tick interval — the nicest whole-second count whose
+ *  on-screen gap clears the label minimum at this zoom. */
+export function rulerMajorSpacing(pixelsPerSecond: number): number {
+  const target = RULER_LABEL_MIN_GAP_PX / Math.max(1, pixelsPerSecond);
+  return (
+    RULER_NICE_SECONDS.find((step) => step >= target) ??
+    RULER_NICE_SECONDS[RULER_NICE_SECONDS.length - 1]
+  );
+}
+
+/** How many binary subdivisions of the major fit as MINOR ticks — major/2,
+ *  /4, /8 (half, quarter, eighth of the major; at a 1s major these are the
+ *  half/quarter/eighth SECOND ticks). Each tier is added only while its gap
+ *  still clears the minor minimum, so zooming out drops the finest tiers. */
+export function rulerSubtierCount(majorSpacing: number, pixelsPerSecond: number): number {
+  let tiers = 0;
+  while (
+    tiers < RULER_MAX_SUBTIER &&
+    (majorSpacing / 2 ** (tiers + 1)) * pixelsPerSecond >= RULER_MINOR_MIN_GAP_PX
+  ) {
+    tiers += 1;
+  }
+  return tiers;
+}
+
+/** The tier a tick at finest-step index `n` belongs to: the COARSEST whose
+ *  spacing divides it (more trailing power-of-two factors = coarser tier).
+ *  0 is the labeled major. */
+export function rulerTickLevel(index: number, maxTier: number): number {
+  if (index === 0) return 0;
+  let trailing = 0;
+  let value = index;
+  while (trailing < maxTier && value % 2 === 0) {
+    value /= 2;
+    trailing += 1;
+  }
+  return maxTier - trailing;
+}
+
+export function formatRulerTick(seconds: number): string {
+  if (seconds < 60) return Number.isInteger(seconds) ? `${seconds}s` : `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+export type RulerTick = Readonly<{ x: number; level: number; label: string }>;
+
+/** The content-x range ticks should exist for (overscan already applied by
+ *  the caller). The ruler is NOT windowed by CSS clipping — ticks outside
+ *  this range are simply never built, which is the whole point. */
+export type RulerWindow = Readonly<{ startX: number; endX: number }>;
+
+/**
+ * The ruler's ticks for one strip, WINDOWED to a content-x range.
+ *
+ * Unwindowed, tick count scales with total DURATION at the finest tier —
+ * a long timeline at high zoom is thousands of ticks, each an absolutely
+ * positioned element, rebuilt per commit, almost all outside the viewport.
+ * Ticks are indexed on a regular time grid, and `timeAt` (the map's inverse,
+ * monotonic because card x-edges strictly increase) turns the window's pixel
+ * bounds into a tick-INDEX range — so generation itself is O(visible), not
+ * O(duration) merely filtered.
+ *
+ * Two exactness notes, both pinned by tests:
+ * - A window whose `startX` reaches the content origin keeps the whole
+ *   pre-content tick pile (every t at or before the first card's startTime
+ *   clamps to x = 0 — the "0s" origin label lives there): `timeAt(0)` returns
+ *   the first card's start TIME, and flooring from there would drop them.
+ * - The index range is widened by the floor/ceil to one tick of slack per
+ *   side, so a window never loses an edge tick to interpolation rounding —
+ *   for any window, the output equals the full build filtered to it (± that
+ *   slack), never less.
+ *
+ * Media cards are ruled; a collection card's fixed width holds an arbitrary
+ * duration, so its INTERIOR is skipped (a smear of ticks says nothing) and a
+ * single minor edge tick brackets it instead. The interior test binary-
+ * searches the (sorted, disjoint) card ranges — with thousands of cards the
+ * old linear `some` per tick was the other hidden O(n) in here.
+ */
+export function buildRulerTicks(
+  cards: readonly ChildSpan[],
+  isCollectionCard: readonly boolean[],
+  pixelsPerSecond: number,
+  windowRange: RulerWindow,
+): RulerTick[] {
+  if (cards.length === 0) return [];
+  const map = buildPlayheadMap(cards);
+  const total = map.totalDurationSeconds;
+  if (total <= 0) return [];
+
+  // Card x-ranges + collection flag, in the SAME cumulative layout the map
+  // walks — one pass carrying the running left edge.
+  const ranges: Array<{ x0: number; x1: number; isCollection: boolean }> = [];
+  let cursorX = 0;
+  for (let index = 0; index < cards.length; index += 1) {
+    ranges.push({
+      x0: cursorX,
+      x1: cursorX + cards[index].width,
+      isCollection: isCollectionCard[index] === true,
+    });
+    cursorX += cards[index].width + STRIP_GAP_PX;
+  }
+
+  // Ranges are sorted and disjoint (widths are positive, the gap separates
+  // them), so at most ONE range can contain a given x: the last whose left
+  // edge lies before it. Binary search for that candidate, then apply the
+  // exact interior predicate to it alone.
+  const inCollectionInterior = (cx: number): boolean => {
+    if (ranges[0].x0 >= cx) return false;
+    let low = 0;
+    let high = ranges.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      if (ranges[middle].x0 < cx) low = middle;
+      else high = middle - 1;
+    }
+    const range = ranges[low];
+    return range.isCollection && cx > range.x0 + 1 && cx <= range.x1;
+  };
+
+  // Tiered ticks: a labeled MAJOR every `major` seconds, plus half / quarter
+  // / eighth minors between them — as many tiers as clear the minor gap at
+  // this zoom. Stepping by the FINEST spacing and assigning each step its
+  // coarsest tier keeps every tier aligned to the major grid; the step index
+  // is ABSOLUTE (n = t / finest), so windowing never shifts a tick's tier.
+  const major = rulerMajorSpacing(pixelsPerSecond);
+  const maxTier = rulerSubtierCount(major, pixelsPerSecond);
+  const finest = major / 2 ** maxTier;
+  const steps = Math.floor((total + 1e-6) / finest);
+  const firstStep =
+    windowRange.startX <= 0
+      ? 0
+      : Math.max(0, Math.floor(map.timeAt(windowRange.startX) / finest));
+  const lastStep = Math.min(steps, Math.ceil(map.timeAt(windowRange.endX) / finest));
+
+  const out: RulerTick[] = [];
+  for (let n = firstStep; n <= lastStep; n += 1) {
+    const t = n * finest;
+    const cx = map.xAt(t);
+    if (inCollectionInterior(cx)) continue;
+    const level = rulerTickLevel(n, maxTier);
+    out.push({
+      x: cx,
+      level,
+      label: level === 0 ? formatRulerTick(Math.round(t * 1000) / 1000) : "",
+    });
+  }
+  // A minor edge tick bracketing each collection's blank interior — windowed
+  // like every other tick.
+  for (const range of ranges) {
+    if (range.isCollection && range.x0 >= windowRange.startX && range.x0 <= windowRange.endX) {
+      out.push({ x: range.x0, level: 1, label: "" });
+    }
+  }
+  return out;
+}
+
 export type GridPlayheadMap = Readonly<{
   posAt: (time: number) => { x: number; y: number };
   timeAt: (x: number, y: number) => number;

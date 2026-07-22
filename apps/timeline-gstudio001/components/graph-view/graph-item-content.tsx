@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useContext, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FolderDown, Image as ImageIcon, Video } from "lucide-react";
 
 import {
@@ -65,6 +65,40 @@ function useElementSize(): [(element: HTMLElement | null) => void, { width: numb
     observerRef.current = observer;
   }, []);
   return [ref, size];
+}
+
+/**
+ * How long a CHANGED frame-count measurement must hold before the filmstrip
+ * re-samples. A continuous px/s drag sweeps a card's width→count ratio
+ * through several integers, and adopting each crossing re-times every frame
+ * slot — swapping every `<img>` src on the card (a fresh CDN URL per slot)
+ * several times per drag, per video card. Generous on purpose: the drag's
+ * layout already tracks live (widths are CSS), only the frame REFINEMENT
+ * waits for the size to hold still.
+ */
+const FRAME_COUNT_SETTLE_MS = 400;
+
+/**
+ * The measured frame count, SETTLED: the first real measurement is adopted
+ * immediately — a freshly (re)mounted card, virtualization remounts included,
+ * must not wait out the delay to show its filmstrip — while later changes
+ * must hold for FRAME_COUNT_SETTLE_MS before they re-sample. The first
+ * adoption happens during render (the repo's cascading-render-safe pattern;
+ * a synchronous setState in the effect would trip the lint), so this pass
+ * already returns the measured value; changes adopt from the timer, which is
+ * async by nature.
+ */
+function useSettledFrameCount(measured: number): number {
+  const [settled, setSettled] = useState(measured);
+  if (settled === 0 && measured !== 0) setSettled(measured);
+  useEffect(() => {
+    // settled === 0 means the render-time first adoption is already in
+    // flight — nothing to debounce yet.
+    if (measured === settled || settled === 0) return;
+    const timer = setTimeout(() => setSettled(measured), FRAME_COUNT_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [measured, settled]);
+  return settled === 0 ? measured : settled;
 }
 
 const NO_PREVIEWS: readonly CollectionPreviewFrame[] = [];
@@ -180,8 +214,15 @@ const GraphClipContent = memo(function GraphClipContent({
   isDragSource,
   trimEnabled,
 }: CollectionItemContentProps) {
-  // Card geometry for the video filmstrip's frame count.
+  // Card geometry for the video filmstrip's frame count. Frame count follows
+  // the card's WIDTH (roughly one ~square frame per card height), SETTLED so
+  // a continuous zoom drag doesn't re-sample the whole filmstrip at every
+  // integer-ratio crossing — computed above the early return because the
+  // settle hook must run unconditionally.
   const [cardSizeRef, cardSize] = useElementSize();
+  const measuredFrames =
+    cardSize.height > 0 ? Math.round(cardSize.width / cardSize.height) : 0;
+  const settledFrames = useSettledFrameCount(measuredFrames);
 
   // MEDIA pixels only. Collections don't render through this seam anymore:
   // their card carries interactive controls (folder drill-in, inline rename),
@@ -192,15 +233,12 @@ const GraphClipContent = memo(function GraphClipContent({
   if (node.kind === "collection") return null;
 
   const isVideo = node.mediaKind === "video";
-  // Frame count follows the card's WIDTH (roughly one ~square frame per card
-  // height), so a wider clip shows MORE distinct frames rather than the same
-  // still tiled — falling back to a duration-based count until first measured.
-  const measuredFrames =
-    cardSize.height > 0 ? Math.round(cardSize.width / cardSize.height) : 0;
+  // A wider clip shows MORE distinct frames rather than the same still tiled
+  // — falling back to a duration-based count until first measured.
   const frames = isVideo
     ? Math.max(
         1,
-        Math.min(measuredFrames || videoFrameCount(mediaDurationSeconds(node), 6), VIDEO_FRAME_CAP),
+        Math.min(settledFrames || videoFrameCount(mediaDurationSeconds(node), 6), VIDEO_FRAME_CAP),
       )
     : 1;
   // Each video frame is sampled at its own time across the visible clip (R6

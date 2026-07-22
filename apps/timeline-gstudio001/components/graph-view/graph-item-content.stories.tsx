@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Decorator, Meta, StoryObj } from "@storybook/react";
 import { expect, userEvent, waitFor } from "storybook/test";
 
@@ -209,5 +210,80 @@ export const ComposedCardStructure: Story = {
     await waitFor(() =>
       expect(surface!.getAttribute("aria-label")).toMatch(/^Renamed timeline \(collection/),
     );
+  },
+};
+
+// ── Filmstrip resample settling (P3) ────────────────────────────────────────
+
+const VIDEO_ID = "vid-1" as NodeId;
+
+const videoGraph = (() => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "root-video",
+      name: "Root",
+      children: [
+        {
+          kind: "media",
+          id: VIDEO_ID as string,
+          mediaKind: "video",
+          name: "A video",
+          src: poster("V", "#334155"),
+          posterSrcs: [poster("V", "#334155")],
+          fullDurationSeconds: 8,
+        },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
+/** A VIDEO card at a controllable size. Media routes through NodeCard, which
+ *  reads its pixels from the provider `components` registry — so this
+ *  renders the registered GraphClipContent, filmstrip and all. */
+function FilmstripSettleHarness() {
+  const [store] = useState(() => createGraphDetailsStore({}));
+  return (
+    <DndCollections initialGraph={videoGraph} components={GRAPH_VIEW_COMPONENTS}>
+      <GraphDetailsProvider store={store}>
+        <div data-resize-host style={{ width: 192, height: 96 }}>
+          <ItemShell id={VIDEO_ID} className="h-full w-full" />
+        </div>
+      </GraphDetailsProvider>
+    </DndCollections>
+  );
+}
+
+/**
+ * The filmstrip's frame count SETTLES instead of chasing every size change
+ * (P3): a zoom drag sweeps a card's width→count ratio through several
+ * integers, and adopting each crossing re-timed every frame slot — swapping
+ * every `<img>` src per crossing, per video card. The first measurement
+ * adopts immediately (a virtualization remount must not show a blank card),
+ * but a CHANGED measurement must hold for the settle delay before one
+ * resample lands on the final count.
+ */
+export const FilmstripResampleSettles: Story = {
+  args: { id: VIDEO_ID, className: "h-full w-full" },
+  render: () => <FilmstripSettleHarness />,
+  play: async ({ canvasElement }) => {
+    const host = canvasElement.querySelector<HTMLElement>("[data-resize-host]")!;
+    // First measurement adopts immediately: 192×96 → 2 frames.
+    await waitFor(() => expect(previewImages(canvasElement)).toHaveLength(2));
+
+    // Grow the card as a zoom drag would. The filmstrip must NOT adopt the
+    // new count as soon as the resize lands (80ms is plenty for the
+    // ResizeObserver + re-render, and well inside the settle delay)…
+    host.style.width = "480px";
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(previewImages(canvasElement).length).toBeLessThan(5);
+
+    // …and once the size holds still past the delay, ONE resample lands on
+    // the final count (480 / 96 = 5 frames).
+    await waitFor(() => expect(previewImages(canvasElement)).toHaveLength(5), {
+      timeout: 2000,
+    });
   },
 };
