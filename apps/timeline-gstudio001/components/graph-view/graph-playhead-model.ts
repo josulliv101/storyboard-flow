@@ -419,6 +419,40 @@ export function buildRulerTicks(
   return out;
 }
 
+export type RulerCollectionSpan = Readonly<{ x: number; width: number; seconds: number }>;
+
+/**
+ * Each collection card's x-range and content duration, for the ruler band to
+ * FILL with a duration label (R7 #4): `buildRulerTicks` deliberately skips a
+ * collection's interior (its fixed width holds an arbitrary duration, so
+ * ticks there would lie), which left the same opaque band as media cards
+ * with nothing in it — reading as a rendering gap rather than a decision.
+ * Windowed like the ticks: only spans INTERSECTING the visible range exist.
+ * Same cumulative layout walk as the tick ranges, so the two can never
+ * disagree about where a collection sits.
+ */
+export function buildRulerCollectionSpans(
+  cards: readonly ChildSpan[],
+  isCollectionCard: readonly boolean[],
+  windowRange: RulerWindow,
+): RulerCollectionSpan[] {
+  const out: RulerCollectionSpan[] = [];
+  let cursorX = 0;
+  for (let index = 0; index < cards.length; index += 1) {
+    const card = cards[index];
+    const x1 = cursorX + card.width;
+    if (
+      isCollectionCard[index] === true &&
+      x1 >= windowRange.startX &&
+      cursorX <= windowRange.endX
+    ) {
+      out.push({ x: cursorX, width: card.width, seconds: card.endTime - card.startTime });
+    }
+    cursorX = x1 + STRIP_GAP_PX;
+  }
+  return out;
+}
+
 export type GridPlayheadMap = Readonly<{
   posAt: (time: number) => { x: number; y: number };
   timeAt: (x: number, y: number) => number;

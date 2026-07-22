@@ -5,6 +5,7 @@ import type { PlaybackLeaf, PlaybackManifest } from "@storyboard/timeline-domain
 
 import {
   buildPlayheadMap,
+  buildRulerCollectionSpans,
   buildRulerTicks,
   cardSpansOf,
   childSpans,
@@ -389,6 +390,43 @@ describe("buildRulerTicks", () => {
     expect(
       buildRulerTicks([{ startTime: 0, endTime: 0, width: 100 }], [false], PPS, FULL_WINDOW),
     ).toEqual([]);
+  });
+});
+
+describe("buildRulerCollectionSpans", () => {
+  // Same fixture shape as the tick tests: media · collection · media ·
+  // collection, so x-ranges are hand-checkable against the tick walk.
+  const cards: ChildSpan[] = [
+    { startTime: 0, endTime: 4, width: 160 },
+    { startTime: 4, endTime: 104, width: 128 }, // 100s of content in 128px
+    { startTime: 104, endTime: 108, width: 160 },
+    { startTime: 108, endTime: 208, width: 128 },
+  ];
+  const flags = [false, true, false, true];
+  const FULL_WINDOW = { startX: 0, endX: Number.MAX_SAFE_INTEGER };
+  const collection1X = 160 + STRIP_GAP_PX;
+  const collection2X = collection1X + 128 + STRIP_GAP_PX + 160 + STRIP_GAP_PX;
+
+  it("yields each collection's x-range and content duration on the tick layout", () => {
+    const spans = buildRulerCollectionSpans(cards, flags, FULL_WINDOW);
+    expect(spans).toEqual([
+      { x: collection1X, width: 128, seconds: 100 },
+      { x: collection2X, width: 128, seconds: 100 },
+    ]);
+  });
+
+  it("windows spans by INTERSECTION so a partially visible collection keeps its label", () => {
+    // Window ends inside the first collection's card — it still reports.
+    const spans = buildRulerCollectionSpans(cards, flags, {
+      startX: 0,
+      endX: collection1X + 10,
+    });
+    expect(spans).toEqual([{ x: collection1X, width: 128, seconds: 100 }]);
+  });
+
+  it("skips collections wholly outside the window and media everywhere", () => {
+    expect(buildRulerCollectionSpans(cards, flags, { startX: 0, endX: 100 })).toEqual([]);
+    expect(buildRulerCollectionSpans(cards, cards.map(() => false), FULL_WINDOW)).toEqual([]);
   });
 });
 

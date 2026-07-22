@@ -26,7 +26,6 @@ import {
 import { GraphViewNavContext } from "./graph-navigation";
 import {
   GraphGridPlayhead,
-  GraphGridScrubSurface,
   GraphPlayhead,
   GraphRuler,
   PlayheadScrubBand,
@@ -229,39 +228,30 @@ function SubTimelineNode({
           style={{ paddingLeft: SUBTIMELINE_INDENT_PX }}
         >
           {surface === "grid" ? (
-            // Grid mode now accepts native drops too (a NativeDropGrid), matching
-            // the strip. It wraps the scrub surface so a drag over that overlay
-            // still bubbles to the drop target.
+            // Grid mode now accepts native drops too (a NativeDropGrid),
+            // matching the strip. Scrubbing is drag-the-playhead (R7 #5-#7),
+            // so there is no scrub-surface sibling — cards keep their
+            // pointerdowns even with the preview on.
             <NativeDropGrid collectionId={id}>
-              <div className="relative">
-                <VirtualGrid
-                  collectionId={collectionId}
-                  cellWidth={dims.gridWidth}
-                  cellHeight={dims.gridHeight}
-                  gap={GRID_GAP}
-                  height={GRID_UNCAPPED_HEIGHT}
-                  overlay={
-                    showPlayhead ? (
-                      <GraphGridPlayhead
-                        focusedId={id}
-                        channel={timeChannel}
-                        cellHeight={dims.gridHeight}
-                        pixelsPerSecond={pixelsPerSecond}
-                        activeWindow={clockWindow}
-                      />
-                    ) : undefined
-                  }
-                  className="bg-black/20"
-                />
-                {showPlayhead && (
-                  <GraphGridScrubSurface
-                    focusedId={id}
-                    channel={timeChannel}
-                    cellHeight={dims.gridHeight}
-                    pixelsPerSecond={pixelsPerSecond}
-                  />
-                )}
-              </div>
+              <VirtualGrid
+                collectionId={collectionId}
+                cellWidth={dims.gridWidth}
+                cellHeight={dims.gridHeight}
+                gap={GRID_GAP}
+                height={GRID_UNCAPPED_HEIGHT}
+                overlay={
+                  showPlayhead ? (
+                    <GraphGridPlayhead
+                      focusedId={id}
+                      channel={timeChannel}
+                      cellHeight={dims.gridHeight}
+                      pixelsPerSecond={pixelsPerSecond}
+                      activeWindow={clockWindow}
+                    />
+                  ) : undefined
+                }
+                className="bg-black/20"
+              />
             </NativeDropGrid>
           ) : (
             <NativeDropStrip collectionId={id}>

@@ -760,8 +760,10 @@ test.describe("graph view E2E", () => {
     // scroll PAST the preview (the sticky-pin assertion below needs that). The
     // preview's own height is a fixed model value, independent of viewport, so
     // the height-persistence checks are unaffected. (The old always-present
-    // bottom trash panel used to guarantee this height; it's gone now — R5 #5.)
-    await page.setViewportSize({ width: 1280, height: 560 });
+    // bottom trash panel used to guarantee this height — gone in R5 #5 — and
+    // the dev-only SyncPanel stopped shortening the page further in R7 #1,
+    // hence 480, not 560: the page must out-scroll the preview by 40px.)
+    await page.setViewportSize({ width: 1280, height: 480 });
     await previewToggle(page).click();
 
     const divider = page.getByRole("separator", { name: "Resize workbench display" });
@@ -783,6 +785,10 @@ test.describe("graph view E2E", () => {
     // pinned to the viewport instead of disappearing with the graph below.
     const previewRegion = page.getByTestId("workbench-preview-region");
     const main = page.getByRole("main");
+    // The expand click above may have auto-scrolled its button into view
+    // (the shorter viewport makes that likely) — measure the preview's
+    // NATURAL top from an unscrolled page.
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
     const naturalTop = await previewRegion.evaluate(
       (element) => element.getBoundingClientRect().top,
     );
@@ -795,7 +801,11 @@ test.describe("graph view E2E", () => {
     expect(await main.evaluate((element) => getComputedStyle(element).overflowY)).toBe("visible");
     expect(await main.evaluate((element) => element.scrollTop)).toBe(0);
 
-    // Closing and reopening the preview restores the same height.
+    // Closing and reopening the preview restores the same height. From the
+    // top of the page again: reopening while scroll-pinned lets the pane
+    // clamp against the pinned layout, which is a different question than
+    // height persistence.
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
     await previewToggle(page).click();
     await expect(divider).toHaveCount(0);
     await previewToggle(page).click();
@@ -1208,11 +1218,11 @@ test.describe("graph view E2E", () => {
     await expect.poll(translateX).toBeLessThan(20);
   });
 
-  test("grid mode: playhead rides cells, scrubs horizontally and jumps rows", async ({
+  test("grid mode with preview: scrub = drag the playhead; cards keep select, drill and hold-drag", async ({
     page,
   }) => {
     // Narrow viewport → few responsive columns, so the 4 project clips wrap
-    // onto at least two rows (needed to exercise the vertical row scrub).
+    // onto at least two rows (needed to exercise the cross-row scrub).
     await page.setViewportSize({ width: 420, height: 900 });
     await installGraphApi(page);
     await openGraph(page);
@@ -1238,39 +1248,36 @@ test.describe("graph view E2E", () => {
         return m ? { x: Number(m[1]), y: Number(m[2]) } : { x: 0, y: 0 };
       });
 
-    // Positions are taken RELATIVE TO THE SCRUB SURFACE, which overlays the
-    // grid exactly — so its interior offsets are layout-independent (the
-    // preview pane above settles asynchronously and shifts absolute page
-    // coords). scrub.hover() also waits for a stable box before pressing.
-    // Content geometry at the default MD size: 9px border+padding, cell
-    // 160×100, 8px gap → row pitch 108, a cell's vertical center ≈ 9 + 50 =
-    // 59 below the scrub top.
-    const scrub = page.locator("[data-grid-scrub]");
-    const ROW0_Y = 59;
-    const ROW1_Y = 59 + 108;
+    // The full-cover scrub surface is GONE (it ate every card pointerdown —
+    // R7 #5/#6/#7): the playhead itself is the scrub affordance now. Its
+    // enlarged handle spans the marker line; grab it and drag. hover() waits
+    // for a stable box first (the pane above settles asynchronously).
+    const handle = playhead.locator("[data-graph-grid-playhead-handle]");
+    // Content geometry at the default MD size: cell 160×100, 8px gap → row
+    // pitch 108.
+    const ROW_PITCH = 108;
 
     // Horizontal scrub across row 0 → x advances, still on row 0.
-    await scrub.hover({ position: { x: 30, y: ROW0_Y } });
+    await handle.hover();
     await page.mouse.down();
-    const sb = (await scrub.boundingBox())!;
-    await page.mouse.move(sb.x + 150, sb.y + ROW0_Y, { steps: 8 });
+    const start = (await playhead.boundingBox())!;
+    await page.mouse.move(start.x + 150, start.y + 50, { steps: 8 });
     await page.mouse.up();
     await expect.poll(async () => (await translate()).x).toBeGreaterThan(100);
     expect((await translate()).y).toBeLessThan(52); // still the first row
 
-    // Vertical scrub: press into the SECOND row → the playhead jumps a row
-    // down (time lands on a later clip). This is the grid-only affordance.
-    await scrub.hover({ position: { x: 89, y: ROW1_Y } });
+    // Cross-row scrub: drag the handle INTO the second row → the playhead
+    // jumps a row down (time lands on a later clip).
+    await handle.hover();
     await page.mouse.down();
-    await page.mouse.move(sb.x + 93, sb.y + ROW1_Y, { steps: 4 });
+    const mid = (await playhead.boundingBox())!;
+    await page.mouse.move(mid.x + 4, mid.y + 50 + ROW_PITCH, { steps: 4 });
     await page.mouse.up();
     await expect.poll(async () => (await translate()).y).toBeGreaterThan(80);
 
-    // Grids are CONTENT-HEIGHT now (the `height` prop is only a max): every
-    // row gets room and the PAGE owns vertical scroll, so there is no
-    // internal scroll for the scrub surface's wheel handler to feed. It must
-    // stand down — a consumed wheel here would scroll nothing and dead-zone
-    // the page. Asserted via defaultPrevented observed at window.
+    // Grids are CONTENT-HEIGHT (the `height` prop is only a max): every row
+    // gets room and the PAGE owns vertical scroll. Nothing may consume the
+    // wheel — asserted via defaultPrevented observed at window.
     expect(await grid.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
 
     await page.evaluate(() => {
@@ -1283,12 +1290,39 @@ test.describe("graph view E2E", () => {
     const wheelLog = () =>
       page.evaluate(() => (window as unknown as { __wheelLog: boolean[] }).__wheelLog);
 
-    await scrub.hover({ position: { x: 89, y: ROW0_Y } });
+    await grid.hover({ position: { x: 89, y: 59 } });
     await page.mouse.wheel(0, 100);
     // NOT consumed: the event keeps its default (the page scroll), and the
     // grid itself never moved.
     await expect.poll(async () => (await wheelLog()).includes(false)).toBe(true);
     expect(await grid.evaluate((el) => el.scrollTop)).toBe(0);
+    // Rewind the page scroll the wheel just caused before measuring cards.
+    await page.evaluate(() => window.scrollTo(0, 0));
+
+    // With the surface gone the cards OWN their pixels again, preview on:
+
+    // SELECT (R7 #7): a plain click toggles selection. (Retried: under load
+    // a press can outlast the 250ms hold threshold and become a grab, whose
+    // click is — correctly — suppressed.)
+    const alpha = grid.locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    // HOLD-DRAG (R7 #6): press-and-hold alpha, travel past bravo → reorder.
+    const bravo = grid.locator('[data-node-id="bravo"]');
+    await holdDrag(page, alpha, bravo, 0.9);
+    await expect
+      .poll(() => gridOrder(page, PROJECT_ID))
+      .toEqual(["bravo", "alpha", CHILD_ID, "charlie"]);
+
+    // DRILL (R7 #5): the collection card's folder button navigates.
+    const collectionWrapper = grid.locator(`[data-node-wrapper="${CHILD_ID}"]`);
+    await expect(async () => {
+      await collectionWrapper.getByRole("button", { name: /^Open / }).click();
+      await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 3000 });
+    }).toPass({ timeout: 15000 });
   });
 
   test("crafted focus URLs are rejected; valid deep links still work", async ({ page }) => {
