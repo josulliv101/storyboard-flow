@@ -13,8 +13,9 @@ export async function DELETE() {
 
     const trashId = `trash-${user.uid}`;
     const trashDoc = await getFirebaseTimelineDocument(trashId, user.uid);
+    const cleared = trashDoc?.clips.length ?? 0;
 
-    if (trashDoc && trashDoc.clips.length > 0) {
+    if (trashDoc && cleared > 0) {
       for (const clip of trashDoc.clips) {
         const clipSrc = (clip as any).src;
         if (clipSrc && clipSrc.includes("cloudinary.com")) {
@@ -30,11 +31,18 @@ export async function DELETE() {
         }
       }
 
-      trashDoc.clips = [];
-      await saveFirebaseTimelineDocument(trashDoc, user.uid);
+      // `allowEmptying` is what makes this work at all. The save path refuses
+      // an empty write over a non-empty document (a stale client erasing real
+      // work) and, separately, reads `lastNonEmptyDocument` back whenever the
+      // stored clips are empty — so without the opt-in this endpoint threw
+      // 500, and had it not thrown the bin would have re-read full anyway.
+      // A copy, not a mutation of the loaded document.
+      await saveFirebaseTimelineDocument({ ...trashDoc, clips: [] }, user.uid, {
+        allowEmptying: true,
+      });
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, cleared });
   } catch (error) {
     console.error("[TRASH_EMPTY_ERROR]", error);
     return NextResponse.json({ error: "Unable to empty the trash." }, { status: 500 });

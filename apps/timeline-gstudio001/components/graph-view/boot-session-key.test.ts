@@ -20,6 +20,15 @@ describe("bootSessionKey", () => {
     expect(bootSessionKey(null, "proj-1")).toBe(bootSessionKey(null, "proj-1"));
   });
 
+  it("defaults the generation, so existing two-argument callers are unaffected", () => {
+    expect(bootSessionKey("user-a", "proj-1")).toBe(bootSessionKey("user-a", "proj-1", 0));
+  });
+
+  it("changes when the generation is bumped (a permanent trash empty remounts)", () => {
+    expect(bootSessionKey("user-a", "proj-1", 1)).not.toBe(bootSessionKey("user-a", "proj-1"));
+    expect(bootSessionKey("user-a", "proj-1", 1)).toBe(bootSessionKey("user-a", "proj-1", 1));
+  });
+
   it("does not let a separator inside either value forge a different pairing", () => {
     // Without encoding, ("a:b", "c") and ("a", "b:c") would both stringify to
     // "a:b:c" and collide.

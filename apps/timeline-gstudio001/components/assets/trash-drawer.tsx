@@ -11,6 +11,7 @@ import {
 
 import { Button } from "@/components/core/button";
 import { useAuth } from "@/components/auth/auth-provider";
+import { announceGraphTrashEmptied } from "@/lib/graph-view-events";
 import type { TimelineClip } from "@storyboard/ui/timeline/types";
 
 type TrashDrawerProps = {
@@ -97,6 +98,11 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
 
       setClips([]);
 
+      // A graph view mounted behind this drawer still holds every one of
+      // those items as nodes under its trash root, and would write them back
+      // on the next commit that touches the trash. Tell it to rebuild.
+      announceGraphTrashEmptied();
+
       window.dispatchEvent(
         new CustomEvent("gstudio-toast", {
           detail: { message: "Trash bin emptied successfully" }
@@ -168,9 +174,16 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
             </div>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 p-5">
-              {clips.map((clip) => (
+              {clips.map((clip, index) => (
                 <div
-                  key={clip.id}
+                  // Keyed by SLOT, not by clip id: the trash document can
+                  // legitimately hold the same id more than once (the legacy
+                  // views mint stable per-asset clip ids, so one asset trashed
+                  // from two timelines arrives twice — the graph's own
+                  // hydration demotes such collisions for the same reason).
+                  // An id key made React log a duplicate-key error per repeat
+                  // and drop cards from the grid.
+                  key={`${index}-${clip.id}`}
                   className="relative group rounded-lg overflow-hidden border border-zinc-900 bg-zinc-900/20 p-2 hover:border-zinc-800 transition-colors"
                 >
                   <div className="aspect-video relative rounded bg-black/60 overflow-hidden flex items-center justify-center border border-zinc-800/40">

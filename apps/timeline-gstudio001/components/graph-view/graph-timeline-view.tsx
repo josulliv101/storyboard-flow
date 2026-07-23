@@ -40,6 +40,7 @@ import {
   GRAPH_PREVIEW_TOGGLE_EVENT,
   GRAPH_RULER_TOGGLE_EVENT,
   GRAPH_SURFACE_EVENT,
+  GRAPH_TRASH_EMPTIED_EVENT,
   broadcastGraphViewState,
   type GraphSurface,
 } from "@/lib/graph-view-events";
@@ -211,6 +212,25 @@ export function GraphTimelineView({
     () => bootstrap !== null && bootstrap !== undefined && bootstrap.length > 0,
   );
 
+  // The sidebar's trash drawer just PERMANENTLY emptied the bin on the
+  // server. Every one of those items is still a node under this graph's trash
+  // root, and the next commit that touches the trash would write the whole
+  // stale list back — resurrecting what the user just destroyed. Drop the
+  // cached documents and re-boot: the counter feeds the boot effect below AND
+  // the session key, so `<DndCollections>` remounts and actually adopts the
+  // rebuilt graph (`initialGraph` is initial-only by design). Undo history
+  // goes with it, which is the honest outcome — a permanent delete is not
+  // undoable, and history entries referencing those nodes could not replay.
+  const [trashGeneration, setTrashGeneration] = useState(0);
+  useEffect(() => {
+    const onEmptied = () => {
+      graphDocumentsGateway.refresh();
+      setTrashGeneration((generation) => generation + 1);
+    };
+    window.addEventListener(GRAPH_TRASH_EMPTIED_EVENT, onEmptied);
+    return () => window.removeEventListener(GRAPH_TRASH_EMPTIED_EVENT, onEmptied);
+  }, []);
+
   useEffect(() => {
     if (trashDocumentId === null) return;
 
@@ -292,14 +312,14 @@ export function GraphTimelineView({
         status: "ready",
         graph: built.value,
         trashRootId,
-        sessionKey: bootSessionKey(uid, projectId),
+        sessionKey: bootSessionKey(uid, projectId, trashGeneration),
       });
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [projectId, trashDocumentId, uid, detailsStore, bootedFromServer]);
+  }, [projectId, trashDocumentId, uid, detailsStore, bootedFromServer, trashGeneration]);
 
   const onSync = useCallback((entry: SyncEntry) => {
     setSyncLog((log) => [entry, ...log].slice(0, 6));

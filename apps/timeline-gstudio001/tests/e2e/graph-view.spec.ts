@@ -1232,10 +1232,9 @@ test.describe("graph view E2E", () => {
     const parentZone = page.locator(`[data-graph-ancestor-drop="${PROJECT_ID}"]`);
     const parentCrumb = parentZone.locator("a");
     const trashZone = page.locator(`[data-graph-sidebar-trash="${TRASH_ID}"]`);
-    const trashIcon = page
-      .getByRole("button", { name: "Trash", exact: true })
-      .locator("svg")
-      .first();
+    // The drawer button's icon is a COMPOSED glyph (a folder with a trash can
+    // in it), so the animation rides its wrapper — not an <svg>.
+    const trashIcon = page.locator('[data-sidebar-icon="trash"]');
 
     // Pick c1 up (hold to activate), then hold it — no release — over each zone.
     const box = (await c1.boundingBox())!;
