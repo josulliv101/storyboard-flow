@@ -63,7 +63,10 @@ serves both; only the source differs:
 
 1. ✅ Seam + Cloudinary adapter + neutral API + `sourceAsset` provenance
    (this document's landing change).
-2. Folder browsing UI (breadcrumb + folder rows + drill-in in the palette).
+2. ✅ Folder browsing UI — the palette always browses (root on open; flat is
+   no longer a palette view), folder tiles lead the rail, the breadcrumb
+   climbs back, and visited pages answer from an in-drawer cache. A provider
+   without folders reports none and the same view IS its flat listing.
 3. Tags mode (Cloudinary listing gains tags; Folders/Tags toggle,
    capability-gated).
 4. **S3 adapter** (decided: the second provider) + provider picker; upload/
