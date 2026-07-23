@@ -12,6 +12,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { Button } from "@/components/core/button";
+import { useBottomDrawerInset } from "@/components/assets/use-bottom-drawer-inset";
 import type { CloudinaryAsset } from "@/lib/cloudinary-media-store";
 
 import { clearPendingDetails, parkPendingDetail } from "./graph-pending-details";
@@ -123,6 +124,14 @@ export function AssetPaletteDrawer({
   onClose: () => void;
 }>) {
   const [state, setState] = useState<AssetPaletteState>({ status: "loading" });
+  const panelRef = useRef<HTMLElement | null>(null);
+  // This panel is FIXED to the bottom of the viewport and non-modal — the
+  // board behind it stays live, and you drag out of it onto that board. So
+  // the page has to be able to scroll its own content clear of it; without
+  // this, the last row of cards sat under the panel with no scroll left to
+  // reach them. Publishing the height also lets the preview pane size itself
+  // against the viewport that is actually visible.
+  useBottomDrawerInset(panelRef, open);
 
   const handleClose = () => {
     if (state.status === "error") setState({ status: "loading" });
@@ -171,6 +180,7 @@ export function AssetPaletteDrawer({
       className="pointer-events-none fixed inset-x-0 bottom-0 z-40"
     >
       <aside
+        ref={panelRef}
         role="dialog"
         aria-modal="false"
         aria-label="Asset palette"
