@@ -3,19 +3,56 @@
 // ids, S3 object keys). Such backends have no folder API to ask; the tree IS
 // the set of key prefixes, so one derivation serves them all and a new
 // path-based adapter gets browsing for free.
+//
+// The same derivation also serves the TAG pseudo-hierarchy: a tag is a path
+// ("scene/heist" nests under "scene"), the only difference being that an
+// asset has exactly ONE folder location but may carry MANY tags — so the
+// core works on a list of locations per asset and the two entry points
+// differ only in how they read them.
 
 import type { Asset, AssetFolder, AssetPage, AssetQuery } from "./types";
 
-function sameFolder(a: readonly string[], b: readonly string[]): boolean {
+type Location = readonly string[];
+
+function sameLocation(a: Location, b: Location): boolean {
   return a.length === b.length && a.every((segment, i) => segment === b[i]);
 }
 
-function isUnder(path: readonly string[], folder: readonly string[]): boolean {
-  return path.length > folder.length && folder.every((segment, i) => segment === path[i]);
+function isUnder(path: Location, base: Location): boolean {
+  return path.length > base.length && base.every((segment, i) => segment === path[i]);
+}
+
+function pageFromLocations(
+  assets: readonly Asset[],
+  locationsOf: (asset: Asset) => readonly Location[],
+  base: Location | undefined,
+  limit: number | undefined,
+): AssetPage {
+  const matching =
+    base === undefined
+      ? assets
+      : assets.filter((asset) => locationsOf(asset).some((loc) => sameLocation(loc, base)));
+
+  const groupBase = base ?? [];
+  const seen = new Set<string>();
+  const folders: AssetFolder[] = [];
+  for (const asset of assets) {
+    for (const location of locationsOf(asset)) {
+      if (!isUnder(location, groupBase)) continue;
+      const name = location[groupBase.length];
+      if (seen.has(name)) continue;
+      seen.add(name);
+      folders.push({ name, path: [...groupBase, name] });
+    }
+  }
+  folders.sort((a, b) => a.name.localeCompare(b.name));
+
+  const limited = limit !== undefined && limit >= 0 ? matching.slice(0, limit) : matching;
+  return { assets: limited, folders };
 }
 
 /**
- * Resolve a query against a fully-mapped flat listing.
+ * Resolve a FOLDER query against a fully-mapped flat listing.
  *
  * `folder` undefined → every asset (the flat view) plus the top-level folder
  * rows; `folder` set → that folder's DIRECT assets plus its direct subfolder
@@ -28,26 +65,24 @@ function isUnder(path: readonly string[], folder: readonly string[]): boolean {
  * adapter is a mapping function and nothing more.
  */
 export function pageFromFlatListing(assets: readonly Asset[], query: AssetQuery): AssetPage {
-  const folder = query.folder;
+  return pageFromLocations(assets, (asset) => [asset.folderPath], query.folder, query.limit);
+}
 
-  const matching =
-    folder === undefined
-      ? assets
-      : assets.filter((asset) => sameFolder(asset.folderPath, folder));
+/** How a tag nests: "scene/heist" is the path ["scene", "heist"]. */
+function tagSegments(tag: string): Location {
+  return tag.split("/").filter((segment) => segment.length > 0);
+}
 
-  const base = folder ?? [];
-  const seen = new Set<string>();
-  const folders: AssetFolder[] = [];
-  for (const asset of assets) {
-    if (!isUnder(asset.folderPath, base)) continue;
-    const name = asset.folderPath[base.length];
-    if (seen.has(name)) continue;
-    seen.add(name);
-    folders.push({ name, path: [...base, name] });
-  }
-  folders.sort((a, b) => a.name.localeCompare(b.name));
-
-  const limited =
-    query.limit !== undefined && query.limit >= 0 ? matching.slice(0, query.limit) : matching;
-  return { assets: limited, folders };
+/**
+ * Resolve a TAGS-mode browse against the same flat listing. Identical
+ * folder semantics over tag paths, with the two differences tags force:
+ * an asset tagged twice lives in BOTH places, and an asset with NO tags
+ * lives at the tags ROOT (the file-browser convention — root files sit
+ * beside the folders). `tagPath` [] is that root; deeper paths scope to
+ * assets carrying exactly that tag.
+ */
+export function pageFromTagListing(assets: readonly Asset[], query: AssetQuery): AssetPage {
+  const locationsOf = (asset: Asset): readonly Location[] =>
+    asset.tags.length === 0 ? [[]] : asset.tags.map(tagSegments);
+  return pageFromLocations(assets, locationsOf, query.tagPath ?? [], query.limit);
 }

@@ -84,6 +84,23 @@ describe("GET /api/assets", () => {
     expect(body.assets.map((entry) => entry.id)).toEqual(["a"]);
   });
 
+  it("?mode=tags browses the tag pseudo-hierarchy via ?tag= segment params", async () => {
+    state.vendorAssets = [
+      { ...vendorAsset("plain", "plain.png") },
+      { ...vendorAsset("tagged", "Scenes/t.png"), tags: ["scene/heist"] },
+    ];
+    // Tags root: untagged assets + top-level tag groups (folder placement is
+    // irrelevant in tag space).
+    const root = await listAssets(request("?mode=tags"));
+    const rootBody = (await root.json()) as { assets: { id: string }[]; folders: unknown };
+    expect(rootBody.assets.map((entry) => entry.id)).toEqual(["plain"]);
+    expect(rootBody.folders).toEqual([{ name: "scene", path: ["scene"] }]);
+
+    const heist = await listAssets(request("?mode=tags&tag=scene&tag=heist"));
+    const heistBody = (await heist.json()) as { assets: { id: string }[] };
+    expect(heistBody.assets.map((entry) => entry.id)).toEqual(["tagged"]);
+  });
+
   it("404s an unknown provider by name", async () => {
     const response = await listAssets(request("?provider=nope"));
     expect(response.status).toBe(404);
@@ -106,7 +123,7 @@ describe("GET /api/assets/providers", () => {
       {
         id: "cloudinary",
         label: "Cloudinary",
-        capabilities: { folders: true, tags: false, search: false, upload: false, delete: false },
+        capabilities: { folders: true, tags: true, search: false, upload: false, delete: false },
       },
     ]);
   });

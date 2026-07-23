@@ -5,7 +5,7 @@
 
 import { listCloudinaryAssets, type CloudinaryAsset } from "@/lib/cloudinary-media-store";
 
-import { pageFromFlatListing } from "./path-folders";
+import { pageFromFlatListing, pageFromTagListing } from "./path-folders";
 import type { AssetContext, AssetProvider } from "./provider";
 import type { Asset } from "./types";
 
@@ -30,9 +30,7 @@ export function cloudinaryAssetToAsset(vendorAsset: CloudinaryAsset): Asset {
     src: vendorAsset.url,
     thumbnailUrl: vendorAsset.thumbnailUrl,
     folderPath: segments.slice(0, -1),
-    // Phase 3 (tags browse) teaches the store's listing to carry tags; until
-    // then Cloudinary reports none and declares the capability off.
-    tags: [],
+    tags: vendorAsset.tags ?? [],
     ...(vendorAsset.width === undefined ? {} : { width: vendorAsset.width }),
     ...(vendorAsset.height === undefined ? {} : { height: vendorAsset.height }),
     ...(vendorAsset.duration === undefined ? {} : { durationSeconds: vendorAsset.duration }),
@@ -46,19 +44,21 @@ export const cloudinaryAssetProvider: AssetProvider = {
   label: "Cloudinary",
   capabilities: {
     folders: true,
+    tags: true,
     // Declared OFF until the adapter actually serves them — the UI offers
     // only what list() honours today.
-    tags: false,
     search: false,
     upload: false,
     delete: false,
   },
   async list(ctx: AssetContext, query) {
     // The store's listing is already user-scoped and paginated at the vendor
-    // boundary; folder scoping is derived from it in memory (the documented
-    // fallback in path-folders — a native `prefix` query is the upgrade path
-    // if libraries outgrow it).
-    const vendorAssets = await listCloudinaryAssets(ctx.uid);
-    return pageFromFlatListing(vendorAssets.map(cloudinaryAssetToAsset), query);
+    // boundary; folder/tag scoping is derived from it in memory (the
+    // documented fallback in path-folders — a native `prefix`/tag query is
+    // the upgrade path if libraries outgrow it).
+    const assets = (await listCloudinaryAssets(ctx.uid)).map(cloudinaryAssetToAsset);
+    return query.tagPath !== undefined
+      ? pageFromTagListing(assets, query)
+      : pageFromFlatListing(assets, query);
   },
 };

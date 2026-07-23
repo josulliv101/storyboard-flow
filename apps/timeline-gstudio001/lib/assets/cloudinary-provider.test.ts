@@ -58,7 +58,7 @@ describe("cloudinaryAssetToAsset", () => {
       src: "https://res.cloudinary.test/image/upload/gstudio/user-1/pic-123.png",
       thumbnailUrl: "https://res.cloudinary.test/thumb/pic-123.jpg",
       folderPath: ["Foobar 001", "Scenes"],
-      tags: [],
+      tags: [],  // absent upstream -> none, not undefined
       width: 1600,
       height: 900,
       bytes: 12345,
@@ -105,13 +105,32 @@ describe("cloudinaryAssetProvider.list", () => {
     expect(scenes.folders).toEqual([{ name: "Heist", path: ["Scenes", "Heist"] }]);
   });
 
-  it("declares folders on and the not-yet-served capabilities off", () => {
+  it("declares folders and tags on, the not-yet-served capabilities off", () => {
     expect(cloudinaryAssetProvider.capabilities).toEqual({
       folders: true,
-      tags: false,
+      tags: true,
       search: false,
       upload: false,
       delete: false,
     });
+  });
+
+  it("carries vendor tags through and serves a tagPath query as a TAG page", async () => {
+    state.vendorAssets = [
+      vendorAsset({ id: "plain", relativePath: "plain.png" }),
+      vendorAsset({ id: "tagged", relativePath: "Scenes/t.png", tags: ["scene/heist"] }),
+    ];
+    const root = await cloudinaryAssetProvider.list({ uid: "user-1" }, { tagPath: [] });
+    // Tag space ignores folders entirely: the untagged asset sits at the tags
+    // root even though it also sits at the folder root, and the tagged one is
+    // reachable only through its tag group.
+    expect(root.assets.map((entry) => entry.id)).toEqual(["plain"]);
+    expect(root.folders).toEqual([{ name: "scene", path: ["scene"] }]);
+
+    const heist = await cloudinaryAssetProvider.list(
+      { uid: "user-1" },
+      { tagPath: ["scene", "heist"] },
+    );
+    expect(heist.assets.map((entry) => entry.id)).toEqual(["tagged"]);
   });
 });
