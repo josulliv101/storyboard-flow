@@ -1549,10 +1549,12 @@ export function PreviewShell({
       {/* Test/debug witness for which read model the pane is playing. */}
       <span data-preview-source={manifest !== null ? "manifest" : "projection"} hidden />
       <WorkbenchSplitPane
-        // Remount on drill so the player shows the newly-focused collection's
-        // first frame instead of holding the previous one. The chosen height
-        // survives — getInitialSurfaceHeight restores it from the ref at mount.
-        key={focusedId}
+        // NOT keyed by focusedId any more. That remount existed only to force
+        // the player off the previous collection's frame; the surface now
+        // repaints when its clip list changes, so a drill-in keeps the canvas,
+        // the decoded media cache and the chosen height instead of tearing the
+        // pane down and flashing black — the most visible part of "clicking
+        // into a collection updates the whole screen".
         clips={clips}
         currentTime={time}
         onCurrentTimeChange={handleTimeChange}

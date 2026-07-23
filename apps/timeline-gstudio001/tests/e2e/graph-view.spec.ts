@@ -1393,6 +1393,50 @@ test.describe("graph view E2E", () => {
     await expect(redoButton(page)).toBeDisabled();
   });
 
+  test("drilling in doesn't wait for the server, and keeps the preview pane alive", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await previewToggle(page).click();
+    await expect(page.locator('[data-testid="workbench-display-canvas"]')).toBeVisible();
+
+    // Tag the live canvas. A remounted pane mints a fresh one, so the tag
+    // surviving the drill IS the "no teardown" assertion.
+    await page.evaluate(() => {
+      document
+        .querySelector('[data-testid="workbench-display-canvas"]')
+        ?.setAttribute("data-alive", "1");
+    });
+
+    // Hold the App Router's RSC request for this navigation. The focus change
+    // needs nothing from it (the graph is in memory; the route only primes
+    // documents), so the board must move well before it answers.
+    await page.route("**/graph/**", async (route) => {
+      if (!route.request().url().includes("_rsc=")) return route.continue();
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await route.continue();
+    });
+
+    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    // Well inside the 2s the server response is held for.
+    await expect(page.getByText("Scene A", { exact: true }).first()).toBeVisible({
+      timeout: 900,
+    });
+    await expect(strip(page, PROJECT_ID)).toHaveCount(0, { timeout: 900 });
+
+    // Same canvas element as before the drill: no black flash, no re-decode,
+    // and the height the user chose survives.
+    await expect(page.locator('[data-testid="workbench-display-canvas"]')).toHaveAttribute(
+      "data-alive",
+      "1",
+    );
+    // The URL still lands once the held response arrives.
+    await expect
+      .poll(() => new URL(page.url()).pathname, { timeout: 8000 })
+      .toBe(`/timeline/${PROJECT_ID}/graph/${CHILD_ID}`);
+  });
+
   test("preview mode: capless playhead line, drag-to-scrub, no layout blowout", async ({
     page,
   }) => {

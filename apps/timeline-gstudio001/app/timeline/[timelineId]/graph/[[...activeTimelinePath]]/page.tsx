@@ -15,10 +15,16 @@ import { loadFocusPathPayloads } from "@/lib/graph-rsc-payloads";
 
 async function FocusPathStream({
   path,
-  uid,
   focusedOnly,
-}: Readonly<{ path: readonly string[]; uid: string; focusedOnly: boolean }>) {
-  const payloads = await loadFocusPathPayloads(path, uid, { focusedOnly });
+}: Readonly<{ path: readonly string[]; focusedOnly: boolean }>) {
+  // Session lookup lives INSIDE the boundary with the document load. Awaited
+  // in the page body it would block the RSC response for this navigation —
+  // and the client is waiting on that response to commit the new pathname.
+  // Everything this component produces is a cache prime the client can also
+  // fetch itself, so all of it belongs behind Suspense.
+  const user = await getAuthUser();
+  if (!user) return null;
+  const payloads = await loadFocusPathPayloads(path, user.uid, { focusedOnly });
   if (payloads.length === 0) return null;
   return <GraphGatewayPrimer payloads={payloads} />;
 }
@@ -30,9 +36,6 @@ export default async function GraphViewPage({
 }) {
   const { activeTimelinePath = [] } = await params;
   if (activeTimelinePath.length === 0) return null;
-
-  const user = await getAuthUser();
-  if (!user) return null;
 
   // Soft navigations arrive as RSC flight requests (the `RSC` header): the
   // client already holds the ancestors from boot and earlier navigations,
@@ -52,7 +55,7 @@ export default async function GraphViewPage({
           CLIENT twin in graph-timeline-view.tsx does decode, correctly:
           `usePathname()` returns the raw encoded pathname. Different sources,
           different rules. */}
-      <FocusPathStream path={activeTimelinePath} uid={user.uid} focusedOnly={softNavigation} />
+      <FocusPathStream path={activeTimelinePath} focusedOnly={softNavigation} />
     </Suspense>
   );
 }
