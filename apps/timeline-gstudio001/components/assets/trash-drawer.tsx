@@ -4,14 +4,22 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   Trash2,
+  Undo2,
   X,
   Loader2,
   AlertCircle,
 } from "lucide-react";
+import { usePathname } from "next/navigation";
 
 import { Button } from "@/components/core/button";
 import { useAuth } from "@/components/auth/auth-provider";
-import { announceGraphTrashEmptied } from "@/lib/graph-view-events";
+import {
+  GRAPH_RESTORE_RESULT_EVENT,
+  announceGraphTrashEmptied,
+  isGraphViewRoute,
+  requestGraphRestoreItem,
+  type GraphRestoreResultDetail,
+} from "@/lib/graph-view-events";
 import type { TimelineClip } from "@storyboard/ui/timeline/types";
 
 type TrashDrawerProps = {
@@ -85,6 +93,48 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
     };
   }, [isOpen, user, requestTrashClips]);
 
+  // RESTORE puts an item back into the timeline the user is looking at — which
+  // is also how they choose the destination: navigate there, then restore. The
+  // move itself is a graph command, and the graph lives in the route tree, so
+  // the drawer asks across the window-event seam and waits for the answer
+  // before dropping the row. Off-graph there is no graph to restore INTO, so
+  // the control isn't offered at all rather than failing on click.
+  const pathname = usePathname();
+  const canRestore = isGraphViewRoute(pathname);
+  const focusedName = "the open timeline";
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onResult = (event: Event) => {
+      const detail = (event as CustomEvent<GraphRestoreResultDetail>).detail;
+      if (!detail) return;
+      setRestoringId((current) => (current === detail.clipId ? null : current));
+      if (detail.ok) {
+        // Drop ONE row for that clip id — the bin can hold the same id more
+        // than once and the graph restored exactly one of them. The updater
+        // computes the index itself rather than closing over a "did I remove
+        // one yet" flag: React may invoke an updater more than once, and a
+        // flag that survives between invocations made the second pass remove
+        // nothing, leaving the restored row on screen.
+        setClips((current) => {
+          const index = current.findIndex((clip) => clip.id === detail.clipId);
+          if (index === -1) return current;
+          return [...current.slice(0, index), ...current.slice(index + 1)];
+        });
+      }
+      window.dispatchEvent(
+        new CustomEvent("gstudio-toast", { detail: { message: detail.message } }),
+      );
+    };
+    window.addEventListener(GRAPH_RESTORE_RESULT_EVENT, onResult);
+    return () => window.removeEventListener(GRAPH_RESTORE_RESULT_EVENT, onResult);
+  }, []);
+
+  const handleRestore = (clipId: string) => {
+    setRestoringId(clipId);
+    requestGraphRestoreItem(clipId);
+  };
+
   const handleEmptyTrash = async () => {
     // Says what actually happens: the BIN entries go (with no restore path,
     // so it really is permanent), while the uploads behind them stay in the
@@ -125,7 +175,13 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/40">
       <div className="fixed inset-0" onClick={onClose} />
-      <div className="asset-library-panel pointer-events-auto ml-[72px] flex max-h-[48vh] flex-col border-t border-zinc-800 bg-zinc-950 text-white shadow-2xl shadow-black/50">
+      {/* `relative` is load-bearing, not cosmetic: the click-to-close backdrop
+          above is POSITIONED and this panel was static, and a positioned
+          sibling paints over a static one whatever the DOM order. The backdrop
+          therefore covered the panel's own controls — every click inside the
+          drawer hit the backdrop and closed it, which is why Empty Trash
+          "did nothing". Positioning the panel puts it back on top. */}
+      <div className="asset-library-panel pointer-events-auto relative ml-[72px] flex max-h-[48vh] flex-col border-t border-zinc-800 bg-zinc-950 text-white shadow-2xl shadow-black/50">
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-5 py-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-zinc-50 flex items-center gap-2">
@@ -152,6 +208,10 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
               type="button"
               variant="outline"
               size="icon"
+              // An icon-only control needs a name: this one had none, so it
+              // reached assistive tech (and tests) as an anonymous button.
+              aria-label="Close trash"
+              title="Close"
               onClick={onClose}
               className="size-8 border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200 cursor-pointer"
             >
@@ -217,10 +277,25 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                       </div>
                     )}
                   </div>
-                  <div className="mt-2 min-w-0">
-                    <p className="truncate text-xs font-semibold text-zinc-200">
+                  <div className="mt-2 flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-200">
                       {(clip as any).title || clip.alt || "Clip"}
                     </p>
+                    {canRestore && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={restoringId === clip.id}
+                        onClick={() => handleRestore(clip.id)}
+                        title={`Restore into ${focusedName}`}
+                        aria-label={`Restore ${(clip as any).title || clip.alt || "clip"}`}
+                        className="h-6 shrink-0 border-zinc-800 px-2 text-[10px] text-zinc-300 hover:border-sky-500/50 hover:text-sky-300 cursor-pointer"
+                      >
+                        <Undo2 className="mr-1 h-3 w-3" />
+                        Restore
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}

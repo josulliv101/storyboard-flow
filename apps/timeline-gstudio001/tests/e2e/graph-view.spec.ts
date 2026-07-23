@@ -1902,6 +1902,56 @@ test.describe("graph view E2E", () => {
     }).toPass({ timeout: 15000 });
   });
 
+  test("a trashed item restores into the timeline you are looking at", async ({ page }) => {
+    const api = await installGraphApi(page);
+    await openGraph(page);
+
+    // Delete bravo from the project…
+    const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", CHILD_ID, "charlie"]);
+
+    // …drill into the child, so "where it came from" and "where I am" differ…
+    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await expect(strip(page, PROJECT_ID)).toHaveCount(0);
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+
+    // …and restore it from the trash drawer. The drawer reads the trash
+    // document from the server when it opens, so wait for the debounced write
+    // rather than racing it.
+    await expect
+      .poll(() => api.patchesFor(TRASH_ID).at(-1)?.clipIds, { timeout: 5000 })
+      .toEqual(["bravo"]);
+    await page.getByRole("button", { name: "Trash", exact: true }).click();
+    const restore = page.getByRole("button", { name: /^Restore bravo/ });
+    await expect(restore).toBeVisible();
+    await restore.click();
+
+    // It lands in the collection now open — not back where it was deleted
+    // from — and the row leaves the drawer.
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2", "bravo"]);
+    await expect(restore).toHaveCount(0);
+
+    // Both documents persist the move, and it is an ordinary undoable step.
+    await expect.poll(() => api.patchesFor(CHILD_ID).at(-1)?.clipIds, { timeout: 5000 }).toEqual([
+      "c1",
+      "c2",
+      "bravo",
+    ]);
+    await expect.poll(() => api.patchesFor(TRASH_ID).at(-1)?.clipIds, { timeout: 5000 }).toEqual([]);
+    // Close the drawer first — its backdrop covers the whole page, sidebar
+    // included, so nothing behind it is clickable.
+    await page.getByRole("button", { name: "Close trash" }).click();
+    await undoButton(page).click();
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+  });
+
   test("crafted focus URLs are rejected; valid deep links still work", async ({ page }) => {
     await installGraphApi(page);
 

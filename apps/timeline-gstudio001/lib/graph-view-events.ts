@@ -149,6 +149,37 @@ export function setGraphTrashDropHover(hovering: boolean): void {
   );
 }
 
+// Restore: the trash DRAWER lists what was deleted, but putting an item back
+// is a graph move (trash root → the open collection), and the graph lives in
+// the route tree. The drawer asks; the bridge inside the provider performs it
+// and answers, so the drawer can drop the row it just restored — or say why
+// it couldn't.
+
+export const GRAPH_RESTORE_ITEM_EVENT = "graph-view:restore-item";
+export const GRAPH_RESTORE_RESULT_EVENT = "graph-view:restore-result";
+
+/** Identifies a trashed item by its stored CLIP id — what the drawer has.
+ *  The graph may know it under a different node id (a collection is keyed by
+ *  its child timeline; a duplicate media id is demoted), so the bridge
+ *  resolves it against the trash root's children. */
+export type GraphRestoreResultDetail = Readonly<{
+  clipId: string;
+  ok: boolean;
+  message: string;
+}>;
+
+/** Drawer → graph: put this trashed item back into the open timeline. */
+export function requestGraphRestoreItem(clipId: string): void {
+  window.dispatchEvent(new CustomEvent<string>(GRAPH_RESTORE_ITEM_EVENT, { detail: clipId }));
+}
+
+/** Graph → drawer: what happened. */
+export function broadcastGraphRestoreResult(detail: GraphRestoreResultDetail): void {
+  window.dispatchEvent(
+    new CustomEvent<GraphRestoreResultDetail>(GRAPH_RESTORE_RESULT_EVENT, { detail }),
+  );
+}
+
 // Emptying the bin is the one action that removes items the graph is HOLDING.
 // The drawer is app chrome and talks to the server directly, so a graph view
 // mounted behind it would keep the deleted nodes in its store — and write them
