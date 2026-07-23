@@ -118,27 +118,6 @@ export function GraphBreadcrumb({
   );
 }
 
-/** The view switcher, which stays page chrome: it leaves the graph entirely,
- *  so it does not belong among the board's own controls. */
-export function GraphViewChrome({
-  projectId,
-  timelinePath,
-}: Readonly<{
-  projectId: string;
-  timelinePath: readonly string[];
-}>) {
-  const focusedId = focusedIdOf(projectId, timelinePath);
-
-  return (
-    <div className="flex w-full items-center justify-end gap-3">
-      <Link
-        href={`/timeline/${encodeURIComponent(projectId)}/storyboard${
-          focusedId === projectId ? "" : `/${encodeURIComponent(focusedId)}`
-        }`}
-        className="shrink-0 text-xs text-zinc-400 transition-colors hover:text-white"
-      >
-        Storyboard view
-      </Link>
-    </div>
-  );
-}
+// (The old GraphViewChrome row — a full-width strip holding only the
+// "Storyboard view" link — is gone: the link lives in the board's overflow
+// menu now, so the page starts at the preview itself.)

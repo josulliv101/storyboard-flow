@@ -161,7 +161,13 @@ function SubTimelineNode({
   };
 
   return (
-    <section aria-label={`Sub-timeline: ${name}`} className="min-w-0">
+    // Each timeline is its OWN gray panel (header + surface in one box) —
+    // the storyboard view's idiom, adopted so every strip reads as one
+    // distinct area; nested rows nest panels, echoing the hierarchy.
+    <section
+      aria-label={`Sub-timeline: ${name}`}
+      className="min-w-0 rounded-lg border border-zinc-800/70 bg-zinc-900/40 p-3"
+    >
       <div className="mb-1.5 flex items-center gap-2">
         <button
           type="button"
@@ -254,7 +260,8 @@ function SubTimelineNode({
                       />
                     ) : undefined
                   }
-                  className="bg-black/20"
+                  // pt-4 = GRID_GAP: row 0's rail band matches the row gaps.
+                  className="bg-black/20 pt-4"
                 />
               </NativeDropGrid>
               {showPlayhead && (
@@ -292,7 +299,8 @@ function SubTimelineNode({
                     </>
                   ) : undefined
                 }
-                className="bg-black/20"
+                // pt-4: the 16px top band the seek rail centres in.
+                className="bg-black/20 pt-4"
               />
               {showPlayhead && (
                 <GraphStripSeekRail

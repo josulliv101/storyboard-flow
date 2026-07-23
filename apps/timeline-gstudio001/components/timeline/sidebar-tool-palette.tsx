@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { FolderPlus, Image, Video } from "lucide-react";
+import { FolderPlus } from "lucide-react";
 
 import { SidebarTooltipLabel } from "./sidebar-tooltip-label";
 
@@ -20,7 +20,11 @@ import { SidebarTooltipLabel } from "./sidebar-tooltip-label";
 //   - DRAG carries the tool over a strip and picks a POSITION. It stays as the
 //     precision affordance, not the only one.
 
-export type SidebarToolType = "collection" | "image" | "video";
+// Collection is the ONLY tool: it mints structure, which nothing else can.
+// The old image/video tools minted demo-content placeholder clips (picsum /
+// stock mp4) that no real workflow used — media enters through the Assets
+// drawer or an OS file drop, both of which carry actual files.
+export type SidebarToolType = "collection";
 
 export type SidebarToolItem = Readonly<{
   type: SidebarToolType;
@@ -36,8 +40,6 @@ export const SIDEBAR_TOOL_ITEMS: readonly SidebarToolItem[] = [
     description: "Nested timeline beat",
     icon: FolderPlus,
   },
-  { type: "image", label: "Image Clip", description: "Image timeline clip", icon: Image },
-  { type: "video", label: "Video Clip", description: "Video timeline clip", icon: Video },
 ];
 
 export function SidebarToolPalette({

@@ -1,17 +1,9 @@
 "use client";
 
 import { useContext, useDeferredValue } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import {
-  EllipsisVertical,
-  FolderTree,
-  GalleryHorizontalEnd,
-  LayoutGrid,
-  Redo2,
-  Ruler,
-  TvMinimal,
-  Undo2,
-} from "lucide-react";
+import { EllipsisVertical, Redo2, Undo2 } from "lucide-react";
 
 import {
   CollectionsContainerContext,
@@ -26,9 +18,11 @@ import { Button } from "@/components/core/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/core/dropdown-menu";
 import { Slider } from "@/components/core/slider";
@@ -45,6 +39,7 @@ import {
   GraphStripSeekRail,
   PreviewShell,
   collectionCardWidth,
+  useFocusedTimelineAggregate,
   type PreviewTimeChannel,
 } from "./graph-preview";
 import { SubTimelines } from "./graph-sub-timelines";
@@ -72,9 +67,11 @@ export type { FocusSurface, ItemSize };
 function BoardMenu({
   itemSize,
   onItemSizeChange,
+  storyboardHref,
 }: Readonly<{
   itemSize: ItemSize;
   onItemSizeChange: (size: ItemSize) => void;
+  storyboardHref: string;
 }>) {
   return (
     <DropdownMenu>
@@ -91,6 +88,13 @@ function BoardMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        <DropdownMenuLabel>View</DropdownMenuLabel>
+        {/* Children visibility moved to the icon SIDEBAR (under the
+            Collection tool) — only the leave-the-graph link lives here. */}
+        <DropdownMenuItem asChild>
+          <Link href={storyboardHref}>Storyboard view</Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuLabel>Thumbnail size</DropdownMenuLabel>
         <DropdownMenuRadioGroup
           value={itemSize}
@@ -109,6 +113,38 @@ function BoardMenu({
   );
 }
 
+/** "8 clips · 3m 00s" — matches the collection cards' badge idiom. */
+function formatAggregateSeconds(seconds: number): string {
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${String(Math.round(seconds % 60)).padStart(2, "0")}s`;
+}
+
+/**
+ * The focused timeline's aggregate, at the row's TRUE centre — directly
+ * under the preview transport's centred play cluster. The header's two
+ * wings (breadcrumb / controls) carry equal `flex-1`, so this piece sits
+ * dead-centre and stays there; a long breadcrumb truncates inside its own
+ * wing instead of pushing the centre around. Passive DATA on purpose (the
+ * per-card badges show the same numbers), so hiding it on small screens
+ * costs nothing.
+ */
+function FocusedAggregate({
+  focusedId,
+  pixelsPerSecond,
+}: Readonly<{ focusedId: string; pixelsPerSecond: number }>) {
+  const { count, seconds } = useFocusedTimelineAggregate(focusedId, pixelsPerSecond);
+  if (count === 0) return null;
+  return (
+    <span
+      className="hidden shrink-0 px-3 text-center font-mono text-[11px] tabular-nums text-zinc-500 sm:block"
+      title="Focused timeline total"
+    >
+      {count} {count === 1 ? "clip" : "clips"} · {formatAggregateSeconds(seconds)}
+    </span>
+  );
+}
+
 /**
  * Horizontal zoom. Lives in the header rather than the overflow menu because
  * it is an exploration tool, not a setting — you reach for it WHILE reading
@@ -123,7 +159,13 @@ function ScaleSlider({
   onChange: (pixelsPerSecond: number) => void;
 }>) {
   return (
-    <div className="flex w-36 shrink-0 items-center gap-2" title="Timeline scale">
+    // Compact, label-less: the tooltip carries what it does AND the live
+    // value (the slider's own aria-valuenow has it too) — the header row
+    // earns back the label's width.
+    <div
+      className="flex w-24 shrink-0 items-center"
+      title={`Timeline zoom — stretch or squeeze the strip's time scale (${Math.round(pixelsPerSecond)} px/s)`}
+    >
       <Slider
         aria-label="Timeline scale"
         min={MIN_TIMELINE_PPS}
@@ -132,12 +174,6 @@ function ScaleSlider({
         value={[pixelsPerSecond]}
         onValueChange={([next]) => onChange(next)}
       />
-      <span
-        aria-hidden="true"
-        className="w-11 shrink-0 font-mono text-[10px] tabular-nums text-zinc-500"
-      >
-        {`${Math.round(pixelsPerSecond)} px/s`}
-      </span>
     </div>
   );
 }
@@ -189,61 +225,18 @@ function GraphUndoRedo() {
   );
 }
 
-function SurfaceToggle({
-  surface,
-  onChange,
-}: Readonly<{
-  surface: FocusSurface;
-  onChange: (surface: FocusSurface) => void;
-}>) {
-  return (
-    <div
-      role="group"
-      aria-label="Timeline layout"
-      className="flex items-center rounded-md border border-zinc-800 p-0.5"
-    >
-      {(["strip", "grid"] as const).map((option) => {
-        const Icon = option === "strip" ? GalleryHorizontalEnd : LayoutGrid;
-        return (
-          <button
-            key={option}
-            type="button"
-            // Keep the accessible name the visible label used to carry, so the
-            // control (and its tests) still resolve by "strip"/"grid".
-            aria-label={option}
-            title={option === "strip" ? "Strip layout" : "Grid layout"}
-            aria-pressed={surface === option}
-            onClick={() => onChange(option)}
-            className={[
-              "flex items-center justify-center rounded px-2 py-1 transition-colors",
-              surface === option
-                ? "bg-zinc-800 text-zinc-100"
-                : "text-zinc-500 hover:text-zinc-200",
-            ].join(" ")}
-          >
-            <Icon aria-hidden="true" className="h-4 w-4" />
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 export function GraphBoard({
   focusedId,
   breadcrumb,
   surface,
-  onSurfaceChange,
   itemSize,
   onItemSizeChange,
   pixelsPerSecond,
   onPixelsPerSecondChange,
   previewOn,
-  onTogglePreview,
   rulerOn,
-  onToggleRuler,
+  storyboardHref,
   childrenShown,
-  onToggleChildren,
   timeChannel,
   trashRootId,
   syncEntries,
@@ -252,18 +245,21 @@ export function GraphBoard({
   /** Slot, not routing props: the board renders where you are without
    *  knowing how a route is shaped. */
   breadcrumb: React.ReactNode;
+  /** Chosen in the SIDEBAR now (its grid/strip icons), not in this header. */
   surface: FocusSurface;
-  onSurfaceChange: (surface: FocusSurface) => void;
   itemSize: ItemSize;
   onItemSizeChange: (size: ItemSize) => void;
   pixelsPerSecond: number;
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
+  /** Toggled from the SIDEBAR's preview icon; the board only renders it. */
   previewOn: boolean;
-  onTogglePreview: () => void;
+  /** Toggled from the SIDEBAR's ruler icon (strip mode only). */
   rulerOn: boolean;
-  onToggleRuler: () => void;
+  /** For the overflow menu's "Storyboard view" item — routing stays the
+   *  caller's business, like the breadcrumb slot. */
+  storyboardHref: string;
+  /** Toggled from the SIDEBAR's children icon; the board only renders it. */
   childrenShown: boolean;
-  onToggleChildren: () => void;
   timeChannel: PreviewTimeChannel;
   trashRootId: string | null;
   syncEntries: readonly SyncEntry[];
@@ -308,79 +304,49 @@ export function GraphBoard({
             className="sticky z-40 -mx-4 -mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-t-xl border-b border-zinc-800/70 bg-zinc-950/95 px-4 py-3 backdrop-blur-sm"
             style={{ top: "var(--workbench-preview-offset, 0px)" }}
           >
-            {breadcrumb}
+            {/* Equal-flex wings keep the aggregate at the row's true centre
+                (under the transport's play cluster). min-w-0 lets a long
+                breadcrumb truncate inside its wing. */}
+            <div className="flex min-w-0 flex-1 items-center">{breadcrumb}</div>
+            <FocusedAggregate
+              focusedId={focusedId}
+              pixelsPerSecond={deferredPixelsPerSecond}
+            />
             {/* flex-wrap + wrap-capable controls so a narrow viewport folds the
-                toolbar onto a second line instead of pushing controls (the
-                Strip/Grid toggle especially) off-screen. No effect when it
-                fits. */}
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-pressed={previewOn}
-                aria-label={previewOn ? "Hide preview" : "Show preview"}
-                title={previewOn ? "Hide preview" : "Show preview"}
-                onClick={onTogglePreview}
-                className={[
-                  "h-8 w-8",
-                  previewOn ? "bg-zinc-800 text-zinc-100" : "text-zinc-500",
-                ].join(" ")}
-              >
-                <TvMinimal aria-hidden="true" className="h-4 w-4" />
-              </Button>
-              {/* Ruler is a strip-only axis (grid has no single time axis), so
-                  the toggle drops out in grid mode like the scale slider. */}
-              {surface === "strip" ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-pressed={rulerOn}
-                  aria-label={rulerOn ? "Hide time ruler" : "Show time ruler"}
-                  title={rulerOn ? "Hide time ruler" : "Show time ruler"}
-                  onClick={onToggleRuler}
-                  className={[
-                    "h-8 w-8",
-                    rulerOn ? "bg-zinc-800 text-zinc-100" : "text-zinc-500",
-                  ].join(" ")}
-                >
-                  <Ruler aria-hidden="true" className="h-4 w-4" />
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-pressed={childrenShown}
-                aria-label={childrenShown ? "Hide children timelines" : "Show children timelines"}
-                title={childrenShown ? "Hide children timelines" : "Show children timelines"}
-                onClick={onToggleChildren}
-                className={[
-                  "h-8 w-8",
-                  childrenShown ? "bg-zinc-800 text-zinc-100" : "text-zinc-500",
-                ].join(" ")}
-              >
-                <FolderTree aria-hidden="true" className="h-4 w-4" />
-              </Button>
+                toolbar onto a second line instead of pushing controls
+                off-screen. No effect when it fits. */}
+            <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
               {/* px/s is a strip-only axis: grid cells are sized by thumbnail
                   size, and the grid playhead ignores clip width, so the slider
                   is a no-op in grid mode. Hidden there (state is preserved, so
-                  returning to strip restores the last zoom). */}
+                  returning to strip restores the last zoom). It LEADS the
+                  cluster, fenced off by a rule: zoom reshapes the surface,
+                  everything right of the line is a toggle or an action. */}
               {surface === "strip" ? (
-                <ScaleSlider
-                  pixelsPerSecond={pixelsPerSecond}
-                  onChange={onPixelsPerSecondChange}
-                />
+                <>
+                  <ScaleSlider
+                    pixelsPerSecond={pixelsPerSecond}
+                    onChange={onPixelsPerSecondChange}
+                  />
+                  <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
+                </>
               ) : null}
-              <SurfaceToggle surface={surface} onChange={onSurfaceChange} />
               <GraphUndoRedo />
-              <BoardMenu itemSize={itemSize} onItemSizeChange={onItemSizeChange} />
+              <BoardMenu
+                itemSize={itemSize}
+                onItemSizeChange={onItemSizeChange}
+                storyboardHref={storyboardHref}
+              />
             </div>
           </div>
 
           {surface === "strip" ? (
-            <NativeDropStrip collectionId={focusedId}>
+            // The focused surface gets the same distinct gray panel as each
+            // sub-timeline row (the storyboard idiom). Padding lives on THIS
+            // wrapper, never on NativeDropStrip: its drop math is
+            // clientX-vs-own-rect, and padding there drifts the indicator.
+            <div className="rounded-lg border border-zinc-800/70 bg-zinc-900/40 p-3">
+              <NativeDropStrip collectionId={focusedId}>
               <VirtualStrip
                 collectionId={parseNodeId(focusedId)}
                 pixelsPerSecond={deferredPixelsPerSecond}
@@ -406,7 +372,9 @@ export function GraphBoard({
                     </>
                   ) : undefined
                 }
-                className="bg-black/25"
+                // pt-4: the 16px top band the seek rail centres in — same
+                // clearance system as the grid's GRID_GAP row bands.
+                className="bg-black/25 pt-4"
               />
               {/* The strip's scrub control — the same rail treatment as the
                   grid's, riding the strip's top padding band and scrolling
@@ -420,7 +388,8 @@ export function GraphBoard({
                   pixelsPerSecond={deferredPixelsPerSecond}
                 />
               )}
-            </NativeDropStrip>
+              </NativeDropStrip>
+            </div>
           ) : (
             // Grid scrubbing is the per-row SEEK RAILS layer — one slim
             // slider in the gap above each row (the video-player idiom, in
@@ -429,8 +398,11 @@ export function GraphBoard({
             // R7 #5/#6/#7) and the in-grid playhead line stays a passive
             // indicator. The layer overlays the grid as a SIBLING (outside
             // NativeDropGrid, whose drop math measures its own wrapper, and
-            // outside the aria-hidden overlay — rails are focusable).
-            <div className="relative">
+            // outside the aria-hidden overlay — rails are focusable). Same
+            // gray panel as the strip branch; the rails' geometry is
+            // measured live from the grid's own rect, so the padding is
+            // accounted for automatically.
+            <div className="relative rounded-lg border border-zinc-800/70 bg-zinc-900/40 p-3">
               <NativeDropGrid collectionId={focusedId}>
                 <VirtualGrid
                   collectionId={parseNodeId(focusedId)}
@@ -453,7 +425,8 @@ export function GraphBoard({
                       />
                     ) : undefined
                   }
-                  className="bg-black/25"
+                  // pt-4 = GRID_GAP: row 0's rail band matches the row gaps.
+                  className="bg-black/25 pt-4"
                 />
               </NativeDropGrid>
               {previewOn && (

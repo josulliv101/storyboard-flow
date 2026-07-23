@@ -26,6 +26,9 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
               <Suspense fallback={null}>
                 <TimelineSidebar />
               </Suspense>
+              {/* Scroll anchoring is disabled page-wide (see globals.css):
+                  the preview pane mounting at main's top must not scroll
+                  the page out from under its own sticky logic. */}
               <main
                 className="min-w-0 flex-1 px-8 pt-6"
                 style={{

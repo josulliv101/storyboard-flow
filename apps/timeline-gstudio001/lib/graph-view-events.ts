@@ -20,19 +20,72 @@ export function isGraphViewRoute(pathname: string): boolean {
 
 export const GRAPH_INSERT_TOOL_EVENT = "graph-view:insert-tool";
 
-/** The palette tools, mirrored by `isSidebarTool` on the graph side. */
-export type GraphInsertTool = "collection" | "image" | "video";
+/** The palette tools, mirrored by `isSidebarTool` on the graph side.
+ *  Collection only: the old image/video placeholder tools were removed —
+ *  media enters through the Assets drawer or OS file drops. */
+export type GraphInsertTool = "collection";
 
 export type GraphInsertToolDetail = Readonly<{ tool: GraphInsertTool }>;
 
 export function isGraphInsertTool(value: string): value is GraphInsertTool {
-  return value === "collection" || value === "image" || value === "video";
+  return value === "collection";
 }
 
 /** Ask the graph view to append a palette tool to the focused collection. */
 export function requestGraphToolInsert(tool: GraphInsertTool): void {
   window.dispatchEvent(
     new CustomEvent<GraphInsertToolDetail>(GRAPH_INSERT_TOOL_EVENT, { detail: { tool } }),
+  );
+}
+
+// The sidebar's top two icons ARE the graph's layout switch (grid first —
+// the initial-load default — then strip), and the ruler toggle lives under
+// the tool palette in strip mode. Same seam as the tools: the sidebar sets
+// state through request events, and the graph view broadcasts its state back
+// (on mount and on every change) so the sidebar controls can reflect it.
+
+export const GRAPH_SURFACE_EVENT = "graph-view:set-surface";
+export const GRAPH_RULER_TOGGLE_EVENT = "graph-view:toggle-ruler";
+export const GRAPH_CHILDREN_TOGGLE_EVENT = "graph-view:toggle-children";
+export const GRAPH_PREVIEW_TOGGLE_EVENT = "graph-view:toggle-preview";
+export const GRAPH_VIEW_STATE_EVENT = "graph-view:view-state";
+
+/** Mirrors `FocusSurface` in graph-view-config (grid is the load default). */
+export type GraphSurface = "strip" | "grid";
+
+export type GraphViewStateDetail = Readonly<{
+  surface: GraphSurface;
+  rulerOn: boolean;
+  childrenShown: boolean;
+  previewOn: boolean;
+}>;
+
+/** Ask the graph view to switch its layout surface. */
+export function requestGraphSurface(surface: GraphSurface): void {
+  window.dispatchEvent(
+    new CustomEvent<GraphSurface>(GRAPH_SURFACE_EVENT, { detail: surface }),
+  );
+}
+
+/** Ask the graph view to toggle the strip's time ruler. */
+export function requestGraphRulerToggle(): void {
+  window.dispatchEvent(new Event(GRAPH_RULER_TOGGLE_EVENT));
+}
+
+/** Ask the graph view to toggle the children-timelines tree. */
+export function requestGraphChildrenToggle(): void {
+  window.dispatchEvent(new Event(GRAPH_CHILDREN_TOGGLE_EVENT));
+}
+
+/** Ask the graph view to toggle the preview pane. */
+export function requestGraphPreviewToggle(): void {
+  window.dispatchEvent(new Event(GRAPH_PREVIEW_TOGGLE_EVENT));
+}
+
+/** Graph → sidebar: the current view state, for control highlighting. */
+export function broadcastGraphViewState(detail: GraphViewStateDetail): void {
+  window.dispatchEvent(
+    new CustomEvent<GraphViewStateDetail>(GRAPH_VIEW_STATE_EVENT, { detail }),
   );
 }
 

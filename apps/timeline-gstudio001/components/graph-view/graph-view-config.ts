@@ -17,9 +17,14 @@ export const TIMELINE_PPS = 40;
  */
 export const MIN_TIMELINE_PPS = 6;
 export const MAX_TIMELINE_PPS = 200;
-export const DEFAULT_TIMELINE_PPS = TIMELINE_PPS;
+/** Opens a notch wider than the packing constant's 40 so clips breathe. */
+export const DEFAULT_TIMELINE_PPS = 50;
 
-export const GRID_GAP = 8;
+/** Gap between grid cells — sized as the seek-rail BAND: the slim track
+ *  centres inside it with clear space on both sides, so the rail (and its
+ *  thumb) never touches the cards above or below. The strips reserve the
+ *  same 16px as top padding (`pt-4`) for their rail. */
+export const GRID_GAP = 16;
 
 /** The five steps of the page-wide item size control. */
 export type ItemSize = "xs" | "sm" | "md" | "lg" | "xl";
@@ -59,7 +64,7 @@ export const ITEM_SIZE_DIMENSIONS = {
   { strip: number; gridWidth: number; gridHeight: number }
 >;
 
-export const DEFAULT_ITEM_SIZE: ItemSize = "md";
+export const DEFAULT_ITEM_SIZE: ItemSize = "lg";
 
 /**
  * The size one step SMALLER, clamped at the floor. Children timelines render a
