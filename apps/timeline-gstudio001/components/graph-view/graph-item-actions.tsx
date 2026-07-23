@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
 import {
   getChildren,
+  isEditableKeyboardTarget,
   parseNodeId,
   useCollectionsSelector,
   useCollectionsStore,
@@ -76,50 +77,56 @@ function captureDocumentTree(rootTimelineId: string): Record<string, TimelineDoc
 }
 
 /**
- * Commit one clone into `parentId` at `toIndex` — the shared tail of Duplicate
- * and Paste. Mirrors the palette insert: park the detail so the persistence
- * bridge claims it on the add patch, dispatch add-nodes, then seed each cloned
- * collection's document (revision-0 create + content write) so a drill-in into
- * the copy never 404s. Returns the new node id, or null if the add was refused.
+ * Commit a batch of clones into `parentId` at `toIndex` as ONE add-nodes
+ * dispatch — the shared tail of Duplicate and Paste, and the reason a
+ * multi-item gesture is a single undo step (the delete-path rule). Mirrors the
+ * palette insert: park each detail so the persistence bridge claims it on the
+ * add patch, dispatch, then seed each cloned collection's document (revision-0
+ * create + content write) so a drill-in into a copy never 404s. Returns the
+ * new node ids — empty when the dispatch was refused (details rolled back).
  */
-function insertClone(
+function insertClones(
   store: CollectionsStore,
-  clone: CloneForInsert,
+  clones: readonly CloneForInsert[],
   parentId: NodeId,
   toIndex: number,
-): NodeId | null {
-  if (clone.detail) parkPendingDetail(clone.node.id as string, clone.detail);
+): readonly NodeId[] {
+  if (clones.length === 0) return [];
+  for (const clone of clones) {
+    if (clone.detail) parkPendingDetail(clone.node.id as string, clone.detail);
+  }
   const dispatched = store.dispatch({
     type: "add-nodes",
-    nodes: [clone.node],
+    nodes: clones.map((clone) => clone.node),
     toParentId: parentId,
     toIndex,
   });
   if (!dispatched.ok) {
-    unparkPendingDetail(clone.node.id as string);
-    return null;
+    for (const clone of clones) unparkPendingDetail(clone.node.id as string);
+    return [];
   }
-  for (const document of clone.newDocuments) {
-    graphDocumentsGateway.seed(document);
-    graphDocumentsGateway.writeClips(document.id, document.clips);
+  for (const clone of clones) {
+    for (const document of clone.newDocuments) {
+      graphDocumentsGateway.seed(document);
+      graphDocumentsGateway.writeClips(document.id, document.clips);
+    }
   }
-  return clone.node.id;
+  return clones.map((clone) => clone.node.id);
 }
 
 /**
- * Duplicate one source node right AFTER it in its own parent. A collection
- * deep-clones its document tree first (ensuring its subtree is loaded). Returns
- * the new node's id, or null if nothing landed.
+ * Build (but don't insert) the clone of one source node — the async half of
+ * Duplicate: a collection ensures its whole document subtree first. Null when
+ * the source vanished or its tree couldn't load (toasted).
  */
-async function duplicateOne(
+async function buildClone(
   store: CollectionsStore,
   details: GraphDetailsStore,
   sourceId: NodeId,
-): Promise<NodeId | null> {
+): Promise<CloneForInsert | null> {
   const node = store.getSnapshot().graph.nodesById.get(sourceId);
   if (!node) return null;
   const detail = details.get(sourceId as string);
-
   if (node.kind === "collection") {
     const rootTimelineId = detail?.duplicateOfTimelineId ?? (sourceId as string);
     if (!(await ensureDocumentTree(rootTimelineId))) {
@@ -127,23 +134,10 @@ async function duplicateOne(
       return null;
     }
   }
-
-  const clone = cloneNodeForInsert(node, detail, {
+  return cloneNodeForInsert(node, detail, {
     readDocument: (timelineId) => graphDocumentsGateway.peek(timelineId),
     mintId,
   });
-
-  // Re-read the live graph: an earlier duplicate in this batch may have shifted
-  // the source's parent's children.
-  const liveGraph = store.getSnapshot().graph;
-  const parentId = liveGraph.parentById.get(sourceId);
-  // A root has a null parent and can't take a sibling — skip it (roots aren't
-  // duplicable anyway).
-  if (parentId === undefined || parentId === null) return null;
-  const siblings = getChildren(liveGraph, parentId);
-  const at = siblings.indexOf(sourceId);
-  const toIndex = at >= 0 ? at + 1 : siblings.length;
-  return insertClone(store, clone, parentId, toIndex);
 }
 
 /**
@@ -199,26 +193,12 @@ function pasteIntoFocused(store: CollectionsStore, focusedId: string): readonly 
       mintId,
     }),
   );
-  for (const clone of clones) {
-    if (clone.detail) parkPendingDetail(clone.node.id as string, clone.detail);
-  }
-  const dispatched = store.dispatch({
-    type: "add-nodes",
-    nodes: clones.map((clone) => clone.node),
-    toParentId: focusedParent,
-    toIndex: getChildren(store.getSnapshot().graph, focusedParent).length,
-  });
-  if (!dispatched.ok) {
-    for (const clone of clones) unparkPendingDetail(clone.node.id as string);
-    return [];
-  }
-  for (const clone of clones) {
-    for (const document of clone.newDocuments) {
-      graphDocumentsGateway.seed(document);
-      graphDocumentsGateway.writeClips(document.id, document.clips);
-    }
-  }
-  return clones.map((clone) => clone.node.id);
+  return insertClones(
+    store,
+    clones,
+    focusedParent,
+    getChildren(store.getSnapshot().graph, focusedParent).length,
+  );
 }
 
 /**
@@ -280,11 +260,52 @@ export function GraphItemActionsBridge({
     const duplicateSelection = async () => {
       const selected = [...store.getSnapshot().interaction.selectedIds];
       if (selected.length === 0) return;
-      const newIds: NodeId[] = [];
+      // Build every clone FIRST (the async ensure), then insert with ONE
+      // add-nodes per parent — a multi-duplicate inside one parent is a single
+      // undo step (the delete-path rule; the old per-source loop left N
+      // entries behind one gesture). One command inserts contiguously, so the
+      // block lands right after the LAST selected source in that parent, with
+      // the copies keeping the sources' relative order; the common single-item
+      // case keeps its exact after-the-source placement. Sources in DIFFERENT
+      // parents still cost one entry per parent — a single cross-parent
+      // command doesn't exist in the engine.
+      type Built = Readonly<{ sourceId: NodeId; clone: CloneForInsert }>;
+      const built: Built[] = [];
       for (const id of selected) {
-        const newId = await duplicateOne(store, details, id);
-        if (newId !== null) newIds.push(newId);
+        const clone = await buildClone(store, details, id);
+        if (clone !== null) built.push({ sourceId: id, clone });
       }
+      if (built.length === 0) return;
+
+      const liveGraph = store.getSnapshot().graph;
+      const groups = new Map<NodeId, Built[]>();
+      for (const item of built) {
+        const parentId = liveGraph.parentById.get(item.sourceId);
+        // A root has no parent and can't take a sibling — skip (roots aren't
+        // duplicable anyway); likewise a source deleted during the loads.
+        if (parentId === undefined || parentId === null) continue;
+        const group = groups.get(parentId);
+        if (group) group.push(item);
+        else groups.set(parentId, [item]);
+      }
+
+      const newIds: NodeId[] = [];
+      for (const [parentId, group] of groups) {
+        const siblings = getChildren(store.getSnapshot().graph, parentId);
+        const at = (item: Built) => siblings.indexOf(item.sourceId);
+        group.sort((a, b) => at(a) - at(b));
+        const lastAt = at(group[group.length - 1]);
+        const toIndex = lastAt >= 0 ? lastAt + 1 : siblings.length;
+        newIds.push(
+          ...insertClones(
+            store,
+            group.map((item) => item.clone),
+            parentId,
+            toIndex,
+          ),
+        );
+      }
+      // Select the copies, so the user sees what they made and can act again.
       if (newIds.length > 0) store.setSelection(newIds);
     };
 
@@ -312,17 +333,24 @@ export function GraphItemActionsBridge({
       store.clearSelection();
     };
 
-    const onAction = (event: Event) => {
-      const action = (event as CustomEvent<GraphItemAction>).detail;
+    // The ONE funnel every trigger goes through — the sidebar's buttons (via
+    // the window event) and the keyboard shortcuts below — so the busy guard,
+    // clipboard rules, and undo shapes can never differ by input method.
+    const perform = (action: GraphItemAction) => {
       // Sync actions honour the same one-at-a-time rule: a paste or delete
       // landing mid-cut would race the capture's trash move.
       if (busyRef.current) return;
       switch (action) {
         case "copy":
           void runExclusive(async () => {
-            await captureSelection(store, details, [
-              ...store.getSnapshot().interaction.selectedIds,
-            ]);
+            const selected = [...store.getSnapshot().interaction.selectedIds];
+            if (await captureSelection(store, details, selected)) {
+              // Copy changes nothing visible on the board — say it landed
+              // (both entry points; the keyboard one especially needs it).
+              toast(`Copied ${selected.length} item${selected.length === 1 ? "" : "s"}.`, {
+                id: "graph-item-copy",
+              });
+            }
           });
           break;
         case "cut":
@@ -346,8 +374,52 @@ export function GraphItemActionsBridge({
           break;
       }
     };
+
+    const onAction = (event: Event) => {
+      perform((event as CustomEvent<GraphItemAction>).detail);
+    };
+
+    // Keyboard: Ctrl/Cmd+C, X, V, D — window-level (not a React boundary on
+    // the board) because paste's moment of need is right AFTER a drill-in,
+    // when the navigation dropped focus to <body> and a subtree listener
+    // would never hear the key. Every guard fails OPEN to the browser: the
+    // shortcut is claimed (preventDefault — Ctrl+D would bookmark) only when
+    // it will actually act on the graph.
+    const KEY_TO_ACTION: Readonly<Record<string, GraphItemAction>> = {
+      c: "copy",
+      x: "cut",
+      v: "paste",
+      d: "duplicate",
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      const action = KEY_TO_ACTION[event.key.toLowerCase()];
+      if (action === undefined) return;
+      if (event.repeat || event.defaultPrevented) return;
+      // Inputs and the rename editor own their clipboard keys (the package's
+      // shared keyboard policy).
+      if (isEditableKeyboardTarget(event.target)) return;
+      const snapshot = store.getSnapshot();
+      if (snapshot.interaction.isDragging) return;
+      // A real TEXT selection means the user wants the browser's copy/cut.
+      if (
+        (action === "copy" || action === "cut") &&
+        (window.getSelection()?.toString() ?? "") !== ""
+      ) {
+        return;
+      }
+      const hasSelection = snapshot.interaction.selectedIds.size > 0;
+      if (action === "paste" ? graphClipboard.isEmpty() : !hasSelection) return;
+      event.preventDefault();
+      perform(action);
+    };
+
     window.addEventListener(GRAPH_ITEM_ACTION_EVENT, onAction);
-    return () => window.removeEventListener(GRAPH_ITEM_ACTION_EVENT, onAction);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener(GRAPH_ITEM_ACTION_EVENT, onAction);
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [store, details, trashId, focusedId]);
 
   return null;

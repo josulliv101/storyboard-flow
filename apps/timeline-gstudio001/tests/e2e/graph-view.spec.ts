@@ -1886,6 +1886,99 @@ test.describe("graph view E2E", () => {
     await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
   });
 
+  test("keyboard: Ctrl+C copies and Ctrl+V pastes after a drill-in (focus on <body>)", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    // Ctrl+C — the copy toast is the only visible change, plus Paste arming.
+    await page.keyboard.press("Control+c");
+    await expect(page.getByText("Copied 1 item.").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+
+    // Drill in — focus drops to <body> here, which is exactly why the
+    // shortcut listener is window-level and not a board-subtree boundary.
+    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await strip(page, CHILD_ID)
+      .locator('[data-node-id="c1"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+
+    await page.keyboard.press("Control+v");
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toHaveLength(3);
+    await expect(
+      strip(page, CHILD_ID).getByRole("button", { name: "alpha", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
+  });
+
+  test("keyboard: Ctrl+D duplicates in place, Ctrl+X cuts the copy back out", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
+
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    // Ctrl+D → the clone lands right after bravo and becomes the selection.
+    await page.keyboard.press("Control+d");
+    await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(5);
+    const order = await stripOrder(page, PROJECT_ID);
+    expect(order[1]).toBe("bravo");
+    expect(order[3]).toBe(CHILD_ID);
+
+    // Ctrl+X cuts the selected clone: gone from the strip, Paste armed.
+    await page.keyboard.press("Control+x");
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+  });
+
+  test("multi-select Duplicate in one parent is ONE undoable step", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+    const alpha = projectStrip.locator('[data-node-id="alpha"]');
+    const bravo = projectStrip.locator('[data-node-id="bravo"]');
+
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await expect(async () => {
+      await bravo.click({ modifiers: ["Control"] });
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    // Both copies land as one contiguous block after the LAST source (bravo),
+    // keeping the sources' relative order.
+    await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+    await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(6);
+    const order = await stripOrder(page, PROJECT_ID);
+    expect(order.slice(0, 2)).toEqual(["alpha", "bravo"]);
+    expect(order.slice(4)).toEqual([CHILD_ID, "charlie"]);
+    expect(order[2]).not.toBe(order[3]);
+
+    // ONE undo reverses the whole duplicate — one gesture, one history entry
+    // (per parent; both sources share the project here).
+    await undoButton(page).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+    await expect(undoButton(page)).toBeDisabled();
+  });
+
   test("interaction model: click toggles selection + trim handles, hold-grab release does neither, collection body selects and its folder button drills", async ({
     page,
   }) => {
