@@ -52,6 +52,7 @@ import { trashDocumentId as deriveTrashDocumentId } from "./trash-document-id";
 import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { HydrationController } from "./graph-hydration";
+import { GraphItemActionsBridge } from "./graph-item-actions";
 import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
 import { GraphViewNavProvider } from "./graph-navigation";
 import {
@@ -443,6 +444,7 @@ export function GraphTimelineView({
         onPaletteDiscard={handlePaletteDiscard}
       >
           <PersistenceBridge onSync={onSync} />
+          <GraphItemActionsBridge trashId={boot.trashRootId} focusedId={focusedId} />
           <GraphDetailsJanitor />
           <AssetPaletteDrawer open={assetsOpen} onClose={() => setAssetsOpen(false)} />
           <HydrationController

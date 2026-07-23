@@ -1776,6 +1776,110 @@ test.describe("graph view E2E", () => {
     await expect(undoButton(page)).toBeDisabled();
   });
 
+  test("selecting a clip switches the rail to item actions; Duplicate clones it after itself; Delete returns to normal", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+
+    // Normal rail: layout controls present, no item actions.
+    await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
+
+    // Select alpha → the contextual cluster switches to item actions, the
+    // layout controls give way, and Paste is disabled (clipboard empty).
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "Duplicate", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Grid layout" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeDisabled();
+
+    // Duplicate → the clone lands right AFTER alpha (index 1), and the focused
+    // document persists the add (one write, five clips).
+    await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+    await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(5);
+    const order = await stripOrder(page, PROJECT_ID);
+    expect(order[0]).toBe("alpha");
+    expect(order[1]).not.toBe("alpha");
+    expect(order[2]).toBe("bravo");
+    await expect.poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds.length).toBe(5);
+
+    // Delete removes the (now-selected) clone and returns to the normal rail.
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+    await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
+  });
+
+  test("Copy a clip, drill into a collection, and Paste it there — the rail stays available across the drill-in", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    // Copy → Paste becomes enabled.
+    await page.getByRole("button", { name: "Copy", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+
+    // Drill into the child collection. The clipboard is a module singleton, so
+    // it survives the client-side navigation: the rail stays in item mode with
+    // Paste available even though the selection is now out of view.
+    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await strip(page, CHILD_ID)
+      .locator('[data-node-id="c1"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+
+    // Paste → alpha's clone appends into the child (after c1/c2), the child
+    // document gets a write, and the rail returns to normal.
+    await page.getByRole("button", { name: "Paste", exact: true }).click();
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toHaveLength(3);
+    expect((await stripOrder(page, CHILD_ID)).slice(0, 2)).toEqual(["c1", "c2"]);
+    await expect.poll(() => api.patchesFor(CHILD_ID).at(-1)?.clipIds.length).toBe(3);
+    await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
+  });
+
+  test("Cut removes the clip but keeps it on the clipboard; Paste relocates it", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
+
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    // Cut → bravo leaves the project strip (moved to trash), but the clipboard
+    // keeps an independent copy, so the rail stays in item mode with Paste on.
+    await page.getByRole("button", { name: "Cut", exact: true }).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", CHILD_ID, "charlie"]);
+    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+
+    // Paste into the child collection → the cut clip lands there (a move).
+    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await strip(page, CHILD_ID)
+      .locator('[data-node-id="c1"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+    await page.getByRole("button", { name: "Paste", exact: true }).click();
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toHaveLength(3);
+    await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
+  });
+
   test("interaction model: click toggles selection + trim handles, hold-grab release does neither, collection body selects and its folder button drills", async ({
     page,
   }) => {

@@ -89,6 +89,37 @@ export function broadcastGraphViewState(detail: GraphViewStateDetail): void {
   );
 }
 
+// Selection ↔ item actions. The engine's selection lives in the graph
+// provider's tree; the sidebar is app chrome. Same seam again: the graph
+// broadcasts how many items are selected (so the sidebar can switch its
+// contextual cluster to item actions), and the sidebar dispatches the action
+// the user picked back for the graph to perform on the live selection.
+
+export const GRAPH_SELECTION_EVENT = "graph-view:selection";
+export const GRAPH_ITEM_ACTION_EVENT = "graph-view:item-action";
+
+/** Graph → sidebar: how many items are currently selected. */
+export type GraphSelectionDetail = Readonly<{ count: number }>;
+
+/** The per-item actions the sidebar's item-mode cluster can request. */
+export type GraphItemAction = "copy" | "cut" | "paste" | "duplicate" | "delete" | "cancel";
+
+/** Graph → sidebar: the live selection size, so the sidebar can enter/exit
+ *  item-actions mode and enable/disable the selection-dependent buttons. */
+export function broadcastGraphSelection(detail: GraphSelectionDetail): void {
+  window.dispatchEvent(
+    new CustomEvent<GraphSelectionDetail>(GRAPH_SELECTION_EVENT, { detail }),
+  );
+}
+
+/** Sidebar → graph: perform an item action on the current selection (or, for
+ *  paste, on the clipboard). */
+export function requestGraphItemAction(action: GraphItemAction): void {
+  window.dispatchEvent(
+    new CustomEvent<GraphItemAction>(GRAPH_ITEM_ACTION_EVENT, { detail: action }),
+  );
+}
+
 // The reverse hand-off: when a drag drops into the graph's sidebar trash
 // target (which lives in the graph provider's tree), the sidebar's own trash
 // DRAWER button — plain app chrome — plays an arrival animation. Same
