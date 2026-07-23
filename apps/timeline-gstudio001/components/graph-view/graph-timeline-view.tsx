@@ -407,6 +407,11 @@ export function GraphTimelineView({
         </p>
       )}
 
+      {/* GraphDetailsProvider wraps DndCollections (not just its children) so
+          the details store is reachable inside the drag OVERLAY too — the
+          collection drag ghost reads a placeholder's stored preview frames
+          there the same way the card does. */}
+      <GraphDetailsProvider store={detailsStore}>
       <DndCollections
         // initialGraph is initial-only (the store is the source of truth
         // thereafter), so a boot re-run for a new session must remount to
@@ -436,7 +441,6 @@ export function GraphTimelineView({
         commandPolicy={commandPolicy}
         onPaletteDiscard={handlePaletteDiscard}
       >
-        <GraphDetailsProvider store={detailsStore}>
           <PersistenceBridge onSync={onSync} />
           <GraphDetailsJanitor />
           <AssetPaletteDrawer open={assetsOpen} onClose={() => setAssetsOpen(false)} />
@@ -484,8 +488,8 @@ export function GraphTimelineView({
               />
             )}
           </GraphViewNavProvider>
-        </GraphDetailsProvider>
       </DndCollections>
+      </GraphDetailsProvider>
     </div>
   );
 }
