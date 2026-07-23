@@ -911,7 +911,7 @@ test.describe("graph view E2E", () => {
     expect(api.patchesFor(TRASH_ID)).toHaveLength(0);
   });
 
-  test("the drag ghost is a fixed compact width, not the card's duration-relative one", async ({
+  test("the drag ghost is a fixed compact square, not the card's duration-relative width", async ({
     page,
   }) => {
     await installGraphApi(page);
@@ -942,15 +942,20 @@ test.describe("graph view E2E", () => {
     await expect(ghost).toBeVisible();
     const ghostBox = (await ghost.boundingBox())!;
 
-    // Fixed ~144px regardless of the card, and materially narrower than the
-    // wide source card — proof the ghost is not sized to the clip's duration.
-    expect(ghostBox.width).toBeGreaterThan(140);
-    expect(ghostBox.width).toBeLessThan(150);
+    // Fixed 112px SQUARE regardless of the card: a compact thumbnail of the
+    // item, materially narrower than the wide source card — proof the ghost is
+    // not sized to the clip's duration.
+    expect(ghostBox.width).toBeGreaterThan(104);
+    expect(ghostBox.width).toBeLessThan(120);
+    expect(Math.abs(ghostBox.height - ghostBox.width)).toBeLessThan(4);
     expect(alphaBox.width).toBeGreaterThan(ghostBox.width + 40);
 
-    // And it rides under the cursor: its horizontal centre tracks the pointer.
+    // And it rides under the cursor: its centre tracks the pointer on BOTH
+    // axes (a fixed-height ghost re-centres vertically on the grab too).
     const ghostCentreX = ghostBox.x + ghostBox.width / 2;
+    const ghostCentreY = ghostBox.y + ghostBox.height / 2;
     expect(Math.abs(ghostCentreX - cursorX)).toBeLessThan(24);
+    expect(Math.abs(ghostCentreY - cursorY)).toBeLessThan(24);
 
     await page.mouse.up();
     await page.waitForTimeout(80);
@@ -1076,9 +1081,10 @@ test.describe("graph view E2E", () => {
   }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
-    // Trash is the sidebar tool palette now (R5 #1): invisible until a drag
-    // starts, then it morphs in over the tools. It is still laid out (opacity
-    // 0), so holdDrag can target it, and the drag activates it before the drop.
+    // Trash is a wide drop zone centred in the breadcrumb row now: invisible
+    // (opacity 0) until a card drag starts, then it fades in. It stays laid
+    // out while hidden, so holdDrag can target it, and the drag makes it
+    // interactive before the drop.
     const trash = page.locator(`[data-graph-sidebar-trash="${TRASH_ID}"]`);
     await holdDrag(page, strip(page, PROJECT_ID).locator('[data-node-id="bravo"]'), trash);
 
@@ -1117,6 +1123,56 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => api.patchesFor(TRASH_ID).at(-1)?.clipIds, { timeout: 5000 })
       .toEqual([]);
+  });
+
+  test("the breadcrumb parent zone moves a card up a level (and hides at the root)", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+
+    // At the ROOT the focused collection has no parent, so the parent zone is
+    // not rendered at all (nowhere up to go).
+    await page.goto(`${GRAPH_URL}?surface=strip`);
+    await strip(page, PROJECT_ID)
+      .locator('[data-node-id="alpha"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+    await expect(page.locator("[data-graph-parent-drop]")).toHaveCount(0);
+
+    // Drill into the child: now the parent zone targets the PROJECT (its
+    // parent). It is invisible until a drag, but laid out so holdDrag reaches
+    // it — exactly like the trash zone beside it.
+    await page.goto(`${GRAPH_URL}/${encodeURIComponent(CHILD_ID)}?surface=strip`);
+    await strip(page, CHILD_ID)
+      .locator('[data-node-id="c1"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+    expect(await stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+    const parentZone = page.locator(`[data-graph-parent-drop="${PROJECT_ID}"]`);
+    await expect(parentZone).toHaveCount(1);
+
+    // Drag c1 up onto the parent zone → it leaves the focused child and lands
+    // in the parent collection.
+    await holdDrag(page, strip(page, CHILD_ID).locator('[data-node-id="c1"]'), parentZone);
+
+    // The focused child now holds only c2…
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c2"]);
+
+    // …and both documents persist the move, in ONE atomic batch: c1 removed
+    // from the child, appended to the parent.
+    await expect
+      .poll(() => api.patchesFor(CHILD_ID).at(-1)?.clipIds, { timeout: 5000 })
+      .toEqual(["c2"]);
+    await expect
+      .poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds, { timeout: 5000 })
+      .toEqual(["alpha", "bravo", "clip-scene", "charlie", "c1"]);
+    expect(
+      api.batches.some(
+        (batch) => batch.includes(CHILD_ID) && batch.includes(PROJECT_ID),
+      ),
+    ).toBe(true);
+
+    // Ordinary undoable move.
+    await undoButton(page).click();
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 
   test("drop into an un-hydrated collection bounces and never writes its document", async ({
@@ -1414,7 +1470,10 @@ test.describe("graph view E2E", () => {
     await expect(thumbOf(lastRail)).not.toBeVisible(); // parked rows sit empty
 
     // Press the LAST row's rail → the playhead SUMMONS into that row and
-    // the thumbs swap; still nothing on the grid got selected.
+    // the thumbs swap; still nothing on the grid got selected. Scroll it into
+    // view first — a multi-row grid can push the last row below the fold, and
+    // a raw mouse.click at an off-screen coordinate would hit nothing.
+    await lastRail.scrollIntoViewIfNeeded();
     const lastBox = (await lastRail.boundingBox())!;
     await page.mouse.click(lastBox.x + lastBox.width / 2, lastBox.y + 4);
     await expect.poll(async () => (await translate()).y).toBeGreaterThan(80);
@@ -2193,11 +2252,12 @@ test.describe("graph view E2E", () => {
     await expect(status).toHaveText("");
   });
 
-  test("sidebar tools are still drag sources after becoming real buttons", async ({ page }) => {
-    // Adding the keyboard path must not cost the pointer one. Playwright's
-    // synthetic mouse cannot drive a native HTML5 drag, so this asserts the
-    // next best thing: the element is still draggable and its dragstart
-    // still loads the DataTransfer the drop zone reads.
+  test("the collection tool in the breadcrumb row is a drag source, uncovered by the drop-zone layer", async ({ page }) => {
+    // The tool keeps BOTH affordances after moving to the header: keyboard
+    // activation (covered elsewhere) and native drag. Playwright's synthetic
+    // mouse cannot drive a native HTML5 drag, so this asserts the next best
+    // thing: the element is still draggable and its dragstart still loads the
+    // DataTransfer the drop targets read.
     await installGraphApi(page);
     await openGraph(page);
 
@@ -2212,21 +2272,17 @@ test.describe("graph view E2E", () => {
     expect(carried).toBe("collection");
 
     // ...and the button must actually RECEIVE that dragstart under a real
-    // pointer. dispatchEvent above bypasses hit-testing, so it can't catch the
-    // regression where the graph's trash slot (an absolute overlay covering
-    // the palette footprint) sits ON TOP of the tools and eats their gesture.
-    // Assert hit-testing: the element at the tool's own centre is that tool,
-    // not the slot. (The slot must stay pointer-events-none — R6 #9.)
-    const hit = await collectionTool.evaluate((el) => {
+    // pointer. dispatchEvent above bypasses hit-testing, so it can't catch a
+    // regression where an overlay eats the gesture — the breadcrumb drop-zone
+    // layer sits over this same row. Assert hit-testing: the topmost element at
+    // the tool's own centre is the tool itself, which holds only while the idle
+    // drop-zone layer stays pointer-events-none.
+    const onThisTool = await collectionTool.evaluate((el) => {
       const r = el.getBoundingClientRect();
       const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      return {
-        onThisTool: el.contains(top),
-        coveredBySlot: top?.closest("#graph-sidebar-trash-slot") != null,
-      };
+      return el.contains(top);
     });
-    expect(hit.coveredBySlot).toBe(false);
-    expect(hit.onThisTool).toBe(true);
+    expect(onThisTool).toBe(true);
   });
 
   test("the ruler renders on EVERY displayed strip, not just the focused one", async ({

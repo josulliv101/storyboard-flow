@@ -395,13 +395,42 @@ const GraphTrimHandle = memo(function GraphTrimHandle({
   );
 });
 
+/** The image that represents a dragged item: a video's poster frame, an
+ *  image clip's own source, or null for a collection (no single frame) or a
+ *  poster-less clip — those fall back to a labelled tile. */
+function ghostImageSrc(node: CollectionGhostContentProps["node"]): string | null {
+  if (node.kind !== "media") return null;
+  return node.mediaKind === "video" ? (node.posterSrcs?.[0] ?? null) : (node.src ?? null);
+}
+
+/**
+ * The drag ghost: a SQUARE thumbnail of the item being moved (the provider
+ * sizes the overlay box square via `dragGhostWidth`/`dragGhostHeight`), so the
+ * preview reads as "this picture" rather than a duration-shaped card. Media
+ * shows its own frame cover-cropped to the square; a collection (or a clip
+ * with no poster) falls back to a labelled tile so the ghost is never an empty
+ * or broken box.
+ */
 const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhostContentProps) {
+  const imageSrc = ghostImageSrc(node);
   return (
-    <span className="relative flex h-full w-full flex-col justify-between rounded-md bg-zinc-900/95 p-2 text-xs shadow-2xl ring-2 ring-amber-400">
-      <span className="truncate font-semibold text-zinc-100">{node.name}</span>
-      <span className="font-mono text-[10px] text-zinc-400">
-        {node.kind === "collection" ? "Timeline" : `${mediaDurationSeconds(node).toFixed(2)}s`}
-      </span>
+    <span className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-md bg-zinc-900 shadow-2xl ring-2 ring-amber-400">
+      {imageSrc ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={imageSrc}
+          alt=""
+          draggable={false}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        <span className="flex h-full w-full flex-col items-center justify-center gap-1 p-2 text-center">
+          <span className="truncate text-[11px] font-semibold text-zinc-100">{node.name}</span>
+          <span className="font-mono text-[9px] text-zinc-400">
+            {node.kind === "collection" ? "Timeline" : `${mediaDurationSeconds(node).toFixed(2)}s`}
+          </span>
+        </span>
+      )}
       {extraCount > 0 && (
         <span className="absolute -top-2 -right-2 flex h-6 min-w-6 items-center justify-center rounded-full bg-amber-400 px-1 text-[11px] font-bold text-black shadow">
           +{extraCount}

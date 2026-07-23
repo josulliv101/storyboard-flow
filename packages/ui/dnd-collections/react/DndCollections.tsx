@@ -170,6 +170,16 @@ export type DndCollectionsProps = Readonly<{
    * duration-relative). Omit to size the ghost to the whole card as before.
    */
   dragGhostWidth?: number;
+  /**
+   * Render the drag ghost at this FIXED height in px as well, centred
+   * VERTICALLY on the grabbed pixel — pair it with `dragGhostWidth` for a
+   * fixed-SIZE (e.g. square) ghost. Use it with a `GhostContent` that paints
+   * the item's own artwork so the drag preview is a compact thumbnail of what
+   * is being moved rather than a duration-shaped card. Requires
+   * `dragGhostWidth`; ignored on its own. Omit to keep the ghost as tall as
+   * the source card (height fills the overlay box).
+   */
+  dragGhostHeight?: number;
   children: ReactNode;
 }>;
 
@@ -240,6 +250,7 @@ export function DndCollections({
   onPaletteDiscard,
   dragGhostScale = 1,
   dragGhostWidth,
+  dragGhostHeight,
   children,
 }: DndCollectionsProps) {
   const componentsValue = useCollectionsComponentsValue(components);
@@ -302,6 +313,7 @@ export function DndCollections({
               onPaletteDiscard={handlePaletteDiscard}
               dragGhostScale={dragGhostScale}
               dragGhostWidth={dragGhostWidth}
+              dragGhostHeight={dragGhostHeight}
             >
               {children}
             </DndCollectionsContext>
@@ -329,12 +341,14 @@ function DndCollectionsContext({
   onPaletteDiscard,
   dragGhostScale,
   dragGhostWidth,
+  dragGhostHeight,
 }: {
   children: ReactNode;
   animateMoves: boolean;
   onPaletteDiscard: (nodes: readonly CollectionItemNode[]) => void;
   dragGhostScale: number;
   dragGhostWidth: number | undefined;
+  dragGhostHeight: number | undefined;
 }) {
   const store = useCollectionsStore();
   // Ref-backed channel: speaking must never set state HERE — this component
@@ -701,6 +715,7 @@ function DndCollectionsContext({
         paletteNodes={palette.paletteNodes}
         ghostScale={dragGhostScale}
         ghostWidth={dragGhostWidth ?? null}
+        ghostHeight={dragGhostHeight ?? null}
       />
       <LiveAnnouncementRegion channel={announceChannel} />
     </DndContext>
@@ -711,10 +726,12 @@ function CollectionsDragOverlay({
   paletteNodes,
   ghostScale,
   ghostWidth,
+  ghostHeight,
 }: {
   paletteNodes: readonly CollectionItemNode[] | null;
   ghostScale: number;
   ghostWidth: number | null;
+  ghostHeight: number | null;
 }) {
   const activeIds = useCollectionsSelector((s) => s.interaction.activeIds);
   const primaryId = activeIds[0] ?? null;
@@ -733,7 +750,9 @@ function CollectionsDragOverlay({
   // remedy for the "long clip → giant ghost" problem, so honour it first.
   const wrapped =
     ghostWidth !== null ? (
-      <FixedWidthGhost width={ghostWidth}>{ghost}</FixedWidthGhost>
+      <FixedWidthGhost width={ghostWidth} height={ghostHeight}>
+        {ghost}
+      </FixedWidthGhost>
     ) : ghostScale < 1 ? (
       <ScaledGhost scale={ghostScale}>{ghost}</ScaledGhost>
     ) : (
@@ -800,7 +819,15 @@ function ScaledGhost({ scale, children }: { scale: number; children: ReactNode }
  * fills the box (row height is not duration-relative). A first-frame scale-in
  * makes it a motion, not a snap; reduced-motion users get the end state.
  */
-function FixedWidthGhost({ width, children }: { width: number; children: ReactNode }) {
+function FixedWidthGhost({
+  width,
+  height,
+  children,
+}: {
+  width: number;
+  height: number | null;
+  children: ReactNode;
+}) {
   const { activatorEvent, activeNodeRect } = useDndContext();
   const [engaged, setEngaged] = useState(false);
 
@@ -809,25 +836,34 @@ function FixedWidthGhost({ width, children }: { width: number; children: ReactNo
     return () => cancelAnimationFrame(frame);
   }, []);
 
-  // The pointer's x offset inside the (card-sized) overlay box. Centre the
-  // fixed-width ghost on it so the grabbed column stays under the cursor.
-  const grabX = (() => {
-    const point = activatorEvent ? getEventCoordinates(activatorEvent) : null;
-    if (!point || !activeNodeRect) return null;
-    return Math.min(Math.max(point.x - activeNodeRect.left, 0), activeNodeRect.width);
-  })();
+  // The pointer's offset inside the (card-sized) overlay box. Centre the
+  // fixed-size ghost on it so the grabbed pixel stays under the cursor — on x
+  // always, and on y too when a fixed height is given (otherwise the ghost
+  // fills the box height and pins to its top, as before).
+  const point = activatorEvent ? getEventCoordinates(activatorEvent) : null;
+  const grabX =
+    point && activeNodeRect
+      ? Math.min(Math.max(point.x - activeNodeRect.left, 0), activeNodeRect.width)
+      : null;
   const left = grabX === null ? 0 : grabX - width / 2;
+
+  const grabY =
+    height !== null && point && activeNodeRect
+      ? Math.min(Math.max(point.y - activeNodeRect.top, 0), activeNodeRect.height)
+      : null;
+  const top = height === null ? 0 : grabY === null ? 0 : grabY - height / 2;
 
   return (
     <div
       data-drag-ghost-width={width}
+      data-drag-ghost-height={height ?? undefined}
       style={{
         position: "absolute",
-        top: 0,
+        top,
         left,
         width,
-        height: "100%",
-        transformOrigin: `${width / 2}px 0`,
+        height: height === null ? "100%" : height,
+        transformOrigin: height === null ? `${width / 2}px 0` : `${width / 2}px ${height / 2}px`,
         transform: `scale(${engaged ? 1 : 0.92})`,
         transition: "transform 160ms cubic-bezier(0.16, 1, 0.3, 1)",
       }}

@@ -337,6 +337,49 @@ export const DragGhostScales: Story = {
   },
 };
 
+export const DragGhostFixedSquare: Story = {
+  // dragGhostWidth + dragGhostHeight pin the ghost to a fixed SIZE (here a
+  // 120x120 square), independent of the source card's width or height —
+  // centred on the grabbed pixel. Consumers pair this with a GhostContent that
+  // paints the item's own artwork (see the graph view's square thumbnail
+  // ghost); the box geometry is what this story asserts.
+  render: () => (
+    <DndCollections
+      initialGraph={standardGraph()}
+      dragGhostWidth={120}
+      dragGhostHeight={120}
+    >
+      <CollectionPanels collectionIds={[parseNodeId("panel-a"), parseNodeId("panel-b")]} />
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const alpha = nodeCard(canvasElement, "alpha");
+    await waitForLayout(alpha);
+
+    await dragHoldAt(alpha, rectPoint(nodeCard(canvasElement, "bravo"), 0.5));
+
+    const wrapper = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>("[data-drag-ghost-width]");
+      expect(el).toBeTruthy();
+      return el!;
+    });
+    // A fixed SQUARE box: both axes pinned to 120px (a duration-shaped card
+    // would be far wider than tall).
+    expect(wrapper.dataset.dragGhostWidth).toBe("120");
+    expect(wrapper.dataset.dragGhostHeight).toBe("120");
+    expect(wrapper.style.width).toBe("120px");
+    expect(wrapper.style.height).toBe("120px");
+    // Centred on the grab point in BOTH axes (origin is the box centre, not
+    // the top-anchored width-only origin).
+    expect(wrapper.style.transformOrigin).toBe("60px 60px");
+
+    await releaseAt(rectPoint(nodeCard(canvasElement, "bravo"), 0.5));
+    await waitFor(() => {
+      expect(document.querySelector("[data-drag-ghost-width]")).toBeNull();
+    });
+  },
+};
+
 export const MultiSelectDrag: Story = {
   render: () => <StandardBoard />,
   play: async ({ canvasElement }) => {

@@ -424,11 +424,13 @@ export function GraphTimelineView({
         // from ever colliding.
         clickSelection="toggle"
         trimRequiresSelection
-        // Give every drag ghost the same compact width, whatever the clip's
-        // duration: a strip card is as wide as its clip is long, so without
-        // this a long clip's ghost was enormous and hid the drop target it was
-        // aimed at. Fixed width keeps the target underneath visible.
-        dragGhostWidth={144}
+        // The drag ghost is a fixed SQUARE thumbnail of the item (see
+        // GraphGhost): width AND height pinned so it shows the clip's own
+        // frame at a stable 1:1, centred on the grabbed pixel, instead of a
+        // duration-shaped card that (for a long clip) buried the drop target
+        // it was aimed at.
+        dragGhostWidth={112}
+        dragGhostHeight={112}
         onOpenNode={handleOpenNode}
         openOnClick={openOnClick}
         commandPolicy={commandPolicy}

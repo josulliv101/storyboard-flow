@@ -4,14 +4,12 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Images,
   Layers,
-  FolderPlus,
   FolderTree,
   GalleryHorizontalEnd,
   LayoutGrid,
   Ruler,
   Settings,
   TvMinimal,
-  UserCircle,
   LogOut,
   Trash2,
 } from "lucide-react";
@@ -24,20 +22,17 @@ import {
   GRAPH_ASSETS_TOGGLE_EVENT,
   GRAPH_TRASH_ARRIVAL_EVENT,
   GRAPH_VIEW_STATE_EVENT,
-  isGraphInsertTool,
   isGraphViewRoute,
   requestGraphChildrenToggle,
   requestGraphPreviewToggle,
   requestGraphRulerToggle,
   requestGraphSurface,
-  requestGraphToolInsert,
   type GraphSurface,
   type GraphViewStateDetail,
 } from "@/lib/graph-view-events";
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
 
-import { SidebarToolPalette, type SidebarToolItem } from "./sidebar-tool-palette";
 import { SidebarTooltipLabel } from "./sidebar-tooltip-label";
 
 type UtilityItem = {
@@ -221,48 +216,7 @@ export function TimelineSidebar() {
     return () => window.removeEventListener(GRAPH_TRASH_ARRIVAL_EVENT, handleArrival);
   }, []);
 
-  const handleDragStart = (e: React.DragEvent, type: string) => {
-    e.dataTransfer.setData("application/x-gstudio-type", type);
-    e.dataTransfer.effectAllowed = "copyMove";
-    
-    // Create a transparent 1x1 base64 GIF to hide the browser's default drag ghost preview
-    const img = new window.Image();
-    img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
-    e.dataTransfer.setDragImage(img, 0, 0);
-
-    // Dispatch window event so viewports / drop zones highlight
-    window.dispatchEvent(
-      new CustomEvent("gstudio-drag-start", { detail: { type } })
-    );
-  };
-
-  const handleDragEnd = () => {
-    window.dispatchEvent(new CustomEvent("gstudio-drag-end"));
-  };
-
   const onGraphRoute = isGraphViewRoute(pathname);
-  // Dragging a tool onto a strip is POINTER-only (native HTML5 drag with a
-  // custom DataTransfer), so on the graph route activation appends it to the
-  // open timeline instead — the keyboard, screen-reader, and touch route to
-  // the same result. Drag remains the way to choose a POSITION.
-  const canInsertTools = onGraphRoute;
-
-  const handleToolActivate = (item: SidebarToolItem) => {
-    if (canInsertTools && isGraphInsertTool(item.type)) {
-      requestGraphToolInsert(item.type);
-      // The graph view announces the authoritative result on its own
-      // aria-live channel (it knows the target and whether it landed —
-      // after the selected card, or appended); this is the visible half,
-      // deliberately position-agnostic.
-      setToastMessage(`Added a ${item.label}.`);
-      return;
-    }
-    showDragToast(item.label);
-  };
-
-  const showDragToast = (label: string) => {
-    setToastMessage(`Drag this "${label}" block onto the workspace to add it!`);
-  };
 
   const handleLogout = async () => {
     try {
@@ -343,31 +297,9 @@ export function TimelineSidebar() {
               </button>
             )}
 
-            {/* `relative` so the graph board can portal its trash drop target
-                into the slot below, filling the palette's exact footprint and
-                morphing over the tools during a drag (see graph-sidebar-trash). */}
-            <div className="relative">
-              <SidebarToolPalette
-                canInsert={canInsertTools}
-                onActivate={handleToolActivate}
-                onDragStart={handleDragStart}
-                onDragEnd={handleDragEnd}
-              />
-              {/* pointer-events-none so the slot never covers the tool buttons'
-                  own drag/click — it only hosts the portaled trash target, which
-                  re-enables its OWN pointer-events while a card drag is live (a
-                  child overriding a none parent), and whose dnd-kit drop is
-                  rect-based regardless. Without this the slot ate the tools'
-                  dragstart and sidebar tool-drag stopped working. */}
-              <div
-                id="graph-sidebar-trash-slot"
-                className="pointer-events-none absolute inset-0"
-              />
-            </div>
-
-            {/* The children-timelines toggle, under the Collection tool: the
-                two are a pair (Collection MAKES a nested timeline, this shows
-                or hides the tree of them). */}
+            {/* The children-timelines toggle. (The Collection tool moved to
+                the board's breadcrumb row, and its card-drag trash target
+                moved there too — the sidebar no longer hosts either.) */}
             {onGraphRoute && (
               <button
                 type="button"
