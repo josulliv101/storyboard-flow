@@ -58,6 +58,19 @@ describe("isTimelineClip", () => {
     expect(isTimelineClip({ ...video, poster: null })).toBe(true);
     expect(isTimelineClip({ ...collection, previewItems: null })).toBe(true);
     expect(isTimelineClip({ ...image, playbackStartTime: null })).toBe(true);
+    expect(isTimelineClip({ ...image, sourceAsset: null })).toBe(true);
+  });
+
+  it("accepts a whole sourceAsset ref and rejects a half-recorded one", () => {
+    const ref = { providerId: "cloudinary", assetId: "gstudio/u/pic-1" };
+    expect(isTimelineClip({ ...image, sourceAsset: ref })).toBe(true);
+    expect(isTimelineClip({ ...video, sourceAsset: ref })).toBe(true);
+    // Half a ref would send re-resolution to the wrong provider — worse
+    // than none, so it fails the clip.
+    expect(isTimelineClip({ ...image, sourceAsset: { providerId: "cloudinary" } })).toBe(false);
+    expect(isTimelineClip({ ...image, sourceAsset: { providerId: "", assetId: "x" } })).toBe(false);
+    expect(isTimelineClip({ ...image, sourceAsset: { providerId: "p", assetId: "" } })).toBe(false);
+    expect(isTimelineClip({ ...image, sourceAsset: "cloudinary:pic-1" })).toBe(false);
   });
 
   it("rejects the shapes the shallow guard let through", () => {

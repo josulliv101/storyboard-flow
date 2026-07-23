@@ -1,0 +1,87 @@
+import { describe, expect, it } from "vitest";
+
+import { pageFromFlatListing } from "./path-folders";
+import type { Asset } from "./types";
+
+function asset(id: string, folderPath: string[]): Asset {
+  return {
+    id,
+    providerId: "test",
+    name: id,
+    kind: "image",
+    src: `https://cdn.test/${id}`,
+    thumbnailUrl: `https://cdn.test/${id}.thumb`,
+    folderPath,
+    tags: [],
+  };
+}
+
+const LISTING = [
+  asset("root-a", []),
+  asset("root-b", []),
+  asset("scenes-1", ["Scenes"]),
+  asset("scenes-2", ["Scenes"]),
+  asset("heist-1", ["Scenes", "Heist"]),
+  asset("props-1", ["Props"]),
+];
+
+describe("pageFromFlatListing", () => {
+  it("flat query (folder undefined) returns EVERY asset plus top-level folder rows", () => {
+    const page = pageFromFlatListing(LISTING, {});
+    expect(page.assets.map((entry) => entry.id)).toEqual([
+      "root-a",
+      "root-b",
+      "scenes-1",
+      "scenes-2",
+      "heist-1",
+      "props-1",
+    ]);
+    expect(page.folders).toEqual([
+      { name: "Props", path: ["Props"] },
+      { name: "Scenes", path: ["Scenes"] },
+    ]);
+  });
+
+  it("root browse ([]) returns only root-level assets — flat and root are distinct", () => {
+    const page = pageFromFlatListing(LISTING, { folder: [] });
+    expect(page.assets.map((entry) => entry.id)).toEqual(["root-a", "root-b"]);
+    expect(page.folders.map((folder) => folder.name)).toEqual(["Props", "Scenes"]);
+  });
+
+  it("a folder lists its DIRECT assets and direct subfolders only", () => {
+    const page = pageFromFlatListing(LISTING, { folder: ["Scenes"] });
+    // heist-1 is deeper — it appears through its subfolder row, which is what
+    // makes drill-in mean something.
+    expect(page.assets.map((entry) => entry.id)).toEqual(["scenes-1", "scenes-2"]);
+    expect(page.folders).toEqual([{ name: "Heist", path: ["Scenes", "Heist"] }]);
+  });
+
+  it("a leaf folder lists assets and no subfolders", () => {
+    const page = pageFromFlatListing(LISTING, { folder: ["Scenes", "Heist"] });
+    expect(page.assets.map((entry) => entry.id)).toEqual(["heist-1"]);
+    expect(page.folders).toEqual([]);
+  });
+
+  it("an unknown folder is empty, not an error", () => {
+    const page = pageFromFlatListing(LISTING, { folder: ["Nope"] });
+    expect(page.assets).toEqual([]);
+    expect(page.folders).toEqual([]);
+  });
+
+  it("limit caps assets but never hides folder rows", () => {
+    const page = pageFromFlatListing(LISTING, { limit: 1 });
+    expect(page.assets.map((entry) => entry.id)).toEqual(["root-a"]);
+    expect(page.folders.length).toBe(2);
+  });
+
+  it("a same-named folder at two depths stays two folders", () => {
+    const listing = [asset("a", ["X"]), asset("b", ["Y", "X"])];
+    expect(pageFromFlatListing(listing, {}).folders.map((folder) => folder.path)).toEqual([
+      ["X"],
+      ["Y"],
+    ]);
+    expect(pageFromFlatListing(listing, { folder: ["Y"] }).folders).toEqual([
+      { name: "X", path: ["Y", "X"] },
+    ]);
+  });
+});

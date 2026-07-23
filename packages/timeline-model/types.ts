@@ -49,16 +49,29 @@ export type TimelineItemBase = {
   viewCollectionAccentIndex?: number;
 };
 
+/** Where a media clip's file came from: the asset provider that owns it and
+ *  that provider's own id for it. Recorded when a clip is minted from the
+ *  asset panel so the file stays identifiable across URL changes, provider
+ *  re-configuration, and future re-linking — `src` is how the clip RENDERS,
+ *  this is what the clip IS. Absent on clips that predate it and on media
+ *  that never came through a provider (direct OS drops). */
+export type AssetSourceRef = {
+  providerId: string;
+  assetId: string;
+};
+
 export type ImageTimelineClip = TimelineItemBase & {
   kind: "image";
   src: string;
   poster?: string;
+  sourceAsset?: AssetSourceRef;
 };
 
 export type VideoTimelineClip = TimelineItemBase & {
   kind: "video";
   src: string;
   poster?: string;
+  sourceAsset?: AssetSourceRef;
 };
 
 export type MediaTimelineClip = ImageTimelineClip | VideoTimelineClip;

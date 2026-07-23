@@ -278,6 +278,29 @@ describe("graphChildrenToClips (round-trip)", () => {
       expect(col.itemCount).toBe(2);
     }
   });
+
+  it("round-trips a media clip's sourceAsset provenance through the side-table", () => {
+    // The asset panel records which provider file a clip came from; the
+    // engine never models it, so hydration must park it in the details
+    // side-table and the write path must put it back — like poster, and
+    // like poster it must NOT appear on clips that never had it.
+    const sourceAsset = { providerId: "cloudinary", assetId: "gstudio/u/pic-1" };
+    const doc = {
+      id: "prov-root",
+      title: "Provenance",
+      clips: [
+        { ...image("with-ref", 4), sourceAsset },
+        image("without-ref", 4),
+      ],
+    };
+    const result = buildFocusedGraph({ "prov-root": doc }, "prov-root");
+    if (!result.ok) throw new Error(result.error);
+    expect(result.value.details["with-ref"]?.sourceAsset).toEqual(sourceAsset);
+
+    const projected = graphChildrenToClips(result.value.graph, result.value.details, "prov-root");
+    expect(projected[0]).toMatchObject({ id: "with-ref", sourceAsset });
+    expect("sourceAsset" in projected[1]).toBe(false);
+  });
 });
 
 describe("against the app's real initial documents", () => {

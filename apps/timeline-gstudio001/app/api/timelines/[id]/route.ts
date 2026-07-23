@@ -17,6 +17,7 @@ import {
 // Demo-content seed for the GET fallback — deliberately still the UI
 // package's fixture set, not model logic.
 import { getTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
+import { CLOUDINARY_PROVIDER_ID } from "@/lib/assets/cloudinary-provider";
 import { listCloudinaryAssets } from "@/lib/cloudinary-media-store";
 import { serveTimelineDocument, serveTrashDocument } from "@/lib/serve-timeline";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
@@ -175,6 +176,10 @@ export async function GET(
           const duration = asset.resourceType === "video" ? (asset.duration ?? 6) : 4;
           const stableId = `asset-${asset.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
+          // Provenance travels with the clip from the moment it is minted
+          // (`sourceAsset` on the stored model): `src` is how it renders,
+          // this is which provider file it IS.
+          const sourceAsset = { providerId: CLOUDINARY_PROVIDER_ID, assetId: asset.id };
           const newClip: TimelineClip =
             asset.resourceType === "video"
               ? {
@@ -191,6 +196,7 @@ export async function GET(
                   sourceDuration: duration,
                   trimIn: 0,
                   trimOut: 0,
+                  sourceAsset,
                 }
               : {
                   id: stableId,
@@ -205,6 +211,7 @@ export async function GET(
                   sourceDuration: duration,
                   trimIn: 0,
                   trimOut: 0,
+                  sourceAsset,
                 };
 
           merged.push(newClip);

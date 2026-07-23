@@ -13,7 +13,7 @@ import {
 
 import { Button } from "@/components/core/button";
 import { useBottomDrawerInset } from "@/components/assets/use-bottom-drawer-inset";
-import type { CloudinaryAsset } from "@/lib/cloudinary-media-store";
+import type { Asset } from "@/lib/assets/types";
 
 import { clearPendingDetails, parkPendingDetail } from "./graph-pending-details";
 
@@ -21,39 +21,36 @@ const DEFAULT_IMAGE_SECONDS = 4;
 const DEFAULT_VIDEO_SECONDS = 8;
 const PALETTE_ASSET_LIMIT = 48;
 
-function assetDisplayName(asset: CloudinaryAsset): string {
-  const path = asset.relativePath ?? asset.pathname;
-  return path.split("/").pop() ?? path;
-}
-
-function createNodeFromAsset(asset: CloudinaryAsset): CollectionItemNode {
+function createNodeFromAsset(asset: Asset): CollectionItemNode {
   clearPendingDetails();
   const id = parseNodeId(
     `asset-${asset.id}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
   );
-  const name = assetDisplayName(asset);
   const aspect =
     asset.width && asset.height && asset.height > 0 ? asset.width / asset.height : 16 / 9;
 
   parkPendingDetail(id as string, {
-    alt: name,
+    alt: asset.name,
     aspect,
     trackIndex: 0,
     poster: asset.thumbnailUrl,
-    ...(asset.resourceType === "image"
+    // Provenance: the persisted clip records which provider file it came
+    // from, not just the URL it renders by (the model's `sourceAsset`).
+    sourceAsset: { providerId: asset.providerId, assetId: asset.id },
+    ...(asset.kind === "image"
       ? { sourceDuration: DEFAULT_IMAGE_SECONDS, trimIn: 0, trimOut: 0 }
       : {}),
   });
 
-  if (asset.resourceType === "video") {
+  if (asset.kind === "video") {
     return {
       id,
       kind: "media",
       mediaKind: "video",
-      name,
-      src: asset.url,
+      name: asset.name,
+      src: asset.src,
       posterSrcs: [asset.thumbnailUrl],
-      fullDurationSeconds: asset.duration ?? DEFAULT_VIDEO_SECONDS,
+      fullDurationSeconds: asset.durationSeconds ?? DEFAULT_VIDEO_SECONDS,
       trimInSeconds: 0,
       trimOutSeconds: 0,
     };
@@ -63,8 +60,8 @@ function createNodeFromAsset(asset: CloudinaryAsset): CollectionItemNode {
     id,
     kind: "media",
     mediaKind: "image",
-    name,
-    src: asset.url,
+    name: asset.name,
+    src: asset.src,
     durationSeconds: DEFAULT_IMAGE_SECONDS,
   };
 }
@@ -72,9 +69,9 @@ function createNodeFromAsset(asset: CloudinaryAsset): CollectionItemNode {
 type AssetPaletteState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ status: "error"; message: string }>
-  | Readonly<{ status: "ready"; assets: readonly CloudinaryAsset[]; truncated: boolean }>;
+  | Readonly<{ status: "ready"; assets: readonly Asset[]; truncated: boolean }>;
 
-function PaletteRail({ assets }: Readonly<{ assets: readonly CloudinaryAsset[] }>) {
+function PaletteRail({ assets }: Readonly<{ assets: readonly Asset[] }>) {
   const store = useCollectionsStore();
   const railRef = useRef<HTMLDivElement>(null);
   const panOptions = useMemo<Parameters<typeof usePanWithMomentum>[2]>(
@@ -100,12 +97,12 @@ function PaletteRail({ assets }: Readonly<{ assets: readonly CloudinaryAsset[] }
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={asset.thumbnailUrl}
-            alt={assetDisplayName(asset)}
+            alt={asset.name}
             draggable={false}
             loading="lazy"
             className="h-full w-full object-cover"
           />
-          {asset.resourceType === "video" && (
+          {asset.kind === "video" && (
             <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1 py-0.5 text-[9px] font-bold tracking-wide text-zinc-100">
               VIDEO
             </span>
@@ -145,7 +142,7 @@ export function AssetPaletteDrawer({
       try {
         const response = await fetch("/api/assets", { cache: "no-store" });
         const result = (await response.json().catch(() => ({}))) as {
-          assets?: CloudinaryAsset[];
+          assets?: Asset[];
           error?: string;
         };
         if (cancelled) return;
