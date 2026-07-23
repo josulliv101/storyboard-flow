@@ -22,6 +22,7 @@ import {
 import type { ClipDetail } from "@storyboard/timeline-domain";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+import { resolveInsertPlacement } from "@/lib/graph-insert-placement";
 import {
   GRAPH_INSERT_TOOL_EVENT,
   isGraphInsertTool,
@@ -271,13 +272,15 @@ const TOOL_LABELS: Readonly<Record<SidebarTool, string>> = {
 /**
  * The KEYBOARD/click path for the sidebar tool palette. The sidebar is app
  * chrome living outside this provider, so it hands the tool off through a
- * window event (same pattern as the Assets launcher). SELECTION-AWARE: the
- * tool lands right after the most recently selected card, inside THAT
- * card's own timeline (any strip, not just the focused one — clicking the
- * sidebar never clears selection, so this works for mouse and keyboard
- * alike). With nothing selected it appends to the focused collection, the
- * one spot that needs no explanation. Dragging the tool remains the
- * pointer-precision path either way.
+ * window event (same pattern as the Assets launcher). SELECTION-AWARE via the
+ * shared `resolveInsertPlacement`: the tool lands right after the most
+ * recently selected card, inside THAT card's own timeline (any strip the
+ * board is showing under the focused collection — clicking the tool never
+ * clears selection, so this works for mouse and keyboard alike). With nothing
+ * selected — or with a selection left BEHIND by a drill-in, which survives the
+ * navigation and would otherwise plant the collection in the timeline the user
+ * just left — it appends to the focused collection, the one spot that needs no
+ * explanation. Dragging the tool remains the pointer-precision path either way.
  *
  * Mounted for BOTH surfaces, deliberately: `NativeDropStrip` only wraps the
  * strip, and an accessible control that silently does nothing in grid mode
@@ -296,27 +299,15 @@ export function SidebarToolInsertBridge({
       if (!tool || !isGraphInsertTool(tool)) return;
       const snapshot = store.getSnapshot();
       const graph = snapshot.graph;
-      // Sets iterate in insertion order, so `.at(-1)` is the most recent
-      // selection — the card a multi-select last touched.
-      const selectedId = [...snapshot.interaction.selectedIds].at(-1);
-      const selectedParentId =
-        selectedId !== undefined ? (graph.parentById.get(selectedId) ?? null) : null;
-      const parentId = selectedParentId ?? parseNodeId(collectionId);
-      const siblings = getChildren(graph, parentId);
-      const selectedAt =
-        selectedId !== undefined && selectedParentId !== null
-          ? siblings.indexOf(selectedId)
-          : -1;
-      const landed = insertTool(
-        tool,
-        selectedAt >= 0 ? selectedAt + 1 : siblings.length,
-        parentId,
+      const { parentId, toIndex, afterId } = resolveInsertPlacement(
+        graph,
+        snapshot.interaction.selectedIds,
+        collectionId,
       );
+      const landed = insertTool(tool, toIndex, parentId);
       const target = graph.nodesById.get(parentId)?.name ?? "the timeline";
       const afterName =
-        selectedAt >= 0 && selectedId !== undefined
-          ? (graph.nodesById.get(selectedId)?.name ?? "the selected clip")
-          : null;
+        afterId !== null ? (graph.nodesById.get(afterId)?.name ?? "the selected clip") : null;
       announce(
         landed
           ? afterName !== null

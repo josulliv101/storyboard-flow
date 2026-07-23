@@ -6,7 +6,6 @@ import type { TimelineDocument } from "@storyboard/timeline-model/types";
 import {
   getChildren,
   isEditableKeyboardTarget,
-  parseNodeId,
   useCollectionsSelector,
   useCollectionsStore,
   type CollectionsStore,
@@ -17,6 +16,7 @@ import { toast } from "@/components/core/sonner";
 import { graphClipboard, type ClipboardEntry } from "@/lib/graph-clipboard";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import type { GraphDetailsStore } from "@/lib/graph-details-store";
+import { resolveInsertPlacement } from "@/lib/graph-insert-placement";
 import { cloneNodeForInsert, type CloneForInsert } from "@/lib/graph-node-clone";
 import {
   GRAPH_ITEM_ACTION_EVENT,
@@ -176,29 +176,37 @@ async function captureSelection(
 }
 
 /**
- * Paste the clipboard into the focused collection, appended — ONE `add-nodes`
- * dispatch for every entry, so a multi-item paste is a single undoable step
- * and a single persisted batch (the same rule the delete path documents, and
- * the same shape as the multi-file drop commit). Documents seed only after
- * the dispatch commits; a refusal rolls back the parked details and returns
- * [] with the clipboard untouched, so the user can retry.
+ * Paste the clipboard — ONE `add-nodes` dispatch for every entry, so a
+ * multi-item paste is a single undoable step and a single persisted batch (the
+ * same rule the delete path documents, and the same shape as the multi-file
+ * drop commit). Documents seed only after the dispatch commits; a refusal
+ * rolls back the parked details and returns [] with the clipboard untouched,
+ * so the user can retry.
+ *
+ * WHERE it lands is `resolveInsertPlacement` — shared with the Collection
+ * tool, so the view's two pointerless inserts obey one rule: after the
+ * selected card when that card is on the board under the focused collection,
+ * appended to the focused collection otherwise. The subtree half matters most
+ * here: the copy → drill-in → Paste flow keeps the source SELECTED across the
+ * navigation, and a bare "after the selection" would fire the paste back into
+ * the timeline the user just left.
  */
-function pasteIntoFocused(store: CollectionsStore, focusedId: string): readonly NodeId[] {
+function pasteFromClipboard(store: CollectionsStore, focusedId: string): readonly NodeId[] {
   const entries = graphClipboard.read();
   if (entries.length === 0) return [];
-  const focusedParent = parseNodeId(focusedId);
+  const snapshot = store.getSnapshot();
+  const { parentId, toIndex } = resolveInsertPlacement(
+    snapshot.graph,
+    snapshot.interaction.selectedIds,
+    focusedId,
+  );
   const clones = entries.map((entry) =>
     cloneNodeForInsert(entry.node, entry.detail, {
       readDocument: (timelineId) => entry.documents[timelineId] ?? null,
       mintId,
     }),
   );
-  return insertClones(
-    store,
-    clones,
-    focusedParent,
-    getChildren(store.getSnapshot().graph, focusedParent).length,
-  );
+  return insertClones(store, clones, parentId, toIndex);
 }
 
 /**
@@ -212,8 +220,8 @@ function pasteIntoFocused(store: CollectionsStore, focusedId: string): readonly 
  *   - Copy  → snapshot the selection to the clipboard (stays in item mode).
  *   - Cut   → snapshot, then trash the originals; the clipboard keeps an
  *             independent copy, so Paste still relocates them (a move).
- *   - Paste → clone the clipboard into the focused collection, then clear the
- *             clipboard + selection (back to normal).
+ *   - Paste → clone the clipboard in after the selected card (or append to the
+ *             focused collection), then clear the clipboard + selection.
  *   - Duplicate → clone each selection in place (after its source).
  *   - Delete → `moveSelectionToTrash` (shared with the keyboard Delete).
  *   - Cancel → clear the selection AND the clipboard (back to normal).
@@ -324,7 +332,7 @@ export function GraphItemActionsBridge({
     };
 
     const pasteSelection = () => {
-      const pasted = pasteIntoFocused(store, focusedId);
+      const pasted = pasteFromClipboard(store, focusedId);
       // Nothing landed (refused dispatch): keep the clipboard so the user can
       // paste somewhere valid instead of silently losing what they copied.
       if (pasted.length === 0) return;
