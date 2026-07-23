@@ -99,7 +99,7 @@ export function GraphTimelineView({
 }) {
   const pathname = usePathname();
   const base = `/timeline/${encodeURIComponent(projectId)}/graph`;
-  const timelinePath = useMemo(
+  const urlPath = useMemo(
     () =>
       pathname.startsWith(base)
         ? pathname
@@ -110,6 +110,31 @@ export function GraphTimelineView({
         : [],
     [pathname, base],
   );
+  // OPTIMISTIC FOCUS. A drill-in is `router.push`, and the App Router does not
+  // commit the new pathname until the server answers the RSC request for that
+  // segment — measured at ~270ms locally, which is exactly the "clicking into
+  // a collection takes a beat" complaint. Nothing about the focus change
+  // actually needs the server: the graph is already in memory, and the page
+  // segment only PRIMES documents the client can fetch itself. So the
+  // navigation callback publishes the path it is heading to, the view moves
+  // on the next frame, and the URL catches up behind it.
+  //
+  // The URL stays the source of truth: this clears whenever the real path
+  // changes (the push landing, Back/Forward, a deep link), and the two agree
+  // by construction because the pending value IS what was pushed.
+  const [pendingPath, setPendingPath] = useState<readonly string[] | null>(null);
+  // Dropped DURING the render that sees a new URL (the documented
+  // adjust-state-on-change pattern, as in the trash drawer) rather than in an
+  // effect: an effect would render the pending path once more before clearing
+  // it, and set-state-in-an-effect is a lint error here for exactly that
+  // cascade. `urlPath` is memoized on the pathname, so this compares
+  // identities and fires only on a real navigation.
+  const [urlPathSeen, setUrlPathSeen] = useState(urlPath);
+  if (urlPath !== urlPathSeen) {
+    setUrlPathSeen(urlPath);
+    setPendingPath(null);
+  }
+  const timelinePath = pendingPath ?? urlPath;
   const focusedId = timelinePath[timelinePath.length - 1] ?? projectId;
 
   const [boot, setBoot] = useState<BootState>({ status: "loading" });
@@ -484,6 +509,7 @@ export function GraphTimelineView({
             projectId={projectId}
             focusedId={focusedId}
             openNodeRef={openNodeRef}
+            onNavigateStart={setPendingPath}
           >
             {focusError !== null ? (
               <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-300">

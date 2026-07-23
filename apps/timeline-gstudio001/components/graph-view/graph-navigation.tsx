@@ -27,6 +27,7 @@ export function GraphViewNavProvider({
   projectId,
   focusedId,
   openNodeRef,
+  onNavigateStart,
   children,
 }: Readonly<{
   projectId: string;
@@ -38,6 +39,15 @@ export function GraphViewNavProvider({
    * ref is the seam that hands it the current focus logic.
    */
   openNodeRef?: MutableRefObject<(nodeId: NodeId) => void>;
+  /**
+   * The focus path this navigation is heading to, published BEFORE the
+   * router push. `router.push` doesn't commit the new pathname until the
+   * server answers that segment's RSC request, and the view derives its focus
+   * from the pathname — so without this the whole board waits on a round trip
+   * it needs nothing from. The consumer renders the pending path immediately
+   * and drops it when the URL catches up.
+   */
+  onNavigateStart?: (path: readonly string[]) => void;
   children: React.ReactNode;
 }>) {
   const router = useRouter();
@@ -53,6 +63,7 @@ export function GraphViewNavProvider({
 
         const base = `/timeline/${encodeURIComponent(projectId)}/graph`;
         if (timelineId === projectId) {
+          onNavigateStart?.([]);
           router.push(base);
           return;
         }
@@ -69,10 +80,14 @@ export function GraphViewNavProvider({
           parent = graph.parentById.get(parent) ?? null;
         }
         if (parent !== projectNodeId) return;
+        // The pending path is exactly what the URL will decode to (the push
+        // below encodes these same segments), so the optimistic render and
+        // the committed one can't disagree.
+        onNavigateStart?.(chain);
         router.push(`${base}/${chain.map(encodeURIComponent).join("/")}`);
       },
     }),
-    [detailsStore, focusedId, projectId, router, store],
+    [detailsStore, focusedId, onNavigateStart, projectId, router, store],
   );
 
   useEffect(() => {

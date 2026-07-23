@@ -530,11 +530,19 @@ export function WorkbenchDisplaySurface({
     });
   }, [bufferedMedia, drawActiveFrame, ensureCachedMedia]);
 
+  // Repaint on a new CLIP LIST as well as a new time. `renderFrameAtTime`
+  // reads the clips through a ref (so playback doesn't re-create it every
+  // frame), which means a caller that swaps the whole list — the graph view
+  // drilling into another collection — left the canvas showing the previous
+  // list's frame whenever the time didn't also change (it resets to 0, and
+  // 0 → 0 is not a change). Consumers worked around that by remounting the
+  // pane, throwing away the canvas, the media cache and the chosen height.
+  // Depending on the sorted list makes the swap repaint itself.
   useEffect(() => {
     if (isPlayingRef.current) return;
     currentTimeRef.current = currentTime;
     renderFrameAtTime(currentTime, false, true);
-  }, [currentTime, renderFrameAtTime]);
+  }, [currentTime, renderFrameAtTime, sortedClips]);
 
   const seekToClip = useCallback(
     (direction: -1 | 1) => {
