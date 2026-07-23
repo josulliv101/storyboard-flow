@@ -196,30 +196,41 @@ async function installGraphApi(
     }),
   );
 
+  // The provider-NEUTRAL /api/assets shape (lib/assets/types) — the palette
+  // reads `name`/`kind`/`src`/`durationSeconds`, never a vendor field.
   await page.route("**/api/assets**", (route) =>
     route.fulfill({
       json: {
+        providerId: "cloudinary",
+        capabilities: { folders: true, tags: false, search: false, upload: false, delete: false },
+        folders: [],
         assets: [
           {
             id: "img-1",
-            pathname: "fixtures/sunset.jpg",
-            url: PIXEL,
+            providerId: "cloudinary",
+            name: "sunset.jpg",
+            kind: "image",
+            src: PIXEL,
             thumbnailUrl: PIXEL,
-            resourceType: "image",
+            folderPath: ["fixtures"],
+            tags: [],
             width: 1600,
             height: 900,
           },
           {
             id: "vid-1",
-            pathname: "fixtures/clip.mp4",
-            url: PIXEL,
+            providerId: "cloudinary",
+            name: "clip.mp4",
+            kind: "video",
+            src: PIXEL,
             thumbnailUrl: PIXEL,
-            resourceType: "video",
+            folderPath: ["fixtures"],
+            tags: [],
             width: 1920,
             height: 1080,
-            // Real duration from the Cloudinary Search API listing — a
-            // dropped video must land at this length, not the 8s default.
-            duration: 12.4,
+            // Real duration from the provider listing — a dropped video must
+            // land at this length, not the 8s default.
+            durationSeconds: 12.4,
           },
         ],
       },
@@ -1114,6 +1125,13 @@ test.describe("graph view E2E", () => {
     expect(persisted).toBeDefined();
     expect(persisted?.kind).toBe("image");
     expect(persisted?.src).toBe(PIXEL);
+    // …and the PROVENANCE: which provider file this clip is, not just the
+    // URL it renders by — the whole chain (palette detail → parked → add
+    // patch → persisted write) has to carry it for it to appear here.
+    expect((persisted as { sourceAsset?: unknown }).sourceAsset).toEqual({
+      providerId: "cloudinary",
+      assetId: "img-1",
+    });
 
     // A VIDEO asset lands at its REAL listed duration, not the default.
     await holdDrag(

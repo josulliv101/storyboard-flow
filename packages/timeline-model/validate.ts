@@ -21,6 +21,21 @@ function isOptionalFiniteNumber(value: unknown): boolean {
   return value == null || isFiniteNumber(value);
 }
 
+/** Same null leniency as every optional field; when present, BOTH halves of
+ *  the ref must be non-empty strings — a half-recorded source is worse than
+ *  none, since re-resolution would query the wrong provider. */
+function isOptionalAssetSourceRef(value: unknown): boolean {
+  if (value == null) return true;
+  if (typeof value !== "object") return false;
+  const ref = value as Record<string, unknown>;
+  return (
+    typeof ref.providerId === "string" &&
+    ref.providerId.length > 0 &&
+    typeof ref.assetId === "string" &&
+    ref.assetId.length > 0
+  );
+}
+
 function hasClipBase(clip: Record<string, unknown>): boolean {
   return (
     typeof clip.id === "string" &&
@@ -45,7 +60,11 @@ export function isTimelineClip(value: unknown): value is TimelineClip {
   if (!hasClipBase(clip)) return false;
 
   if (clip.kind === "image" || clip.kind === "video") {
-    return typeof clip.src === "string" && isOptionalString(clip.poster);
+    return (
+      typeof clip.src === "string" &&
+      isOptionalString(clip.poster) &&
+      isOptionalAssetSourceRef(clip.sourceAsset)
+    );
   }
 
   if (clip.kind === "collection") {

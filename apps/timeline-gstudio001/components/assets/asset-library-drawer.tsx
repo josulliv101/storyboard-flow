@@ -13,75 +13,19 @@ import { Button } from "@/components/core/button";
 import { useBottomDrawerInset } from "@/components/assets/use-bottom-drawer-inset";
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
 import { cn } from "@/lib/utils";
-import type { TimelineClip } from "@storyboard/ui/timeline/types";
 import { useAuth } from "@/components/auth/auth-provider";
 import { getTimelinePath, getTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
 
-type CloudinaryAsset = {
-  id: string;
-  pathname: string;
-  url: string;
-  thumbnailUrl: string;
-  resourceType: "image" | "video";
-  format?: string;
-  width?: number;
-  height?: number;
-  size?: number;
-  createdAt?: string;
-  duration?: number;
-};
+// No local Cloudinary shape any more: this drawer never consumed the /api/
+// assets payload (its clips are minted SERVER-side by the asset-library
+// virtual-timeline route) — the fetch below is a refresh trigger and error
+// surface, so it reads only `error`. The dead vendor type and unused
+// clip-minting helper it carried went with the provider seam.
 
 type AssetLibraryDrawerProps = {
   isOpen: boolean;
   onClose: () => void;
 };
-
-function getAssetName(pathname: string) {
-  return pathname.split("/").pop() || pathname;
-}
-
-function createAssetClip(asset: CloudinaryAsset, index: number, startTime: number): TimelineClip {
-  const name = getAssetName(asset.pathname);
-  const aspect =
-    asset.width && asset.height && asset.height > 0
-      ? asset.width / asset.height
-      : 16 / 9;
-  const duration = asset.resourceType === "video" ? (asset.duration ?? 6) : 4;
-  const stableId = `asset-${asset.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-
-  if (asset.resourceType === "video") {
-    return {
-      id: stableId,
-      index,
-      kind: "video",
-      src: asset.url,
-      poster: asset.thumbnailUrl,
-      alt: name,
-      aspect,
-      trackIndex: 0,
-      startTime,
-      duration,
-      sourceDuration: duration,
-      trimIn: 0,
-      trimOut: 0,
-    };
-  }
-
-  return {
-    id: stableId,
-    index,
-    kind: "image",
-    src: asset.url,
-    alt: name,
-    aspect,
-    trackIndex: 0,
-    startTime,
-    duration,
-    sourceDuration: duration,
-    trimIn: 0,
-    trimOut: 0,
-  };
-}
 
 export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps) {
   const { user } = useAuth();
@@ -106,13 +50,10 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
 
     try {
       const response = await fetch("/api/assets", { cache: "no-store" });
-      const result = (await response.json().catch(() => ({}))) as {
-        assets?: CloudinaryAsset[];
-        error?: string;
-      };
+      const result = (await response.json().catch(() => ({}))) as { error?: string };
 
       if (!response.ok) {
-        throw new Error(result.error || "Unable to load Cloudinary assets.");
+        throw new Error(result.error || "Unable to load assets.");
       }
 
       setAssetsVersion((v) => v + 1);

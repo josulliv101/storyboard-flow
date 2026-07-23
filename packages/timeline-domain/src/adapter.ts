@@ -31,6 +31,7 @@ import {
 } from "@storyboard/timeline-model/constants";
 import { previewItemsFrom } from "@storyboard/timeline-model/documents";
 import type {
+  AssetSourceRef,
   CollectionTimelineClip,
   TimelineClip,
   TimelineDocument,
@@ -66,6 +67,9 @@ export type ClipDetail = Readonly<{
    *  collection clip (node id = childTimelineId), and any DEMOTED duplicate
    *  media clip. The write path round-trips it. */
   sourceClipId?: string;
+  /** Which asset-provider file this media clip came from — pure provenance
+   *  (the engine never reads it), round-tripped like poster. */
+  sourceAsset?: AssetSourceRef;
   itemCount?: number;
   previewItems?: CollectionTimelineClip["previewItems"];
   /** The collection clip's own display duration in its parent timeline. */
@@ -126,6 +130,7 @@ function mediaDetail(clip: Exclude<TimelineClip, CollectionTimelineClip>): ClipD
     aspect: clip.aspect,
     trackIndex: clip.trackIndex,
     ...(clip.poster === undefined ? {} : { poster: clip.poster }),
+    ...(clip.sourceAsset === undefined ? {} : { sourceAsset: clip.sourceAsset }),
     ...(clip.playbackStartTime === undefined ? {} : { playbackStartTime: clip.playbackStartTime }),
     ...(clip.playbackDuration === undefined ? {} : { playbackDuration: clip.playbackDuration }),
     ...(clip.kind === "image"
@@ -455,6 +460,7 @@ export function graphChildrenToClips(
         ...(detail?.playbackDuration === undefined
           ? {}
           : { playbackDuration: detail.playbackDuration }),
+        ...(detail?.sourceAsset === undefined ? {} : { sourceAsset: detail.sourceAsset }),
       };
       if (node.mediaKind === "video") {
         return {
