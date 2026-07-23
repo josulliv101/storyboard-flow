@@ -427,12 +427,24 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
   // FIRST and LAST only (or the single frame) — never three, exactly as the
   // card picks its two representative frames.
   const chosen = all.length > 1 ? [all[0], all[all.length - 1]] : all;
-  const frames: string[] = isCollection
+  const derivedFrames: string[] = isCollection
     ? chosen.map((preview) => preview.poster ?? preview.src).filter(Boolean)
     : (() => {
         const src = mediaGhostSrc(node);
         return src ? [src] : [];
       })();
+  // STICKY for the life of the ghost. A collection's frames are derived from
+  // the LIVE graph plus the details table, and both move under us mid-drag:
+  // dragging over an un-hydrated collection hydrates it, which re-runs this
+  // derivation. Any moment where it yields fewer frames (or none) swapped the
+  // thumbnail for the grey fallback tile and back — the flicker into a
+  // "disabled-looking" ghost. The ghost is a transient, read-only picture of
+  // what is being dragged, so it may only ever GAIN detail, never lose it.
+  // (State adjusted during render, not a ref: reading or writing a ref while
+  // rendering is a lint error here, and this is the documented pattern.)
+  const [bestFrames, setBestFrames] = useState(derivedFrames);
+  if (derivedFrames.length > bestFrames.length) setBestFrames(derivedFrames);
+  const frames = derivedFrames.length >= bestFrames.length ? derivedFrames : bestFrames;
 
   return (
     // Slightly transparent so the breadcrumb drop zones read THROUGH the ghost

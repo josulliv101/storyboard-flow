@@ -11,7 +11,20 @@ const FLIP_DURATION_MS = 180;
 const FLIP_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 
 type Point = Readonly<{ x: number; y: number }>;
-type CardRect = Readonly<{ card: HTMLElement; nodeId: string; point: Point }>;
+type Box = Readonly<{ x: number; y: number; width: number; height: number }>;
+type CardRect = Readonly<{ card: HTMLElement; nodeId: string; point: Point; box: Box }>;
+
+/**
+ * Where the dragged card should APPEAR to come from on a drop: the box the
+ * drag ghost occupied at release. Published by the provider's drag-end
+ * handler (see DndCollections) and consumed by the next sweep.
+ *
+ * Without it the dropped card FLIPs from the slot it used to occupy — so the
+ * motion starts wherever the item WAS, often most of the board away from the
+ * pointer, while the ghost the user was watching vanishes on the spot. The
+ * eye follows the ghost; the animation should continue from there.
+ */
+export type FlipDropOrigin = Readonly<{ nodeId: string; box: Box }>;
 
 function measureCards(container: HTMLElement): CardRect[] {
   const rects: CardRect[] = [];
@@ -28,7 +41,12 @@ function measureCards(container: HTMLElement): CardRect[] {
     // itself, preserving the documented contract.
     const card = idElement.closest<HTMLElement>("[data-node-wrapper]") ?? idElement;
     const rect = card.getBoundingClientRect();
-    rects.push({ card, nodeId, point: { x: rect.left, y: rect.top } });
+    rects.push({
+      card,
+      nodeId,
+      point: { x: rect.left, y: rect.top },
+      box: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+    });
   }
   return rects;
 }
@@ -83,7 +101,12 @@ function cancelAnimations(animations: Set<Animation>): void {
   animations.clear();
 }
 
-export function useFlipGraphAnimation(containerRef: RefObject<HTMLElement | null>): void {
+export function useFlipGraphAnimation(
+  containerRef: RefObject<HTMLElement | null>,
+  /** Set by the drop that is about to commit; read (and cleared) by the sweep
+   *  it triggers, so it can only ever affect that one commit. */
+  dropOriginRef?: RefObject<FlipDropOrigin | null>,
+): void {
   const store = useCollectionsStore();
   const graph = useCollectionsSelector((state) => state.graph);
   const firstRects = useRef<readonly CardRect[] | null>(null);
@@ -124,18 +147,34 @@ export function useFlipGraphAnimation(containerRef: RefObject<HTMLElement | null
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     if (reduceMotion) return;
 
+    const dropOrigin = dropOriginRef?.current ?? null;
+    if (dropOriginRef) dropOriginRef.current = null;
+
     const after = measureCards(container);
     const matches = matchBeforeRects(first, after);
-    for (const { card, point } of after) {
-      const before = matches.get(card);
+    for (const { card, nodeId, point, box } of after) {
+      // The DROPPED card starts from the ghost the user just released — same
+      // place their eye already is — scaling up from the ghost's footprint
+      // into the slot. Every other card keeps the plain positional FLIP from
+      // where it used to sit.
+      const isDropped = dropOrigin !== null && dropOrigin.nodeId === nodeId;
+      const before = isDropped ? dropOrigin.box : matches.get(card);
       if (!before) continue;
 
       const dx = before.x - point.x;
       const dy = before.y - point.y;
-      if (dx === 0 && dy === 0) continue;
+      const sx = isDropped && box.width > 0 ? dropOrigin.box.width / box.width : 1;
+      const sy = isDropped && box.height > 0 ? dropOrigin.box.height / box.height : 1;
+      if (dx === 0 && dy === 0 && sx === 1 && sy === 1) continue;
 
       const animation = card.animate(
-        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }],
+        [
+          {
+            transformOrigin: "top left",
+            transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`,
+          },
+          { transformOrigin: "top left", transform: "translate(0, 0) scale(1, 1)" },
+        ],
         { duration: FLIP_DURATION_MS, easing: FLIP_EASING, composite: "replace" }
       );
       animationsRef.current.add(animation);
