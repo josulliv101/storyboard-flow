@@ -64,14 +64,16 @@ export const DragOnly: Story = {
 // Behavior
 // ---------------------------------------------------------------------------
 
-/** The tiles are real buttons, so they are reachable and named as actions. */
+/** The tile is a real button, so it is reachable and named as an action.
+ *  (Collection is the only tool: the image/video placeholder tools were
+ *  removed — media arrives via the Assets drawer or OS file drops.) */
 export const AccessibleNames: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const tools = canvas.getAllByRole("button");
-    await expect(tools).toHaveLength(3);
+    await expect(tools).toHaveLength(1);
     await expect(
-      canvas.getByRole("button", { name: "Add Image Clip to the open timeline" }),
+      canvas.getByRole("button", { name: "Add Collection to the open timeline" }),
     ).toBeInTheDocument();
     // Drag survives the switch to <button> — it is the position affordance.
     await expect(tools[0]).toHaveAttribute("draggable", "true");
@@ -100,10 +102,10 @@ export const ClickActivates: Story = {
 export const KeyboardActivates: Story = {
   play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
-    const video = canvas.getByRole("button", { name: "Add Video Clip to the open timeline" });
+    const tool = canvas.getByRole("button", { name: "Add Collection to the open timeline" });
 
-    video.focus();
-    await expect(video).toHaveFocus();
+    tool.focus();
+    await expect(tool).toHaveFocus();
 
     await userEvent.keyboard("{Enter}");
     await expect(args.onActivate).toHaveBeenCalledTimes(1);
@@ -111,7 +113,7 @@ export const KeyboardActivates: Story = {
     await userEvent.keyboard(" ");
     await expect(args.onActivate).toHaveBeenCalledTimes(2);
     await expect(args.onActivate).toHaveBeenLastCalledWith(
-      expect.objectContaining({ type: "video" }),
+      expect.objectContaining({ type: "collection" }),
     );
   },
 };

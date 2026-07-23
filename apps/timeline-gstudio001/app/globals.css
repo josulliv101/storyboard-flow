@@ -221,3 +221,14 @@ html[data-timeline-endpoint-transition="active"]::view-transition-old(.timeline-
     animation: none;
   }
 }
+
+/* The page (document scroller) must never scroll-anchor: opening the
+   preview pane mounts ~150px of content at the top of <main>, and Chrome's
+   anchoring "helpfully" scrolled the page down to keep the board still —
+   which pinned the fresh pane and made its restore-clamp shrink the height
+   the user had chosen. The pane's own sticky logic owns that relationship.
+   On <html> because the exclusion-subtree form (overflow-anchor on <main>)
+   did not suppress it in Chromium. */
+html {
+  overflow-anchor: none;
+}

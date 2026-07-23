@@ -36,8 +36,8 @@ import { parkPendingDetail, unparkPendingDetail } from "./graph-pending-details"
 // in-graph drags (cards, palette thumbnails); this layer owns what dnd-kit
 // cannot see — HTML5 drags:
 //
-//   - the sidebar tool icons (application/x-gstudio-type: collection /
-//     image / video), which mint a fresh node at the drop position;
+//   - the sidebar COLLECTION tool (application/x-gstudio-type), which
+//     mints a fresh nested timeline at the drop position;
 //   - OS FILE drops (images/videos, several at once), which upload through
 //     the same /api/timeline-media pipeline the legacy views use and then
 //     add one node per file — in a single undoable commit.
@@ -54,14 +54,14 @@ import { parkPendingDetail, unparkPendingDetail } from "./graph-pending-details"
 // trips.
 
 const TOOL_MIME = "application/x-gstudio-type";
-// The demo clip the legacy views use for placeholder video content.
-const PLACEHOLDER_VIDEO_SRC = "https://www.w3schools.com/html/mov_bbb.mp4";
-const PLACEHOLDER_VIDEO_SECONDS = 10;
 
-type SidebarTool = "collection" | "image" | "video";
+// Collection is the only sidebar tool now: the old image/video tools minted
+// demo-content placeholders nobody used — real media arrives as FILES (OS
+// drop / Assets drawer), handled by the upload path below.
+type SidebarTool = "collection";
 
 function isSidebarTool(value: string): value is SidebarTool {
-  return value === "collection" || value === "image" || value === "video";
+  return value === "collection";
 }
 
 function mintId(prefix: string): string {
@@ -197,11 +197,17 @@ function useToolInsertion(collectionId: string) {
   const store = useCollectionsStore();
 
   const addNodes = useCallback(
-    (nodes: readonly CollectionItemNode[], toIndex: number): boolean => {
+    (
+      nodes: readonly CollectionItemNode[],
+      toIndex: number,
+      // Default: the hook's own collection (every drop path). The insert
+      // bridge overrides it to land next to a selection in ANOTHER strip.
+      toParentId: NodeId = parseNodeId(collectionId),
+    ): boolean => {
       const result = store.dispatch({
         type: "add-nodes",
         nodes,
-        toParentId: parseNodeId(collectionId),
+        toParentId,
         toIndex,
       });
       // Every refusal — including the un-hydrated-target veto — now comes
@@ -221,85 +227,35 @@ function useToolInsertion(collectionId: string) {
   /** Returns whether the tool actually landed, so callers can announce the
    *  truth rather than assuming success. */
   const insertTool = useCallback(
-    (tool: SidebarTool, toIndex: number): boolean => {
-      if (tool === "collection") {
-        const childId = mintId("timeline");
-        // hydrated: true — the collection is BRAND-NEW and empty, so drops
-        // into it must not bounce and writes may touch its document.
-        parkPendingDetail(childId, {
-          alt: "New Timeline collection",
-          aspect: 16 / 9,
-          trackIndex: 0,
-          itemCount: 0,
-          duration: 3,
-          sourceDuration: 3,
-          trimIn: 0,
-          trimOut: 0,
-          hydrated: true,
-        });
-        const added = addNodes(
-          [{ id: parseNodeId(childId), kind: "collection", name: "New Timeline" }],
-          toIndex,
-        );
-        if (added) {
-          // Create the child document itself: seed the cache (expected
-          // revision 0 = compare-and-set create) and queue an empty write —
-          // it joins the same atomic batch as the parent's update, so a
-          // drill-in never 404s on a half-created collection.
-          graphDocumentsGateway.seed({ id: childId, title: "New Timeline", clips: [] });
-          graphDocumentsGateway.writeClips(childId, []);
-        }
-        return added;
-      }
-
-      const id = mintId(tool);
-      const placeholder = `https://picsum.photos/seed/${id}/640/360`;
-      if (tool === "image") {
-        parkPendingDetail(id, {
-          alt: "New Image",
-          aspect: 16 / 9,
-          trackIndex: 0,
-          sourceDuration: 4,
-          trimIn: 0,
-          trimOut: 0,
-        });
-        return addNodes(
-          [
-            {
-              id: parseNodeId(id),
-              kind: "media",
-              mediaKind: "image",
-              name: "New Image",
-              src: placeholder,
-              durationSeconds: 4,
-            },
-          ],
-          toIndex,
-        );
-      }
-
-      parkPendingDetail(id, {
-        alt: "New Video",
+    (_tool: SidebarTool, toIndex: number, toParentId?: NodeId): boolean => {
+      const childId = mintId("timeline");
+      // hydrated: true — the collection is BRAND-NEW and empty, so drops
+      // into it must not bounce and writes may touch its document.
+      parkPendingDetail(childId, {
+        alt: "New Timeline collection",
         aspect: 16 / 9,
         trackIndex: 0,
-        poster: placeholder,
+        itemCount: 0,
+        duration: 3,
+        sourceDuration: 3,
+        trimIn: 0,
+        trimOut: 0,
+        hydrated: true,
       });
-      return addNodes(
-        [
-          {
-            id: parseNodeId(id),
-            kind: "media",
-            mediaKind: "video",
-            name: "New Video",
-            src: PLACEHOLDER_VIDEO_SRC,
-            posterSrcs: [placeholder],
-            fullDurationSeconds: PLACEHOLDER_VIDEO_SECONDS,
-            trimInSeconds: 0,
-            trimOutSeconds: 0,
-          },
-        ],
+      const added = addNodes(
+        [{ id: parseNodeId(childId), kind: "collection", name: "New Timeline" }],
         toIndex,
+        toParentId,
       );
+      if (added) {
+        // Create the child document itself: seed the cache (expected
+        // revision 0 = compare-and-set create) and queue an empty write —
+        // it joins the same atomic batch as the parent's update, so a
+        // drill-in never 404s on a half-created collection.
+        graphDocumentsGateway.seed({ id: childId, title: "New Timeline", clips: [] });
+        graphDocumentsGateway.writeClips(childId, []);
+      }
+      return added;
     },
     [addNodes],
   );
@@ -310,15 +266,18 @@ function useToolInsertion(collectionId: string) {
 /** Human label for an inserted tool, for the announcement. */
 const TOOL_LABELS: Readonly<Record<SidebarTool, string>> = {
   collection: "collection",
-  image: "image clip",
-  video: "video clip",
 };
 
 /**
  * The KEYBOARD/click path for the sidebar tool palette. The sidebar is app
  * chrome living outside this provider, so it hands the tool off through a
- * window event (same pattern as the Assets launcher) and this appends it to
- * the focused collection.
+ * window event (same pattern as the Assets launcher). SELECTION-AWARE: the
+ * tool lands right after the most recently selected card, inside THAT
+ * card's own timeline (any strip, not just the focused one — clicking the
+ * sidebar never clears selection, so this works for mouse and keyboard
+ * alike). With nothing selected it appends to the focused collection, the
+ * one spot that needs no explanation. Dragging the tool remains the
+ * pointer-precision path either way.
  *
  * Mounted for BOTH surfaces, deliberately: `NativeDropStrip` only wraps the
  * strip, and an accessible control that silently does nothing in grid mode
@@ -335,15 +294,34 @@ export function SidebarToolInsertBridge({
     const handleInsert = (event: Event) => {
       const tool = (event as CustomEvent<GraphInsertToolDetail>).detail?.tool;
       if (!tool || !isGraphInsertTool(tool)) return;
-      const parentId = parseNodeId(collectionId);
-      const graph = store.getSnapshot().graph;
-      // Append: with no pointer there is no position to read, and the end of
-      // the timeline is the one spot that needs no explanation.
-      const landed = insertTool(tool, getChildren(graph, parentId).length);
+      const snapshot = store.getSnapshot();
+      const graph = snapshot.graph;
+      // Sets iterate in insertion order, so `.at(-1)` is the most recent
+      // selection — the card a multi-select last touched.
+      const selectedId = [...snapshot.interaction.selectedIds].at(-1);
+      const selectedParentId =
+        selectedId !== undefined ? (graph.parentById.get(selectedId) ?? null) : null;
+      const parentId = selectedParentId ?? parseNodeId(collectionId);
+      const siblings = getChildren(graph, parentId);
+      const selectedAt =
+        selectedId !== undefined && selectedParentId !== null
+          ? siblings.indexOf(selectedId)
+          : -1;
+      const landed = insertTool(
+        tool,
+        selectedAt >= 0 ? selectedAt + 1 : siblings.length,
+        parentId,
+      );
       const target = graph.nodesById.get(parentId)?.name ?? "the timeline";
+      const afterName =
+        selectedAt >= 0 && selectedId !== undefined
+          ? (graph.nodesById.get(selectedId)?.name ?? "the selected clip")
+          : null;
       announce(
         landed
-          ? `Added a ${TOOL_LABELS[tool]} to the end of "${target}".`
+          ? afterName !== null
+            ? `Added a ${TOOL_LABELS[tool]} after "${afterName}" in "${target}".`
+            : `Added a ${TOOL_LABELS[tool]} to the end of "${target}".`
           : `Could not add a ${TOOL_LABELS[tool]} to "${target}".`,
       );
     };

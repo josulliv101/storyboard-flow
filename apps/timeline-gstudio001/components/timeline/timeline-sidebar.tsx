@@ -5,33 +5,40 @@ import {
   Images,
   Layers,
   FolderPlus,
-  Image,
-  Video,
-  Film,
-  Hammer,
+  FolderTree,
+  GalleryHorizontalEnd,
+  LayoutGrid,
+  Ruler,
   Settings,
+  TvMinimal,
   UserCircle,
   LogOut,
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { AssetLibraryDrawer } from "@/components/assets/asset-library-drawer";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
   GRAPH_ASSETS_TOGGLE_EVENT,
   GRAPH_TRASH_ARRIVAL_EVENT,
+  GRAPH_VIEW_STATE_EVENT,
   isGraphInsertTool,
   isGraphViewRoute,
+  requestGraphChildrenToggle,
+  requestGraphPreviewToggle,
+  requestGraphRulerToggle,
+  requestGraphSurface,
   requestGraphToolInsert,
+  type GraphSurface,
+  type GraphViewStateDetail,
 } from "@/lib/graph-view-events";
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
 
 import { SidebarToolPalette, type SidebarToolItem } from "./sidebar-tool-palette";
 import { SidebarTooltipLabel } from "./sidebar-tooltip-label";
-import type { ProjectViewMode } from "@storyboard/ui/timeline/timeline-view-state";
 
 type UtilityItem = {
   id: "assets" | "trash" | "settings";
@@ -47,7 +54,12 @@ const SIDEBAR_ICON_IDLE =
 const SIDEBAR_ICON_PRESSED =
   "translate-y-px border-zinc-600 bg-zinc-800 text-zinc-100 shadow-inner shadow-black/50 ring-1 ring-inset ring-zinc-700/70";
 
-type IconLinkProps = {
+type SurfaceIconControlProps = {
+  surface: GraphSurface;
+  /** On a graph route the control is a BUTTON that switches the live view's
+   *  layout through the event bridge; elsewhere it is a LINK that lands on
+   *  the graph route already in that layout. */
+  onGraphRoute: boolean;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   isActive: boolean;
@@ -55,28 +67,46 @@ type IconLinkProps = {
   description: string;
 };
 
-function IconLink({
+function SurfaceIconControl({
+  surface,
+  onGraphRoute,
   href,
   icon: Icon,
   isActive,
   label,
   description,
-}: IconLinkProps) {
+}: SurfaceIconControlProps) {
   const tooltipId = `sidebar-tooltip-${label.toLowerCase().replace(/\s+/g, "-")}`;
+  const className = cn(
+    SIDEBAR_ICON_BASE,
+    isActive ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+  );
+  const content = (
+    <>
+      <Icon className="h-4 w-4 transition-colors" />
+      <SidebarTooltipLabel id={tooltipId} label={label} description={description} />
+    </>
+  );
 
-  return (
+  return onGraphRoute ? (
+    <button
+      type="button"
+      aria-label={label}
+      aria-describedby={tooltipId}
+      aria-pressed={isActive}
+      onClick={() => requestGraphSurface(surface)}
+      className={className}
+    >
+      {content}
+    </button>
+  ) : (
     <Link
       href={href}
       aria-label={label}
       aria-describedby={tooltipId}
-      aria-current={isActive ? "page" : undefined}
-      className={cn(
-        SIDEBAR_ICON_BASE,
-        isActive ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
-      )}
+      className={className}
     >
-      <Icon className="h-4 w-4 transition-colors" />
-      <SidebarTooltipLabel id={tooltipId} label={label} description={description} />
+      {content}
     </Link>
   );
 }
@@ -104,7 +134,6 @@ const UTILITY_ITEMS: UtilityItem[] = [
 
 export function TimelineSidebar() {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const { user, logout } = useAuth();
   const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
   const [isTrashOpen, setIsTrashOpen] = useState(false);
@@ -140,22 +169,28 @@ export function TimelineSidebar() {
     pathSegments[0] === "timeline" && pathSegments[1]?.startsWith("project-")
       ? pathSegments[1]
       : undefined;
-  const projectView: ProjectViewMode | null = activeProjectId
-    ? pathSegments[2] === "workbench"
-      ? "workbench"
-      : "storyboard"
-    : null;
-  const activeTimelinePath = activeProjectId ? pathSegments.slice(3).join("/") : "";
 
-  const getProjectViewHref = (mode: ProjectViewMode) => {
-    if (!activeProjectId) return mode === "storyboard" ? "/storyboard" : "/workbench";
+  const graphHref = activeProjectId
+    ? `/timeline/${encodeURIComponent(activeProjectId)}/graph`
+    : "/";
 
-    const search = searchParams.toString();
-    const childPath = activeTimelinePath ? `/${activeTimelinePath}` : "";
-    return `/timeline/${encodeURIComponent(activeProjectId)}/${mode}${childPath}${
-      search ? `?${search}` : ""
-    }`;
-  };
+  // The graph view broadcasts its surface + ruler state (on mount and every
+  // change); the sidebar's layout icons and ruler toggle reflect it. Grid is
+  // the graph's load default, so it is the resting state here too.
+  const [graphView, setGraphView] = useState<GraphViewStateDetail>({
+    surface: "grid",
+    rulerOn: false,
+    childrenShown: false,
+    previewOn: false,
+  });
+  useEffect(() => {
+    const onState = (event: Event) => {
+      const detail = (event as CustomEvent<GraphViewStateDetail>).detail;
+      if (detail) setGraphView(detail);
+    };
+    window.addEventListener(GRAPH_VIEW_STATE_EVENT, onState);
+    return () => window.removeEventListener(GRAPH_VIEW_STATE_EVENT, onState);
+  }, []);
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -205,19 +240,21 @@ export function TimelineSidebar() {
     window.dispatchEvent(new CustomEvent("gstudio-drag-end"));
   };
 
+  const onGraphRoute = isGraphViewRoute(pathname);
   // Dragging a tool onto a strip is POINTER-only (native HTML5 drag with a
   // custom DataTransfer), so on the graph route activation appends it to the
   // open timeline instead — the keyboard, screen-reader, and touch route to
   // the same result. Drag remains the way to choose a POSITION.
-  const canInsertTools = isGraphViewRoute(pathname);
+  const canInsertTools = onGraphRoute;
 
   const handleToolActivate = (item: SidebarToolItem) => {
     if (canInsertTools && isGraphInsertTool(item.type)) {
       requestGraphToolInsert(item.type);
       // The graph view announces the authoritative result on its own
-      // aria-live channel (it knows the target and whether it landed); this
-      // is the visible half, for everyone else.
-      setToastMessage(`Added a ${item.label} to the end of the open timeline.`);
+      // aria-live channel (it knows the target and whether it landed —
+      // after the selected card, or appended); this is the visible half,
+      // deliberately position-agnostic.
+      setToastMessage(`Added a ${item.label}.`);
       return;
     }
     showDragToast(item.label);
@@ -254,47 +291,132 @@ export function TimelineSidebar() {
 
       {activeProjectId && (
         <div className="flex flex-col items-center gap-2">
-          <IconLink
-            href={getProjectViewHref("storyboard")}
-            icon={Film}
-            isActive={projectView === "storyboard"}
-            label="Storyboard"
-            description="Project storyboard"
+          {/* The graph's layout switch (was the breadcrumb row's strip/grid
+              toggle). Grid first: it is the initial-load default. */}
+          <SurfaceIconControl
+            surface="grid"
+            onGraphRoute={onGraphRoute}
+            href={graphHref}
+            icon={LayoutGrid}
+            isActive={onGraphRoute && graphView.surface === "grid"}
+            label="Grid layout"
+            description="Graph timelines as grids"
           />
-          <IconLink
-            href={getProjectViewHref("workbench")}
-            icon={Hammer}
-            isActive={projectView === "workbench"}
-            label="Workbench"
-            description="Project workbench"
+          <SurfaceIconControl
+            surface="strip"
+            onGraphRoute={onGraphRoute}
+            href={`${graphHref}?surface=strip`}
+            icon={GalleryHorizontalEnd}
+            isActive={onGraphRoute && graphView.surface === "strip"}
+            label="Strip layout"
+            description="Graph timelines as strips"
           />
         </div>
       )}
 
       {activeProjectId && (
         <>
-          <div className="h-px w-10 shrink-0 bg-zinc-800/80" />
+          {/* zinc-500: the old zinc-800/80 vanished against the rail. */}
+          <div className="h-px w-10 shrink-0 bg-zinc-500" />
 
-          {/* `relative` so the graph board can portal its trash drop target
-              into the slot below, filling the palette's exact footprint and
-              morphing over the tools during a drag (see graph-sidebar-trash). */}
-          <div className="relative">
-            <SidebarToolPalette
-              canInsert={canInsertTools}
-              onActivate={handleToolActivate}
-              onDragStart={handleDragStart}
-              onDragEnd={handleDragEnd}
-            />
-            {/* pointer-events-none so the slot never covers the tool buttons'
-                own drag/click — it only hosts the portaled trash target, which
-                re-enables its OWN pointer-events while a card drag is live (a
-                child overriding a none parent), and whose dnd-kit drop is
-                rect-based regardless. Without this the slot ate the tools'
-                dragstart and sidebar tool-drag stopped working. */}
-            <div
-              id="graph-sidebar-trash-slot"
-              className="pointer-events-none absolute inset-0"
-            />
+          <div className="flex flex-col items-center gap-2">
+            {/* The preview-pane toggle leads the cluster (was the breadcrumb
+                row's TV icon). */}
+            {onGraphRoute && (
+              <button
+                type="button"
+                aria-pressed={graphView.previewOn}
+                aria-label={graphView.previewOn ? "Hide preview" : "Show preview"}
+                aria-describedby="sidebar-tooltip-preview"
+                onClick={requestGraphPreviewToggle}
+                className={cn(
+                  SIDEBAR_ICON_BASE,
+                  graphView.previewOn ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+                )}
+              >
+                <TvMinimal className="h-4 w-4 transition-colors" />
+                <SidebarTooltipLabel
+                  id="sidebar-tooltip-preview"
+                  label="Preview"
+                  description="Play the focused timeline"
+                />
+              </button>
+            )}
+
+            {/* `relative` so the graph board can portal its trash drop target
+                into the slot below, filling the palette's exact footprint and
+                morphing over the tools during a drag (see graph-sidebar-trash). */}
+            <div className="relative">
+              <SidebarToolPalette
+                canInsert={canInsertTools}
+                onActivate={handleToolActivate}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+              />
+              {/* pointer-events-none so the slot never covers the tool buttons'
+                  own drag/click — it only hosts the portaled trash target, which
+                  re-enables its OWN pointer-events while a card drag is live (a
+                  child overriding a none parent), and whose dnd-kit drop is
+                  rect-based regardless. Without this the slot ate the tools'
+                  dragstart and sidebar tool-drag stopped working. */}
+              <div
+                id="graph-sidebar-trash-slot"
+                className="pointer-events-none absolute inset-0"
+              />
+            </div>
+
+            {/* The children-timelines toggle, under the Collection tool: the
+                two are a pair (Collection MAKES a nested timeline, this shows
+                or hides the tree of them). */}
+            {onGraphRoute && (
+              <button
+                type="button"
+                aria-pressed={graphView.childrenShown}
+                aria-label={
+                  graphView.childrenShown
+                    ? "Hide children timelines"
+                    : "Show children timelines"
+                }
+                aria-describedby="sidebar-tooltip-children"
+                onClick={requestGraphChildrenToggle}
+                className={cn(
+                  SIDEBAR_ICON_BASE,
+                  graphView.childrenShown ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+                )}
+              >
+                <FolderTree className="h-4 w-4 transition-colors" />
+                <SidebarTooltipLabel
+                  id="sidebar-tooltip-children"
+                  label="Children timelines"
+                  description="Show the nested timeline tree"
+                />
+              </button>
+            )}
+
+            {/* The strip's time-ruler toggle (was in the breadcrumb row). It
+                rides under the children toggle and only exists in strip
+                layout — the grid has no single time axis for a ruler to
+                mark. */}
+            {onGraphRoute && graphView.surface === "strip" && (
+              <button
+                type="button"
+                aria-pressed={graphView.rulerOn}
+                aria-label={graphView.rulerOn ? "Hide time ruler" : "Show time ruler"}
+                aria-describedby="sidebar-tooltip-ruler"
+                onClick={requestGraphRulerToggle}
+                className={cn(
+                  SIDEBAR_ICON_BASE,
+                  graphView.rulerOn ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+                )}
+              >
+                <Ruler className="h-4 w-4 transition-colors" />
+                <SidebarTooltipLabel
+                  id="sidebar-tooltip-ruler"
+                  label="Time ruler"
+                  description="Tick marks over every strip"
+                />
+              </button>
+            )}
           </div>
         </>
       )}

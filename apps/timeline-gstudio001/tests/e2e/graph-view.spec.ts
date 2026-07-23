@@ -330,10 +330,17 @@ async function gridOrder(page: Page, collectionId: string): Promise<string[]> {
 }
 
 async function openGraph(page: Page): Promise<void> {
-  await page.goto(GRAPH_URL);
+  // GRID is the bare-URL load default; this suite's tests are written
+  // against strips, so land directly in strip layout via the deep-link
+  // param (the same one the sidebar's Strip icon uses off-graph).
+  await page.goto(`${GRAPH_URL}?surface=strip`);
   await strip(page, PROJECT_ID)
     .locator('[data-node-id="alpha"]')
     .waitFor({ state: "visible", timeout: 30000 });
+  // Children timelines are OFF by default now; this suite predates that
+  // and reads the tree throughout, so reveal it through the real control
+  // (the sidebar's children icon).
+  await page.getByRole("button", { name: "Show children timelines" }).click();
 }
 
 /** Sub-graph rows start COLLAPSED — expand one to reveal its (lazy-hydrated)
@@ -415,14 +422,20 @@ async function holdDrag(
 const undoButton = (page: Page): Locator => page.getByRole("button", { name: /undo/i });
 const redoButton = (page: Page): Locator => page.getByRole("button", { name: /redo/i });
 
-// Scope header toggles to the main region so sidebar buttons never match.
-const headerToggle = (page: Page, label: string): Locator =>
-  page.getByRole("main").getByRole("button", { name: label, exact: true });
+// The layout switch lives in the SIDEBAR now (its top icons drive the graph
+// surface through the event bridge); the breadcrumb row has no toggle.
+const surfaceButton = (page: Page, surface: "strip" | "grid"): Locator =>
+  page.getByRole("button", {
+    name: surface === "grid" ? "Grid layout" : "Strip layout",
+    exact: true,
+  });
 
 // The preview toggle is an ICON button whose accessible name flips with
-// state ("Show preview" / "Hide preview") — a fixed exact label can't find it.
+// state ("Show preview" / "Hide preview") — a fixed exact label can't find
+// it. It lives in the SIDEBAR now (first icon under the separator), so no
+// main-region scoping.
 const previewToggle = (page: Page): Locator =>
-  page.getByRole("main").getByRole("button", { name: /(show|hide) preview/i });
+  page.getByRole("button", { name: /(show|hide) preview/i });
 
 // The board's own "Assets" button is gone — the SIDEBAR button is the one
 // affordance, and on graph routes it hands off to the palette drawer.
@@ -732,23 +745,60 @@ test.describe("graph view E2E", () => {
       .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
       .toEqual(["c1", "c2"]);
 
-    const layout = page.getByRole("group", { name: "Timeline layout" });
     const childStrip = page.locator(`[data-virtual-strip="${CHILD_ID}"]`);
     const childGrid = page.locator(`[data-virtual-grid="${CHILD_ID}"]`);
 
-    // Default strip mode: the child row is a strip.
+    // openGraph lands in strip mode: the child row is a strip.
     await expect(childStrip).toBeVisible();
     await expect(childGrid).toHaveCount(0);
 
-    // Toggle grid → the child follows the page-wide surface, not just the focus.
-    await layout.getByRole("button", { name: "grid" }).click();
+    // Sidebar Grid icon → the child follows the page-wide surface, not just
+    // the focus.
+    await surfaceButton(page, "grid").click();
     await expect(childGrid).toBeVisible();
     await expect(childStrip).toHaveCount(0);
 
     // Back to strip → the child follows again.
-    await layout.getByRole("button", { name: "strip" }).click();
+    await surfaceButton(page, "strip").click();
     await expect(childStrip).toBeVisible();
     await expect(childGrid).toHaveCount(0);
+  });
+
+  test("grid is the bare-URL default; the sidebar owns layout and the strip-only ruler toggle", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    // No ?surface param: the graph must land in GRID layout, with the
+    // sidebar's Grid icon pressed and no ruler toggle (grid has no time
+    // axis; the breadcrumb row hosts neither control anymore).
+    await page.goto(GRAPH_URL);
+    await expect(page.locator(`[data-virtual-grid="${PROJECT_ID}"]`)).toBeVisible();
+    await expect(surfaceButton(page, "grid")).toHaveAttribute("aria-pressed", "true");
+    await expect(surfaceButton(page, "strip")).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("button", { name: /show time ruler/i })).toHaveCount(0);
+
+    // Children timelines are opt-in: OFF by default, mounted by the
+    // sidebar's children icon.
+    await expect(
+      page.getByRole("button", { name: "Show children timelines" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
+
+    // Strip icon → strip layout, and the ruler toggle appears in the
+    // sidebar under the tool cluster.
+    await surfaceButton(page, "strip").click();
+    await expect(strip(page, PROJECT_ID)).toBeVisible();
+    await expect(surfaceButton(page, "strip")).toHaveAttribute("aria-pressed", "true");
+    const rulerToggle = page.getByRole("button", { name: /show time ruler/i });
+    await expect(rulerToggle).toBeVisible();
+
+    // It toggles the real ruler and reads back pressed.
+    await rulerToggle.click();
+    await expect(page.getByRole("button", { name: /hide time ruler/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.locator("[data-graph-ruler]").first()).toBeVisible();
   });
 
   test("preview height is the user's: tree growth never steals it, and a toggle restores it", async ({
@@ -818,9 +868,15 @@ test.describe("graph view E2E", () => {
     // clamp against the pinned layout, which is a different question than
     // height persistence.
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
-    await previewToggle(page).click();
+    // KEYBOARD activation for the off/on cycle: a mouse click here made the
+    // runner scroll the page mid-toggle (the fresh pane then mounted pinned
+    // and clamped the restored height — a different question than height
+    // persistence, which is this test's subject).
+    await previewToggle(page).focus();
+    await page.keyboard.press("Enter");
     await expect(divider).toHaveCount(0);
-    await previewToggle(page).click();
+    await previewToggle(page).focus();
+    await page.keyboard.press("Enter");
     await expect(divider).toBeVisible();
     await expect.poll(heightOf).toBe(initial);
   });
@@ -907,10 +963,7 @@ test.describe("graph view E2E", () => {
     await openGraph(page);
     // Switch the surface to grid; the cards become grid cells (same NodeCard,
     // now with "hold" drag activation so a press-and-hold reorders).
-    await page
-      .getByRole("group", { name: "Timeline layout" })
-      .getByRole("button", { name: "grid" })
-      .click();
+    await surfaceButton(page, "grid").click();
     const projectGrid = page.locator(`[data-virtual-grid="${PROJECT_ID}"]`);
     await expect(projectGrid).toBeVisible();
 
@@ -961,7 +1014,8 @@ test.describe("graph view E2E", () => {
     await undoButton(page).click();
 
     await page.goBack();
-    await page.waitForURL(`**${GRAPH_URL}`);
+    // `*` tail: openGraph lands with ?surface=strip, and BACK returns to it.
+    await page.waitForURL(`**${GRAPH_URL}*`);
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
@@ -1300,10 +1354,7 @@ test.describe("graph view E2E", () => {
     await installGraphApi(page);
     await openGraph(page);
     // Switch the surface to grid, then turn Preview on.
-    await page
-      .getByRole("group", { name: "Timeline layout" })
-      .getByRole("button", { name: "grid" })
-      .click();
+    await surfaceButton(page, "grid").click();
     await previewToggle(page).click();
 
     const playhead = page.locator("[data-graph-grid-playhead]");
@@ -1495,7 +1546,7 @@ test.describe("graph view E2E", () => {
     // A skipped level breaks the chain: the child's clips are not children
     // of the project directly... but a LEGITIMATE deep link to the child
     // itself passes every edge and hydrates on boot.
-    await page.goto(`${GRAPH_URL}/${CHILD_ID}`);
+    await page.goto(`${GRAPH_URL}/${CHILD_ID}?surface=strip`);
     await expect
       .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
       .toEqual(["c1", "c2"]);
@@ -1598,7 +1649,8 @@ test.describe("graph view E2E", () => {
       await collectionCard.click({ position: { x: cardBox.width / 2, y: cardBox.height - 4 } });
       await expect(collectionCard).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}$`));
+    // Query-tolerant: openGraph lands with ?surface=strip on the same path.
+    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
 
     // The folder button is the pointer twin of O: it DRILLS IN. It is a real
     // <button> SIBLING of the selection surface (nesting one in the card
@@ -1660,27 +1712,11 @@ test.describe("graph view E2E", () => {
     await openGraph(page);
     const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
 
-    // 1) Sidebar IMAGE tool: mints a placeholder image clip at the drop
-    //    position (clientX 0 = before the first card).
-    const toolTransfer = await page.evaluateHandle(() => {
-      const transfer = new DataTransfer();
-      transfer.setData("application/x-gstudio-type", "image");
-      return transfer;
-    });
-    await dropZone.dispatchEvent("drop", { dataTransfer: toolTransfer, clientX: 0 });
-    await expect
-      .poll(() => stripOrder(page, PROJECT_ID))
-      .toEqual([
-        expect.stringMatching(/^image-/),
-        "alpha",
-        "bravo",
-        CHILD_ID,
-        "charlie",
-      ]);
-
-    // 2) Sidebar COLLECTION tool: mints a new collection AND creates its
-    //    (empty) child document in the SAME atomic batch as the parent
-    //    update — a drill-in can never 404 on a half-created collection.
+    // 1) Sidebar COLLECTION tool (the only palette tool): mints a new
+    //    collection at the drop position (clientX 0 = before the first
+    //    card) AND creates its (empty) child document in the SAME atomic
+    //    batch as the parent update — a drill-in can never 404 on a
+    //    half-created collection.
     const collectionTransfer = await page.evaluateHandle(() => {
       const transfer = new DataTransfer();
       transfer.setData("application/x-gstudio-type", "collection");
@@ -1703,7 +1739,7 @@ test.describe("graph view E2E", () => {
       api.batches.some((batch) => batch.includes(newChildId) && batch.includes(PROJECT_ID)),
     ).toBe(true);
 
-    // 3) OS FILE drop, several at once: both upload and land as ONE commit.
+    // 2) OS FILE drop, several at once: both upload and land as ONE commit.
     const fileTransfer = await page.evaluateHandle(() => {
       const transfer = new DataTransfer();
       transfer.items.add(new File([new Uint8Array([137, 80, 78, 71])], "photo-a.png", { type: "image/png" }));
@@ -1711,22 +1747,22 @@ test.describe("graph view E2E", () => {
       return transfer;
     });
     await dropZone.dispatchEvent("drop", { dataTransfer: fileTransfer, clientX: 0 });
-    // 4 fixture clips + image tool + collection tool + 2 files = 8.
+    // 4 fixture clips + collection tool + 2 files = 7.
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length), { timeout: 10000 })
-      .toBe(8);
+      .toBe(7);
     expect(uploads).toBe(2);
 
     // Both files persisted into the project document in one write.
     await expect
       .poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds.length, { timeout: 5000 })
-      .toBe(8);
+      .toBe(7);
 
     // The whole file drop is ONE undoable step.
     await undoButton(page).click();
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
-      .toBe(6);
+      .toBe(5);
   });
 
   test("sidebar tools insert from the KEYBOARD, with no pointer involved", async ({ page }) => {
@@ -1737,21 +1773,21 @@ test.describe("graph view E2E", () => {
     await installGraphApi(page);
     await openGraph(page);
 
-    const imageTool = page.getByRole("button", { name: /add image clip/i });
-    await expect(imageTool).toBeVisible();
+    const collectionTool = page.getByRole("button", { name: /add collection/i });
+    await expect(collectionTool).toBeVisible();
 
     // Reach it by TABBING — it must be in the focus order, not just clickable.
-    await imageTool.focus();
-    await expect(imageTool).toBeFocused();
+    await collectionTool.focus();
+    await expect(collectionTool).toBeFocused();
     await page.keyboard.press("Enter");
 
     // Appended to the end of the focused timeline.
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
-      .toEqual(["alpha", "bravo", CHILD_ID, "charlie", expect.stringMatching(/^image-/)]);
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie", expect.stringMatching(/^timeline-/)]);
 
     // Space is the other native activation key, and must not be swallowed.
-    await imageTool.focus();
+    await collectionTool.focus();
     await page.keyboard.press(" ");
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
@@ -1766,7 +1802,52 @@ test.describe("graph view E2E", () => {
     // And it persists.
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.at(-1)), { timeout: 5000 })
-      .toMatch(/^image-/);
+      .toMatch(/^timeline-/);
+  });
+
+  test("the collection tool lands AFTER the selected card, in that card's own strip", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // Select bravo (a media clip: click toggles selection, no drill)…
+    await strip(page, PROJECT_ID).locator('[data-node-id="bravo"]').click();
+    await expect(strip(page, PROJECT_ID).locator('[data-node-id="bravo"]')).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+
+    // …then CLICK the sidebar tool: sidebar clicks never clear selection,
+    // so the new collection lands right after bravo, not at the end.
+    const collectionTool = page.getByRole("button", { name: /add collection/i });
+    await collectionTool.click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual([
+        "alpha",
+        "bravo",
+        expect.stringMatching(/^timeline-/),
+        CHILD_ID,
+        "charlie",
+      ]);
+
+    // The selected card may live in ANY strip: select c1 in the CHILD
+    // timeline — the insert follows the selection there, not the focus.
+    await expandSubGraph(page, "Scene A");
+    await expect
+      .poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 })
+      .toEqual(["c1", "c2"]);
+    await strip(page, CHILD_ID).locator('[data-node-id="c1"]').click();
+    await collectionTool.click();
+    await expect
+      .poll(() => stripOrder(page, CHILD_ID))
+      .toEqual(["c1", expect.stringMatching(/^timeline-/), "c2"]);
+
+    // The focused root gained exactly the ONE insert from before.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
+      .toBe(5);
   });
 
   test("keyboard insertion works in grid mode too", async ({ page }) => {
@@ -1775,7 +1856,7 @@ test.describe("graph view E2E", () => {
     // insert bridge is mounted for both surfaces either way.
     await installGraphApi(page);
     await openGraph(page);
-    await headerToggle(page, "grid").click();
+    await surfaceButton(page, "grid").click();
     await expect(page.locator(`[data-native-drop="${PROJECT_ID}"]`)).toHaveCount(1);
 
     await page.getByRole("button", { name: /add collection/i }).focus();
@@ -1897,7 +1978,7 @@ test.describe("graph view E2E", () => {
         const zone = document.querySelector("[data-native-drop]");
         if (!zone) throw new Error("no drop zone");
         const transfer = new DataTransfer();
-        transfer.setData("application/x-gstudio-type", "image");
+        transfer.setData("application/x-gstudio-type", "collection");
 
         const win = window as unknown as { __rectCalls: number };
         win.__rectCalls = 0;
@@ -2120,35 +2201,32 @@ test.describe("graph view E2E", () => {
     await installGraphApi(page);
     await openGraph(page);
 
-    const imageTool = page.getByRole("button", { name: /add image clip/i });
-    await expect(imageTool).toHaveAttribute("draggable", "true");
+    const collectionTool = page.getByRole("button", { name: /add collection/i });
+    await expect(collectionTool).toHaveAttribute("draggable", "true");
 
-    const carried = await imageTool.evaluate((el) => {
+    const carried = await collectionTool.evaluate((el) => {
       const transfer = new DataTransfer();
       el.dispatchEvent(new DragEvent("dragstart", { dataTransfer: transfer, bubbles: true }));
       return transfer.getData("application/x-gstudio-type");
     });
-    expect(carried).toBe("image");
+    expect(carried).toBe("collection");
 
     // ...and the button must actually RECEIVE that dragstart under a real
     // pointer. dispatchEvent above bypasses hit-testing, so it can't catch the
     // regression where the graph's trash slot (an absolute overlay covering
     // the palette footprint) sits ON TOP of the tools and eats their gesture.
-    // Assert hit-testing: the element at each tool's own centre is that tool,
+    // Assert hit-testing: the element at the tool's own centre is that tool,
     // not the slot. (The slot must stay pointer-events-none — R6 #9.)
-    for (const name of [/add collection/i, /add image clip/i, /add video clip/i]) {
-      const tool = page.getByRole("button", { name });
-      const hit = await tool.evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-        return {
-          onThisTool: el.contains(top),
-          coveredBySlot: top?.closest("#graph-sidebar-trash-slot") != null,
-        };
-      });
-      expect(hit.coveredBySlot).toBe(false);
-      expect(hit.onThisTool).toBe(true);
-    }
+    const hit = await collectionTool.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return {
+        onThisTool: el.contains(top),
+        coveredBySlot: top?.closest("#graph-sidebar-trash-slot") != null,
+      };
+    });
+    expect(hit.coveredBySlot).toBe(false);
+    expect(hit.onThisTool).toBe(true);
   });
 
   test("the ruler renders on EVERY displayed strip, not just the focused one", async ({

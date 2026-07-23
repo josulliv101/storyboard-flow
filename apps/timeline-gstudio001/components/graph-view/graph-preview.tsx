@@ -128,6 +128,38 @@ export function usePreviewCardSpans(): PreviewCardSpans | null {
   return useContext(PreviewCardSpansContext);
 }
 
+/**
+ * Clip count and total seconds of the focused timeline — the board header's
+ * centred aggregate readout. Same plumbing as the playheads (graph + details
+ * + manifest spans through `childSpans`), so its total always agrees with
+ * where the playhead can actually reach.
+ */
+export function useFocusedTimelineAggregate(
+  focusedId: string,
+  pixelsPerSecond: number,
+): Readonly<{ count: number; seconds: number }> {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
+  const graph = useSyncExternalStore(
+    store.subscribe,
+    () => store.getSnapshot().graph,
+    () => store.getSnapshot().graph,
+  );
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    () => detailsStore.read(),
+    () => detailsStore.read(),
+  );
+  return useMemo(() => {
+    const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
+    return {
+      count: cards.length,
+      seconds: cards.length > 0 ? cards[cards.length - 1].endTime : 0,
+    };
+  }, [graph, details, focusedId, spans, pixelsPerSecond]);
+}
+
 
 export function GraphPlayhead({
   focusedId,
@@ -183,12 +215,14 @@ export function GraphPlayhead({
   }, [store, detailsStore, focusedId, channel, spans, pixelsPerSecond, activeWindow]);
 
   // No cap on the line: the seek rail's circular thumb above IS the
-  // playhead's head now — the old triangle poked up over it.
+  // playhead's head now — the old triangle poked up over it. The stem
+  // reaches up through the band's clearance (-top-1 = the 4px inset) so it
+  // meets the track's underside instead of floating below it.
   return (
     <div
       ref={lineRef}
       data-graph-playhead
-      className="absolute inset-y-0 left-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+      className="absolute -top-1 bottom-0 left-0 w-0.5 bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.9)]"
     />
   );
 }
@@ -428,8 +462,10 @@ export function GraphGridPlayhead({
       line.style.display = inside ? "" : "none";
       if (!inside) return;
       const { x, y } = map.posAt(time);
-      line.style.transform = `translate(${x}px, ${y}px)`;
-      line.style.height = `${map.rowHeight}px`;
+      // Reach up through the band's clearance so the stem meets its row
+      // rail's underside (the strip line does the same via -top-1).
+      line.style.transform = `translate(${x}px, ${y - SEEK_RAIL_BAND_INSET_PX}px)`;
+      line.style.height = `${map.rowHeight + SEEK_RAIL_BAND_INSET_PX}px`;
     };
 
     paint();
@@ -461,6 +497,15 @@ export function GraphGridPlayhead({
 
 /** Keyboard step for the seek rails: one nudge per arrow press. */
 const SEEK_RAIL_STEP_SECONDS = 1;
+
+/** The rail's slim track vs the BAND it rides (the grid's row gap; the
+ *  strip's `pt-4` top padding). The track centres in the band, so the
+ *  clearance on each side keeps the track and its thumb clear of the cards
+ *  — rail and items never overlap, and a selected card's ring stays fully
+ *  visible (the old design filled the band edge-to-edge and sat flush on
+ *  the card tops). */
+const SEEK_RAIL_TRACK_PX = 8;
+const SEEK_RAIL_BAND_INSET_PX = (GRID_GAP - SEEK_RAIL_TRACK_PX) / 2;
 
 type SeekRailGeometry = Readonly<{
   columns: number;
@@ -621,7 +666,12 @@ function SeekRailRow({
       // dark backdrop, where a see-through zinc melted away entirely — the
       // user read row 1 as having "no rail" (R7 follow-up).
       className="group pointer-events-auto absolute cursor-ew-resize touch-none rounded-full bg-zinc-700 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-white/25 transition-shadow hover:ring-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-      style={{ left: x, top: y, width: extent, height: GRID_GAP }}
+      style={{
+        left: x,
+        top: y + SEEK_RAIL_BAND_INSET_PX,
+        width: extent,
+        height: SEEK_RAIL_TRACK_PX,
+      }}
     >
       {/* Elapsed fill, then boundary ticks, then the thumb on top. */}
       <div
@@ -638,15 +688,15 @@ function SeekRailRow({
           style={{ left: `${(((index + 1) * pitch - GRID_GAP / 2) / extent) * 100}%` }}
         />
       ))}
-      {/* h-2.5, not larger: the rail lives in the 8px row gap, and a taller
-          thumb overhangs onto the cards below — the "item overlaps rail"
-          complaint. 1px of kiss is invisible; the whole rail is the hit
+      {/* h-3: the head is visibly bigger than the slim track (2px past it
+          each side), and the band's inset keeps even that overhang clear of
+          the cards — thumb and items never touch. The whole rail is the hit
           target anyway. */}
       <div
         ref={thumbRef}
         data-rail-thumb
         aria-hidden="true"
-        className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
+        className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
       />
     </div>
   );
@@ -901,8 +951,13 @@ export function GraphStripSeekRail({
       const scrollerRect = scroller.getBoundingClientRect();
       const wrapperRect = wrapper.getBoundingClientRect();
       const left = scrollerRect.left - wrapperRect.left + padLeft;
+      // Centre the slim track in the scroller's top padding band (falls
+      // back to flush-at-top if the padding is no taller than the track).
       const top =
-        scrollerRect.top - wrapperRect.top + parseFloat(styles.borderTopWidth);
+        scrollerRect.top -
+        wrapperRect.top +
+        parseFloat(styles.borderTopWidth) +
+        Math.max(0, (parseFloat(styles.paddingTop) - SEEK_RAIL_TRACK_PX) / 2);
       const width = Math.max(0, scroller.clientWidth - padLeft - padRight + 1);
       setGeometry((previous) =>
         previous &&
@@ -932,17 +987,33 @@ export function GraphStripSeekRail({
     const scroller = outer.parentElement?.querySelector<HTMLElement>("[data-virtual-strip]");
     if (!scroller) return;
 
+    // The thumb lives OUTSIDE the pill's clip in window coordinates
+    // (content x − scrollLeft), so the circle stays whole at the timeline's
+    // ends. It hides once fully past the window's edge (a detached head
+    // floating beside the pill would read as a bug); `contentX` carries the
+    // last painted position into scroll-only frames.
+    let contentX = 0;
+    const placeThumb = () => {
+      const windowX = contentX - scroller.scrollLeft;
+      thumb.style.left = `${windowX}px`;
+      const overhang = thumb.offsetWidth / 2;
+      const visible =
+        thumb.dataset.active !== "false" &&
+        windowX >= -overhang &&
+        windowX <= outer.clientWidth + overhang;
+      thumb.style.visibility = visible ? "" : "hidden";
+    };
     const syncScroll = () => {
       inner.style.transform = `translateX(${-scroller.scrollLeft}px)`;
+      placeThumb();
     };
     const paint = () => {
       const time = channel.get();
-      const active = time >= start && time <= end;
-      thumb.style.visibility = active ? "" : "hidden";
+      thumb.dataset.active = String(time >= start && time <= end);
       const clamped = Math.min(end, Math.max(start, time));
-      const x = map.xAt(clamped);
-      fill.style.width = `${x}px`;
-      thumb.style.left = `${x}px`;
+      contentX = map.xAt(clamped);
+      fill.style.width = `${contentX}px`;
+      placeThumb();
       outer.setAttribute("aria-valuenow", (clamped - start).toFixed(1));
       outer.setAttribute(
         "aria-valuetext",
@@ -1082,50 +1153,59 @@ export function GraphStripSeekRail({
         revealTime(next);
         event.preventDefault();
       }}
-      // The OUTER element wears the grid rail's exact chrome (rounded pill,
-      // solid track, groove, ring) so both surfaces read as one control —
-      // the window IS the visible track, and it ends at the LAST item when
-      // the timeline fits (min with the extent, exactly like a grid rail).
-      // When the timeline overflows, the pill spans the viewport and the
-      // content layer slides inside it.
-      className="group absolute z-20 cursor-ew-resize touch-none overflow-hidden rounded-full bg-zinc-700 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-white/25 transition-shadow hover:ring-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      // The pill wears the grid rail's exact chrome (rounded, solid track,
+      // groove, ring) so both surfaces read as one control — the window IS
+      // the visible track, and it ends at the LAST item when the timeline
+      // fits (min with the extent, exactly like a grid rail). When the
+      // timeline overflows, the pill spans the viewport and the content
+      // layer slides inside it. The chrome lives on an INNER clip layer:
+      // only fill and ticks clip to the pill, while the thumb rides the
+      // unclipped outer in window coordinates — the circle stays whole at
+      // the timeline's ends instead of being cut by the pill's corner.
+      className="group absolute z-20 cursor-ew-resize touch-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
       style={
         geometry
           ? {
               left: geometry.left,
               top: geometry.top,
               width: Math.min(extent, geometry.width),
-              height: 8,
+              height: SEEK_RAIL_TRACK_PX,
             }
-          : { left: 9, top: 1, right: 9, height: 8 }
+          : { left: 9, top: 1 + SEEK_RAIL_BAND_INSET_PX, right: 9, height: SEEK_RAIL_TRACK_PX }
       }
     >
-      {/* Content-space layer: as wide as the timeline, translated against
-          the scroller so fill, ticks and thumb stay glued to their cards. */}
-      <div ref={innerRef} className="relative h-full" style={{ width: extent }}>
-        <div
-          ref={fillRef}
-          data-rail-fill
-          aria-hidden="true"
-          className="absolute inset-y-0 left-0 rounded-full bg-sky-400/40"
-        />
-        {ticks.map((x, index) => (
-          <span
-            key={index}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 overflow-hidden rounded-full bg-zinc-700 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-white/25 transition-shadow group-hover:ring-white/40"
+      >
+        {/* Content-space layer: as wide as the timeline, translated against
+            the scroller so fill and ticks stay glued to their cards. */}
+        <div ref={innerRef} className="relative h-full" style={{ width: extent }}>
+          <div
+            ref={fillRef}
+            data-rail-fill
             aria-hidden="true"
-            className="absolute inset-y-0 w-px bg-white/30"
-            style={{ left: x }}
+            className="absolute inset-y-0 left-0 rounded-full bg-sky-400/40"
           />
-        ))}
-        {/* h-2.5 like the grid rails: 1px of kiss past the 8px band, no
-            overhang onto the cards. */}
-        <div
-          ref={thumbRef}
-          data-rail-thumb
-          aria-hidden="true"
-          className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
-        />
+          {ticks.map((x, index) => (
+            <span
+              key={index}
+              aria-hidden="true"
+              className="absolute inset-y-0 w-px bg-white/30"
+              style={{ left: x }}
+            />
+          ))}
+        </div>
       </div>
+      {/* h-3 like the grid rails: the head is visibly bigger than the slim
+          track, and the band's inset keeps it clear of the cards. Window
+          coordinates (painted as content x − scrollLeft), unclipped. */}
+      <div
+        ref={thumbRef}
+        data-rail-thumb
+        aria-hidden="true"
+        className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
+      />
     </div>
   );
 }

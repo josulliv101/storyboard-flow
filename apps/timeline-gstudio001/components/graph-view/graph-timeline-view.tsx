@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -33,7 +33,15 @@ import {
   graphDocumentsGateway,
   type GraphServerPayload,
 } from "@/lib/graph-documents-gateway";
-import { GRAPH_ASSETS_TOGGLE_EVENT } from "@/lib/graph-view-events";
+import {
+  GRAPH_ASSETS_TOGGLE_EVENT,
+  GRAPH_CHILDREN_TOGGLE_EVENT,
+  GRAPH_PREVIEW_TOGGLE_EVENT,
+  GRAPH_RULER_TOGGLE_EVENT,
+  GRAPH_SURFACE_EVENT,
+  broadcastGraphViewState,
+  type GraphSurface,
+} from "@/lib/graph-view-events";
 
 import { AssetPaletteDrawer } from "./graph-asset-palette";
 import { toast } from "@/components/core/sonner";
@@ -58,7 +66,7 @@ import {
   DEFAULT_TIMELINE_PPS,
   FALLBACK_DETAIL,
 } from "./graph-view-config";
-import { GraphBreadcrumb, GraphViewChrome } from "./graph-view-chrome";
+import { GraphBreadcrumb } from "./graph-view-chrome";
 
 type BootState =
   | Readonly<{ status: "loading" }>
@@ -105,12 +113,20 @@ export function GraphTimelineView({
   const [detailsStore] = useState(() => createGraphDetailsStore());
   const [focusError, setFocusError] = useState<string | null>(null);
   const [syncLog, setSyncLog] = useState<readonly SyncEntry[]>([]);
-  const [surface, setSurface] = useState<FocusSurface>("strip");
+  // GRID is the load default (the sidebar's first icon); `?surface=strip`
+  // lets a link land directly in strip mode. The graph tree mounts
+  // client-only (`ssr: false` in client-graph-view), so useSearchParams has
+  // no prerender/Suspense implications.
+  const initialSurface = useSearchParams().get("surface");
+  const [surface, setSurface] = useState<FocusSurface>(
+    initialSurface === "strip" ? "strip" : "grid",
+  );
   const [itemSize, setItemSize] = useState<ItemSize>(DEFAULT_ITEM_SIZE);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_TIMELINE_PPS);
-  // Children timelines render by default (their absence would hide the tree);
-  // the FolderTree toggle unmounts them.
-  const [childrenShown, setChildrenShown] = useState(true);
+  // Children timelines are OFF by default (the focused timeline is the
+  // page's subject; the tree is opt-in) — the sidebar's children icon
+  // mounts them.
+  const [childrenShown, setChildrenShown] = useState(false);
   const [previewOn, setPreviewOn] = useState(false);
   const [rulerOn, setRulerOn] = useState(false);
   const [timeChannel] = useState(createPreviewTimeChannel);
@@ -121,6 +137,34 @@ export function GraphTimelineView({
     window.addEventListener(GRAPH_ASSETS_TOGGLE_EVENT, toggle);
     return () => window.removeEventListener(GRAPH_ASSETS_TOGGLE_EVENT, toggle);
   }, []);
+
+  // The sidebar owns the layout switch and the ruler toggle (its top icons /
+  // tool cluster); it drives this state through request events…
+  useEffect(() => {
+    const onSurface = (event: Event) => {
+      const detail = (event as CustomEvent<GraphSurface>).detail;
+      if (detail === "strip" || detail === "grid") setSurface(detail);
+    };
+    const onRulerToggle = () => setRulerOn((current) => !current);
+    const onChildrenToggle = () => setChildrenShown((current) => !current);
+    const onPreviewToggle = () => setPreviewOn((current) => !current);
+    window.addEventListener(GRAPH_SURFACE_EVENT, onSurface);
+    window.addEventListener(GRAPH_RULER_TOGGLE_EVENT, onRulerToggle);
+    window.addEventListener(GRAPH_CHILDREN_TOGGLE_EVENT, onChildrenToggle);
+    window.addEventListener(GRAPH_PREVIEW_TOGGLE_EVENT, onPreviewToggle);
+    return () => {
+      window.removeEventListener(GRAPH_SURFACE_EVENT, onSurface);
+      window.removeEventListener(GRAPH_RULER_TOGGLE_EVENT, onRulerToggle);
+      window.removeEventListener(GRAPH_CHILDREN_TOGGLE_EVENT, onChildrenToggle);
+      window.removeEventListener(GRAPH_PREVIEW_TOGGLE_EVENT, onPreviewToggle);
+    };
+  }, []);
+
+  // …and this broadcast (on mount and every change) is what lets its
+  // controls show the current surface, ruler, children, and preview state.
+  useEffect(() => {
+    broadcastGraphViewState({ surface, rulerOn, childrenShown, previewOn });
+  }, [surface, rulerOn, childrenShown, previewOn]);
 
   const gatewayError = useSyncExternalStore(
     graphDocumentsGateway.subscribe,
@@ -348,9 +392,15 @@ export function GraphTimelineView({
     );
   }
 
+  // The old "Storyboard view" chrome row above the preview is gone — the
+  // link lives in the board's overflow menu now, so the page starts at the
+  // preview itself.
+  const storyboardHref = `/timeline/${encodeURIComponent(projectId)}/storyboard${
+    focusedId === projectId ? "" : `/${encodeURIComponent(focusedId)}`
+  }`;
+
   return (
     <div className="flex flex-col gap-4">
-      <GraphViewChrome projectId={projectId} timelinePath={timelinePath} />
       {gatewayError !== null && (
         <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           {gatewayError}
@@ -418,17 +468,14 @@ export function GraphTimelineView({
                   <GraphBreadcrumb projectId={projectId} timelinePath={timelinePath} />
                 }
                 surface={surface}
-                onSurfaceChange={setSurface}
                 itemSize={itemSize}
                 onItemSizeChange={setItemSize}
                 pixelsPerSecond={pixelsPerSecond}
                 onPixelsPerSecondChange={setPixelsPerSecond}
                 previewOn={previewOn}
-                onTogglePreview={() => setPreviewOn((current) => !current)}
                 rulerOn={rulerOn}
-                onToggleRuler={() => setRulerOn((current) => !current)}
+                storyboardHref={storyboardHref}
                 childrenShown={childrenShown}
-                onToggleChildren={() => setChildrenShown((current) => !current)}
                 timeChannel={timeChannel}
                 trashRootId={boot.trashRootId}
                 syncEntries={syncLog}
