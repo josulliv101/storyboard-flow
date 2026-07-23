@@ -429,14 +429,14 @@ export function GraphTimelineView({
         // from ever colliding.
         clickSelection="toggle"
         trimRequiresSelection
-        // The drag ghost is a fixed SQUARE thumbnail of the item (see
+        // The drag ghost is a fixed 16:9 thumbnail of the item (see
         // GraphGhost): width AND height pinned so it shows the clip's own
-        // frame at a stable 1:1, centred on the grabbed pixel, instead of a
-        // duration-shaped card that (for a long clip) buried the drop target
-        // it was aimed at. Kept SMALL so it doesn't cover the breadcrumb drop
-        // zones the user is aiming the drag at.
+        // frame at a stable landscape ratio, centred on the grabbed pixel,
+        // instead of a duration-shaped card that (for a long clip) buried the
+        // drop target it was aimed at. Kept SMALL so it doesn't cover the
+        // breadcrumb drop zones the user is aiming the drag at.
         dragGhostWidth={72}
-        dragGhostHeight={72}
+        dragGhostHeight={40}
         onOpenNode={handleOpenNode}
         openOnClick={openOnClick}
         commandPolicy={commandPolicy}
