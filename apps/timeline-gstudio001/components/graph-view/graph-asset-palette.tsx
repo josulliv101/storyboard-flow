@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Folder as FolderIcon } from "lucide-react";
 
 import {
   PaletteItem,
@@ -13,7 +14,7 @@ import {
 
 import { Button } from "@/components/core/button";
 import { useBottomDrawerInset } from "@/components/assets/use-bottom-drawer-inset";
-import type { Asset } from "@/lib/assets/types";
+import type { Asset, AssetFolder } from "@/lib/assets/types";
 
 import { clearPendingDetails, parkPendingDetail } from "./graph-pending-details";
 
@@ -66,12 +67,104 @@ function createNodeFromAsset(asset: Asset): CollectionItemNode {
   };
 }
 
+type PalettePage = Readonly<{
+  assets: readonly Asset[];
+  folders: readonly AssetFolder[];
+  truncated: boolean;
+}>;
+
 type AssetPaletteState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ status: "error"; message: string }>
-  | Readonly<{ status: "ready"; assets: readonly Asset[]; truncated: boolean }>;
+  | (Readonly<{ status: "ready" }> & PalettePage);
 
-function PaletteRail({ assets }: Readonly<{ assets: readonly Asset[] }>) {
+/**
+ * A folder tile in the rail — same footprint as an asset thumbnail so the
+ * rail scans as one row, but a plain BUTTON, not a PaletteItem: folders are
+ * navigation, not draggable media, and making them drag sources would hand
+ * dnd-kit a node factory with nothing to mint.
+ */
+function FolderTile({
+  folder,
+  onOpen,
+}: Readonly<{ folder: AssetFolder; onOpen: (path: readonly string[]) => void }>) {
+  return (
+    <button
+      type="button"
+      data-palette-folder={folder.name}
+      aria-label={`Open folder ${folder.name}`}
+      onClick={() => onOpen(folder.path)}
+      className="flex h-24 w-36 shrink-0 flex-col items-center justify-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 text-zinc-400 transition-colors hover:border-sky-500/50 hover:bg-zinc-900 hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+    >
+      <FolderIcon aria-hidden="true" className="h-6 w-6" />
+      <span className="w-full truncate text-center text-[10px] font-semibold text-zinc-300">
+        {folder.name}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * Where you are, and the way back up: Assets / segment / segment. Every
+ * ancestor is a button; the CURRENT folder is text (there is nowhere to go
+ * by clicking where you already are). At the root this renders as the plain
+ * heading it always was — a provider without folders never grows crumbs, so
+ * the degradation contract costs nothing here.
+ */
+function FolderBreadcrumb({
+  path,
+  onNavigate,
+}: Readonly<{ path: readonly string[]; onNavigate: (path: readonly string[]) => void }>) {
+  if (path.length === 0) {
+    return (
+      <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Assets</h3>
+    );
+  }
+  return (
+    <nav aria-label="Asset folders" className="flex min-w-0 items-center gap-1 text-xs">
+      <button
+        type="button"
+        onClick={() => onNavigate([])}
+        className="shrink-0 font-semibold uppercase tracking-[0.14em] text-zinc-400 hover:text-sky-300"
+      >
+        Assets
+      </button>
+      {path.map((segment, index) => {
+        const isCurrent = index === path.length - 1;
+        return (
+          <span key={index} className="flex min-w-0 items-center gap-1">
+            <span aria-hidden="true" className="shrink-0 text-zinc-700">
+              /
+            </span>
+            {isCurrent ? (
+              <span aria-current="page" className="truncate font-semibold text-zinc-200">
+                {segment}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onNavigate(path.slice(0, index + 1))}
+                className="truncate text-zinc-400 hover:text-sky-300"
+              >
+                {segment}
+              </button>
+            )}
+          </span>
+        );
+      })}
+    </nav>
+  );
+}
+
+function PaletteRail({
+  assets,
+  folders,
+  onOpenFolder,
+}: Readonly<{
+  assets: readonly Asset[];
+  folders: readonly AssetFolder[];
+  onOpenFolder: (path: readonly string[]) => void;
+}>) {
   const store = useCollectionsStore();
   const railRef = useRef<HTMLDivElement>(null);
   const panOptions = useMemo<Parameters<typeof usePanWithMomentum>[2]>(
@@ -87,6 +180,12 @@ function PaletteRail({ assets }: Readonly<{ assets: readonly Asset[] }>) {
       className="flex cursor-grab gap-2 overflow-x-auto pb-1 select-none active:cursor-grabbing"
       style={{ touchAction: "pan-y" }}
     >
+      {/* Folders lead the rail — places before things, the file-browser
+          convention — and they come from the same listing response, so a
+          provider without folders simply contributes none. */}
+      {folders.map((folder) => (
+        <FolderTile key={folder.name} folder={folder} onOpen={onOpenFolder} />
+      ))}
       {assets.map((asset) => (
         <PaletteItem
           key={asset.id}
@@ -121,7 +220,23 @@ export function AssetPaletteDrawer({
   onClose: () => void;
 }>) {
   const [state, setState] = useState<AssetPaletteState>({ status: "loading" });
+  // The folder being browsed. [] is the ROOT, not the flat listing — the
+  // drawer always browses (`?browse=1`): a provider with folders opens
+  // organized instead of jumbled, and one without simply reports no folders
+  // and the same view IS its flat listing. Survives close/reopen (this
+  // component stays mounted), like the preview pane's height.
+  const [path, setPath] = useState<readonly string[]>([]);
+  // Visited folders answer instantly on the way back up; a provider fetch
+  // per crumb-click would make the breadcrumb feel broken. Retry bypasses it
+  // (the effect always network-fetches when loading), so a stale entry heals.
+  const pageCacheRef = useRef(new Map<string, PalettePage>());
   const panelRef = useRef<HTMLElement | null>(null);
+
+  const navigateTo = useCallback((next: readonly string[]) => {
+    setPath(next);
+    const cached = pageCacheRef.current.get(JSON.stringify(next));
+    setState(cached ? { status: "ready", ...cached } : { status: "loading" });
+  }, []);
   // This panel is FIXED to the bottom of the viewport and non-modal — the
   // board behind it stays live, and you drag out of it onto that board. So
   // the page has to be able to scroll its own content clear of it; without
@@ -140,9 +255,15 @@ export function AssetPaletteDrawer({
     let cancelled = false;
     void (async () => {
       try {
-        const response = await fetch("/api/assets", { cache: "no-store" });
+        // browse=1 names the ROOT when the path is empty; one `folder` param
+        // per segment (never a joined string — a segment containing "/" must
+        // not fake a boundary).
+        const params = new URLSearchParams({ browse: "1" });
+        for (const segment of path) params.append("folder", segment);
+        const response = await fetch(`/api/assets?${params}`, { cache: "no-store" });
         const result = (await response.json().catch(() => ({}))) as {
           assets?: Asset[];
+          folders?: AssetFolder[];
           error?: string;
         };
         if (cancelled) return;
@@ -150,11 +271,13 @@ export function AssetPaletteDrawer({
           setState({ status: "error", message: result.error ?? "Could not load assets." });
           return;
         }
-        setState({
-          status: "ready",
+        const page: PalettePage = {
           assets: result.assets.slice(0, PALETTE_ASSET_LIMIT),
+          folders: result.folders ?? [],
           truncated: result.assets.length > PALETTE_ASSET_LIMIT,
-        });
+        };
+        pageCacheRef.current.set(JSON.stringify(path), page);
+        setState({ status: "ready", ...page });
       } catch (cause) {
         if (!cancelled) {
           setState({
@@ -167,7 +290,7 @@ export function AssetPaletteDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, state.status]);
+  }, [open, state.status, path]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -184,10 +307,8 @@ export function AssetPaletteDrawer({
         className="pointer-events-auto ml-[72px] flex max-h-[38vh] flex-col border-t border-zinc-800 bg-zinc-950 p-3 text-white shadow-2xl shadow-black/50"
       >
         <div className="mb-2 flex items-center gap-3">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">
-            Assets
-          </h3>
-          <span className="text-[10px] text-zinc-600">
+          <FolderBreadcrumb path={path} onNavigate={navigateTo} />
+          <span className="shrink-0 text-[10px] text-zinc-600">
             Drag a thumbnail into any timeline · Enter picks one up for keyboard placement
           </span>
           <span className="grow" />
@@ -222,13 +343,19 @@ export function AssetPaletteDrawer({
         )}
 
         {state.status === "ready" &&
-          (state.assets.length === 0 ? (
+          (state.assets.length === 0 && state.folders.length === 0 ? (
             <p className="rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
-              No assets yet — upload some from the asset library on the storyboard view.
+              {path.length === 0
+                ? "No assets yet — upload some from the asset library on the storyboard view."
+                : "This folder is empty."}
             </p>
           ) : (
             <>
-              <PaletteRail assets={state.assets} />
+              <PaletteRail
+                assets={state.assets}
+                folders={state.folders}
+                onOpenFolder={navigateTo}
+              />
               {state.truncated && (
                 <p className="mt-1 text-[10px] text-zinc-600">
                   Showing the newest {PALETTE_ASSET_LIMIT} assets — the full library is on the

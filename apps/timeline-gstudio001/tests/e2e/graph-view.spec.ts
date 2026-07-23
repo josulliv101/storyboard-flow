@@ -197,45 +197,62 @@ async function installGraphApi(
   );
 
   // The provider-NEUTRAL /api/assets shape (lib/assets/types) — the palette
-  // reads `name`/`kind`/`src`/`durationSeconds`, never a vendor field.
-  await page.route("**/api/assets**", (route) =>
-    route.fulfill({
+  // reads `name`/`kind`/`src`/`durationSeconds`, never a vendor field. The
+  // mock SCOPES by the request's folder params exactly like the server's
+  // pageFromFlatListing, so the palette's browse UI is exercised against
+  // coherent pages: img-1 lives at the ROOT, vid-1 inside "fixtures".
+  const paletteAssets = [
+    {
+      id: "img-1",
+      providerId: "cloudinary",
+      name: "sunset.jpg",
+      kind: "image",
+      src: PIXEL,
+      thumbnailUrl: PIXEL,
+      folderPath: [] as string[],
+      tags: [],
+      width: 1600,
+      height: 900,
+    },
+    {
+      id: "vid-1",
+      providerId: "cloudinary",
+      name: "clip.mp4",
+      kind: "video",
+      src: PIXEL,
+      thumbnailUrl: PIXEL,
+      folderPath: ["fixtures"],
+      tags: [],
+      width: 1920,
+      height: 1080,
+      // Real duration from the provider listing — a dropped video must
+      // land at this length, not the 8s default.
+      durationSeconds: 12.4,
+    },
+  ];
+  await page.route("**/api/assets**", (route) => {
+    const url = new URL(route.request().url());
+    const folder = url.searchParams.getAll("folder");
+    const inFolder = (path: string[]) =>
+      path.length === folder.length && folder.every((seg, i) => path[i] === seg);
+    const subfolderNames = new Set(
+      paletteAssets
+        .filter(
+          (asset) =>
+            asset.folderPath.length > folder.length &&
+            folder.every((seg, i) => asset.folderPath[i] === seg),
+        )
+        .map((asset) => asset.folderPath[folder.length]),
+    );
+    return route.fulfill({
       json: {
         providerId: "cloudinary",
         capabilities: { folders: true, tags: false, search: false, upload: false, delete: false },
-        folders: [],
-        assets: [
-          {
-            id: "img-1",
-            providerId: "cloudinary",
-            name: "sunset.jpg",
-            kind: "image",
-            src: PIXEL,
-            thumbnailUrl: PIXEL,
-            folderPath: ["fixtures"],
-            tags: [],
-            width: 1600,
-            height: 900,
-          },
-          {
-            id: "vid-1",
-            providerId: "cloudinary",
-            name: "clip.mp4",
-            kind: "video",
-            src: PIXEL,
-            thumbnailUrl: PIXEL,
-            folderPath: ["fixtures"],
-            tags: [],
-            width: 1920,
-            height: 1080,
-            // Real duration from the provider listing — a dropped video must
-            // land at this length, not the 8s default.
-            durationSeconds: 12.4,
-          },
-        ],
+        folders: [...subfolderNames].map((name) => ({ name, path: [...folder, name] })),
+        assets: paletteAssets.filter((asset) => inFolder(asset.folderPath)),
       },
-    }),
-  );
+    });
+  });
 
   // Two-segment path, so the generic single-segment mock below never sees it.
   await page.route("**/api/timelines/*/preview-manifest", (route) => {
@@ -1133,7 +1150,10 @@ test.describe("graph view E2E", () => {
       assetId: "img-1",
     });
 
-    // A VIDEO asset lands at its REAL listed duration, not the default.
+    // A VIDEO asset lands at its REAL listed duration, not the default. It
+    // lives inside a folder now — drill in through the real tile first.
+    await drawer.locator('[data-palette-folder="fixtures"]').click();
+    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toBeVisible();
     await holdDrag(
       page,
       drawer.locator('[data-palette-item="asset-vid-1"]'),
@@ -1150,6 +1170,39 @@ test.describe("graph view E2E", () => {
     expect(video?.kind).toBe("video");
     expect(video?.sourceDuration).toBe(12.4);
     expect(video?.duration).toBe(12.4); // untrimmed: full source length
+  });
+
+  test("palette folders: root shows tiles, drill-in scopes, the breadcrumb climbs back", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await assetsButton(page).click();
+    const drawer = page.getByRole("dialog", { name: "Asset palette" });
+
+    // ROOT: the root asset and the folder tile — never the folder's contents
+    // (an asset deeper than the browsed folder appears only through its
+    // folder row; that is what makes drill-in mean something).
+    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-folder="fixtures"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toHaveCount(0);
+
+    // DRILL IN: the folder's assets replace the root's, and the breadcrumb
+    // grows a crumb — the current folder as text, the root as a button.
+    await drawer.locator('[data-palette-folder="fixtures"]').click();
+    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toHaveCount(0);
+    const breadcrumb = drawer.getByRole("navigation", { name: "Asset folders" });
+    await expect(breadcrumb.getByText("fixtures")).toBeVisible();
+
+    // CLIMB BACK via the root crumb: the root page returns (from the cache —
+    // no spinner state to wait through, but the assertion is on content, so
+    // either path passes only if the page is RIGHT).
+    await breadcrumb.getByRole("button", { name: "Assets" }).click();
+    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toHaveCount(0);
+    // At the root the header is the plain heading again — no navigation.
+    await expect(drawer.getByRole("navigation", { name: "Asset folders" })).toHaveCount(0);
   });
 
   test("trash drop moves across roots, persists BOTH documents, and undoes", async ({
