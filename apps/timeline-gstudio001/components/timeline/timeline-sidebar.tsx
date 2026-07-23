@@ -1,17 +1,22 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import {
+  ClipboardPaste,
+  Copy,
+  CopyPlus,
   Images,
   Layers,
   FolderTree,
   GalleryHorizontalEnd,
   LayoutGrid,
   Ruler,
+  Scissors,
   Settings,
   TvMinimal,
   LogOut,
   Trash2,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -20,17 +25,22 @@ import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
   GRAPH_ASSETS_TOGGLE_EVENT,
+  GRAPH_SELECTION_EVENT,
   GRAPH_TRASH_ARRIVAL_EVENT,
   GRAPH_TRASH_HOVER_EVENT,
   GRAPH_VIEW_STATE_EVENT,
   isGraphViewRoute,
   requestGraphChildrenToggle,
+  requestGraphItemAction,
   requestGraphPreviewToggle,
   requestGraphRulerToggle,
   requestGraphSurface,
+  type GraphItemAction,
+  type GraphSelectionDetail,
   type GraphSurface,
   type GraphViewStateDetail,
 } from "@/lib/graph-view-events";
+import { graphClipboard } from "@/lib/graph-clipboard";
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
 
@@ -104,6 +114,102 @@ function SurfaceIconControl({
     >
       {content}
     </Link>
+  );
+}
+
+const SIDEBAR_ICON_DISABLED =
+  "cursor-not-allowed border-zinc-800/50 bg-zinc-900/20 text-zinc-600 opacity-50";
+
+/** One button in the item-actions cluster — dispatches its action across the
+ *  window-event seam for the graph provider to perform on the selection. */
+function ItemActionButton({
+  action,
+  icon: Icon,
+  label,
+  description,
+  disabled = false,
+}: Readonly<{
+  action: GraphItemAction;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  description: string;
+  disabled?: boolean;
+}>) {
+  const tooltipId = `sidebar-tooltip-item-${action}`;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-describedby={tooltipId}
+      disabled={disabled}
+      onClick={() => requestGraphItemAction(action)}
+      className={cn(SIDEBAR_ICON_BASE, disabled ? SIDEBAR_ICON_DISABLED : SIDEBAR_ICON_IDLE)}
+    >
+      <Icon className="h-4 w-4 transition-colors" />
+      <SidebarTooltipLabel id={tooltipId} label={label} description={description} />
+    </button>
+  );
+}
+
+/**
+ * The contextual cluster shown while an item is selected (or something is on
+ * the clipboard). Replaces the layout/toggle controls with actions on the
+ * selected item. Copy/Cut/Duplicate/Delete need a live selection; Paste needs
+ * a non-empty clipboard; Done exits back to the normal controls (clearing the
+ * clipboard — with contents kept, item mode couldn't close). While an async
+ * action is in flight (`busy`) every button disables, so nothing double-fires.
+ */
+function ItemActionsCluster({
+  hasSelection,
+  canPaste,
+  busy,
+}: Readonly<{ hasSelection: boolean; canPaste: boolean; busy: boolean }>) {
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <ItemActionButton
+        action="copy"
+        icon={Copy}
+        label="Copy"
+        description="Copy the selected item"
+        disabled={busy || !hasSelection}
+      />
+      <ItemActionButton
+        action="cut"
+        icon={Scissors}
+        label="Cut"
+        description="Cut the selected item — paste to move it"
+        disabled={busy || !hasSelection}
+      />
+      <ItemActionButton
+        action="paste"
+        icon={ClipboardPaste}
+        label="Paste"
+        description="Paste into this timeline"
+        disabled={busy || !canPaste}
+      />
+      <ItemActionButton
+        action="duplicate"
+        icon={CopyPlus}
+        label="Duplicate"
+        description="Duplicate the selected item in place"
+        disabled={busy || !hasSelection}
+      />
+      <ItemActionButton
+        action="delete"
+        icon={Trash2}
+        label="Delete"
+        description="Move the selected item to trash"
+        disabled={busy || !hasSelection}
+      />
+      <div className="h-px w-10 shrink-0 bg-zinc-700" />
+      <ItemActionButton
+        action="cancel"
+        icon={X}
+        label="Done"
+        description="Exit item actions and clear the clipboard"
+        disabled={busy}
+      />
+    </div>
   );
 }
 
@@ -228,7 +334,49 @@ export function TimelineSidebar() {
     return () => window.removeEventListener(GRAPH_TRASH_HOVER_EVENT, handleHover);
   }, []);
 
+  // The graph broadcasts how many items are selected; while something is
+  // selected — OR the clipboard holds a copy/cut — the contextual controls
+  // switch to item actions (copy, cut, paste, duplicate, delete, cancel). The
+  // clipboard condition is what keeps Paste reachable after Copy clears the
+  // selection (copy here, drill into another timeline, paste there).
+  const [selectionCount, setSelectionCount] = useState(0);
+  const [actionBusy, setActionBusy] = useState(false);
+  useEffect(() => {
+    const onSelection = (event: Event) => {
+      const detail = (event as CustomEvent<GraphSelectionDetail>).detail;
+      if (detail) {
+        setSelectionCount(detail.count);
+        setActionBusy(detail.busy);
+      }
+    };
+    window.addEventListener(GRAPH_SELECTION_EVENT, onSelection);
+    return () => window.removeEventListener(GRAPH_SELECTION_EVENT, onSelection);
+  }, []);
+  const canPaste = useSyncExternalStore(
+    graphClipboard.subscribe,
+    () => !graphClipboard.isEmpty(),
+    () => false,
+  );
+
   const onGraphRoute = isGraphViewRoute(pathname);
+  const itemMode = onGraphRoute && (selectionCount > 0 || canPaste);
+
+  // Swapping clusters unmounts the control that held keyboard focus (e.g. the
+  // Delete button the user just activated), dumping focus to <body>. Restore
+  // it to the rail's first enabled control — but ONLY on a real mode
+  // TRANSITION (not mount: focus starts on <body> on every page load, and
+  // grabbing it then would steal focus from the document), and ONLY when the
+  // swap actually orphaned focus: a mouse click on a card also flips
+  // itemMode, and focus is on the card then, which must not be stolen.
+  const railRef = useRef<HTMLElement>(null);
+  const prevItemModeRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    const previous = prevItemModeRef.current;
+    prevItemModeRef.current = itemMode;
+    if (previous === null || previous === itemMode) return;
+    if (document.activeElement !== document.body && document.activeElement !== null) return;
+    railRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus();
+  }, [itemMode]);
 
   const handleLogout = async () => {
     try {
@@ -246,7 +394,10 @@ export function TimelineSidebar() {
   // outrank them (R7 #8). Nothing overlaps the 72px rail itself, so raising
   // it hides nothing.
   return (
-    <aside className="sticky top-0 z-50 flex h-screen w-[72px] shrink-0 flex-col items-center gap-5 overflow-visible border-r border-zinc-800 bg-zinc-900/50 px-3 py-5 backdrop-blur-md">
+    <aside
+      ref={railRef}
+      className="sticky top-0 z-50 flex h-screen w-[72px] shrink-0 flex-col items-center gap-5 overflow-visible border-r border-zinc-800 bg-zinc-900/50 px-3 py-5 backdrop-blur-md"
+    >
       <Link
         href="/"
         aria-label="Storyboard Workbench home"
@@ -255,7 +406,15 @@ export function TimelineSidebar() {
         SW
       </Link>
 
-      {activeProjectId && (
+      {activeProjectId && itemMode && (
+        <ItemActionsCluster
+          hasSelection={selectionCount > 0}
+          canPaste={canPaste}
+          busy={actionBusy}
+        />
+      )}
+
+      {activeProjectId && !itemMode && (
         <div className="flex flex-col items-center gap-2">
           {/* The graph's layout switch (was the breadcrumb row's strip/grid
               toggle). Grid first: it is the initial-load default. */}
@@ -280,7 +439,7 @@ export function TimelineSidebar() {
         </div>
       )}
 
-      {activeProjectId && (
+      {activeProjectId && !itemMode && (
         <>
           {/* zinc-500: the old zinc-800/80 vanished against the rail. */}
           <div className="h-px w-10 shrink-0 bg-zinc-500" />

@@ -9,6 +9,7 @@ import {
   parseNodeId,
   resolveTrashCommand,
   useCollectionsStore,
+  type CollectionsStore,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
@@ -82,6 +83,51 @@ export function GraphViewNavProvider({
 }
 
 /**
+ * Move the current selection to the trash root as ONE undoable command — the
+ * shared core of the keyboard Delete/Backspace and the sidebar's Delete
+ * action, so the two can never diverge. Reads the selection from the store,
+ * drops invalid picks (missing, root, already trashed) per-node via
+ * resolveTrashCommand, and returns how many actually moved (0 = nothing
+ * dispatched). No-op mid-drag or with no trash root.
+ *
+ * ONE command for the whole selection, not a per-node loop: parity with the
+ * drag path means one UNDO reverses the whole delete, and the reducer's
+ * multi-node handling prunes descendants of other moved nodes (a selected clip
+ * inside a selected collection travels with its parent) and re-sorts into
+ * graph order.
+ */
+export function moveSelectionToTrash(
+  store: CollectionsStore,
+  trashId: string | null,
+  // Explicit ids for callers that snapshotted the selection BEFORE async work
+  // (the sidebar Cut awaits document loads first — re-reading the live
+  // selection here would trash whatever the user selected in the meantime,
+  // not what they cut). Defaults to the live selection for the keyboard path.
+  ids?: readonly NodeId[],
+): number {
+  if (trashId === null || store.getSnapshot().interaction.isDragging) return 0;
+  const { graph, interaction } = store.getSnapshot();
+  const selected = ids ?? [...interaction.selectedIds];
+  if (selected.length === 0) return 0;
+  const trash = parseNodeId(trashId);
+  const movable = selected.filter((nodeId) => resolveTrashCommand(graph, nodeId, trash).ok);
+  if (movable.length === 0) return 0;
+  const dispatched = store.dispatch({
+    type: "move-nodes",
+    nodeIds: movable,
+    toParentId: trash,
+    toIndex: getChildren(graph, trash).length,
+  });
+  // A refusal (the un-hydrated-target policy, a cycle) already speaks through
+  // the commandPolicy's own toast — announce only what landed.
+  if (!dispatched.ok) return 0;
+  toast(`Moved ${movable.length} item${movable.length === 1 ? "" : "s"} to trash.`, {
+    id: "graph-delete-to-trash",
+  });
+  return movable.length;
+}
+
+/**
  * Keyboard boundary for the board: the O key drills into a collection or
  * duplicate-reference card, and plain Delete/Backspace moves the whole current
  * selection to trash.
@@ -113,38 +159,13 @@ export function OpenKeyBoundary({
   // Plain Delete/Backspace trashes EVERY selected card — the pointer twin of
   // dragging a multi-selection onto the trash target, and the unmodified
   // sibling of the package's Alt+Delete (which trashes only the focused card).
-  //
-  // ONE command for the whole selection, not a per-node loop: parity with the
-  // drag path means one UNDO reverses the whole delete (a loop left N entries
-  // behind one keypress), and the reducer's own multi-node handling prunes
-  // descendants of other moved nodes (a selected clip inside a selected
-  // collection travels with its parent instead of being yanked to the trash
-  // root separately) and re-sorts into graph order.
+  // The command itself is `moveSelectionToTrash` (shared with the sidebar's
+  // Delete action); here we only gate the keypress and claim it.
   const trashSelection = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (trashId === null || store.getSnapshot().interaction.isDragging) return;
-    const { graph, interaction } = store.getSnapshot();
-    const selected = [...interaction.selectedIds];
-    if (selected.length === 0) return;
-
+    if (store.getSnapshot().interaction.selectedIds.size === 0) return;
     event.preventDefault();
-    const trash = parseNodeId(trashId);
-    // Per-node validation (missing, root, already-in-trash) keeps the loop's
-    // semantics: invalid picks drop out silently, the rest still move.
-    const movable = selected.filter((nodeId) => resolveTrashCommand(graph, nodeId, trash).ok);
-    if (movable.length === 0) return;
-
-    const dispatched = store.dispatch({
-      type: "move-nodes",
-      nodeIds: movable,
-      toParentId: trash,
-      toIndex: getChildren(graph, trash).length,
-    });
-    // A refusal (the un-hydrated-target policy, a cycle) already speaks
-    // through the commandPolicy's own toast — announce only what landed.
-    if (!dispatched.ok) return;
-    toast(`Moved ${movable.length} item${movable.length === 1 ? "" : "s"} to trash.`, {
-      id: "graph-delete-to-trash",
-    });
+    moveSelectionToTrash(store, trashId);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {

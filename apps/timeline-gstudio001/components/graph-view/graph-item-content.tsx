@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { FolderDown, Image as ImageIcon, Video } from "lucide-react";
+import { FolderTree, Image as ImageIcon, Video } from "lucide-react";
 
 import {
   CollectionItem,
@@ -603,7 +603,9 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         }}
         className="absolute left-1/2 top-[41%] flex aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300"
       >
-        <FolderDown className="h-[55%] w-[55%]" />
+        {/* FolderTree, matching the sidebar's children-timelines toggle — one
+            icon for "this has child timelines" everywhere. */}
+        <FolderTree className="h-[55%] w-[55%]" />
       </button>
 
       {/* The rename editor — a REAL input, overlaying the label row while

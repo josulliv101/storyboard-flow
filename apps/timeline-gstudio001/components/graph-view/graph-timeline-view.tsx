@@ -28,6 +28,7 @@ import {
 } from "@storyboard/timeline-domain";
 
 import { useAuth } from "@/components/auth/auth-provider";
+import { graphClipboard } from "@/lib/graph-clipboard";
 import { createGraphDetailsStore } from "@/lib/graph-details-store";
 import {
   graphDocumentsGateway,
@@ -52,6 +53,7 @@ import { trashDocumentId as deriveTrashDocumentId } from "./trash-document-id";
 import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { HydrationController } from "./graph-hydration";
+import { GraphItemActionsBridge } from "./graph-item-actions";
 import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
 import { GraphViewNavProvider } from "./graph-navigation";
 import {
@@ -183,9 +185,14 @@ export function GraphTimelineView({
   // AUTH BINDING first: the gateway is a module singleton that outlives
   // soft logout/login, so a different signed-in user must reset it before
   // anything reads or primes. Declared before the prime and boot effects
-  // so mount-order runs bind → prime → boot.
+  // so mount-order runs bind → prime → boot. The clipboard singleton holds
+  // copied document snapshots and follows the same rule — a different user
+  // must never paste the previous user's timelines.
   useEffect(() => {
-    if (user) graphDocumentsGateway.bindUser(user.uid);
+    if (user) {
+      graphDocumentsGateway.bindUser(user.uid);
+      graphClipboard.bindUser(user.uid);
+    }
   }, [user]);
 
   // RSC payloads prime the gateway (guarded inside it: only for the bound
@@ -443,6 +450,7 @@ export function GraphTimelineView({
         onPaletteDiscard={handlePaletteDiscard}
       >
           <PersistenceBridge onSync={onSync} />
+          <GraphItemActionsBridge trashId={boot.trashRootId} focusedId={focusedId} />
           <GraphDetailsJanitor />
           <AssetPaletteDrawer open={assetsOpen} onClose={() => setAssetsOpen(false)} />
           <HydrationController
