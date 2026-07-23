@@ -1393,6 +1393,70 @@ test.describe("graph view E2E", () => {
     await expect(redoButton(page)).toBeDisabled();
   });
 
+  test("a dropped card animates out of the ghost, not back to where it started", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+    const alpha = projectStrip.locator('[data-node-id="alpha"]');
+    const charlie = projectStrip.locator('[data-node-id="charlie"]');
+    await settleMoveAnimations(page);
+
+    // Record every Web Animation started during the drop instead of racing a
+    // 180ms window with getAnimations().
+    await page.evaluate(() => {
+      const recorded: { duration: unknown; transforms: string[] }[] = [];
+      (window as unknown as { __drops: typeof recorded }).__drops = recorded;
+      const original = Element.prototype.animate;
+      Element.prototype.animate = function (keyframes, options) {
+        const frames = Array.isArray(keyframes) ? keyframes : [];
+        recorded.push({
+          duration:
+            typeof options === "number" ? options : (options as KeyframeAnimationOptions)?.duration,
+          transforms: frames
+            .map((frame) => (frame as Keyframe)?.transform)
+            .filter((value): value is string => typeof value === "string"),
+        });
+        return original.call(this, keyframes, options);
+      };
+    });
+
+    const from = (await alpha.boundingBox())!;
+    const to = (await charlie.boundingBox())!;
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(400);
+    await page.mouse.move(to.x + to.width * 0.8, to.y + to.height / 2, { steps: 12 });
+    await page.waitForTimeout(150);
+    await page.mouse.up();
+    await page.waitForTimeout(120);
+
+    const drops = await page.evaluate(
+      () => (window as unknown as { __drops: { duration: unknown; transforms: string[] }[] }).__drops,
+    );
+    const moves = drops.filter((entry) => entry.transforms.some((t) => t.includes("translate")));
+    expect(moves.length).toBeGreaterThan(0);
+
+    // dnd-kit's default drop animation (250ms) would fly the ghost BACK to
+    // the drag's origin while the card FLIPs forward — two motions crossing.
+    // It is switched off, so nothing runs at that duration.
+    expect(moves.some((entry) => entry.duration === 250)).toBe(false);
+
+    // The dropped card starts from the ghost's box: a fractional scale (the
+    // ghost is 72px wide, the card is not). Displaced siblings animate at
+    // scale(1, 1), so this is exactly the dropped card's signature.
+    const grewFromGhost = moves.some((entry) =>
+      entry.transforms.some((t) => /scale\(0?\.\d+/.test(t)),
+    );
+    expect(grewFromGhost).toBe(true);
+
+    // And the move itself still committed.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["bravo", CHILD_ID, "charlie", "alpha"]);
+  });
+
   test("drilling in doesn't wait for the server, and keeps the preview pane alive", async ({
     page,
   }) => {

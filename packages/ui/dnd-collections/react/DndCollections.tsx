@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -61,7 +62,10 @@ import {
   type CollectionsClickSelection,
 } from "./interaction-policy";
 import { LiveTrimChannelContext, useCreateLiveTrimChannel } from "./live-trim";
-import { useFlipGraphAnimation } from "./use-flip-graph-animation";
+import {
+  useFlipGraphAnimation,
+  type FlipDropOrigin,
+} from "./use-flip-graph-animation";
 import { NodeCardGhost } from "./node-views";
 import { CollectionsPointerSensor } from "./pointer-sensors";
 import { LiveAnnouncementRegion, useAnnounceChannel } from "./use-announcements";
@@ -330,8 +334,14 @@ export function DndCollections({
 // A dedicated child so its graph subscription re-renders ONLY this null
 // component per commit, never the provider subtree (which would re-render
 // every view and defeat the efficiency model).
-function FlipAnimator({ containerRef }: { containerRef: RefObject<HTMLElement | null> }) {
-  useFlipGraphAnimation(containerRef);
+function FlipAnimator({
+  containerRef,
+  dropOriginRef,
+}: {
+  containerRef: RefObject<HTMLElement | null>;
+  dropOriginRef: RefObject<FlipDropOrigin | null>;
+}) {
+  useFlipGraphAnimation(containerRef, dropOriginRef);
   return null;
 }
 
@@ -376,6 +386,11 @@ function DndCollectionsContext({
   const palette = usePaletteDrag({ store, intentRef, announce, onDiscard: onPaletteDiscard });
 
   const containerRef = useRef<HTMLDivElement>(null);
+  // The live drag ghost element, and the box it occupied at the moment of a
+  // drop — the FLIP sweep animates the dropped card out of that box instead
+  // of out of the slot it used to sit in (see FlipDropOrigin).
+  const ghostRef = useRef<HTMLElement | null>(null);
+  const dropOriginRef = useRef<FlipDropOrigin | null>(null);
   // A mounted <TrashTarget> registers its collection id here (see
   // container-context) so Alt+Delete can move the focused card to trash.
   const trashRef = useRef<NodeId | null>(null);
@@ -618,6 +633,24 @@ function DndCollectionsContext({
         return;
       }
 
+      // Measure the ghost BEFORE the commit — dispatching unmounts the
+      // overlay, and this box is where the dropped card's motion should
+      // start. Only the primary dragged node gets it; the rest of a
+      // multi-select FLIPs from their own previous slots.
+      const ghostBox = ghostRef.current?.getBoundingClientRect() ?? null;
+      dropOriginRef.current =
+        ghostBox && ghostBox.width > 0 && ghostBox.height > 0
+          ? {
+              nodeId: activeIds[0] as string,
+              box: {
+                x: ghostBox.left,
+                y: ghostBox.top,
+                width: ghostBox.width,
+                height: ghostBox.height,
+              },
+            }
+          : null;
+
       const dispatched = store.dispatch(commandResult.value);
       store.endDrag();
 
@@ -685,7 +718,9 @@ function DndCollectionsContext({
         </div>
       </CollectionsContainerContext.Provider>
       {/* Instance-wide FLIP sweep (opt out with animateMoves={false}). */}
-      {animateMoves && <FlipAnimator containerRef={containerRef} />}
+      {animateMoves && (
+        <FlipAnimator containerRef={containerRef} dropOriginRef={dropOriginRef} />
+      )}
       {/* The single keyboard-usage description, referenced by cards via
           aria-describedby (dnd-kit's own instructions are blanked above). It
           must match the real grammar EXACTLY — every chord here is verified
@@ -716,6 +751,7 @@ function DndCollectionsContext({
         ghostScale={dragGhostScale}
         ghostWidth={dragGhostWidth ?? null}
         ghostHeight={dragGhostHeight ?? null}
+        ghostRef={ghostRef}
       />
       <LiveAnnouncementRegion channel={announceChannel} />
     </DndContext>
@@ -727,11 +763,14 @@ function CollectionsDragOverlay({
   ghostScale,
   ghostWidth,
   ghostHeight,
+  ghostRef,
 }: {
   paletteNodes: readonly CollectionItemNode[] | null;
   ghostScale: number;
   ghostWidth: number | null;
   ghostHeight: number | null;
+  /** Receives the ghost's outer element, so a drop can measure where it was. */
+  ghostRef: MutableRefObject<HTMLElement | null>;
 }) {
   const activeIds = useCollectionsSelector((s) => s.interaction.activeIds);
   const primaryId = activeIds[0] ?? null;
@@ -750,16 +789,30 @@ function CollectionsDragOverlay({
   // remedy for the "long clip → giant ghost" problem, so honour it first.
   const wrapped =
     ghostWidth !== null ? (
-      <FixedWidthGhost width={ghostWidth} height={ghostHeight}>
+      <FixedWidthGhost width={ghostWidth} height={ghostHeight} elementRef={ghostRef}>
         {ghost}
       </FixedWidthGhost>
     ) : ghostScale < 1 ? (
-      <ScaledGhost scale={ghostScale}>{ghost}</ScaledGhost>
+      <ScaledGhost scale={ghostScale} elementRef={ghostRef}>
+        {ghost}
+      </ScaledGhost>
     ) : (
-      ghost
+      // Unwrapped, the ghost is consumer pixels with no element of ours to
+      // measure — a plain box that fills dnd-kit's overlay (which is sized to
+      // the source card) gives the drop the same handle in every variant.
+      <div ref={ghostRef as MutableRefObject<HTMLDivElement | null>} className="h-full w-full">
+        {ghost}
+      </div>
     );
 
-  return <DragOverlay>{wrapped}</DragOverlay>;
+  // `dropAnimation={null}`: dnd-kit's default flies the overlay from the
+  // release point BACK to where the drag started (250ms, translate3d), which
+  // on a successful drop is the wrong direction entirely — the user watched
+  // the ghost travel to a new slot, and it then retreated to the old one
+  // while the real card FLIPped forward past it. The two motions crossed.
+  // The ghost now simply hands off: it disappears at release and the dropped
+  // card animates out of the box it left behind (see FlipDropOrigin).
+  return <DragOverlay dropAnimation={null}>{wrapped}</DragOverlay>;
 }
 
 /**
@@ -773,7 +826,15 @@ function CollectionsDragOverlay({
  * the shrink a motion, not a snap; reduced-motion users get the end state
  * with no animation.
  */
-function ScaledGhost({ scale, children }: { scale: number; children: ReactNode }) {
+function ScaledGhost({
+  scale,
+  elementRef,
+  children,
+}: {
+  scale: number;
+  elementRef: MutableRefObject<HTMLElement | null>;
+  children: ReactNode;
+}) {
   const { activatorEvent, activeNodeRect } = useDndContext();
   const [engaged, setEngaged] = useState(false);
 
@@ -793,6 +854,7 @@ function ScaledGhost({ scale, children }: { scale: number; children: ReactNode }
 
   return (
     <div
+      ref={elementRef as MutableRefObject<HTMLDivElement | null>}
       data-drag-ghost-scale={scale}
       style={{
         transformOrigin: origin,
@@ -822,10 +884,12 @@ function ScaledGhost({ scale, children }: { scale: number; children: ReactNode }
 function FixedWidthGhost({
   width,
   height,
+  elementRef,
   children,
 }: {
   width: number;
   height: number | null;
+  elementRef: MutableRefObject<HTMLElement | null>;
   children: ReactNode;
 }) {
   const { activatorEvent, activeNodeRect } = useDndContext();
@@ -855,6 +919,7 @@ function FixedWidthGhost({
 
   return (
     <div
+      ref={elementRef as MutableRefObject<HTMLDivElement | null>}
       data-drag-ghost-width={width}
       data-drag-ghost-height={height ?? undefined}
       style={{
