@@ -14,12 +14,15 @@ import {
 import {
   MIN_ITEM_WIDTH,
   durationToWidth,
+  mediaDurationSeconds,
   useCollectionsSelector,
   useCollectionsStore,
   type CollectionsGraph,
+  type NodeId,
 } from "@storyboard/ui/dnd-collections";
 import {
   graphChildrenToClips,
+  hydratedCollectionDuration,
   manifestToClips,
   type DetailsById,
   type PlaybackManifest,
@@ -1410,6 +1413,58 @@ function useManifestClips(
   return state !== null && state.forId === focusedId
     ? { clips: state.clips, spans: state.spans }
     : null;
+}
+
+/**
+ * What the current selection adds up to — the numbers the board header shows
+ * in place of the focused-timeline total while anything is selected.
+ *
+ * Duration comes from the SAME model the cards and the playhead use: a media
+ * node's effective (trimmed) length, and for a collection the live hydrated
+ * total when its subtree is loaded, falling back to the stored summary for a
+ * placeholder — so a selected collection contributes what its card claims,
+ * not zero. Descendants of another selected node are skipped: selecting a
+ * collection and a clip inside it is one collection's worth of time, not
+ * that time counted twice.
+ */
+export function useSelectionAggregate(): Readonly<{ count: number; seconds: number }> {
+  const graph = useCollectionsSelector((snapshot) => snapshot.graph);
+  const selectedIds = useCollectionsSelector((snapshot) => snapshot.interaction.selectedIds);
+  const detailsStore = useGraphDetailsStore();
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    detailsStore.read,
+    detailsStore.read,
+  );
+
+  return useMemo(() => {
+    const picked = [...selectedIds].filter((id) => graph.nodesById.has(id));
+    // Drop anything already inside another selected node (the reducer prunes
+    // the same way on a multi-node move).
+    const selectedSet = new Set(picked);
+    const roots = picked.filter((id) => {
+      const seen = new Set<NodeId>();
+      let parent = graph.parentById.get(id) ?? null;
+      while (parent !== null && !seen.has(parent)) {
+        if (selectedSet.has(parent)) return false;
+        seen.add(parent);
+        parent = graph.parentById.get(parent) ?? null;
+      }
+      return true;
+    });
+    let total = 0;
+    for (const id of roots) {
+      const node = graph.nodesById.get(id);
+      if (!node) continue;
+      if (node.kind === "collection") {
+        const hydrated = hydratedCollectionDuration(graph, details, id);
+        total += hydrated > 0 ? hydrated : (details[id as string]?.duration ?? 0);
+      } else {
+        total += mediaDurationSeconds(node);
+      }
+    }
+    return { count: roots.length, seconds: total };
+  }, [graph, selectedIds, details]);
 }
 
 export function PreviewShell({
