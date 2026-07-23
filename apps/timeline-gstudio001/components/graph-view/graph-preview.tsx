@@ -506,6 +506,12 @@ const SEEK_RAIL_STEP_SECONDS = 1;
  *  the card tops). */
 const SEEK_RAIL_TRACK_PX = 8;
 const SEEK_RAIL_BAND_INSET_PX = (GRID_GAP - SEEK_RAIL_TRACK_PX) / 2;
+/** The UNPLAYED groove is a slim centred line; the PLAYED fill grows to the
+ *  full track height as the scrub sweeps through it, so the rail visibly
+ *  thickens behind the thumb. The HIT TARGET is unchanged — the whole
+ *  SEEK_RAIL_TRACK_PX-tall box stays grabbable; only this visible line is
+ *  slim. */
+const SEEK_RAIL_GROOVE_PX = 2;
 
 type SeekRailGeometry = Readonly<{
   columns: number;
@@ -662,10 +668,12 @@ function SeekRailRow({
         }
         event.preventDefault();
       }}
-      // Solid track, not a translucency: the rail sits over the grid's own
-      // dark backdrop, where a see-through zinc melted away entirely — the
-      // user read row 1 as having "no rail" (R7 follow-up).
-      className="group pointer-events-auto absolute cursor-ew-resize touch-none rounded-full bg-zinc-700 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-white/25 transition-shadow hover:ring-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+      // Transparent HIT box (the whole track is grabbable); the visible rail
+      // is the groove + fill within it. Blue throughout (was zinc-700, which
+      // read as the scroll bar under the items — same neutral gray, same slim
+      // pill): the groove and fill wear the playhead's own blue, the thumb is
+      // the red playhead head, so the rail reads as the preview's scrubber.
+      className="group pointer-events-auto absolute cursor-ew-resize touch-none rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
       style={{
         left: x,
         top: y + SEEK_RAIL_BAND_INSET_PX,
@@ -673,12 +681,19 @@ function SeekRailRow({
         height: SEEK_RAIL_TRACK_PX,
       }}
     >
-      {/* Elapsed fill, then boundary ticks, then the thumb on top. */}
+      {/* UNPLAYED groove: a slim centred line. Solid, not translucent — a
+          see-through track melted into the grid's dark backdrop (R7). */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-full bg-sky-900 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-sky-400/40 transition-shadow group-hover:ring-sky-300/60"
+        style={{ height: SEEK_RAIL_GROOVE_PX }}
+      />
+      {/* PLAYED fill (full track height), then boundary ticks, then thumb. */}
       <div
         ref={fillRef}
         data-rail-fill
         aria-hidden="true"
-        className="absolute inset-y-0 left-0 rounded-full bg-sky-400/40"
+        className="absolute inset-y-0 left-0 rounded-full bg-sky-300/80"
       />
       {rowCards.slice(1).map((_, index) => (
         <span
@@ -1174,9 +1189,18 @@ export function GraphStripSeekRail({
           : { left: 9, top: 1 + SEEK_RAIL_BAND_INSET_PX, right: 9, height: SEEK_RAIL_TRACK_PX }
       }
     >
+      {/* UNPLAYED groove: a slim centred line across the visible rail (static
+          — the track itself is uniform, only the fill scrolls). */}
       <div
         aria-hidden="true"
-        className="absolute inset-0 overflow-hidden rounded-full bg-zinc-700 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-white/25 transition-shadow group-hover:ring-white/40"
+        className="absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-full bg-sky-900 shadow-[inset_0_1px_2px_rgba(0,0,0,0.6)] ring-1 ring-sky-400/40 transition-shadow group-hover:ring-sky-300/60"
+        style={{ height: SEEK_RAIL_GROOVE_PX }}
+      />
+      {/* PLAYED fill + ticks clip to the pill (full track height); transparent
+          so the slim groove behind shows through the unplayed stretch. */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 overflow-hidden rounded-full"
       >
         {/* Content-space layer: as wide as the timeline, translated against
             the scroller so fill and ticks stay glued to their cards. */}
@@ -1185,7 +1209,7 @@ export function GraphStripSeekRail({
             ref={fillRef}
             data-rail-fill
             aria-hidden="true"
-            className="absolute inset-y-0 left-0 rounded-full bg-sky-400/40"
+            className="absolute inset-y-0 left-0 rounded-full bg-sky-300/80"
           />
           {ticks.map((x, index) => (
             <span
@@ -1431,6 +1455,11 @@ export function PreviewShell({
     [channel],
   );
 
+  // Drilling changes focusedId: reset the scrub clock to the START of the
+  // newly-focused collection. The playheads/rails read the channel, so this
+  // alone moves them home; the pane itself is keyed by focusedId below so its
+  // displayed FRAME resets too (otherwise the player holds the previous
+  // collection's last frame across the swap — "it still shows the old one").
   useEffect(() => {
     channel.set(0);
   }, [channel, focusedId]);
@@ -1465,6 +1494,10 @@ export function PreviewShell({
       {/* Test/debug witness for which read model the pane is playing. */}
       <span data-preview-source={manifest !== null ? "manifest" : "projection"} hidden />
       <WorkbenchSplitPane
+        // Remount on drill so the player shows the newly-focused collection's
+        // first frame instead of holding the previous one. The chosen height
+        // survives — getInitialSurfaceHeight restores it from the ref at mount.
+        key={focusedId}
         clips={clips}
         currentTime={time}
         onCurrentTimeChange={handleTimeChange}

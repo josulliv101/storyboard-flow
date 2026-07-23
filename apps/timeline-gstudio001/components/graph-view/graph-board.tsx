@@ -3,7 +3,7 @@
 import { useContext, useDeferredValue } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { EllipsisVertical, Redo2, Undo2 } from "lucide-react";
+import { EllipsisVertical, FolderPlus, Redo2, Undo2 } from "lucide-react";
 
 import {
   CollectionsContainerContext,
@@ -14,6 +14,7 @@ import {
   useCollectionsStore,
 } from "@storyboard/ui/dnd-collections";
 
+import { requestGraphToolInsert } from "@/lib/graph-view-events";
 import { Button } from "@/components/core/button";
 import {
   DropdownMenu,
@@ -28,7 +29,7 @@ import {
 import { Slider } from "@/components/core/slider";
 
 import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
-import { SidebarGraphTrashPortal } from "./graph-sidebar-trash";
+import { BreadcrumbDropZones } from "./graph-breadcrumb-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
 import { SyncPanel, type SyncEntry } from "./graph-persistence";
 import {
@@ -225,6 +226,39 @@ function GraphUndoRedo() {
   );
 }
 
+/**
+ * The Collection tool, relocated from the icon sidebar into the board header
+ * (right cluster). Same two affordances it always had: CLICK (or keyboard)
+ * appends a nested timeline to the open collection through the insert bridge,
+ * and native DRAG carries it onto a strip to pick a POSITION. The default
+ * browser drag image is suppressed (1×1 transparent gif) so only the strip's
+ * own drop indicator shows where it will land.
+ */
+function GraphAddCollectionButton() {
+  const handleDragStart = (event: React.DragEvent) => {
+    // Same MIME the sidebar tool used, which NativeDropStrip/Grid accept.
+    event.dataTransfer.setData("application/x-gstudio-type", "collection");
+    event.dataTransfer.effectAllowed = "copyMove";
+    const img = new window.Image();
+    img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+    event.dataTransfer.setDragImage(img, 0, 0);
+  };
+
+  return (
+    <button
+      type="button"
+      draggable
+      aria-label="Add Collection to the open timeline"
+      title="New collection — click to append, drag onto a strip to place"
+      onDragStart={handleDragStart}
+      onClick={() => requestGraphToolInsert("collection")}
+      className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center rounded-md border border-zinc-800 bg-zinc-900/40 text-zinc-400 transition-colors hover:border-sky-500 hover:bg-sky-950/20 hover:text-sky-400 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+    >
+      <FolderPlus aria-hidden="true" className="h-4 w-4" />
+    </button>
+  );
+}
+
 export function GraphBoard({
   focusedId,
   breadcrumb,
@@ -316,12 +350,15 @@ export function GraphBoard({
                 toolbar onto a second line instead of pushing controls
                 off-screen. No effect when it fits. */}
             <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+              {/* The Collection tool (moved here from the icon sidebar): the
+                  view's one "add structure" action leads the cluster, fenced
+                  off from the surface/history controls to its right. */}
+              <GraphAddCollectionButton />
+              <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               {/* px/s is a strip-only axis: grid cells are sized by thumbnail
                   size, and the grid playhead ignores clip width, so the slider
                   is a no-op in grid mode. Hidden there (state is preserved, so
-                  returning to strip restores the last zoom). It LEADS the
-                  cluster, fenced off by a rule: zoom reshapes the surface,
-                  everything right of the line is a toggle or an action. */}
+                  returning to strip restores the last zoom). */}
               {surface === "strip" ? (
                 <>
                   <ScaleSlider
@@ -338,14 +375,22 @@ export function GraphBoard({
                 storyboardHref={storyboardHref}
               />
             </div>
+
+            {/* Card-drag drop targets (move-to-parent + trash), centred over
+                this header row and shown only while a card is being dragged.
+                Inside the header so its absolute layer positions against it;
+                inside the provider so its droppables join the DndContext. */}
+            <BreadcrumbDropZones focusedId={focusedId} trashId={trashRootId} />
           </div>
 
           {surface === "strip" ? (
-            // The focused surface gets the same distinct gray panel as each
-            // sub-timeline row (the storyboard idiom). Padding lives on THIS
-            // wrapper, never on NativeDropStrip: its drop math is
-            // clientX-vs-own-rect, and padding there drifts the indicator.
-            <div className="rounded-lg border border-zinc-800/70 bg-zinc-900/40 p-3">
+            // The focused surface spans the card's FULL width (-mx-4 cancels
+            // the card's p-4), so its edges line up with the full-bleed
+            // breadcrumb bar above instead of sitting inset like a panel
+            // nested under it. Padding lives on THIS wrapper, never on
+            // NativeDropStrip: its drop math is clientX-vs-own-rect, and
+            // padding there drifts the indicator.
+            <div className="-mx-4 border-y border-zinc-800/70 bg-zinc-900/40 p-3">
               <NativeDropStrip collectionId={focusedId}>
               <VirtualStrip
                 collectionId={parseNodeId(focusedId)}
@@ -402,7 +447,7 @@ export function GraphBoard({
             // gray panel as the strip branch; the rails' geometry is
             // measured live from the grid's own rect, so the padding is
             // accounted for automatically.
-            <div className="relative rounded-lg border border-zinc-800/70 bg-zinc-900/40 p-3">
+            <div className="relative -mx-4 border-y border-zinc-800/70 bg-zinc-900/40 p-3">
               <NativeDropGrid collectionId={focusedId}>
                 <VirtualGrid
                   collectionId={parseNodeId(focusedId)}
@@ -456,12 +501,9 @@ export function GraphBoard({
             />
           )}
 
-          {/* Trash is now the sidebar tool palette, which morphs into a drop
-              target while a card is being dragged (R5 #1) — the old fixed
-              bottom-right panel is gone (R5 #5). This portals into the sidebar
-              from inside the provider, so its droppable joins the DndContext. */}
-          <SidebarGraphTrashPortal trashId={trashRootId} />
-
+          {/* Card-drag drop targets (trash + move-to-parent) live in the
+              breadcrumb row now (see BreadcrumbDropZones in the header above),
+              not a portal into the sidebar. */}
           {devPanelsOn && <SyncPanel entries={syncEntries} />}
         </div>
       </PreviewShell>
