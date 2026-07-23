@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useDroppable } from "@dnd-kit/core";
-import { FolderUp, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 import {
   encodeDropTarget,
@@ -139,22 +139,18 @@ function useTrashArrivalAnnounce(trashId: NodeId) {
 }
 
 /**
- * The two card-drag drop zones, centred over the board header. Renders the
- * parent-level zone (unless the focus is the root) and the trash zone, both
+ * The trash card-drag drop zone, right-aligned over the board header (opposite
+ * the breadcrumb). The "move up a level" targets are the ancestor breadcrumb
+ * crumbs themselves now (see AncestorCrumb) — dropping on a crumb moves the
+ * card to that collection, up to the root — so only trash lives here. Shown
  * only while a card drag is live. Also registers the trash id for the keyboard
  * controller (Alt+Delete), which the old sidebar portal used to own.
  */
 export function BreadcrumbDropZones({
-  focusedId,
   trashId,
-}: Readonly<{ focusedId: string; trashId: string | null }>) {
+}: Readonly<{ trashId: string | null }>) {
   const { trashRef } = useCollectionsContainer();
   const isDragging = useCollectionsSelector((s) => s.interaction.isDragging);
-  // The focused collection's parent, if any — the "up one level" target. Null
-  // at the root, where the parent zone is hidden (nowhere up to go).
-  const parentId = useCollectionsSelector(
-    (s) => s.graph.parentById.get(parseNodeId(focusedId)) ?? null,
-  );
   const trashNodeId = trashId !== null ? parseNodeId(trashId) : null;
 
   // Keep the keyboard trash path (Alt+Delete) working now that the sidebar
@@ -169,29 +165,18 @@ export function BreadcrumbDropZones({
 
   useTrashArrivalAnnounce(trashNodeId ?? parseNodeId("__none__"));
 
+  if (trashNodeId === null) return null;
   return (
-    <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center gap-3 px-4">
-      {parentId !== null && (
-        <DropZone
-          targetId={parentId}
-          active={isDragging}
-          icon={FolderUp}
-          label="Move to parent"
-          dataAttr="data-graph-parent-drop"
-          accent={{ over: "border-sky-300 bg-sky-800 text-sky-50", icon: "text-sky-100" }}
-        />
-      )}
-      {trashNodeId !== null && (
-        <DropZone
-          targetId={trashNodeId}
-          active={isDragging}
-          icon={Trash2}
-          label="Move to trash"
-          dataAttr="data-graph-sidebar-trash"
-          accent={{ over: "border-zinc-200 bg-zinc-700 text-zinc-50", icon: "text-zinc-100" }}
-          onOverChange={setGraphTrashDropHover}
-        />
-      )}
+    <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-end px-4">
+      <DropZone
+        targetId={trashNodeId}
+        active={isDragging}
+        icon={Trash2}
+        label="Move to trash"
+        dataAttr="data-graph-sidebar-trash"
+        accent={{ over: "border-zinc-200 bg-zinc-700 text-zinc-50", icon: "text-zinc-100" }}
+        onOverChange={setGraphTrashDropHover}
+      />
     </div>
   );
 }

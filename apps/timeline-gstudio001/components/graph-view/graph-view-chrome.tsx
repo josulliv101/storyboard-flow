@@ -3,8 +3,14 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useSyncExternalStore } from "react";
+import { useDroppable } from "@dnd-kit/core";
 
-import { parseNodeId, useCollectionsSelector, type NodeId } from "@storyboard/ui/dnd-collections";
+import {
+  encodeDropTarget,
+  parseNodeId,
+  useCollectionsSelector,
+  type NodeId,
+} from "@storyboard/ui/dnd-collections";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
@@ -25,11 +31,55 @@ function focusedIdOf(projectId: string, timelinePath: readonly string[]) {
   return timelinePath[timelinePath.length - 1] ?? projectId;
 }
 
+type CrumbDropState = "idle" | "droppable" | "hovered";
+
+/**
+ * A breadcrumb crumb that DOUBLES AS a drop target while a card is dragged.
+ * The trail already IS the ancestor chain (root … parent), so dropping a card
+ * on any ancestor crumb moves it to THAT collection — up one level, or several,
+ * all the way to the root, in a single motion. Idle it is a plain nav link;
+ * during a drag every ancestor crumb reads as droppable (a dotted underline),
+ * and the crumb under the pointer shows where the item will land (a solid sky
+ * underline). Text-decoration only, so the crumb's width never changes and
+ * nothing shifts as the states toggle. The focused (current) crumb is NOT one
+ * of these — the item already lives there.
+ */
+function AncestorCrumb({
+  crumbId,
+  href,
+  label,
+}: Readonly<{ crumbId: string; href: string; label: string }>) {
+  const { setNodeRef } = useDroppable({
+    id: encodeDropTarget({ type: "panel", collectionId: parseNodeId(crumbId) }),
+  });
+  const state = useCollectionsSelector((snapshot): CrumbDropState => {
+    if (!snapshot.interaction.isDragging) return "idle";
+    const intent = snapshot.interaction.dropIntent;
+    return intent?.type === "append-to-collection" && String(intent.collectionId) === crumbId
+      ? "hovered"
+      : "droppable";
+  });
+  const className =
+    state === "hovered"
+      ? "text-sky-200 underline decoration-sky-400 decoration-2 underline-offset-4"
+      : state === "droppable"
+        ? "text-zinc-300 underline decoration-dotted decoration-zinc-500 underline-offset-4"
+        : "text-zinc-400 transition-colors hover:text-white";
+  return (
+    <span ref={setNodeRef} data-graph-ancestor-drop={crumbId}>
+      <Link href={href} className={className}>
+        {label}
+      </Link>
+    </span>
+  );
+}
+
 /**
  * Where you ARE and how to go up — the navigation unit, rendered inside the
  * board's own header rather than as page chrome above it. It sits where a
  * paragraph of interaction hints used to: the trail is worth permanent space,
- * a list of things you can try is not.
+ * a list of things you can try is not. During a card drag the ancestor crumbs
+ * become drop targets (see AncestorCrumb).
  */
 export function GraphBreadcrumb({
   projectId,
@@ -50,29 +100,6 @@ export function GraphBreadcrumb({
   );
   const focusedTitle = documents[focusedId]?.title ?? focusedNodeName ?? focusedId;
   const rename = useInlineRename(focusedId as NodeId, focusedTitle);
-  // While a card is dragged over the "Move to parent" drop zone, its target is
-  // the focused collection's parent — light up THAT crumb so the user sees
-  // where the item will land. `parentId` is the parent node's id; the crumb
-  // whose id matches it gets the highlight.
-  const parentId = useCollectionsSelector(
-    (snapshot) => snapshot.graph.parentById.get(parseNodeId(focusedId)) ?? null,
-  );
-  const parentDropHovered = useCollectionsSelector((snapshot) => {
-    const intent = snapshot.interaction.dropIntent;
-    const target = snapshot.graph.parentById.get(parseNodeId(focusedId)) ?? null;
-    return (
-      target !== null &&
-      intent?.type === "append-to-collection" &&
-      intent.collectionId === target
-    );
-  });
-  // Just an UNDERLINE (no box/chip): text-decoration is drawn under the glyphs
-  // and never changes the crumb's layout width, so highlighting the parent
-  // never bumps its neighbours.
-  const parentCrumbClass = (crumbId: string) =>
-    parentDropHovered && crumbId === parentId
-      ? " text-sky-200 underline decoration-sky-400 decoration-2 underline-offset-4"
-      : "";
   const parentHref =
     timelinePath.length > 1
       ? `${base}/${timelinePath.slice(0, -1).map(encodeURIComponent).join("/")}`
@@ -99,26 +126,24 @@ export function GraphBreadcrumb({
             renders once, as the current one. */}
         {focusedId !== projectId && (
           <>
-            <Link
+            <AncestorCrumb
+              crumbId={projectId}
               href={base}
-              className={`text-zinc-400 transition-colors hover:text-white${parentCrumbClass(projectId)}`}
-            >
-              {documents[projectId]?.title ?? projectId}
-            </Link>
+              label={documents[projectId]?.title ?? projectId}
+            />
             <span>/</span>
           </>
         )}
         {timelinePath.slice(0, -1).map((segment, index) => (
           <span key={segment} className="flex items-center gap-2">
-            <Link
+            <AncestorCrumb
+              crumbId={segment}
               href={`${base}/${timelinePath
                 .slice(0, index + 1)
                 .map(encodeURIComponent)
                 .join("/")}`}
-              className={`text-zinc-400 transition-colors hover:text-white${parentCrumbClass(segment)}`}
-            >
-              {documents[segment]?.title ?? segment}
-            </Link>
+              label={documents[segment]?.title ?? segment}
+            />
             <span>/</span>
           </span>
         ))}
