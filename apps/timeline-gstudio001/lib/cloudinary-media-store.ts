@@ -28,6 +28,8 @@ export type CloudinaryAsset = {
   /** Real media duration in seconds — videos only, from the Search API
    *  listing (the Admin API list endpoint doesn't return it). */
   duration?: number;
+  /** Cloudinary tags — the asset panel's tag pseudo-hierarchy browses them. */
+  tags?: string[];
 };
 
 type CloudinaryConfig = {
@@ -54,6 +56,7 @@ type CloudinaryResource = {
   public_id: string;
   resource_type: "image" | "video" | "raw";
   secure_url: string;
+  tags?: string[];
   width?: number;
 };
 
@@ -150,6 +153,7 @@ function toAsset(
     createdAt: resource.created_at,
     relativePath,
     duration: resource.resource_type === "video" ? resource.duration : undefined,
+    tags: resource.tags ?? [],
   };
 }
 
@@ -168,6 +172,9 @@ async function listCloudinaryResources(
       prefix: `${folderPrefix}/`,
       max_results: "100",
       direction: "desc",
+      // Include each resource's tag list — the asset panel's tags browse
+      // mode groups on them.
+      tags: "true",
     });
 
     if (nextCursor) {
@@ -228,6 +235,9 @@ async function searchCloudinaryVideos(
         body: JSON.stringify({
           expression: `public_id:${folderPrefix}/* AND resource_type:video`,
           max_results: 100,
+          // Tag lists ride along like duration does — see the function
+          // comment for why videos use Search in the first place.
+          with_field: "tags",
           ...(nextCursor ? { next_cursor: nextCursor } : {}),
         }),
         cache: "no-store",

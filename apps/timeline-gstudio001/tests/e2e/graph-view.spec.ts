@@ -210,7 +210,7 @@ async function installGraphApi(
       src: PIXEL,
       thumbnailUrl: PIXEL,
       folderPath: [] as string[],
-      tags: [],
+      tags: [] as string[],
       width: 1600,
       height: 900,
     },
@@ -222,7 +222,10 @@ async function installGraphApi(
       src: PIXEL,
       thumbnailUrl: PIXEL,
       folderPath: ["fixtures"],
-      tags: [],
+      // A nested tag, deliberately DISJOINT from the folder tree: tag space
+      // must group this under b-roll/night even though it lives in the
+      // "fixtures" folder.
+      tags: ["b-roll/night"],
       width: 1920,
       height: 1080,
       // Real duration from the provider listing — a dropped video must
@@ -232,24 +235,34 @@ async function installGraphApi(
   ];
   await page.route("**/api/assets**", (route) => {
     const url = new URL(route.request().url());
-    const folder = url.searchParams.getAll("folder");
-    const inFolder = (path: string[]) =>
-      path.length === folder.length && folder.every((seg, i) => path[i] === seg);
-    const subfolderNames = new Set(
-      paletteAssets
-        .filter(
-          (asset) =>
-            asset.folderPath.length > folder.length &&
-            folder.every((seg, i) => asset.folderPath[i] === seg),
-        )
-        .map((asset) => asset.folderPath[folder.length]),
+    // In tags mode an asset's LOCATIONS are its tags split on "/" (or the
+    // root when untagged); in folders mode its one location is folderPath —
+    // the same shapes the server's path-folders module derives.
+    const tagsMode = url.searchParams.get("mode") === "tags";
+    const base = url.searchParams.getAll(tagsMode ? "tag" : "folder");
+    const locationsOf = (asset: (typeof paletteAssets)[number]): string[][] =>
+      tagsMode
+        ? asset.tags.length === 0
+          ? [[]]
+          : asset.tags.map((tag) => tag.split("/"))
+        : [asset.folderPath];
+    const atBase = (path: string[]) =>
+      path.length === base.length && base.every((seg, i) => path[i] === seg);
+    const groupNames = new Set(
+      paletteAssets.flatMap((asset) =>
+        locationsOf(asset)
+          .filter(
+            (path) => path.length > base.length && base.every((seg, i) => path[i] === seg),
+          )
+          .map((path) => path[base.length]),
+      ),
     );
     return route.fulfill({
       json: {
         providerId: "cloudinary",
-        capabilities: { folders: true, tags: false, search: false, upload: false, delete: false },
-        folders: [...subfolderNames].map((name) => ({ name, path: [...folder, name] })),
-        assets: paletteAssets.filter((asset) => inFolder(asset.folderPath)),
+        capabilities: { folders: true, tags: true, search: false, upload: false, delete: false },
+        folders: [...groupNames].map((name) => ({ name, path: [...base, name] })),
+        assets: paletteAssets.filter((asset) => locationsOf(asset).some(atBase)),
       },
     });
   });
@@ -1203,6 +1216,46 @@ test.describe("graph view E2E", () => {
     await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toHaveCount(0);
     // At the root the header is the plain heading again — no navigation.
     await expect(drawer.getByRole("navigation", { name: "Asset folders" })).toHaveCount(0);
+  });
+
+  test("palette tags mode: toggle, pseudo-hierarchy drill-in, and back to folders", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await assetsButton(page).click();
+    const drawer = page.getByRole("dialog", { name: "Asset palette" });
+    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
+
+    // The toggle exists because the MOCK declares the capability — a
+    // provider that can't do tags never grows this control.
+    const toggle = drawer.getByRole("group", { name: "Browse assets by" });
+    await toggle.getByRole("button", { name: "Tags" }).click();
+
+    // Tags root: the untagged asset beside the top-level tag group. vid-1
+    // lives in the "fixtures" FOLDER but tag space doesn't care — it is
+    // reachable only through b-roll/night.
+    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-folder="b-roll"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-folder="fixtures"]')).toHaveCount(0);
+    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toHaveCount(0);
+
+    // Drill the nested tag: b-roll -> night -> the tagged asset.
+    await drawer.locator('[data-palette-folder="b-roll"]').click();
+    await expect(drawer.locator('[data-palette-folder="night"]')).toBeVisible();
+    await drawer.locator('[data-palette-folder="night"]').click();
+    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toHaveCount(0);
+    // The breadcrumb roots at "Tags" in this mode.
+    const breadcrumb = drawer.getByRole("navigation", { name: "Asset folders" });
+    await expect(breadcrumb.getByRole("button", { name: "Tags" })).toBeVisible();
+
+    // Back to Folders: the toggle resets to the FOLDER root (a tag path
+    // means nothing in folder space).
+    await toggle.getByRole("button", { name: "Folders" }).click();
+    await expect(drawer.locator('[data-palette-folder="fixtures"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-folder="b-roll"]')).toHaveCount(0);
   });
 
   test("trash drop moves across roots, persists BOTH documents, and undoes", async ({

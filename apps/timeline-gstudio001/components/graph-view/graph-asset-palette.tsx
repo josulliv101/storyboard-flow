@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Folder as FolderIcon } from "lucide-react";
+import { Folder as FolderIcon, Tag as TagIcon } from "lucide-react";
 
 import {
   PaletteItem,
@@ -78,25 +78,35 @@ type AssetPaletteState =
   | Readonly<{ status: "error"; message: string }>
   | (Readonly<{ status: "ready" }> & PalettePage);
 
+/** Which pseudo-hierarchy the drawer is browsing. Folders are the default;
+ *  tags appear as a toggle only when the provider declares the capability. */
+type BrowseMode = "folders" | "tags";
+
 /**
- * A folder tile in the rail — same footprint as an asset thumbnail so the
- * rail scans as one row, but a plain BUTTON, not a PaletteItem: folders are
- * navigation, not draggable media, and making them drag sources would hand
- * dnd-kit a node factory with nothing to mint.
+ * A folder (or tag-group) tile in the rail — same footprint as an asset
+ * thumbnail so the rail scans as one row, but a plain BUTTON, not a
+ * PaletteItem: these are navigation, not draggable media, and making them
+ * drag sources would hand dnd-kit a node factory with nothing to mint.
  */
 function FolderTile({
   folder,
+  mode,
   onOpen,
-}: Readonly<{ folder: AssetFolder; onOpen: (path: readonly string[]) => void }>) {
+}: Readonly<{
+  folder: AssetFolder;
+  mode: BrowseMode;
+  onOpen: (path: readonly string[]) => void;
+}>) {
+  const Icon = mode === "tags" ? TagIcon : FolderIcon;
   return (
     <button
       type="button"
       data-palette-folder={folder.name}
-      aria-label={`Open folder ${folder.name}`}
+      aria-label={`Open ${mode === "tags" ? "tag" : "folder"} ${folder.name}`}
       onClick={() => onOpen(folder.path)}
       className="flex h-24 w-36 shrink-0 flex-col items-center justify-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 text-zinc-400 transition-colors hover:border-sky-500/50 hover:bg-zinc-900 hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
     >
-      <FolderIcon aria-hidden="true" className="h-6 w-6" />
+      <Icon aria-hidden="true" className="h-6 w-6" />
       <span className="w-full truncate text-center text-[10px] font-semibold text-zinc-300">
         {folder.name}
       </span>
@@ -113,11 +123,18 @@ function FolderTile({
  */
 function FolderBreadcrumb({
   path,
+  rootLabel,
   onNavigate,
-}: Readonly<{ path: readonly string[]; onNavigate: (path: readonly string[]) => void }>) {
+}: Readonly<{
+  path: readonly string[];
+  rootLabel: string;
+  onNavigate: (path: readonly string[]) => void;
+}>) {
   if (path.length === 0) {
     return (
-      <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">Assets</h3>
+      <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-400">
+        {rootLabel}
+      </h3>
     );
   }
   return (
@@ -127,7 +144,7 @@ function FolderBreadcrumb({
         onClick={() => onNavigate([])}
         className="shrink-0 font-semibold uppercase tracking-[0.14em] text-zinc-400 hover:text-sky-300"
       >
-        Assets
+        {rootLabel}
       </button>
       {path.map((segment, index) => {
         const isCurrent = index === path.length - 1;
@@ -159,10 +176,12 @@ function FolderBreadcrumb({
 function PaletteRail({
   assets,
   folders,
+  mode,
   onOpenFolder,
 }: Readonly<{
   assets: readonly Asset[];
   folders: readonly AssetFolder[];
+  mode: BrowseMode;
   onOpenFolder: (path: readonly string[]) => void;
 }>) {
   const store = useCollectionsStore();
@@ -184,7 +203,7 @@ function PaletteRail({
           convention — and they come from the same listing response, so a
           provider without folders simply contributes none. */}
       {folders.map((folder) => (
-        <FolderTile key={folder.name} folder={folder} onOpen={onOpenFolder} />
+        <FolderTile key={folder.name} folder={folder} mode={mode} onOpen={onOpenFolder} />
       ))}
       {assets.map((asset) => (
         <PaletteItem
@@ -231,12 +250,23 @@ export function AssetPaletteDrawer({
   // (the effect always network-fetches when loading), so a stale entry heals.
   const pageCacheRef = useRef(new Map<string, PalettePage>());
   const panelRef = useRef<HTMLElement | null>(null);
+  // Folders or tags — the SAME breadcrumb/tile machinery browses either;
+  // only the wire params and the tile icon differ. The toggle renders only
+  // once a response has declared the provider can do tags (capability-gated
+  // UI, per the seam's degradation contract).
+  const [mode, setMode] = useState<BrowseMode>("folders");
+  const [tagsAvailable, setTagsAvailable] = useState(false);
 
-  const navigateTo = useCallback((next: readonly string[]) => {
-    setPath(next);
-    const cached = pageCacheRef.current.get(JSON.stringify(next));
-    setState(cached ? { status: "ready", ...cached } : { status: "loading" });
-  }, []);
+  const navigateTo = useCallback(
+    (next: readonly string[], nextMode?: BrowseMode) => {
+      const targetMode = nextMode ?? mode;
+      setMode(targetMode);
+      setPath(next);
+      const cached = pageCacheRef.current.get(JSON.stringify([targetMode, next]));
+      setState(cached ? { status: "ready", ...cached } : { status: "loading" });
+    },
+    [mode],
+  );
   // This panel is FIXED to the bottom of the viewport and non-modal — the
   // board behind it stays live, and you drag out of it onto that board. So
   // the page has to be able to scroll its own content clear of it; without
@@ -255,15 +285,20 @@ export function AssetPaletteDrawer({
     let cancelled = false;
     void (async () => {
       try {
-        // browse=1 names the ROOT when the path is empty; one `folder` param
-        // per segment (never a joined string — a segment containing "/" must
-        // not fake a boundary).
-        const params = new URLSearchParams({ browse: "1" });
-        for (const segment of path) params.append("folder", segment);
+        // browse=1 names the ROOT when the path is empty; one param per
+        // segment (never a joined string — a segment containing "/" must
+        // not fake a boundary). Tags mode swaps the param family, nothing
+        // else: the response shape is identical.
+        const params =
+          mode === "tags"
+            ? new URLSearchParams({ mode: "tags" })
+            : new URLSearchParams({ browse: "1" });
+        for (const segment of path) params.append(mode === "tags" ? "tag" : "folder", segment);
         const response = await fetch(`/api/assets?${params}`, { cache: "no-store" });
         const result = (await response.json().catch(() => ({}))) as {
           assets?: Asset[];
           folders?: AssetFolder[];
+          capabilities?: { tags?: boolean };
           error?: string;
         };
         if (cancelled) return;
@@ -276,7 +311,8 @@ export function AssetPaletteDrawer({
           folders: result.folders ?? [],
           truncated: result.assets.length > PALETTE_ASSET_LIMIT,
         };
-        pageCacheRef.current.set(JSON.stringify(path), page);
+        pageCacheRef.current.set(JSON.stringify([mode, path]), page);
+        setTagsAvailable(result.capabilities?.tags === true);
         setState({ status: "ready", ...page });
       } catch (cause) {
         if (!cancelled) {
@@ -290,7 +326,7 @@ export function AssetPaletteDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, state.status, path]);
+  }, [open, state.status, path, mode]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -307,7 +343,38 @@ export function AssetPaletteDrawer({
         className="pointer-events-auto ml-[72px] flex max-h-[38vh] flex-col border-t border-zinc-800 bg-zinc-950 p-3 text-white shadow-2xl shadow-black/50"
       >
         <div className="mb-2 flex items-center gap-3">
-          <FolderBreadcrumb path={path} onNavigate={navigateTo} />
+          <FolderBreadcrumb
+            path={path}
+            rootLabel={mode === "tags" ? "Tags" : "Assets"}
+            onNavigate={navigateTo}
+          />
+          {tagsAvailable && (
+            <div
+              role="group"
+              aria-label="Browse assets by"
+              className="flex shrink-0 overflow-hidden rounded-md border border-zinc-800"
+            >
+              {(["folders", "tags"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={mode === option}
+                  onClick={() => {
+                    // Switching hierarchies starts at the new one's root —
+                    // a folder path means nothing in tag space.
+                    if (mode !== option) navigateTo([], option);
+                  }}
+                  className={
+                    mode === option
+                      ? "bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-zinc-100"
+                      : "px-2 py-0.5 text-[10px] font-semibold text-zinc-500 hover:text-zinc-200"
+                  }
+                >
+                  {option === "folders" ? "Folders" : "Tags"}
+                </button>
+              ))}
+            </div>
+          )}
           <span className="shrink-0 text-[10px] text-zinc-600">
             Drag a thumbnail into any timeline · Enter picks one up for keyboard placement
           </span>
@@ -346,14 +413,19 @@ export function AssetPaletteDrawer({
           (state.assets.length === 0 && state.folders.length === 0 ? (
             <p className="rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
               {path.length === 0
-                ? "No assets yet — upload some from the asset library on the storyboard view."
-                : "This folder is empty."}
+                ? mode === "tags"
+                  ? "No tagged or untagged assets to show."
+                  : "No assets yet — upload some from the asset library on the storyboard view."
+                : mode === "tags"
+                  ? "No assets carry exactly this tag."
+                  : "This folder is empty."}
             </p>
           ) : (
             <>
               <PaletteRail
                 assets={state.assets}
                 folders={state.folders}
+                mode={mode}
                 onOpenFolder={navigateTo}
               />
               {state.truncated && (

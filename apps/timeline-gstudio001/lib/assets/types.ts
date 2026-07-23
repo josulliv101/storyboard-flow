@@ -55,12 +55,20 @@ export type AssetFolder = Readonly<{
 export type AssetQuery = Readonly<{
   /**
    * Folder to browse. `undefined` = the FLAT listing (every asset, no
-   * folder scoping — today's palette behaviour); `[]` = the root folder's
-   * direct children; deeper arrays scope to that folder. Distinct on
-   * purpose: flat is a view, root is a place.
+   * folder scoping); `[]` = the root folder's direct children; deeper
+   * arrays scope to that folder. Distinct on purpose: flat is a view, root
+   * is a place.
    */
   folder?: readonly string[];
-  /** Require every listed tag (capability-gated). */
+  /**
+   * TAG pseudo-hierarchy to browse instead (capability-gated; wins over
+   * `folder` when both are present). Same segment semantics — a tag
+   * "scene/heist" is the path ["scene", "heist"] — with the two differences
+   * tags force: an asset tagged twice lives in both places, and an UNTAGGED
+   * asset lives at the tags root. `[]` = that root.
+   */
+  tagPath?: readonly string[];
+  /** Require every listed tag (an AND filter, capability-gated). */
   tags?: readonly string[];
   /** Free-text filter (capability-gated). */
   search?: string;

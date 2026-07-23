@@ -67,8 +67,12 @@ serves both; only the source differs:
    no longer a palette view), folder tiles lead the rail, the breadcrumb
    climbs back, and visited pages answer from an in-drawer cache. A provider
    without folders reports none and the same view IS its flat listing.
-3. Tags mode (Cloudinary listing gains tags; Folders/Tags toggle,
-   capability-gated).
+3. ✅ Tags mode — the Cloudinary listing carries tags (Admin API `tags=true`,
+   Search API `with_field: "tags"`), `AssetQuery.tagPath` browses the
+   pseudo-hierarchy (`?mode=tags&tag=<seg>&tag=<seg>`; none = the tags root,
+   where UNTAGGED assets sit beside the top-level groups), and the palette
+   grows a capability-gated Folders/Tags toggle. An asset tagged twice lives
+   in both places; folder placement is invisible in tag space.
 4. **S3 adapter** (decided: the second provider) + provider picker; upload/
    delete through the seam.
 5. Retire the legacy drawer's bespoke virtual-timeline folder pipeline

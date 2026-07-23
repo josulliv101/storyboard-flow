@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { pageFromFlatListing } from "./path-folders";
+import { pageFromFlatListing, pageFromTagListing } from "./path-folders";
 import type { Asset } from "./types";
 
-function asset(id: string, folderPath: string[]): Asset {
+function asset(id: string, folderPath: string[], tags: string[] = []): Asset {
   return {
     id,
     providerId: "test",
@@ -12,7 +12,7 @@ function asset(id: string, folderPath: string[]): Asset {
     src: `https://cdn.test/${id}`,
     thumbnailUrl: `https://cdn.test/${id}.thumb`,
     folderPath,
-    tags: [],
+    tags,
   };
 }
 
@@ -83,5 +83,49 @@ describe("pageFromFlatListing", () => {
     expect(pageFromFlatListing(listing, { folder: ["Y"] }).folders).toEqual([
       { name: "X", path: ["Y", "X"] },
     ]);
+  });
+});
+
+describe("pageFromTagListing", () => {
+  // Folders play no part in tag space: every asset here lives at folder root
+  // so any grouping observed comes from tags alone.
+  const TAGGED = [
+    asset("untagged", []),
+    asset("hero", [], ["hero"]),
+    asset("heist-1", [], ["scene/heist"]),
+    asset("heist-hero", [], ["scene/heist", "hero"]),
+    asset("chase-1", [], ["scene/chase"]),
+  ];
+
+  it("the tags root shows UNTAGGED assets beside the top-level tag groups", () => {
+    const page = pageFromTagListing(TAGGED, { tagPath: [] });
+    expect(page.assets.map((entry) => entry.id)).toEqual(["untagged"]);
+    expect(page.folders).toEqual([
+      { name: "hero", path: ["hero"] },
+      { name: "scene", path: ["scene"] },
+    ]);
+  });
+
+  it("a tag path matches assets carrying EXACTLY that tag, with subgroups below", () => {
+    // "scene" itself tags nothing here — its page is pure navigation.
+    const scene = pageFromTagListing(TAGGED, { tagPath: ["scene"] });
+    expect(scene.assets).toEqual([]);
+    expect(scene.folders.map((folder) => folder.name)).toEqual(["chase", "heist"]);
+
+    const heist = pageFromTagListing(TAGGED, { tagPath: ["scene", "heist"] });
+    expect(heist.assets.map((entry) => entry.id)).toEqual(["heist-1", "heist-hero"]);
+    expect(heist.folders).toEqual([]);
+  });
+
+  it("an asset tagged twice lives in BOTH places — the difference from folders", () => {
+    const hero = pageFromTagListing(TAGGED, { tagPath: ["hero"] });
+    expect(hero.assets.map((entry) => entry.id)).toEqual(["hero", "heist-hero"]);
+  });
+
+  it("defaults a missing tagPath to the root and honours limit", () => {
+    const page = pageFromTagListing(TAGGED, {});
+    expect(page.assets.map((entry) => entry.id)).toEqual(["untagged"]);
+    const limited = pageFromTagListing(TAGGED, { tagPath: ["scene", "heist"], limit: 1 });
+    expect(limited.assets.map((entry) => entry.id)).toEqual(["heist-1"]);
   });
 });

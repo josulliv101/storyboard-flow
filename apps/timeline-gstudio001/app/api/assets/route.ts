@@ -15,7 +15,11 @@ export const dynamic = "force-dynamic";
  *                       segment containing "/" can never fake a boundary.
  *                       `?browse=1` with no folder params means the ROOT
  *                       folder; no browse and no folder params means the
- *                       FLAT listing (every asset — the palette's view).
+ *                       FLAT listing (every asset).
+ *   ?mode=tags          browse the TAG pseudo-hierarchy instead: `?tag=`
+ *                       params (repeatable, per segment) are the path, none
+ *                       = the tags root. `folders` rows are then tag groups
+ *                       — the client renders them identically.
  *   ?limit=<n>
  *
  * Response: { providerId, capabilities, assets, folders, nextCursor? } — the
@@ -37,11 +41,18 @@ export async function GET(request: Request) {
       );
     }
 
+    const tagsMode = url.searchParams.get("mode") === "tags";
     const folderSegments = url.searchParams.getAll("folder");
     const browsing = url.searchParams.get("browse") !== null || folderSegments.length > 0;
     const limitParam = Number(url.searchParams.get("limit"));
     const query: AssetQuery = {
-      ...(browsing ? { folder: folderSegments } : {}),
+      // Tags mode is ALWAYS a browse (no tag params = the tags root); the
+      // folder/flat distinction only exists in folders mode.
+      ...(tagsMode
+        ? { tagPath: url.searchParams.getAll("tag") }
+        : browsing
+          ? { folder: folderSegments }
+          : {}),
       ...(Number.isFinite(limitParam) && limitParam > 0 ? { limit: limitParam } : {}),
     };
 
