@@ -721,4 +721,45 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     // Empty: the card keeps its stored summary for a placeholder.
     expect(hydratedCollectionPreviews(focused.value.graph, "kid")).toEqual([]);
   });
+
+  it("recurses into a hydrated sub-collection to surface its nested images", () => {
+    const documents: Record<string, TimelineDocument> = {
+      kid: {
+        id: "kid",
+        title: "Kid",
+        clips: packTimelineClips([collectionClip("clip-sub", "sub", "Sub")]),
+      },
+      sub: {
+        id: "sub",
+        title: "Sub",
+        clips: packTimelineClips([image("s-a", 3), image("s-b", 3)]),
+      },
+    };
+    const focused = buildFocusedGraph(documents, "kid");
+    if (!focused.ok) throw new Error(focused.error);
+
+    // "kid" has NO direct media — only the "sub" collection. The walk descends
+    // into sub and surfaces its images as kid's preview frames (the first
+    // nested image, and beyond).
+    expect(hydratedCollectionPreviews(focused.value.graph, "kid").map((p) => p.id)).toEqual([
+      "s-a",
+      "s-b",
+    ]);
+  });
+
+  it("stops at a placeholder sub-collection (its nested media aren't loaded)", () => {
+    const documents: Record<string, TimelineDocument> = {
+      kid: {
+        id: "kid",
+        title: "Kid",
+        clips: packTimelineClips([collectionClip("clip-sub", "sub", "Sub")]),
+      },
+      // "sub" has no document: it stays a placeholder with no children in the
+      // graph, so the descent finds nothing to show.
+    };
+    const focused = buildFocusedGraph(documents, "kid");
+    if (!focused.ok) throw new Error(focused.error);
+
+    expect(hydratedCollectionPreviews(focused.value.graph, "kid")).toEqual([]);
+  });
 });
