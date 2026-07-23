@@ -942,11 +942,11 @@ test.describe("graph view E2E", () => {
     await expect(ghost).toBeVisible();
     const ghostBox = (await ghost.boundingBox())!;
 
-    // Fixed 112px SQUARE regardless of the card: a compact thumbnail of the
+    // Fixed 72px SQUARE regardless of the card: a compact thumbnail of the
     // item, materially narrower than the wide source card — proof the ghost is
     // not sized to the clip's duration.
-    expect(ghostBox.width).toBeGreaterThan(104);
-    expect(ghostBox.width).toBeLessThan(120);
+    expect(ghostBox.width).toBeGreaterThan(64);
+    expect(ghostBox.width).toBeLessThan(80);
     expect(Math.abs(ghostBox.height - ghostBox.width)).toBeLessThan(4);
     expect(alphaBox.width).toBeGreaterThan(ghostBox.width + 40);
 
@@ -1125,33 +1125,32 @@ test.describe("graph view E2E", () => {
       .toEqual([]);
   });
 
-  test("the breadcrumb parent zone moves a card up a level (and hides at the root)", async ({
+  test("dropping a card on an ancestor breadcrumb crumb moves it up a level (no crumb at the root)", async ({
     page,
   }) => {
     const api = await installGraphApi(page);
 
-    // At the ROOT the focused collection has no parent, so the parent zone is
-    // not rendered at all (nowhere up to go).
+    // At the ROOT the focused crumb is the ONLY crumb — there are no ANCESTOR
+    // crumbs to drop on (nowhere up to go).
     await page.goto(`${GRAPH_URL}?surface=strip`);
     await strip(page, PROJECT_ID)
       .locator('[data-node-id="alpha"]')
       .waitFor({ state: "visible", timeout: 30000 });
-    await expect(page.locator("[data-graph-parent-drop]")).toHaveCount(0);
+    await expect(page.locator("[data-graph-ancestor-drop]")).toHaveCount(0);
 
-    // Drill into the child: now the parent zone targets the PROJECT (its
-    // parent). It is invisible until a drag, but laid out so holdDrag reaches
-    // it — exactly like the trash zone beside it.
+    // Drill into the child: the PROJECT crumb (its parent) becomes an ancestor
+    // drop target — the trail itself is the "move up a level" control now.
     await page.goto(`${GRAPH_URL}/${encodeURIComponent(CHILD_ID)}?surface=strip`);
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
     expect(await stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
-    const parentZone = page.locator(`[data-graph-parent-drop="${PROJECT_ID}"]`);
-    await expect(parentZone).toHaveCount(1);
+    const projectCrumb = page.locator(`[data-graph-ancestor-drop="${PROJECT_ID}"]`);
+    await expect(projectCrumb).toHaveCount(1);
 
-    // Drag c1 up onto the parent zone → it leaves the focused child and lands
-    // in the parent collection.
-    await holdDrag(page, strip(page, CHILD_ID).locator('[data-node-id="c1"]'), parentZone);
+    // Drag c1 up onto the project (parent) crumb → it leaves the focused child
+    // and lands in the parent collection.
+    await holdDrag(page, strip(page, CHILD_ID).locator('[data-node-id="c1"]'), projectCrumb);
 
     // The focused child now holds only c2…
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c2"]);
@@ -1175,22 +1174,61 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 
+  test("every ancestor is a drop target: a card jumps multiple levels to a grandparent crumb", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    // Build PROJECT → Scene A (child) → Scene B (grandchild, holds g1).
+    api.documents
+      .get(CHILD_ID)!
+      .clips.push(collectionClip("clip-nested", GRANDCHILD_ID, 2, "Scene B", 1));
+    api.documents.set(GRANDCHILD_ID, {
+      id: GRANDCHILD_ID,
+      title: "Scene B",
+      clips: [mediaClip("g1", "image", 0, 4)],
+    });
+
+    // Focus TWO levels deep, on Scene B, via a deep link.
+    await page.goto(
+      `${GRAPH_URL}/${encodeURIComponent(CHILD_ID)}/${encodeURIComponent(GRANDCHILD_ID)}?surface=strip`,
+    );
+    await strip(page, GRANDCHILD_ID)
+      .locator('[data-node-id="g1"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+
+    // BOTH ancestors are drop targets — the project (root) and Scene A (parent).
+    await expect(page.locator("[data-graph-ancestor-drop]")).toHaveCount(2);
+    const projectCrumb = page.locator(`[data-graph-ancestor-drop="${PROJECT_ID}"]`);
+    await expect(projectCrumb).toHaveCount(1);
+    await expect(page.locator(`[data-graph-ancestor-drop="${CHILD_ID}"]`)).toHaveCount(1);
+
+    // Drop g1 on the PROJECT crumb → it jumps TWO levels up, from Scene B
+    // straight to the project, in a single motion.
+    await holdDrag(page, strip(page, GRANDCHILD_ID).locator('[data-node-id="g1"]'), projectCrumb);
+    await expect.poll(() => stripOrder(page, GRANDCHILD_ID)).toEqual([]);
+    await expect
+      .poll(() => api.patchesFor(GRANDCHILD_ID).at(-1)?.clipIds, { timeout: 5000 })
+      .toEqual([]);
+    await expect
+      .poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds, { timeout: 5000 })
+      .toEqual(["alpha", "bravo", "clip-scene", "charlie", "g1"]);
+  });
+
   test("hovering a drop zone highlights the parent crumb / animates the sidebar trash icon", async ({
     page,
   }) => {
     await installGraphApi(page);
-    // Drill in so the parent zone exists (parent = the project crumb).
+    // Drill in so an ancestor crumb (the project) exists to drop on.
     await page.goto(`${GRAPH_URL}/${encodeURIComponent(CHILD_ID)}?surface=strip`);
     const c1 = strip(page, CHILD_ID).locator('[data-node-id="c1"]');
     await c1.waitFor({ state: "visible", timeout: 30000 });
     await settleMoveAnimations(page);
 
-    const parentZone = page.locator(`[data-graph-parent-drop="${PROJECT_ID}"]`);
+    // The project (ancestor) crumb IS the "move up" drop target; its link
+    // carries the hover underline.
+    const parentZone = page.locator(`[data-graph-ancestor-drop="${PROJECT_ID}"]`);
+    const parentCrumb = parentZone.locator("a");
     const trashZone = page.locator(`[data-graph-sidebar-trash="${TRASH_ID}"]`);
-    const parentCrumb = page
-      .getByRole("navigation", { name: "Timeline focus path" })
-      .getByRole("link")
-      .first();
     const trashIcon = page
       .getByRole("button", { name: "Trash", exact: true })
       .locator("svg")

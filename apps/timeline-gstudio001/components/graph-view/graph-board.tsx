@@ -401,11 +401,12 @@ export function GraphBoard({
               />
             </div>
 
-            {/* Card-drag drop targets (move-to-parent + trash), centred over
-                this header row and shown only while a card is being dragged.
-                Inside the header so its absolute layer positions against it;
-                inside the provider so its droppables join the DndContext. */}
-            <BreadcrumbDropZones focusedId={focusedId} trashId={trashRootId} />
+            {/* The trash drop target (right side), shown only while a card is
+                being dragged. The "move up a level" targets are the ancestor
+                breadcrumb crumbs themselves (see GraphBreadcrumb). Inside the
+                header so its absolute layer positions against it; inside the
+                provider so its droppable joins the DndContext. */}
+            <BreadcrumbDropZones trashId={trashRootId} />
           </div>
 
           {surface === "strip" ? (

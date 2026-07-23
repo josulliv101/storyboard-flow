@@ -373,22 +373,46 @@ export type CollectionPreviewFrame = Readonly<{ id: string; src: string; poster?
  * thumbnail the card paints — `posterSrcs` for video, `src` for an image —
  * and the same first/middle/last selection `previewItemsFrom` uses keeps the
  * card in step with the persisted preview.
+ *
+ * RECURSES into sub-collections: a collection whose direct children are all
+ * nested collections has no media of its own to show, so the walk descends
+ * depth-first (in child order) to surface the first nested image — and the
+ * rest, from which first/middle/last is picked. A placeholder sub-collection
+ * has no children in the graph, so the descent stops there naturally (its
+ * nested media aren't loaded and can't be shown until it hydrates). This is a
+ * LIVE-card enrichment only; the persisted summary (`hydratedCollectionPreviewItems`
+ * / `previewItemsFrom`) stays direct-media, since it can't resolve documents
+ * it doesn't hold.
  */
 export function hydratedCollectionPreviews(
   graph: CollectionsGraph,
   collectionId: string,
 ): readonly CollectionPreviewFrame[] {
   const media: CollectionPreviewFrame[] = [];
-  for (const childId of getChildren(graph, parseNodeId(collectionId))) {
-    const node = graph.nodesById.get(childId);
-    if (!node || node.kind !== "media") continue;
-    const poster = node.mediaKind === "video" ? node.posterSrcs?.[0] : undefined;
-    media.push({
-      id: node.id as string,
-      src: node.src ?? "",
-      ...(poster === undefined ? {} : { poster }),
-    });
-  }
+  const seen = new Set<string>();
+  const collect = (id: NodeId): void => {
+    for (const childId of getChildren(graph, id)) {
+      const node = graph.nodesById.get(childId);
+      if (!node) continue;
+      if (node.kind === "media") {
+        const poster = node.mediaKind === "video" ? node.posterSrcs?.[0] : undefined;
+        media.push({
+          id: node.id as string,
+          src: node.src ?? "",
+          ...(poster === undefined ? {} : { poster }),
+        });
+      } else if (node.kind === "collection") {
+        // Descend to find nested images. `seen` guards a pathological cycle
+        // (the graph is a tree, so this is belt-and-braces).
+        const key = node.id as string;
+        if (!seen.has(key)) {
+          seen.add(key);
+          collect(childId);
+        }
+      }
+    }
+  };
+  collect(parseNodeId(collectionId));
   if (media.length <= 3) return media;
   return [media[0], media[Math.floor(media.length / 2)], media[media.length - 1]];
 }

@@ -407,6 +407,11 @@ export function GraphTimelineView({
         </p>
       )}
 
+      {/* GraphDetailsProvider wraps DndCollections (not just its children) so
+          the details store is reachable inside the drag OVERLAY too — the
+          collection drag ghost reads a placeholder's stored preview frames
+          there the same way the card does. */}
+      <GraphDetailsProvider store={detailsStore}>
       <DndCollections
         // initialGraph is initial-only (the store is the source of truth
         // thereafter), so a boot re-run for a new session must remount to
@@ -428,15 +433,15 @@ export function GraphTimelineView({
         // GraphGhost): width AND height pinned so it shows the clip's own
         // frame at a stable 1:1, centred on the grabbed pixel, instead of a
         // duration-shaped card that (for a long clip) buried the drop target
-        // it was aimed at.
-        dragGhostWidth={112}
-        dragGhostHeight={112}
+        // it was aimed at. Kept SMALL so it doesn't cover the breadcrumb drop
+        // zones the user is aiming the drag at.
+        dragGhostWidth={72}
+        dragGhostHeight={72}
         onOpenNode={handleOpenNode}
         openOnClick={openOnClick}
         commandPolicy={commandPolicy}
         onPaletteDiscard={handlePaletteDiscard}
       >
-        <GraphDetailsProvider store={detailsStore}>
           <PersistenceBridge onSync={onSync} />
           <GraphDetailsJanitor />
           <AssetPaletteDrawer open={assetsOpen} onClose={() => setAssetsOpen(false)} />
@@ -484,8 +489,8 @@ export function GraphTimelineView({
               />
             )}
           </GraphViewNavProvider>
-        </GraphDetailsProvider>
       </DndCollections>
+      </GraphDetailsProvider>
     </div>
   );
 }

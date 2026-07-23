@@ -414,16 +414,32 @@ function mediaGhostSrc(node: CollectionGhostContentProps["node"]): string | null
  */
 const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhostContentProps) {
   const isCollection = node.kind === "collection";
-  const collectionPreviews = useHydratedCollectionPreviews(node.id as string, isCollection);
+  // Mirror the CARD (GraphCollectionItemParts) exactly, so the ghost shows what
+  // the card shows: a HYDRATED collection uses its live recursive preview
+  // frames; a placeholder falls back to the stored summary in the details
+  // side-table — reachable here now that the provider wraps the drag overlay.
+  const detail = useClipDetail(node.id as string);
+  const hydrated = detail?.hydrated === true;
+  const livePreviews = useHydratedCollectionPreviews(node.id as string, isCollection && hydrated);
+  const all: readonly CollectionPreviewFrame[] = isCollection
+    ? hydrated
+      ? livePreviews
+      : (detail?.previewItems ?? [])
+    : [];
+  // FIRST and LAST only (or the single frame) — never three, exactly as the
+  // card picks its two representative frames.
+  const chosen = all.length > 1 ? [all[0], all[all.length - 1]] : all;
   const frames: string[] = isCollection
-    ? collectionPreviews.map((preview) => preview.poster ?? preview.src).filter(Boolean)
+    ? chosen.map((preview) => preview.poster ?? preview.src).filter(Boolean)
     : (() => {
         const src = mediaGhostSrc(node);
         return src ? [src] : [];
       })();
 
   return (
-    <span className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-md bg-zinc-900 shadow-2xl ring-2 ring-amber-400">
+    // Slightly transparent so the breadcrumb drop zones read THROUGH the ghost
+    // while dragging over them — the user can see where they're aiming.
+    <span className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-md bg-zinc-900 opacity-80 shadow-2xl ring-2 ring-amber-400">
       {frames.length > 0 ? (
         <span className="flex h-full w-full gap-px">
           {frames.map((src, index) => (
