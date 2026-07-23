@@ -203,6 +203,27 @@ html[data-timeline-endpoint-transition="active"]::view-transition-old(.timeline-
   animation: trash-armed-pulse 1.5s ease-in-out infinite;
 }
 
+/* The sidebar trash ICON, while a dragged card hovers the breadcrumb's
+   "Move to trash" zone: a looping wiggle-pop that calls attention to where the
+   item is headed. A continuous twin of the one-shot trash-arrival above. */
+@keyframes trash-hover-attention {
+  0%,
+  100% {
+    transform: scale(1) rotate(0);
+  }
+  30% {
+    transform: scale(1.25) rotate(-8deg);
+    color: rgb(244 244 245);
+  }
+  60% {
+    transform: scale(1.1) rotate(6deg);
+  }
+}
+
+.animate-trash-hover-attention {
+  animation: trash-hover-attention 800ms ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html[data-timeline-route-fade] body {
     animation: none !important;
@@ -217,7 +238,8 @@ html[data-timeline-endpoint-transition="active"]::view-transition-old(.timeline-
   }
 
   .animate-trash-arrival,
-  .animate-trash-armed-pulse {
+  .animate-trash-armed-pulse,
+  .animate-trash-hover-attention {
     animation: none;
   }
 }

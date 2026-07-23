@@ -1175,6 +1175,57 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 
+  test("hovering a drop zone highlights the parent crumb / animates the sidebar trash icon", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    // Drill in so the parent zone exists (parent = the project crumb).
+    await page.goto(`${GRAPH_URL}/${encodeURIComponent(CHILD_ID)}?surface=strip`);
+    const c1 = strip(page, CHILD_ID).locator('[data-node-id="c1"]');
+    await c1.waitFor({ state: "visible", timeout: 30000 });
+    await settleMoveAnimations(page);
+
+    const parentZone = page.locator(`[data-graph-parent-drop="${PROJECT_ID}"]`);
+    const trashZone = page.locator(`[data-graph-sidebar-trash="${TRASH_ID}"]`);
+    const parentCrumb = page
+      .getByRole("navigation", { name: "Timeline focus path" })
+      .getByRole("link")
+      .first();
+    const trashIcon = page
+      .getByRole("button", { name: "Trash", exact: true })
+      .locator("svg")
+      .first();
+
+    // Pick c1 up (hold to activate), then hold it — no release — over each zone.
+    const box = (await c1.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(400);
+
+    // Over MOVE-TO-PARENT → the parent crumb lights up; trash icon still calm.
+    const pz = (await parentZone.boundingBox())!;
+    await page.mouse.move(pz.x + pz.width / 2, pz.y + pz.height / 2, { steps: 12 });
+    await expect
+      .poll(async () => (await parentCrumb.getAttribute("class")) ?? "")
+      .toContain("decoration-sky-400");
+    await expect(trashIcon).not.toHaveClass(/animate-trash-hover-attention/);
+
+    // Over MOVE-TO-TRASH → the sidebar trash icon animates; crumb highlight clears.
+    const tz = (await trashZone.boundingBox())!;
+    await page.mouse.move(tz.x + tz.width / 2, tz.y + tz.height / 2, { steps: 12 });
+    await expect(trashIcon).toHaveClass(/animate-trash-hover-attention/);
+    await expect
+      .poll(async () => (await parentCrumb.getAttribute("class")) ?? "")
+      .not.toContain("decoration-sky-400");
+
+    // Release back on the source — no move — and the trash animation stops.
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(80);
+    await expect(trashIcon).not.toHaveClass(/animate-trash-hover-attention/);
+    expect(await stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+  });
+
   test("drop into an un-hydrated collection bounces and never writes its document", async ({
     page,
   }) => {

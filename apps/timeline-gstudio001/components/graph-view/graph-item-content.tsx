@@ -395,10 +395,9 @@ const GraphTrimHandle = memo(function GraphTrimHandle({
   );
 });
 
-/** The image that represents a dragged item: a video's poster frame, an
- *  image clip's own source, or null for a collection (no single frame) or a
- *  poster-less clip — those fall back to a labelled tile. */
-function ghostImageSrc(node: CollectionGhostContentProps["node"]): string | null {
+/** A media clip's own frame: a video's poster, an image's source (null when
+ *  it has neither — the ghost then falls back to a labelled tile). */
+function mediaGhostSrc(node: CollectionGhostContentProps["node"]): string | null {
   if (node.kind !== "media") return null;
   return node.mediaKind === "video" ? (node.posterSrcs?.[0] ?? null) : (node.src ?? null);
 }
@@ -406,23 +405,38 @@ function ghostImageSrc(node: CollectionGhostContentProps["node"]): string | null
 /**
  * The drag ghost: a SQUARE thumbnail of the item being moved (the provider
  * sizes the overlay box square via `dragGhostWidth`/`dragGhostHeight`), so the
- * preview reads as "this picture" rather than a duration-shaped card. Media
- * shows its own frame cover-cropped to the square; a collection (or a clip
- * with no poster) falls back to a labelled tile so the ghost is never an empty
- * or broken box.
+ * preview reads as "this picture" rather than a duration-shaped card. A media
+ * clip shows its own frame; a COLLECTION shows the same child preview frames
+ * its card paints (first/middle/last of its media), derived from the LIVE
+ * graph — which is available inside the drag overlay even though the details
+ * side-table is not. A poster-less clip, or a collection with no media to
+ * show, falls back to a labelled tile so the ghost is never empty or broken.
  */
 const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhostContentProps) {
-  const imageSrc = ghostImageSrc(node);
+  const isCollection = node.kind === "collection";
+  const collectionPreviews = useHydratedCollectionPreviews(node.id as string, isCollection);
+  const frames: string[] = isCollection
+    ? collectionPreviews.map((preview) => preview.poster ?? preview.src).filter(Boolean)
+    : (() => {
+        const src = mediaGhostSrc(node);
+        return src ? [src] : [];
+      })();
+
   return (
     <span className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-md bg-zinc-900 shadow-2xl ring-2 ring-amber-400">
-      {imageSrc ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={imageSrc}
-          alt=""
-          draggable={false}
-          className="h-full w-full object-cover"
-        />
+      {frames.length > 0 ? (
+        <span className="flex h-full w-full gap-px">
+          {frames.map((src, index) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={index}
+              src={src}
+              alt=""
+              draggable={false}
+              className="h-full min-w-0 flex-1 object-cover"
+            />
+          ))}
+        </span>
       ) : (
         <span className="flex h-full w-full flex-col items-center justify-center gap-1 p-2 text-center">
           <span className="truncate text-[11px] font-semibold text-zinc-100">{node.name}</span>

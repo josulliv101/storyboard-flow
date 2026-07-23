@@ -238,10 +238,35 @@ function GraphAddCollectionButton() {
   const handleDragStart = (event: React.DragEvent) => {
     // Same MIME the sidebar tool used, which NativeDropStrip/Grid accept.
     event.dataTransfer.setData("application/x-gstudio-type", "collection");
-    event.dataTransfer.effectAllowed = "copyMove";
+    event.dataTransfer.effectAllowed = "copy";
     const img = new window.Image();
     img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
     event.dataTransfer.setDragImage(img, 0, 0);
+
+    // The browser shows a "no-drop" cursor wherever a dragover handler doesn't
+    // preventDefault — i.e. everywhere except directly over a strip/grid — so
+    // the cursor flickers to no-drop as the pointer crosses the gaps between
+    // them (and at the very start, up in the header). Claim EVERY dragover at
+    // the document level for the drag's lifetime so the cursor stays a valid
+    // "copy" throughout; the strips/grids still own the drop position and the
+    // actual add. A matching document drop swallows a stray drop that misses
+    // every strip so the browser takes no default action.
+    const onDocDragOver = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes("application/x-gstudio-type")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    };
+    const onDocDrop = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("application/x-gstudio-type")) e.preventDefault();
+    };
+    const cleanup = () => {
+      document.removeEventListener("dragover", onDocDragOver);
+      document.removeEventListener("drop", onDocDrop);
+      document.removeEventListener("dragend", cleanup);
+    };
+    document.addEventListener("dragover", onDocDragOver);
+    document.addEventListener("drop", onDocDrop);
+    document.addEventListener("dragend", cleanup, { once: true });
   };
 
   return (
