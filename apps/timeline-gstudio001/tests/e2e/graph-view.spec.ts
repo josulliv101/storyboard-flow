@@ -1393,6 +1393,40 @@ test.describe("graph view E2E", () => {
     await expect(redoButton(page)).toBeDisabled();
   });
 
+  test("the preview OPENS at its height instead of animating into it", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // Listen before the toggle: the mount-time sizing pass measures the real
+    // height a frame or two after the placeholder one paints, so a height
+    // transition armed at mount plays as a visible shrink — every first open,
+    // and only the first (a reopen restores the remembered height).
+    await page.evaluate(() => {
+      const runs: string[] = [];
+      (window as unknown as { __heightRuns: string[] }).__heightRuns = runs;
+      document.addEventListener(
+        "transitionrun",
+        (event) => {
+          if ((event as TransitionEvent).propertyName === "height") runs.push("height");
+        },
+        true,
+      );
+    });
+
+    await previewToggle(page).click();
+    await expect(page.locator('[data-testid="workbench-display-canvas"]')).toBeVisible();
+    await page.waitForTimeout(500);
+
+    const runs = await page.evaluate(
+      () => (window as unknown as { __heightRuns: string[] }).__heightRuns,
+    );
+    expect(runs).toEqual([]);
+
+    // The transition is still armed afterwards, for a viewport clamp.
+    const pane = page.locator('[data-testid="workbench-preview-region"] > div').first();
+    await expect(pane).toHaveClass(/transition-\[height\]/);
+  });
+
   test("a dropped card animates out of the ghost, not back to where it started", async ({
     page,
   }) => {

@@ -769,6 +769,10 @@ export function WorkbenchSplitPane({
     () => restoredSurfaceHeight ?? DEFAULT_SURFACE_HEIGHT,
   );
   const [isDividerDragging, setIsDividerDragging] = useState(false);
+  // False until the opening height has been measured AND painted (see the
+  // double-rAF below), so the pane appears at its size instead of animating
+  // into it.
+  const [heightAnimated, setHeightAnimated] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const dividerRef = useRef<HTMLButtonElement | null>(null);
   const lowerPaneRef = useRef<HTMLDivElement | null>(null);
@@ -871,6 +875,24 @@ export function WorkbenchSplitPane({
     });
   }, [clampToViewport]);
 
+  // Arm the height transition only once the opening size has been painted.
+  // The sizing pass below runs in a layout effect and its inputs (the
+  // divider's box, the viewport boundary, the asset-drawer variable) settle
+  // over the first frames, so the height can land a frame or two after the
+  // first paint — late enough for the browser to have a before-change style
+  // and animate the difference. Two frames is "after the next paint" without
+  // guessing at a duration.
+  useEffect(() => {
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => setHeightAnimated(true));
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, []);
+
   useLayoutEffect(() => {
     // Size ONCE on mount. After that the height belongs to the user: only a
     // divider drag changes it, and a shrinking viewport may clamp it.
@@ -972,7 +994,14 @@ export function WorkbenchSplitPane({
         <div
           className={cn(
             "min-h-0",
-            !isDividerDragging &&
+            // The transition is for LATER height changes (a shrinking
+            // viewport clamping the pane). It must not run against the
+            // mount-time sizing pass, which starts from a placeholder height
+            // and measures the real one — that played as a visible shrink
+            // every first open, and only the first, since a reopen restores
+            // the remembered height and never re-measures.
+            heightAnimated &&
+              !isDividerDragging &&
               "transition-[height] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
           )}
           style={{
