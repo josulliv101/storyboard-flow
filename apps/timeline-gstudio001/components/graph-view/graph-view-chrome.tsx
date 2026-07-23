@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
-import { useCollectionsSelector, type NodeId } from "@storyboard/ui/dnd-collections";
+import { parseNodeId, useCollectionsSelector, type NodeId } from "@storyboard/ui/dnd-collections";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
@@ -50,6 +50,29 @@ export function GraphBreadcrumb({
   );
   const focusedTitle = documents[focusedId]?.title ?? focusedNodeName ?? focusedId;
   const rename = useInlineRename(focusedId as NodeId, focusedTitle);
+  // While a card is dragged over the "Move to parent" drop zone, its target is
+  // the focused collection's parent — light up THAT crumb so the user sees
+  // where the item will land. `parentId` is the parent node's id; the crumb
+  // whose id matches it gets the highlight.
+  const parentId = useCollectionsSelector(
+    (snapshot) => snapshot.graph.parentById.get(parseNodeId(focusedId)) ?? null,
+  );
+  const parentDropHovered = useCollectionsSelector((snapshot) => {
+    const intent = snapshot.interaction.dropIntent;
+    const target = snapshot.graph.parentById.get(parseNodeId(focusedId)) ?? null;
+    return (
+      target !== null &&
+      intent?.type === "append-to-collection" &&
+      intent.collectionId === target
+    );
+  });
+  // Just an UNDERLINE (no box/chip): text-decoration is drawn under the glyphs
+  // and never changes the crumb's layout width, so highlighting the parent
+  // never bumps its neighbours.
+  const parentCrumbClass = (crumbId: string) =>
+    parentDropHovered && crumbId === parentId
+      ? " text-sky-200 underline decoration-sky-400 decoration-2 underline-offset-4"
+      : "";
   const parentHref =
     timelinePath.length > 1
       ? `${base}/${timelinePath.slice(0, -1).map(encodeURIComponent).join("/")}`
@@ -76,7 +99,10 @@ export function GraphBreadcrumb({
             renders once, as the current one. */}
         {focusedId !== projectId && (
           <>
-            <Link href={base} className="text-zinc-400 transition-colors hover:text-white">
+            <Link
+              href={base}
+              className={`text-zinc-400 transition-colors hover:text-white${parentCrumbClass(projectId)}`}
+            >
               {documents[projectId]?.title ?? projectId}
             </Link>
             <span>/</span>
@@ -89,7 +115,7 @@ export function GraphBreadcrumb({
                 .slice(0, index + 1)
                 .map(encodeURIComponent)
                 .join("/")}`}
-              className="text-zinc-400 transition-colors hover:text-white"
+              className={`text-zinc-400 transition-colors hover:text-white${parentCrumbClass(segment)}`}
             >
               {documents[segment]?.title ?? segment}
             </Link>

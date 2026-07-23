@@ -21,6 +21,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import {
   GRAPH_ASSETS_TOGGLE_EVENT,
   GRAPH_TRASH_ARRIVAL_EVENT,
+  GRAPH_TRASH_HOVER_EVENT,
   GRAPH_VIEW_STATE_EVENT,
   isGraphViewRoute,
   requestGraphChildrenToggle,
@@ -216,6 +217,17 @@ export function TimelineSidebar() {
     return () => window.removeEventListener(GRAPH_TRASH_ARRIVAL_EVENT, handleArrival);
   }, []);
 
+  // A dragged card is (or is not) currently over the breadcrumb's trash drop
+  // zone — the icon does an attention wiggle while it is, pointing the user at
+  // where the drop lands.
+  const [trashDropHover, setTrashDropHover] = useState(false);
+  useEffect(() => {
+    const handleHover = (event: Event) =>
+      setTrashDropHover((event as CustomEvent<boolean>).detail === true);
+    window.addEventListener(GRAPH_TRASH_HOVER_EVENT, handleHover);
+    return () => window.removeEventListener(GRAPH_TRASH_HOVER_EVENT, handleHover);
+  }, []);
+
   const onGraphRoute = isGraphViewRoute(pathname);
 
   const handleLogout = async () => {
@@ -406,6 +418,9 @@ export function TimelineSidebar() {
                 key={item.id === "trash" ? trashArrival : undefined}
                 className={cn(
                   "h-4 w-4 transition-colors",
+                  // Continuous wiggle while a card hovers the trash drop zone;
+                  // the one-shot arrival pop takes over on the actual drop.
+                  item.id === "trash" && trashDropHover && "animate-trash-hover-attention",
                   item.id === "trash" && trashArrival > 0 && "animate-trash-arrival",
                 )}
               />

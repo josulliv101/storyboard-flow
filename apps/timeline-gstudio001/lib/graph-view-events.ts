@@ -100,3 +100,18 @@ export const GRAPH_TRASH_ARRIVAL_EVENT = "graph-view:trash-arrival";
 export function announceGraphTrashArrival(): void {
   window.dispatchEvent(new CustomEvent(GRAPH_TRASH_ARRIVAL_EVENT));
 }
+
+// While a dragged card hovers the breadcrumb's "Move to trash" zone, the
+// sidebar's trash icon plays an attention animation — the drop target lives in
+// the graph tree, the icon is app chrome, so the state crosses the same
+// window-event seam. Detail is the hover on/off boolean.
+
+export const GRAPH_TRASH_HOVER_EVENT = "graph-view:trash-hover";
+
+/** Tell the sidebar's trash icon whether a card is currently over the trash
+ *  drop zone (so it can animate for attention). */
+export function setGraphTrashDropHover(hovering: boolean): void {
+  window.dispatchEvent(
+    new CustomEvent<boolean>(GRAPH_TRASH_HOVER_EVENT, { detail: hovering }),
+  );
+}

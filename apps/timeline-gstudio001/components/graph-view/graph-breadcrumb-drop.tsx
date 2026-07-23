@@ -13,7 +13,7 @@ import {
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
-import { announceGraphTrashArrival } from "@/lib/graph-view-events";
+import { announceGraphTrashArrival, setGraphTrashDropHover } from "@/lib/graph-view-events";
 
 // The graph's card-drag drop targets live CENTRED IN THE BREADCRUMB ROW now,
 // appearing while a card is being dragged (they were the sidebar tool
@@ -58,6 +58,7 @@ function DropZone({
   label,
   accent,
   dataAttr,
+  onOverChange,
 }: Readonly<{
   targetId: NodeId;
   active: boolean;
@@ -65,11 +66,20 @@ function DropZone({
   label: string;
   accent: ZoneAccent;
   dataAttr: string;
+  /** Notified whenever this zone becomes the hovered drop target (or stops
+   *  being it) — the trash zone uses it to animate the sidebar icon. */
+  onOverChange?: (over: boolean) => void;
 }>) {
   const state = useZoneState(targetId);
   const { setNodeRef } = useDroppable({
     id: encodeDropTarget({ type: "panel", collectionId: targetId }),
   });
+
+  useEffect(() => {
+    onOverChange?.(state === "over");
+  }, [state, onOverChange]);
+  // Belt-and-braces: clear the signal if the zone unmounts mid-hover.
+  useEffect(() => () => onOverChange?.(false), [onOverChange]);
 
   return (
     <div
@@ -179,6 +189,7 @@ export function BreadcrumbDropZones({
           label="Move to trash"
           dataAttr="data-graph-sidebar-trash"
           accent={{ over: "border-zinc-200 bg-zinc-700 text-zinc-50", icon: "text-zinc-100" }}
+          onOverChange={setGraphTrashDropHover}
         />
       )}
     </div>
