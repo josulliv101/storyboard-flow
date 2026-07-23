@@ -1877,6 +1877,12 @@ test.describe("graph view E2E", () => {
       .waitFor({ state: "visible", timeout: 30000 });
     await page.getByRole("button", { name: "Paste", exact: true }).click();
     await expect.poll(() => stripOrder(page, CHILD_ID)).toHaveLength(3);
+    // The pasted card IS bravo's clone (same name, fresh id) — not just "some
+    // third child": a paste inserting the wrong entry would still pass a bare
+    // length check.
+    const pasted = strip(page, CHILD_ID).getByRole("button", { name: "bravo", exact: true });
+    await expect(pasted).toBeVisible();
+    await expect(pasted).not.toHaveAttribute("data-node-id", "bravo");
     await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
   });
 

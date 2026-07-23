@@ -149,6 +149,57 @@ describe("cloneNodeForInsert: collection deep clone", () => {
     expect(result.detail).not.toHaveProperty("duplicateOfTimelineId");
   });
 
+  it("preserves sharing topology: a child referenced twice clones ONCE, both refs pointing at it", () => {
+    const sharedDocs: Record<string, TimelineDocument> = {
+      S: {
+        id: "S",
+        title: "Root",
+        clips: [collectionClip("c1", "SUB", "Sub once"), collectionClip("c2", "SUB", "Sub twice")],
+      },
+      SUB: { id: "SUB", title: "Sub", clips: [imageClip("c3", "b.png")] },
+    };
+
+    const result = cloneNodeForInsert(node, detail, {
+      readDocument: readerFor(sharedDocs),
+      mintId: counterMint(),
+    });
+
+    // ONE clone of SUB, not two — the source's sharing must survive the copy.
+    expect(result.newDocuments).toHaveLength(2);
+    const root = result.newDocuments.find((doc) => doc.id === result.node.id)!;
+    const refs = root.clips.flatMap((clip) =>
+      clip.kind === "collection" ? [clip.childTimelineId] : [],
+    );
+    expect(refs).toHaveLength(2);
+    expect(refs[0]).toBe(refs[1]);
+    expect(refs[0]).not.toBe("SUB");
+  });
+
+  it("a cycle resolves to the IN-FLIGHT clone id, never back to the source", () => {
+    // Corrupt-data shape: A contains B, B contains A.
+    const cyclicDocs: Record<string, TimelineDocument> = {
+      A: { id: "A", title: "A", clips: [collectionClip("ab", "B", "To B")] },
+      B: { id: "B", title: "B", clips: [collectionClip("ba", "A", "Back to A")] },
+    };
+
+    const result = cloneNodeForInsert(
+      { id: parseNodeId("A"), kind: "collection", name: "A" },
+      undefined,
+      { readDocument: readerFor(cyclicDocs), mintId: counterMint() },
+    );
+
+    expect(result.newDocuments).toHaveLength(2);
+    const cloneA = result.newDocuments.find((doc) => doc.id === result.node.id)!;
+    const cloneB = result.newDocuments.find((doc) => doc.id !== result.node.id)!;
+    const aRef = cloneA.clips[0];
+    const bRef = cloneB.clips[0];
+    if (aRef.kind !== "collection" || bRef.kind !== "collection") throw new Error("fixture");
+    // A' → B' and B' → A' — the clone is a closed, independent cycle. A back
+    // reference to the SOURCE "A" would wire the copy to the original.
+    expect(aRef.childTimelineId).toBe(cloneB.id);
+    expect(bRef.childTimelineId).toBe(cloneA.id);
+  });
+
   it("clones the REFERENCED timeline when the source is a duplicate-reference", () => {
     const refNode: CollectionItemNode = { id: parseNodeId("ref-card"), kind: "collection", name: "Ref" };
     const refDetail: ClipDetail = {

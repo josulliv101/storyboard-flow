@@ -26,24 +26,45 @@ export type ClipboardEntry = Readonly<{
 
 export type GraphClipboard = Readonly<{
   read: () => readonly ClipboardEntry[];
-  set: (entries: readonly ClipboardEntry[]) => void;
+  /**
+   * Install new contents. Pass the `generation()` observed BEFORE any async
+   * capture work: if the clipboard was rebound to a different user (or
+   * otherwise reset) while the capture ran, the stale write is refused and
+   * `set` returns false — an in-flight Copy must never land another user's
+   * data into the new session.
+   */
+  set: (entries: readonly ClipboardEntry[], atGeneration?: number) => boolean;
   clear: () => void;
   isEmpty: () => boolean;
+  /** Monotonic reset counter — snapshot before async capture, hand to `set`. */
+  generation: () => number;
+  /**
+   * Bind to an authenticated user. Same contract as the documents gateway's
+   * `bindUser`: the module singleton outlives soft logout/login, so binding a
+   * DIFFERENT uid wipes the contents — the next user must never paste the
+   * previous user's timelines. First bind (or re-bind to the same uid) keeps
+   * the contents; every wipe bumps the generation so stale captures die.
+   */
+  bindUser: (uid: string) => void;
   /** Change notifications, for the sidebar's `can paste` subscription. */
   subscribe: (listener: () => void) => () => void;
 }>;
 
 function createGraphClipboard(): GraphClipboard {
   let entries: readonly ClipboardEntry[] = [];
+  let boundUid: string | null = null;
+  let generation = 0;
   const listeners = new Set<() => void>();
   const emit = () => {
     for (const listener of listeners) listener();
   };
   return {
     read: () => entries,
-    set: (next) => {
+    set: (next, atGeneration) => {
+      if (atGeneration !== undefined && atGeneration !== generation) return false;
       entries = next;
       emit();
+      return true;
     },
     clear: () => {
       if (entries.length === 0) return;
@@ -51,6 +72,15 @@ function createGraphClipboard(): GraphClipboard {
       emit();
     },
     isEmpty: () => entries.length === 0,
+    generation: () => generation,
+    bindUser: (uid) => {
+      if (boundUid === uid) return;
+      const hadEntries = entries.length > 0;
+      boundUid = uid;
+      generation += 1;
+      entries = [];
+      if (hadEntries) emit();
+    },
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {

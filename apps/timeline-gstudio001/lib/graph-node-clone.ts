@@ -54,25 +54,32 @@ function stripCloneOnlyFields(detail: ClipDetail): ClipDetail {
  * fresh id for each document and each clip. Returns the new ROOT id and every
  * new document (nested first). A missing source document (should not happen —
  * the caller ensures the subtree) clones as an empty timeline so a drill-in
- * never 404s; a cycle (only possible in a corrupt graph) keeps the original
- * reference rather than recurse forever.
+ * never 404s.
+ *
+ * The memo preserves the source's SHARING TOPOLOGY: the clone id is allocated
+ * and recorded BEFORE descending, so a child referenced twice resolves to ONE
+ * cloned document both times (rather than silently forking into two), and a
+ * cycle (only possible in corrupt data) resolves to the in-flight clone id —
+ * never to the source id, which would wire a live reference to the original
+ * into an allegedly independent copy.
  */
 function cloneDocumentTree(
   rootId: string,
   deps: CloneDeps,
 ): { newId: string; documents: TimelineDocument[] } {
   const documents: TimelineDocument[] = [];
-  const inProgress = new Set<string>();
+  const cloneIdBySource = new Map<string, string>();
 
   function clone(srcId: string): string {
-    if (inProgress.has(srcId)) return srcId;
+    const existing = cloneIdBySource.get(srcId);
+    if (existing !== undefined) return existing;
     const newId = deps.mintId("timeline");
+    cloneIdBySource.set(srcId, newId);
     const src = deps.readDocument(srcId);
     if (src === null) {
       documents.push({ id: newId, title: "Timeline", clips: [] });
       return newId;
     }
-    inProgress.add(srcId);
     const clips: TimelineClip[] = src.clips.map((clip) => {
       if (clip.kind !== "collection") {
         return { ...clip, id: deps.mintId(clip.kind) };
@@ -80,7 +87,6 @@ function cloneDocumentTree(
       const childNewId = clone(clip.childTimelineId);
       return { ...clip, id: deps.mintId("clip"), childTimelineId: childNewId };
     });
-    inProgress.delete(srcId);
     documents.push({ ...src, id: newId, clips });
     return newId;
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
 import {
@@ -149,14 +149,17 @@ async function duplicateOne(
 /**
  * Snapshot the selection onto the clipboard (Copy / Cut). Each collection's
  * whole document tree is ensured then deep-copied, so the clipboard is
- * independent of the source thereafter. Returns false (and toasts) if a
- * collection's tree can't be loaded.
+ * independent of the source thereafter. The write is guarded by the clipboard
+ * GENERATION observed before the (async) loads: if the clipboard was rebound
+ * to a different user mid-capture, the stale write is refused. Returns false
+ * (and toasts, for load failures) if nothing landed.
  */
 async function captureSelection(
   store: CollectionsStore,
   details: GraphDetailsStore,
   selected: readonly NodeId[],
 ): Promise<boolean> {
+  const atGeneration = graphClipboard.generation();
   const graph = store.getSnapshot().graph;
   const entries: ClipboardEntry[] = [];
   for (const id of selected) {
@@ -175,29 +178,47 @@ async function captureSelection(
     entries.push({ node, detail, documents });
   }
   if (entries.length === 0) return false;
-  graphClipboard.set(entries);
-  return true;
+  return graphClipboard.set(entries, atGeneration);
 }
 
 /**
- * Paste the clipboard into the focused collection, appended. Clones fresh ids
- * from the copy-time snapshot each time. Returns the new node ids.
+ * Paste the clipboard into the focused collection, appended — ONE `add-nodes`
+ * dispatch for every entry, so a multi-item paste is a single undoable step
+ * and a single persisted batch (the same rule the delete path documents, and
+ * the same shape as the multi-file drop commit). Documents seed only after
+ * the dispatch commits; a refusal rolls back the parked details and returns
+ * [] with the clipboard untouched, so the user can retry.
  */
-function pasteIntoFocused(store: CollectionsStore, focusedId: string): NodeId[] {
+function pasteIntoFocused(store: CollectionsStore, focusedId: string): readonly NodeId[] {
   const entries = graphClipboard.read();
   if (entries.length === 0) return [];
   const focusedParent = parseNodeId(focusedId);
-  const newIds: NodeId[] = [];
-  for (const entry of entries) {
-    const clone = cloneNodeForInsert(entry.node, entry.detail, {
+  const clones = entries.map((entry) =>
+    cloneNodeForInsert(entry.node, entry.detail, {
       readDocument: (timelineId) => entry.documents[timelineId] ?? null,
       mintId,
-    });
-    const toIndex = getChildren(store.getSnapshot().graph, focusedParent).length;
-    const newId = insertClone(store, clone, focusedParent, toIndex);
-    if (newId !== null) newIds.push(newId);
+    }),
+  );
+  for (const clone of clones) {
+    if (clone.detail) parkPendingDetail(clone.node.id as string, clone.detail);
   }
-  return newIds;
+  const dispatched = store.dispatch({
+    type: "add-nodes",
+    nodes: clones.map((clone) => clone.node),
+    toParentId: focusedParent,
+    toIndex: getChildren(store.getSnapshot().graph, focusedParent).length,
+  });
+  if (!dispatched.ok) {
+    for (const clone of clones) unparkPendingDetail(clone.node.id as string);
+    return [];
+  }
+  for (const clone of clones) {
+    for (const document of clone.newDocuments) {
+      graphDocumentsGateway.seed(document);
+      graphDocumentsGateway.writeClips(document.id, document.clips);
+    }
+  }
+  return clones.map((clone) => clone.node.id);
 }
 
 /**
@@ -224,14 +245,38 @@ export function GraphItemActionsBridge({
   const store = useCollectionsStore();
   const details = useGraphDetailsStore();
   const selectionSize = useCollectionsSelector((s) => s.interaction.selectedIds.size);
+  // True while an async action (copy/cut/duplicate loading documents) runs.
+  // State so the broadcast below re-fires; the REF is what the (stable) event
+  // listener consults, so the guard needs no effect re-subscription.
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
 
-  // Graph → sidebar: mirror the live selection size (on mount and every change).
+  // Graph → sidebar: mirror the live selection size + busy (on mount and every
+  // change) — and zero it on unmount, so a later graph session doesn't flash
+  // the previous session's stale item-mode cluster before its own first
+  // broadcast lands.
   useEffect(() => {
-    broadcastGraphSelection({ count: selectionSize });
-  }, [selectionSize]);
+    broadcastGraphSelection({ count: selectionSize, busy });
+  }, [selectionSize, busy]);
+  useEffect(() => () => broadcastGraphSelection({ count: 0, busy: false }), []);
 
   // Sidebar → graph: run the requested action against the current selection.
   useEffect(() => {
+    // ONE action at a time: the sidebar disables its buttons while busy, but
+    // the guard here is what actually prevents a double-fire (a second click
+    // landing before the broadcast round-trips, or any stray event).
+    const runExclusive = async (action: () => Promise<void>) => {
+      if (busyRef.current) return;
+      busyRef.current = true;
+      setBusy(true);
+      try {
+        await action();
+      } finally {
+        busyRef.current = false;
+        setBusy(false);
+      }
+    };
+
     const duplicateSelection = async () => {
       const selected = [...store.getSnapshot().interaction.selectedIds];
       if (selected.length === 0) return;
@@ -244,18 +289,24 @@ export function GraphItemActionsBridge({
     };
 
     const cutSelection = async () => {
+      // Snapshot the ids BEFORE the async capture: the user can change the
+      // selection while documents load, and the trash move below must remove
+      // exactly what was captured — not whatever is selected by then.
       const selected = [...store.getSnapshot().interaction.selectedIds];
       if (selected.length === 0) return;
       if (!(await captureSelection(store, details, selected))) return;
       // Remove the originals (recoverable in trash); the clipboard holds an
       // independent snapshot, so Paste still relocates them. Item mode stays
       // alive because the clipboard is now non-empty (Paste remains available).
-      moveSelectionToTrash(store, trashId);
+      moveSelectionToTrash(store, trashId, selected);
       store.clearSelection();
     };
 
     const pasteSelection = () => {
-      pasteIntoFocused(store, focusedId);
+      const pasted = pasteIntoFocused(store, focusedId);
+      // Nothing landed (refused dispatch): keep the clipboard so the user can
+      // paste somewhere valid instead of silently losing what they copied.
+      if (pasted.length === 0) return;
       // Paste returns to the normal controls: drop the clipboard and selection.
       graphClipboard.clear();
       store.clearSelection();
@@ -263,18 +314,25 @@ export function GraphItemActionsBridge({
 
     const onAction = (event: Event) => {
       const action = (event as CustomEvent<GraphItemAction>).detail;
+      // Sync actions honour the same one-at-a-time rule: a paste or delete
+      // landing mid-cut would race the capture's trash move.
+      if (busyRef.current) return;
       switch (action) {
         case "copy":
-          void captureSelection(store, details, [...store.getSnapshot().interaction.selectedIds]);
+          void runExclusive(async () => {
+            await captureSelection(store, details, [
+              ...store.getSnapshot().interaction.selectedIds,
+            ]);
+          });
           break;
         case "cut":
-          void cutSelection();
+          void runExclusive(cutSelection);
           break;
         case "paste":
           pasteSelection();
           break;
         case "duplicate":
-          void duplicateSelection();
+          void runExclusive(duplicateSelection);
           break;
         case "delete":
           moveSelectionToTrash(store, trashId);

@@ -98,8 +98,10 @@ export function broadcastGraphViewState(detail: GraphViewStateDetail): void {
 export const GRAPH_SELECTION_EVENT = "graph-view:selection";
 export const GRAPH_ITEM_ACTION_EVENT = "graph-view:item-action";
 
-/** Graph → sidebar: how many items are currently selected. */
-export type GraphSelectionDetail = Readonly<{ count: number }>;
+/** Graph → sidebar: how many items are currently selected, and whether an
+ *  async item action (copy/cut/duplicate loading documents) is in flight —
+ *  the sidebar disables the cluster while busy so actions can't double-fire. */
+export type GraphSelectionDetail = Readonly<{ count: number; busy: boolean }>;
 
 /** The per-item actions the sidebar's item-mode cluster can request. */
 export type GraphItemAction = "copy" | "cut" | "paste" | "duplicate" | "delete" | "cancel";

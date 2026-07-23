@@ -28,6 +28,7 @@ import {
 } from "@storyboard/timeline-domain";
 
 import { useAuth } from "@/components/auth/auth-provider";
+import { graphClipboard } from "@/lib/graph-clipboard";
 import { createGraphDetailsStore } from "@/lib/graph-details-store";
 import {
   graphDocumentsGateway,
@@ -184,9 +185,14 @@ export function GraphTimelineView({
   // AUTH BINDING first: the gateway is a module singleton that outlives
   // soft logout/login, so a different signed-in user must reset it before
   // anything reads or primes. Declared before the prime and boot effects
-  // so mount-order runs bind → prime → boot.
+  // so mount-order runs bind → prime → boot. The clipboard singleton holds
+  // copied document snapshots and follows the same rule — a different user
+  // must never paste the previous user's timelines.
   useEffect(() => {
-    if (user) graphDocumentsGateway.bindUser(user.uid);
+    if (user) {
+      graphDocumentsGateway.bindUser(user.uid);
+      graphClipboard.bindUser(user.uid);
+    }
   }, [user]);
 
   // RSC payloads prime the gateway (guarded inside it: only for the bound

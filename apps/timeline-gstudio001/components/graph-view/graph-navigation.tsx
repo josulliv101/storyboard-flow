@@ -96,10 +96,18 @@ export function GraphViewNavProvider({
  * inside a selected collection travels with its parent) and re-sorts into
  * graph order.
  */
-export function moveSelectionToTrash(store: CollectionsStore, trashId: string | null): number {
+export function moveSelectionToTrash(
+  store: CollectionsStore,
+  trashId: string | null,
+  // Explicit ids for callers that snapshotted the selection BEFORE async work
+  // (the sidebar Cut awaits document loads first — re-reading the live
+  // selection here would trash whatever the user selected in the meantime,
+  // not what they cut). Defaults to the live selection for the keyboard path.
+  ids?: readonly NodeId[],
+): number {
   if (trashId === null || store.getSnapshot().interaction.isDragging) return 0;
   const { graph, interaction } = store.getSnapshot();
-  const selected = [...interaction.selectedIds];
+  const selected = ids ?? [...interaction.selectedIds];
   if (selected.length === 0) return 0;
   const trash = parseNodeId(trashId);
   const movable = selected.filter((nodeId) => resolveTrashCommand(graph, nodeId, trash).ok);
