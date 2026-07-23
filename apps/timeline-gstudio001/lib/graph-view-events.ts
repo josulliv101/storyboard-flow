@@ -148,3 +148,16 @@ export function setGraphTrashDropHover(hovering: boolean): void {
     new CustomEvent<boolean>(GRAPH_TRASH_HOVER_EVENT, { detail: hovering }),
   );
 }
+
+// Emptying the bin is the one action that removes items the graph is HOLDING.
+// The drawer is app chrome and talks to the server directly, so a graph view
+// mounted behind it would keep the deleted nodes in its store — and write them
+// straight back on the next commit that touches the trash. The drawer
+// announces the empty here and the graph view rebuilds from the server.
+
+export const GRAPH_TRASH_EMPTIED_EVENT = "graph-view:trash-emptied";
+
+/** Announce that the trash document was permanently emptied on the server. */
+export function announceGraphTrashEmptied(): void {
+  window.dispatchEvent(new CustomEvent(GRAPH_TRASH_EMPTIED_EVENT));
+}

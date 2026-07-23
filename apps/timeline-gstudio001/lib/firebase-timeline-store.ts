@@ -260,6 +260,19 @@ export async function getFirebaseTimelineDocument(id: string, requesterUid: stri
   return entry?.document ?? null;
 }
 
+export type SaveOptions = Readonly<{
+  isProject?: boolean;
+  /**
+   * Permit a save that leaves the document with NO clips, and clear the
+   * `lastNonEmptyDocument` recovery snapshot with it. Off by default: an empty
+   * write is normally a stale or half-loaded client about to erase real work,
+   * which the guard in `saveFirebaseTimelineEntry` rejects. The one caller
+   * that means it is DELETE /api/trash — emptying the bin is the user asking
+   * for exactly this document to end up empty.
+   */
+  allowEmptying?: boolean;
+}>;
+
 /** The one Firestore payload both write paths (single save, atomic batch)
  *  produce — shared so revision stamping and ownership claiming can't drift
  *  between them. */
@@ -268,7 +281,7 @@ function buildSavePayload(
   existing: TimelineDocumentRecord | undefined,
   requesterUid: string,
   revision: number,
-  options?: { isProject?: boolean },
+  options?: SaveOptions,
 ) {
   return {
     id: normalizedDocument.id,
@@ -278,7 +291,16 @@ function buildSavePayload(
     clips: normalizedDocument.clips,
     ...(normalizedDocument.clips.length > 0
       ? { lastNonEmptyDocument: normalizedDocument }
-      : {}),
+      : // A DELIBERATE empty (`allowEmptying` — the trash bin's Empty Trash)
+        // must drop the recovery snapshot as well. `toTimelineDocument` reads
+        // `lastNonEmptyDocument` back whenever the stored document has no
+        // clips, so leaving it behind would re-hydrate the very clips this
+        // write removed and the empty would never stick. An INCIDENTAL empty
+        // (never reachable through the guard below, but merge-safe anyway)
+        // leaves the snapshot exactly where it was.
+        options?.allowEmptying
+        ? { lastNonEmptyDocument: FieldValue.delete() }
+        : {}),
     isProject: options?.isProject ?? existing?.isProject === true,
     // Ownership: a save CREATES with the requester as owner, CLAIMS a legacy
     // unowned record, and was refused earlier on someone else's. Children
@@ -293,7 +315,7 @@ function buildSavePayload(
 export async function saveFirebaseTimelineEntry(
   document: TimelineDocument,
   requesterUid: string,
-  options?: { isProject?: boolean },
+  options?: SaveOptions,
 ): Promise<TimelineEntry> {
   if (isUnsavedProjectPlaceholder(document)) {
     throw new Error("Refusing to save an unloaded project placeholder.");
@@ -313,6 +335,7 @@ export async function saveFirebaseTimelineEntry(
     : null;
 
   if (
+    !options?.allowEmptying &&
     existingDocument &&
     existingDocument.clips.length > 0 &&
     normalizedDocument.clips.length === 0
@@ -345,7 +368,7 @@ export async function saveFirebaseTimelineEntry(
 export async function saveFirebaseTimelineDocument(
   document: TimelineDocument,
   requesterUid: string,
-  options?: { isProject?: boolean },
+  options?: SaveOptions,
 ) {
   return (await saveFirebaseTimelineEntry(document, requesterUid, options)).document;
 }

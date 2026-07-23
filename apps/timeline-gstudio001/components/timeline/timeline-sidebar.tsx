@@ -5,6 +5,7 @@ import {
   ClipboardPaste,
   Copy,
   CopyPlus,
+  Folder,
   Images,
   Layers,
   FolderTree,
@@ -52,6 +53,38 @@ type UtilityItem = {
   description: string;
   icon: React.ComponentType<{ className?: string }>;
 };
+
+/**
+ * The trash BIN as this app means it: a folder (it holds timeline items, and
+ * they come back) with a trash can sitting in its body. Lucide has no such
+ * glyph, so it is composed — the folder at full size, the can scaled into the
+ * pocket below the tab. Both strokes inherit `currentColor`, so every state
+ * the button paints (idle, pressed, drop-hover) still styles one icon.
+ *
+ * `className` sizes the WRAPPER (the call site passes the same `h-4 w-4` every
+ * other sidebar icon gets) and the parts size off it, so the composition can
+ * never drift from the row.
+ */
+function FolderTrashIcon({ className }: Readonly<{ className?: string }>) {
+  return (
+    <span
+      aria-hidden="true"
+      // The animated element: the sidebar hands its drop-hover / arrival
+      // classes to THIS wrapper (both glyphs move together), so it is also
+      // what the e2e watches.
+      data-sidebar-icon="trash"
+      className={cn("relative inline-block shrink-0", className)}
+    >
+      <Folder className="h-full w-full" />
+      {/* Nudged below the folder's tab so the can reads as sitting INSIDE the
+          pocket; the heavier stroke keeps it legible at 16px. */}
+      <Trash2
+        className="absolute left-1/2 top-[58%] h-[52%] w-[52%] -translate-x-1/2 -translate-y-1/2"
+        strokeWidth={2.75}
+      />
+    </span>
+  );
+}
 
 const SIDEBAR_ICON_BASE =
   "group/sidebar-item relative flex size-11 items-center justify-center rounded-lg border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400";
@@ -230,7 +263,7 @@ const UTILITY_ITEMS: UtilityItem[] = [
     id: "trash",
     label: "Trash",
     description: "Deleted timeline items",
-    icon: Trash2,
+    icon: FolderTrashIcon,
   },
   {
     id: "settings",
