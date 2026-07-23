@@ -41,6 +41,7 @@ import {
   PreviewShell,
   collectionCardWidth,
   useFocusedTimelineAggregate,
+  useSelectionAggregate,
   type PreviewTimeChannel,
 } from "./graph-preview";
 import { SubTimelines } from "./graph-sub-timelines";
@@ -122,22 +123,41 @@ function formatAggregateSeconds(seconds: number): string {
 }
 
 /**
- * The focused timeline's aggregate, at the row's TRUE centre — directly
- * under the preview transport's centred play cluster. The header's two
- * wings (breadcrumb / controls) carry equal `flex-1`, so this piece sits
- * dead-centre and stays there; a long breadcrumb truncates inside its own
- * wing instead of pushing the centre around. Passive DATA on purpose (the
- * per-card badges show the same numbers), so hiding it on small screens
- * costs nothing.
+ * The centre readout of the header row: normally the focused timeline's
+ * aggregate, and — while anything is selected — what the SELECTION adds up
+ * to instead. One slot, two answers: the selection is the more specific fact
+ * about the same timeline, so it takes the same pixels rather than opening a
+ * second readout the eye has to choose between. Clearing the selection puts
+ * the timeline total straight back.
+ *
+ * The header's two wings (breadcrumb / controls) carry equal `flex-1`, so
+ * this piece sits dead-centre and stays there; a long breadcrumb truncates
+ * inside its own wing instead of pushing the centre around. Passive DATA on
+ * purpose (the per-card badges show the same numbers), so hiding it on small
+ * screens costs nothing.
  */
 function FocusedAggregate({
   focusedId,
   pixelsPerSecond,
 }: Readonly<{ focusedId: string; pixelsPerSecond: number }>) {
+  const selection = useSelectionAggregate();
   const { count, seconds } = useFocusedTimelineAggregate(focusedId, pixelsPerSecond);
+
+  if (selection.count > 0) {
+    return (
+      <span
+        data-selection-summary
+        className="hidden shrink-0 px-3 text-center font-mono text-[11px] tabular-nums text-amber-300/90 sm:block"
+        title="Selected items"
+      >
+        {selection.count} selected · {formatAggregateSeconds(selection.seconds)}
+      </span>
+    );
+  }
   if (count === 0) return null;
   return (
     <span
+      data-focused-aggregate
       className="hidden shrink-0 px-3 text-center font-mono text-[11px] tabular-nums text-zinc-500 sm:block"
       title="Focused timeline total"
     >

@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { FolderTree, Image as ImageIcon, Video } from "lucide-react";
+import { FolderTree } from "lucide-react";
 
 import {
   CollectionItem,
@@ -288,20 +288,18 @@ const GraphClipContent = memo(function GraphClipContent({
           ))}
         </span>
       )}
-      {/* Kind tag (R6 #7): a corner badge so video vs image reads at a glance,
-          at every item size. Decorative for AT (the card's own label names the
-          clip); the title gives a pointer tooltip. */}
+      {/* Kind tag (R6 #7): a WORD, bottom-left. The glyph version (a 4px film
+          or picture icon in the top corner) was ambiguous at small item sizes
+          — the two lucide marks read as the same smudge — so it says which it
+          is. Bottom-left pairs it with the duration pill on the right without
+          either covering the artwork's centre. Decorative for AT (the card's
+          own label names the clip). */}
       <span
         aria-hidden="true"
         data-media-kind={isVideo ? "video" : "image"}
-        title={isVideo ? "Video" : "Image"}
-        className="pointer-events-none absolute left-1 top-1 flex h-4 w-4 items-center justify-center rounded bg-zinc-950/75 text-zinc-100 ring-1 ring-white/15 backdrop-blur-[1px]"
+        className="pointer-events-none absolute bottom-1 left-1 z-10 rounded bg-black/75 px-1 py-0.5 font-mono text-[8px] leading-none font-semibold tracking-[0.08em] text-zinc-100"
       >
-        {isVideo ? (
-          <Video aria-hidden="true" className="h-2.5 w-2.5" />
-        ) : (
-          <ImageIcon aria-hidden="true" className="h-2.5 w-2.5" />
-        )}
+        {isVideo ? "VIDEO" : "IMAGE"}
       </span>
       {trimEnabled && <LiveDurationPill id={id} node={node} />}
       {/* Floating frame-at-the-edge panel during a trim drag (video only) —
