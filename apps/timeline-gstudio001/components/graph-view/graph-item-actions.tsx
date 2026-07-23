@@ -6,6 +6,7 @@ import type { TimelineDocument } from "@storyboard/timeline-model/types";
 import {
   getChildren,
   isEditableKeyboardTarget,
+  parseNodeId,
   useCollectionsSelector,
   useCollectionsStore,
   type CollectionsStore,
@@ -20,6 +21,8 @@ import { resolveInsertPlacement } from "@/lib/graph-insert-placement";
 import { cloneNodeForInsert, type CloneForInsert } from "@/lib/graph-node-clone";
 import {
   GRAPH_ITEM_ACTION_EVENT,
+  GRAPH_RESTORE_ITEM_EVENT,
+  broadcastGraphRestoreResult,
   broadcastGraphSelection,
   type GraphItemAction,
 } from "@/lib/graph-view-events";
@@ -247,6 +250,65 @@ export function GraphItemActionsBridge({
     broadcastGraphSelection({ count: selectionSize, busy });
   }, [selectionSize, busy]);
   useEffect(() => () => broadcastGraphSelection({ count: 0, busy: false }), []);
+
+  // Trash drawer → graph: put a deleted item back into the OPEN timeline.
+  //
+  // Restoring is the delete command run backwards — one `move-nodes` out of
+  // the trash root — so it undoes, persists, and animates like any other move.
+  // The destination is wherever the user is now, which is also how they choose
+  // it: navigate to the timeline you want it in, then restore. It shares the
+  // Paste/Collection-tool placement rule, so a selected card in the focused
+  // subtree puts it right after that card instead of at the end.
+  //
+  // The drawer knows items by their stored CLIP id. The graph may hold the
+  // same item under a different node id — a collection is keyed by its child
+  // timeline, and a duplicate media id is demoted to a synthetic one — so the
+  // node is resolved against the trash root's children by id OR by the
+  // detail's `sourceClipId`, which is exactly what the hydration path records
+  // for both of those cases.
+  useEffect(() => {
+    const onRestore = (event: Event) => {
+      const clipId = (event as CustomEvent<string>).detail;
+      if (typeof clipId !== "string" || clipId.length === 0) return;
+      const answer = (ok: boolean, message: string) =>
+        broadcastGraphRestoreResult({ clipId, ok, message });
+
+      if (trashId === null) return answer(false, "The trash isn't loaded in this project.");
+      const snapshot = store.getSnapshot();
+      if (snapshot.interaction.isDragging) return answer(false, "Finish the drag first.");
+
+      const graph = snapshot.graph;
+      const trashNode = parseNodeId(trashId);
+      const nodeId = getChildren(graph, trashNode).find(
+        (id) => (id as string) === clipId || details.get(id as string)?.sourceClipId === clipId,
+      );
+      if (nodeId === undefined) {
+        return answer(false, "That item is no longer in this project's trash.");
+      }
+
+      const { parentId, toIndex } = resolveInsertPlacement(
+        graph,
+        snapshot.interaction.selectedIds,
+        focusedId,
+      );
+      const dispatched = store.dispatch({
+        type: "move-nodes",
+        nodeIds: [nodeId],
+        toParentId: parentId,
+        toIndex,
+      });
+      // A refusal already speaks through the commandPolicy's own toast; the
+      // drawer only needs to know the row is still trashed.
+      if (!dispatched.ok) return answer(false, "Couldn't restore that item here.");
+
+      const name = graph.nodesById.get(nodeId)?.name ?? "Item";
+      const target = graph.nodesById.get(parentId)?.name ?? "this timeline";
+      answer(true, `Restored "${name}" to "${target}".`);
+    };
+
+    window.addEventListener(GRAPH_RESTORE_ITEM_EVENT, onRestore);
+    return () => window.removeEventListener(GRAPH_RESTORE_ITEM_EVENT, onRestore);
+  }, [store, details, trashId, focusedId]);
 
   // Sidebar → graph: run the requested action against the current selection.
   useEffect(() => {
