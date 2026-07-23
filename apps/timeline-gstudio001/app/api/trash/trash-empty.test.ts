@@ -9,6 +9,10 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/
 // document, and — had it not thrown — the READ path re-hydrates
 // `lastNonEmptyDocument` whenever the stored clips are empty, so the bin
 // would have come straight back. Both are pinned here.
+//
+// The Cloudinary double is here to prove a NEGATIVE: emptying the bin must
+// never delete an uploaded file. The files stay in the Assets library, where
+// they can be placed again; reclaiming storage is a separate, deliberate job.
 
 type Stored = Record<string, unknown>;
 
@@ -49,22 +53,13 @@ const state = vi.hoisted(() => {
       docs.delete(id);
     },
   });
-  // The reference scan reads the whole collection with a cap; `scanFails`
-  // stands in for a Firestore error on that read.
-  const control = { scanFails: false };
   const db = {
     collection: () => ({
       doc: docRef,
       where: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }),
-      limit: (max: number) => ({
-        get: async () => {
-          if (control.scanFails) throw new Error("scan exploded");
-          return { docs: [...docs.keys()].slice(0, max).map(snapshot) };
-        },
-      }),
     }),
   };
-  return { docs, current, db, cloudinaryDeletes, control };
+  return { docs, current, db, cloudinaryDeletes };
 });
 
 vi.mock("server-only", () => ({}));
@@ -92,7 +87,6 @@ vi.mock("@/lib/cloudinary-media-store", () => ({
 
 import { DELETE as emptyTrash } from "./route";
 import { GET as getTimeline } from "../timelines/[id]/route";
-import { MEDIA_SCAN_LIMIT } from "@/lib/firebase-timeline-store";
 
 const TRASH_ID = "trash-user-a";
 
@@ -152,7 +146,6 @@ const readBack = async (): Promise<TimelineDocument> => {
 beforeEach(() => {
   state.docs.clear();
   state.cloudinaryDeletes.length = 0;
-  state.control.scanFails = false;
   state.current.user = { uid: "user-a", email: null, name: null, picture: null };
 });
 
@@ -165,12 +158,7 @@ describe("DELETE /api/trash", () => {
 
     const response = await emptyTrash();
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      success: true,
-      cleared: 2,
-      assetsDeleted: 0,
-      assetsKept: 0,
-    });
+    expect(await response.json()).toEqual({ success: true, cleared: 2 });
 
     // Stored: no clips, no recovery snapshot, revision bumped.
     const stored = state.docs.get(TRASH_ID)!;
@@ -193,94 +181,25 @@ describe("DELETE /api/trash", () => {
     expect((await readBack()).clips).toEqual([]);
   });
 
-  it("deletes only the Cloudinary-hosted assets, by resource type", async () => {
-    seedTrash([
-      clip("c1", "https://res.cloudinary.com/demo/image/upload/v1/folder/pic.png"),
-      clip("c2", "https://res.cloudinary.com/demo/video/upload/v1/folder/movie.mp4", "video"),
-      clip("c3", "https://example.test/not-cloudinary.png"),
-    ]);
-
-    expect((await emptyTrash()).status).toBe(200);
-    expect(state.cloudinaryDeletes).toEqual([
-      { publicId: "folder/pic", resourceType: "image" },
-      { publicId: "folder/movie", resourceType: "video" },
-    ]);
-  });
-
-  it("KEEPS an asset another timeline still points at", async () => {
-    // The clip is in the bin, but the same upload is placed in a live
-    // timeline — deleting the file would break a timeline the user can see.
-    const shared = "https://res.cloudinary.com/demo/image/upload/v1/folder/shared.png";
+  it("NEVER deletes an uploaded file, whoever else does or doesn't use it", async () => {
+    // Every shape the old asset-deleting version treated differently: a
+    // Cloudinary image, a Cloudinary video, an asset placed in a live
+    // timeline, and one placed nowhere else at all. None of them is touched —
+    // the files stay in the Assets library.
     const orphan = "https://res.cloudinary.com/demo/image/upload/v1/folder/orphan.png";
-    seedTrash([clip("c1", shared), clip("c2", orphan)]);
+    const shared = "https://res.cloudinary.com/demo/image/upload/v1/folder/shared.png";
+    seedTrash([
+      clip("c1", orphan),
+      clip("c2", shared),
+      clip("c3", "https://res.cloudinary.com/demo/video/upload/v1/folder/movie.mp4", "video"),
+      clip("c4", "https://example.test/not-cloudinary.png"),
+    ]);
     seedLiveTimeline("project-live", [shared]);
 
     const response = await emptyTrash();
-    expect(await response.json()).toEqual({
-      success: true,
-      cleared: 2,
-      assetsDeleted: 1,
-      assetsKept: 1,
-    });
-    expect(state.cloudinaryDeletes).toEqual([
-      { publicId: "folder/orphan", resourceType: "image" },
-    ]);
-  });
-
-  it("matches across URL SHAPES — a live poster protects the source file", async () => {
-    // The live document kept only a generated poster (transform chain, .jpg);
-    // the bin holds the plain source (.mp4). Same asset, and a naive string
-    // compare would have deleted it.
-    seedTrash([
-      clip("c1", "https://res.cloudinary.com/demo/video/upload/v1712/folder/clip.mp4", "video"),
-    ]);
-    seedLiveTimeline("project-live", [
-      "https://res.cloudinary.com/demo/video/upload/so_0.35,w_640,c_fill/folder/clip.jpg",
-    ]);
-
-    expect((await emptyTrash()).status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, cleared: 4 });
     expect(state.cloudinaryDeletes).toEqual([]);
-  });
-
-  it("deletes an asset only ONCE, however many trashed clips share it", async () => {
-    const shared = "https://res.cloudinary.com/demo/image/upload/v1/folder/twice.png";
-    seedTrash([clip("c1", shared), clip("c2", shared)]);
-
-    expect((await emptyTrash()).status).toBe(200);
-    expect(state.cloudinaryDeletes).toEqual([
-      { publicId: "folder/twice", resourceType: "image" },
-    ]);
-  });
-
-  it("keeps every asset when the collection is bigger than the scan cap", async () => {
-    // Past the cap the scan has only seen SOME documents, so "no reference
-    // found" stops being evidence of "unreferenced" — and a permanent delete
-    // needs evidence.
-    seedTrash([clip("c1", "https://res.cloudinary.com/demo/image/upload/v1/folder/pic.png")]);
-    for (let i = 0; i < MEDIA_SCAN_LIMIT; i += 1) {
-      state.docs.set(`filler-${i}`, { id: `filler-${i}`, title: "f", clips: [] });
-    }
-
-    const response = await emptyTrash();
-    expect(await response.json()).toMatchObject({ assetsDeleted: 0, assetsKept: 1 });
-    expect(state.cloudinaryDeletes).toEqual([]);
-    expect(state.docs.get(TRASH_ID)?.clips).toEqual([]);
-  });
-
-  it("keeps every asset when the reference scan fails — and still empties the bin", async () => {
-    seedTrash([clip("c1", "https://res.cloudinary.com/demo/image/upload/v1/folder/pic.png")]);
-    state.control.scanFails = true;
-
-    const response = await emptyTrash();
-    expect(await response.json()).toEqual({
-      success: true,
-      cleared: 1,
-      assetsDeleted: 0,
-      assetsKept: 1,
-    });
-    // No evidence either way = no permanent delete. The document still
-    // emptied: that is the part the user asked for.
-    expect(state.cloudinaryDeletes).toEqual([]);
+    // The bin still emptied — that is the whole job.
     expect(state.docs.get(TRASH_ID)?.clips).toEqual([]);
   });
 
@@ -296,12 +215,7 @@ describe("DELETE /api/trash", () => {
 
     const response = await emptyTrash();
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      success: true,
-      cleared: 0,
-      assetsDeleted: 0,
-      assetsKept: 0,
-    });
+    expect(await response.json()).toEqual({ success: true, cleared: 0 });
     // No write at all: the revision is untouched.
     expect(state.docs.get(TRASH_ID)?.revision).toBe(7);
   });

@@ -4,7 +4,6 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 import type { TimelineDocument, TimelineClip } from "@storyboard/timeline-model/types";
 import { getFirebaseDb } from "./firebase-admin";
-import { collectCloudinaryUrls } from "./media-references";
 import { firstFrameUrl } from "./project-thumbnail";
 import { resolveOwnership, TimelineAccessDeniedError } from "./timeline-ownership";
 
@@ -229,52 +228,6 @@ export async function listFirebaseTimelineProjects(requesterUid: string) {
       const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
       return bTime - aTime;
     });
-}
-
-/** What a media-reference scan saw. `complete` is false when the collection
- *  was larger than the cap — the caller then knows it CANNOT conclude that an
- *  asset is unreferenced, only that it didn't happen to see a reference. */
-export type MediaReferenceScan = Readonly<{
-  urls: ReadonlySet<string>;
-  complete: boolean;
-}>;
-
-/** How many documents one scan will read. Generous relative to a real
- *  library, and bounded so a runaway collection can't turn one endpoint into
- *  an unbounded read. Exported so a test can sit exactly on the cap rather
- *  than hard-coding a number that would drift. */
-export const MEDIA_SCAN_LIMIT = 2000;
-
-/**
- * Every media URL still referenced by a stored document, excluding the ones
- * named in `excludeDocumentIds`.
- *
- * Used before permanently deleting assets (emptying the trash): an asset is
- * only safe to destroy when nothing outside the bin points at it, and in this
- * app the same asset routinely appears in several timelines. The scan reads
- * the WHOLE collection rather than one owner's documents on purpose — this
- * result only ever suppresses a delete, so casting the widest net is the
- * conservative choice, and legacy records carry no ownerUid to filter on
- * anyway. `lastNonEmptyDocument` is scanned along with the live document:
- * a recovery snapshot that outlives the asset it names would restore a
- * timeline full of broken images.
- */
-export async function collectMediaReferences(
-  excludeDocumentIds: readonly string[] = [],
-): Promise<MediaReferenceScan> {
-  const excluded = new Set(excludeDocumentIds);
-  // One over the cap, so a full page is distinguishable from a truncated one.
-  const snapshot = await withFirebaseTimeout(
-    collection().limit(MEDIA_SCAN_LIMIT + 1).get(),
-    "Scanning timelines for media references",
-  );
-  const complete = snapshot.docs.length <= MEDIA_SCAN_LIMIT;
-  const urls = new Set<string>();
-  for (const doc of snapshot.docs.slice(0, MEDIA_SCAN_LIMIT)) {
-    if (excluded.has(doc.id)) continue;
-    collectCloudinaryUrls(doc.data(), urls);
-  }
-  return { urls, complete };
 }
 
 export async function getFirebaseTimelineEntry(

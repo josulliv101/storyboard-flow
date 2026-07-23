@@ -86,8 +86,12 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   }, [isOpen, user, requestTrashClips]);
 
   const handleEmptyTrash = async () => {
+    // Says what actually happens: the BIN entries go (with no restore path,
+    // so it really is permanent), while the uploads behind them stay in the
+    // Assets library and can be placed again. The old wording promised a
+    // blanket "permanently delete", which read as losing the files too.
     const confirmed = window.confirm(
-      "Are you sure you want to permanently delete all items in the trash? This action cannot be undone."
+      `Empty the trash? The ${clips.length} item${clips.length === 1 ? "" : "s"} in the bin will be removed and cannot be restored. Your uploaded files stay in the Assets library.`
     );
     if (!confirmed) return;
 
