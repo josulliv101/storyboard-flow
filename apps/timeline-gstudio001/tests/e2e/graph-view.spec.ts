@@ -911,7 +911,7 @@ test.describe("graph view E2E", () => {
     expect(api.patchesFor(TRASH_ID)).toHaveLength(0);
   });
 
-  test("the drag ghost is a fixed compact square, not the card's duration-relative width", async ({
+  test("the drag ghost is a fixed compact 16:9 thumbnail, not the card's duration-relative width", async ({
     page,
   }) => {
     await installGraphApi(page);
@@ -942,12 +942,15 @@ test.describe("graph view E2E", () => {
     await expect(ghost).toBeVisible();
     const ghostBox = (await ghost.boundingBox())!;
 
-    // Fixed 72px SQUARE regardless of the card: a compact thumbnail of the
-    // item, materially narrower than the wide source card — proof the ghost is
-    // not sized to the clip's duration.
+    // Fixed 72×40 (16:9) regardless of the card: a compact landscape thumbnail
+    // of the item, materially narrower than the wide source card — proof the
+    // ghost is not sized to the clip's duration. The ratio also excludes the
+    // old square (1:1) shape.
     expect(ghostBox.width).toBeGreaterThan(64);
     expect(ghostBox.width).toBeLessThan(80);
-    expect(Math.abs(ghostBox.height - ghostBox.width)).toBeLessThan(4);
+    const ghostRatio = ghostBox.width / ghostBox.height;
+    expect(ghostRatio).toBeGreaterThan(1.6);
+    expect(ghostRatio).toBeLessThan(2.0);
     expect(alphaBox.width).toBeGreaterThan(ghostBox.width + 40);
 
     // And it rides under the cursor: its centre tracks the pointer on BOTH
@@ -1240,6 +1243,14 @@ test.describe("graph view E2E", () => {
     await page.mouse.down();
     await page.waitForTimeout(400);
 
+    // The middle summary + right toolbar fade out under the drag readout (both
+    // DragChromeFade wrappers); the breadcrumb, the drop target, stays.
+    const chromeFades = page.locator("[data-drag-chrome-fade]");
+    await expect(chromeFades).toHaveCount(2);
+    for (const fade of await chromeFades.all()) {
+      await expect(fade).toHaveAttribute("data-faded", "true");
+    }
+
     // Over MOVE-TO-PARENT → the parent crumb lights up; trash icon still calm.
     const pz = (await parentZone.boundingBox())!;
     await page.mouse.move(pz.x + pz.width / 2, pz.y + pz.height / 2, { steps: 12 });
@@ -1247,6 +1258,13 @@ test.describe("graph view E2E", () => {
       .poll(async () => (await parentCrumb.getAttribute("class")) ?? "")
       .toContain("decoration-sky-400");
     await expect(trashIcon).not.toHaveClass(/animate-trash-hover-attention/);
+
+    // The ghost covers the crumb, so the trash slot borrows its pixels to name
+    // the destination: "Drop into {crumb title}".
+    const crumbLabel = (await parentCrumb.innerText()).trim();
+    await expect(trashZone).toHaveAttribute("data-drop-state", "hint");
+    await expect(trashZone).toContainText("Drop into");
+    await expect(trashZone).toContainText(crumbLabel);
 
     // Over MOVE-TO-TRASH → the sidebar trash icon animates; crumb highlight clears.
     const tz = (await trashZone.boundingBox())!;
@@ -1256,11 +1274,20 @@ test.describe("graph view E2E", () => {
       .poll(async () => (await parentCrumb.getAttribute("class")) ?? "")
       .not.toContain("decoration-sky-400");
 
+    // The trash IS the target now, so the slot is the trash again — not a
+    // destination hint.
+    await expect(trashZone).toHaveAttribute("data-drop-state", "over");
+    await expect(trashZone).toContainText("Move to trash");
+
     // Release back on the source — no move — and the trash animation stops.
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 12 });
     await page.mouse.up();
     await page.waitForTimeout(80);
     await expect(trashIcon).not.toHaveClass(/animate-trash-hover-attention/);
+    // Chrome returns once the drag ends.
+    for (const fade of await chromeFades.all()) {
+      await expect(fade).toHaveAttribute("data-faded", "false");
+    }
     expect(await stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 

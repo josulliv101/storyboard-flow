@@ -29,7 +29,7 @@ import {
 import { Slider } from "@/components/core/slider";
 
 import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
-import { BreadcrumbDropZones } from "./graph-breadcrumb-drop";
+import { BreadcrumbDropZones, DragChromeFade } from "./graph-breadcrumb-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
 import { SyncPanel, type SyncEntry } from "./graph-persistence";
 import {
@@ -367,14 +367,19 @@ export function GraphBoard({
                 (under the transport's play cluster). min-w-0 lets a long
                 breadcrumb truncate inside its wing. */}
             <div className="flex min-w-0 flex-1 items-center">{breadcrumb}</div>
-            <FocusedAggregate
-              focusedId={focusedId}
-              pixelsPerSecond={deferredPixelsPerSecond}
-            />
+            {/* Middle summary and the right-hand controls fade out under the
+                drag readout that overlays this row, and fade back on drop. The
+                breadcrumb stays — it IS the drop target. */}
+            <DragChromeFade className="flex items-center">
+              <FocusedAggregate
+                focusedId={focusedId}
+                pixelsPerSecond={deferredPixelsPerSecond}
+              />
+            </DragChromeFade>
             {/* flex-wrap + wrap-capable controls so a narrow viewport folds the
                 toolbar onto a second line instead of pushing controls
                 off-screen. No effect when it fits. */}
-            <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+            <DragChromeFade className="flex flex-1 flex-wrap items-center justify-end gap-2">
               {/* The Collection tool (moved here from the icon sidebar): the
                   view's one "add structure" action leads the cluster, fenced
                   off from the surface/history controls to its right. */}
@@ -399,7 +404,7 @@ export function GraphBoard({
                 onItemSizeChange={onItemSizeChange}
                 storyboardHref={storyboardHref}
               />
-            </div>
+            </DragChromeFade>
 
             {/* The trash drop target (right side), shown only while a card is
                 being dragged. The "move up a level" targets are the ancestor
