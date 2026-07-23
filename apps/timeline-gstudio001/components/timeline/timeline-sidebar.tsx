@@ -117,8 +117,14 @@ function SurfaceIconControl({
   );
 }
 
+// Recessed, not invisible. This used to dim TWICE — a zinc-600 glyph and then
+// `opacity-50` over it — which on the near-black rail left the Paste icon
+// (item mode's resting state, disabled until something is copied) barely
+// legible. One dimming step is enough: a solid zinc-500 glyph reads as
+// available-but-not-now, and the flat border plus the missing hover response
+// carry "disabled" on their own.
 const SIDEBAR_ICON_DISABLED =
-  "cursor-not-allowed border-zinc-800/50 bg-zinc-900/20 text-zinc-600 opacity-50";
+  "cursor-not-allowed border-zinc-800/70 bg-zinc-900/20 text-zinc-500";
 
 /** One button in the item-actions cluster — dispatches its action across the
  *  window-event seam for the graph provider to perform on the selection. */

@@ -1834,7 +1834,9 @@ test.describe("graph view E2E", () => {
 
     // Drill into the child collection. The clipboard is a module singleton, so
     // it survives the client-side navigation: the rail stays in item mode with
-    // Paste available even though the selection is now out of view.
+    // Paste available even though the selection is now out of view. The
+    // SELECTION survives the navigation too — see the placement test below for
+    // why the paste must ignore it here and append into the focused child.
     await page.getByRole("button", { name: "Open Scene A" }).first().click();
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
@@ -1848,6 +1850,70 @@ test.describe("graph view E2E", () => {
     expect((await stripOrder(page, CHILD_ID)).slice(0, 2)).toEqual(["c1", "c2"]);
     await expect.poll(() => api.patchesFor(CHILD_ID).at(-1)?.clipIds.length).toBe(3);
     await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
+  });
+
+  test("Paste lands AFTER the selected card, and a selection left above the focus never hijacks it", async ({
+    page,
+  }) => {
+    // Paste follows the same placement rule as the Collection tool: after the
+    // most recently selected card, in THAT card's strip — but only while that
+    // strip sits inside the focused collection's subtree (i.e. is on the
+    // board). It used to always append to the focused collection.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    const projectStrip = strip(page, PROJECT_ID);
+    const alpha = projectStrip.locator('[data-node-id="alpha"]');
+
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await page.getByRole("button", { name: "Copy", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+
+    // alpha is still selected and still on screen → its clone lands at index 1,
+    // not at the end of the strip.
+    await page.getByRole("button", { name: "Paste", exact: true }).click();
+    await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(5);
+    const order = await stripOrder(page, PROJECT_ID);
+    expect(order[0]).toBe("alpha");
+    expect(order[1]).not.toBe("alpha");
+    expect(order.slice(2)).toEqual(["bravo", CHILD_ID, "charlie"]);
+    // And it IS alpha's clone sitting there, not some other entry.
+    await expect(projectStrip.getByRole("button", { name: "alpha", exact: true })).toHaveCount(2);
+
+    // Now the drill-in wrinkle: selection SURVIVES navigation in this app, so
+    // a naive "after the selection" would fire this paste back into the
+    // project, at a card the user can no longer see.
+    const charlie = projectStrip.locator('[data-node-id="charlie"]');
+    await expect(async () => {
+      await charlie.click();
+      await expect(charlie).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await page.getByRole("button", { name: "Copy", exact: true }).click();
+
+    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    // The route change itself, not a CHILD card appearing — a sub-row strip
+    // can be on screen before any navigation happens.
+    await expect(strip(page, PROJECT_ID)).toHaveCount(0);
+    await strip(page, CHILD_ID)
+      .locator('[data-node-id="c1"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+    await page.getByRole("button", { name: "Paste", exact: true }).click();
+
+    // Appended into the FOCUSED child, after its own cards…
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toHaveLength(3);
+    expect((await stripOrder(page, CHILD_ID)).slice(0, 2)).toEqual(["c1", "c2"]);
+    await expect(
+      strip(page, CHILD_ID).getByRole("button", { name: "charlie", exact: true }),
+    ).toBeVisible();
+    // …and the project never grew a sixth clip. Checked on the WRITES because
+    // the project strip is off-screen now; the child's write lands in the same
+    // debounced batch, so by the time it is recorded a hijacked project write
+    // would have been too. (Ancestor summary re-writes are expected — a
+    // project patch is fine as long as it still carries five clips.)
+    await expect.poll(() => api.patchesFor(CHILD_ID).at(-1)?.clipIds.length).toBe(3);
+    expect(api.patchesFor(PROJECT_ID).some((patch) => patch.clipIds.length > 5)).toBe(false);
   });
 
   test("Cut removes the clip but keeps it on the clipboard; Paste relocates it", async ({
@@ -2226,6 +2292,27 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
       .toBe(5);
+
+    // …but only strips INSIDE the focused subtree count. Select charlie in the
+    // project, then drill into Scene A: the selection survives the navigation,
+    // and the tool must append into the collection now open rather than plant
+    // the new timeline back where the user came from (same rule as Paste).
+    await strip(page, PROJECT_ID).locator('[data-node-id="charlie"]').click();
+    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    // Wait on the PROJECT strip leaving, not on a CHILD card appearing: the
+    // Scene A sub-row is expanded above, so its strip is already on the page
+    // and that wait would pass without the route having changed at all —
+    // letting the tool click race the navigation (it did, first run).
+    await expect(strip(page, PROJECT_ID)).toHaveCount(0);
+    await collectionTool.click();
+    await expect
+      .poll(() => stripOrder(page, CHILD_ID))
+      .toEqual([
+        "c1",
+        expect.stringMatching(/^timeline-/),
+        "c2",
+        expect.stringMatching(/^timeline-/),
+      ]);
   });
 
   test("keyboard insertion works in grid mode too", async ({ page }) => {
