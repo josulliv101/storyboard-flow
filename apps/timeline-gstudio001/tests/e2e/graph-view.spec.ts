@@ -1034,6 +1034,61 @@ test.describe("graph view E2E", () => {
       .toEqual(["alpha", "bravo", "clip-scene", "charlie"]);
   });
 
+  test("the asset palette leaves the page scrollable clear of itself", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    // Short viewport + the children tree = a page taller than the screen, so
+    // the bottom is only reachable by scrolling.
+    await page.setViewportSize({ width: 1280, height: 520 });
+    await expandSubGraph(page, "Scene A");
+
+    await assetsButton(page).click();
+    const drawer = page.getByRole("dialog", { name: "Asset palette" });
+    await expect(drawer).toBeVisible();
+
+    // The panel is fixed to the bottom of the viewport, so the page must gain
+    // exactly its height as scrollable room — otherwise the last content sits
+    // under it with no scroll left to reach it.
+    await expect
+      .poll(async () => {
+        const [pad, panelHeight] = await Promise.all([
+          page.evaluate(
+            () => parseFloat(getComputedStyle(document.querySelector("main")!).paddingBottom) || 0,
+          ),
+          drawer.evaluate((el) => el.getBoundingClientRect().height),
+        ]);
+        return panelHeight > 0 && Math.abs(pad - panelHeight) < 1;
+      })
+      .toBe(true);
+
+    // And it really is reachable: scrolled to the end, the last card clears
+    // the panel's top edge.
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await expect
+      .poll(async () =>
+        page.evaluate(() => {
+          const cards = document.querySelectorAll("[data-node-id]");
+          const last = cards[cards.length - 1]?.getBoundingClientRect();
+          const panelTop = document
+            .querySelector('aside[aria-label="Asset palette"]')!
+            .getBoundingClientRect().top;
+          return last !== undefined && last.bottom <= panelTop + 1;
+        }),
+      )
+      .toBe(true);
+
+    // Closing gives the room back.
+    await assetsButton(page).click();
+    await expect(drawer).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => parseFloat(getComputedStyle(document.querySelector("main")!).paddingBottom) || 0,
+        ),
+      )
+      .toBe(0);
+  });
+
   test("palette drag mints a fresh node from an asset and persists it", async ({ page }) => {
     const api = await installGraphApi(page);
     await openGraph(page);

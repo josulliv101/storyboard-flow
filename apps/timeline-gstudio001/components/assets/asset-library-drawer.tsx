@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, Fragment } from "react";
+import { useCallback, useEffect, useRef, useState, Fragment } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertCircle,
@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/core/button";
+import { useBottomDrawerInset } from "@/components/assets/use-bottom-drawer-inset";
 import { SmoothScrollList } from "@/components/timeline/smooth-scroll-list";
 import { cn } from "@/lib/utils";
 import type { TimelineClip } from "@storyboard/ui/timeline/types";
@@ -148,35 +149,9 @@ export function AssetLibraryDrawer({ isOpen, onClose }: AssetLibraryDrawerProps)
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
-  useLayoutEffect(() => {
-    const root = document.documentElement;
-
-    if (!isOpen) {
-      root.style.setProperty("--asset-library-height", "0px");
-      return;
-    }
-
-    const panel = panelRef.current;
-    if (!panel) return;
-
-    const publishHeight = () => {
-      root.style.setProperty(
-        "--asset-library-height",
-        `${panel.getBoundingClientRect().height}px`,
-      );
-    };
-
-    publishHeight();
-    const observer = new ResizeObserver(publishHeight);
-    observer.observe(panel);
-    window.addEventListener("resize", publishHeight);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", publishHeight);
-      root.style.setProperty("--asset-library-height", "0px");
-    };
-  }, [isOpen]);
+  // Keeps the page scrollable past this drawer (shared with the graph's asset
+  // palette — see use-bottom-drawer-inset).
+  useBottomDrawerInset(panelRef, isOpen);
 
   if (!isOpen || typeof document === "undefined") return null;
 
