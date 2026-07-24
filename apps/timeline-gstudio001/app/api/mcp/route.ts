@@ -31,8 +31,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-/** The MCP Apps view's resource URI, referenced by every `_meta` UI key. */
+// The SAME UI bundle, registered twice because the two ecosystems disagree on
+// the MIME type: MCP Apps uses `text/html;profile=mcp-app`, while ChatGPT only
+// renders `text/html+skybridge` and requires its `openai/outputTemplate` to
+// name a resource it can read. A resource carries one MIME type, so one URI
+// can't satisfy both — two registrations over one HTML string is the cheapest
+// honest fix, and each `_meta` key points at its own dialect.
 const TIMELINE_APP_URI = "ui://storyboard/timeline.html";
+const TIMELINE_APP_URI_OPENAI = "ui://storyboard/timeline-openai.html";
 
 // MCP Apps constants, declared here rather than imported from
 // `@modelcontextprotocol/ext-apps/server`. That package peer-requires SDK
@@ -43,6 +49,8 @@ const TIMELINE_APP_URI = "ui://storyboard/timeline.html";
 // The client bundle still uses ext-apps (Vite resolves it in isolation).
 const UI_RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 const UI_RESOURCE_META_KEY = "ui/resourceUri";
+/** ChatGPT's Apps SDK renders only this MIME type. */
+const OPENAI_WIDGET_MIME_TYPE = "text/html+skybridge";
 
 /** Constant-time compare that can't leak length via early return. */
 function secretsMatch(provided: string, expected: string): boolean {
@@ -149,6 +157,24 @@ const handler = createMcpHandler(
       }),
     );
 
+    // Same bundle, ChatGPT's dialect.
+    server.registerResource(
+      "Storyboard timeline view (ChatGPT)",
+      TIMELINE_APP_URI_OPENAI,
+      {
+        mimeType: OPENAI_WIDGET_MIME_TYPE,
+        _meta: {
+          "openai/widgetDescription":
+            "A visual timeline of the storyboard's clips, sized by duration.",
+        },
+      },
+      async (uri) => ({
+        contents: [
+          { uri: uri.href, mimeType: OPENAI_WIDGET_MIME_TYPE, text: TIMELINE_APP_HTML },
+        ],
+      }),
+    );
+
     server.registerTool(
       "show_timeline",
       {
@@ -166,7 +192,8 @@ const handler = createMcpHandler(
           // and flat forms of the standard key, and ChatGPT reads its own.
           ui: { resourceUri: TIMELINE_APP_URI },
           [UI_RESOURCE_META_KEY]: TIMELINE_APP_URI,
-          "openai/outputTemplate": TIMELINE_APP_URI,
+          // Must name the skybridge-typed resource, or ChatGPT won't render.
+          "openai/outputTemplate": TIMELINE_APP_URI_OPENAI,
         },
       },
       async (_args, extra) => {
