@@ -1,5 +1,6 @@
 import {
   getChildren,
+  isVideoMedia,
   parseNodeId,
   type CollectionsStore,
   type NodeId,
@@ -19,11 +20,19 @@ export type GraphToolContext = Readonly<{
   store: CollectionsStore;
   details: GraphDetailsStore;
   focusedId: string;
+  /** The project's trash root id, or null when it isn't loaded (remove_clip). */
+  trashId: string | null;
 }>;
 
 /** The v1 tool surface. Add tools here as they land (see docs). */
 export function createGraphTools(ctx: GraphToolContext): ToolDef[] {
-  return [readTimelineTool(ctx), moveClipTool(ctx)];
+  return [
+    readTimelineTool(ctx),
+    moveClipTool(ctx),
+    trimClipTool(ctx),
+    renameItemTool(ctx),
+    removeClipTool(ctx),
+  ];
 }
 
 // ---- arg readers: agent input is `unknown`, never trusted ------------------
@@ -181,6 +190,157 @@ function moveClipTool(ctx: GraphToolContext): ToolDef {
         toParentId: targetStr,
         toIndex: placement.toIndex,
         newOrder,
+      });
+    },
+  };
+}
+
+// ---- trim_clip -------------------------------------------------------------
+
+function trimClipTool(ctx: GraphToolContext): ToolDef {
+  return {
+    name: "trim_clip",
+    description:
+      "Set a media clip's trim or duration. Video: trimInSeconds / trimOutSeconds (omitted ones keep their current value). Image: durationSeconds.",
+    inputSchema: {
+      type: "object",
+      required: ["nodeId"],
+      properties: {
+        nodeId: { type: "string" },
+        trimInSeconds: { type: "number", minimum: 0, description: "Video only." },
+        trimOutSeconds: { type: "number", minimum: 0, description: "Video only." },
+        durationSeconds: { type: "number", exclusiveMinimum: 0, description: "Image only." },
+      },
+      additionalProperties: false,
+    },
+    execute: (args) => {
+      const nodeIdStr = readString(args, "nodeId");
+      if (!nodeIdStr) return toolError("trim_clip requires a nodeId.");
+      const graph = ctx.store.getSnapshot().graph;
+      const nodeId = parseNodeId(nodeIdStr);
+      const node = graph.nodesById.get(nodeId);
+      if (!node) return toolError(`No node with id "${nodeIdStr}".`);
+      if (node.kind !== "media") {
+        return toolError(`"${node.name}" is a collection, not a clip — only clips can be trimmed.`);
+      }
+
+      const trimIn = readNumber(args, "trimInSeconds");
+      const trimOut = readNumber(args, "trimOutSeconds");
+      const duration = readNumber(args, "durationSeconds");
+
+      if (isVideoMedia(node)) {
+        if (duration !== undefined) {
+          return toolError(
+            "Video clips are trimmed with trimInSeconds / trimOutSeconds, not durationSeconds.",
+          );
+        }
+        const nextIn = trimIn ?? node.trimInSeconds;
+        const nextOut = trimOut ?? node.trimOutSeconds;
+        if (nextIn < 0 || nextOut < 0 || nextIn + nextOut >= node.fullDurationSeconds) {
+          return toolError(
+            `Trim out of range: the source is ${node.fullDurationSeconds}s, so trimIn + trimOut must be under that (got ${nextIn} + ${nextOut}).`,
+          );
+        }
+        const result = ctx.store.dispatch({
+          type: "update-media",
+          nodeId,
+          update: { mediaKind: "video", trimInSeconds: nextIn, trimOutSeconds: nextOut },
+        });
+        if (!result.ok) return toolError(describeDispatchRejection(result.error));
+        const effective = Math.max(0, node.fullDurationSeconds - nextIn - nextOut);
+        return toolOk(`Trimmed "${node.name}" to ${effective.toFixed(2)}s (in ${nextIn}s, out ${nextOut}s).`, {
+          nodeId: nodeIdStr,
+          mediaKind: "video",
+          trimInSeconds: nextIn,
+          trimOutSeconds: nextOut,
+          effectiveDurationSeconds: effective,
+        });
+      }
+
+      // Image.
+      if (trimIn !== undefined || trimOut !== undefined) {
+        return toolError("Image clips take a durationSeconds, not trimInSeconds / trimOutSeconds.");
+      }
+      if (duration === undefined) return toolError("trim_clip on an image needs a durationSeconds.");
+      if (duration <= 0) return toolError("durationSeconds must be greater than 0.");
+      const result = ctx.store.dispatch({
+        type: "update-media",
+        nodeId,
+        update: { mediaKind: "image", durationSeconds: duration },
+      });
+      if (!result.ok) return toolError(describeDispatchRejection(result.error));
+      return toolOk(`Set "${node.name}" duration to ${duration}s.`, {
+        nodeId: nodeIdStr,
+        mediaKind: "image",
+        effectiveDurationSeconds: duration,
+      });
+    },
+  };
+}
+
+// ---- rename_item -----------------------------------------------------------
+
+function renameItemTool(ctx: GraphToolContext): ToolDef {
+  return {
+    name: "rename_item",
+    description:
+      "Rename a clip or collection. Renaming a collection also updates its child document's title.",
+    inputSchema: {
+      type: "object",
+      required: ["nodeId", "name"],
+      properties: {
+        nodeId: { type: "string" },
+        name: { type: "string", minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+    execute: (args) => {
+      const nodeIdStr = readString(args, "nodeId");
+      if (!nodeIdStr) return toolError("rename_item requires a nodeId.");
+      const rawName = readString(args, "name");
+      if (!rawName) return toolError("rename_item requires a non-blank name.");
+      const name = rawName.trim();
+      const graph = ctx.store.getSnapshot().graph;
+      const nodeId = parseNodeId(nodeIdStr);
+      if (!graph.nodesById.get(nodeId)) return toolError(`No node with id "${nodeIdStr}".`);
+      const result = ctx.store.dispatch({ type: "rename-node", nodeId, name });
+      if (!result.ok) return toolError(describeDispatchRejection(result.error));
+      return toolOk(`Renamed to "${name}".`, { nodeId: nodeIdStr, name });
+    },
+  };
+}
+
+// ---- remove_clip -----------------------------------------------------------
+
+function removeClipTool(ctx: GraphToolContext): ToolDef {
+  return {
+    name: "remove_clip",
+    description: "Move a clip or collection to the trash. Recoverable — not a hard delete.",
+    inputSchema: {
+      type: "object",
+      required: ["nodeId"],
+      properties: { nodeId: { type: "string" } },
+      additionalProperties: false,
+    },
+    execute: (args) => {
+      const nodeIdStr = readString(args, "nodeId");
+      if (!nodeIdStr) return toolError("remove_clip requires a nodeId.");
+      if (ctx.trashId === null) return toolError("The trash isn't loaded in this project.");
+      const graph = ctx.store.getSnapshot().graph;
+      const nodeId = parseNodeId(nodeIdStr);
+      const node = graph.nodesById.get(nodeId);
+      if (!node) return toolError(`No node with id "${nodeIdStr}".`);
+      const trashRoot = parseNodeId(ctx.trashId);
+      const result = ctx.store.dispatch({
+        type: "move-nodes",
+        nodeIds: [nodeId],
+        toParentId: trashRoot,
+        toIndex: getChildren(graph, trashRoot).length,
+      });
+      if (!result.ok) return toolError(describeDispatchRejection(result.error));
+      return toolOk(`Moved "${node.name}" to the trash (recoverable).`, {
+        removedId: nodeIdStr,
+        recoverable: true,
       });
     },
   };

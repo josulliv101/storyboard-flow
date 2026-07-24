@@ -390,3 +390,15 @@ placement default `after: nodeId`; `insertClones(...)`; `setSelection(newIds)`.
   and un-hydrated-drop-bounce tests. Console signature confirmed:
   `navigator.modelContextTesting.listTools()` and
   `executeTool(name, jsonArgsString)` (args are a JSON **string**).
+
+- **2026-07-24** — Increment 2: the synchronous mutation trio `trim_clip`
+  (`update-media` — video trims / image duration, validated against the source
+  length), `rename_item` (`rename-node`), and `remove_clip` (`move-nodes` into
+  the trash root, recoverable). All are direct command translators — no
+  async/ensure. `ToolCtx` gained `trashId` (threaded from `boot.trashRootId`
+  through `<McpToolsBridge>`) for `remove_clip`. Covered by
+  handler-over-a-real-store tests in `tools.test.ts` (trim mutates the node,
+  wrong-field/out-of-range rejected; rename trims + rejects blank; remove
+  relocates to trash and errors when trash is absent). Remaining v1 surface:
+  `list_assets` + `add_clip` (asset-provider seam), then `duplicate_clip`
+  (async → brings in the `sessionAlive` guard).

@@ -21,13 +21,16 @@ import { useGraphDetailsStore } from "./graph-details-context";
  * reads and placement to the open collection); the store is stable within a
  * session, so intra-session reads always see current state via getSnapshot.
  */
-export function McpToolsBridge({ focusedId }: Readonly<{ focusedId: string }>) {
+export function McpToolsBridge({
+  focusedId,
+  trashId,
+}: Readonly<{ focusedId: string; trashId: string | null }>) {
   const store = useCollectionsStore();
   const details = useGraphDetailsStore();
 
   useEffect(
-    () => registerWebMcpTools(createGraphTools({ store, details, focusedId })),
-    [store, details, focusedId],
+    () => registerWebMcpTools(createGraphTools({ store, details, focusedId, trashId })),
+    [store, details, focusedId, trashId],
   );
 
   return null;

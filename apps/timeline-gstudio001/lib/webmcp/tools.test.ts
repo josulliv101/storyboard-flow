@@ -41,7 +41,7 @@ const fakeDetails = {
 
 function harness(focusedId = "project") {
   const store = createCollectionsStore(graph());
-  const defs = createGraphTools({ store, details: fakeDetails, focusedId });
+  const defs = createGraphTools({ store, details: fakeDetails, focusedId, trashId: null });
   const tool = (name: string) => {
     const found = defs.find((d) => d.name === name);
     if (!found) throw new Error(`missing tool ${name}`);
@@ -87,5 +87,109 @@ describe("move_clip tool", () => {
   it("surfaces the reducer rejection when the target is a clip", async () => {
     const { move } = harness();
     expect((await move.execute({ nodeId: "a", into: "b" })).isError).toBe(true);
+  });
+});
+
+/** project ─ img (image 4s), vid (video full 10, trim 1/1) ; trash (empty root) */
+function mediaGraph(): CollectionsGraph {
+  const built = buildGraph([
+    {
+      kind: "collection",
+      id: "project",
+      name: "Project",
+      children: [
+        { kind: "media", id: "img", name: "img", durationSeconds: 4 },
+        {
+          kind: "media",
+          mediaKind: "video",
+          id: "vid",
+          name: "vid",
+          fullDurationSeconds: 10,
+          trimInSeconds: 1,
+          trimOutSeconds: 1,
+        },
+      ],
+    },
+    { kind: "collection", id: "trash", name: "Trash", children: [] },
+  ]);
+  if (!built.ok) throw new Error(`fixture invalid: ${JSON.stringify(built.error)}`);
+  return built.value;
+}
+
+function mediaHarness(trashId: string | null = "trash") {
+  const store = createCollectionsStore(mediaGraph());
+  const defs = createGraphTools({ store, details: fakeDetails, focusedId: "project", trashId });
+  const tool = (name: string) => {
+    const found = defs.find((d) => d.name === name);
+    if (!found) throw new Error(`missing tool ${name}`);
+    return found;
+  };
+  const node = (id: string) => store.getSnapshot().graph.nodesById.get(parseNodeId(id));
+  const order = (parent: string) =>
+    getChildren(store.getSnapshot().graph, parseNodeId(parent)).map(String);
+  return {
+    store,
+    node,
+    order,
+    trim: tool("trim_clip"),
+    rename: tool("rename_item"),
+    remove: tool("remove_clip"),
+  };
+}
+
+describe("trim_clip tool", () => {
+  it("re-trims a video and mutates the node", async () => {
+    const { trim, node } = mediaHarness();
+    const res = await trim.execute({ nodeId: "vid", trimInSeconds: 2, trimOutSeconds: 3 });
+    expect(res.isError).toBeFalsy();
+    expect(node("vid")).toMatchObject({ trimInSeconds: 2, trimOutSeconds: 3 });
+    expect(res.structuredContent).toMatchObject({ effectiveDurationSeconds: 5 });
+  });
+
+  it("sets an image duration", async () => {
+    const { trim, node } = mediaHarness();
+    const res = await trim.execute({ nodeId: "img", durationSeconds: 8 });
+    expect(res.isError).toBeFalsy();
+    expect(node("img")).toMatchObject({ durationSeconds: 8 });
+  });
+
+  it("rejects a trim that exceeds the source length", async () => {
+    const { trim } = mediaHarness();
+    expect((await trim.execute({ nodeId: "vid", trimInSeconds: 6, trimOutSeconds: 6 })).isError).toBe(true);
+  });
+
+  it("rejects the wrong field for the media kind", async () => {
+    const { trim } = mediaHarness();
+    expect((await trim.execute({ nodeId: "vid", durationSeconds: 3 })).isError).toBe(true);
+    expect((await trim.execute({ nodeId: "img", trimInSeconds: 1 })).isError).toBe(true);
+  });
+});
+
+describe("rename_item tool", () => {
+  it("renames a clip and trims whitespace", async () => {
+    const { rename, node } = mediaHarness();
+    const res = await rename.execute({ nodeId: "img", name: "  Hero shot  " });
+    expect(res.isError).toBeFalsy();
+    expect(node("img")).toMatchObject({ name: "Hero shot" });
+  });
+
+  it("rejects a blank name", async () => {
+    const { rename } = mediaHarness();
+    expect((await rename.execute({ nodeId: "img", name: "   " })).isError).toBe(true);
+  });
+});
+
+describe("remove_clip tool", () => {
+  it("moves a clip into the trash root", async () => {
+    const { remove, order } = mediaHarness();
+    const res = await remove.execute({ nodeId: "img" });
+    expect(res.isError).toBeFalsy();
+    expect(order("project")).toEqual(["vid"]);
+    expect(order("trash")).toEqual(["img"]);
+  });
+
+  it("errors when the trash isn't loaded", async () => {
+    const { remove } = mediaHarness(null);
+    expect((await remove.execute({ nodeId: "img" })).isError).toBe(true);
   });
 });
