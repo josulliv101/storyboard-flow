@@ -3,6 +3,8 @@ import { timingSafeEqual } from "node:crypto";
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 
+import { TIMELINE_APP_HTML } from "@/lib/mcp-apps/timeline-app-html";
+
 import {
   getFirebaseTimelineDocument,
   listFirebaseTimelineProjects,
@@ -28,6 +30,19 @@ import { TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+/** The MCP Apps view's resource URI, referenced by every `_meta` UI key. */
+const TIMELINE_APP_URI = "ui://storyboard/timeline.html";
+
+// MCP Apps constants, declared here rather than imported from
+// `@modelcontextprotocol/ext-apps/server`. That package peer-requires SDK
+// ^1.29 while `mcp-handler` pins exactly 1.26.0, so importing its server
+// helpers drags in a SECOND copy of the SDK — and two SDK instances in one
+// process is a real runtime hazard, not just a type error. The helpers only
+// normalize these two values, so emitting them directly keeps a single SDK.
+// The client bundle still uses ext-apps (Vite resolves it in isolation).
+const UI_RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
+const UI_RESOURCE_META_KEY = "ui/resourceUri";
 
 /** Constant-time compare that can't leak length via early return. */
 function secretsMatch(provided: string, expected: string): boolean {
@@ -113,6 +128,63 @@ const handler = createMcpHandler(
           }
           throw error;
         }
+      },
+    );
+
+    // --- MCP Apps: an interactive timeline view -----------------------------
+    //
+    // The UI bundle is served as a ui:// resource and rendered by the host in a
+    // sandboxed iframe. It is SELF-SUFFICIENT: the host's ui/initialize result
+    // carries no tool arguments, so the view calls list_projects/read_timeline
+    // itself over the bridge rather than being handed data.
+
+    server.registerResource(
+      "Storyboard timeline view",
+      TIMELINE_APP_URI,
+      { mimeType: UI_RESOURCE_MIME_TYPE },
+      async (uri) => ({
+        contents: [
+          { uri: uri.href, mimeType: UI_RESOURCE_MIME_TYPE, text: TIMELINE_APP_HTML },
+        ],
+      }),
+    );
+
+    server.registerTool(
+      "show_timeline",
+      {
+        description:
+          "Show the storyboard timeline as an interactive visual strip — clips laid out proportionally by duration, with thumbnails. Use this when the user wants to SEE the timeline rather than read it.",
+        inputSchema: {
+          timelineId: z
+            .string()
+            .optional()
+            .describe("Project or timeline id to open. Omit to let the view pick."),
+        },
+        _meta: {
+          // All three spellings point at the same resource so one server
+          // renders everywhere: hosts are required to accept both the nested
+          // and flat forms of the standard key, and ChatGPT reads its own.
+          ui: { resourceUri: TIMELINE_APP_URI },
+          [UI_RESOURCE_META_KEY]: TIMELINE_APP_URI,
+          "openai/outputTemplate": TIMELINE_APP_URI,
+        },
+      },
+      async (_args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        // The visual is the point, but return text too so the model still has
+        // something to reason about without reading the iframe.
+        const projects = await listFirebaseTimelineProjects(uid);
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Opened the timeline view (${projects.length} project${
+                projects.length === 1 ? "" : "s"
+              } available).`,
+            },
+          ],
+        };
       },
     );
   },
