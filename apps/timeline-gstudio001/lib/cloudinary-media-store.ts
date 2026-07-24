@@ -2,6 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
+import { encodePublicIdPath } from "./cloudinary-public-id";
+
 import { getMediaContentType } from "./firebase-media-store";
 
 export type CloudinaryMediaUpload = {
@@ -118,11 +120,11 @@ function sanitizePublicId(filename: string) {
 }
 
 function cloudinaryVideoThumbnailUrl(config: CloudinaryConfig, publicId: string) {
-  return `https://res.cloudinary.com/${config.cloudName}/video/upload/so_0.35,w_640,h_360,c_fill,q_auto,f_jpg/${publicId}.jpg`;
+  return `https://res.cloudinary.com/${config.cloudName}/video/upload/so_0.35,w_640,h_360,c_fill,q_auto,f_jpg/${encodePublicIdPath(publicId)}.jpg`;
 }
 
 function cloudinaryImageThumbnailUrl(config: CloudinaryConfig, publicId: string) {
-  return `https://res.cloudinary.com/${config.cloudName}/image/upload/w_640,h_360,c_fill,q_auto,f_auto/${publicId}`;
+  return `https://res.cloudinary.com/${config.cloudName}/image/upload/w_640,h_360,c_fill,q_auto,f_auto/${encodePublicIdPath(publicId)}`;
 }
 
 function toAsset(

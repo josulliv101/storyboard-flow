@@ -52,6 +52,21 @@ const UI_RESOURCE_META_KEY = "ui/resourceUri";
 /** ChatGPT's Apps SDK renders only this MIME type. */
 const OPENAI_WIDGET_MIME_TYPE = "text/html+skybridge";
 
+// Hosts render the widget in a sandboxed iframe whose CSP blocks external
+// origins unless the resource declares them. Thumbnails come straight from the
+// stored clip URLs, so without this every card renders as a broken image.
+// `resourceDomains` covers scripts/styles/images; no connectDomains, because
+// the view fetches data through the host bridge rather than the network.
+const WIDGET_IMAGE_DOMAINS = ["https://res.cloudinary.com", "https://picsum.photos"];
+const WIDGET_UI_META = {
+  ui: { csp: { resourceDomains: WIDGET_IMAGE_DOMAINS } },
+  // ChatGPT reads its own CSP key.
+  "openai/widgetCSP": {
+    resource_domains: WIDGET_IMAGE_DOMAINS,
+    connect_domains: [],
+  },
+} as const;
+
 /** Constant-time compare that can't leak length via early return. */
 function secretsMatch(provided: string, expected: string): boolean {
   const a = Buffer.from(provided);
@@ -152,7 +167,12 @@ const handler = createMcpHandler(
       { mimeType: UI_RESOURCE_MIME_TYPE },
       async (uri) => ({
         contents: [
-          { uri: uri.href, mimeType: UI_RESOURCE_MIME_TYPE, text: TIMELINE_APP_HTML },
+          {
+            uri: uri.href,
+            mimeType: UI_RESOURCE_MIME_TYPE,
+            text: TIMELINE_APP_HTML,
+            _meta: WIDGET_UI_META,
+          },
         ],
       }),
     );
@@ -170,7 +190,12 @@ const handler = createMcpHandler(
       },
       async (uri) => ({
         contents: [
-          { uri: uri.href, mimeType: OPENAI_WIDGET_MIME_TYPE, text: TIMELINE_APP_HTML },
+          {
+            uri: uri.href,
+            mimeType: OPENAI_WIDGET_MIME_TYPE,
+            text: TIMELINE_APP_HTML,
+            _meta: WIDGET_UI_META,
+          },
         ],
       }),
     );
