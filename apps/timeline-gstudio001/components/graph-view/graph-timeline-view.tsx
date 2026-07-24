@@ -497,7 +497,7 @@ export function GraphTimelineView({
       >
           <PersistenceBridge onSync={onSync} />
           <GraphItemActionsBridge trashId={boot.trashRootId} focusedId={focusedId} />
-          <McpToolsBridge focusedId={focusedId} />
+          <McpToolsBridge focusedId={focusedId} trashId={boot.trashRootId} />
           <GraphDetailsJanitor />
           <AssetPaletteDrawer open={assetsOpen} onClose={() => setAssetsOpen(false)} />
           <HydrationController
