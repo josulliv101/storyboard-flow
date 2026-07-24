@@ -188,14 +188,22 @@ export function GraphPlayhead({
     let lastGraph: CollectionsGraph | null = null;
     let lastDetails: DetailsById | null = null;
     let map: PlayheadMap | null = null;
-    const paint = () => {
+    // Rebuild the position map only when its geometry inputs (graph/details)
+    // change; returns whether it did, so store-driven callers can skip the DOM
+    // write when nothing the playhead reads actually moved.
+    const rebuildIfNeeded = (): boolean => {
       const graph = store.getSnapshot().graph;
       const details = detailsStore.read();
-      if (graph !== lastGraph || details !== lastDetails) {
-        lastGraph = graph;
-        lastDetails = details;
-        map = buildPlayheadMap(childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)));
-      }
+      if (graph === lastGraph && details === lastDetails) return false;
+      lastGraph = graph;
+      lastDetails = details;
+      map = buildPlayheadMap(
+        childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
+      );
+      return true;
+    };
+    // Position-only style write, for the current clock time.
+    const paint = () => {
       const line = lineRef.current;
       if (!line || !map) return;
       const time = channel.get();
@@ -206,10 +214,24 @@ export function GraphPlayhead({
       line.style.display = inside ? "" : "none";
       if (inside) line.style.transform = `translateX(${map.xAt(time)}px)`;
     };
-    paint();
-    const unsubscribeTime = channel.subscribe(paint);
-    const unsubscribeStore = store.subscribe(paint);
-    const unsubscribeDetails = detailsStore.subscribe(paint);
+    // The clock moved: always reposition, cheaply picking up any pending
+    // geometry change on the way (the rebuild is a no-op when nothing changed).
+    const tick = () => {
+      rebuildIfNeeded();
+      paint();
+    };
+    // A store/details notification only matters to the playhead when it changed
+    // the geometry. Drag start/end, selection, and every drop-intent tick
+    // during a drag leave the committed graph untouched, so this bails before
+    // any DOM write — otherwise every mounted sub-timeline playhead repainted
+    // on each of those, directly on the drag/INP hot path.
+    const onData = () => {
+      if (rebuildIfNeeded()) paint();
+    };
+    tick();
+    const unsubscribeTime = channel.subscribe(tick);
+    const unsubscribeStore = store.subscribe(onData);
+    const unsubscribeDetails = detailsStore.subscribe(onData);
     return () => {
       unsubscribeTime();
       unsubscribeStore();
@@ -433,7 +455,11 @@ export function GraphGridPlayhead({
     let lastCellWidth = 0;
     let map: GridPlayheadMap | null = null;
 
-    const paint = () => {
+    // Rebuild the position map only when its geometry inputs change — graph or
+    // details, plus the grid's live column count / cell width. Returns whether
+    // it did, so store-driven callers can skip the DOM write when nothing the
+    // playhead reads actually moved.
+    const rebuildIfNeeded = (): boolean => {
       const graph = store.getSnapshot().graph;
       const details = detailsStore.read();
       const columns = Number(grid?.dataset.gridColumns) || 1;
@@ -442,22 +468,28 @@ export function GraphGridPlayhead({
       // is only a target for picking column count, not the rendered size.
       const cellWidth = Number(grid?.dataset.gridCellWidth) || 1;
       if (
-        graph !== lastGraph ||
-        details !== lastDetails ||
-        columns !== lastColumns ||
-        cellWidth !== lastCellWidth
+        graph === lastGraph &&
+        details === lastDetails &&
+        columns === lastColumns &&
+        cellWidth === lastCellWidth
       ) {
-        lastGraph = graph;
-        lastDetails = details;
-        lastColumns = columns;
-        lastCellWidth = cellWidth;
-        map = buildGridPlayheadMap(
-          childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
-          columns,
-          cellWidth,
-          cellHeight,
-        );
+        return false;
       }
+      lastGraph = graph;
+      lastDetails = details;
+      lastColumns = columns;
+      lastCellWidth = cellWidth;
+      map = buildGridPlayheadMap(
+        childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
+        columns,
+        cellWidth,
+        cellHeight,
+      );
+      return true;
+    };
+
+    // Position-only style write, for the current clock time.
+    const paint = () => {
       if (!map) return;
       const time = channel.get();
       const inside =
@@ -471,11 +503,27 @@ export function GraphGridPlayhead({
       line.style.height = `${map.rowHeight + SEEK_RAIL_BAND_INSET_PX}px`;
     };
 
-    paint();
-    const unsubscribeTime = channel.subscribe(paint);
-    const unsubscribeStore = store.subscribe(paint);
-    const unsubscribeDetails = detailsStore.subscribe(paint);
-    const observer = grid ? new ResizeObserver(paint) : null;
+    // The clock moved: always reposition, cheaply picking up any pending
+    // geometry change on the way (the rebuild is a no-op when nothing changed).
+    const tick = () => {
+      rebuildIfNeeded();
+      paint();
+    };
+    // Store / details / resize notifications only matter when they changed the
+    // geometry. Drag start/end, selection, and every drop-intent tick during a
+    // drag leave the committed graph untouched, so this bails before any DOM
+    // write — otherwise every mounted sub-timeline playhead repainted on each
+    // of those, directly on the drag/INP hot path. A resize that alters
+    // columns/cellWidth is caught here too.
+    const onData = () => {
+      if (rebuildIfNeeded()) paint();
+    };
+
+    tick();
+    const unsubscribeTime = channel.subscribe(tick);
+    const unsubscribeStore = store.subscribe(onData);
+    const unsubscribeDetails = detailsStore.subscribe(onData);
+    const observer = grid ? new ResizeObserver(onData) : null;
     if (grid && observer) observer.observe(grid);
     return () => {
       unsubscribeTime();

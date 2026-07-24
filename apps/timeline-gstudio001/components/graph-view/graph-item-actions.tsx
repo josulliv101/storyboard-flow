@@ -242,6 +242,22 @@ export function GraphItemActionsBridge({
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
 
+  // Session-lifetime guard for the async actions below. This bridge is
+  // remounted with a fresh store whenever the graph's session key changes
+  // (project / user / trash-generation switch), so ONE mount == ONE session:
+  // the ref flips false only on a true unmount, and NEVER on the intra-session
+  // dep changes (focusedId / trashId navigation) that merely re-run the action
+  // effect — those keep the same live store, so an in-flight Duplicate is still
+  // valid across them. An async action consults it before touching the store
+  // or the SINGLETON documents gateway; see `duplicateSelection`.
+  const sessionAliveRef = useRef(true);
+  useEffect(() => {
+    sessionAliveRef.current = true;
+    return () => {
+      sessionAliveRef.current = false;
+    };
+  }, []);
+
   // Graph → sidebar: mirror the live selection size + busy (on mount and every
   // change) — and zero it on unmount, so a later graph session doesn't flash
   // the previous session's stale item-mode cluster before its own first
@@ -343,9 +359,20 @@ export function GraphItemActionsBridge({
       const built: Built[] = [];
       for (const id of selected) {
         const clone = await buildClone(store, details, id);
+        // The session can be torn down (project switch) while a clone's
+        // document tree loads. Bail the moment it is — before loading more.
+        if (!sessionAliveRef.current) return;
         if (clone !== null) built.push({ sourceId: id, clone });
       }
       if (built.length === 0) return;
+
+      // The safety-critical check: everything below dispatches into `store`
+      // and, via `insertClones`, seeds + writes cloned child documents through
+      // the singleton gateway. If the session died during the loads above,
+      // those writes would seed timelines into a project that no longer exists
+      // — orphans with no graph path to reach them. No awaits follow, so this
+      // one guard covers the whole side-effecting section.
+      if (!sessionAliveRef.current) return;
 
       const liveGraph = store.getSnapshot().graph;
       const groups = new Map<NodeId, Built[]>();
