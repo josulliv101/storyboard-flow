@@ -24,14 +24,34 @@ function clipLabel(clip: TimelineClip): string {
   return clip.alt ?? clip.kind;
 }
 
+/**
+ * Repair URLs that were stored with unencoded path segments.
+ *
+ * Poster URLs written before the cloudinary-media-store encoding fix contain
+ * LITERAL SPACES for assets in folders like "New Collection", and browsers
+ * refuse to load those — every such thumbnail renders broken. The stored data
+ * still has them, so repair defensively at render time rather than only fixing
+ * new writes. `encodeURI` is the right tool: it escapes spaces but leaves
+ * existing `%20` alone (it never escapes `%`), so already-correct URLs pass
+ * through untouched.
+ */
+function safeUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return encodeURI(url);
+  } catch {
+    return url;
+  }
+}
+
 /** Poster for a clip: media uses its own art; a collection borrows its first
  *  preview item, which is what the app's own cards do. */
 function clipPoster(clip: TimelineClip): string | undefined {
   if (clip.kind === "collection") {
     const first = clip.previewItems?.[0];
-    return first?.poster ?? first?.src;
+    return safeUrl(first?.poster ?? first?.src);
   }
-  return clip.poster ?? clip.src;
+  return safeUrl(clip.poster ?? clip.src);
 }
 
 function Clip({ clip, totalSeconds }: { clip: TimelineClip; totalSeconds: number }) {
