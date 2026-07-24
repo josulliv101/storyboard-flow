@@ -41,6 +41,12 @@ type WorkbenchDisplaySurfaceProps = {
   onCurrentTimeChange: (time: number) => void;
   className?: string;
   preferredClipId?: string | null;
+  /** Controlled playback. When supplied, the surface plays iff this is true and
+   *  reports intent through `onPlayingChange` (the play button and the
+   *  end-of-timeline auto-stop call it) instead of holding play state itself.
+   *  Omit for the default uncontrolled behavior (internal play state). */
+  playing?: boolean;
+  onPlayingChange?: (playing: boolean) => void;
 };
 
 const BUFFER_WINDOW_SIZE = 4;
@@ -246,6 +252,8 @@ export function WorkbenchDisplaySurface({
   onCurrentTimeChange,
   className,
   preferredClipId,
+  playing,
+  onPlayingChange,
 }: WorkbenchDisplaySurfaceProps) {
   const { getCollectionClipFramePreview } = useTimelineDocuments();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -261,7 +269,18 @@ export function WorkbenchDisplaySurface({
   const sortedClipsRef = useRef<TimelineClip[]>([]);
   const durationRef = useRef(0);
   const isPlayingRef = useRef(false);
-  const [isPlaying, setIsPlaying] = useState(false);
+  // Controlled when `playing` is supplied; otherwise the surface owns the state
+  // (the default, preserving every existing consumer's behavior).
+  const isControlledPlayback = playing !== undefined;
+  const [uncontrolledPlaying, setUncontrolledPlaying] = useState(false);
+  const isPlaying = playing ?? uncontrolledPlaying;
+  const setPlaying = useCallback(
+    (next: boolean) => {
+      if (isControlledPlayback) onPlayingChange?.(next);
+      else setUncontrolledPlaying(next);
+    },
+    [isControlledPlayback, onPlayingChange],
+  );
 
   const sortedClips = useMemo(
     () => [...clips].sort((a, b) => getClipPlaybackStart(a) - getClipPlaybackStart(b) || a.index - b.index),
@@ -635,7 +654,7 @@ export function WorkbenchDisplaySurface({
       if (nextTime >= durationRef.current) {
         publishTime(durationRef.current, now, true);
         renderFrameAtTime(durationRef.current, false, true);
-        setIsPlaying(false);
+        setPlaying(false);
         return;
       }
 
@@ -654,7 +673,7 @@ export function WorkbenchDisplaySurface({
       window.removeEventListener("visibilitychange", handleVisibilityChange);
       cancelQueuedFrame();
     };
-  }, [isPlaying, onCurrentTimeChange, renderFrameAtTime]);
+  }, [isPlaying, onCurrentTimeChange, renderFrameAtTime, setPlaying]);
 
   useEffect(() => {
     const mediaCache = cacheRef.current;
@@ -709,7 +728,7 @@ export function WorkbenchDisplaySurface({
           </button>
           <button
             type="button"
-            onClick={() => setIsPlaying((value) => !value)}
+            onClick={() => setPlaying(!isPlaying)}
             disabled={!canPlay}
             className="grid size-9 place-items-center rounded-full border border-zinc-700 bg-zinc-900 text-zinc-100 transition-colors hover:border-amber-400 hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-40"
             aria-label={isPlaying ? "Pause workbench preview" : "Play workbench preview"}
@@ -742,6 +761,9 @@ type WorkbenchSplitPaneProps = {
   onCurrentTimeChange: (time: number) => void;
   children: ReactNode;
   preferredClipId?: string | null;
+  /** Controlled playback, forwarded to the display surface. See there. */
+  playing?: boolean;
+  onPlayingChange?: (playing: boolean) => void;
   /** Read ONCE at mount for a height carried over from a previous mount (e.g.
    *  the consumer toggled this pane off and back on). Returning a number makes
    *  the pane start there and SKIP the one-time fit — a height the user chose
@@ -760,6 +782,8 @@ export function WorkbenchSplitPane({
   onCurrentTimeChange,
   children,
   preferredClipId,
+  playing,
+  onPlayingChange,
   getInitialSurfaceHeight,
   onSurfaceHeightChange,
 }: WorkbenchSplitPaneProps) {
@@ -1014,6 +1038,8 @@ export function WorkbenchSplitPane({
             currentTime={currentTime}
             onCurrentTimeChange={onCurrentTimeChange}
             preferredClipId={preferredClipId}
+            playing={playing}
+            onPlayingChange={onPlayingChange}
             className="h-full"
           />
         </div>

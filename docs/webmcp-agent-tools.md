@@ -402,3 +402,38 @@ placement default `after: nodeId`; `insertClones(...)`; `setSelection(newIds)`.
   relocates to trash and errors when trash is absent). Remaining v1 surface:
   `list_assets` + `add_clip` (asset-provider seam), then `duplicate_clip`
   (async → brings in the `sessionAlive` guard).
+
+- **2026-07-24** — Increment 3: **view / session tools** — a new category
+  distinct from the document-edit tools. These are *ephemeral* (no persistence,
+  no undo): `get_view_state` (focus + selection + preview, read-only),
+  `select_items` / `clear_selection` (→ `store.setSelection` / `clearSelection`),
+  `focus` / `go_up` (→ the graph view's `openTimeline` navigation), and
+  `set_preview` (→ the `GRAPH_PREVIEW_TOGGLE_EVENT` window event, made
+  deterministic by reading the `GRAPH_VIEW_STATE_EVENT` broadcast). Motivation:
+  driving the app previously required pixel-clicking for navigation/preview
+  (brittle); these make it first-class. Wiring: selection is pure store; preview
+  rides the sidebar's existing window-event bus (zero threading — the bridge
+  mirrors the view-state broadcast into a ref); navigation is a router push, so
+  `<McpToolsBridge>` gains `projectId` + `onOpenNode` (the `openTimeline` seam,
+  same one the board's click-to-drill uses). Verified: 36 unit tests
+  (handlers over a real store + injected nav/preview spies) and **live** in the
+  real app via chrome-in-browser — `focus`/`go_up` moved the route, `set_preview`
+  flipped the pane and `get_view_state` read it back. Navigation is async (the
+  tool returns before the route commits — read_timeline to confirm).
+
+- **2026-07-24** — Increment 3 (cont.): **playback tools** `play` / `pause` /
+  `seek`, plus `isPlaying` + `currentTimeSeconds` on `get_view_state`. `play`
+  turns the preview on first if it's off (so you see it), then starts. This
+  needed a change to the **shared player**: `WorkbenchDisplaySurface`
+  (`packages/ui/timeline`) gained optional controlled-playback props
+  (`playing` + `onPlayingChange`) — supplied → it renders/reports play state
+  through them; omitted → the previous uncontrolled behavior is unchanged (so
+  every existing consumer is untouched). Play state now lives on the
+  `PreviewTimeChannel` (`isPlaying`/`setPlaying`/`subscribePlaying`), above the
+  pane's mount, so it survives preview toggling and can be set before the pane
+  exists (that's what makes play-auto-shows-preview race-free). `PreviewShell`
+  wires the surface's controlled props to the channel; `<McpToolsBridge>` gains
+  the channel and derives `seek`/`setPlaying`/`getPlayback`. Verified: 41 unit
+  tests, `packages/ui` typecheck + a `ControlledPlayback` story interaction
+  test (the surface reflects the `playing` prop), and **live** — `play` opened
+  the preview and advanced time 0→2.5s, `pause` froze it, `seek` jumped to 20s.

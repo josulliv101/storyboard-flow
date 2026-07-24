@@ -66,11 +66,19 @@ export type PreviewTimeChannel = Readonly<{
   get: () => number;
   set: (time: number) => void;
   subscribe: (listener: () => void) => () => void;
+  /** Play state, held here (above the preview pane's mount) so it survives the
+   *  pane toggling off/on and can be driven before the pane exists — that's how
+   *  "play turns the preview on and it's already playing" works. */
+  isPlaying: () => boolean;
+  setPlaying: (playing: boolean) => void;
+  subscribePlaying: (listener: () => void) => () => void;
 }>;
 
 export function createPreviewTimeChannel(): PreviewTimeChannel {
   let time = 0;
+  let playing = false;
   const listeners = new Set<() => void>();
+  const playListeners = new Set<() => void>();
   return {
     get: () => time,
     set: (next) => {
@@ -81,6 +89,18 @@ export function createPreviewTimeChannel(): PreviewTimeChannel {
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
+      };
+    },
+    isPlaying: () => playing,
+    setPlaying: (next) => {
+      if (playing === next) return;
+      playing = next;
+      for (const listener of playListeners) listener();
+    },
+    subscribePlaying: (listener) => {
+      playListeners.add(listener);
+      return () => {
+        playListeners.delete(listener);
       };
     },
   };
@@ -1550,6 +1570,15 @@ export function PreviewShell({
   const [time, setTime] = useState(0);
 
   useEffect(() => channel.subscribe(() => setTime(channel.get())), [channel]);
+  // Controlled playback: the channel is the source of truth (so play state
+  // survives the pane toggling and can be set before it mounts). The surface
+  // renders play/pause from `playing` and reports its own button/auto-stop
+  // through `channel.setPlaying`.
+  const playing = useSyncExternalStore(
+    channel.subscribePlaying,
+    channel.isPlaying,
+    channel.isPlaying,
+  );
   const handleTimeChange = useCallback(
     (next: number) => {
       setTime(next);
@@ -1606,6 +1635,8 @@ export function PreviewShell({
         clips={clips}
         currentTime={time}
         onCurrentTimeChange={handleTimeChange}
+        playing={playing}
+        onPlayingChange={channel.setPlaying}
         getInitialSurfaceHeight={getInitialSurfaceHeight}
         onSurfaceHeightChange={handleSurfaceHeightChange}
       >
