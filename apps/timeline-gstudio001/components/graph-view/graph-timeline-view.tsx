@@ -494,6 +494,7 @@ export function GraphTimelineView({
         openOnClick={openOnClick}
         commandPolicy={commandPolicy}
         onPaletteDiscard={handlePaletteDiscard}
+        itemInstructions="Press O to open the focused collection, or F2 to rename it."
       >
           <PersistenceBridge onSync={onSync} />
           <GraphItemActionsBridge trashId={boot.trashRootId} focusedId={focusedId} />

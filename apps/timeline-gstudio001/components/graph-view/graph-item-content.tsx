@@ -574,8 +574,9 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             onDoubleClick={(event) => {
               event.stopPropagation();
               rename.begin();
+              // (keyboard: F2 on the focused card — see OpenKeyBoundary)
             }}
-            title="Double-click to rename"
+            title="Double-click or press F2 to rename"
             className="min-w-0 flex-1 cursor-text truncate text-[10px] font-semibold text-zinc-100"
           >
             {displayName}

@@ -122,6 +122,19 @@ export function requestGraphItemAction(action: GraphItemAction): void {
   );
 }
 
+// Keyboard rename hand-off. F2 on a focused collection card is caught at the
+// board's keyboard boundary (OpenKeyBoundary), but inline-rename state is LOCAL
+// to each rename site (card, breadcrumb, sub-row — all via useInlineRename).
+// This event carries the node id so the matching site opens its editor: the
+// keyboard twin of double-clicking the label.
+
+export const GRAPH_RENAME_ITEM_EVENT = "graph-view:rename-item";
+
+/** Ask the rename site for this node id to open its inline editor. */
+export function requestGraphRenameItem(nodeId: string): void {
+  window.dispatchEvent(new CustomEvent<string>(GRAPH_RENAME_ITEM_EVENT, { detail: nodeId }));
+}
+
 // The reverse hand-off: when a drag drops into the graph's sidebar trash
 // target (which lives in the graph provider's tree), the sidebar's own trash
 // DRAWER button — plain app chrome — plays an arrival animation. Same

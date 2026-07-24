@@ -184,6 +184,14 @@ export type DndCollectionsProps = Readonly<{
    * the source card (height fills the overlay box).
    */
   dragGhostHeight?: number;
+  /**
+   * Extra keyboard-usage sentences appended to the shared card instructions
+   * element (referenced by every card via `aria-describedby`). The package has
+   * no "open" or "rename" concept — those are HOST keyboard boundaries — so a
+   * consumer documents its own card shortcuts here to keep them discoverable to
+   * screen-reader users alongside the built-in select/move grammar.
+   */
+  itemInstructions?: ReactNode;
   children: ReactNode;
 }>;
 
@@ -255,6 +263,7 @@ export function DndCollections({
   dragGhostScale = 1,
   dragGhostWidth,
   dragGhostHeight,
+  itemInstructions,
   children,
 }: DndCollectionsProps) {
   const componentsValue = useCollectionsComponentsValue(components);
@@ -318,6 +327,7 @@ export function DndCollections({
               dragGhostScale={dragGhostScale}
               dragGhostWidth={dragGhostWidth}
               dragGhostHeight={dragGhostHeight}
+              itemInstructions={itemInstructions}
             >
               {children}
             </DndCollectionsContext>
@@ -352,6 +362,7 @@ function DndCollectionsContext({
   dragGhostScale,
   dragGhostWidth,
   dragGhostHeight,
+  itemInstructions,
 }: {
   children: ReactNode;
   animateMoves: boolean;
@@ -359,6 +370,7 @@ function DndCollectionsContext({
   dragGhostScale: number;
   dragGhostWidth: number | undefined;
   dragGhostHeight: number | undefined;
+  itemInstructions: ReactNode;
 }) {
   const store = useCollectionsStore();
   // Ref-backed channel: speaking must never set state HERE — this component
@@ -738,6 +750,7 @@ function DndCollectionsContext({
         plus Shift plus Up or Down trims the start of a video, and Alt plus Shift plus Home or End
         slides a video&apos;s source window earlier or later without changing its length. Press Alt
         plus Delete to move it to trash.
+        {itemInstructions ? <> {itemInstructions}</> : null}
       </p>
       {/* Palette items are external drag sources — the card instructions
           above (selection, Alt-moves) don't apply, so they reference this
