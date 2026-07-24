@@ -26,6 +26,7 @@ import {
 } from "../react/collections-components";
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { NodeCard } from "../react/node-views";
+import { isContiguousReorderNoOp } from "./insert-noop";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
 import {
   useFocusNode,
@@ -298,18 +299,8 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       // Hide the indicator on a NO-OP move: dragging items already in this
       // collection to a boundary that leaves them where they are. Only for a
       // contiguous run wholly inside this collection (see VirtualStrip).
-      const active = s.interaction.activeIds;
-      if (active.length > 0) {
-        const children = getChildren(s.graph, collectionId);
-        const positions = active.map((id) => children.indexOf(id));
-        if (positions.every((position) => position >= 0)) {
-          const lo = Math.min(...positions);
-          const hi = Math.max(...positions);
-          const contiguous = hi - lo + 1 === positions.length;
-          if (contiguous && intent.index >= lo && intent.index <= hi + 1) {
-            return null;
-          }
-        }
+      if (isContiguousReorderNoOp(indexById, s.interaction.activeIds, intent.index)) {
+        return null;
       }
       return intent.index;
     });

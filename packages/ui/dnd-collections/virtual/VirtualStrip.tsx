@@ -27,6 +27,7 @@ import {
   finitePositiveOrUndefined,
   nonNegativeIntegerOr,
 } from "../core/numeric";
+import { isContiguousReorderNoOp } from "./insert-noop";
 import {
   useCollectionsComponents,
   type CollectionItemContentComponent,
@@ -724,18 +725,8 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       // at any boundary from the run's start to just past its end is identity.
       // (A non-contiguous multi-drag reorders the items between them, so it is a
       // real move and keeps its indicator.)
-      const active = s.interaction.activeIds;
-      if (active.length > 0) {
-        const children = getChildren(s.graph, collectionId);
-        const positions = active.map((id) => children.indexOf(id));
-        if (positions.every((position) => position >= 0)) {
-          const lo = Math.min(...positions);
-          const hi = Math.max(...positions);
-          const contiguous = hi - lo + 1 === positions.length;
-          if (contiguous && intent.index >= lo && intent.index <= hi + 1) {
-            return null;
-          }
-        }
+      if (isContiguousReorderNoOp(indexById, s.interaction.activeIds, intent.index)) {
+        return null;
       }
       return intent.index;
     });
