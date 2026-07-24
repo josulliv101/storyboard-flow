@@ -1,9 +1,11 @@
 # WebMCP agent tools
 
-**Status: design / planning — no code yet.** This is the agreed shape for
-letting an AI agent (Claude, or any MCP client) edit the timeline while the
-app is open side-by-side and updates in real time. Keep it current as
-decisions land — see the decision log at the bottom.
+**Status: shipped, and still growing.** Two surfaces are live — the in-page
+**WebMCP** tools (11 tools; real-time, mutate the live store) and a **remote
+MCP** endpoint at `/api/mcp` (read-only, OAuth 2.1 + PKCE, reachable by URL
+with no browser open). The design below is what they were built from; the
+decision log at the bottom is the running record of what actually shipped and
+why. Keep it current as decisions land.
 
 ## Goal
 
@@ -460,3 +462,37 @@ placement default `after: nodeId`; `insertClones(...)`; `setSelection(newIds)`.
   Firestore reads are one-shot and the browser holds no listeners, so a
   server-side write would not appear in an open tab without a live-push channel
   (see the top of this doc).
+
+- **2026-07-24** — **OAuth 2.1 + PKCE** on the remote MCP endpoint, so
+  claude.ai's custom-connector flow can attach. Built ON Firebase rather than
+  adopting an auth vendor: `/oauth/authorize` is a PAGE (so the root layout's
+  `AuthGate` handles sign-in) that validates the request and shows consent;
+  `POST /api/oauth/authorize` re-validates server-side and issues a single-use
+  code; `POST /api/oauth/token` verifies PKCE + client credentials and returns
+  an HS256 access token plus a rotating refresh token. Discovery lives at
+  `/.well-known/oauth-authorization-server` (RFC 8414) and
+  `/.well-known/oauth-protected-resource` (RFC 9728), both deriving their
+  origin from the request so localhost/preview/production need no config.
+
+  **Security decisions worth keeping:** S256 only (a `plain` or absent method is
+  refused, never defaulted — that's the PKCE downgrade); exact redirect-URI
+  matching; an unknown `client_id`/`redirect_uri` is FATAL and renders an error
+  rather than redirecting (redirecting to an unverified URI is how codes leak);
+  codes are single-use via a Firestore transaction and stored hashed; `alg` is
+  pinned to HS256 from our own header, never read from the token; access tokens
+  are audience-bound to this deployment's MCP URL. `jose` is deliberately NOT
+  used — HS256 is hand-rolled on `node:crypto` because jose@6's pure-ESM
+  packaging is what broke the Vercel deploy (see vercel-production-deploy).
+
+  **Dynamic Client Registration is intentionally omitted** — Claude also accepts
+  operator-provided credentials, so a personal deployment avoids exposing an
+  unauthenticated registration endpoint. New env: `MCP_OAUTH_CLIENT_ID`,
+  `MCP_OAUTH_CLIENT_SECRET`, `MCP_OAUTH_REDIRECT_URIS`,
+  `MCP_OAUTH_SIGNING_SECRET`. The static `MCP_BEARER_TOKEN` path remains for
+  Claude Code / mcp-remote; OAuth is tried first and the uid now comes from the
+  token's `sub` instead of a fixed env var.
+
+  **Known gap:** signing in mid-flow returns to the app root and drops the
+  authorization parameters, so an unauthenticated user must sign in and then
+  restart the connection from Claude. Covered by 28 unit tests over the
+  security-critical rules.
