@@ -20,7 +20,9 @@ const html = readFileSync(source, "utf8");
 // Backticks and ${ } would terminate or interpolate the template literal.
 const escaped = html.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
 
-const module = `// GENERATED FILE — do not edit.
+// Not named `module`: that shadows the CommonJS global and trips
+// @next/next/no-assign-module-variable.
+const moduleSource = `// GENERATED FILE — do not edit.
 // Built from mcp-app/ by \`npm run build:mcp-app\`. Edit the sources there.
 //
 // The MCP Apps UI, inlined as a string so the serverless function can serve it
@@ -30,7 +32,7 @@ export const TIMELINE_APP_HTML = \`${escaped}\`;
 `;
 
 mkdirSync(dirname(target), { recursive: true });
-writeFileSync(target, module, "utf8");
+writeFileSync(target, moduleSource, "utf8");
 
 console.log(
   `[mcp-app] wrote ${target} (${(html.length / 1024).toFixed(0)} KB of HTML)`,
