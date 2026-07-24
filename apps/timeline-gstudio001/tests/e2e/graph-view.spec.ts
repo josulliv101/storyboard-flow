@@ -679,6 +679,34 @@ test.describe("graph view E2E", () => {
       .toBe("Heist Plan");
   });
 
+  test("keyboard rename: a rename request opens the card's inline editor (no pointer)", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
+    await expect(card).toHaveAttribute("aria-label", /^Scene A \(collection/);
+
+    // F2 on a focused collection card is the pointerless twin of double-clicking
+    // the label: OpenKeyBoundary turns it into this rename request, which the
+    // card's inline editor opens off. We drive the request directly here — the
+    // F2 keydown itself rides the same OpenKeyBoundary the O-key test covers,
+    // and is verified with a real keypress (Playwright's Chromium doesn't
+    // deliver the F2 function key to the page).
+    await page.evaluate(
+      (id) => window.dispatchEvent(new CustomEvent("graph-view:rename-item", { detail: id })),
+      CHILD_ID,
+    );
+    const editor = page.getByRole("textbox", { name: "Timeline name" });
+    await editor.fill("Heist Plan");
+    await editor.press("Enter");
+
+    await expect(card).toHaveAttribute("aria-label", /^Heist Plan \(collection/);
+    await expect
+      .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
+      .toBe("Heist Plan");
+  });
+
   test("composed collection card: interactive controls are siblings of the surface, never nested", async ({
     page,
   }) => {

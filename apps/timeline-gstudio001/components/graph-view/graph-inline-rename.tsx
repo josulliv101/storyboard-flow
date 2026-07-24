@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useCollectionsStore, type NodeId } from "@storyboard/ui/dnd-collections";
+
+import { GRAPH_RENAME_ITEM_EVENT } from "@/lib/graph-view-events";
 
 /**
  * In-place rename LOGIC for a collection node, single-sourced so the card, the
@@ -25,6 +27,17 @@ export function useInlineRename(nodeId: NodeId, currentName: string) {
     setDraft(currentName);
     setEditing(true);
   }, [currentName]);
+
+  // Keyboard rename: the board's OpenKeyBoundary catches F2 and dispatches this
+  // event with the node id; the matching site (card, breadcrumb, sub-row) opens
+  // its editor — the keyboard twin of double-clicking the label.
+  useEffect(() => {
+    const onRename = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === (nodeId as string)) begin();
+    };
+    window.addEventListener(GRAPH_RENAME_ITEM_EVENT, onRename);
+    return () => window.removeEventListener(GRAPH_RENAME_ITEM_EVENT, onRename);
+  }, [nodeId, begin]);
 
   const cancel = useCallback(() => setEditing(false), []);
 

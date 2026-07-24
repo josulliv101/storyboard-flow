@@ -14,6 +14,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { toast } from "@/components/core/sonner";
+import { requestGraphRenameItem } from "@/lib/graph-view-events";
 
 import { useGraphDetailsStore } from "./graph-details-context";
 
@@ -171,6 +172,20 @@ export function OpenKeyBoundary({
     nav?.openTimeline(nodeId);
   };
 
+  // F2 opens the focused collection's inline rename editor — the keyboard twin
+  // of double-clicking its label, so rename isn't pointer-only. Only
+  // collections carry a rename editor (media has no name field), so the key is
+  // claimed only when it will actually act.
+  const renameFromKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (store.getSnapshot().interaction.isDragging) return;
+    const target = event.target as HTMLElement;
+    const id = target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
+    if (!id) return;
+    if (store.getSnapshot().graph.nodesById.get(parseNodeId(id))?.kind !== "collection") return;
+    event.preventDefault();
+    requestGraphRenameItem(id);
+  };
+
   // Plain Delete/Backspace trashes EVERY selected card — the pointer twin of
   // dragging a multi-selection onto the trash target, and the unmodified
   // sibling of the package's Alt+Delete (which trashes only the focused card).
@@ -190,6 +205,7 @@ export function OpenKeyBoundary({
     if (isEditableKeyboardTarget(event.target)) return;
 
     if (event.key === "o" || event.key === "O") openFromKey(event);
+    else if (event.key === "F2") renameFromKey(event);
     else if (event.key === "Delete" || event.key === "Backspace") trashSelection(event);
   };
 
