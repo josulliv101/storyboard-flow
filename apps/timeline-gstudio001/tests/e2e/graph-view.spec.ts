@@ -1258,6 +1258,101 @@ test.describe("graph view E2E", () => {
     await expect(drawer.locator('[data-palette-folder="b-roll"]')).toHaveCount(0);
   });
 
+  test("provider picker: appears with two providers, switches the source, hidden with one", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+
+    // Register AFTER installGraphApi so these win: one handler for BOTH the
+    // providers list and the (provider-scoped) asset listing. Two providers
+    // installed — Cloudinary (default) and S3 — with disjoint contents so a
+    // switch is unmistakable.
+    await page.route("**/api/assets/providers**", (route) =>
+      route.fulfill({
+        json: {
+          providers: [
+            {
+              id: "cloudinary",
+              label: "Cloudinary",
+              capabilities: {
+                folders: true,
+                tags: false,
+                search: false,
+                upload: false,
+                delete: false,
+              },
+            },
+            {
+              id: "s3",
+              label: "S3 (media-bucket)",
+              capabilities: {
+                folders: true,
+                tags: false,
+                search: false,
+                upload: false,
+                delete: false,
+              },
+            },
+          ],
+        },
+      }),
+    );
+    await page.route("**/api/assets?**", (route) => {
+      const url = new URL(route.request().url());
+      const provider = url.searchParams.get("provider") ?? "cloudinary";
+      const asset = (id: string) => ({
+        id,
+        providerId: provider,
+        name: `${id}.png`,
+        kind: "image",
+        src: PIXEL,
+        thumbnailUrl: PIXEL,
+        folderPath: [],
+        tags: [],
+      });
+      return route.fulfill({
+        json: {
+          providerId: provider,
+          capabilities: { folders: true, tags: false, search: false, upload: false, delete: false },
+          folders: [],
+          assets: provider === "s3" ? [asset("s3-only")] : [asset("cloud-only")],
+        },
+      });
+    });
+
+    await openGraph(page);
+    await assetsButton(page).click();
+    const drawer = page.getByRole("dialog", { name: "Asset palette" });
+
+    // Cloudinary is the default source, so its content shows first…
+    await expect(drawer.locator('[data-palette-item="asset-cloud-only"]')).toBeVisible();
+    const picker = drawer.getByRole("combobox", { name: "Asset source" });
+    await expect(picker).toBeVisible();
+
+    // …switch to S3: its disjoint content replaces Cloudinary's.
+    await picker.selectOption("s3");
+    await expect(drawer.locator('[data-palette-item="asset-s3-only"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-item="asset-cloud-only"]')).toHaveCount(0);
+
+    // And back — proving the switch is real navigation, not a one-way trip.
+    await picker.selectOption("cloudinary");
+    await expect(drawer.locator('[data-palette-item="asset-cloud-only"]')).toBeVisible();
+    await expect(drawer.locator('[data-palette-item="asset-s3-only"]')).toHaveCount(0);
+  });
+
+  test("provider picker stays hidden when only one provider is installed", async ({ page }) => {
+    // The DEFAULT installGraphApi mock returns no providers list (its
+    // `**/api/assets**` handler answers the providers URL with an assets
+    // payload that carries no `providers` field), so the picker never
+    // appears — the single-provider deployment is visually unchanged.
+    await installGraphApi(page);
+    await openGraph(page);
+    await assetsButton(page).click();
+    const drawer = page.getByRole("dialog", { name: "Asset palette" });
+    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
+    await expect(drawer.getByRole("combobox", { name: "Asset source" })).toHaveCount(0);
+  });
+
   test("trash drop moves across roots, persists BOTH documents, and undoes", async ({
     page,
   }) => {

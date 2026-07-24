@@ -73,6 +73,9 @@ type PalettePage = Readonly<{
   truncated: boolean;
 }>;
 
+/** What the picker needs from /api/assets/providers. */
+type ProviderOption = Readonly<{ id: string; label: string }>;
+
 type AssetPaletteState =
   | Readonly<{ status: "loading" }>
   | Readonly<{ status: "error"; message: string }>
@@ -256,16 +259,47 @@ export function AssetPaletteDrawer({
   // UI, per the seam's degradation contract).
   const [mode, setMode] = useState<BrowseMode>("folders");
   const [tagsAvailable, setTagsAvailable] = useState(false);
+  // Which asset provider is selected. `null` = the server's default (the
+  // first-registered); an explicit id is threaded into every request. The
+  // picker only appears when more than one provider is installed, so a
+  // single-provider deployment is unchanged.
+  const [providers, setProviders] = useState<readonly ProviderOption[]>([]);
+  const [providerId, setProviderId] = useState<string | null>(null);
+
+  // The page cache is keyed by ALL THREE axes — provider, mode, path — so no
+  // cached page can leak across a provider or hierarchy switch (a folder path
+  // means nothing in another provider, nor in tag space).
+  const cacheKey = useCallback(
+    (p: string | null, m: BrowseMode, segments: readonly string[]) =>
+      JSON.stringify([p ?? "", m, segments]),
+    [],
+  );
 
   const navigateTo = useCallback(
     (next: readonly string[], nextMode?: BrowseMode) => {
       const targetMode = nextMode ?? mode;
       setMode(targetMode);
       setPath(next);
-      const cached = pageCacheRef.current.get(JSON.stringify([targetMode, next]));
+      const cached = pageCacheRef.current.get(cacheKey(providerId, targetMode, next));
       setState(cached ? { status: "ready", ...cached } : { status: "loading" });
     },
-    [mode],
+    [mode, providerId, cacheKey],
+  );
+
+  // Switching provider is a full reset: back to the FOLDER root, because a
+  // path and even a hierarchy MODE belong to the provider you left (the new
+  // one may not do tags at all — its next response re-derives tagsAvailable).
+  const selectProvider = useCallback(
+    (next: string) => {
+      if (next === (providerId ?? "")) return;
+      const targetId = next === "" ? null : next;
+      setProviderId(targetId);
+      setMode("folders");
+      setPath([]);
+      const cached = pageCacheRef.current.get(cacheKey(targetId, "folders", []));
+      setState(cached ? { status: "ready", ...cached } : { status: "loading" });
+    },
+    [providerId, cacheKey],
   );
   // This panel is FIXED to the bottom of the viewport and non-modal — the
   // board behind it stays live, and you drag out of it onto that board. So
@@ -280,6 +314,28 @@ export function AssetPaletteDrawer({
     onClose();
   };
 
+  // Load the installed providers once the drawer opens — best-effort: a
+  // failure just leaves the picker hidden and the default provider serving,
+  // which is exactly the single-provider experience.
+  useEffect(() => {
+    if (!open || providers.length > 0) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/assets/providers", { cache: "no-store" });
+        const result = (await response.json().catch(() => ({}))) as {
+          providers?: ProviderOption[];
+        };
+        if (!cancelled && response.ok && result.providers) setProviders(result.providers);
+      } catch {
+        // Ignore — the default provider still serves without a picker.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, providers.length]);
+
   useEffect(() => {
     if (!open || state.status !== "loading") return;
     let cancelled = false;
@@ -293,6 +349,7 @@ export function AssetPaletteDrawer({
           mode === "tags"
             ? new URLSearchParams({ mode: "tags" })
             : new URLSearchParams({ browse: "1" });
+        if (providerId !== null) params.set("provider", providerId);
         for (const segment of path) params.append(mode === "tags" ? "tag" : "folder", segment);
         const response = await fetch(`/api/assets?${params}`, { cache: "no-store" });
         const result = (await response.json().catch(() => ({}))) as {
@@ -311,7 +368,7 @@ export function AssetPaletteDrawer({
           folders: result.folders ?? [],
           truncated: result.assets.length > PALETTE_ASSET_LIMIT,
         };
-        pageCacheRef.current.set(JSON.stringify([mode, path]), page);
+        pageCacheRef.current.set(cacheKey(providerId, mode, path), page);
         setTagsAvailable(result.capabilities?.tags === true);
         setState({ status: "ready", ...page });
       } catch (cause) {
@@ -326,7 +383,7 @@ export function AssetPaletteDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, state.status, path, mode]);
+  }, [open, state.status, path, mode, providerId, cacheKey]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -348,6 +405,27 @@ export function AssetPaletteDrawer({
             rootLabel={mode === "tags" ? "Tags" : "Assets"}
             onNavigate={navigateTo}
           />
+          {/* The provider picker appears ONLY with more than one installed —
+              a single-provider deployment (Cloudinary alone, no S3 env) is
+              visually unchanged. A native <select>: the option count is
+              provider-driven, so a fixed toggle wouldn't scale. */}
+          {providers.length > 1 && (
+            <label className="flex shrink-0 items-center gap-1 text-[10px] text-zinc-500">
+              <span className="sr-only">Asset source</span>
+              <select
+                aria-label="Asset source"
+                value={providerId ?? providers[0].id}
+                onChange={(event) => selectProvider(event.target.value)}
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+              >
+                {providers.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {tagsAvailable && (
             <div
               role="group"
