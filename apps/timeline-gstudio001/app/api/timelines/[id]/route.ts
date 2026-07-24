@@ -8,8 +8,6 @@ import {
 } from "@/lib/firebase-timeline-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import {
-  decodeFolderPath,
-  encodeFolderPath,
   getFolderPathFromTimelineId,
   isStoredTimelineDocument,
   isUnsavedProjectPlaceholder,
@@ -18,7 +16,8 @@ import {
 // package's fixture set, not model logic.
 import { getTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
 import { CLOUDINARY_PROVIDER_ID } from "@/lib/assets/cloudinary-provider";
-import { listCloudinaryAssets } from "@/lib/cloudinary-media-store";
+import { buildAssetLibraryClips } from "@/lib/assets/asset-library-timeline";
+import { assetProviders } from "@/lib/assets/registry";
 import { serveTimelineDocument, serveTrashDocument } from "@/lib/serve-timeline";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
@@ -79,161 +78,28 @@ export async function GET(
     if (id.startsWith("asset-library-")) {
       const firebaseDocument = await getFirebaseTimelineDocument(id, user.uid);
 
-      let title = "Cloudinary Assets";
-      if (id.startsWith("asset-library-col-")) {
-        title = "New Collection";
-      }
+      const title = id.startsWith("asset-library-col-") ? "New Collection" : "Cloudinary Assets";
+      const doc: TimelineDocument = firebaseDocument || { id, title, clips: [] };
 
-      const doc: TimelineDocument = firebaseDocument || {
-        id,
-        title,
-        clips: [],
-      };
-
-      // 1. Fetch Cloudinary assets
-      const cloudinaryAssets = await listCloudinaryAssets(user.uid);
+      // The bespoke Cloudinary listing + hand-rolled folder detection this
+      // branch used to do now lives behind the provider seam (phase 5): ask
+      // the Cloudinary provider for this folder's page — the SAME
+      // folder-scoping the graph palette uses — and shape it into the
+      // media-strip's synthetic-timeline clips. Pinned to Cloudinary because
+      // the asset-library ids embed Cloudinary folder paths; the drawer is
+      // Cloudinary's, not a generic provider surface.
       const folderPath = getFolderPathFromTimelineId(id, user.uid);
-
-      // Detect subfolders under the current folderPath
-      const detectedSubfolders = new Set<string>();
-      cloudinaryAssets.forEach((asset) => {
-        const path = asset.relativePath || asset.pathname;
-        const parts = path.split("/").filter(Boolean);
-        parts.pop(); // remove file name
-        const assetFolder = parts.join("/");
-
-        if (folderPath === "") {
-          if (parts.length > 0) {
-            detectedSubfolders.add(parts[0]);
-          }
-        } else {
-          if (
-            assetFolder.startsWith(folderPath + "/") &&
-            parts.length > folderPath.split("/").length
-          ) {
-            const childPath = parts.slice(0, folderPath.split("/").length + 1).join("/");
-            detectedSubfolders.add(childPath);
-          }
-        }
-      });
-
-      // 2. Filter Cloudinary assets in this folder
-      const assetsInFolder = cloudinaryAssets.filter((asset) => {
-        const path = asset.relativePath || asset.pathname;
-        const parts = path.split("/").filter(Boolean);
-        parts.pop(); // remove file name
-        const assetFolder = parts.join("/");
-        return assetFolder === folderPath;
-      });
-
-      const allActiveUrls = new Set(cloudinaryAssets.map((a) => a.url));
-
-      // 3. Keep existing collections and valid media clips
-      let merged = doc.clips.filter((clip) => {
-        if (clip.kind === "collection") return true;
-        return allActiveUrls.has(clip.src);
-      });
-
-      // Inject dynamically detected Cloudinary subfolders as collections
-      detectedSubfolders.forEach((subfolderPath) => {
-        const childId = `asset-library-col-${user.uid}-${encodeFolderPath(subfolderPath)}`;
-        const exists = merged.some(
-          (clip) => clip.kind === "collection" && clip.childTimelineId === childId
-        );
-        if (!exists) {
-          const folderName = subfolderPath.split("/").pop() || "Folder";
-          const uniqueId = `dynamic-col-${encodeFolderPath(subfolderPath)}`;
-          merged.push({
-            id: uniqueId,
-            index: merged.length,
-            kind: "collection",
-            title: folderName,
-            childTimelineId: childId,
-            itemCount: 0,
-            duration: 3,
-            sourceDuration: 3,
-            trimIn: 0,
-            trimOut: 0,
-            alt: folderName,
-            aspect: 16 / 9,
-            trackIndex: 0,
-            startTime: 0,
-          });
-        }
-      });
-
-      // 4. Add new assets
-      assetsInFolder.forEach((asset) => {
-        const exists = merged.some(
-          (clip) => clip.kind !== "collection" && clip.src === asset.url
-        );
-        if (!exists) {
-          const name = asset.relativePath?.split("/").pop()?.replace(/\.[^/.]+$/, "") || "Asset";
-          const aspect =
-            asset.width && asset.height && asset.height > 0
-              ? asset.width / asset.height
-              : 16 / 9;
-          const duration = asset.resourceType === "video" ? (asset.duration ?? 6) : 4;
-          const stableId = `asset-${asset.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-
-          // Provenance travels with the clip from the moment it is minted
-          // (`sourceAsset` on the stored model): `src` is how it renders,
-          // this is which provider file it IS.
-          const sourceAsset = { providerId: CLOUDINARY_PROVIDER_ID, assetId: asset.id };
-          const newClip: TimelineClip =
-            asset.resourceType === "video"
-              ? {
-                  id: stableId,
-                  index: merged.length,
-                  kind: "video",
-                  src: asset.url,
-                  poster: asset.thumbnailUrl,
-                  alt: name,
-                  aspect,
-                  trackIndex: 0,
-                  startTime: 0,
-                  duration,
-                  sourceDuration: duration,
-                  trimIn: 0,
-                  trimOut: 0,
-                  sourceAsset,
-                }
-              : {
-                  id: stableId,
-                  index: merged.length,
-                  kind: "image",
-                  src: asset.url,
-                  alt: name,
-                  aspect,
-                  trackIndex: 0,
-                  startTime: 0,
-                  duration,
-                  sourceDuration: duration,
-                  trimIn: 0,
-                  trimOut: 0,
-                  sourceAsset,
-                };
-
-          merged.push(newClip);
-        }
-      });
-
-      // 5. Reindex and pack clips
-      let nextStartTime = 1;
-      const packedClips = merged.map((clip, index) => {
-        const packed = {
-          ...clip,
-          index,
-          startTime: nextStartTime,
-        };
-        nextStartTime += packed.duration + 1;
-        return packed;
-      });
+      const folderSegments = folderPath === "" ? [] : folderPath.split("/");
+      const provider = assetProviders.get(CLOUDINARY_PROVIDER_ID);
+      if (!provider) {
+        return NextResponse.json({ error: "Asset provider unavailable." }, { status: 500 });
+      }
+      const page = await provider.list({ uid: user.uid }, { folder: folderSegments });
 
       return NextResponse.json({
         document: {
           ...doc,
-          clips: packedClips,
+          clips: buildAssetLibraryClips(page, user.uid, doc.clips),
         },
       });
     }
