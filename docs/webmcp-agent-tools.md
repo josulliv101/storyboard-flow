@@ -58,7 +58,7 @@ handlers:
 | --- | --- | --- |
 | Agent (Claude) | `chrome-devtools-mcp` with `--categoryExperimentalWebmcp=true` | official Google MCP server over CDP; **primary route** |
 | Manual | DevTools → **Application → WebMCP** panel | invoke tools by hand; appears once a tool is registered (Chrome 149+) |
-| Manual / scripted | console: `navigator.modelContextTesting` | `getTools()` / `executeTool(name, input)` (introspect for exact names) |
+| Manual / scripted | console: `navigator.modelContextTesting` | `listTools()` / `executeTool(name, input)` |
 
 MCP client config for the primary route:
 
@@ -335,9 +335,10 @@ placement default `after: nodeId`; `insertClones(...)`; `setSelection(newIds)`.
   revisit only if a caller needs raw control.
 - **Auto-select on mutate** — default on for single-node `move`/`add`/
   `duplicate` (aids the "watch it" UX); needs a `select:false` escape hatch.
-- **`navigator.modelContextTesting` method names** — `getTools`/`executeTool`
-  vs `listTools`/`executeTool` differ across spec versions; introspect the live
-  object before wiring the console/manual path.
+- ~~`navigator.modelContextTesting` method names~~ — **RESOLVED (Chrome 150):**
+  `listTools()` and `executeTool(name, input)` (it's a `ModelContextTesting`
+  extending `EventTarget`, also exposing `getCrossDocumentScriptToolResult`
+  and an `ontoolchange` event).
 
 ## Decision log
 
@@ -373,3 +374,19 @@ placement default `after: nodeId`; `insertClones(...)`; `setSelection(newIds)`.
   `sessionAlive` guard is needed yet (it returns with `duplicate_clip`/
   `add_clip`). Covered by unit tests in `lib/webmcp/*.test.ts` (pure placement
   + tree projection, and handler-over-a-real-store for read/move).
+
+- **2026-07-24** — Eager one-level hydration (app behavior, decoupled from
+  WebMCP; requested so tools see hydrated data without a drill-in).
+  `HydrationController` (`components/graph-view/graph-hydration.tsx`) now, after
+  the focus path, hydrates the focused timeline's **direct child collections**.
+  That level is cache-warm (RSC-primed), so it costs no extra fetch. Rows still
+  render collapsed — a sub-row's strip is gated on its own `expanded` state,
+  not on hydration (`graph-sub-timelines.tsx`), so the collapse/expand UX is
+  unchanged. Effect on the tools: `read_timeline` now returns the focused
+  timeline's child collections as `hydrated:true` with a real `childCount`, and
+  `move_clip` into them works without drilling in. **The "refused into
+  un-hydrated" behavior now only applies to grandchild+ collections** (still
+  lazy). Verified: full graph-view e2e (61) green — including the collapsed-row
+  and un-hydrated-drop-bounce tests. Console signature confirmed:
+  `navigator.modelContextTesting.listTools()` and
+  `executeTool(name, jsonArgsString)` (args are a JSON **string**).

@@ -87,7 +87,14 @@ export async function hydrateTimeline(
   reportHydrationIssue(timelineId, null);
 }
 
-/** Hydrate the focus path plus the shallow inline timelines rendered below it. */
+/**
+ * Hydrate the focus path, then eagerly hydrate ONE level of inline child
+ * timelines below the focus. That child level is already cache-warm (the RSC
+ * layer primes it), so its graph hydration costs no extra fetch; it makes the
+ * sub-rows' data present without a drill-in — collapsed rows STAY collapsed
+ * (a row's strip is gated on its own `expanded` state, not on hydration).
+ * Grandchildren and deeper stay lazy, hydrating on their row's first expand.
+ */
 export function HydrationController({
   projectId,
   segments,
@@ -125,14 +132,12 @@ export function HydrationController({
 
     void (async () => {
       const ensure = (timelineId: string) => hydrateTimeline(store, detailsStore, timelineId);
+      const focusChain = [projectId, ...path];
       let error: string | null = null;
       let previous: string | null = null;
 
-      // Only the FOCUS PATH is hydrated up front — the sub-graph tree below
-      // hydrates each row lazily on its first expand. (The RSC layer still
-      // primes one eager child level into the gateway cache, so that first
-      // expand is a warm-cache hit, not a fresh fetch.)
-      for (const segment of [projectId, ...path]) {
+      // The FOCUS PATH is hydrated up front, in order.
+      for (const segment of focusChain) {
         if (cancelled) return;
         const graph = store.getSnapshot().graph;
         const node = graph.nodesById.get(parseNodeId(segment));
@@ -152,6 +157,21 @@ export function HydrationController({
       }
 
       if (!cancelled) onFocusError(error);
+      if (cancelled || error !== null) return;
+
+      // Then eagerly hydrate ONE level below: the focused timeline's direct
+      // child collections. That level is cache-warm (RSC-primed), so each is a
+      // warm hit that just pulls the children into the graph — no drill-in
+      // needed, so sub-rows carry live data and are addressable by tools/moves
+      // straight away. Rows still render collapsed (strip gated on `expanded`);
+      // grandchildren stay lazy. Best-effort per child: a failure reports its
+      // own issue (see hydrateTimeline) and never blocks the focus view.
+      const focusedId = focusChain[focusChain.length - 1];
+      for (const childId of getChildren(store.getSnapshot().graph, parseNodeId(focusedId))) {
+        if (cancelled) return;
+        const child = store.getSnapshot().graph.nodesById.get(childId);
+        if (child?.kind === "collection") await ensure(childId);
+      }
     })();
 
     return () => {
