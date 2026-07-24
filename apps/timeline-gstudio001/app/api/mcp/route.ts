@@ -3,7 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 
-import { TIMELINE_APP_HTML } from "@/lib/mcp-apps/timeline-app-html";
+import { TIMELINE_APP_HTML } from "@storyboard/timeline-widget";
 
 import {
   getFirebaseTimelineDocument,
@@ -46,7 +46,9 @@ const TIMELINE_APP_URI_OPENAI = "ui://storyboard/timeline-openai.html";
 // helpers drags in a SECOND copy of the SDK — and two SDK instances in one
 // process is a real runtime hazard, not just a type error. The helpers only
 // normalize these two values, so emitting them directly keeps a single SDK.
-// The client bundle still uses ext-apps (Vite resolves it in isolation).
+// The client bundle still uses ext-apps, but it lives in its own workspace
+// (`@storyboard/timeline-widget`) and Vite resolves it in isolation, so the
+// server never sees that dependency.
 const UI_RESOURCE_MIME_TYPE = "text/html;profile=mcp-app";
 const UI_RESOURCE_META_KEY = "ui/resourceUri";
 /** ChatGPT's Apps SDK renders only this MIME type. */

@@ -1,0 +1,4 @@
+# Vite's intermediate output. The build's real deliverable is the generated
+# `timeline-app-html.ts`, which IS committed so consumers can import the widget
+# without running a build first.
+dist/

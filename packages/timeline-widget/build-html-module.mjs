@@ -13,7 +13,9 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const source = join(here, "dist", "index.html");
-const target = join(here, "..", "lib", "mcp-apps", "timeline-app-html.ts");
+// Generated INTO this package and committed: `index.ts` re-exports it, so the
+// consuming app imports a package rather than a path into another workspace.
+const target = join(here, "timeline-app-html.ts");
 
 const html = readFileSync(source, "utf8");
 
@@ -23,7 +25,8 @@ const escaped = html.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g
 // Not named `module`: that shadows the CommonJS global and trips
 // @next/next/no-assign-module-variable.
 const moduleSource = `// GENERATED FILE — do not edit.
-// Built from mcp-app/ by \`npm run build:mcp-app\`. Edit the sources there.
+// Built from src/ by \`npm run build\` in @storyboard/timeline-widget.
+// Edit the sources there and rebuild.
 //
 // The MCP Apps UI, inlined as a string so the serverless function can serve it
 // as a ui:// resource with no runtime file access.
