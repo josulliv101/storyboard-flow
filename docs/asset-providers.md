@@ -83,8 +83,23 @@ serves both; only the source differs:
    only when the bucket is configured; the palette's picker `<select>`
    appears only when more than one provider is installed. Upload/delete
    through the seam is still ahead (both providers declare them off).
-5. Retire the legacy drawer's bespoke virtual-timeline folder pipeline
-   (`/api/timelines/asset-library-*`) onto the seam.
+5. ✅ Retire the legacy virtual-timeline pipeline onto the seam. The
+   `/api/timelines/asset-library-*` GET branch no longer lists Cloudinary
+   directly or hand-rolls folder detection: it asks the Cloudinary provider
+   for the folder's page (the same `pageFromFlatListing` the palette uses) and
+   `lib/assets/asset-library-timeline.ts` shapes it into the media-strip's
+   synthetic-timeline clips (folders → navigable collections, assets → media
+   with `sourceAsset`). The legacy storyboard/workbench drawer is UNCHANGED —
+   it still browses those synthetic timelines through the media-strip — but
+   the seam is now the single asset-listing path. (Minor behavior improvement:
+   a persisted folder-collection whose Cloudinary folder no longer exists is
+   dropped rather than shown stale.)
+
+The seam is now the only asset-BROWSING path in the app. `listCloudinaryAssets`
+survives in exactly two places: the Cloudinary provider adapter (its data
+source), and `serve-timeline`'s document HEALING (validating a stored clip's
+media still exists) — a different concern from browsing, left as-is. No route
+lists assets to browse them except through a provider.
 
 ## Enabling S3
 
