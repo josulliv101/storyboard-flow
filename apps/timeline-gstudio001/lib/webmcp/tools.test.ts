@@ -6,9 +6,11 @@ import {
   getChildren,
   parseNodeId,
   type CollectionsGraph,
+  type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
 import type { GraphDetailsStore } from "@/lib/graph-details-store";
+import type { GraphViewStateDetail } from "@/lib/graph-view-events";
 
 import { createGraphTools } from "./tools";
 
@@ -39,9 +41,54 @@ const fakeDetails = {
   subscribe: () => () => {},
 } as unknown as GraphDetailsStore;
 
+/** Records navigation/preview/playback calls the view tools make, and
+ *  simulates preview + playback so the tools' deterministic logic is testable. */
+function viewSpies() {
+  const opened: string[] = [];
+  const toggles: string[] = [];
+  let view: GraphViewStateDetail = {
+    surface: "grid",
+    rulerOn: false,
+    childrenShown: false,
+    previewOn: false,
+  };
+  let playback = { time: 0, isPlaying: false };
+  return {
+    opened,
+    toggles,
+    getPreview: () => view.previewOn,
+    getPlayback: () => playback,
+    hooks: {
+      openTimeline: (id: NodeId) => {
+        opened.push(String(id));
+      },
+      getViewState: () => view,
+      togglePreview: () => {
+        toggles.push("toggle");
+        view = { ...view, previewOn: !view.previewOn };
+      },
+      seek: (seconds: number) => {
+        playback = { ...playback, time: Math.max(0, seconds) };
+      },
+      setPlaying: (playing: boolean) => {
+        playback = { ...playback, isPlaying: playing };
+      },
+      getPlayback: () => playback,
+    },
+  };
+}
+
 function harness(focusedId = "project") {
   const store = createCollectionsStore(graph());
-  const defs = createGraphTools({ store, details: fakeDetails, focusedId, trashId: null });
+  const spies = viewSpies();
+  const defs = createGraphTools({
+    store,
+    details: fakeDetails,
+    projectId: "project",
+    focusedId,
+    trashId: null,
+    ...spies.hooks,
+  });
   const tool = (name: string) => {
     const found = defs.find((d) => d.name === name);
     if (!found) throw new Error(`missing tool ${name}`);
@@ -49,7 +96,27 @@ function harness(focusedId = "project") {
   };
   const order = (parent: string) =>
     getChildren(store.getSnapshot().graph, parseNodeId(parent)).map(String);
-  return { store, read: tool("read_timeline"), move: tool("move_clip"), order };
+  const selected = () => [...store.getSnapshot().interaction.selectedIds].map(String);
+  return {
+    store,
+    order,
+    selected,
+    opened: spies.opened,
+    toggles: spies.toggles,
+    getPreview: spies.getPreview,
+    getPlayback: spies.getPlayback,
+    read: tool("read_timeline"),
+    move: tool("move_clip"),
+    getViewStateTool: tool("get_view_state"),
+    select: tool("select_items"),
+    clearSelection: tool("clear_selection"),
+    focus: tool("focus"),
+    goUp: tool("go_up"),
+    setPreview: tool("set_preview"),
+    play: tool("play"),
+    pause: tool("pause"),
+    seek: tool("seek"),
+  };
 }
 
 describe("read_timeline tool", () => {
@@ -118,7 +185,14 @@ function mediaGraph(): CollectionsGraph {
 
 function mediaHarness(trashId: string | null = "trash") {
   const store = createCollectionsStore(mediaGraph());
-  const defs = createGraphTools({ store, details: fakeDetails, focusedId: "project", trashId });
+  const defs = createGraphTools({
+    store,
+    details: fakeDetails,
+    projectId: "project",
+    focusedId: "project",
+    trashId,
+    ...viewSpies().hooks,
+  });
   const tool = (name: string) => {
     const found = defs.find((d) => d.name === name);
     if (!found) throw new Error(`missing tool ${name}`);
@@ -191,5 +265,140 @@ describe("remove_clip tool", () => {
   it("errors when the trash isn't loaded", async () => {
     const { remove } = mediaHarness(null);
     expect((await remove.execute({ nodeId: "img" })).isError).toBe(true);
+  });
+});
+
+describe("select_items / clear_selection tools", () => {
+  it("selects known ids and skips unknown ones", async () => {
+    const h = harness();
+    const res = await h.select.execute({ nodeIds: ["a", "scene-a", "ghost"] });
+    expect(res.isError).toBeFalsy();
+    expect(h.selected().sort()).toEqual(["a", "scene-a"]);
+  });
+
+  it("errors when no id is known", async () => {
+    const h = harness();
+    expect((await h.select.execute({ nodeIds: ["ghost"] })).isError).toBe(true);
+  });
+
+  it("clears the selection", async () => {
+    const h = harness();
+    await h.select.execute({ nodeIds: ["a", "b"] });
+    await h.clearSelection.execute({});
+    expect(h.selected()).toEqual([]);
+  });
+});
+
+describe("get_view_state tool", () => {
+  it("reports focus, selection, and preview", async () => {
+    const h = harness();
+    await h.select.execute({ nodeIds: ["a"] });
+    const res = await h.getViewStateTool.execute({});
+    expect(res.structuredContent).toMatchObject({
+      focusedId: "project",
+      isRoot: true,
+      selectedIds: ["a"],
+      previewOn: false,
+    });
+  });
+});
+
+describe("focus / go_up tools", () => {
+  it("focus opens a collection by id", async () => {
+    const h = harness();
+    expect((await h.focus.execute({ nodeId: "scene-a" })).isError).toBeFalsy();
+    expect(h.opened).toEqual(["scene-a"]);
+  });
+
+  it("focus with no id opens the project root", async () => {
+    const h = harness("scene-a");
+    await h.focus.execute({});
+    expect(h.opened).toEqual(["project"]);
+  });
+
+  it("focus on the already-focused node is a no-op", async () => {
+    const h = harness();
+    const res = await h.focus.execute({ nodeId: "project" });
+    expect((res.structuredContent as { changed: boolean }).changed).toBe(false);
+    expect(h.opened).toEqual([]);
+  });
+
+  it("focus rejects a clip", async () => {
+    const h = harness();
+    expect((await h.focus.execute({ nodeId: "a" })).isError).toBe(true);
+  });
+
+  it("go_up focuses the parent", async () => {
+    const h = harness("scene-a");
+    await h.goUp.execute({});
+    expect(h.opened).toEqual(["project"]);
+  });
+
+  it("go_up at the root is a no-op", async () => {
+    const h = harness();
+    const res = await h.goUp.execute({});
+    expect((res.structuredContent as { changed: boolean }).changed).toBe(false);
+    expect(h.opened).toEqual([]);
+  });
+});
+
+describe("set_preview tool", () => {
+  it("toggles only when the requested state differs", async () => {
+    const h = harness();
+    const on = await h.setPreview.execute({ on: true });
+    expect((on.structuredContent as { changed: boolean }).changed).toBe(true);
+    expect(h.getPreview()).toBe(true);
+    expect(h.toggles.length).toBe(1);
+
+    const again = await h.setPreview.execute({ on: true });
+    expect((again.structuredContent as { changed: boolean }).changed).toBe(false);
+    expect(h.toggles.length).toBe(1);
+  });
+});
+
+describe("play / pause / seek tools", () => {
+  it("play turns preview on (when off) and starts playback", async () => {
+    const h = harness();
+    const res = await h.play.execute({});
+    expect(res.isError).toBeFalsy();
+    expect(h.getPreview()).toBe(true);
+    expect(h.getPlayback().isPlaying).toBe(true);
+    expect((res.structuredContent as { openedPreview: boolean }).openedPreview).toBe(true);
+  });
+
+  it("play does not re-open the preview when it's already on", async () => {
+    const h = harness();
+    await h.setPreview.execute({ on: true });
+    const res = await h.play.execute({});
+    expect((res.structuredContent as { openedPreview: boolean }).openedPreview).toBe(false);
+    expect(h.getPlayback().isPlaying).toBe(true);
+  });
+
+  it("pause stops playback", async () => {
+    const h = harness();
+    await h.play.execute({});
+    const res = await h.pause.execute({});
+    expect(h.getPlayback().isPlaying).toBe(false);
+    expect((res.structuredContent as { changed: boolean }).changed).toBe(true);
+  });
+
+  it("seek moves the playhead and clamps negatives to 0", async () => {
+    const h = harness();
+    await h.seek.execute({ seconds: 12.5 });
+    expect(h.getPlayback().time).toBe(12.5);
+    await h.seek.execute({ seconds: -4 });
+    expect(h.getPlayback().time).toBe(0);
+  });
+
+  it("get_view_state reports playback", async () => {
+    const h = harness();
+    await h.seek.execute({ seconds: 3 });
+    await h.play.execute({});
+    const res = await h.getViewStateTool.execute({});
+    expect(res.structuredContent).toMatchObject({
+      isPlaying: true,
+      currentTimeSeconds: 3,
+      previewOn: true,
+    });
   });
 });

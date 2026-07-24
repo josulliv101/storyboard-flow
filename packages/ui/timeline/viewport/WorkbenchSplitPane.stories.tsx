@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { expect, userEvent, within } from "storybook/test";
 
 import { WorkbenchSplitPane } from "./workbench-display-surface";
 
@@ -51,4 +52,51 @@ type Story = StoryObj<typeof meta>;
  * the timeline sections continue through the document scrollport. */
 export const StickyPreview: Story = {
   render: () => <StickyPreviewFixture />,
+};
+
+function ControlledPlaybackFixture() {
+  const [currentTime, setCurrentTime] = useState(0);
+  const [playing, setPlaying] = useState(false);
+
+  return (
+    <main className="min-h-[900px] bg-zinc-950 p-4 text-zinc-100">
+      <button
+        type="button"
+        data-testid="external-toggle"
+        onClick={() => setPlaying((value) => !value)}
+        className="mb-3 rounded border border-zinc-700 px-3 py-1 text-sm"
+      >
+        External play toggle
+      </button>
+      <WorkbenchSplitPane
+        clips={[]}
+        currentTime={currentTime}
+        onCurrentTimeChange={setCurrentTime}
+        playing={playing}
+        onPlayingChange={setPlaying}
+      >
+        <div className="min-h-24" />
+      </WorkbenchSplitPane>
+    </main>
+  );
+}
+
+/** Controlled playback: when `playing` is supplied, the surface's play/pause
+ *  button REFLECTS that prop rather than owning the state — flipping it from
+ *  outside swaps the button from Play to Pause. */
+export const ControlledPlayback: Story = {
+  render: () => <ControlledPlaybackFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+
+    // Starts paused → the surface offers "Play".
+    expect(canvas.getByRole("button", { name: "Play workbench preview" })).toBeInTheDocument();
+
+    // Flip the controlled prop from OUTSIDE the surface; it re-renders as "Pause".
+    await user.click(canvas.getByTestId("external-toggle"));
+    expect(
+      await canvas.findByRole("button", { name: "Pause workbench preview" }),
+    ).toBeInTheDocument();
+  },
 };
