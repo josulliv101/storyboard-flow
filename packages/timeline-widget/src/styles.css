@@ -1,0 +1,328 @@
+/* Self-contained styling — no Tailwind. This bundle renders inside a host's
+   sandboxed iframe, so it ships its own CSS.
+
+   Every colour, font, and radius reads a HOST token with a local fallback:
+   `var(--color-text-primary, #18181b)`. When Claude, ChatGPT, or Copilot
+   publishes its design tokens the widget adopts them and looks native; when
+   nothing is published (standalone, Storybook, a host that doesn't send them)
+   the fallback keeps the widget on its own coherent palette. */
+
+:root {
+  --bg: transparent;
+  color-scheme: light dark;
+
+  /* Every card's art is exactly this tall, whatever the card's width.
+     DURATION DRIVES WIDTH ONLY. Deriving height from width via an aspect ratio
+     made a 3.5s clip 58px tall next to a 1:44 clip at 157px, and a row of
+     ragged cards reads as broken when it is embedded in a chat transcript
+     beside ordinary text. Fixed height + `object-fit: cover` crops the frame
+     instead of reshaping the card. */
+  --clip-art-height: 104px;
+
+  /* Local fallbacks, used only where a host token is absent. */
+  --fallback-fg: #18181b;
+  --fallback-muted: #71717a;
+  --fallback-card: #ffffff;
+  --fallback-border: #e4e4e7;
+  --fallback-accent: #0284c7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fallback-fg: #fafafa;
+    --fallback-muted: #a1a1aa;
+    --fallback-card: #18181b;
+    --fallback-border: #3f3f46;
+    --fallback-accent: #38bdf8;
+  }
+}
+
+/* A host that stamps the document theme wins over the OS preference. */
+:root[data-theme="dark"] {
+  --fallback-fg: #fafafa;
+  --fallback-muted: #a1a1aa;
+  --fallback-card: #18181b;
+  --fallback-border: #3f3f46;
+  --fallback-accent: #38bdf8;
+}
+
+:root[data-theme="light"] {
+  --fallback-fg: #18181b;
+  --fallback-muted: #71717a;
+  --fallback-card: #ffffff;
+  --fallback-border: #e4e4e7;
+  --fallback-accent: #0284c7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--color-text-primary, var(--fallback-fg));
+  font-family: var(
+    --font-sans,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif
+  );
+  font-size: var(--font-text-sm-size, 13px);
+}
+
+.app {
+  padding: 12px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.head h1 {
+  flex: 1 1 auto;
+  font-size: var(--font-heading-xs-size, 15px);
+  font-weight: var(--font-weight-semibold, 600);
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.head select {
+  background: var(--color-background-secondary, var(--fallback-card));
+  color: var(--color-text-primary, var(--fallback-fg));
+  border: var(--border-width-regular, 1px) solid
+    var(--color-border-primary, var(--fallback-border));
+  border-radius: var(--border-radius-sm, 6px);
+  padding: 4px 8px;
+  font: inherit;
+  max-width: 45%;
+  flex: none;
+}
+
+.button {
+  background: var(--color-background-secondary, var(--fallback-card));
+  color: var(--color-text-primary, var(--fallback-fg));
+  border: var(--border-width-regular, 1px) solid
+    var(--color-border-primary, var(--fallback-border));
+  border-radius: var(--border-radius-sm, 6px);
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+  flex: none;
+}
+
+.button:hover {
+  border-color: var(--color-border-secondary, var(--fallback-accent));
+}
+
+.muted {
+  color: var(--color-text-secondary, var(--fallback-muted));
+  margin: 8px 0 0;
+}
+
+.notice {
+  border: var(--border-width-regular, 1px) solid
+    var(--color-border-primary, var(--fallback-border));
+  border-radius: var(--border-radius-md, 8px);
+  padding: 10px 12px;
+  margin: 8px 0 0;
+}
+
+.notice--error {
+  border-color: var(--color-border-danger, #f87171);
+  color: var(--color-text-danger, var(--fallback-fg));
+}
+
+.notice__title {
+  margin: 0 0 4px;
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.notice__detail {
+  margin: 0 0 8px;
+  color: var(--color-text-secondary, var(--fallback-muted));
+}
+
+/* The strip scrolls horizontally rather than wrapping: a timeline reads as one
+   continuous left-to-right run, and wrapping would imply rows that don't exist. */
+.strip {
+  display: flex;
+  /* stretch, not the default: every card matches the tallest, so a wrapped
+     two-line caption can't leave one card taller than its neighbours. */
+  align-items: stretch;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.clip {
+  margin: 0;
+  position: relative;
+  /* flex-shrink: 0 is THE fix for the collapsed strip. Widths arrive from
+     `clipStripWidths` in absolute pixels; letting the row shrink them took the
+     most from the widest card while a min-width floor protected the narrowest,
+     so every clip converged on the same size and the strip stopped conveying
+     duration at all. Fixed widths plus the scroll above keep the proportions
+     identical at every container size. */
+  flex: 0 0 auto;
+  border: var(--border-width-regular, 1px) solid
+    var(--color-border-primary, var(--fallback-border));
+  border-radius: var(--border-radius-md, 8px);
+  overflow: hidden;
+  background: var(--color-background-secondary, var(--fallback-card));
+  display: flex;
+  flex-direction: column;
+}
+
+.clip--collection {
+  border-color: color-mix(
+    in srgb,
+    var(--color-border-info, var(--fallback-accent)) 45%,
+    var(--color-border-primary, var(--fallback-border))
+  );
+}
+
+.clip--selected {
+  outline: 2px solid var(--color-ring-info, var(--fallback-accent));
+  outline-offset: -2px;
+}
+
+/* The whole card is the hit target, and a real button so keyboard users get it. */
+.clip__hit {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.clip__hit:focus-visible {
+  outline: 2px solid var(--color-ring-info, var(--fallback-accent));
+  outline-offset: -2px;
+}
+
+.clip__art {
+  position: relative;
+  display: block;
+  height: var(--clip-art-height, 104px);
+  flex: none;
+  background: color-mix(
+    in srgb,
+    var(--color-text-primary, var(--fallback-fg)) 8%,
+    transparent
+  );
+}
+
+.clip__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.clip__art--empty {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.clip__kind,
+.clip__count {
+  position: absolute;
+  top: 4px;
+  font-size: var(--font-text-xs-size, 9px);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: var(--border-radius-full, 999px);
+  background: rgb(0 0 0 / 0.62);
+  color: #fff;
+}
+
+.clip__kind {
+  left: 4px;
+}
+
+.clip__count {
+  right: 4px;
+  text-transform: none;
+}
+
+.clip__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 7px 6px;
+  margin-top: auto;
+}
+
+/* Two lines before truncating — a single ellipsised line rendered most names
+   as "Youn…" / "FBI I…", which identifies nothing. */
+.clip__name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: var(--font-text-sm-line-height, 1.25);
+  /* Always reserve both lines. Without this a one-line caption makes its card
+     shorter than a two-line neighbour, and the strip's height would depend on
+     whichever clip happens to have the longest name. */
+  min-height: 2.5em;
+}
+
+.clip__time {
+  color: var(--color-text-secondary, var(--fallback-muted));
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+/* Revealed on hover/focus so the card stays clean, but the drill-in is
+   discoverable without knowing that double-click works. */
+.clip__open {
+  position: absolute;
+  inset: auto 6px 34px auto;
+  appearance: none;
+  font: inherit;
+  font-size: var(--font-text-xs-size, 10px);
+  padding: 2px 8px;
+  border-radius: var(--border-radius-full, 999px);
+  border: 0;
+  background: rgb(0 0 0 / 0.72);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.clip:hover .clip__open,
+.clip__open:focus-visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clip__open {
+    transition: none;
+  }
+}

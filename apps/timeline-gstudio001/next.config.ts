@@ -31,7 +31,7 @@ const nextConfig: NextConfig = {
   // export condition and loads fine. Only shows up in a bundled deploy —
   // `next dev` doesn't bundle node_modules, so it passes locally.
   serverExternalPackages: ['firebase-admin'],
-  transpilePackages: ['motion', '@storyboard/ui', '@storyboard/timeline-domain', '@storyboard/timeline-model', '@storyboard/collections-core'],
+  transpilePackages: ['motion', '@storyboard/ui', '@storyboard/timeline-domain', '@storyboard/timeline-model', '@storyboard/collections-core', '@storyboard/timeline-widget'],
   webpack: (config, { dev }) => {
     // HMR is disabled in AI Studio via DISABLE_HMR env var.
     // Do not modifyâfile watching is disabled to prevent flickering during agent edits.

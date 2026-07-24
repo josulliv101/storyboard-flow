@@ -1,0 +1,29 @@
+{
+  "name": "@storyboard/timeline-widget",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The MCP Apps timeline view, built to a single self-contained HTML file and exported as a string.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "sideEffects": false,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node build-html-module.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@storyboard/timeline-model": "*",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.0.4",
+    "typescript": "5.9.3",
+    "vite": "^8.1.5",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
