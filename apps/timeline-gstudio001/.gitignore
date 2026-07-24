@@ -8,3 +8,6 @@ playwright-report/
 *.log
 .env*
 !.env.example
+
+# Vite intermediate output for the MCP Apps UI; the committed artifact is lib/mcp-apps/timeline-app-html.ts
+mcp-app/dist/
