@@ -36,9 +36,11 @@ function clipPoster(clip: TimelineClip): string | undefined {
 
 function Clip({ clip, totalSeconds }: { clip: TimelineClip; totalSeconds: number }) {
   const duration = clip.duration ?? 0;
-  // Width tracks duration so the strip reads as a real timeline, with a floor
-  // so a very short clip stays legible rather than collapsing to a sliver.
-  const share = totalSeconds > 0 ? (duration / totalSeconds) * 100 : 0;
+  // Width tracks duration so the strip reads as a real timeline — but CLAMPED
+  // at both ends. Unbounded, one long clip (e.g. a 1:44 collection in a 3:34
+  // timeline) swallows the row and squeezes everything else into slivers.
+  const rawShare = totalSeconds > 0 ? (duration / totalSeconds) * 100 : 0;
+  const share = Math.min(28, Math.max(9, rawShare));
   const poster = clipPoster(clip);
   const isCollection = clip.kind === "collection";
 
@@ -60,6 +62,8 @@ function Clip({ clip, totalSeconds }: { clip: TimelineClip; totalSeconds: number
         )}
       </div>
       <figcaption className="clip__meta">
+        {/* Two lines before truncating: single-line ellipsis reduced most
+            names to "Youn…" / "FBI I…", which identifies nothing. */}
         <span className="clip__name">{clipLabel(clip)}</span>
         <span className="clip__time">{formatSeconds(duration)}</span>
       </figcaption>
@@ -97,6 +101,9 @@ function App() {
     appInfo: { name: "storyboard-timeline", version: "1.0.0" },
     // No extra features declared: this view only reads, via callServerTool.
     capabilities: {},
+    // Ask the host to size the frame to the content, so the widget doesn't
+    // scroll inside a too-short iframe.
+    autoResize: true,
   });
 
   const [projects, setProjects] = useState<Project[] | null>(null);
