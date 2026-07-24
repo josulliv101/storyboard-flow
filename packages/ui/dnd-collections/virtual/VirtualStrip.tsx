@@ -249,8 +249,15 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const graphGeneration = useCollectionsSelector((s) => s.graphGeneration);
     const nodesById = store.getSnapshot().graph.nodesById;
     // The selected video (if any) drives the TrimOverview band above the row.
+    // Scoped to THIS collection's own children: only the strip that owns the
+    // selected clip can show its trim overview, so a selection anywhere else in
+    // the graph leaves this selector returning null and Object.is bails the
+    // re-render. (Unscoped, it returned the first selected video ANYWHERE, so
+    // every mounted strip received the same node and re-rendered on any video
+    // selection — even though only one strip could ever display it.)
     const selectedVideo = useCollectionsSelector((s) => {
       for (const id of s.interaction.selectedIds) {
+        if (s.graph.parentById.get(id) !== collectionId) continue;
         const n = s.graph.nodesById.get(id);
         if (n && isVideoMedia(n)) return n;
       }
