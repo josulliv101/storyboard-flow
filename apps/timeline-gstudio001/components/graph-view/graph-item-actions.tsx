@@ -413,11 +413,21 @@ export function GraphItemActionsBridge({
       const selected = [...store.getSnapshot().interaction.selectedIds];
       if (selected.length === 0) return;
       if (!(await captureSelection(store, details, selected))) return;
+      // The capture awaited documents; the session can be torn down (project
+      // switch) meanwhile — the same guard Duplicate uses. Without it the move
+      // below dispatches into a dead store, leaving the clipboard populated
+      // while the originals were never actually removed in the live session.
+      if (!sessionAliveRef.current) return;
       // Remove the originals (recoverable in trash); the clipboard holds an
       // independent snapshot, so Paste still relocates them. Item mode stays
       // alive because the clipboard is now non-empty (Paste remains available).
-      moveSelectionToTrash(store, trashId, selected);
-      store.clearSelection();
+      //
+      // Clear the selection ONLY if the move actually landed: a drag starting
+      // mid-capture makes moveSelectionToTrash a no-op (returns 0, isDragging),
+      // and clearing anyway would leave Cut silently behaving like Copy —
+      // clipboard set, nothing trashed, selection gone.
+      const moved = moveSelectionToTrash(store, trashId, selected);
+      if (moved > 0) store.clearSelection();
     };
 
     const pasteSelection = () => {
