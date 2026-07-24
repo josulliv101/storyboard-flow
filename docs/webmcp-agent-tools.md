@@ -437,3 +437,26 @@ placement default `after: nodeId`; `insertClones(...)`; `setSelection(newIds)`.
   tests, `packages/ui` typecheck + a `ControlledPlayback` story interaction
   test (the surface reflects the `playing` prop), and **live** — `play` opened
   the preview and advanced time 0→2.5s, `pause` froze it, `seek` jumped to 20s.
+
+- **2026-07-24** — The **server-MCP transport** (the "durable hedge" above) is
+  now real, alongside WebMCP rather than replacing it. `app/api/mcp/route.ts`
+  mounts a remote MCP server via Vercel's `mcp-handler` (streamable HTTP) on the
+  deployed origin, so an agent can reach the project by URL with **no browser
+  open**. Deliberately a different execution path from the WebMCP tools: those
+  mutate the live `CollectionsStore` in the page (real-time), these read
+  Firestore server-side through the existing `firebase-timeline-store`
+  functions. **Read-only** for this milestone — it's a publicly reachable
+  endpoint over real user data, so transport + auth get proven before any write
+  path exists. Tools: `list_projects`, `read_timeline`.
+
+  **Auth is interim**: one static bearer token (`MCP_BEARER_TOKEN`) identifying
+  a single `MCP_OWNER_UID`, gated by `withMcpAuth` — enough to drive from Claude
+  Code / `mcp-remote`. claude.ai's custom-connector flow expects **OAuth 2.1 +
+  PKCE**, so connecting there requires building that; at which point the fixed
+  `ownerUid()` env var becomes a per-user derivation. The 401 already emits the
+  correct `WWW-Authenticate` challenge with `resource_metadata` pointing at
+  `/.well-known/oauth-protected-resource`, which is the discovery hook OAuth
+  will use. Note the real-time property is **not** available on this transport —
+  Firestore reads are one-shot and the browser holds no listeners, so a
+  server-side write would not appear in an open tab without a live-push channel
+  (see the top of this doc).
