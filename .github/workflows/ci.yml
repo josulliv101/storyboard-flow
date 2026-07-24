@@ -35,6 +35,10 @@ jobs:
         working-directory: packages/ui
         run: npx tsc --noEmit -p tsconfig.json
 
+      - name: Typecheck app
+        working-directory: apps/timeline-gstudio001
+        run: npx tsc --noEmit
+
       - name: Lint app
         working-directory: apps/timeline-gstudio001
         run: npm run lint

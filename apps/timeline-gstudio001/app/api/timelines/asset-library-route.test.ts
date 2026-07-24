@@ -102,7 +102,9 @@ describe("GET /api/timelines/asset-library-<uid> (seam-backed)", () => {
     expect((doc.clips[0] as CollectionTimelineClip).childTimelineId).toBe(
       `asset-library-col-user-a-${encodeFolderPath("Scenes/Heist")}`,
     );
-    const media = doc.clips[1] as TimelineClip;
+    const media = doc.clips[1];
+    // Narrow off the collection variant (no `src`) before reading `src`.
+    if (media.kind === "collection") throw new Error("expected the image clip at index 1");
     expect(media.src).toBe("https://cdn.test/scenes-1");
   });
 
