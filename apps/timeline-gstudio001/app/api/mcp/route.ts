@@ -7,6 +7,8 @@ import {
   getFirebaseTimelineDocument,
   listFirebaseTimelineProjects,
 } from "@/lib/firebase-timeline-store";
+import { MCP_SCOPE, getSigningSecret, verifyAccessToken } from "@/lib/oauth/core";
+import { mcpResourceUrl, originFromRequest } from "@/lib/oauth/metadata";
 import { TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
 // Remote MCP endpoint — the "give Claude a URL" surface, distinct from the
@@ -14,15 +16,14 @@ import { TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 // browser against the live CollectionsStore; these run server-side against
 // Firestore, so an agent can read the project with no browser open.
 //
-// READ-ONLY on purpose. This is a publicly reachable endpoint over real user
-// data, so the first milestone proves transport + auth without exposing any
-// write path. Mutations wait until the auth story is finished (see below).
+// READ-ONLY on purpose: a publicly reachable endpoint over real user data
+// proves transport + auth before any write path exists.
 //
-// AUTH IS INTERIM. A single static bearer token identifying ONE owner uid,
-// which is enough to drive from Claude Code / mcp-remote and prove the loop.
-// claude.ai's custom-connector flow expects OAuth 2.1 + PKCE, so connecting
-// there needs that built first — at which point `ownerUid()` stops being a
-// fixed env var and starts being derived per authenticated user.
+// TWO auth paths, both yielding the uid the tools act as:
+//   1. OAuth 2.1 access token (claude.ai custom connector) — uid from `sub`.
+//   2. Static bearer token (Claude Code / mcp-remote) — uid from MCP_OWNER_UID.
+// The static path stays because it's already wired up; it is only active when
+// both its env vars are set, and OAuth is tried first.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,15 +33,8 @@ export const maxDuration = 60;
 function secretsMatch(provided: string, expected: string): boolean {
   const a = Buffer.from(provided);
   const b = Buffer.from(expected);
-  // timingSafeEqual throws on length mismatch, so gate on it — the length of
-  // a rejected token is not itself sensitive.
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
-}
-
-/** The uid every tool reads as. Fixed while auth is a shared bearer token. */
-function ownerUid(): string | undefined {
-  return process.env.MCP_OWNER_UID?.trim() || undefined;
 }
 
 function jsonResult(summary: string, payload: unknown) {
@@ -56,15 +50,26 @@ function errorResult(message: string) {
   return { content: [{ type: "text" as const, text: message }], isError: true };
 }
 
+/**
+ * The uid this call acts as, taken from the verified token — never from tool
+ * arguments, so one authenticated caller can't read another account's data.
+ */
+function uidFrom(extra: { authInfo?: { extra?: Record<string, unknown> } }): string | null {
+  const uid = extra.authInfo?.extra?.uid;
+  return typeof uid === "string" && uid.length > 0 ? uid : null;
+}
+
+const NO_IDENTITY = "Could not determine the account for this token.";
+
 const handler = createMcpHandler(
   (server) => {
     server.tool(
       "list_projects",
       "List the owner's timeline projects: id, title, clip count, and last-updated time. Start here to find a project id for read_timeline.",
       {},
-      async () => {
-        const uid = ownerUid();
-        if (!uid) return errorResult("MCP_OWNER_UID is not configured on the server.");
+      async (_args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
 
         const projects = await listFirebaseTimelineProjects(uid);
         const summary =
@@ -82,9 +87,9 @@ const handler = createMcpHandler(
       "read_timeline",
       "Read one timeline document by id — its title and full ordered clip list. Ids come from list_projects, or from a collection clip's childTimelineId when drilling into a nested timeline.",
       { timelineId: z.string().min(1).describe("Timeline document id.") },
-      async ({ timelineId }) => {
-        const uid = ownerUid();
-        if (!uid) return errorResult("MCP_OWNER_UID is not configured on the server.");
+      async ({ timelineId }, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
 
         try {
           const document = await getFirebaseTimelineDocument(timelineId, uid);
@@ -116,26 +121,47 @@ const handler = createMcpHandler(
 );
 
 /**
- * Bearer gate. Returning `undefined` denies the request; mcp-handler answers
- * with a 401 carrying the WWW-Authenticate challenge. A server missing either
- * env var denies everything rather than falling open.
+ * Returning `undefined` denies; mcp-handler answers 401 with the
+ * WWW-Authenticate challenge pointing at the protected-resource metadata,
+ * which is how a client discovers the OAuth server. Unconfigured servers deny
+ * rather than falling open.
  */
 const authedHandler = withMcpAuth(
   handler,
-  (_request, bearerToken) => {
-    const expected = process.env.MCP_BEARER_TOKEN?.trim();
-    const uid = ownerUid();
-    if (!expected || !uid) return undefined;
-    if (!bearerToken || !secretsMatch(bearerToken, expected)) return undefined;
+  (request, bearerToken) => {
+    if (!bearerToken) return undefined;
 
-    return {
-      token: bearerToken,
-      clientId: "storyboard-flow-mcp",
-      scopes: ["timelines:read"],
-      extra: { uid },
-    };
+    // 1. OAuth access token. Audience is bound to THIS deployment's MCP URL,
+    //    so a token minted for another resource can't be replayed here.
+    const signingSecret = getSigningSecret();
+    if (signingSecret) {
+      const audience = mcpResourceUrl(originFromRequest(request));
+      const verified = verifyAccessToken(bearerToken, signingSecret, audience);
+      if (verified.ok) {
+        return {
+          token: bearerToken,
+          clientId: verified.claims.client_id,
+          scopes: verified.claims.scope.split(/\s+/).filter(Boolean),
+          extra: { uid: verified.claims.sub },
+        };
+      }
+    }
+
+    // 2. Static bearer fallback (Claude Code / mcp-remote).
+    const staticToken = process.env.MCP_BEARER_TOKEN?.trim();
+    const staticUid = process.env.MCP_OWNER_UID?.trim();
+    if (staticToken && staticUid && secretsMatch(bearerToken, staticToken)) {
+      return {
+        token: bearerToken,
+        clientId: "storyboard-flow-mcp",
+        scopes: [MCP_SCOPE],
+        extra: { uid: staticUid },
+      };
+    }
+
+    return undefined;
   },
-  { required: true, requiredScopes: ["timelines:read"] },
+  { required: true, requiredScopes: [MCP_SCOPE] },
 );
 
 export { authedHandler as GET, authedHandler as POST, authedHandler as DELETE };
