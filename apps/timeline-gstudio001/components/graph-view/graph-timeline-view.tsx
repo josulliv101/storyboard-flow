@@ -55,6 +55,7 @@ import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { HydrationController } from "./graph-hydration";
 import { GraphItemActionsBridge } from "./graph-item-actions";
+import { McpToolsBridge } from "./graph-mcp-tools";
 import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
 import { GraphViewNavProvider } from "./graph-navigation";
 import {
@@ -496,6 +497,7 @@ export function GraphTimelineView({
       >
           <PersistenceBridge onSync={onSync} />
           <GraphItemActionsBridge trashId={boot.trashRootId} focusedId={focusedId} />
+          <McpToolsBridge focusedId={focusedId} />
           <GraphDetailsJanitor />
           <AssetPaletteDrawer open={assetsOpen} onClose={() => setAssetsOpen(false)} />
           <HydrationController
