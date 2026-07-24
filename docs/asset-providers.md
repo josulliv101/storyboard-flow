@@ -73,10 +73,35 @@ serves both; only the source differs:
    where UNTAGGED assets sit beside the top-level groups), and the palette
    grows a capability-gated Folders/Tags toggle. An asset tagged twice lives
    in both places; folder placement is invisible in tag space.
-4. **S3 adapter** (decided: the second provider) + provider picker; upload/
-   delete through the seam.
+4. ✅ **S3 adapter** + provider picker. `lib/assets/s3-provider.ts` maps
+   object keys to neutral assets (folders from the key path via the same
+   `pageFromFlatListing`), env-configured (`S3_ASSETS_BUCKET` /
+   `S3_ASSETS_REGION`, optional `S3_ASSETS_PREFIX` and `S3_ASSETS_PUBLIC_URL`;
+   URLs are presigned GETs when no public base is set, so private buckets
+   work). The SDK loads lazily and the deps (`listObjects` / `urlFor`) are
+   injectable, so the adapter unit-tests without AWS. The provider registers
+   only when the bucket is configured; the palette's picker `<select>`
+   appears only when more than one provider is installed. Upload/delete
+   through the seam is still ahead (both providers declare them off).
 5. Retire the legacy drawer's bespoke virtual-timeline folder pipeline
    (`/api/timelines/asset-library-*`) onto the seam.
+
+## Enabling S3
+
+Set in the app's environment:
+
+```
+S3_ASSETS_BUCKET=my-media-bucket
+S3_ASSETS_REGION=us-east-1
+S3_ASSETS_PREFIX=media/            # optional — the browse root inside the bucket
+S3_ASSETS_PUBLIC_URL=https://cdn…  # optional — omit for presigned private URLs
+```
+
+Credentials ride the AWS SDK default chain (`AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY`, or an instance role). With the bucket set, the
+provider registers and the palette shows an "Asset source" picker. The
+bucket is app-level (every signed-in user sees the same bucket); per-user
+buckets would be the OAuth track's concern.
 
 Out of scope until its own track: per-user OAuth providers (token storage,
 refresh, connect/disconnect UI). The `AssetContext` parameter is where those

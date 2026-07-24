@@ -3,11 +3,18 @@
 // APIs. Registration order is preference order — the first entry is what a
 // request that names no provider gets.
 //
-// Adding a provider = one adapter file + one entry here. The S3 adapter
-// (decided 2026-07-23: the second provider, proving the seam) lands as
-// exactly that pair.
+// Adding a provider = one adapter file + one entry here.
 
 import { cloudinaryAssetProvider } from "./cloudinary-provider";
-import { createAssetProviderRegistry } from "./provider";
+import { createAssetProviderRegistry, type AssetProvider } from "./provider";
+import { createS3AssetProvider } from "./s3-provider";
 
-export const assetProviders = createAssetProviderRegistry([cloudinaryAssetProvider]);
+// Cloudinary is always present (it's env-or-nothing at call time, but the
+// adapter registers unconditionally); S3 only appears when its bucket is
+// configured, so an unconfigured deployment never offers a dead provider in
+// the picker. `createS3AssetProvider` returns null in that case.
+const providers: AssetProvider[] = [cloudinaryAssetProvider];
+const s3Provider = createS3AssetProvider();
+if (s3Provider !== null) providers.push(s3Provider);
+
+export const assetProviders = createAssetProviderRegistry(providers);
