@@ -2,7 +2,6 @@ import type {Metadata} from 'next';
 import { Suspense } from 'react';
 import { AuthGate } from '@/components/auth/auth-gate';
 import { AuthProvider } from '@/components/auth/auth-provider';
-import { TimelineRouteFadeController } from '@/components/timeline/timeline-route-fade';
 import { TimelineSidebar } from '@/components/timeline/timeline-sidebar';
 import { Toaster } from '@/components/core/sonner';
 import './globals.css'; // Global styles
@@ -19,7 +18,6 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
         {/* App-wide: the sidebar renders on every route, so anything it
             toasts needs a surface here rather than inside one view. */}
         <Toaster />
-        <TimelineRouteFadeController />
         <AuthProvider>
           <AuthGate>
             <div className="relative flex min-h-screen overflow-x-clip bg-zinc-950 font-sans text-white">
