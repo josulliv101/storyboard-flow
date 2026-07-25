@@ -13,6 +13,7 @@
 // leaf knows both WHERE it plays (timelineStart/Duration in root time) and
 // WHAT it plays (sourceStart, advancing at playbackRate).
 
+import { effectiveDocuments } from "@storyboard/timeline-model";
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 export type PlaybackLeaf = Readonly<{
@@ -144,13 +145,24 @@ export function compilePlaybackManifest(
   compiledAt: string,
   documentRevisions?: Readonly<Record<string, number>>,
 ): PlaybackManifest {
-  const root = documents[projectId];
-  if (!root) throw new Error(`Unknown project timeline "${projectId}".`);
+  if (!documents[projectId]) throw new Error(`Unknown project timeline "${projectId}".`);
+  // Compile from the EFFECTIVE closure: disabled clips dropped, survivors
+  // repacked. Doing it here rather than inside `flattenDocument` is what
+  // makes the window math below work unchanged — it maps a parent's output
+  // span onto the child's LOCAL time range, so the child's coordinates have
+  // to already be closed up. Filtering during the walk would instead leave
+  // the disabled clip's span empty, and the player holds the last frame
+  // across a gap: a freeze-frame, not a skip.
+  //
+  // Dropping a disabled COLLECTION clip removes its whole subtree here,
+  // without walking into it.
+  const effective = effectiveDocuments(documents);
+  const root = effective[projectId];
   const durationSeconds = documentDuration(root);
   const leaves: PlaybackLeaf[] = [];
 
   flattenDocument(
-    documents,
+    effective,
     projectId,
     [projectId],
     {

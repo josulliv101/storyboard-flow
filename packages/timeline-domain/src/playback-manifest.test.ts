@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { CLIP_GAP_SECONDS } from "@storyboard/timeline-model";
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 import { compilePlaybackManifest, manifestToClips } from "./playback-manifest";
@@ -206,5 +207,84 @@ describe("manifestToClips", () => {
       manifest.leaves[0].timelineDuration * manifest.leaves[0].playbackRate,
       6,
     );
+  });
+});
+
+describe("disabled clips", () => {
+  it("skips a disabled clip and CLOSES the gap it leaves", () => {
+    // The closing is the point. Dropping "b" without repacking would leave
+    // 0-4 and 8-12 occupied and 4-8 empty — and the player holds the last
+    // drawn frame across an empty span, so "a" would freeze on screen for
+    // four seconds instead of "b" being skipped.
+    const documents = {
+      root: doc("root", [
+        image("a", 0, 4),
+        { ...image("b", 4, 4), disabled: true },
+        image("c", 8, 4),
+      ]),
+    };
+
+    const manifest = compilePlaybackManifest(documents, "root", 1, AT);
+
+    expect(manifest.leaves.map((leaf) => leaf.id)).toEqual(["a", "c"]);
+    // "c" moved up into "b"'s span, and the total lost b's four seconds.
+    // Expressed via CLIP_GAP_SECONDS because the survivors are REPACKED, so
+    // they sit at the model's canonical spacing, not the fixture's literals.
+    expect(manifest.leaves[1].timelineStart).toBeCloseTo(4 + CLIP_GAP_SECONDS, 6);
+    expect(manifest.durationSeconds).toBeCloseTo(8 + CLIP_GAP_SECONDS, 6);
+    // No hole beyond the standard inter-clip gap — which is what would make
+    // the player freeze-frame rather than skip.
+    const gap =
+      manifest.leaves[1].timelineStart -
+      (manifest.leaves[0].timelineStart + manifest.leaves[0].timelineDuration);
+    expect(gap).toBeCloseTo(CLIP_GAP_SECONDS, 6);
+  });
+
+  it("skips a disabled collection's ENTIRE subtree", () => {
+    const documents = {
+      root: doc("root", [
+        image("intro", 0, 4),
+        { ...collection("scene-ref", "scene", 4, 6), disabled: true },
+        image("outro", 10, 4),
+      ]),
+      scene: doc("scene", [image("deep-a", 0, 2), image("deep-b", 2, 4)]),
+    };
+
+    const manifest = compilePlaybackManifest(documents, "root", 1, AT);
+
+    expect(manifest.leaves.map((leaf) => leaf.id)).toEqual(["intro", "outro"]);
+    expect(manifest.durationSeconds).toBeCloseTo(8 + CLIP_GAP_SECONDS, 6);
+  });
+
+  it("skips a disabled clip nested inside a collection, and re-times the parent", () => {
+    // The child shrinks from 6s to 2s, so the parent's collection clip has to
+    // be re-timed too — otherwise its 6s span would window the child's 2s of
+    // content and stretch or truncate it.
+    const documents = {
+      root: doc("root", [collection("scene-ref", "scene", 0, 2)]),
+      scene: doc("scene", [
+        image("keep", 0, 2),
+        { ...image("drop", 2, 4), disabled: true },
+      ]),
+    };
+
+    const manifest = compilePlaybackManifest(documents, "root", 1, AT);
+
+    expect(manifest.leaves.map((leaf) => leaf.id)).toEqual(["keep"]);
+    expect(manifest.leaves[0].playbackRate).toBeCloseTo(1, 6);
+    expect(manifest.leaves[0].timelineDuration).toBeCloseTo(2, 6);
+  });
+
+  it("leaves an all-enabled closure byte-identical", () => {
+    // The pass must be a no-op when nothing is disabled — it runs on every
+    // compile, including for every document that never uses the feature.
+    const documents = {
+      root: doc("root", [image("a", 0, 4), collection("s", "scene", 4, 4)]),
+      scene: doc("scene", [image("x", 0, 4)]),
+    };
+    const before = JSON.stringify(compilePlaybackManifest(documents, "root", 1, AT));
+    const after = JSON.stringify(compilePlaybackManifest(documents, "root", 1, AT));
+    expect(after).toBe(before);
+    expect(JSON.parse(before).leaves.map((l: { id: string }) => l.id)).toEqual(["a", "x"]);
   });
 });
