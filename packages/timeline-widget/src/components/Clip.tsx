@@ -29,6 +29,11 @@ export function Clip({ clip, width, selected = false, onSelect, onOpen }: ClipPr
     isCollection ? "clip--collection" : "",
     selected ? "clip--selected" : "",
     canOpen ? "clip--openable" : "",
+    // Muted, not hidden, and it keeps its width — the same rule the app's
+    // cards follow. A view that dropped disabled clips would disagree with
+    // the board about what the timeline contains, which is worse for an agent
+    // reading this than showing something that plainly does not play.
+    clip.disabled ? "clip--disabled" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -46,7 +51,7 @@ export function Clip({ clip, width, selected = false, onSelect, onOpen }: ClipPr
         // Without this the accessible name is whatever the card's text happens
         // to concatenate to ("collection 6 Bank Heist 40.9s"). Naming it
         // explicitly gives screen readers the clip and its length, in order.
-        aria-label={`${label}, ${duration}`}
+        aria-label={`${label}, ${duration}${clip.disabled ? ", disabled" : ""}`}
         aria-pressed={selected}
         onClick={() => onSelect?.(clip)}
         // A collection opens on double-click, which leaves single-click free
@@ -62,6 +67,11 @@ export function Clip({ clip, width, selected = false, onSelect, onOpen }: ClipPr
           <span className="clip__kind">{isCollection ? "collection" : clip.kind}</span>
           {isCollection && clip.itemCount !== undefined && (
             <span className="clip__count">{clip.itemCount}</span>
+          )}
+          {clip.disabled && (
+            <span className="clip__disabled" aria-hidden="true">
+              skipped
+            </span>
           )}
         </span>
         <span className="clip__meta">

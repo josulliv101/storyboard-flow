@@ -198,3 +198,32 @@ export const Interactive: Story = {
     await expect(canvas.getByText(/opened: FBI Interview/)).toBeInTheDocument();
   },
 };
+
+/**
+ * Disabled clips are MUTED, never dropped, and they keep their width — their
+ * duration still shapes the strip. Dropping them would make this view disagree
+ * with the app's board about what the timeline contains, which is the worst
+ * outcome for an agent reading it. The "skipped" badge stays at full strength
+ * so the reason is legible against the greyed artwork.
+ */
+export const DisabledClips: Story = {
+  args: {
+    clips: [
+      clip({ id: "on-1", alt: "Plays", duration: 6 }),
+      clip({ id: "off-1", alt: "Skipped", duration: 6, disabled: true }),
+      collection("off-col", "Skipped scene", 20, 4),
+      clip({ id: "on-2", alt: "Plays too", duration: 6 }),
+    ].map((c) => (c.id === "off-col" ? { ...c, disabled: true } : c)),
+  },
+  play: async ({ canvasElement }) => {
+    const muted = canvasElement.querySelectorAll(".clip--disabled");
+    await expect(muted).toHaveLength(2);
+    // Same slot as an enabled clip of the same duration: equal widths prove
+    // the card was muted rather than collapsed.
+    const cards = Array.from(canvasElement.querySelectorAll<HTMLElement>(".clip"));
+    await expect(cards).toHaveLength(4);
+    const first = cards[0].getBoundingClientRect().width;
+    const second = cards[1].getBoundingClientRect().width;
+    await expect(Math.abs(first - second)).toBeLessThan(1);
+  },
+};

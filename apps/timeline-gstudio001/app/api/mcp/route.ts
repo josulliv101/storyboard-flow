@@ -9,6 +9,7 @@ import {
   getFirebaseTimelineDocument,
   listFirebaseTimelineProjects,
 } from "@/lib/firebase-timeline-store";
+import { describeTimelineForAgent } from "@/lib/mcp-timeline-summary";
 import { MCP_SCOPE, getSigningSecret, verifyAccessToken } from "@/lib/oauth/core";
 import { mcpResourceUrl, originFromRequest } from "@/lib/oauth/metadata";
 import { TimelineAccessDeniedError } from "@/lib/timeline-ownership";
@@ -135,16 +136,7 @@ const handler = createMcpHandler(
           const document = await getFirebaseTimelineDocument(timelineId, uid);
           if (!document) return errorResult(`No timeline document with id "${timelineId}".`);
 
-          const clips = document.clips ?? [];
-          const summary = `"${document.title}" — ${clips.length} clip${
-            clips.length === 1 ? "" : "s"
-          }: ${
-            clips
-              .slice(0, 8)
-              .map((clip) => (clip.kind === "collection" ? `${clip.title} (collection)` : clip.kind))
-              .join(", ") || "(empty)"
-          }${clips.length > 8 ? "…" : ""}`;
-          return jsonResult(summary, { timeline: document });
+          return jsonResult(describeTimelineForAgent(document), { timeline: document });
         } catch (error) {
           // Ownership is enforced in the store; surface a refusal rather than
           // leaking whether the id exists under another account.
