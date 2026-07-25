@@ -87,10 +87,10 @@ serves both; only the source differs:
    `/api/timelines/asset-library-*` GET branch no longer lists Cloudinary
    directly or hand-rolls folder detection: it asks the Cloudinary provider
    for the folder's page (the same `pageFromFlatListing` the palette uses) and
-   `lib/assets/asset-library-timeline.ts` shapes it into the media-strip's
-   synthetic-timeline clips (folders → navigable collections, assets → media
-   with `sourceAsset`). The legacy storyboard/workbench drawer is UNCHANGED —
-   it still browses those synthetic timelines through the media-strip — but
+   `lib/assets/asset-library-timeline.ts` shapes it into synthetic-timeline
+   clips (folders → navigable collections, assets → media with
+   `sourceAsset`). The legacy storyboard/workbench drawer is UNCHANGED — it
+   still browses those synthetic timelines through `SmoothScrollList` — but
    the seam is now the single asset-listing path. (Minor behavior improvement:
    a persisted folder-collection whose Cloudinary folder no longer exists is
    dropped rather than shown stale.)

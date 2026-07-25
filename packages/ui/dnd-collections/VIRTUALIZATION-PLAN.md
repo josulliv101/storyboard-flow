@@ -75,8 +75,9 @@ command). Do not fork the reducer/patch model.
    a retry-until-mounted loop).
 6. **Auto-scroll (§15).** dnd-kit's built-in autoScroller handles
    scrollable containers; verify intents recompute during scroll-without-
-   pointer-move, and reuse media-strip's shared autoscroll helper if the
-   built-in fights the virtualizer.
+   pointer-move. (This step used to say "reuse media-strip's shared
+   autoscroll helper" as the fallback — that package was deleted as
+   unreachable, so a fallback would have to be written here.)
 
 **Decided (user, 2026-07-10):** variable width applies to the HORIZONTAL
 strip only. Grid cells are UNIFORM within a grid (no per-item variable width
