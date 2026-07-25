@@ -9,7 +9,8 @@
   "scripts": {
     "storybook": "npm run storybook --workspace=apps/storybook",
     "build-storybook": "npm run build-storybook --workspace=apps/storybook",
-    "dev:frontend": "npm run dev --workspace=apps/timeline-gstudio001"
+    "dev:frontend": "npm run dev --workspace=apps/timeline-gstudio001",
+    "audit:ui": "node scripts/find-unreachable-ui.mjs"
   },
   "devDependencies": {
     "cross-env": "^10.1.0",

@@ -41,14 +41,15 @@ Non-obvious wiring:
 
 ## Architecture
 
-### packages/ui: two documented drag-and-drop systems
+### packages/ui: the drag-and-drop system
 
-- `packages/ui/media-strip` — timeline media strip with an **adapter layer** over three DnD backends (dnd-kit, pragmatic, native HTML5; pragmatic is experimental). Read `packages/ui/media-strip/ARCHITECTURE.md` before structural changes; `README.md` has the consumer quickstart.
 - `packages/ui/dnd-collections` — collections graph DnD built on dnd-kit: a normalized graph as single source of truth, a pure command reducer as the only mutation path, reversible patches backing undo/redo and the `onChange` feed, and a selector store so drags don't re-render uninvolved cards. Read `packages/ui/dnd-collections/ARCHITECTURE.md` (design/invariants) and `API.md` (exports) before touching it.
 
-Both packages follow the same discipline: pure `core/` logic with no React/DOM imports, React bindings layered on top, and mutation flowing through one typed command/reducer path that returns `Result`-shaped rejections instead of throwing.
+Its discipline: pure `core/` logic with no React/DOM imports, React bindings layered on top, and mutation flowing through one typed command/reducer path that returns `Result`-shaped rejections instead of throwing.
 
-### Testing strategy (layered, applies to both DnD packages)
+There used to be a second one — `packages/ui/media-strip`, an adapter layer over three DnD backends. It was deleted along with `media-strip-base`, `wheel-picker` and `charts`: a reachability walk found nothing imported any of them. They looked live only because `packages/ui/index.ts` re-exported them and grep can't tell a barrel from a consumer. **Nothing imports the bare `@storyboard/ui`** — the package is consumed entirely by subpath — so an `export *` in that barrel is not evidence of use. `npm run audit:ui` re-runs the walk (`scripts/find-unreachable-ui.mjs`); `--dir <name>` answers "is any file in this folder still imported?" before you delete one.
+
+### Testing strategy (layered)
 
 1. Unit tests (`core/*.test.ts`) for pure logic.
 2. Story `play` functions for interaction coverage — simple clicks/toggles per `apps/storybook/AGENTS.md`, but these repos also drive simulated pointer drags here.

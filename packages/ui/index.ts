@@ -1,3 +1,11 @@
+// The package's nominal entry (package.json main/types), but NOT how anyone
+// consumes it: every importer reaches in by subpath
+// ("@storyboard/ui/timeline/types"), and no file anywhere imports the bare
+// "@storyboard/ui". So an `export *` here is not evidence a module is used —
+// it was the reason media-strip, wheel-picker and charts looked live to grep
+// while being unreachable. Before assuming something here has consumers, run
+// `npm run audit:ui`.
+
 export * from "./lib/utils";
 export * from "./hooks/use-mobile";
 export * from "./core/accordion";
@@ -61,19 +69,4 @@ export * from "./core/toggle";
 export * from "./core/toggle-group";
 export * from "./core/switch";
 export * from "./drag-drop";
-export * from "./media-strip";
-export * from "./media-strip-base";
-export * from "./wheel-picker/SceneLaunchPreviewWheelV3";
-export * from "./wheel-picker/UniformItemProgress";
-export * from "./wheel-picker/GalleryCanvasPreview";
-export * from "./wheel-picker/TimelineRuler";
-export * from "./wheel-picker/PreviewWheelMediaTile";
-export * from "./wheel-picker/PreviewWheelPlayer";
-export * from "./wheel-picker/PreviewWheelPlayhead";
-export * from "./wheel-picker/PreviewWheelReorderPortal";
-export * from "./wheel-picker/PreviewWheelGridView";
-export * from "./wheel-picker/PreviewWheelNestingGuides";
-export * from "./wheel-picker/PreviewWheelTrackItem";
-export * from "./wheel-picker/PreviewWheelAdjacentPreviewItem";
-export * from "./wheel-picker/PreviewWheelHeaderControls";
 export * from "./timeline";
