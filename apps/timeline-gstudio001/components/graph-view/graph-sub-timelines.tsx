@@ -133,9 +133,16 @@ function SubTimelineNode({
   const rename = useInlineRename(collectionId, name);
   const detail = useClipDetail(id);
   const hydrated = detail?.hydrated === true;
-  const liveCount = useCollectionsSelector((snapshot) =>
-    getChildren(snapshot.graph, collectionId).length,
-  );
+  // ENABLED children only — this row says what the timeline contributes, so
+  // it has to agree with the time totals and the served summary rather than
+  // counting clips that are skipped.
+  const liveCount = useCollectionsSelector((snapshot) => {
+    let total = 0;
+    for (const child of getChildren(snapshot.graph, collectionId)) {
+      if (snapshot.graph.nodesById.get(child)?.disabled !== true) total += 1;
+    }
+    return total;
+  });
   const childIds = useCollectionChildIds(collectionId);
   const status = subTimelineRowStatus({ expanded, hydrated, failed });
 

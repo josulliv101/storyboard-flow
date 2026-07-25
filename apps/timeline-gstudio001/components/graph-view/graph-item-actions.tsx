@@ -236,6 +236,18 @@ export function GraphItemActionsBridge({
   const store = useCollectionsStore();
   const details = useGraphDetailsStore();
   const selectionSize = useCollectionsSelector((s) => s.interaction.selectedIds.size);
+  // Returns a PRIMITIVE, per the store's selector contract — allocating here
+  // (an array of the selected nodes, say) would re-render on every snapshot.
+  // A mixed selection is false, so the toggle's next press disables the rest
+  // rather than flipping each item independently.
+  const allDisabled = useCollectionsSelector((s) => {
+    const selected = s.interaction.selectedIds;
+    if (selected.size === 0) return false;
+    for (const id of selected) {
+      if (s.graph.nodesById.get(id)?.disabled !== true) return false;
+    }
+    return true;
+  });
   // True while an async action (copy/cut/duplicate loading documents) runs.
   // State so the broadcast below re-fires; the REF is what the (stable) event
   // listener consults, so the guard needs no effect re-subscription.
@@ -263,9 +275,12 @@ export function GraphItemActionsBridge({
   // the previous session's stale item-mode cluster before its own first
   // broadcast lands.
   useEffect(() => {
-    broadcastGraphSelection({ count: selectionSize, busy });
-  }, [selectionSize, busy]);
-  useEffect(() => () => broadcastGraphSelection({ count: 0, busy: false }), []);
+    broadcastGraphSelection({ count: selectionSize, busy, allDisabled });
+  }, [selectionSize, busy, allDisabled]);
+  useEffect(
+    () => () => broadcastGraphSelection({ count: 0, busy: false, allDisabled: false }),
+    [],
+  );
 
   // Trash drawer → graph: put a deleted item back into the OPEN timeline.
   //
@@ -473,6 +488,35 @@ export function GraphItemActionsBridge({
           moveSelectionToTrash(store, trashId);
           store.clearSelection();
           break;
+        case "toggle-disabled": {
+          const selected = [...store.getSnapshot().interaction.selectedIds];
+          if (selected.length === 0) break;
+          // One command per node, but ONE decision for the whole selection:
+          // every node goes to the same state, so a mixed selection resolves
+          // instead of each item flipping its own way. Re-read `disabled`
+          // from the live graph rather than trusting the sidebar's broadcast,
+          // which is a frame behind.
+          const graph = store.getSnapshot().graph;
+          const nextDisabled = selected.some(
+            (id) => graph.nodesById.get(id)?.disabled !== true,
+          );
+          let changed = 0;
+          for (const nodeId of selected) {
+            // A node already in the target state is refused as `same-position`
+            // and never enters history — so this loop cannot pad undo with
+            // no-ops when only part of the selection needs changing.
+            if (store.dispatch({ type: "set-node-disabled", nodeId, disabled: nextDisabled }).ok) {
+              changed += 1;
+            }
+          }
+          if (changed > 0) {
+            toast(
+              `${nextDisabled ? "Disabled" : "Enabled"} ${changed} item${changed === 1 ? "" : "s"}.`,
+              { id: "graph-item-disable" },
+            );
+          }
+          break;
+        }
         case "cancel":
           graphClipboard.clear();
           store.clearSelection();

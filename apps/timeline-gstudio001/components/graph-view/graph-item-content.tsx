@@ -267,7 +267,13 @@ const GraphClipContent = memo(function GraphClipContent({
         selected ? "ring-2 ring-amber-400" : "ring-1 ring-white/15",
         rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
         isDragSource ? "opacity-40" : "",
+        // Disabled reads as MUTED, never as missing: the card keeps its slot
+        // and its full width (its duration still shapes the board), it just
+        // stops looking like content that plays. Grayscale + reduced opacity
+        // survives on top of any artwork, where a tint would not.
+        node.disabled ? "opacity-45 grayscale" : "",
       ].join(" ")}
+      data-disabled={node.disabled ? "true" : undefined}
     >
       {frameSrcs.length === 0 ? (
         <span className="flex h-full w-full items-center justify-center text-[10px] text-zinc-500">
@@ -506,10 +512,22 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   // live children (like the count), so editing a loaded child refreshes this
   // card without a reload; placeholders fall back to their stored summary.
   const hydrated = detail?.hydrated === true;
+  // Primitive return, per the store's selector contract.
+  const enabledChildCount = useCollectionsSelector((s) => {
+    const children = s.graph.childrenById.get(id) ?? [];
+    let total = 0;
+    for (const child of children) {
+      if (s.graph.nodesById.get(child)?.disabled !== true) total += 1;
+    }
+    return total;
+  });
   const livePreviews = useHydratedCollectionPreviews(id as string, hydrated);
   const liveSeconds = useHydratedCollectionSeconds(id as string, hydrated);
 
-  const count = hydrated ? childCount : (detail?.itemCount ?? childCount);
+  // ENABLED children only, so the card agrees with the time totals and with
+  // the served summary (which derives itemCount from the effective document).
+  // `childCount` from the primitive counts every child, disabled included.
+  const count = hydrated ? enabledChildCount : (detail?.itemCount ?? enabledChildCount);
   const totalSeconds = hydrated ? liveSeconds : detail?.duration;
   // FIRST and LAST only — the card says "a timeline runs from here to
   // there", which two frames tell and three do not. A single-item
@@ -538,6 +556,12 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           selected ? "ring-2 ring-amber-400" : "",
           rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
           isDragSource ? "opacity-40" : "",
+          // No `data-disabled` twin here: SelectionSurface takes an explicit
+          // prop list with no rest spread, so a hyphenated attribute passed to
+          // it is silently dropped — and TS does not flag it, because excess
+          // property checks skip hyphenated JSX names. The marker class below
+          // is what tests and e2e can query on a collection card.
+          node.disabled ? "opacity-45 grayscale is-disabled-card" : "",
         ].join(" ")}
       >
         <span className="flex min-h-0 flex-1 gap-0.5 overflow-hidden">
