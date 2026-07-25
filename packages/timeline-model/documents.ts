@@ -52,6 +52,46 @@ export function packTimelineClips(clips: TimelineClip[]) {
   });
 }
 
+/** The clips that actually play and count. Absent `disabled` means enabled. */
+export function enabledClips(clips: readonly TimelineClip[]): TimelineClip[] {
+  return clips.filter((clip) => clip.disabled !== true);
+}
+
+/**
+ * A document as the READ models should see it: disabled clips dropped, and
+ * the survivors repacked so the gap they left closes.
+ *
+ * The repack is the whole point, and it is why this cannot be a `filter` at
+ * the point of use. Dropping a clip without repacking leaves its span empty,
+ * and an empty span is not silence — the workbench player HOLDS the last
+ * drawn frame across a gap (see `getContainingClip`), so a disabled clip
+ * would freeze-frame for its own duration instead of being skipped.
+ *
+ * The STORED document keeps its disabled clips at their original positions:
+ * the board still shows them in place. Only what plays and what counts is
+ * computed from this projection.
+ */
+export function effectiveDocument(document: TimelineDocument): TimelineDocument {
+  const kept = enabledClips(document.clips);
+  if (kept.length === document.clips.length) return document;
+  return { ...document, clips: packTimelineClips(kept) };
+}
+
+/**
+ * `effectiveDocument` across a whole closure, keyed the same way. A nested
+ * collection is skipped by dropping its CLIP in the parent, which removes the
+ * entire subtree from the projection without having to walk into it.
+ */
+export function effectiveDocuments(
+  documents: Readonly<Record<string, TimelineDocument>>,
+): Record<string, TimelineDocument> {
+  const result: Record<string, TimelineDocument> = {};
+  for (const [id, document] of Object.entries(documents)) {
+    result[id] = effectiveDocument(document);
+  }
+  return result;
+}
+
 export function cloneTimelineDocument(document: TimelineDocument): TimelineDocument {
   return JSON.parse(JSON.stringify(document)) as TimelineDocument;
 }

@@ -251,3 +251,83 @@ describe("collectionChildIds", () => {
     expect(collectionChildIds(parent)).toEqual(["child-1", "child-2"]);
   });
 });
+
+describe("disabled clips are excluded from summaries", () => {
+  it("drops a disabled child clip from itemCount, duration and previewItems", () => {
+    const child = docOf("child-1", [
+      mediaClip("keep", { startTime: 0, duration: 4 }),
+      { ...mediaClip("skip", { startTime: 4.12, duration: 6 }), disabled: true },
+    ]);
+    const parent = docOf("parent", [collectionClip("col", "child-1")]);
+
+    const { document } = deriveCollectionSummaries(parent, new Map([["child-1", child]]));
+    const col = document.clips[0] as CollectionTimelineClip;
+
+    expect(col.itemCount).toBe(1);
+    // 4s of content, not 4 + gap + 6 — the disabled clip contributes nothing
+    // to the time total and the survivor is repacked to the start.
+    expect(col.duration).toBeCloseTo(4, 6);
+    expect(col.previewItems?.map((item) => item.id)).toEqual(["keep"]);
+  });
+
+  it("propagates a DEEP disable up every ancestor in one bottom-up pass", () => {
+    // This is the property that makes descendants free: nothing here walks
+    // upward or maintains a reverse index — deriveClosureSummaries resolves
+    // children first, so a change three levels down is already reflected in
+    // the summary its parent derives from.
+    const documents = {
+      root: docOf("root", [collectionClip("mid-ref", "mid")]),
+      mid: docOf("mid", [collectionClip("leaf-ref", "leaf")]),
+      leaf: docOf("leaf", [
+        mediaClip("a", { startTime: 0, duration: 4 }),
+        { ...mediaClip("b", { startTime: 4.12, duration: 4 }), disabled: true },
+      ]),
+    };
+
+    const derived = deriveClosureSummaries(documents);
+
+    const leafSummary = derived.mid.clips[0] as CollectionTimelineClip;
+    expect(leafSummary.itemCount).toBe(1);
+    expect(leafSummary.duration).toBeCloseTo(4, 6);
+
+    // The grandparent shrank too, without knowing why.
+    const midSummary = derived.root.clips[0] as CollectionTimelineClip;
+    expect(midSummary.duration).toBeCloseTo(4, 6);
+    expect(midSummary.itemCount).toBe(1);
+  });
+
+  it("treats an all-disabled collection like an empty one", () => {
+    // Deliberate: all-disabled and empty are the same thing to a reader, and
+    // a zero-duration card would be new behaviour rather than consistency.
+    const child = docOf("child-1", [
+      { ...mediaClip("x", { duration: 4 }), disabled: true },
+    ]);
+    const parent = docOf("parent", [collectionClip("col", "child-1")]);
+    const empty = docOf("child-2", []);
+    const parent2 = docOf("parent", [collectionClip("col", "child-2")]);
+
+    const allDisabled = deriveCollectionSummaries(parent, new Map([["child-1", child]]));
+    const isEmpty = deriveCollectionSummaries(parent2, new Map([["child-2", empty]]));
+
+    const a = allDisabled.document.clips[0] as CollectionTimelineClip;
+    const b = isEmpty.document.clips[0] as CollectionTimelineClip;
+    expect(a.itemCount).toBe(b.itemCount);
+    expect(a.duration).toBe(b.duration);
+  });
+
+  it("keeps the PARENT's own disabled clip in place", () => {
+    // Summaries are derived from the child; the parent's own clip list is
+    // only repacked. A disabled clip in the parent keeps its slot — the board
+    // still shows it — so it must survive this pass.
+    const parent = docOf("parent", [
+      { ...mediaClip("off", { duration: 4 }), disabled: true },
+      collectionClip("col", "child-1", { startTime: 4.12 }),
+    ]);
+    const child = docOf("child-1", [mediaClip("m", { duration: 5 })]);
+
+    const { document } = deriveCollectionSummaries(parent, new Map([["child-1", child]]));
+
+    expect(document.clips.map((clip) => clip.id)).toEqual(["off", "col"]);
+    expect(document.clips[0].disabled).toBe(true);
+  });
+});

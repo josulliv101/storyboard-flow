@@ -57,6 +57,8 @@ import {
 import { createTimelineDocumentsState } from "@storyboard/ui/timeline/timeline-documents";
 import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
 
+import { enabledClips, packTimelineClips } from "@storyboard/timeline-model";
+
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
 
@@ -1554,8 +1556,18 @@ export function PreviewShell({
     detailsStore.read,
     detailsStore.read,
   );
+  // Disabled clips are dropped and the rest repacked, matching what the
+  // manifest compiles — otherwise the pane would play one timeline before the
+  // manifest lands and a different one after.
+  //
+  // The filter lives HERE, not in `graphChildrenToClips`: that same function
+  // is what graph-persistence writes to storage, so skipping clips inside it
+  // would DELETE every disabled clip on the next commit.
   const projectionClips = useMemo<TimelineClip[]>(
-    () => (enabled ? graphChildrenToClips(graph, details, focusedId) : []),
+    () =>
+      enabled
+        ? packTimelineClips(enabledClips(graphChildrenToClips(graph, details, focusedId)))
+        : [],
     [enabled, graph, details, focusedId],
   );
   // The pane plays the manifest (full nested depth) once it lands; until

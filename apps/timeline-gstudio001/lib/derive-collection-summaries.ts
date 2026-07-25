@@ -1,5 +1,6 @@
 import { TIMELINE_LEADING_PADDING_SECONDS } from "@storyboard/timeline-model/constants";
 import {
+  effectiveDocument,
   packTimelineClips,
   previewItemsFrom,
 } from "@storyboard/timeline-model";
@@ -36,11 +37,22 @@ export function deriveCollectionSummaries(
     if (!child) return clip;
 
     const title = child.title || clip.title;
-    const itemCount = child.clips.length;
-    const previewItems = previewItemsFrom(child.clips);
+    // Summaries describe what the collection CONTRIBUTES, so they are derived
+    // from the child's ENABLED clips, repacked. That is what makes a disabled
+    // clip vanish from counts and time totals — and because
+    // `deriveClosureSummaries` runs bottom-up, disabling something three
+    // levels down shrinks every ancestor automatically, with no reverse index.
+    //
+    // A collection whose children are ALL disabled falls to the same
+    // `duration = 3` an empty collection already gets: all-disabled and empty
+    // are the same thing to a reader, and inventing a zero-width case here
+    // would be new behaviour, not consistency.
+    const effectiveChild = effectiveDocument(child);
+    const itemCount = effectiveChild.clips.length;
+    const previewItems = previewItemsFrom(effectiveChild.clips);
     let duration = 3;
-    if (child.clips.length > 0) {
-      const last = child.clips[child.clips.length - 1];
+    if (effectiveChild.clips.length > 0) {
+      const last = effectiveChild.clips[effectiveChild.clips.length - 1];
       duration = last.startTime + last.duration + TIMELINE_LEADING_PADDING_SECONDS;
     }
 
