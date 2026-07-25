@@ -58,6 +58,7 @@ import { createTimelineDocumentsState } from "@storyboard/ui/timeline/timeline-d
 import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
 
 import { useGraphDetailsStore } from "./graph-details-context";
 import { GRID_GAP, TIMELINE_PPS } from "./graph-view-config";
@@ -1618,6 +1619,11 @@ export function PreviewShell({
     surfaceHeightRef.current = height;
   }, []);
 
+  // The pane's own close button goes through the SAME window event as the
+  // sidebar's toggle, so `previewOn` in graph-timeline-view stays the one
+  // owner of the state. Only reachable while open, so toggle IS close.
+  const handleClose = useCallback(() => requestGraphPreviewToggle(), []);
+
   if (!enabled) return <>{children}</>;
 
   return (
@@ -1639,6 +1645,7 @@ export function PreviewShell({
         onPlayingChange={channel.setPlaying}
         getInitialSurfaceHeight={getInitialSurfaceHeight}
         onSurfaceHeightChange={handleSurfaceHeightChange}
+        onClose={handleClose}
       >
         {/* The playhead and scrub band live in `children`; they read these
             spans so their time↔x mapping is the pane's clock, not their own. */}
