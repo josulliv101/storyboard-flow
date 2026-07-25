@@ -31,6 +31,11 @@ export type DisplayClip = {
   poster?: string;
   duration?: number;
   previewItems?: readonly DisplayPreviewItem[] | null;
+  /** Skipped in playback and totals. Display code should MUTE it, not hide
+   *  it: the clip keeps its slot and its width everywhere it is drawn, so a
+   *  surface that dropped it would disagree with the board about what the
+   *  timeline contains. */
+  disabled?: boolean;
 };
 
 /**

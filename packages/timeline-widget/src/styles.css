@@ -246,7 +246,8 @@ body {
 }
 
 .clip__kind,
-.clip__count {
+.clip__count,
+.clip__disabled {
   position: absolute;
   top: 4px;
   font-size: var(--font-text-xs-size, 9px);
@@ -265,6 +266,30 @@ body {
 .clip__count {
   right: 4px;
   text-transform: none;
+}
+
+/* Bottom-left, so it cannot collide with the kind chip (top-left) or the
+   collection count (top-right). */
+.clip__disabled {
+  top: auto;
+  bottom: 4px;
+  left: 4px;
+  background: rgb(0 0 0 / 0.78);
+}
+
+/* Muted, never hidden: the card keeps its slot and its full width — its
+   duration still shapes the strip — it just stops reading as content that
+   plays. Grayscale + reduced opacity is what survives on top of arbitrary
+   artwork, where a tint would not. Matches the app's cards. The badge is
+   pulled back to full strength so the REASON stays legible. */
+.clip--disabled {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.clip--disabled .clip__disabled {
+  opacity: 1;
+  filter: none;
 }
 
 .clip__meta {
