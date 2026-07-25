@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext, useMemo, useRef, useState } from "react";
-import { FolderTree, Folder, FolderOpen } from "lucide-react";
+import { FolderInput, Folder, FolderOpen } from "lucide-react";
 
 import {
   VirtualGrid,
@@ -221,9 +221,12 @@ function SubTimelineNode({
           onClick={() => nav?.openTimeline(collectionId)}
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
         >
-          {/* FolderTree, matching the sidebar's children-timelines toggle and
-              the collection card's drill button — one icon for the concept. */}
-          <FolderTree aria-hidden="true" className="h-4 w-4" />
+          {/* FolderInput — a folder with an arrow going INTO it. This button
+              NAVIGATES; the sidebar's FolderTree toggles whether the children
+              tree is shown. Those are different verbs and no longer share an
+              icon. The collection card's drill button is the same verb as
+              this one and uses the same icon. */}
+          <FolderInput aria-hidden="true" className="h-4 w-4" />
         </button>
       </div>
 
