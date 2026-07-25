@@ -21,7 +21,6 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { AssetLibraryDrawer } from "@/components/assets/asset-library-drawer";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
@@ -276,7 +275,6 @@ const UTILITY_ITEMS: UtilityItem[] = [
 export function TimelineSidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
-  const [isAssetLibraryOpen, setIsAssetLibraryOpen] = useState(false);
   const [isTrashOpen, setIsTrashOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
@@ -565,30 +563,26 @@ export function TimelineSidebar() {
 
       <div className="mt-auto flex flex-col items-center gap-2 relative">
         {UTILITY_ITEMS.map((item) => {
+          // Assets is a GRAPH-ROUTE affordance now. The legacy drawer that
+          // used to answer it elsewhere is gone: its one remaining route was
+          // the project list, where there is no open timeline to drag an
+          // asset into — it could browse and do nothing. Rather than leave a
+          // button that opens nothing, it is hidden off the graph.
+          if (item.id === "assets" && !onGraphRoute) return null;
+
           const Icon = item.icon;
           const tooltipId = `sidebar-tooltip-utility-${item.id}`;
-          const isPressed =
-            (item.id === "assets" && isAssetLibraryOpen) ||
-            (item.id === "trash" && isTrashOpen);
+          const isPressed = item.id === "trash" && isTrashOpen;
           const handleClick =
             item.id === "assets"
               ? () => {
-                  // On graph routes the asset surface is the graph view's own
-                  // palette drawer (its drags work with dnd-collections; the
-                  // legacy drawer's can't land there) — hand off to it.
-                  if (isGraphViewRoute(pathname)) {
-                    window.dispatchEvent(new CustomEvent(GRAPH_ASSETS_TOGGLE_EVENT));
-                    setIsTrashOpen(false);
-                    return;
-                  }
-                  setIsAssetLibraryOpen(!isAssetLibraryOpen);
+                  // The asset surface is the graph view's own palette drawer
+                  // (its drags work with dnd-collections) — hand off to it.
+                  window.dispatchEvent(new CustomEvent(GRAPH_ASSETS_TOGGLE_EVENT));
                   setIsTrashOpen(false);
                 }
               : item.id === "trash"
-                ? () => {
-                    setIsTrashOpen(!isTrashOpen);
-                    setIsAssetLibraryOpen(false);
-                  }
+                ? () => setIsTrashOpen(!isTrashOpen)
                 : // Placeholder until real settings exist — and the app's
                   // first sonner-driven surface, next to the legacy
                   // `gstudio-toast` pill the trash drawer still uses.
@@ -703,11 +697,6 @@ export function TimelineSidebar() {
           </div>
         )}
       </div>
-
-      <AssetLibraryDrawer
-        isOpen={isAssetLibraryOpen}
-        onClose={() => setIsAssetLibraryOpen(false)}
-      />
 
       <TrashDrawer
         isOpen={isTrashOpen}

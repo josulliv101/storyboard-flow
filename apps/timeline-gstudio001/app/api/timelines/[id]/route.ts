@@ -1,23 +1,18 @@
 import { NextResponse } from "next/server";
 
-import type { TimelineDocument, TimelineClip } from "@storyboard/timeline-model/types";
+import type { TimelineClip } from "@storyboard/timeline-model/types";
 import {
-  getFirebaseTimelineDocument,
   saveFirebaseTimelineEntry,
   deleteFirebaseTimelineDocument,
 } from "@/lib/firebase-timeline-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import {
-  getFolderPathFromTimelineId,
   isStoredTimelineDocument,
   isUnsavedProjectPlaceholder,
 } from "@storyboard/timeline-model";
 // Demo-content seed for the GET fallback — deliberately still the UI
 // package's fixture set, not model logic.
 import { getTimelineDocument } from "@storyboard/ui/timeline/timeline-documents";
-import { CLOUDINARY_PROVIDER_ID } from "@/lib/assets/cloudinary-provider";
-import { buildAssetLibraryClips } from "@/lib/assets/asset-library-timeline";
-import { assetProviders } from "@/lib/assets/registry";
 import { serveTimelineDocument, serveTrashDocument } from "@/lib/serve-timeline";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
@@ -75,34 +70,12 @@ export async function GET(
       return NextResponse.json({ error: "Invalid timeline id." }, { status: 400 });
     }
 
-    if (id.startsWith("asset-library-")) {
-      const firebaseDocument = await getFirebaseTimelineDocument(id, user.uid);
-
-      const title = id.startsWith("asset-library-col-") ? "New Collection" : "Cloudinary Assets";
-      const doc: TimelineDocument = firebaseDocument || { id, title, clips: [] };
-
-      // The bespoke Cloudinary listing + hand-rolled folder detection this
-      // branch used to do now lives behind the provider seam (phase 5): ask
-      // the Cloudinary provider for this folder's page — the SAME
-      // folder-scoping the graph palette uses — and shape it into the
-      // media-strip's synthetic-timeline clips. Pinned to Cloudinary because
-      // the asset-library ids embed Cloudinary folder paths; the drawer is
-      // Cloudinary's, not a generic provider surface.
-      const folderPath = getFolderPathFromTimelineId(id, user.uid);
-      const folderSegments = folderPath === "" ? [] : folderPath.split("/");
-      const provider = assetProviders.get(CLOUDINARY_PROVIDER_ID);
-      if (!provider) {
-        return NextResponse.json({ error: "Asset provider unavailable." }, { status: 500 });
-      }
-      const page = await provider.list({ uid: user.uid }, { folder: folderSegments });
-
-      return NextResponse.json({
-        document: {
-          ...doc,
-          clips: buildAssetLibraryClips(page, user.uid, doc.clips),
-        },
-      });
-    }
+    // `asset-library-<uid>` / `asset-library-col-<uid>-<folder>` ids used to
+    // be served here as SYNTHETIC timelines — a Cloudinary folder shaped into
+    // clips so the legacy drawer could browse it through the media strip.
+    // That drawer is gone, and nothing else ever requested those ids: assets
+    // are browsed through /api/assets (the provider seam) by the graph
+    // palette, which needs no timeline document to do it.
 
     // Heal + read-time summary derivation live in lib/serve-timeline — the
     // ONE serve path this route shares with the RSC payload loaders.
