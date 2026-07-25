@@ -100,3 +100,39 @@ export const ControlledPlayback: Story = {
     ).toBeInTheDocument();
   },
 };
+
+function ClosablePreviewFixture() {
+  const [currentTime, setCurrentTime] = useState(0);
+  const [open, setOpen] = useState(true);
+
+  return (
+    <main className="min-h-[900px] bg-zinc-950 p-4 text-zinc-100">
+      {open ? (
+        <WorkbenchSplitPane
+          clips={[]}
+          currentTime={currentTime}
+          onCurrentTimeChange={setCurrentTime}
+          onClose={() => setOpen(false)}
+        >
+          <div className="min-h-24" />
+        </WorkbenchSplitPane>
+      ) : (
+        <p data-testid="preview-closed">Preview closed</p>
+      )}
+    </main>
+  );
+}
+
+/** `onClose` adds the corner close button — a second way out of the preview
+ *  beside whatever toggle the consumer owns. Without the prop no button is
+ *  drawn (see the other stories: none of them have one). */
+export const ClosablePreview: Story = {
+  render: () => <ClosablePreviewFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+
+    await user.click(canvas.getByRole("button", { name: "Close preview" }));
+    expect(await canvas.findByTestId("preview-closed")).toBeInTheDocument();
+  },
+};

@@ -1,6 +1,6 @@
 "use client";
 
-import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { Pause, Play, SkipBack, SkipForward, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -47,6 +47,10 @@ type WorkbenchDisplaySurfaceProps = {
    *  Omit for the default uncontrolled behavior (internal play state). */
   playing?: boolean;
   onPlayingChange?: (playing: boolean) => void;
+  /** When supplied, the surface renders a close affordance in its top-right
+   *  corner. Omit and no button is drawn — a consumer that has no way to hide
+   *  the preview must not show one. */
+  onClose?: () => void;
 };
 
 const BUFFER_WINDOW_SIZE = 4;
@@ -254,6 +258,7 @@ export function WorkbenchDisplaySurface({
   preferredClipId,
   playing,
   onPlayingChange,
+  onClose,
 }: WorkbenchDisplaySurfaceProps) {
   const { getCollectionClipFramePreview } = useTimelineDocuments();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -705,7 +710,7 @@ export function WorkbenchDisplaySurface({
       data-testid="workbench-display-surface"
       data-buffered-media-count={bufferedMedia.length}
     >
-      <div className="min-h-0 flex-1 bg-black">
+      <div className="relative min-h-0 flex-1 bg-black">
         <canvas
           ref={canvasRef}
           className="block h-full w-full bg-black"
@@ -713,6 +718,22 @@ export function WorkbenchDisplaySurface({
           aria-label={activeMedia ? `${activeMedia.clipTitle} preview` : "Empty workbench preview"}
           data-testid="workbench-display-canvas"
         />
+        {/* Second way out of the preview, next to the sidebar's toggle. Pinned
+            to the canvas's far-right corner, which is LETTERBOX: the frame is
+            drawn centred at `min` scale, so this sits in the black gutter
+            rather than over the picture. */}
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-2 top-2 z-10 grid size-7 place-items-center rounded-full border border-zinc-800 bg-zinc-900/80 text-zinc-400 backdrop-blur-sm transition-colors hover:border-zinc-600 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+            aria-label="Close preview"
+            title="Close preview"
+            data-testid="workbench-preview-close"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
       <div className="relative flex shrink-0 items-center justify-center border-t border-zinc-800 bg-zinc-950 px-4 py-2 text-xs text-zinc-200">
         <div className="flex items-center gap-2">
@@ -774,6 +795,8 @@ type WorkbenchSplitPaneProps = {
    *  across unmounts. Store it in a ref: this fires per pointer move during a
    *  divider drag. */
   onSurfaceHeightChange?: (height: number) => void;
+  /** Forwarded to the display surface's close button. See there. */
+  onClose?: () => void;
 };
 
 export function WorkbenchSplitPane({
@@ -786,6 +809,7 @@ export function WorkbenchSplitPane({
   onPlayingChange,
   getInitialSurfaceHeight,
   onSurfaceHeightChange,
+  onClose,
 }: WorkbenchSplitPaneProps) {
   // Read once, at mount. `undefined` means nothing to restore → fit instead.
   const [restoredSurfaceHeight] = useState(() => getInitialSurfaceHeight?.());
@@ -1040,6 +1064,7 @@ export function WorkbenchSplitPane({
             preferredClipId={preferredClipId}
             playing={playing}
             onPlayingChange={onPlayingChange}
+            onClose={onClose}
             className="h-full"
           />
         </div>
@@ -1052,14 +1077,15 @@ export function WorkbenchSplitPane({
           aria-valuenow={Math.round(surfaceHeight)}
           aria-label="Resize workbench display"
           // The divider's OWN height is the only source of the gap on either
-          // side of the rule: it centres the 1px line, so the space above and
-          // below is h/2 each (h-3 — kept in sync with DIVIDER_HEIGHT_PX).
+          // side: it centres the grip, so the space above and below is h/2
+          // each (h-3 — kept in sync with DIVIDER_HEIGHT_PX).
           // Nothing else may add padding against it — the lower pane used to
           // carry a pt-3 that made the bottom gap 22px against the top's
-          // 10px, which read as a misaligned rule. Affordance: a centred
-          // grip pill says "draggable" at rest, and hovering tints the whole
-          // band gray (the old amber line highlight is gone; focus ring is
-          // sky, matching the seek rails).
+          // 10px, which read as misaligned. Affordance: a centred grip pill
+          // says "draggable" at rest (half-opacity so it stays quiet), and
+          // hovering brings it to full strength and tints the whole band gray
+          // — no full-width rule (the old amber line highlight is gone too;
+          // focus ring is sky, matching the seek rails).
           className="group relative flex h-3 w-full cursor-row-resize items-center justify-center bg-transparent transition-colors hover:bg-zinc-800/70 active:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
@@ -1068,12 +1094,8 @@ export function WorkbenchSplitPane({
         >
           <span
             aria-hidden="true"
-            className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-zinc-800"
-          />
-          <span
-            aria-hidden="true"
             data-divider-grip
-            className="relative h-1 w-10 rounded-full bg-zinc-600 transition-colors group-hover:bg-zinc-400 group-active:bg-zinc-300"
+            className="relative h-1 w-10 rounded-full bg-zinc-600 opacity-50 transition-[color,background-color,opacity] group-hover:bg-zinc-400 group-hover:opacity-100 group-active:bg-zinc-300 group-active:opacity-100"
           />
         </button>
       </div>
