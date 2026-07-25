@@ -113,6 +113,7 @@ function mediaSpec(clip: Exclude<TimelineClip, CollectionTimelineClip>): GraphNo
       fullDurationSeconds: clip.sourceDuration,
       trimInSeconds: clip.trimIn,
       trimOutSeconds: clip.trimOut,
+      ...(clip.disabled ? { disabled: true } : {}),
     };
   }
   return {
@@ -121,6 +122,7 @@ function mediaSpec(clip: Exclude<TimelineClip, CollectionTimelineClip>): GraphNo
     name: clip.alt,
     src: clip.src,
     durationSeconds: clip.duration,
+    ...(clip.disabled ? { disabled: true } : {}),
   };
 }
 
@@ -191,7 +193,13 @@ function clipSpecs(
         ...collectionDetail(clip, false),
         duplicateOfTimelineId: childId,
       };
-      return { kind: "collection", id: clip.id, name: clip.title, children: [] };
+      return {
+        kind: "collection",
+        id: clip.id,
+        name: clip.title,
+        children: [],
+        ...(clip.disabled ? { disabled: true } : {}),
+      };
     }
     ctx.used.add(childId);
 
@@ -203,12 +211,19 @@ function clipSpecs(
         id: childId,
         name: clip.title,
         children: clipSpecs(ctx, childDoc, hydrateLevels - 1),
+        ...(clip.disabled ? { disabled: true } : {}),
       };
     }
 
     if (!childDoc) ctx.missing.push(childId);
     ctx.details[childId] = collectionDetail(clip, false);
-    return { kind: "collection", id: childId, name: clip.title, children: [] };
+    return {
+      kind: "collection",
+      id: childId,
+      name: clip.title,
+      children: [],
+      ...(clip.disabled ? { disabled: true } : {}),
+    };
   });
 }
 
@@ -461,6 +476,9 @@ export function graphChildrenToClips(
           ? {}
           : { playbackDuration: detail.playbackDuration }),
         ...(detail?.sourceAsset === undefined ? {} : { sourceAsset: detail.sourceAsset }),
+        // Read from the NODE, not `detail`: disabling goes through a graph
+        // command, so the flag rides the patch/undo path like a rename does.
+        ...(node.disabled ? { disabled: true } : {}),
       };
       if (node.mediaKind === "video") {
         return {
@@ -520,6 +538,7 @@ export function graphChildrenToClips(
       sourceDuration: detail?.sourceDuration ?? duration,
       trimIn: detail?.trimIn ?? 0,
       trimOut: detail?.trimOut ?? 0,
+      ...(node.disabled ? { disabled: true } : {}),
     };
   });
 }

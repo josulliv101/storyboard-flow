@@ -301,6 +301,48 @@ describe("graphChildrenToClips (round-trip)", () => {
     expect(projected[0]).toMatchObject({ id: "with-ref", sourceAsset });
     expect("sourceAsset" in projected[1]).toBe(false);
   });
+
+  it("round-trips `disabled` on media and collection clips, and omits it otherwise", () => {
+    // Unlike sourceAsset this rides the GRAPH, not the details side-table —
+    // disabling is a command, so the flag has to survive
+    // clip -> spec -> node -> clip. A disabled clip keeps its slot: same
+    // order, same startTime, same duration as if it were enabled.
+    const doc: TimelineDocument = {
+      id: "dis-root",
+      title: "Disabled",
+      clips: packTimelineClips([
+        { ...image("off-img", 4), disabled: true },
+        image("on-img", 4),
+        { ...collectionClip("off-col", "child", "Child"), disabled: true },
+      ]),
+    };
+    const result = buildFocusedGraph({ "dis-root": doc, child: CHILD_DOC }, "dis-root");
+    if (!result.ok) throw new Error(result.error);
+
+    const projected = graphChildrenToClips(result.value.graph, result.value.details, "dis-root");
+    expect(projected[0]).toMatchObject({ id: "off-img", disabled: true });
+    expect("disabled" in projected[1]).toBe(false);
+    expect(projected[2]).toMatchObject({ disabled: true });
+
+    // Slot preserved: projecting the SAME document with nothing disabled must
+    // produce identical geometry. Compared against an enabled twin rather
+    // than against packTimelineClips, because a hydrated collection derives
+    // its duration from live children — the stored 3 is not what it projects.
+    const enabledDoc: TimelineDocument = {
+      ...doc,
+      clips: doc.clips.map(({ disabled: _skip, ...clip }) => clip as TimelineClip),
+    };
+    const control = buildFocusedGraph({ "dis-root": enabledDoc, child: CHILD_DOC }, "dis-root");
+    if (!control.ok) throw new Error(control.error);
+    const controlClips = graphChildrenToClips(
+      control.value.graph,
+      control.value.details,
+      "dis-root",
+    );
+    expect(projected.map((c) => [c.id, c.index, c.startTime, c.duration])).toEqual(
+      controlClips.map((c) => [c.id, c.index, c.startTime, c.duration]),
+    );
+  });
 });
 
 describe("against the app's real initial documents", () => {

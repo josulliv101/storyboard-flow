@@ -59,6 +59,13 @@ export type CollectionsCommand =
       nodeId: NodeId;
       /** Non-blank; callers trim. */
       name: string;
+    }>
+  | Readonly<{
+      type: "set-node-disabled";
+      /** Any node — media or collection. Structure is untouched. */
+      nodeId: NodeId;
+      /** True to skip the node (and its subtree) in playback and totals. */
+      disabled: boolean;
     }>;
 
 export type CommandRejection =
@@ -106,6 +113,9 @@ export function applyCommand(
   // Data mutations — no target parent/index, so handle them first.
   if (command.type === "update-media") {
     return applyMediaUpdate(graph, command.nodeId, command.update);
+  }
+  if (command.type === "set-node-disabled") {
+    return applySetDisabled(graph, command.nodeId, command.disabled);
   }
   if (command.type === "rename-node") {
     return applyRename(graph, command.nodeId, command.name);
@@ -342,6 +352,46 @@ function applyRename(
   if (node.name === name) return { ok: false, error: { reason: "same-position" } };
 
   const after: CollectionItemNode = { ...node, name };
+  const patch: CollectionsPatch = {
+    type: "nodes-updated",
+    updates: [{ nodeId, before: node, after }],
+  };
+  return { ok: true, value: { graph: applyPatch(graph, patch), patch } };
+}
+
+/**
+ * Mark a node skipped (or un-skipped). Like a rename this is pure DATA — no
+ * structure changes, so a disabled node keeps its slot, its order, and its
+ * trim — and it rides the same `nodes-updated` patch, inheriting undo/redo,
+ * the change feed and structural sharing.
+ *
+ * The engine gives `disabled` no meaning beyond storing it. Who skips what is
+ * a DOMAIN decision (see the playback manifest and the collection-summary
+ * derivation, which drop disabled clips and repack around them); teaching the
+ * graph about it would put timing policy inside the reducer.
+ *
+ * Enabling DELETES the key rather than writing `false`, so an untouched
+ * document never grows a field and `before`/`after` stay minimal.
+ */
+function applySetDisabled(
+  graph: CollectionsGraph,
+  nodeId: NodeId,
+  disabled: boolean
+): Result<ApplyCommandSuccess, CommandRejection> {
+  const node = graph.nodesById.get(nodeId);
+  if (!node) return { ok: false, error: { reason: "missing-node", nodeId } };
+  if ((node.disabled ?? false) === disabled) {
+    return { ok: false, error: { reason: "same-position" } };
+  }
+
+  let after: CollectionItemNode;
+  if (disabled) {
+    after = { ...node, disabled: true };
+  } else {
+    const { disabled: _enabled, ...rest } = node;
+    after = rest as CollectionItemNode;
+  }
+
   const patch: CollectionsPatch = {
     type: "nodes-updated",
     updates: [{ nodeId, before: node, after }],

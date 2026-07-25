@@ -98,6 +98,18 @@ describe("isStoredTimelineDocument", () => {
     ).toBe(true);
   });
 
+  it("accepts `disabled` only as a boolean", () => {
+    // The write gate is the last place a bad value can be stopped: the
+    // playback and summary passes read this flag as "skip this clip", so a
+    // stored string would silently drop a clip from the timeline.
+    expect(isTimelineClip({ ...image, disabled: true })).toBe(true);
+    expect(isTimelineClip({ ...image, disabled: false })).toBe(true);
+    expect(isTimelineClip(image)).toBe(true);
+    expect(isTimelineClip({ ...image, disabled: "false" })).toBe(false);
+    expect(isTimelineClip({ ...image, disabled: 1 })).toBe(false);
+    expect(isTimelineClip({ ...image, disabled: null })).toBe(false);
+  });
+
   it("rejects a document containing ONE malformed clip", () => {
     expect(
       isStoredTimelineDocument({

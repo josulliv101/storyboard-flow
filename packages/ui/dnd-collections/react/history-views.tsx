@@ -21,6 +21,8 @@ function describeCommand(command: CollectionsCommand): string {
       return `trim ${command.nodeId} (${command.update.mediaKind})`;
     case "rename-node":
       return `rename ${command.nodeId} → "${command.name}"`;
+    case "set-node-disabled":
+      return `${command.disabled ? "disable" : "enable"} ${command.nodeId}`;
   }
 }
 
