@@ -299,55 +299,6 @@ html:not(.dark) .timeline-track-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 0, 0, 0.25) !important;
 }
 
-html[data-timeline-endpoint-transition="active"] {
-  view-transition-name: none;
-}
-
-html[data-timeline-endpoint-transition="active"]::view-transition {
-  pointer-events: none;
-}
-
-html[data-timeline-endpoint-transition="active"]::view-transition-group(.timeline-clip-item) {
-  animation-duration: 320ms;
-  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-html[data-timeline-endpoint-transition="active"]::view-transition-new(.timeline-clip-item):only-child {
-  animation-name: timeline-endpoint-enter;
-  animation-duration: 320ms;
-  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-html[data-timeline-endpoint-transition="active"]::view-transition-old(.timeline-clip-item):only-child {
-  animation-name: timeline-endpoint-exit;
-  animation-duration: 220ms;
-  animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
-}
-
-@keyframes timeline-endpoint-enter {
-  from {
-    opacity: 0;
-    transform: translateY(12px) scale(0.96);
-    filter: blur(4px);
-  }
-}
-
-@keyframes timeline-endpoint-exit {
-  to {
-    opacity: 0;
-    transform: translateY(10px) scale(0.96);
-    filter: blur(4px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  html[data-timeline-endpoint-transition="active"]::view-transition-group(*),
-  html[data-timeline-endpoint-transition="active"]::view-transition-old(*),
-  html[data-timeline-endpoint-transition="active"]::view-transition-new(*) {
-    animation: none !important;
-  }
-}
-
 /* Universal light mode hover overrides for elements normally styled with dark classes */
 html:not(.dark) .workbench-shell [class*="hover:bg-white/10"]:hover {
   background-color: rgba(0, 0, 0, 0.08) !important;
