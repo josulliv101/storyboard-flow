@@ -68,5 +68,7 @@ export * from "./core/tooltip";
 export * from "./core/toggle";
 export * from "./core/toggle-group";
 export * from "./core/switch";
-export * from "./drag-drop";
-export * from "./timeline";
+// No `export * from "./timeline"`: that barrel re-exported the legacy
+// viewport, which is deleted. What survives (types, the document store, the
+// workbench surface) is imported by subpath, which is how every consumer
+// already reached it.

@@ -47,7 +47,14 @@ Non-obvious wiring:
 
 Its discipline: pure `core/` logic with no React/DOM imports, React bindings layered on top, and mutation flowing through one typed command/reducer path that returns `Result`-shaped rejections instead of throwing.
 
-There used to be a second one — `packages/ui/media-strip`, an adapter layer over three DnD backends. It was deleted along with `media-strip-base`, `wheel-picker` and `charts`: a reachability walk found nothing imported any of them. They looked live only because `packages/ui/index.ts` re-exported them and grep can't tell a barrel from a consumer. **Nothing imports the bare `@storyboard/ui`** — the package is consumed entirely by subpath — so an `export *` in that barrel is not evidence of use. `npm run audit:ui` re-runs the walk (`scripts/find-unreachable-ui.mjs`); `--dir <name>` answers "is any file in this folder still imported?" before you delete one.
+There used to be a second one — `packages/ui/media-strip`, an adapter layer over three DnD backends — plus a legacy timeline viewport (`SmoothScrollList` and its hooks) driving the old routes. Both are gone, along with `media-strip-base`, `wheel-picker`, `charts` and `drag-drop`: a reachability walk found nothing imported them. They looked live only because `packages/ui/index.ts` re-exported them and grep can't tell a barrel from a consumer. **Nothing imports the bare `@storyboard/ui`** — the package is consumed entirely by subpath — so an `export *` in that barrel is not evidence of use.
+
+`npm run audit:ui` re-runs the walk (`scripts/find-unreachable-ui.mjs`); `--dir <name>` answers "is any file in this folder still imported?" before you delete one. Two things it deliberately cannot tell you, both of which have already nearly caused a bad deletion:
+
+- **Stories and tests are excluded from its seed set**, so every cover file reports as unreachable whether or not its subject is live. Check the subject before deleting a `.stories.tsx` / `.test.ts` — the name may not match the module it covers (`WorkbenchSplitPane.stories.tsx` covers `workbench-display-surface.tsx`).
+- **It only sees imports.** A route entered from outside the app is a link-graph orphan but very much alive — `/oauth/authorize` is the connector consent page, advertised as `authorization_endpoint` in `lib/oauth/metadata.ts`.
+
+What survives in `packages/ui/timeline` is exactly what the graph path imports: `types`, `constants`, `utils`, `timeline-documents`, `timeline-document-store`, `hooks/use-timeline-clips`, and `viewport/workbench-display-surface` (the graph's preview pane).
 
 ### Testing strategy (layered)
 
