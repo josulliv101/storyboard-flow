@@ -101,10 +101,26 @@ export const GRAPH_ITEM_ACTION_EVENT = "graph-view:item-action";
 /** Graph → sidebar: how many items are currently selected, and whether an
  *  async item action (copy/cut/duplicate loading documents) is in flight —
  *  the sidebar disables the cluster while busy so actions can't double-fire. */
-export type GraphSelectionDetail = Readonly<{ count: number; busy: boolean }>;
+export type GraphSelectionDetail = Readonly<{
+  count: number;
+  busy: boolean;
+  /** True when EVERY selected item is already disabled, which is what flips
+   *  the toggle's label from "Disable" to "Enable". A mixed selection reads
+   *  as false: the toggle then disables the rest, so one press always leaves
+   *  the selection in a single, predictable state. */
+  allDisabled: boolean;
+}>;
 
 /** The per-item actions the sidebar's item-mode cluster can request. */
-export type GraphItemAction = "copy" | "cut" | "paste" | "duplicate" | "delete" | "cancel";
+export type GraphItemAction =
+  | "copy"
+  | "cut"
+  | "paste"
+  | "duplicate"
+  | "delete"
+  | "cancel"
+  /** Skip (or un-skip) the selection in playback, counts and time totals. */
+  | "toggle-disabled";
 
 /** Graph → sidebar: the live selection size, so the sidebar can enter/exit
  *  item-actions mode and enable/disable the selection-dependent buttons. */
