@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import {
+  Ban,
+  CircleCheck,
   ClipboardPaste,
   Copy,
   CopyPlus,
@@ -222,7 +224,14 @@ function ItemActionsCluster({
   hasSelection,
   canPaste,
   busy,
-}: Readonly<{ hasSelection: boolean; canPaste: boolean; busy: boolean }>) {
+  allDisabled,
+}: Readonly<{
+  hasSelection: boolean;
+  canPaste: boolean;
+  busy: boolean;
+  /** Every selected item is already skipped — flips the toggle to "Enable". */
+  allDisabled: boolean;
+}>) {
   return (
     <div className="flex flex-col items-center gap-2">
       {/* Only the five actions that touch the SELECTION sit inside the amber
@@ -267,6 +276,20 @@ function ItemActionsCluster({
           icon={Trash2}
           label="Delete"
           description="Move the selected item to trash"
+          disabled={busy || !hasSelection}
+        />
+        {/* The button shows the icon of the ACTION it performs, so it reads
+            Ban ("disable this") until everything selected is already
+            disabled, then offers the way back. */}
+        <ItemActionButton
+          action="toggle-disabled"
+          icon={allDisabled ? CircleCheck : Ban}
+          label={allDisabled ? "Enable" : "Disable"}
+          description={
+            allDisabled
+              ? "Play this item again, and count it in the totals"
+              : "Skip this item in playback, counts and time totals"
+          }
           disabled={busy || !hasSelection}
         />
       </div>
@@ -410,12 +433,14 @@ export function TimelineSidebar() {
   // selection (copy here, drill into another timeline, paste there).
   const [selectionCount, setSelectionCount] = useState(0);
   const [actionBusy, setActionBusy] = useState(false);
+  const [selectionAllDisabled, setSelectionAllDisabled] = useState(false);
   useEffect(() => {
     const onSelection = (event: Event) => {
       const detail = (event as CustomEvent<GraphSelectionDetail>).detail;
       if (detail) {
         setSelectionCount(detail.count);
         setActionBusy(detail.busy);
+        setSelectionAllDisabled(detail.allDisabled);
       }
     };
     window.addEventListener(GRAPH_SELECTION_EVENT, onSelection);
@@ -480,6 +505,7 @@ export function TimelineSidebar() {
           hasSelection={selectionCount > 0}
           canPaste={canPaste}
           busy={actionBusy}
+          allDisabled={selectionAllDisabled}
         />
       )}
 

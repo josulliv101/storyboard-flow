@@ -362,3 +362,54 @@ export const TrimOverviewSamplesDistinctFrames: Story = {
     expect(canvasElement.textContent).not.toContain("full clip");
   },
 };
+
+/**
+ * A DISABLED collection: skipped in playback, counts and time totals, but it
+ * keeps its slot and its full width — its duration still shapes the board.
+ * So it must read as muted, never as missing or as an error. Grayscale plus
+ * reduced opacity is what survives on top of arbitrary artwork, where a tint
+ * would not.
+ */
+export const DisabledCollection: Story = {
+  args: baseArgs,
+  decorators: [
+    (Story) => {
+      const graph = buildGraph([
+        {
+          kind: "collection",
+          id: COLLECTION_ID,
+          name: "A timeline",
+          children: [],
+          disabled: true,
+        },
+      ]);
+      if (!graph.ok) throw new Error(JSON.stringify(graph.error));
+      const store = createGraphDetailsStore({
+        [COLLECTION_ID]: {
+          alt: "A timeline",
+          aspect: 16 / 9,
+          trackIndex: 0,
+          hydrated: false,
+          itemCount: 2,
+          previewItems: [ASSET_A, ASSET_B],
+        },
+      });
+      return (
+        <DndCollections initialGraph={graph.value}>
+          <GraphDetailsProvider store={store}>
+            <div className="h-32 w-40 bg-zinc-950 p-2">
+              <Story />
+            </div>
+          </GraphDetailsProvider>
+        </DndCollections>
+      );
+    },
+  ],
+  play: async ({ canvasElement }) => {
+    const card = canvasElement.querySelector(".is-disabled-card");
+    await expect(card).not.toBeNull();
+    await expect(getComputedStyle(card as Element).filter).toBe("grayscale(1)");
+    // The frames still render — a disabled card shows its content, muted.
+    await expect(previewImages(canvasElement)).toHaveLength(2);
+  },
+};
