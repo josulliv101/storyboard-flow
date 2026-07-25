@@ -3,6 +3,8 @@ import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { expect, userEvent, within } from "storybook/test";
 
+import type { TimelineClip } from "../types";
+
 import { WorkbenchSplitPane } from "./workbench-display-surface";
 
 function StickyPreviewFixture() {
@@ -54,6 +56,30 @@ export const StickyPreview: Story = {
   render: () => <StickyPreviewFixture />,
 };
 
+// A playable clip is REQUIRED for the controlled-playback story, and the
+// duration is the whole point: with `clips={[]}` the surface's duration is 0,
+// so the end-of-timeline auto-stop fires on the first animation frame and
+// pushes `playing` straight back to false. "Pause" then exists for about one
+// frame — an assertion that passes on an idle machine and loses the race
+// under parallel load. Deterministic data URI, never a network fetch.
+const PIXEL =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
+
+const PLAYABLE_CLIP: TimelineClip = {
+  id: "clip-controlled-playback",
+  index: 0,
+  kind: "image",
+  src: PIXEL,
+  alt: "Controlled playback fixture",
+  aspect: 16 / 9,
+  trackIndex: 0,
+  startTime: 0,
+  duration: 30,
+  sourceDuration: 30,
+  trimIn: 0,
+  trimOut: 0,
+};
+
 function ControlledPlaybackFixture() {
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -69,7 +95,7 @@ function ControlledPlaybackFixture() {
         External play toggle
       </button>
       <WorkbenchSplitPane
-        clips={[]}
+        clips={[PLAYABLE_CLIP]}
         currentTime={currentTime}
         onCurrentTimeChange={setCurrentTime}
         playing={playing}
@@ -93,7 +119,9 @@ export const ControlledPlayback: Story = {
     // Starts paused → the surface offers "Play".
     expect(canvas.getByRole("button", { name: "Play workbench preview" })).toBeInTheDocument();
 
-    // Flip the controlled prop from OUTSIDE the surface; it re-renders as "Pause".
+    // Flip the controlled prop from OUTSIDE the surface; it re-renders as
+    // "Pause" and STAYS there — the fixture clip is 30s, so nothing stops
+    // playback out from under the assertion.
     await user.click(canvas.getByTestId("external-toggle"));
     expect(
       await canvas.findByRole("button", { name: "Pause workbench preview" }),
