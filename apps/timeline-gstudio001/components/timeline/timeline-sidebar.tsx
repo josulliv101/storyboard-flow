@@ -158,6 +158,15 @@ function SurfaceIconControl({
 const SIDEBAR_ICON_DISABLED =
   "cursor-not-allowed border-zinc-800/70 bg-zinc-900/20 text-zinc-500";
 
+// Item mode borrows the SELECTION colour. A selected card is ring-2
+// ring-amber-400 (graph-item-content), and these buttons act on that card, so
+// they carry the same amber — but only in the FILL. Bordering them in amber
+// too was too loud next to the card it is meant to refer to; the tint alone
+// carries the connection. Disabled buttons stay ZINC: an amber-tinted
+// disabled button reads as available, and Paste is disabled most of the time.
+const SIDEBAR_ICON_ITEM_IDLE =
+  "border-zinc-800 bg-amber-400/10 text-amber-200/80 hover:border-zinc-600 hover:bg-amber-400/20 hover:text-amber-100";
+
 /** One button in the item-actions cluster — dispatches its action across the
  *  window-event seam for the graph provider to perform on the selection. */
 function ItemActionButton({
@@ -166,12 +175,17 @@ function ItemActionButton({
   label,
   description,
   disabled = false,
+  /** "item" acts on the selected card and carries its amber; "neutral" does
+   *  not — Done exits the mode rather than doing anything to the selection,
+   *  so it stays on the sidebar's ordinary zinc. */
+  tone = "item",
 }: Readonly<{
   action: GraphItemAction;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   description: string;
   disabled?: boolean;
+  tone?: "item" | "neutral";
 }>) {
   const tooltipId = `sidebar-tooltip-item-${action}`;
   return (
@@ -181,7 +195,14 @@ function ItemActionButton({
       aria-describedby={tooltipId}
       disabled={disabled}
       onClick={() => requestGraphItemAction(action)}
-      className={cn(SIDEBAR_ICON_BASE, disabled ? SIDEBAR_ICON_DISABLED : SIDEBAR_ICON_IDLE)}
+      className={cn(
+        SIDEBAR_ICON_BASE,
+        disabled
+          ? SIDEBAR_ICON_DISABLED
+          : tone === "item"
+            ? SIDEBAR_ICON_ITEM_IDLE
+            : SIDEBAR_ICON_IDLE,
+      )}
     >
       <Icon className="h-4 w-4 transition-colors" />
       <SidebarTooltipLabel id={tooltipId} label={label} description={description} />
@@ -204,48 +225,59 @@ function ItemActionsCluster({
 }: Readonly<{ hasSelection: boolean; canPaste: boolean; busy: boolean }>) {
   return (
     <div className="flex flex-col items-center gap-2">
-      <ItemActionButton
-        action="copy"
-        icon={Copy}
-        label="Copy"
-        description="Copy the selected item"
-        disabled={busy || !hasSelection}
-      />
-      <ItemActionButton
-        action="cut"
-        icon={Scissors}
-        label="Cut"
-        description="Cut the selected item — paste to move it"
-        disabled={busy || !hasSelection}
-      />
-      <ItemActionButton
-        action="paste"
-        icon={ClipboardPaste}
-        label="Paste"
-        description="Paste into this timeline"
-        disabled={busy || !canPaste}
-      />
-      <ItemActionButton
-        action="duplicate"
-        icon={CopyPlus}
-        label="Duplicate"
-        description="Duplicate the selected item in place"
-        disabled={busy || !hasSelection}
-      />
-      <ItemActionButton
-        action="delete"
-        icon={Trash2}
-        label="Delete"
-        description="Move the selected item to trash"
-        disabled={busy || !hasSelection}
-      />
-      <div className="h-px w-10 shrink-0 bg-zinc-700" />
+      {/* Only the five actions that touch the SELECTION sit inside the amber
+          block — a wash, no border, so the group reads as one thing tied to
+          the selected card without drawing a box around itself. Done is
+          deliberately outside it: it exits the mode, it does nothing to the
+          card, and it keeps the sidebar's ordinary zinc. */}
+      <div
+        data-item-actions-cluster
+        className="flex flex-col items-center gap-2 rounded-xl bg-amber-400/[0.07] px-1.5 py-2"
+      >
+        <ItemActionButton
+          action="copy"
+          icon={Copy}
+          label="Copy"
+          description="Copy the selected item"
+          disabled={busy || !hasSelection}
+        />
+        <ItemActionButton
+          action="cut"
+          icon={Scissors}
+          label="Cut"
+          description="Cut the selected item — paste to move it"
+          disabled={busy || !hasSelection}
+        />
+        <ItemActionButton
+          action="paste"
+          icon={ClipboardPaste}
+          label="Paste"
+          description="Paste into this timeline"
+          disabled={busy || !canPaste}
+        />
+        <ItemActionButton
+          action="duplicate"
+          icon={CopyPlus}
+          label="Duplicate"
+          description="Duplicate the selected item in place"
+          disabled={busy || !hasSelection}
+        />
+        <ItemActionButton
+          action="delete"
+          icon={Trash2}
+          label="Delete"
+          description="Move the selected item to trash"
+          disabled={busy || !hasSelection}
+        />
+      </div>
+      <div className="h-px w-8 shrink-0 bg-zinc-700" />
       <ItemActionButton
         action="cancel"
         icon={X}
         label="Done"
         description="Exit item actions and clear the clipboard"
         disabled={busy}
+        tone="neutral"
       />
     </div>
   );
