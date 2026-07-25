@@ -692,3 +692,79 @@ describe("patch inversion round-trips", () => {
     });
   });
 });
+
+describe("set-node-disabled", () => {
+  const nodeOf = (graph: CollectionsGraph, id: string) => graph.nodesById.get(parseNodeId(id))!;
+
+  test("sets the flag on media and on collections, leaving structure alone", () => {
+    for (const target of ["A", "F"]) {
+      const graph = fixture();
+      const result = applyCommand(graph, {
+        type: "set-node-disabled",
+        nodeId: parseNodeId(target),
+        disabled: true,
+      });
+      if (!result.ok) throw new Error(JSON.stringify(result.error));
+      expect(nodeOf(result.value.graph, target).disabled).toBe(true);
+      // Structure untouched — a disabled node keeps its slot and its children.
+      for (const [id] of graph.childrenById) {
+        expect([...getChildren(result.value.graph, id)]).toEqual([...getChildren(graph, id)]);
+      }
+      expect(findGraphInvariantViolation(result.value.graph)).toBeNull();
+    }
+  });
+
+  test("enabling DELETES the key rather than writing false", () => {
+    const disabled = applyCommand(fixture(), {
+      type: "set-node-disabled",
+      nodeId: parseNodeId("A"),
+      disabled: true,
+    });
+    if (!disabled.ok) throw new Error("expected ok");
+
+    const enabled = applyCommand(disabled.value.graph, {
+      type: "set-node-disabled",
+      nodeId: parseNodeId("A"),
+      disabled: false,
+    });
+    if (!enabled.ok) throw new Error("expected ok");
+    // `false` would be truthy-adjacent noise on every clip that ever toggled;
+    // absence is the enabled state everywhere else in the model.
+    expect("disabled" in nodeOf(enabled.value.graph, "A")).toBe(false);
+  });
+
+  test("a no-op change is refused, so it never enters history", () => {
+    const alreadyEnabled = applyCommand(fixture(), {
+      type: "set-node-disabled",
+      nodeId: parseNodeId("A"),
+      disabled: false,
+    });
+    expect(alreadyEnabled.ok).toBe(false);
+    if (!alreadyEnabled.ok) expect(alreadyEnabled.error.reason).toBe("same-position");
+  });
+
+  test("a missing node is refused", () => {
+    const result = applyCommand(fixture(), {
+      type: "set-node-disabled",
+      nodeId: parseNodeId("nope"),
+      disabled: true,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.reason).toBe("missing-node");
+  });
+
+  test("undo restores the previous flag", () => {
+    const graph = fixture();
+    const result = applyCommand(graph, {
+      type: "set-node-disabled",
+      nodeId: parseNodeId("A"),
+      disabled: true,
+    });
+    if (!result.ok) throw new Error("expected ok");
+
+    const undone = applyPatch(result.value.graph, invertPatch(result.value.patch));
+    expect("disabled" in nodeOf(undone, "A")).toBe(false);
+    const redone = applyPatch(undone, result.value.patch);
+    expect(nodeOf(redone, "A").disabled).toBe(true);
+  });
+});

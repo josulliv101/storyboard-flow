@@ -27,6 +27,18 @@ export type TimelineItemBase = {
   trimIn: number;
   /** Amount trimmed from the source end. */
   trimOut: number;
+  /**
+   * Skipped: excluded from playback and from every count and duration total,
+   * along with its whole subtree when this is a collection clip. It KEEPS its
+   * slot in the stored document — same index, same startTime, same duration —
+   * because disabling is not deleting: the board still shows the clip in
+   * place, and only the read models (the playback manifest and the
+   * collection-summary derivation) drop it and repack around it.
+   *
+   * Absent means enabled; enabling removes the key rather than writing
+   * `false`, so documents that never use the feature never grow the field.
+   */
+  disabled?: boolean;
   /** Optional unscaled timeline position used when visual width differs from playback time. */
   playbackStartTime?: number;
   /** Optional unscaled playback duration used when visual width differs from playback time. */

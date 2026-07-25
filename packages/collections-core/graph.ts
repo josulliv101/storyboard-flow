@@ -48,6 +48,15 @@ export type ImageMediaNode = Readonly<{
   src?: string;
   /** The item's timeline duration. Trimming an image sets this directly. */
   durationSeconds: number;
+  /**
+   * Skipped: excluded from playback and from every count and duration total,
+   * along with its whole subtree when it is a collection. The engine treats a
+   * disabled node exactly like an enabled one — it still occupies its slot,
+   * still moves, still trims — because "skip this" is a DOMAIN fact about the
+   * timeline, not a structural one about the graph. Absent means enabled;
+   * re-enabling removes the key rather than writing `false`.
+   */
+  disabled?: boolean;
 }>;
 
 export type VideoMediaNode = Readonly<{
@@ -70,6 +79,15 @@ export type VideoMediaNode = Readonly<{
   trimInSeconds: number;
   /** Seconds trimmed off the END (right handle). 0 = untrimmed. */
   trimOutSeconds: number;
+  /**
+   * Skipped: excluded from playback and from every count and duration total,
+   * along with its whole subtree when it is a collection. The engine treats a
+   * disabled node exactly like an enabled one — it still occupies its slot,
+   * still moves, still trims — because "skip this" is a DOMAIN fact about the
+   * timeline, not a structural one about the graph. Absent means enabled;
+   * re-enabling removes the key rather than writing `false`.
+   */
+  disabled?: boolean;
 }>;
 
 export type MediaNode = ImageMediaNode | VideoMediaNode;
@@ -78,6 +96,15 @@ export type CollectionNode = Readonly<{
   id: NodeId;
   kind: "collection";
   name: string;
+  /**
+   * Skipped: excluded from playback and from every count and duration total,
+   * along with its whole subtree when it is a collection. The engine treats a
+   * disabled node exactly like an enabled one — it still occupies its slot,
+   * still moves, still trims — because "skip this" is a DOMAIN fact about the
+   * timeline, not a structural one about the graph. Absent means enabled;
+   * re-enabling removes the key rather than writing `false`.
+   */
+  disabled?: boolean;
 }>;
 
 export type CollectionItemNode = MediaNode | CollectionNode;
@@ -143,6 +170,7 @@ export type GraphNodeSpec =
       name: string;
       src?: string;
       durationSeconds?: number; // default 4
+      disabled?: boolean;
     }>
   | Readonly<{
       kind: "media";
@@ -154,8 +182,15 @@ export type GraphNodeSpec =
       fullDurationSeconds: number;
       trimInSeconds?: number; // default 0
       trimOutSeconds?: number; // default 0
+      disabled?: boolean;
     }>
-  | Readonly<{ kind: "collection"; id: string; name: string; children?: readonly GraphNodeSpec[] }>;
+  | Readonly<{
+      kind: "collection";
+      id: string;
+      name: string;
+      children?: readonly GraphNodeSpec[];
+      disabled?: boolean;
+    }>;
 
 export type BuildGraphError =
   | Readonly<{ reason: "duplicate-id"; id: string }>
@@ -225,6 +260,7 @@ export function buildGraph(
               fullDurationSeconds: spec.fullDurationSeconds,
               trimInSeconds: spec.trimInSeconds ?? 0,
               trimOutSeconds: spec.trimOutSeconds ?? 0,
+              ...(spec.disabled ? { disabled: true } : {}),
             }
           : {
               id,
@@ -233,10 +269,16 @@ export function buildGraph(
               name: spec.name,
               src: spec.src,
               durationSeconds: spec.durationSeconds ?? 4,
+              ...(spec.disabled ? { disabled: true } : {}),
             }
       );
     } else {
-      nodesById.set(id, { id, kind: "collection", name: spec.name });
+      nodesById.set(id, {
+        id,
+        kind: "collection",
+        name: spec.name,
+        ...(spec.disabled ? { disabled: true } : {}),
+      });
       const children = spec.children ?? [];
       childrenById.set(id, children.map((child) => child.id as NodeId));
       // Push in reverse so pop() visits children in document order — keeps
@@ -448,6 +490,13 @@ function validateNodeIdentity(
   if (value.kind !== "media" && value.kind !== "collection") {
     return invalidValue(`${path}.kind`, 'Expected "media" or "collection".');
   }
+  // Checked here rather than per-kind: `disabled` is on every node type, and
+  // a truthy non-boolean (the string "false", say) would otherwise be
+  // normalized to `disabled: true` by the parse path's `? :` and silently
+  // skip a clip in playback.
+  if (value.disabled !== undefined && typeof value.disabled !== "boolean") {
+    return invalidType(`${path}.disabled`, "Expected a boolean.");
+  }
   return null;
 }
 
@@ -555,7 +604,10 @@ export function parseCollectionItemNode(
   const id = parseNodeId(value.id as string);
   const name = value.name as string;
   if (value.kind === "collection") {
-    return { ok: true, value: { id, kind: "collection", name } };
+    return {
+      ok: true,
+      value: { id, kind: "collection", name, ...(value.disabled ? { disabled: true } : {}) },
+    };
   }
 
   const mediaError = validateMediaRecord(value, path, true);
@@ -576,6 +628,7 @@ export function parseCollectionItemNode(
         fullDurationSeconds: value.fullDurationSeconds as number,
         trimInSeconds: value.trimInSeconds as number,
         trimOutSeconds: value.trimOutSeconds as number,
+        ...(value.disabled ? { disabled: true } : {}),
       },
     };
   }
@@ -589,6 +642,7 @@ export function parseCollectionItemNode(
       name,
       src: value.src as string | undefined,
       durationSeconds: value.durationSeconds as number,
+      ...(value.disabled ? { disabled: true } : {}),
     },
   };
 }

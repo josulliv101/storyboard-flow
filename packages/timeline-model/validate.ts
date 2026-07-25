@@ -50,7 +50,12 @@ function hasClipBase(clip: Record<string, unknown>): boolean {
     isFiniteNumber(clip.trimIn) &&
     isFiniteNumber(clip.trimOut) &&
     isOptionalFiniteNumber(clip.playbackStartTime) &&
-    isOptionalFiniteNumber(clip.playbackDuration)
+    isOptionalFiniteNumber(clip.playbackDuration) &&
+    // Strictly boolean-or-absent. This gate guards the WRITE path, and a
+    // truthy non-boolean would be read as "skip this clip" by the playback
+    // and summary passes — a stored string "false" would silently drop a
+    // clip from the timeline.
+    (clip.disabled === undefined || typeof clip.disabled === "boolean")
   );
 }
 
