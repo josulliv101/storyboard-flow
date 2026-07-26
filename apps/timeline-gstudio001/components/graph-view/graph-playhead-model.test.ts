@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildGraph, type GraphNodeSpec } from "@storyboard/collections-core";
+import { buildGraph, parseNodeId, type GraphNodeSpec } from "@storyboard/collections-core";
 import type { PlaybackLeaf, PlaybackManifest } from "@storyboard/timeline-domain";
 
 import {
@@ -10,6 +10,7 @@ import {
   buildStripOverlay,
   cardSpansOf,
   childSpans,
+  flatCardSpans,
   isDisabledByAncestor,
   manifestTrailsLedger,
   MAX_MANIFEST_FETCH_RETRIES,
@@ -219,6 +220,117 @@ describe("playableSpanSeconds", () => {
 
   it("is zero when every card is disabled", () => {
     expect(playableSpanSeconds([card(0, 4, true), card(4.12, 8.12, true)])).toBe(0);
+  });
+});
+
+describe("flatCardSpans", () => {
+  const nested = () =>
+    graphOf([
+      collection("root", [
+        media("a", 4),
+        {
+          kind: "collection",
+          id: "scene",
+          name: "scene",
+          children: [media("s1", 4), media("s2", 4)],
+        },
+        media("b", 4),
+      ]),
+    ]);
+  const items = (graph: ReturnType<typeof graphOf>) => [
+    { nodeId: parseNodeId("a"), collectionPath: [] },
+    { nodeId: parseNodeId("s1"), collectionPath: [parseNodeId("scene")] },
+    { nodeId: parseNodeId("s2"), collectionPath: [parseNodeId("scene")] },
+    { nodeId: parseNodeId("b"), collectionPath: [] },
+  ];
+  const width = (seconds: number) => seconds * 10;
+
+  it("packs the run itself when no manifest has landed", () => {
+    const graph = nested();
+    const cards = flatCardSpans(graph, items(graph), "root", null, width);
+
+    expect(cards).toHaveLength(4);
+    // Leading padding, each duration, one gap between — the run's own packing,
+    // because items from different documents share no single projection.
+    // Rounded: the cumulative gap arithmetic lands a float ulp off exact.
+    const round = (value: number) => Math.round(value * 100) / 100;
+    expect(cards.map((card) => [round(card.startTime), round(card.endTime)])).toEqual([
+      [0, 4],
+      [4.12, 8.12],
+      [8.24, 12.24],
+      [12.36, 16.36],
+    ]);
+    expect(cards.map((card) => card.width)).toEqual([40, 40, 40, 40]);
+  });
+
+  it("reads each card's window from the manifest, keyed by its OWN parent", () => {
+    // The point of carrying the parent chain: s1/s2 are keyed under "scene",
+    // not under the focused root, so a flat strip lands on the same clock the
+    // preview plays.
+    const graph = nested();
+    const spans: PreviewCardSpans = new Map([
+      [mediaSpanKey("root", "a"), { start: 0, end: 4 }],
+      [mediaSpanKey("scene", "s1"), { start: 5, end: 9 }],
+      [mediaSpanKey("scene", "s2"), { start: 9, end: 13 }],
+      [mediaSpanKey("root", "b"), { start: 13, end: 17 }],
+    ]);
+
+    const cards = flatCardSpans(graph, items(graph), "root", spans, width);
+    expect(cards.map((card) => [card.startTime, card.endTime])).toEqual([
+      [0, 4],
+      [5, 9],
+      [9, 13],
+      [13, 17],
+    ]);
+  });
+
+  it("counts EVERY card as enabled when nothing is disabled", () => {
+    // Guards the header readout against an off-by-one: N items in, N counted.
+    const graph = nested();
+    const cards = flatCardSpans(graph, items(graph), "root", null, width);
+    expect(cards.filter((card) => card.disabled !== true)).toHaveLength(4);
+  });
+
+  it("marks a card disabled by an ANCESTOR that is off-screen in a flat run", () => {
+    // The whole reason inheritance is resolved here: in a flat run the
+    // disabled collection is not on screen to explain itself.
+    const graph = graphOf([
+      collection("root", [
+        {
+          kind: "collection",
+          id: "off",
+          name: "off",
+          disabled: true,
+          children: [media("x", 4)],
+        },
+        media("b", 4),
+      ]),
+    ]);
+    const cards = flatCardSpans(
+      graph,
+      [
+        { nodeId: parseNodeId("x"), collectionPath: [parseNodeId("off")] },
+        { nodeId: parseNodeId("b"), collectionPath: [] },
+      ],
+      "root",
+      null,
+      width,
+    );
+    expect(cards.map((card) => card.disabled)).toEqual([true, undefined]);
+  });
+
+  it("clamps monotonic when manifest-timed and packed cards mix", () => {
+    // Same invariant childSpans holds: the playhead map binary-searches the
+    // times array and returns garbage on an unsorted one.
+    const graph = nested();
+    const spans: PreviewCardSpans = new Map([
+      [mediaSpanKey("scene", "s2"), { start: 1, end: 2 }],
+    ]);
+    const times = flatCardSpans(graph, items(graph), "root", spans, width).flatMap((card) => [
+      card.startTime,
+      card.endTime,
+    ]);
+    expect([...times].sort((left, right) => left - right)).toEqual(times);
   });
 });
 

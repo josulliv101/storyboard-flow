@@ -25,6 +25,7 @@ import {
   hydratedCollectionPlayableDuration,
   manifestToClips,
   type DetailsById,
+  type FlatItem,
   type PlaybackManifest,
 } from "@storyboard/timeline-domain";
 
@@ -36,6 +37,7 @@ import {
   buildStripOverlay,
   cardSpansOf,
   childSpans,
+  flatCardSpans,
   formatRulerTick,
   manifestTrailsLedger,
   nextManifestClipsState,
@@ -146,6 +148,46 @@ function clipWidthAt(pixelsPerSecond: number): (clip: TimelineClip) => number {
 // wrong cards (the round-1 #6 bug).
 const PreviewCardSpansContext = createContext<PreviewCardSpans | null>(null);
 
+/**
+ * The FLAT run the strip is showing, or null in the ordinary nested reading.
+ *
+ * Every time overlay — ruler, playhead, seek rail — and the header aggregate
+ * derive their card windows from the focused collection's DIRECT children. In
+ * a flat run those are the wrong cards, so each of them reads this instead and
+ * measures the run actually on screen. Published by the board, which already
+ * computes the list for the strip itself, so the marks and the cards can never
+ * disagree about what they are describing.
+ */
+const FlatItemsContext = createContext<readonly FlatItem[] | null>(null);
+
+export function FlatItemsProvider({
+  items,
+  children,
+}: Readonly<{ items: readonly FlatItem[] | null; children: React.ReactNode }>) {
+  return <FlatItemsContext.Provider value={items}>{children}</FlatItemsContext.Provider>;
+}
+
+/**
+ * The cards a time overlay should measure: the flat run when one is showing,
+ * this collection's own children otherwise. One resolution, called from every
+ * overlay — including the ones that rebuild inside an effect rather than a
+ * memo, which is why it is a plain function and not a hook.
+ */
+function cardsFor(
+  graph: CollectionsGraph,
+  details: DetailsById,
+  focusedId: string,
+  spans: PreviewCardSpans | null,
+  pixelsPerSecond: number,
+  flatItems: readonly FlatItem[] | null,
+): ChildSpan[] {
+  return flatItems
+    ? flatCardSpans(graph, flatItems, focusedId, spans, (seconds) =>
+        durationToWidth(seconds, pixelsPerSecond),
+      )
+    : childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
+}
+
 /** The global-clock windows the pane is playing, or null when it is on the
  *  live projection (no manifest yet). Sub-rows use it both to gate their
  *  playhead — only shown when a manifest exists, since only then do their
@@ -177,8 +219,9 @@ export function useFocusedTimelineAggregate(
     () => detailsStore.read(),
     () => detailsStore.read(),
   );
+  const flatItems = useContext(FlatItemsContext);
   return useMemo(() => {
-    const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
+    const cards = cardsFor(graph, details, focusedId, spans, pixelsPerSecond, flatItems);
     // Enabled-only, both numbers: this readout says what a viewer would sit
     // through, which is NOT how far the playhead travels now that disabled
     // cards keep their span. The two disagree by design — the ruler runs
@@ -187,7 +230,7 @@ export function useFocusedTimelineAggregate(
       count: cards.filter((card) => card.disabled !== true).length,
       seconds: playableSpanSeconds(cards),
     };
-  }, [graph, details, focusedId, spans, pixelsPerSecond]);
+  }, [graph, details, focusedId, spans, pixelsPerSecond, flatItems]);
 }
 
 
@@ -209,6 +252,7 @@ export function GraphPlayhead({
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
   const spans = useContext(PreviewCardSpansContext);
+  const flatItems = useContext(FlatItemsContext);
   const lineRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -225,7 +269,7 @@ export function GraphPlayhead({
       lastGraph = graph;
       lastDetails = details;
       map = buildPlayheadMap(
-        childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
+        cardsFor(graph, details, focusedId, spans, pixelsPerSecond, flatItems),
       );
       return true;
     };
@@ -264,7 +308,7 @@ export function GraphPlayhead({
       unsubscribeStore();
       unsubscribeDetails();
     };
-  }, [store, detailsStore, focusedId, channel, spans, pixelsPerSecond, activeWindow]);
+  }, [store, detailsStore, focusedId, channel, spans, pixelsPerSecond, activeWindow, flatItems]);
 
   // No cap on the line: the seek rail's circular thumb above IS the
   // playhead's head now — the old triangle poked up over it. The stem
@@ -389,6 +433,7 @@ export function GraphRuler({
     [],
   );
   const tickWindow = useScrollerTickWindow(scroller);
+  const flatItems = useContext(FlatItemsContext);
   const graph = useSyncExternalStore(
     store.subscribe,
     () => store.getSnapshot().graph,
@@ -406,9 +451,14 @@ export function GraphRuler({
   // tick count follows the VIEWPORT, not the duration. Scrolling recomputes
   // only on chunk crossings (tickWindow identity is stable between them).
   const { ticks, collectionSpans, skips } = useMemo(() => {
-    const clips = graphChildrenToClips(graph, details, focusedId);
-    const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
-    const isCollection = clips.map((clip) => clip.kind === "collection");
+    const cards = cardsFor(graph, details, focusedId, spans, pixelsPerSecond, flatItems);
+    // A flat run holds no collections at all, so every card is ruled — the
+    // blank-interior rule exists only for collection cards.
+    const isCollection = flatItems
+      ? cards.map(() => false)
+      : graphChildrenToClips(graph, details, focusedId).map(
+          (clip) => clip.kind === "collection",
+        );
     return {
       ticks: buildRulerTicks(cards, isCollection, pixelsPerSecond, tickWindow),
       // A collection's interior gets no ticks (its width is not a time axis)
@@ -420,7 +470,7 @@ export function GraphRuler({
       // range as the ticks beside them.
       skips: buildStripOverlay(cards, tickWindow).skips,
     };
-  }, [graph, details, spans, focusedId, pixelsPerSecond, tickWindow]);
+  }, [graph, details, spans, focusedId, pixelsPerSecond, tickWindow, flatItems]);
 
   return (
     <div
@@ -1032,6 +1082,7 @@ export function GraphStripSeekRail({
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
   const spans = useContext(PreviewCardSpansContext);
+  const flatItems = useContext(FlatItemsContext);
   const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const fillRef = useRef<HTMLDivElement>(null);
@@ -1051,8 +1102,8 @@ export function GraphStripSeekRail({
     () => detailsStore.read(),
   );
   const cards = useMemo(
-    () => childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
-    [graph, details, spans, focusedId, pixelsPerSecond],
+    () => cardsFor(graph, details, focusedId, spans, pixelsPerSecond, flatItems),
+    [graph, details, spans, focusedId, pixelsPerSecond, flatItems],
   );
   const map = useMemo(() => buildPlayheadMap(cards), [cards]);
   const start = cards.length > 0 ? cards[0].startTime : 0;

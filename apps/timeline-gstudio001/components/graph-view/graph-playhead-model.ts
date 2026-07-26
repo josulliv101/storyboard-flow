@@ -1,7 +1,13 @@
-import { getChildren, parseNodeId, type CollectionsGraph } from "@storyboard/collections-core";
+import {
+  getChildren,
+  mediaDurationSeconds,
+  parseNodeId,
+  type CollectionsGraph,
+} from "@storyboard/collections-core";
 import {
   graphChildrenToClips,
   type DetailsById,
+  type FlatItem,
   type PlaybackManifest,
 } from "@storyboard/timeline-domain";
 import {
@@ -275,6 +281,61 @@ export function childSpans(
  * Card lengths come from `childSpans`, so a collection contributes the
  * manifest's full-depth window rather than a stored summary guess.
  */
+/**
+ * `childSpans` for a FLAT run — the same card windows, for a list that spans
+ * many parents instead of one collection's children.
+ *
+ * The manifest keys each media leaf by `mediaSpanKey(parent, id)`, and a flat
+ * item carries its parent chain, so the lookup is exact per card: a flat strip
+ * reads the SAME clock the preview plays, card for card, without the caller
+ * having to know which collection any of them came from.
+ *
+ * The fallback (no manifest yet) packs the run itself — leading padding, each
+ * duration, one gap between — because there is no single projection to borrow
+ * from when the items come from different documents. Same monotonic clamp as
+ * `childSpans`, and for the same reason: mixing manifest-timed and
+ * fallback-timed cards can otherwise produce an unsorted times array, and the
+ * playhead map's binary search silently returns garbage on one.
+ */
+export function flatCardSpans(
+  graph: CollectionsGraph,
+  items: readonly FlatItem[],
+  focusedId: string,
+  spans: PreviewCardSpans | null,
+  widthForSeconds: (seconds: number) => number,
+): ChildSpan[] {
+  let previousEnd = 0;
+  let cursor = TIMELINE_LEADING_PADDING_SECONDS;
+
+  return items.map((item) => {
+    const node = graph.nodesById.get(item.nodeId);
+    const seconds = node && node.kind === "media" ? mediaDurationSeconds(node) : 0;
+    const parentId =
+      (item.collectionPath[item.collectionPath.length - 1] as string | undefined) ?? focusedId;
+    const span = spans?.get(mediaSpanKey(parentId, item.nodeId as string));
+
+    const fallbackStart = cursor;
+    cursor += seconds + CLIP_GAP_SECONDS;
+
+    const startTime = Math.max(span ? span.start : fallbackStart, previousEnd);
+    const endTime = Math.max(span ? span.end : fallbackStart + seconds, startTime);
+    previousEnd = endTime;
+
+    // A flat card is disabled by its OWN flag or by any collection above it —
+    // and in a flat run those ancestors are off-screen, which is exactly why
+    // the inherited case has to be resolved here rather than assumed away.
+    const disabled =
+      node?.disabled === true || isDisabledByAncestor(graph, item.nodeId as string);
+
+    return {
+      width: widthForSeconds(seconds),
+      startTime,
+      endTime,
+      ...(disabled ? { disabled: true } : {}),
+    };
+  });
+}
+
 export type StripSegment = Readonly<{ x: number; width: number }>;
 
 export type StripOverlay = Readonly<{
