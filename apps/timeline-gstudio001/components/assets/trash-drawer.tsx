@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   Trash2,
@@ -14,6 +14,9 @@ import { usePathname } from "next/navigation";
 import { Button } from "@/components/core/button";
 import { toast } from "@/components/core/sonner";
 import { trashRowCaption } from "@/lib/trash-provenance";
+import { groupTrashClips } from "@/lib/trash-groups";
+import { discardTrashClips } from "@/lib/graph-trash-discard";
+import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
   GRAPH_RESTORE_RESULT_EVENT,
@@ -104,13 +107,16 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   const pathname = usePathname();
   const canRestore = isGraphViewRoute(pathname);
   const focusedName = "the open timeline";
-  const [restoringId, setRestoringId] = useState<string | null>(null);
+  // A SET, not one id: "Restore all" puts several in flight at once, and a
+  // single slot would leave every button but the last looking idle.
+  const [restoringIds, setRestoringIds] = useState<readonly string[]>([]);
 
+  const uid = user?.uid;
   useEffect(() => {
     const onResult = (event: Event) => {
       const detail = (event as CustomEvent<GraphRestoreResultDetail>).detail;
       if (!detail) return;
-      setRestoringId((current) => (current === detail.clipId ? null : current));
+      setRestoringIds((current) => current.filter((id) => id !== detail.clipId));
       if (detail.ok) {
         // Drop ONE row for that clip id — the bin can hold the same id more
         // than once and the graph restored exactly one of them. The updater
@@ -118,11 +124,32 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
         // one yet" flag: React may invoke an updater more than once, and a
         // flag that survives between invocations made the second pass remove
         // nothing, leaving the restored row on screen.
+        const duplicates = addedGroupRef.current.get(detail.clipId) ?? [];
+        addedGroupRef.current.delete(detail.clipId);
         setClips((current) => {
-          const index = current.findIndex((clip) => clip.id === detail.clipId);
-          if (index === -1) return current;
-          return [...current.slice(0, index), ...current.slice(index + 1)];
+          // Drop the clip that was added, plus the duplicates that came with
+          // its row — the row stood for one image and that image is now taken.
+          const doomed = new Set([detail.clipId, ...duplicates]);
+          const kept: TimelineClip[] = [];
+          const removedOnce = new Set<string>();
+          for (const clip of current) {
+            // One removal per id: the bin can hold the same id twice, and only
+            // as many as this row accounted for may go.
+            if (doomed.has(clip.id) && !removedOnce.has(clip.id)) {
+              removedOnce.add(clip.id);
+              continue;
+            }
+            kept.push(clip);
+          }
+          return kept;
         });
+        // The add moved ONE clip out of the bin through the graph; these never
+        // move anywhere, so they need a real discard — which has to wait for
+        // the graph's own (debounced) trash write to land first, or it gets
+        // overwritten by it. See lib/graph-trash-discard.ts.
+        if (duplicates.length > 0 && uid) {
+          void discardTrashClips(duplicates, `trash-${uid}`, graphDocumentsGateway);
+        }
       }
       // Sonner, like every other surface in the app. This used to dispatch a
       // bespoke `gstudio-toast` event that the sidebar rendered as its own
@@ -134,11 +161,40 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
     };
     window.addEventListener(GRAPH_RESTORE_RESULT_EVENT, onResult);
     return () => window.removeEventListener(GRAPH_RESTORE_RESULT_EVENT, onResult);
-  }, []);
+  }, [uid]);
 
   const handleRestore = (clipId: string) => {
-    setRestoringId(clipId);
+    setRestoringIds((current) => [...current, clipId]);
     requestGraphRestoreItem(clipId);
+  };
+
+  /**
+   * Add the row's image to whatever timeline is open, and clear it from the
+   * bin entirely.
+   *
+   * This was never "put it back where it came from" — the graph inserts at
+   * `resolveInsertPlacement`, i.e. into the FOCUSED timeline — but calling it
+   * Restore implied otherwise. The bin is a place you take images from; where
+   * they land is wherever you are.
+   *
+   * The bin holds one row per IMAGE. How many clips happen to back that row
+   * is bookkeeping the user never asked about, so taking the image takes ALL
+   * of them: one copy is added, and any duplicates are discarded rather than
+   * left behind as a row that looks unchanged after you just used it.
+   *
+   * The discard is deliberately AFTER the add succeeds. If the add is refused
+   * (no graph, an un-hydrated target), nothing has been taken and nothing may
+   * be thrown away.
+   */
+  const addedGroupRef = useRef(new Map<string, readonly string[]>());
+  const handleAddToTimeline = (group: { key: string; clips: readonly TimelineClip[] }) => {
+    const [first, ...duplicates] = group.clips;
+    if (!first) return;
+    addedGroupRef.current.set(
+      first.id,
+      duplicates.map((clip) => clip.id),
+    );
+    handleRestore(first.id);
   };
 
   const handleEmptyTrash = async () => {
@@ -240,16 +296,22 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
             </div>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 p-5">
-              {clips.map((clip, index) => (
+              {groupTrashClips(clips).map((group, index) => {
+                // The row stands for the IMAGE, not one clip: every field it
+                // paints comes from the first copy, which is safe precisely
+                // because copies of one asset share them.
+                const clip = group.clips[0];
+                const busy = group.clips.some((entry) => restoringIds.includes(entry.id));
+                return (
                 <div
-                  // Keyed by SLOT, not by clip id: the trash document can
+                  // Keyed by SLOT as well as identity: the trash document can
                   // legitimately hold the same id more than once (the legacy
                   // views mint stable per-asset clip ids, so one asset trashed
                   // from two timelines arrives twice — the graph's own
                   // hydration demotes such collisions for the same reason).
                   // An id key made React log a duplicate-key error per repeat
                   // and drop cards from the grid.
-                  key={`${index}-${clip.id}`}
+                  key={`${index}-${group.key}`}
                   className="relative group rounded-lg overflow-hidden border border-zinc-900 bg-zinc-900/20 p-2 hover:border-zinc-800 transition-colors"
                 >
                   <div className="aspect-video relative rounded bg-black/60 overflow-hidden flex items-center justify-center border border-zinc-800/40">
@@ -303,19 +365,20 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={restoringId === clip.id}
-                        onClick={() => handleRestore(clip.id)}
-                        title={`Restore into ${focusedName}`}
-                        aria-label={`Restore ${(clip as any).title || clip.alt || "clip"}`}
+                        disabled={busy}
+                        onClick={() => handleAddToTimeline(group)}
+                        title={`Add to ${focusedName}`}
+                        aria-label={`Add ${(clip as any).title || clip.alt || "clip"} to ${focusedName}`}
                         className="h-6 shrink-0 border-zinc-800 px-2 text-[10px] text-zinc-300 hover:border-sky-500/50 hover:text-sky-300 cursor-pointer"
                       >
                         <Undo2 className="mr-1 h-3 w-3" />
-                        Restore
+                        Add
                       </Button>
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </main>
