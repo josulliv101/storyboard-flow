@@ -288,8 +288,14 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       [itemIds],
     );
     // The item source as the change-feed subscriber sees it (see its own note).
+    // Written in an EFFECT, not during render — a render-time ref write is a
+    // lint error in this repo. One commit of lag is harmless here: the
+    // subscriber only uses it for `nodes-updated`, whose membership and order
+    // are identical in the previous list by definition.
     const shownIdsRef = useRef<readonly NodeId[] | null>(null);
-    shownIdsRef.current = itemIds ?? null;
+    useEffect(() => {
+      shownIdsRef.current = itemIds ?? null;
+    }, [itemIds]);
     const selectedVideo = useCollectionsSelector((s) => {
       for (const id of s.interaction.selectedIds) {
         if (shownIds ? !shownIds.has(id) : s.graph.parentById.get(id) !== collectionId) continue;

@@ -38,6 +38,7 @@ import {
   GRAPH_ASSETS_TOGGLE_EVENT,
   GRAPH_CHILDREN_TOGGLE_EVENT,
   GRAPH_PREVIEW_TOGGLE_EVENT,
+  GRAPH_FLAT_TOGGLE_EVENT,
   GRAPH_RULER_TOGGLE_EVENT,
   GRAPH_SURFACE_EVENT,
   GRAPH_TRASH_EMPTIED_EVENT,
@@ -53,7 +54,7 @@ import { trashDocumentId as deriveTrashDocumentId } from "./trash-document-id";
 
 import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
 import { GraphDetailsProvider } from "./graph-details-context";
-import { HydrationController } from "./graph-hydration";
+import { FlatClosureHydrator, HydrationController } from "./graph-hydration";
 import { GraphItemActionsBridge } from "./graph-item-actions";
 import { McpToolsBridge } from "./graph-mcp-tools";
 import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
@@ -158,6 +159,10 @@ export function GraphTimelineView({
   const [childrenShown, setChildrenShown] = useState(false);
   const [previewOn, setPreviewOn] = useState(false);
   const [rulerOn, setRulerOn] = useState(false);
+  // Flat mode: every item in the focused closure, in order, no nesting.
+  // Strip-only — grid has no equivalent, and leaving grid turns it off below.
+  const [flatOn, setFlatOn] = useState(false);
+  const [flatLoading, setFlatLoading] = useState(false);
   const [timeChannel] = useState(createPreviewTimeChannel);
   const [assetsOpen, setAssetsOpen] = useState(false);
 
@@ -175,14 +180,17 @@ export function GraphTimelineView({
       if (detail === "strip" || detail === "grid") setSurface(detail);
     };
     const onRulerToggle = () => setRulerOn((current) => !current);
+    const onFlatToggle = () => setFlatOn((current) => !current);
     const onChildrenToggle = () => setChildrenShown((current) => !current);
     const onPreviewToggle = () => setPreviewOn((current) => !current);
     window.addEventListener(GRAPH_SURFACE_EVENT, onSurface);
+    window.addEventListener(GRAPH_FLAT_TOGGLE_EVENT, onFlatToggle);
     window.addEventListener(GRAPH_RULER_TOGGLE_EVENT, onRulerToggle);
     window.addEventListener(GRAPH_CHILDREN_TOGGLE_EVENT, onChildrenToggle);
     window.addEventListener(GRAPH_PREVIEW_TOGGLE_EVENT, onPreviewToggle);
     return () => {
       window.removeEventListener(GRAPH_SURFACE_EVENT, onSurface);
+      window.removeEventListener(GRAPH_FLAT_TOGGLE_EVENT, onFlatToggle);
       window.removeEventListener(GRAPH_RULER_TOGGLE_EVENT, onRulerToggle);
       window.removeEventListener(GRAPH_CHILDREN_TOGGLE_EVENT, onChildrenToggle);
       window.removeEventListener(GRAPH_PREVIEW_TOGGLE_EVENT, onPreviewToggle);
@@ -192,8 +200,24 @@ export function GraphTimelineView({
   // …and this broadcast (on mount and every change) is what lets its
   // controls show the current surface, ruler, children, and preview state.
   useEffect(() => {
-    broadcastGraphViewState({ surface, rulerOn, childrenShown, previewOn });
-  }, [surface, rulerOn, childrenShown, previewOn]);
+    broadcastGraphViewState({ surface, rulerOn, childrenShown, previewOn, flatOn, flatLoading });
+  }, [surface, rulerOn, childrenShown, previewOn, flatOn, flatLoading]);
+
+  // Flat mode is a STRIP reading. Leaving strip drops it rather than letting it
+  // sit armed and re-apply invisibly on the way back — the grid never showed a
+  // flat run, so returning to a flat strip the user did not ask for would be a
+  // surprise. Adjusted during render (the repo's cascading-render-safe pattern)
+  // rather than in an effect, which the set-state-in-effect lint forbids.
+  const [prevSurface, setPrevSurface] = useState(surface);
+  if (prevSurface !== surface) {
+    setPrevSurface(surface);
+    if (surface !== "strip" && flatOn) setFlatOn(false);
+  }
+
+  // The closure hydration flat mode needs runs in `FlatClosureHydrator`, which
+  // is mounted INSIDE the provider below — the collections store only exists
+  // there. This component owns the flag and the pending state; the hydrator
+  // reports back through `setFlatLoading`.
 
   const gatewayError = useSyncExternalStore(
     graphDocumentsGateway.subscribe,
@@ -367,8 +391,37 @@ export function GraphTimelineView({
   // closure never goes stale. The onSync call is a deliberate exception to
   // the "pure predicate" rule — it feeds the SyncPanel's telemetry and fires
   // at most once per blocked dispatch.
+  // Read live rather than closed over: the policy closure is handed to the
+  // provider once, and a stale `flatOn` would let a reorder through the moment
+  // the user toggled flat on.
+  const flatOnRef = useRef(flatOn);
+  useEffect(() => {
+    flatOnRef.current = flatOn;
+  }, [flatOn]);
+
   const commandPolicy = useCallback<CommandPolicy>(
     (command) => {
+      // FLAT MODE refuses POSITION-based commands.
+      //
+      // Reordering: the owner's call, and the reason is the UI's — which
+      // collection an item belongs to stops being visible in a flat run, so a
+      // drag whose whole meaning is "put it here, among these" has no honest
+      // reading.
+      //
+      // Adding: a correctness bar, not a design one, and it lifts once the
+      // translation lands. The strip publishes boundaries into the FLAT list
+      // while the drop intent still names the focused collection, so a drop
+      // committed today would insert at a flat index inside the wrong parent.
+      // `resolveFlatDropTarget` is the rule that fixes it; until it is wired,
+      // refusing beats landing items somewhere nobody chose.
+      if (flatOnRef.current && (command.type === "move-nodes" || command.type === "add-nodes")) {
+        const message =
+          command.type === "move-nodes"
+            ? "Reordering is off while every item is shown — open the collection to reorder inside it."
+            : "Adding is off while every item is shown — open a collection to add to it.";
+        toast.error(message, { id: "flat-mode-blocked" });
+        return { reason: "blocked-by-policy", blockedIds: [], message };
+      }
       const blocked = collectUnhydratedDropTargets(command, detailsStore.read());
       if (blocked.length === 0) return null;
       onSync({
@@ -513,6 +566,14 @@ export function GraphTimelineView({
             serverPrimed={bootedFromServer}
             onFocusError={setFocusError}
           />
+          {/* Flat mode needs the WHOLE closure loaded, not just the focus
+              chain — mounted here because the collections store lives only
+              inside the provider. */}
+          <FlatClosureHydrator
+            enabled={flatOn}
+            focusedId={focusedId}
+            onLoadingChange={setFlatLoading}
+          />
 
           <GraphViewNavProvider
             projectId={projectId}
@@ -544,6 +605,7 @@ export function GraphTimelineView({
                 onPixelsPerSecondChange={setPixelsPerSecond}
                 previewOn={previewOn}
                 rulerOn={rulerOn}
+                flatOn={flatOn}
                 storyboardHref={storyboardHref}
                 childrenShown={childrenShown}
                 timeChannel={timeChannel}

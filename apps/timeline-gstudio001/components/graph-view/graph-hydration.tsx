@@ -181,3 +181,111 @@ export function HydrationController({
 
   return null;
 }
+
+/**
+ * Hydrate the WHOLE closure under `rootId` — every nested collection, to any
+ * depth — and resolve once nothing is left unhydrated.
+ *
+ * Flat mode needs this and the nested board does not: a strip showing one
+ * collection's children only ever needs that collection loaded, but a flat run
+ * IS the closure, so an unhydrated branch is not a collapsed row the user can
+ * open — it is items silently missing from a list that claims to be complete.
+ *
+ * A LOOP rather than one pass, because hydrating a level is what reveals the
+ * next: a placeholder's children only exist after its own document lands. Each
+ * round hydrates every placeholder it can currently see, then re-reads the
+ * graph and looks again; it ends when a round finds none.
+ *
+ * Rounds are bounded. Hydration can legitimately fail (a missing document, or
+ * another user's) — `hydrateTimeline` reports that and returns, leaving the
+ * collection unhydrated forever, so an unbounded loop would spin on it. The
+ * cap also covers a graph deeper than any real timeline.
+ *
+ * `onProgress` fires after each round so a caller can show what has landed so
+ * far; the gateway dedupes concurrent `ensure`s for the same id, so hydrating a
+ * level in parallel costs one request per document, not one per reference.
+ */
+export async function hydrateClosure(
+  store: CollectionsStore,
+  detailsStore: GraphDetailsStore,
+  rootId: string,
+  { maxRounds = 16, onProgress }: Readonly<{
+    maxRounds?: number;
+    onProgress?: () => void;
+  }> = {},
+): Promise<void> {
+  for (let round = 0; round < maxRounds; round += 1) {
+    const graph = store.getSnapshot().graph;
+    const details = detailsStore.read();
+    const pending: string[] = [];
+
+    // Collect every unhydrated collection under the root, this round.
+    const seen = new Set<string>();
+    const visit = (id: string) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      for (const childId of getChildren(graph, parseNodeId(id))) {
+        const node = graph.nodesById.get(childId);
+        if (!node || node.kind !== "collection") continue;
+        const childKey = childId as string;
+        if (details[childKey]?.hydrated === true) visit(childKey);
+        else pending.push(childKey);
+      }
+    };
+    visit(rootId);
+
+    if (pending.length === 0) return;
+    // Parallel within a round: these are independent documents, and the
+    // gateway collapses duplicate ids for us.
+    await Promise.all(pending.map((id) => hydrateTimeline(store, detailsStore, id)));
+    onProgress?.();
+
+    // A round that hydrated nothing NEW would loop forever — every id in
+    // `pending` failed to load and will keep failing. Stop and let their
+    // reported errors stand.
+    const after = detailsStore.read();
+    if (!pending.some((id) => after[id]?.hydrated === true)) return;
+  }
+}
+
+/**
+ * Loads the whole closure while FLAT mode is on.
+ *
+ * Mounted inside the provider (the collections store lives only there) and
+ * reports its pending state up, because the flag itself belongs to the view
+ * state the sidebar mirrors.
+ *
+ * Re-runs on focus change as well as on entry: drilling into a different
+ * collection while flat is on makes a different closure the subject.
+ */
+export function FlatClosureHydrator({
+  enabled,
+  focusedId,
+  onLoadingChange,
+}: Readonly<{
+  enabled: boolean;
+  focusedId: string;
+  onLoadingChange: (loading: boolean) => void;
+}>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+
+  useEffect(() => {
+    if (!enabled) {
+      onLoadingChange(false);
+      return;
+    }
+    let cancelled = false;
+    onLoadingChange(true);
+    void hydrateClosure(store, detailsStore, focusedId).finally(() => {
+      // A focus change or a flat-mode exit already superseded this run; its
+      // "finished" would clear a flag the NEXT run had just raised.
+      if (!cancelled) onLoadingChange(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, focusedId, store, detailsStore, onLoadingChange]);
+
+  return null;
+}
