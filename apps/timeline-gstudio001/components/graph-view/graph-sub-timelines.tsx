@@ -40,6 +40,7 @@ import {
   ITEM_SIZE_DIMENSIONS,
   MAX_SUBTREE_DEPTH,
   SUBTIMELINE_INDENT_PX,
+  SUBTIMELINE_PANEL_RIGHT_INSET_PX,
   type FocusSurface,
   type ItemSize,
 } from "./graph-view-config";
@@ -242,6 +243,13 @@ function SubTimelineNode({
           aria-hidden="true"
           data-subtimeline-thumbs
           className="flex h-10 w-[72px] shrink-0 overflow-hidden rounded-sm bg-zinc-950/60"
+          // Cancel the right inset this row's ANCESTOR panels impose, so every
+          // preview in the tree lands on one vertical line however deeply the
+          // row is nested. Without it each level shifted the frames 13px left
+          // and the column read as ragged. The frames deliberately overhang
+          // the nested panels' right edges to get there — that is the point:
+          // they belong to the column, not to the panel they sit in.
+          style={{ marginRight: -(depth * SUBTIMELINE_PANEL_RIGHT_INSET_PX) }}
         >
           {previewFrames.map((frame, index) => (
             // Keyed by SLOT, not content: the pair is order-stable and the

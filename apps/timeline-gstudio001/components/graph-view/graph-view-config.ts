@@ -107,3 +107,18 @@ export const FALLBACK_DETAIL: ClipDetail = {
   aspect: 16 / 9,
   trackIndex: 0,
 };
+
+/**
+ * How far each nesting level pushes a sub-timeline row's RIGHT edge inward:
+ * the panel's own `p-3` (12px) plus its 1px border. The left indent
+ * (SUBTIMELINE_INDENT_PX) is what makes the hierarchy readable and is
+ * deliberately NOT cancelled — but the right side accumulating the same way
+ * staggered the rows' preview frames, so a depth-3 row's frames sat 39px left
+ * of a depth-0 row's and the column read as ragged.
+ *
+ * COUPLED to the row panel's `p-3 border` classes in graph-sub-timelines.tsx:
+ * change the padding or border there and this must change with it. It is a
+ * literal because Tailwind needs literal class names, so the two cannot be
+ * derived from one source.
+ */
+export const SUBTIMELINE_PANEL_RIGHT_INSET_PX = 13;
