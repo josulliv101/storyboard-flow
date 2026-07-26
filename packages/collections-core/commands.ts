@@ -62,9 +62,19 @@ export type CollectionsCommand =
     }>
   | Readonly<{
       type: "set-node-disabled";
-      /** Any node — media or collection. Structure is untouched. */
-      nodeId: NodeId;
-      /** True to skip the node (and its subtree) in playback and totals. */
+      /**
+       * Any nodes — media or collection. Structure is untouched.
+       *
+       * A LIST, because disabling a multi-selection is ONE user action and has
+       * to be one command: dispatching per node produced N history entries (so
+       * undo restored one item at a time), N reducer passes, and N persistence
+       * notifications. The `nodes-updated` patch already carried an array of
+       * updates, so the batch costs nothing structurally.
+       */
+      nodeIds: readonly NodeId[];
+      /** True to skip the nodes (and their subtrees) in playback and totals.
+       *  One decision for the whole batch — a mixed selection resolves to a
+       *  single target state rather than each item flipping its own way. */
       disabled: boolean;
     }>;
 
@@ -115,7 +125,7 @@ export function applyCommand(
     return applyMediaUpdate(graph, command.nodeId, command.update);
   }
   if (command.type === "set-node-disabled") {
-    return applySetDisabled(graph, command.nodeId, command.disabled);
+    return applySetDisabled(graph, command.nodeIds, command.disabled);
   }
   if (command.type === "rename-node") {
     return applyRename(graph, command.nodeId, command.name);
@@ -375,27 +385,40 @@ function applyRename(
  */
 function applySetDisabled(
   graph: CollectionsGraph,
-  nodeId: NodeId,
+  nodeIds: readonly NodeId[],
   disabled: boolean
 ): Result<ApplyCommandSuccess, CommandRejection> {
-  const node = graph.nodesById.get(nodeId);
-  if (!node) return { ok: false, error: { reason: "missing-node", nodeId } };
-  if ((node.disabled ?? false) === disabled) {
-    return { ok: false, error: { reason: "same-position" } };
+  if (nodeIds.length === 0) return { ok: false, error: { reason: "nothing-to-add" } };
+
+  const updates: { nodeId: NodeId; before: CollectionItemNode; after: CollectionItemNode }[] = [];
+  const seen = new Set<NodeId>();
+  for (const nodeId of nodeIds) {
+    // A repeated id would emit two updates for one node, and the second's
+    // `before` would already be the first's `after` — an unreversible patch.
+    if (seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    const node = graph.nodesById.get(nodeId);
+    // A MISSING node is still an error: the caller named something that does
+    // not exist, and silently skipping it would hide a real bug.
+    if (!node) return { ok: false, error: { reason: "missing-node", nodeId } };
+    // A node already in the target state contributes nothing. Skipped rather
+    // than rejected, so disabling a partly-disabled selection still works —
+    // the whole batch is only a no-op when EVERY node is already there.
+    if ((node.disabled ?? false) === disabled) continue;
+
+    let after: CollectionItemNode;
+    if (disabled) {
+      after = { ...node, disabled: true };
+    } else {
+      const { disabled: _enabled, ...rest } = node;
+      after = rest as CollectionItemNode;
+    }
+    updates.push({ nodeId, before: node, after });
   }
 
-  let after: CollectionItemNode;
-  if (disabled) {
-    after = { ...node, disabled: true };
-  } else {
-    const { disabled: _enabled, ...rest } = node;
-    after = rest as CollectionItemNode;
-  }
+  if (updates.length === 0) return { ok: false, error: { reason: "same-position" } };
 
-  const patch: CollectionsPatch = {
-    type: "nodes-updated",
-    updates: [{ nodeId, before: node, after }],
-  };
+  const patch: CollectionsPatch = { type: "nodes-updated", updates };
   return { ok: true, value: { graph: applyPatch(graph, patch), patch } };
 }
 

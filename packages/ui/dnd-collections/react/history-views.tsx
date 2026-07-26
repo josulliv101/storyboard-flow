@@ -22,7 +22,7 @@ function describeCommand(command: CollectionsCommand): string {
     case "rename-node":
       return `rename ${command.nodeId} → "${command.name}"`;
     case "set-node-disabled":
-      return `${command.disabled ? "disable" : "enable"} ${command.nodeId}`;
+      return `${command.disabled ? "disable" : "enable"} [${command.nodeIds.join(", ")}]`;
   }
 }
 

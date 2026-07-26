@@ -511,25 +511,30 @@ export function GraphItemActionsBridge({
         case "toggle-disabled": {
           const selected = [...store.getSnapshot().interaction.selectedIds];
           if (selected.length === 0) break;
-          // One command per node, but ONE decision for the whole selection:
-          // every node goes to the same state, so a mixed selection resolves
-          // instead of each item flipping its own way. Re-read `disabled`
-          // from the live graph rather than trusting the sidebar's broadcast,
-          // which is a frame behind.
+          // ONE command for the whole selection — one history entry, one
+          // reducer pass, one persistence notification. Dispatching per node
+          // made undo give the items back one at a time, which is not what the
+          // user did. Nodes already in the target state are skipped inside the
+          // reducer, so a partly-disabled selection still resolves in one go.
+          //
+          // Re-read `disabled` from the live graph rather than trusting the
+          // sidebar's broadcast, which is a frame behind.
           const graph = store.getSnapshot().graph;
           const nextDisabled = selected.some(
             (id) => graph.nodesById.get(id)?.disabled !== true,
           );
-          let changed = 0;
-          for (const nodeId of selected) {
-            // A node already in the target state is refused as `same-position`
-            // and never enters history — so this loop cannot pad undo with
-            // no-ops when only part of the selection needs changing.
-            if (store.dispatch({ type: "set-node-disabled", nodeId, disabled: nextDisabled }).ok) {
-              changed += 1;
-            }
-          }
-          if (changed > 0) {
+          const result = store.dispatch({
+            type: "set-node-disabled",
+            nodeIds: selected,
+            disabled: nextDisabled,
+          });
+          if (result.ok) {
+            // What actually CHANGED, which is what the patch carries — not the
+            // selection size, since part of it may already have been there.
+            const changed =
+              result.value.type === "nodes-updated"
+                ? result.value.updates.length
+                : selected.length;
             toast(
               `${nextDisabled ? "Disabled" : "Enabled"} ${changed} item${changed === 1 ? "" : "s"}.`,
               { id: "graph-item-disable" },
