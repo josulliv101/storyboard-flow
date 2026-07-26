@@ -16,6 +16,7 @@ import {
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
+import { useCollectionPreviewFrames } from "./graph-item-content";
 import { hydrateTimeline } from "./graph-hydration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { NativeDropGrid, NativeDropStrip } from "./graph-native-drop";
@@ -141,6 +142,8 @@ function SubTimelineNode({
     }
     return total;
   });
+  // Same pair the card shows; empty until an un-hydrated row loads.
+  const previewFrames = useCollectionPreviewFrames(id, hydrated, detail?.previewItems);
   const childIds = useCollectionChildIds(collectionId);
   const status = subTimelineRowStatus({ expanded, hydrated, failed });
 
@@ -218,12 +221,43 @@ function SubTimelineNode({
             {subTimelineRowStatusLabel(status)}
           </span>
         )}
-        {/* No drill-in control here. This row already has the affordance that
-            matters — the folder toggle opens the timeline IN PLACE, which is
-            what the children tree is for — so a second control that navigated
-            AWAY from it was answering a question the row does not ask. The
-            collection CARD keeps its drill button; that is where "go to this
-            timeline" belongs. */}
+        <span className="grow" />
+        {/* DECORATIVE only — no drill-in. This row's affordance is the folder
+            toggle, which opens the timeline in place; a second control that
+            navigated away was answering a question the row does not ask. These
+            frames just say WHICH timeline the row is, which a name alone does
+            not when you are scanning a nested tree.
+            
+            aria-hidden and not focusable, so the row's accessible surface is
+            still exactly its toggle and its name.
+
+            The frames butt directly together and fill the box — no gap, no
+            backing colour showing through as a gutter — and the box is sized
+            to the row's full header height rather than sitting inside it.
+
+            Same first/last pair the card shows, from one shared hook: the row
+            is the tree view of the very cards beside it, so two derivations of
+            "what this timeline looks like" would drift in plain sight. */}
+        <span
+          aria-hidden="true"
+          data-subtimeline-thumbs
+          className="flex h-10 w-[72px] shrink-0 overflow-hidden rounded-sm bg-zinc-950/60"
+        >
+          {previewFrames.map((frame, index) => (
+            // Keyed by SLOT, not content: the pair is order-stable and the
+            // same asset can be both first and last, so a content key would
+            // collide AND remount an already-loaded frame on every child edit.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={index}
+              src={frame.poster ?? frame.src}
+              alt=""
+              draggable={false}
+              loading="lazy"
+              className="h-full min-w-0 flex-1 object-cover"
+            />
+          ))}
+        </span>
       </div>
 
       {expanded && hydrated && (
