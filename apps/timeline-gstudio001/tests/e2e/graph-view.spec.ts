@@ -3437,13 +3437,12 @@ test.describe("graph view E2E", () => {
       .poll(() => stripOrder(page, PROJECT_ID), { timeout: 15000 })
       .toEqual(["alpha", "bravo", "c1", "c2", "charlie"]);
 
-    // The time overlays stay off: they position through the focused
-    // collection's DIRECT children, so in a flat run they would mark the wrong
-    // cards. Showing nothing is deliberate until the flat span model lands.
+    // The time overlays now measure the FLAT run rather than the focused
+    // collection's direct children, so the ruler rules the cards on screen.
     await page.getByRole("button", { name: /show time ruler/i }).click();
-    await expect(page.locator("[data-graph-ruler]")).toHaveCount(0);
+    await expect(page.locator("[data-graph-ruler]")).toHaveCount(1);
 
-    // Leaving flat mode restores the nested reading — and the ruler with it.
+    // Leaving flat mode restores the nested reading.
     await page.getByRole("button", { name: "Show collections" }).click();
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))

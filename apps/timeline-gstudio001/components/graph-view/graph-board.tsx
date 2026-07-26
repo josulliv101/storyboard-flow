@@ -39,6 +39,7 @@ import {
   GraphPlayhead,
   GraphRuler,
   GraphSeekRails,
+  FlatItemsProvider,
   GraphStripSeekRail,
   PreviewShell,
   collectionCardWidth,
@@ -374,18 +375,23 @@ export function GraphBoard({
   // strip mid-drag. `undefined` when flat is off, which is what makes the
   // strip fall back to the focused collection's own children.
   const graph = useCollectionsSelector((s) => s.graph);
-  const flatItemIds = useMemo(
+  // The ITEMS, not just their ids: the strip needs the ids, and every time
+  // overlay needs each item's parent chain to look up its manifest span.
+  const flatItems = useMemo(
     () =>
-      flatOn
-        ? flattenMediaOrder(graph, parseNodeId(focusedId), MAX_SUBTREE_DEPTH).map(
-            (item) => item.nodeId,
-          )
-        : undefined,
+      flatOn ? flattenMediaOrder(graph, parseNodeId(focusedId), MAX_SUBTREE_DEPTH) : null,
     [flatOn, graph, focusedId],
+  );
+  const flatItemIds = useMemo(
+    () => flatItems?.map((item) => item.nodeId),
+    [flatItems],
   );
 
   return (
     <OpenKeyBoundary trashId={trashRootId}>
+      {/* Published ABOVE the preview shell so the header aggregate and every
+          time overlay inside it measure the run actually on screen. */}
+      <FlatItemsProvider items={flatItems}>
       <PreviewShell enabled={previewOn} focusedId={focusedId} channel={timeChannel}>
         {/* Outside the surface branch on purpose: the sidebar's tool buttons
             must insert in grid mode too, where no NativeDropStrip exists. */}
@@ -474,14 +480,7 @@ export function GraphBoard({
                 itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
-                  // FLAT mode carries no time overlays yet. The ruler, the
-                  // playhead and the rail below all position through
-                  // `childSpans`, which maps the focused collection's DIRECT
-                  // children — in a flat run those are the wrong cards, so the
-                  // marks would land on items they do not describe. Showing
-                  // nothing is the honest state until the flat span model
-                  // lands; the preview pane itself still plays.
-                  !flatOn && (previewOn || rulerOn) ? (
+                  previewOn || rulerOn ? (
                     <>
                       {rulerOn ? (
                         <GraphRuler
@@ -508,7 +507,7 @@ export function GraphBoard({
                   with the content; a drag held at the scroller's edge
                   auto-pans to reveal more items mid-scrub. Replaces the old
                   invisible PlayheadScrubBand. */}
-              {previewOn && !flatOn && (
+              {previewOn && (
                 <GraphStripSeekRail
                   focusedId={focusedId}
                   channel={timeChannel}
@@ -589,6 +588,7 @@ export function GraphBoard({
           {devPanelsOn && <SyncPanel entries={syncEntries} />}
         </div>
       </PreviewShell>
+      </FlatItemsProvider>
     </OpenKeyBoundary>
   );
 }
