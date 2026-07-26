@@ -357,7 +357,6 @@ export function TimelineSidebar() {
       document.removeEventListener("touchstart", handleClickOutside);
     };
   }, [isProfileOpen]);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const pathSegments = pathname.split("/").filter(Boolean);
   const activeProjectId =
     pathSegments[0] === "timeline" && pathSegments[1]?.startsWith("project-")
@@ -384,24 +383,6 @@ export function TimelineSidebar() {
     };
     window.addEventListener(GRAPH_VIEW_STATE_EVENT, onState);
     return () => window.removeEventListener(GRAPH_VIEW_STATE_EVENT, onState);
-  }, []);
-
-  useEffect(() => {
-    if (!toastMessage) return;
-    const timer = setTimeout(() => {
-      setToastMessage(null);
-    }, 4000);
-    return () => clearTimeout(timer);
-  }, [toastMessage]);
-
-  useEffect(() => {
-    const handleToastEvent = (e: any) => {
-      if (e.detail?.message) {
-        setToastMessage(e.detail.message);
-      }
-    };
-    window.addEventListener("gstudio-toast" as any, handleToastEvent);
-    return () => window.removeEventListener("gstudio-toast" as any, handleToastEvent);
   }, []);
 
   // A drag just dropped items into the graph's sidebar trash target — play
@@ -475,9 +456,9 @@ export function TimelineSidebar() {
   const handleLogout = async () => {
     try {
       await logout();
-      setToastMessage("Signed out.");
+      toast("Signed out.", { id: "auth-signed-out" });
     } catch {
-      setToastMessage("Unable to sign out.");
+      toast("Unable to sign out.", { id: "auth-signed-out" });
     }
   };
 
@@ -641,9 +622,7 @@ export function TimelineSidebar() {
                 }
               : item.id === "trash"
                 ? () => setIsTrashOpen(!isTrashOpen)
-                : // Placeholder until real settings exist — and the app's
-                  // first sonner-driven surface, next to the legacy
-                  // `gstudio-toast` pill the trash drawer still uses.
+                : // Placeholder until real settings exist.
                   () =>
                     toast("Settings", {
                       description: "App-wide settings aren’t wired up yet.",
@@ -762,19 +741,6 @@ export function TimelineSidebar() {
       />
 
       <style>{`
-        @keyframes slideDown {
-          from {
-            transform: translate(-50%, -20px);
-            opacity: 0;
-          }
-          to {
-            transform: translate(-50%, 0);
-            opacity: 1;
-          }
-        }
-        .timeline-toast-animate {
-          animation: slideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
         @keyframes slideInLeft {
           from {
             transform: translateX(-8px);
@@ -790,25 +756,6 @@ export function TimelineSidebar() {
         }
       `}</style>
 
-      {toastMessage && (
-        <div
-          role="status"
-          aria-live="polite"
-          style={{
-            position: "fixed",
-            top: "24px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 10000,
-          }}
-          className="timeline-toast-animate flex h-10 items-center gap-2.5 rounded-full border border-sky-500/30 bg-zinc-900/95 px-5 text-xs font-medium text-zinc-100 shadow-2xl backdrop-blur-md select-none"
-        >
-          <Layers className="h-3.5 w-3.5 text-sky-400 shrink-0" aria-hidden="true" />
-          <span className="text-zinc-200">
-            {toastMessage}
-          </span>
-        </div>
-      )}
     </aside>
   );
 }
