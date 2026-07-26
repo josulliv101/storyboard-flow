@@ -343,6 +343,31 @@ describe("graphChildrenToClips (round-trip)", () => {
       controlClips.map((c) => [c.id, c.index, c.startTime, c.duration]),
     );
   });
+
+  it("round-trips trash provenance through the details side-table", () => {
+    // Same seam as sourceAsset: the engine never models "when was this
+    // deleted", so hydration must park it and the write path must put it back
+    // — and must NOT invent it on clips that never had it.
+    const trashedAt = "2026-07-25T12:00:00.000Z";
+    const trashedFrom = { timelineId: "bank-heist", title: "Bank Heist" };
+    const doc: TimelineDocument = {
+      id: "trash-root",
+      title: "Trash",
+      clips: packTimelineClips([
+        { ...image("deleted", 4), trashedAt, trashedFrom },
+        image("never-trashed", 4),
+      ]),
+    };
+    const result = buildFocusedGraph({ "trash-root": doc }, "trash-root");
+    if (!result.ok) throw new Error(result.error);
+    expect(result.value.details["deleted"]?.trashedAt).toBe(trashedAt);
+    expect(result.value.details["deleted"]?.trashedFrom).toEqual(trashedFrom);
+
+    const projected = graphChildrenToClips(result.value.graph, result.value.details, "trash-root");
+    expect(projected[0]).toMatchObject({ id: "deleted", trashedAt, trashedFrom });
+    expect("trashedAt" in projected[1]).toBe(false);
+    expect("trashedFrom" in projected[1]).toBe(false);
+  });
 });
 
 describe("against the app's real initial documents", () => {

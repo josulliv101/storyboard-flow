@@ -16,6 +16,10 @@ import {
 import { toast } from "@/components/core/sonner";
 import { requestGraphRenameItem } from "@/lib/graph-view-events";
 
+import type { ClipDetail } from "@storyboard/timeline-domain";
+
+import type { GraphDetailsStore } from "@/lib/graph-details-store";
+
 import { useGraphDetailsStore } from "./graph-details-context";
 
 type GraphViewNav = Readonly<{
@@ -120,6 +124,11 @@ export function moveSelectionToTrash(
   // selection here would trash whatever the user selected in the meantime,
   // not what they cut). Defaults to the live selection for the keyboard path.
   ids?: readonly NodeId[],
+  // Optional: when supplied, each trashed clip is stamped with WHEN it went to
+  // the bin and WHICH timeline it came from. Optional rather than required so
+  // the trash move works unchanged from any call site that has no details
+  // store — provenance is a nicety, never a precondition for deleting.
+  details?: GraphDetailsStore,
 ): number {
   if (trashId === null || store.getSnapshot().interaction.isDragging) return 0;
   const { graph, interaction } = store.getSnapshot();
@@ -128,6 +137,36 @@ export function moveSelectionToTrash(
   const trash = parseNodeId(trashId);
   const movable = selected.filter((nodeId) => resolveTrashCommand(graph, nodeId, trash).ok);
   if (movable.length === 0) return 0;
+
+  // Stamp BEFORE dispatching: the persistence bridge writes the affected
+  // documents from its `subscribeToChanges` callback, reading the details
+  // table as it stands then — so a stamp applied after the dispatch would
+  // miss the very write it is meant to ride. The parent is read here for the
+  // same reason: after the move it IS the trash.
+  const previousDetails: Record<string, ClipDetail> = {};
+  if (details) {
+    const trashedAt = new Date().toISOString();
+    const stamped: Record<string, ClipDetail> = {};
+    for (const nodeId of movable) {
+      const existing = details.get(nodeId as string);
+      // No detail entry means nothing to merge INTO — every graph node built
+      // from a document has one, so this is the "shouldn't happen" branch
+      // rather than a case worth inventing defaults for.
+      if (!existing) continue;
+      previousDetails[nodeId as string] = existing;
+      const parentId = graph.parentById.get(nodeId) ?? null;
+      const title = parentId === null ? undefined : graph.nodesById.get(parentId)?.name;
+      stamped[nodeId as string] = {
+        ...existing,
+        trashedAt,
+        ...(parentId !== null && title
+          ? { trashedFrom: { timelineId: parentId as string, title } }
+          : {}),
+      };
+    }
+    details.merge(stamped);
+  }
+
   const dispatched = store.dispatch({
     type: "move-nodes",
     nodeIds: movable,
@@ -135,8 +174,12 @@ export function moveSelectionToTrash(
     toIndex: getChildren(graph, trash).length,
   });
   // A refusal (the un-hydrated-target policy, a cycle) already speaks through
-  // the commandPolicy's own toast — announce only what landed.
-  if (!dispatched.ok) return 0;
+  // the commandPolicy's own toast — announce only what landed. Roll the stamp
+  // back with it: nothing was trashed, so nothing may claim to have been.
+  if (!dispatched.ok) {
+    if (details && Object.keys(previousDetails).length > 0) details.merge(previousDetails);
+    return 0;
+  }
   toast(`Moved ${movable.length} item${movable.length === 1 ? "" : "s"} to trash.`, {
     id: "graph-delete-to-trash",
   });
@@ -195,7 +238,7 @@ export function OpenKeyBoundary({
     if (trashId === null || store.getSnapshot().interaction.isDragging) return;
     if (store.getSnapshot().interaction.selectedIds.size === 0) return;
     event.preventDefault();
-    moveSelectionToTrash(store, trashId);
+    moveSelectionToTrash(store, trashId, undefined, detailsStore);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {

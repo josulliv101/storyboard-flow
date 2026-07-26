@@ -35,6 +35,7 @@ import type {
   CollectionTimelineClip,
   TimelineClip,
   TimelineDocument,
+  TrashOrigin,
 } from "@storyboard/timeline-model/types";
 
 import {
@@ -70,6 +71,11 @@ export type ClipDetail = Readonly<{
   /** Which asset-provider file this media clip came from — pure provenance
    *  (the engine never reads it), round-tripped like poster. */
   sourceAsset?: AssetSourceRef;
+  /** When this clip was trashed, and from where. Provenance again: the engine
+   *  never reads it, so it rides the side-table rather than the graph node —
+   *  the same seam `sourceAsset` uses, and for the same reason. */
+  trashedAt?: string;
+  trashedFrom?: TrashOrigin;
   itemCount?: number;
   previewItems?: CollectionTimelineClip["previewItems"];
   /** The collection clip's own display duration in its parent timeline. */
@@ -133,6 +139,8 @@ function mediaDetail(clip: Exclude<TimelineClip, CollectionTimelineClip>): ClipD
     trackIndex: clip.trackIndex,
     ...(clip.poster === undefined ? {} : { poster: clip.poster }),
     ...(clip.sourceAsset === undefined ? {} : { sourceAsset: clip.sourceAsset }),
+    ...(clip.trashedAt === undefined ? {} : { trashedAt: clip.trashedAt }),
+    ...(clip.trashedFrom === undefined ? {} : { trashedFrom: clip.trashedFrom }),
     ...(clip.playbackStartTime === undefined ? {} : { playbackStartTime: clip.playbackStartTime }),
     ...(clip.playbackDuration === undefined ? {} : { playbackDuration: clip.playbackDuration }),
     ...(clip.kind === "image"
@@ -146,6 +154,8 @@ function collectionDetail(clip: CollectionTimelineClip, hydrated: boolean): Clip
     alt: clip.alt,
     aspect: clip.aspect,
     trackIndex: clip.trackIndex,
+    ...(clip.trashedAt === undefined ? {} : { trashedAt: clip.trashedAt }),
+    ...(clip.trashedFrom === undefined ? {} : { trashedFrom: clip.trashedFrom }),
     sourceClipId: clip.id,
     itemCount: clip.itemCount,
     ...(clip.previewItems === undefined ? {} : { previewItems: clip.previewItems }),
@@ -476,6 +486,8 @@ export function graphChildrenToClips(
           ? {}
           : { playbackDuration: detail.playbackDuration }),
         ...(detail?.sourceAsset === undefined ? {} : { sourceAsset: detail.sourceAsset }),
+        ...(detail?.trashedAt === undefined ? {} : { trashedAt: detail.trashedAt }),
+        ...(detail?.trashedFrom === undefined ? {} : { trashedFrom: detail.trashedFrom }),
         // Read from the NODE, not `detail`: disabling goes through a graph
         // command, so the flag rides the patch/undo path like a rename does.
         ...(node.disabled ? { disabled: true } : {}),
@@ -539,6 +551,8 @@ export function graphChildrenToClips(
       trimIn: detail?.trimIn ?? 0,
       trimOut: detail?.trimOut ?? 0,
       ...(node.disabled ? { disabled: true } : {}),
+      ...(detail?.trashedAt === undefined ? {} : { trashedAt: detail.trashedAt }),
+      ...(detail?.trashedFrom === undefined ? {} : { trashedFrom: detail.trashedFrom }),
     };
   });
 }
