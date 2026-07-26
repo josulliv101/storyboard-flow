@@ -4,6 +4,10 @@ import {
   type DetailsById,
   type PlaybackManifest,
 } from "@storyboard/timeline-domain";
+import {
+  CLIP_GAP_SECONDS,
+  TIMELINE_LEADING_PADDING_SECONDS,
+} from "@storyboard/timeline-model/constants";
 import type { TimelineClip } from "@storyboard/timeline-model/types";
 
 import { GRID_GAP } from "./graph-view-config";
@@ -164,7 +168,16 @@ export function shouldRetryManifestFetch(
   return consecutiveFailures > 0 && consecutiveFailures <= maxRetries;
 }
 
-export type ChildSpan = Readonly<{ startTime: number; endTime: number; width: number }>;
+export type ChildSpan = Readonly<{
+  startTime: number;
+  endTime: number;
+  width: number;
+  /** Won't play — the seek rail dims this stretch and the player jumps it.
+   *  True for a clip disabled outright AND for one whose collection ancestor
+   *  is (see `isDisabledByAncestor`); the rail draws no distinction, because
+   *  either way nothing here reaches the viewer. */
+  disabled?: boolean;
+}>;
 
 /**
  * Each direct child of `collectionId`, with its time window in the clock the
@@ -190,6 +203,29 @@ export type ChildSpan = Readonly<{ startTime: number; endTime: number; width: nu
  * manifest paths are built from, but `graphChildrenToClips` maps over the
  * same `getChildren` array, so index alignment holds.
  */
+/**
+ * Whether any COLLECTION above this node is disabled — the inherited state.
+ * Disabling a collection disables everything inside it, at any depth, and a
+ * descendant cannot opt back in.
+ *
+ * The node's own flag is deliberately NOT consulted: callers need to tell "off
+ * because I said so" from "off because my parent is", and they show different
+ * chips. Ask this and the node's own `disabled` separately.
+ *
+ * Cycle-guarded with a seen set — `parentById` is a tree in practice, but this
+ * runs on the render path and a malformed graph must not hang it.
+ */
+export function isDisabledByAncestor(graph: CollectionsGraph, nodeId: string): boolean {
+  const seen = new Set<string>();
+  let parent = graph.parentById.get(nodeId as never) ?? null;
+  while (parent !== null && !seen.has(parent as string)) {
+    if (graph.nodesById.get(parent)?.disabled === true) return true;
+    seen.add(parent as string);
+    parent = graph.parentById.get(parent) ?? null;
+  }
+  return false;
+}
+
 export function childSpans(
   graph: CollectionsGraph,
   details: DetailsById,
@@ -198,6 +234,13 @@ export function childSpans(
   widthForClip: (clip: TimelineClip) => number,
 ): ChildSpan[] {
   const childIds = getChildren(graph, parseNodeId(collectionId));
+  // Drilled INTO a disabled collection: none of these children carry the flag
+  // themselves, but nothing here plays, so every card counts as disabled for
+  // the rail. Resolved once for the whole level — it cannot vary between
+  // siblings.
+  const focusDisabled =
+    graph.nodesById.get(parseNodeId(collectionId))?.disabled === true ||
+    isDisabledByAncestor(graph, collectionId);
   let previousEnd = 0;
   return graphChildrenToClips(graph, details, collectionId).map((clip, index) => {
     const childId = childIds[index] as string;
@@ -209,8 +252,56 @@ export function childSpans(
     const startTime = Math.max(span ? span.start : clip.startTime, previousEnd);
     const endTime = Math.max(span ? span.end : clip.startTime + clip.duration, startTime);
     previousEnd = endTime;
-    return { width: widthForClip(clip), startTime, endTime };
+    return {
+      width: widthForClip(clip),
+      startTime,
+      endTime,
+      ...(focusDisabled || clip.disabled === true ? { disabled: true } : {}),
+    };
   });
+}
+
+/**
+ * Seconds of these cards that will actually PLAY — the readout number, as
+ * opposed to the layout span the playhead sweeps.
+ *
+ * The two are the same until something is disabled, and this reduces to the
+ * old `last.endTime` exactly when nothing is: leading padding, plus each
+ * enabled card's own length, plus one gap between neighbours. Disabled cards
+ * contribute neither their span nor a gap, which is what keeps the header
+ * total describing what a viewer would sit through rather than how far the
+ * playhead can travel.
+ *
+ * Card lengths come from `childSpans`, so a collection contributes the
+ * manifest's full-depth window rather than a stored summary guess.
+ */
+/**
+ * Content-space x ranges of the cards that will NOT play, in the strip's own
+ * layout (widths plus the inter-card gutter — the same accumulation
+ * `buildPlayheadMap` walks, so a segment lands exactly under its card).
+ *
+ * Shared by the strip's seek rail and the ruler band so the two mark the same
+ * stretches; a disabled item reads as one continuous dimmed run across both.
+ */
+export function disabledCardSegments(
+  cards: readonly ChildSpan[],
+): Array<Readonly<{ x: number; width: number }>> {
+  const segments: Array<Readonly<{ x: number; width: number }>> = [];
+  let cursor = 0;
+  for (const card of cards) {
+    if (card.disabled === true) segments.push({ x: cursor, width: card.width });
+    cursor += card.width + STRIP_GAP_PX;
+  }
+  return segments;
+}
+
+export function playableSpanSeconds(cards: readonly ChildSpan[]): number {
+  const enabled = cards.filter((card) => card.disabled !== true);
+  if (enabled.length === 0) return 0;
+  const content = enabled.reduce((total, card) => total + (card.endTime - card.startTime), 0);
+  return (
+    TIMELINE_LEADING_PADDING_SECONDS + content + CLIP_GAP_SECONDS * (enabled.length - 1)
+  );
 }
 
 export type PlayheadMap = Readonly<{

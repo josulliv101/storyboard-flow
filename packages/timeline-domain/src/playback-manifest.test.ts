@@ -211,11 +211,11 @@ describe("manifestToClips", () => {
 });
 
 describe("disabled clips", () => {
-  it("skips a disabled clip and CLOSES the gap it leaves", () => {
-    // The closing is the point. Dropping "b" without repacking would leave
-    // 0-4 and 8-12 occupied and 4-8 empty — and the player holds the last
-    // drawn frame across an empty span, so "a" would freeze on screen for
-    // four seconds instead of "b" being skipped.
+  it("KEEPS a disabled clip's span and marks it, leaving neighbours in place", () => {
+    // The span is the point. The compiler used to drop "b" and repack, which
+    // left the player nothing to jump over and no way to scrub into it. Now
+    // "b" holds 4-8 exactly as stored, "c" does not move up, and the player
+    // decides what to do about it.
     const documents = {
       root: doc("root", [
         image("a", 0, 4),
@@ -226,21 +226,22 @@ describe("disabled clips", () => {
 
     const manifest = compilePlaybackManifest(documents, "root", 1, AT);
 
-    expect(manifest.leaves.map((leaf) => leaf.id)).toEqual(["a", "c"]);
-    // "c" moved up into "b"'s span, and the total lost b's four seconds.
-    // Expressed via CLIP_GAP_SECONDS because the survivors are REPACKED, so
-    // they sit at the model's canonical spacing, not the fixture's literals.
-    expect(manifest.leaves[1].timelineStart).toBeCloseTo(4 + CLIP_GAP_SECONDS, 6);
-    expect(manifest.durationSeconds).toBeCloseTo(8 + CLIP_GAP_SECONDS, 6);
-    // No hole beyond the standard inter-clip gap — which is what would make
-    // the player freeze-frame rather than skip.
-    const gap =
-      manifest.leaves[1].timelineStart -
-      (manifest.leaves[0].timelineStart + manifest.leaves[0].timelineDuration);
-    expect(gap).toBeCloseTo(CLIP_GAP_SECONDS, 6);
+    expect(manifest.leaves.map((leaf) => leaf.id)).toEqual(["a", "b", "c"]);
+    expect(manifest.leaves.map((leaf) => leaf.disabled)).toEqual([
+      undefined,
+      true,
+      undefined,
+    ]);
+    // Stored coordinates, untouched — no repack.
+    expect(manifest.leaves[1].timelineStart).toBeCloseTo(4, 6);
+    expect(manifest.leaves[2].timelineStart).toBeCloseTo(8, 6);
+    expect(manifest.durationSeconds).toBeCloseTo(12, 6);
   });
 
-  it("skips a disabled collection's ENTIRE subtree", () => {
+  it("marks a disabled collection's ENTIRE subtree, and keeps its span", () => {
+    // Walked into rather than pruned: the subtree's leaves all exist, all
+    // carry the flag, and the collection still occupies 4-10 so the playhead
+    // has something to leap.
     const documents = {
       root: doc("root", [
         image("intro", 0, 4),
@@ -252,39 +253,62 @@ describe("disabled clips", () => {
 
     const manifest = compilePlaybackManifest(documents, "root", 1, AT);
 
-    expect(manifest.leaves.map((leaf) => leaf.id)).toEqual(["intro", "outro"]);
-    expect(manifest.durationSeconds).toBeCloseTo(8 + CLIP_GAP_SECONDS, 6);
+    expect(manifest.leaves.map((leaf) => leaf.id)).toEqual([
+      "intro",
+      "deep-a",
+      "deep-b",
+      "outro",
+    ]);
+    expect(manifest.leaves.map((leaf) => leaf.disabled)).toEqual([
+      undefined,
+      true,
+      true,
+      undefined,
+    ]);
+    expect(manifest.durationSeconds).toBeCloseTo(14, 6);
   });
 
-  it("skips a disabled clip nested inside a collection, and re-times the parent", () => {
-    // The child shrinks from 6s to 2s, so the parent's collection clip has to
-    // be re-timed too — otherwise its 6s span would window the child's 2s of
-    // content and stretch or truncate it.
+  it("marks a disabled clip nested inside an ENABLED collection", () => {
+    // Inheritance is one-way: the parent is playable, so only the clip that
+    // was actually disabled is marked. The child's timing is untouched —
+    // nothing shrinks, so the parent's window still maps 1:1.
     const documents = {
-      root: doc("root", [collection("scene-ref", "scene", 0, 2)]),
+      root: doc("root", [collection("scene-ref", "scene", 0, 6)]),
       scene: doc("scene", [
         image("keep", 0, 2),
-        { ...image("drop", 2, 4), disabled: true },
+        { ...image("skip", 2, 4), disabled: true },
       ]),
     };
 
     const manifest = compilePlaybackManifest(documents, "root", 1, AT);
 
-    expect(manifest.leaves.map((leaf) => leaf.id)).toEqual(["keep"]);
+    expect(manifest.leaves.map((leaf) => leaf.id)).toEqual(["keep", "skip"]);
+    expect(manifest.leaves.map((leaf) => leaf.disabled)).toEqual([undefined, true]);
     expect(manifest.leaves[0].playbackRate).toBeCloseTo(1, 6);
-    expect(manifest.leaves[0].timelineDuration).toBeCloseTo(2, 6);
+    expect(manifest.leaves[1].timelineDuration).toBeCloseTo(4, 6);
   });
 
-  it("leaves an all-enabled closure byte-identical", () => {
-    // The pass must be a no-op when nothing is disabled — it runs on every
-    // compile, including for every document that never uses the feature.
+  it("does not mark anything in an all-enabled closure", () => {
+    // The flag must never appear on a document that does not use the feature —
+    // an always-present `disabled: false` would churn every stored manifest.
     const documents = {
       root: doc("root", [image("a", 0, 4), collection("s", "scene", 4, 4)]),
       scene: doc("scene", [image("x", 0, 4)]),
     };
-    const before = JSON.stringify(compilePlaybackManifest(documents, "root", 1, AT));
-    const after = JSON.stringify(compilePlaybackManifest(documents, "root", 1, AT));
-    expect(after).toBe(before);
-    expect(JSON.parse(before).leaves.map((l: { id: string }) => l.id)).toEqual(["a", "x"]);
+
+    const manifest = compilePlaybackManifest(documents, "root", 1, AT);
+
+    expect(manifest.leaves.map((leaf) => leaf.id)).toEqual(["a", "x"]);
+    expect(manifest.leaves.every((leaf) => !("disabled" in leaf))).toBe(true);
+  });
+
+  it("carries the flag onto the player's clips", () => {
+    const documents = {
+      root: doc("root", [image("a", 0, 4), { ...image("b", 4, 4), disabled: true }]),
+    };
+
+    const clips = manifestToClips(compilePlaybackManifest(documents, "root", 1, AT));
+
+    expect(clips.map((clip) => clip.disabled)).toEqual([undefined, true]);
   });
 });

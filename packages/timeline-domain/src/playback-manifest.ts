@@ -12,8 +12,12 @@
 // maps it onto the parent's output span, accumulating `playbackRate` so a
 // leaf knows both WHERE it plays (timelineStart/Duration in root time) and
 // WHAT it plays (sourceStart, advancing at playbackRate).
+//
+// DISABLED clips are compiled in, marked rather than dropped, so this clock
+// matches the board's layout exactly. Skipping them is the player's job —
+// only it knows whether the user is playing (jump the span) or scrubbing
+// (draw it grayed).
 
-import { effectiveDocuments } from "@storyboard/timeline-model";
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 export type PlaybackLeaf = Readonly<{
@@ -26,6 +30,12 @@ export type PlaybackLeaf = Readonly<{
   timelineDuration: number;
   sourceStart: number;
   playbackRate: number;
+  /** Skipped by the PLAYER, not by this compiler. A disabled leaf keeps its
+   *  full span on the timeline — that span is what the playhead jumps over
+   *  while playing and what a scrub can land inside. Set when the leaf's own
+   *  clip is disabled OR any collection clip above it on the path was.
+   *  Absent means playable. */
+  disabled?: boolean;
 }>;
 
 export type PlaybackManifest = Readonly<{
@@ -67,6 +77,7 @@ function addMediaLeaf(
   window: TimeWindow,
   overlapStart: number,
   overlapEnd: number,
+  disabled: boolean,
 ): void {
   const localSpan = Math.max(0.001, window.localEnd - window.localStart);
   const outputScale = window.outputDuration / localSpan;
@@ -83,6 +94,7 @@ function addMediaLeaf(
     timelineDuration: (overlapEnd - overlapStart) * outputScale,
     sourceStart: clip.trimIn + clipProgress * sourceRange,
     playbackRate: (sourceRange / Math.max(0.001, clip.duration)) / outputScale,
+    ...(disabled ? { disabled: true } : {}),
   });
 }
 
@@ -93,6 +105,11 @@ function flattenDocument(
   window: TimeWindow,
   visited: ReadonlySet<string>,
   leaves: PlaybackLeaf[],
+  /** True once any collection clip ABOVE this document was disabled. Disabling
+   *  a collection disables everything under it, and there is no way back on
+   *  the way down — an enabled child of a disabled parent still does not play.
+   */
+  inheritedDisabled: boolean,
 ): void {
   if (visited.has(documentId)) throw new Error(`Collection cycle detected at "${documentId}".`);
   const document = documents[documentId];
@@ -107,8 +124,14 @@ function flattenDocument(
     const overlapEnd = Math.min(clipEnd, window.localEnd);
     if (overlapEnd <= overlapStart) continue;
 
+    // Disabled rides DOWN the walk instead of pruning it: the subtree still
+    // compiles, so a disabled collection keeps its span and every leaf under
+    // it is marked. That span is what the player jumps over and what a scrub
+    // can land inside.
+    const clipDisabled = inheritedDisabled || clip.disabled === true;
+
     if (clip.kind !== "collection") {
-      addMediaLeaf(leaves, clip, path, window, overlapStart, overlapEnd);
+      addMediaLeaf(leaves, clip, path, window, overlapStart, overlapEnd, clipDisabled);
       continue;
     }
 
@@ -134,6 +157,7 @@ function flattenDocument(
       },
       nextVisited,
       leaves,
+      clipDisabled,
     );
   }
 }
@@ -146,23 +170,23 @@ export function compilePlaybackManifest(
   documentRevisions?: Readonly<Record<string, number>>,
 ): PlaybackManifest {
   if (!documents[projectId]) throw new Error(`Unknown project timeline "${projectId}".`);
-  // Compile from the EFFECTIVE closure: disabled clips dropped, survivors
-  // repacked. Doing it here rather than inside `flattenDocument` is what
-  // makes the window math below work unchanged — it maps a parent's output
-  // span onto the child's LOCAL time range, so the child's coordinates have
-  // to already be closed up. Filtering during the walk would instead leave
-  // the disabled clip's span empty, and the player holds the last frame
-  // across a gap: a freeze-frame, not a skip.
+  // Compiled from the STORED closure, disabled clips and all. They keep their
+  // stored positions, so the manifest's clock IS the board's layout: the
+  // playhead maps onto the same cards, a disabled item has a real span to be
+  // jumped over, and a scrub can come to rest inside one.
   //
-  // Dropping a disabled COLLECTION clip removes its whole subtree here,
-  // without walking into it.
-  const effective = effectiveDocuments(documents);
-  const root = effective[projectId];
+  // This is the inverse of the original design, which dropped disabled clips
+  // and repacked the survivors here. That closed the gap (necessary, because
+  // the player HOLDS the last frame across an empty span — a freeze-frame,
+  // not a skip) but left nothing to jump over or scrub into. The skip now
+  // happens in the player instead, which can tell playing from scrubbing;
+  // this compiler cannot.
+  const root = documents[projectId];
   const durationSeconds = documentDuration(root);
   const leaves: PlaybackLeaf[] = [];
 
   flattenDocument(
-    effective,
+    documents,
     projectId,
     [projectId],
     {
@@ -173,6 +197,7 @@ export function compilePlaybackManifest(
     },
     new Set(),
     leaves,
+    false,
   );
 
   return {
@@ -208,6 +233,9 @@ export function manifestToClips(manifest: PlaybackManifest): TimelineClip[] {
       sourceDuration: leaf.sourceStart + sourceRange,
       trimIn: leaf.sourceStart,
       trimOut: 0,
+      // The player reads this to decide whether to skip the span (playing) or
+      // draw it grayed (scrubbing).
+      ...(leaf.disabled ? { disabled: true } : {}),
     };
     if (leaf.kind === "video") {
       return {

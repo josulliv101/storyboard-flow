@@ -113,6 +113,19 @@ export type CollectionTimelineClip = TimelineItemBase & {
   title: string;
   childTimelineId: string;
   itemCount: number;
+  /**
+   * Seconds of this collection that actually PLAY — its child's enabled clips
+   * only. The twin of `duration`, which is the collection's LAYOUT span and
+   * counts disabled children so the board, the ruler and the playback clock
+   * agree on where every card sits.
+   *
+   * The two differ exactly when a descendant is disabled, and the split is
+   * deliberate: geometry has to include a disabled clip (the playhead jumps
+   * over its span, a scrub can land in it) while the readouts on the card
+   * describe what a viewer would actually see. Absent when nothing under the
+   * collection is disabled — then `duration` already is the playable time.
+   */
+  playableDuration?: number;
   previewItems?: Array<{
     id: string;
     kind: MediaKind;

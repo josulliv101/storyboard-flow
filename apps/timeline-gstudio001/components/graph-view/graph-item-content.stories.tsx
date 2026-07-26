@@ -9,6 +9,7 @@ import {
   type CollectionItemShellComponent,
   type CollectionItemShellProps,
   type CollectionTrimOverviewContentComponent,
+  type CollectionsGraph,
   type NodeId,
   type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
@@ -212,6 +213,106 @@ export const ComposedCardStructure: Story = {
     await waitFor(() =>
       expect(surface!.getAttribute("aria-label")).toMatch(/^Renamed timeline \(collection/),
     );
+  },
+};
+
+// ── Disabled, and disabled-by-parent ────────────────────────────────────────
+
+/** Builds a details store + provider around an arbitrary graph, so the
+ *  disabled cases can nest the card inside a parent collection. */
+function renderWithGraph(graph: CollectionsGraph) {
+  const detail: ClipDetail = {
+    alt: "A timeline",
+    aspect: 16 / 9,
+    trackIndex: 0,
+    hydrated: false,
+    itemCount: 2,
+    previewItems: [ASSET_A, ASSET_B],
+  };
+  const store = createGraphDetailsStore({ [COLLECTION_ID]: detail });
+  const decorator: Decorator = (Story) => (
+    <DndCollections initialGraph={graph}>
+      <GraphDetailsProvider store={store}>
+        <div className="h-32 w-40 bg-zinc-950 p-2">
+          <Story />
+        </div>
+      </GraphDetailsProvider>
+    </DndCollections>
+  );
+  return decorator;
+}
+
+const graphWithNodeDisabled = (() => {
+  const result = buildGraph([
+    { kind: "collection", id: COLLECTION_ID, name: "A timeline", children: [], disabled: true },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
+const graphWithParentDisabled = (() => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "parent" as NodeId,
+      name: "Off parent",
+      disabled: true,
+      children: [{ kind: "collection", id: COLLECTION_ID, name: "A timeline", children: [] }],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
+/**
+ * A card disabled on ITSELF: muted, and badged with the word that names why.
+ * The badge is what distinguishes it from the inherited case below — the two
+ * look identical otherwise, on purpose, because a viewer sees neither.
+ */
+export const DisabledCard: Story = {
+  args: baseArgs,
+  decorators: [renderWithGraph(graphWithNodeDisabled)],
+  play: async ({ canvasElement }) => {
+    const surface = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
+    // Marker CLASS, not data-disabled: SelectionSurface has an explicit prop
+    // list with no rest spread, so a hyphenated attribute would be dropped.
+    await expect(surface.classList.contains("is-disabled-card")).toBe(true);
+    await expect(surface.classList.contains("is-parent-disabled-card")).toBe(false);
+
+    const chip = canvasElement.querySelector<HTMLElement>("[data-disabled-chip]")!;
+    await expect(chip).not.toBeNull();
+    await expect(chip.dataset.disabledChip).toBe("self");
+    await expect(chip.textContent).toBe("DISABLED");
+  },
+};
+
+/**
+ * A card that is off only because a collection ABOVE it is. It carries the
+ * same muted treatment but its own flag is clear, so re-enabling it here would
+ * do nothing — the chip says where to go instead.
+ */
+export const DisabledByParentCard: Story = {
+  args: baseArgs,
+  decorators: [renderWithGraph(graphWithParentDisabled)],
+  play: async ({ canvasElement }) => {
+    const surface = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
+    await expect(surface.classList.contains("is-disabled-card")).toBe(true);
+    await expect(surface.classList.contains("is-parent-disabled-card")).toBe(true);
+
+    const chip = canvasElement.querySelector<HTMLElement>("[data-disabled-chip]")!;
+    await expect(chip.dataset.disabledChip).toBe("inherited");
+    await expect(chip.textContent).toBe("PARENT OFF");
+  },
+};
+
+/** The ordinary case carries no chip at all. */
+export const NoDisabledChipWhenEnabled: Story = {
+  args: baseArgs,
+  decorators: [renderWithDetail([ASSET_A, ASSET_B])],
+  play: async ({ canvasElement }) => {
+    const surface = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
+    await expect(surface.classList.contains("is-disabled-card")).toBe(false);
+    await expect(canvasElement.querySelector("[data-disabled-chip]")).toBeNull();
   },
 };
 

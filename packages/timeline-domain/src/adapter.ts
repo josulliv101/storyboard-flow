@@ -78,8 +78,12 @@ export type ClipDetail = Readonly<{
   trashedFrom?: TrashOrigin;
   itemCount?: number;
   previewItems?: CollectionTimelineClip["previewItems"];
-  /** The collection clip's own display duration in its parent timeline. */
+  /** The collection clip's own display duration in its parent timeline — its
+   *  LAYOUT span, disabled descendants included. */
   duration?: number;
+  /** Of that span, the seconds that actually play. Absent when nothing under
+   *  the collection is disabled (then `duration` already is it). */
+  playableDuration?: number;
   /** False for placeholder collections awaiting hydration. */
   hydrated?: boolean;
   /** Set on a duplicate-reference card (see module comment). */
@@ -160,6 +164,9 @@ function collectionDetail(clip: CollectionTimelineClip, hydrated: boolean): Clip
     itemCount: clip.itemCount,
     ...(clip.previewItems === undefined ? {} : { previewItems: clip.previewItems }),
     duration: clip.duration,
+    ...(clip.playableDuration === undefined
+      ? {}
+      : { playableDuration: clip.playableDuration }),
     sourceDuration: clip.sourceDuration,
     trimIn: clip.trimIn,
     trimOut: clip.trimOut,
@@ -362,6 +369,46 @@ export function hydratedCollectionDuration(
 }
 
 /**
+ * The same walk, restricted to what actually PLAYS: disabled children (and
+ * everything under them) contribute neither their seconds nor their gap.
+ *
+ * The twin of `hydratedCollectionDuration`, and the split matters —that one
+ * is GEOMETRY, feeding the collection clip's `duration` in the projection, so
+ * it has to keep counting disabled children or the card would lose the slot
+ * the playhead jumps over. This one is a READOUT, for the card's badge and the
+ * selection total, where the honest number is what a viewer would sit through.
+ *
+ * Falls back to the stored `playableDuration` summary for an unhydrated child
+ * (see deriveCollectionSummaries), then to `duration` for documents written
+ * before the field existed — where nothing is disabled the two are equal
+ * anyway, so the fallback is exact rather than approximate.
+ */
+export function hydratedCollectionPlayableDuration(
+  graph: CollectionsGraph,
+  details: DetailsById,
+  collectionId: NodeId,
+): number {
+  let total = TIMELINE_LEADING_PADDING_SECONDS;
+  let first = true;
+  for (const childId of getChildren(graph, collectionId)) {
+    const node = graph.nodesById.get(childId);
+    if (!node) continue;
+    if (node.disabled === true) continue;
+    if (!first) total += CLIP_GAP_SECONDS;
+    first = false;
+    if (node.kind === "media") {
+      total += mediaDurationSeconds(node);
+      continue;
+    }
+    const detail = details[childId as string];
+    total += detail?.hydrated
+      ? hydratedCollectionPlayableDuration(graph, details, childId)
+      : (detail?.playableDuration ?? detail?.duration ?? 3);
+  }
+  return total;
+}
+
+/**
  * Preview frames of a HYDRATED collection, derived from its live children with
  * the SAME `previewItemsFrom` the read-time summary derivation uses — so the
  * projection and the served document agree byte-for-byte.
@@ -528,6 +575,13 @@ export function graphChildrenToClips(
     const previewItems = detail?.hydrated
       ? hydratedCollectionPreviewItems(graph, details, node.id)
       : detail?.previewItems;
+    // The playable READOUT beside the layout duration above, derived live for
+    // the same self-healing reason. Omitted when it equals the layout span, so
+    // a closure with nothing disabled never grows the field.
+    const playable = detail?.hydrated
+      ? hydratedCollectionPlayableDuration(graph, details, node.id)
+      : detail?.playableDuration;
+    const playableDuration = playable === duration ? undefined : playable;
     nextStartTime += duration + CLIP_GAP_SECONDS;
     return {
       id: detail?.sourceClipId ?? (node.id as string),
@@ -542,6 +596,7 @@ export function graphChildrenToClips(
         ? getChildren(graph, node.id).length
         : (detail?.itemCount ?? getChildren(graph, node.id).length),
       ...(previewItems === undefined ? {} : { previewItems }),
+      ...(playableDuration === undefined ? {} : { playableDuration }),
       alt: detail?.alt ?? `${node.name} collection`,
       aspect: detail?.aspect ?? 16 / 9,
       trackIndex: detail?.trackIndex ?? 0,

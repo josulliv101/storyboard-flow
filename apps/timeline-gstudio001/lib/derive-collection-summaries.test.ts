@@ -252,8 +252,8 @@ describe("collectionChildIds", () => {
   });
 });
 
-describe("disabled clips are excluded from summaries", () => {
-  it("drops a disabled child clip from itemCount, duration and previewItems", () => {
+describe("disabled clips split geometry from the readouts", () => {
+  it("keeps a disabled child in `duration` but out of the readouts", () => {
     const child = docOf("child-1", [
       mediaClip("keep", { startTime: 0, duration: 4 }),
       { ...mediaClip("skip", { startTime: 4.12, duration: 6 }), disabled: true },
@@ -263,10 +263,13 @@ describe("disabled clips are excluded from summaries", () => {
     const { document } = deriveCollectionSummaries(parent, new Map([["child-1", child]]));
     const col = document.clips[0] as CollectionTimelineClip;
 
+    // LAYOUT: the full 4 + gap + 6 span. The collection's slot has to cover
+    // its disabled child, or the manifest's window math would squeeze the
+    // child's real content into a shorter parent span and play it fast.
+    expect(col.duration).toBeCloseTo(10.12, 6);
+    // READOUTS: what a viewer would actually see.
+    expect(col.playableDuration).toBeCloseTo(4, 6);
     expect(col.itemCount).toBe(1);
-    // 4s of content, not 4 + gap + 6 — the disabled clip contributes nothing
-    // to the time total and the survivor is repacked to the start.
-    expect(col.duration).toBeCloseTo(4, 6);
     expect(col.previewItems?.map((item) => item.id)).toEqual(["keep"]);
   });
 
@@ -288,17 +291,50 @@ describe("disabled clips are excluded from summaries", () => {
 
     const leafSummary = derived.mid.clips[0] as CollectionTimelineClip;
     expect(leafSummary.itemCount).toBe(1);
-    expect(leafSummary.duration).toBeCloseTo(4, 6);
+    expect(leafSummary.duration).toBeCloseTo(8.12, 6);
+    expect(leafSummary.playableDuration).toBeCloseTo(4, 6);
 
-    // The grandparent shrank too, without knowing why.
+    // The grandparent's PLAYABLE time shrank too, without knowing why — while
+    // its layout span still covers everything below it. This is the assertion
+    // that pins the propagation THROUGH a collection child: mid's playable
+    // time has to read leaf-ref's playableDuration (4), not its layout
+    // duration (8.12), or a deep disable would stop one level up.
     const midSummary = derived.root.clips[0] as CollectionTimelineClip;
-    expect(midSummary.duration).toBeCloseTo(4, 6);
     expect(midSummary.itemCount).toBe(1);
+    expect(midSummary.playableDuration).toBeCloseTo(4, 6);
+    expect(midSummary.duration).toBeCloseTo(8.12, 6);
   });
 
-  it("treats an all-disabled collection like an empty one", () => {
-    // Deliberate: all-disabled and empty are the same thing to a reader, and
-    // a zero-duration card would be new behaviour rather than consistency.
+  it("omits playableDuration entirely when nothing is disabled", () => {
+    // The field must not appear on documents that never use the feature —
+    // same convention as `disabled` itself.
+    const child = docOf("child-1", [mediaClip("a", { startTime: 0, duration: 4 })]);
+    const parent = docOf("parent", [collectionClip("col", "child-1")]);
+
+    const { document } = deriveCollectionSummaries(parent, new Map([["child-1", child]]));
+    const col = document.clips[0] as CollectionTimelineClip;
+
+    expect("playableDuration" in col).toBe(false);
+  });
+
+  it("clears a stale playableDuration once the child is re-enabled", () => {
+    // The derivation spreads the previous clip, so re-enabling must DELETE the
+    // key rather than leave the old playable time sitting there.
+    const child = docOf("child-1", [mediaClip("a", { startTime: 0, duration: 4 })]);
+    const parent = docOf("parent", [
+      { ...collectionClip("col", "child-1"), playableDuration: 2 },
+    ]);
+
+    const { document } = deriveCollectionSummaries(parent, new Map([["child-1", child]]));
+    const col = document.clips[0] as CollectionTimelineClip;
+
+    expect(col.playableDuration).toBeUndefined();
+  });
+
+  it("gives an all-disabled collection the same PLAYABLE time as an empty one", () => {
+    // Deliberate: all-disabled and empty are the same thing to a reader. Their
+    // layout spans differ, though — the all-disabled one still has a child
+    // occupying room on the board.
     const child = docOf("child-1", [
       { ...mediaClip("x", { duration: 4 }), disabled: true },
     ]);
@@ -312,7 +348,8 @@ describe("disabled clips are excluded from summaries", () => {
     const a = allDisabled.document.clips[0] as CollectionTimelineClip;
     const b = isEmpty.document.clips[0] as CollectionTimelineClip;
     expect(a.itemCount).toBe(b.itemCount);
-    expect(a.duration).toBe(b.duration);
+    expect(a.playableDuration ?? a.duration).toBe(b.duration);
+    expect(a.duration).toBeGreaterThan(b.duration);
   });
 
   it("keeps the PARENT's own disabled clip in place", () => {

@@ -35,10 +35,12 @@ import {
   buildRulerTicks,
   cardSpansOf,
   childSpans,
+  disabledCardSegments,
   formatRulerTick,
   manifestTrailsLedger,
   nextManifestClipsState,
   nextManifestFailureCount,
+  playableSpanSeconds,
   shouldRetryManifestFetch,
   STRIP_GAP_PX,
   type ChildSpan,
@@ -56,8 +58,6 @@ import {
 } from "@storyboard/ui/timeline/timeline-document-store";
 import { createTimelineDocumentsState } from "@storyboard/ui/timeline/timeline-documents";
 import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
-
-import { enabledClips, packTimelineClips } from "@storyboard/timeline-model";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
@@ -179,9 +179,13 @@ export function useFocusedTimelineAggregate(
   );
   return useMemo(() => {
     const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
+    // Enabled-only, both numbers: this readout says what a viewer would sit
+    // through, which is NOT how far the playhead travels now that disabled
+    // cards keep their span. The two disagree by design — the ruler runs
+    // longer than the total claimed here whenever something is disabled.
     return {
-      count: cards.length,
-      seconds: cards.length > 0 ? cards[cards.length - 1].endTime : 0,
+      count: cards.filter((card) => card.disabled !== true).length,
+      seconds: playableSpanSeconds(cards),
     };
   }, [graph, details, focusedId, spans, pixelsPerSecond]);
 }
@@ -385,7 +389,7 @@ export function GraphRuler({
   // zoom no longer mints thousands of offscreen tick elements per commit —
   // tick count follows the VIEWPORT, not the duration. Scrolling recomputes
   // only on chunk crossings (tickWindow identity is stable between them).
-  const { ticks, collectionSpans } = useMemo(() => {
+  const { ticks, collectionSpans, skips } = useMemo(() => {
     const clips = graphChildrenToClips(graph, details, focusedId);
     const cards = childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
     const isCollection = clips.map((clip) => clip.kind === "collection");
@@ -395,6 +399,9 @@ export function GraphRuler({
       // — fill its stretch of the band with the content duration instead
       // (R7 #4), same live-derived total the card badge shows.
       collectionSpans: buildRulerCollectionSpans(cards, isCollection, tickWindow),
+      // Same segments the seek rail dims, so a skipped stretch reads as one
+      // run down through the ruler and the scrubber.
+      skips: disabledCardSegments(cards),
     };
   }, [graph, details, spans, focusedId, pixelsPerSecond, tickWindow]);
 
@@ -410,6 +417,17 @@ export function GraphRuler({
           strip with a bright baseline keeps the whole ruler legible over ANY
           clip, at every zoom. */}
       <div className="absolute inset-x-0 top-0 h-[18px] border-b border-sky-400/50 bg-zinc-950/90" />
+      {/* Skipped stretches, under the ticks: the band goes flat and gray where
+          playback will not travel, so the ruler reads as measuring a timeline
+          with holes in it rather than one continuous run. */}
+      {skips.map((segment, index) => (
+        <div
+          key={`skip-${index}`}
+          data-ruler-skip
+          className="absolute top-0 h-[18px] bg-zinc-700/50"
+          style={{ transform: `translateX(${segment.x}px)`, width: segment.width }}
+        />
+      ))}
       {ticks.map((tick, index) => (
         <div key={index} className="absolute top-0" style={{ transform: `translateX(${tick.x}px)` }}>
           {/* Tier drives height + brightness: labeled majors run the full band
@@ -769,6 +787,23 @@ function SeekRailRow({
         aria-hidden="true"
         className="absolute inset-y-0 left-0 rounded-full bg-sky-300/80"
       />
+      {/* SKIP marks: the cells playback will jump over. One per disabled card
+          in THIS row, laid on the row's own cell pitch — a grid cell is a
+          fixed width, so the mark is the cell, not a time range. */}
+      {rowCards.map((card, index) =>
+        card.disabled === true ? (
+          <span
+            key={`skip-${index}`}
+            data-rail-skip
+            aria-hidden="true"
+            className="absolute inset-y-0 bg-zinc-600/70"
+            style={{
+              left: `${((index * pitch) / extent) * 100}%`,
+              width: `${(cellWidth / extent) * 100}%`,
+            }}
+          />
+        ) : null,
+      )}
       {rowCards.slice(1).map((_, index) => (
         <span
           key={index}
@@ -1008,14 +1043,18 @@ export function GraphStripSeekRail({
   // The rail's content width ends at the LAST item's right edge, and the
   // interior ticks sit at the gap centres between cards — the strip twin of
   // the grid rails' cell-edge ticks.
-  const { extent, ticks } = useMemo(() => {
+  const { extent, ticks, skips } = useMemo(() => {
     let cursor = 0;
     const tickXs: number[] = [];
     cards.forEach((card, index) => {
       if (index > 0) tickXs.push(cursor - STRIP_GAP_PX / 2);
       cursor += card.width + STRIP_GAP_PX;
     });
-    return { extent: Math.max(1, cursor - STRIP_GAP_PX), ticks: tickXs };
+    return {
+      extent: Math.max(1, cursor - STRIP_GAP_PX),
+      ticks: tickXs,
+      skips: disabledCardSegments(cards),
+    };
   }, [cards]);
 
   // Window geometry over the scroller's padding band, measured like the
@@ -1285,6 +1324,19 @@ export function GraphStripSeekRail({
             aria-hidden="true"
             className="absolute inset-y-0 left-0 rounded-full bg-sky-300/80"
           />
+          {/* SKIP marks, over the fill: the stretches playback will jump. A
+              neutral scrim rather than a colour of its own — the point is
+              that this part of the rail is dead, and a dead stretch should
+              look drained next to the live fill, not decorated. */}
+          {skips.map((segment, index) => (
+            <span
+              key={`skip-${index}`}
+              data-rail-skip
+              aria-hidden="true"
+              className="absolute inset-y-0 bg-zinc-600/70"
+              style={{ left: segment.x, width: segment.width }}
+            />
+          ))}
           {ticks.map((x, index) => (
             <span
               key={index}
@@ -1556,18 +1608,14 @@ export function PreviewShell({
     detailsStore.read,
     detailsStore.read,
   );
-  // Disabled clips are dropped and the rest repacked, matching what the
-  // manifest compiles — otherwise the pane would play one timeline before the
-  // manifest lands and a different one after.
-  //
-  // The filter lives HERE, not in `graphChildrenToClips`: that same function
-  // is what graph-persistence writes to storage, so skipping clips inside it
-  // would DELETE every disabled clip on the next commit.
+  // Disabled clips ride through UNFILTERED and unrepacked, matching what the
+  // manifest now compiles — otherwise the pane would play one timeline before
+  // the manifest lands and a different one after. They already carry
+  // `disabled` off the graph node (see graphChildrenToClips), and the display
+  // surface is what acts on it: jump the span while playing, gray it while
+  // scrubbing.
   const projectionClips = useMemo<TimelineClip[]>(
-    () =>
-      enabled
-        ? packTimelineClips(enabledClips(graphChildrenToClips(graph, details, focusedId)))
-        : [],
+    () => (enabled ? graphChildrenToClips(graph, details, focusedId) : []),
     [enabled, graph, details, focusedId],
   );
   // The pane plays the manifest (full nested depth) once it lands; until
