@@ -31,6 +31,7 @@ import {
 import { getEventCoordinates } from "@dnd-kit/utilities";
 
 import { getChildren, type CollectionItemNode, type CollectionsGraph, type NodeId } from "../core/graph";
+import type { AddNodesCommand, MoveNodesCommand } from "../core/commands";
 import {
   decodeDropTarget,
   encodeDropTarget,
@@ -140,6 +141,33 @@ export type DndCollectionsProps = Readonly<{
    * announced with the rejection's `message`.
    */
   commandPolicy?: CommandPolicy;
+  /**
+   * Rewrite the command a POINTER DROP resolved to, before it is dispatched.
+   *
+   * The escape hatch for a view whose boundaries do not mean what the intent
+   * assumes. A drop names its target as (collection, index), taken from the
+   * insert container the pointer was over — which is right for a strip showing
+   * one collection's children, and wrong for a FLAT strip, whose boundaries
+   * index a run spanning many parents. Such a view can map (flat index) →
+   * (real parent, real index) here.
+   *
+   * POINTER DROPS ONLY — node drags AND palette drags, since both resolve
+   * their target from the same insert boundary and both would be wrong in the
+   * same way. KEYBOARD moves and trash are not routed through this: they name
+   * their target directly rather than reading it off a boundary, so there is
+   * nothing to correct.
+   *
+   * Runs BEFORE `commandPolicy`, so a rewritten command is still subject to
+   * every application rule; returning the command unchanged is a no-op.
+   */
+  mapDropCommand?: (
+    command: MoveNodesCommand | AddNodesCommand,
+    intent: DropIntent,
+    /** The committed graph the drop resolved against — handed over so a
+     *  mapper can re-derive whatever its view's boundaries mean without
+     *  reaching for a store it may not be able to see. */
+    graph: CollectionsGraph,
+  ) => MoveNodesCommand | AddNodesCommand;
   /**
    * Fires when a palette drag's factory-created nodes will NEVER commit —
    * cancelled, refused (including by `commandPolicy`), or orphaned by a
@@ -259,6 +287,7 @@ export function DndCollections({
   openOnClick,
   trimRequiresSelection,
   commandPolicy,
+  mapDropCommand,
   onPaletteDiscard,
   dragGhostScale = 1,
   dragGhostWidth,
@@ -288,16 +317,26 @@ export function DndCollections({
   // concurrent rendering.
   const onChangeRef = useRef(onChange);
   const commandPolicyRef = useRef(commandPolicy);
+  const mapDropCommandRef = useRef(mapDropCommand);
   const onPaletteDiscardRef = useRef(onPaletteDiscard);
   useLayoutEffect(() => {
     onChangeRef.current = onChange;
     commandPolicyRef.current = commandPolicy;
+    mapDropCommandRef.current = mapDropCommand;
     onPaletteDiscardRef.current = onPaletteDiscard;
   });
   // Stable identity so the palette controller (and everything depending on
   // it) never rebuilds because the consumer passed an inline closure.
   const handlePaletteDiscard = useCallback(
     (nodes: readonly CollectionItemNode[]) => onPaletteDiscardRef.current?.(nodes),
+    []
+  );
+  // Same treatment: a stable identity over the ref, so a consumer rebuilding
+  // its mapper per render never re-creates the drop handler mid-drag. Unset
+  // means identity — the command commits exactly as resolved.
+  const handleMapDropCommand = useCallback(
+    (command: MoveNodesCommand | AddNodesCommand, intent: DropIntent, graph: CollectionsGraph) =>
+      mapDropCommandRef.current?.(command, intent, graph) ?? command,
     []
   );
 
@@ -323,6 +362,7 @@ export function DndCollections({
           <LiveTrimChannelContext.Provider value={liveTrimChannel}>
             <DndCollectionsContext
               animateMoves={animateMoves}
+              mapDropCommand={handleMapDropCommand}
               onPaletteDiscard={handlePaletteDiscard}
               dragGhostScale={dragGhostScale}
               dragGhostWidth={dragGhostWidth}
@@ -358,6 +398,7 @@ function FlipAnimator({
 function DndCollectionsContext({
   children,
   animateMoves,
+  mapDropCommand,
   onPaletteDiscard,
   dragGhostScale,
   dragGhostWidth,
@@ -366,6 +407,13 @@ function DndCollectionsContext({
 }: {
   children: ReactNode;
   animateMoves: boolean;
+  /** Already ref-indirected by the outer component — a stable identity, safe
+   *  to read inside the drop handler without re-creating it. */
+  mapDropCommand: (
+    command: MoveNodesCommand | AddNodesCommand,
+    intent: DropIntent,
+    graph: CollectionsGraph,
+  ) => MoveNodesCommand | AddNodesCommand;
   onPaletteDiscard: (nodes: readonly CollectionItemNode[]) => void;
   dragGhostScale: number;
   dragGhostWidth: number | undefined;
@@ -395,7 +443,16 @@ function DndCollectionsContext({
   // from onDragMove/onDragOver.
   const intentRef = useRef<DropIntent | null>(null);
 
-  const palette = usePaletteDrag({ store, intentRef, announce, onDiscard: onPaletteDiscard });
+  const palette = usePaletteDrag({
+    store,
+    intentRef,
+    announce,
+    onDiscard: onPaletteDiscard,
+    // A palette drop is a drop: same boundary, same correction. Narrowed to
+    // the add variant, which is all this path can ever produce.
+    mapDropCommand: (command, intent, graph) =>
+      mapDropCommand(command, intent, graph) as AddNodesCommand,
+  });
 
   const containerRef = useRef<HTMLDivElement>(null);
   // The live drag ghost element, and the box it occupied at the moment of a
@@ -644,6 +701,11 @@ function DndCollectionsContext({
         announce("Cancelled drag.");
         return;
       }
+      // A view whose boundaries index something other than the target
+      // collection's own children gets to correct the target here — see
+      // `mapDropCommand`. Read through the ref so a consumer that rebuilds the
+      // callback per render never leaves a stale mapping armed mid-drag.
+      const command = mapDropCommand(commandResult.value, intent, graph);
 
       // Measure the ghost BEFORE the commit — dispatching unmounts the
       // overlay, and this box is where the dropped card's motion should
@@ -663,11 +725,11 @@ function DndCollectionsContext({
             }
           : null;
 
-      const dispatched = store.dispatch(commandResult.value);
+      const dispatched = store.dispatch(command);
       store.endDrag();
 
       if (dispatched.ok) {
-        const targetName = graph.nodesById.get(commandResult.value.toParentId)?.name ?? "collection";
+        const targetName = graph.nodesById.get(command.toParentId)?.name ?? "collection";
         announce(
           activeIds.length > 1
             ? `Moved ${activeIds.length} items to "${targetName}".`

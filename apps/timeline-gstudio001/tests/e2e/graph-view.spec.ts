@@ -3481,6 +3481,63 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 
+  // RETRIED, deliberately. This is a real-mouse drag, and dnd-kit recomputes
+  // `over` on a measure cadence — releasing before it catches up is the
+  // documented CI-only flake class (see the package CLAUDE.md), which the
+  // suite already carries two of. It passes 4/4 in isolation and fails
+  // roughly one run in three under full parallel load, with flat mode
+  // correctly on in the captured snapshot: the state is right, the drag is
+  // starved. Retries buy the coverage without making the suite red; the RULE
+  // itself is pinned deterministically by resolveFlatDropTarget's unit tests.
+  test.describe(() => {
+    test.describe.configure({ retries: 2 });
+    test("in flat mode a palette drop joins the LEFT neighbour's collection", async ({
+        page,
+      }) => {
+      const api = await installGraphApi(page);
+      await openGraph(page);
+      await page.getByRole("button", { name: "Show all items in order" }).click();
+      await expect
+        .poll(() => stripOrder(page, PROJECT_ID), { timeout: 15000 })
+        .toEqual(["alpha", "bravo", "c1", "c2", "charlie"]);
+
+      // Wait for the closure hydration to FINISH before dragging. It mutates
+      // the graph as each collection lands, and a graph replaced mid-drag
+      // orphans the drop by design — under parallel load that is a real race,
+      // not just slowness.
+      await expect(
+        page.getByRole("button", { name: "Show collections" }),
+      ).toHaveAttribute("aria-busy", "false");
+
+      await assetsButton(page).click();
+      const drawer = page.getByRole("dialog", { name: "Asset palette" });
+      await expect(drawer).toBeVisible();
+
+      // Drop onto c2's RIGHT half — the boundary just after it. c2 lives in
+      // Scene A, so the new clip belongs to Scene A, NOT to the focused project
+      // whose collection the drop intent actually names.
+      await holdDrag(
+        page,
+        drawer.locator('[data-palette-item="asset-img-1"]'),
+        strip(page, PROJECT_ID).locator('[data-node-id="c2"]'),
+        0.85,
+      );
+
+      // It landed in the CHILD document, after c2 — the flat index was
+      // translated, not taken literally.
+      await expect
+        .poll(() => api.patchesFor(CHILD_ID).at(-1)?.clipIds, { timeout: 8000 })
+        .toHaveLength(3);
+      const childIds = api.patchesFor(CHILD_ID).at(-1)!.clipIds!;
+      expect(childIds.slice(0, 2)).toEqual(["c1", "c2"]);
+
+      // And the project document did NOT gain it — the untranslated command
+      // would have inserted here, at a flat index inside the wrong parent.
+      const projectIds = api.patchesFor(PROJECT_ID).at(-1)?.clipIds;
+      if (projectIds) expect(projectIds).toHaveLength(4);
+    });
+  });
+
   // The seek rail's marks are PER ITEM — one boundary tick between every pair
   // of cards — so unwindowed they scale with clip count, which is precisely
   // the cost the strip's card virtualizer exists to avoid. It matters most for
