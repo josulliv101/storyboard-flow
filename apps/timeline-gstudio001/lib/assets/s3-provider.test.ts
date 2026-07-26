@@ -120,12 +120,14 @@ describe("createS3AssetProvider", () => {
     expect(noPoster?.thumbnailUrl).toBe("");
   });
 
-  it("declares folders on and tags off — its Folders/Tags toggle disappears", async () => {
+  it("declares folders and search on, tags off — its Folders/Tags toggle disappears", async () => {
     const s3 = provider([]);
     expect(s3.capabilities).toEqual({
       folders: true,
       tags: false,
-      search: false,
+      // S3 has no search API and needs none: the same in-memory derivation
+      // over the same listing that already serves folders.
+      search: true,
       upload: false,
       delete: false,
     });

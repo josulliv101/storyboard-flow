@@ -41,6 +41,13 @@ export async function GET(request: Request) {
       );
     }
 
+    // A non-blank `q` is a SEARCH, and it outranks both browse modes: a query
+    // spans the whole library, so carrying the folder or tag the user was
+    // standing in would hide the results they asked for. Blank or
+    // whitespace-only reads as "not searching" rather than "match nothing",
+    // so clearing the box returns to browsing instead of emptying the panel.
+    const searchTerm = (url.searchParams.get("q") ?? "").trim();
+    const searching = searchTerm.length > 0;
     const tagsMode = url.searchParams.get("mode") === "tags";
     const folderSegments = url.searchParams.getAll("folder");
     const browsing = url.searchParams.get("browse") !== null || folderSegments.length > 0;
@@ -48,11 +55,13 @@ export async function GET(request: Request) {
     const query: AssetQuery = {
       // Tags mode is ALWAYS a browse (no tag params = the tags root); the
       // folder/flat distinction only exists in folders mode.
-      ...(tagsMode
-        ? { tagPath: url.searchParams.getAll("tag") }
-        : browsing
-          ? { folder: folderSegments }
-          : {}),
+      ...(searching
+        ? { search: searchTerm }
+        : tagsMode
+          ? { tagPath: url.searchParams.getAll("tag") }
+          : browsing
+            ? { folder: folderSegments }
+            : {}),
       ...(Number.isFinite(limitParam) && limitParam > 0 ? { limit: limitParam } : {}),
     };
 

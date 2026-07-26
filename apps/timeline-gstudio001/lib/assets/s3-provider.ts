@@ -18,7 +18,7 @@
 // the same bucket. Fine for a personal deployment; revisit if this app ever
 // becomes multi-tenant.
 
-import { pageFromFlatListing } from "./path-folders";
+import { pageFromFlatListing, pageFromSearch } from "./path-folders";
 import type { AssetProvider } from "./provider";
 import type { Asset, AssetKind } from "./types";
 
@@ -246,12 +246,20 @@ export function createS3AssetProvider(
       // on a listing, so the capability is honestly off and the palette's
       // Folders/Tags toggle disappears for this provider.
       tags: false,
-      search: false,
+      // Same in-memory derivation over the same full listing that folders
+      // come from (pageFromSearch) — S3 has no search API, but none is
+      // needed, so this is exactly as complete as browsing is here.
+      search: true,
       upload: false,
       delete: false,
     },
     async list(_ctx, query) {
       const assets = await listing();
+      // Search outranks browsing: a query spans the whole library, so scoping
+      // it to the folder the user was standing in would hide the hits.
+      if (query.search !== undefined && query.search.trim().length > 0) {
+        return pageFromSearch(assets, query);
+      }
       // tagPath can arrive despite the capability (the contract: ignore,
       // never throw) — without tags every asset would sit at the tags root,
       // which is just the folder-flat view, so serve folders regardless.

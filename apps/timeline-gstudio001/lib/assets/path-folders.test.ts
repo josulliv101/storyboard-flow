@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { pageFromFlatListing, pageFromTagListing } from "./path-folders";
+import { pageFromFlatListing, pageFromSearch, pageFromTagListing } from "./path-folders";
 import type { Asset } from "./types";
 
 function asset(id: string, folderPath: string[], tags: string[] = []): Asset {
@@ -127,5 +127,55 @@ describe("pageFromTagListing", () => {
     expect(page.assets.map((entry) => entry.id)).toEqual(["untagged"]);
     const limited = pageFromTagListing(TAGGED, { tagPath: ["scene", "heist"], limit: 1 });
     expect(limited.assets.map((entry) => entry.id)).toEqual(["heist-1"]);
+  });
+});
+
+describe("pageFromSearch", () => {
+  const listing = [
+    ...LISTING,
+    asset("Bank_Heist_01", ["Scenes", "Heist"], ["scene/heist"]),
+    asset("alleyway-shot", ["Exteriors"]),
+  ];
+
+  it("matches the NAME, case-insensitively", () => {
+    const page = pageFromSearch(listing, { folderPath: [], search: "heist" } as never);
+    expect(page.assets.map((a) => a.id)).toContain("Bank_Heist_01");
+    expect(page.assets.map((a) => a.id)).toContain("heist-1");
+  });
+
+  it("matches the FOLDER path — people search for where they filed it", () => {
+    const page = pageFromSearch(listing, { folderPath: [], search: "exteriors" } as never);
+    expect(page.assets.map((a) => a.id)).toEqual(["alleyway-shot"]);
+  });
+
+  it("matches TAGS", () => {
+    const page = pageFromSearch(listing, { folderPath: [], search: "scene/heist" } as never);
+    expect(page.assets.map((a) => a.id)).toEqual(["Bank_Heist_01"]);
+  });
+
+  it("returns a FLAT page — a search spans the library, so folders are meaningless", () => {
+    const page = pageFromSearch(listing, { folderPath: [], search: "scenes" } as never);
+    expect(page.folders).toEqual([]);
+    expect(page.assets.length).toBeGreaterThan(0);
+  });
+
+  it("treats a blank or whitespace-only term as NOT searching", () => {
+    // The route already refuses to set `search` for these, but the provider
+    // is reachable directly — and "match nothing" would empty the panel for
+    // someone who merely cleared the box.
+    expect(pageFromSearch(listing, { folderPath: [], search: "" } as never).assets).toEqual([]);
+    expect(pageFromSearch(listing, { folderPath: [], search: "   " } as never).assets).toEqual([]);
+    expect(pageFromSearch(listing, { folderPath: [] } as never).assets).toEqual([]);
+  });
+
+  it("honours the limit", () => {
+    const page = pageFromSearch(listing, { folderPath: [], search: "e", limit: 2 } as never);
+    expect(page.assets).toHaveLength(2);
+  });
+
+  it("returns nothing for a term that matches nothing", () => {
+    expect(
+      pageFromSearch(listing, { folderPath: [], search: "zzzznope" } as never).assets,
+    ).toEqual([]);
   });
 });

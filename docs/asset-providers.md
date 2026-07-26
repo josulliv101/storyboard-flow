@@ -16,6 +16,18 @@ implementing one interface and registering one line.
   Registration order is preference order; the first entry answers requests
   that name no provider. Adding a provider = one adapter file + one entry.
 
+**Search is a THIRD derivation over the flat listing**, beside folders and
+tags — see `pageFromSearch` in `lib/assets/path-folders.ts`. No provider
+delegates to a vendor search API: every path-shaped backend already loads its
+listing to derive folders, so search costs one more filter and both installed
+providers get it for the same code. It matches name, folder path and tags
+(case-insensitive substring), returns a FLAT page with no folders — a query
+spans the library, so regrouping hits into folders answers a question the user
+just stopped asking — and OUTRANKS both browse modes, since scoping a query to
+the folder someone was standing in would hide what they asked for. A blank or
+whitespace-only `q` reads as "not searching", so clearing the box returns to
+the browse that was showing.
+
 **Capabilities are the degradation contract.** Each provider declares
 `{ folders, tags, search, upload, delete }` and the UI renders only what is
 true — a provider without folders gets a flat panel, one without upload gets
@@ -34,6 +46,7 @@ queries, and safe deletion later.
 ## Wire protocol
 
 `GET /api/assets?provider=<id>&folder=<seg>&folder=<seg>&browse=1&limit=<n>`
+`GET /api/assets?q=<term>` — a library-wide search; carries no folder/tag/browse.
 
 - `folder` repeats one param per **path segment**, so a segment containing
   `/` can never fake a boundary (NodeId lesson: assume ids contain your
