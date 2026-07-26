@@ -63,6 +63,10 @@ export async function GET(request: Request) {
             ? { folder: folderSegments }
             : {}),
       ...(Number.isFinite(limitParam) && limitParam > 0 ? { limit: limitParam } : {}),
+      // Opaque to this route on purpose: only the provider knows what its own
+      // cursor means (an offset for the path-derived ones, a backend token
+      // for anything that pushes paging down).
+      ...(url.searchParams.get("cursor") ? { cursor: url.searchParams.get("cursor")! } : {}),
     };
 
     const page = await provider.list({ uid: user.uid }, query);

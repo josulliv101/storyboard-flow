@@ -20,7 +20,18 @@ import { clearPendingDetails, parkPendingDetail } from "./graph-pending-details"
 
 const DEFAULT_IMAGE_SECONDS = 4;
 const DEFAULT_VIDEO_SECONDS = 8;
-const PALETTE_ASSET_LIMIT = 48;
+/**
+ * How many assets one request fetches — a PAGE SIZE now, not the cap it used
+ * to be. The old 48 was the whole story: the rail showed 48 and said the rest
+ * was elsewhere. With a cursor there is no "rest", so the number is free to
+ * be small.
+ *
+ * Small on purpose. The first page is what the user waits for, and a dozen
+ * tiles already fill a horizontal rail past its scroll edge — fetching four
+ * times that to satisfy a scroll most people never make costs everyone the
+ * wait. "Load more" is one click for the minority who go looking.
+ */
+const PALETTE_PAGE_SIZE = 12;
 
 function createNodeFromAsset(asset: Asset): CollectionItemNode {
   clearPendingDetails();
@@ -70,7 +81,10 @@ function createNodeFromAsset(asset: Asset): CollectionItemNode {
 type PalettePage = Readonly<{
   assets: readonly Asset[];
   folders: readonly AssetFolder[];
-  truncated: boolean;
+  /** The provider's cursor for the NEXT page, absent when this is the last.
+   *  Replaces the old `truncated` boolean, which could only announce that
+   *  there was more and never reach it. */
+  nextCursor?: string;
 }>;
 
 /** What the picker needs from /api/assets/providers. */
@@ -321,6 +335,66 @@ export function AssetPaletteDrawer({
     [],
   );
 
+  // Both the first fetch and every "load more" go through this, so the
+  // search-vs-browse param rules cannot drift between them — that divergence
+  // would be invisible until a paged search silently started browsing.
+  const requestParams = useCallback(
+    (cursor?: string) => {
+      const params = searchTerm
+        ? new URLSearchParams({ q: searchTerm })
+        : mode === "tags"
+          ? new URLSearchParams({ mode: "tags" })
+          : new URLSearchParams({ browse: "1" });
+      params.set("limit", String(PALETTE_PAGE_SIZE));
+      if (providerId !== null) params.set("provider", providerId);
+      if (!searchTerm) {
+        for (const segment of path) params.append(mode === "tags" ? "tag" : "folder", segment);
+      }
+      if (cursor !== undefined) params.set("cursor", cursor);
+      return params;
+    },
+    [searchTerm, mode, providerId, path],
+  );
+
+  // Appending, not replacing: the rail keeps everything already loaded so a
+  // second page never costs the user their scroll position or the tile they
+  // were reaching for. Its own flag rather than the shared `loading` status,
+  // which swaps the whole rail for skeletons — that would be a worse answer
+  // to "show me more" than showing nothing at all.
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadMore = useCallback(async () => {
+    const cursor = state.status === "ready" ? state.nextCursor : undefined;
+    if (cursor === undefined || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const response = await fetch(`/api/assets?${requestParams(cursor)}`, { cache: "no-store" });
+      const result = (await response.json().catch(() => ({}))) as {
+        assets?: Asset[];
+        nextCursor?: string;
+      };
+      if (!response.ok || !result.assets) return;
+      setState((current) => {
+        // The page the user was on may have been replaced while this was in
+        // flight (they searched, navigated, switched provider). Appending
+        // then would splice one folder's assets onto another's.
+        if (current.status !== "ready" || current.nextCursor !== cursor) return current;
+        const merged: PalettePage = {
+          assets: [...current.assets, ...result.assets!],
+          folders: current.folders,
+          ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
+        };
+        pageCacheRef.current.set(cacheKey(providerId, mode, path, searchTerm), merged);
+        return { status: "ready", ...merged };
+      });
+    } catch {
+      // Silent: the rail still shows every asset already loaded, and the
+      // button stays for a retry. An error banner would replace content the
+      // user can still use.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [state, loadingMore, requestParams, cacheKey, providerId, mode, path, searchTerm]);
+
   const navigateTo = useCallback(
     (next: readonly string[], nextMode?: BrowseMode) => {
       const targetMode = nextMode ?? mode;
@@ -399,20 +473,12 @@ export function AssetPaletteDrawer({
         // A search is library-wide and carries no place: no browse, no
         // folder/tag params. The route treats a blank `q` as "not searching",
         // so clearing the box returns to exactly the browse that was showing.
-        const params = searchTerm
-          ? new URLSearchParams({ q: searchTerm })
-          : mode === "tags"
-            ? new URLSearchParams({ mode: "tags" })
-            : new URLSearchParams({ browse: "1" });
-        if (providerId !== null) params.set("provider", providerId);
-        if (!searchTerm) {
-          for (const segment of path) params.append(mode === "tags" ? "tag" : "folder", segment);
-        }
-        const response = await fetch(`/api/assets?${params}`, { cache: "no-store" });
+        const response = await fetch(`/api/assets?${requestParams()}`, { cache: "no-store" });
         const result = (await response.json().catch(() => ({}))) as {
           assets?: Asset[];
           folders?: AssetFolder[];
           capabilities?: { tags?: boolean; search?: boolean };
+          nextCursor?: string;
           error?: string;
         };
         if (cancelled) return;
@@ -421,9 +487,12 @@ export function AssetPaletteDrawer({
           return;
         }
         const page: PalettePage = {
-          assets: result.assets.slice(0, PALETTE_ASSET_LIMIT),
+          // No client-side slice: the provider honours `limit`, so trimming
+          // here again would drop assets we had already fetched AND lie about
+          // where the next page starts.
+          assets: result.assets,
           folders: result.folders ?? [],
-          truncated: result.assets.length > PALETTE_ASSET_LIMIT,
+          ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
         };
         pageCacheRef.current.set(cacheKey(providerId, mode, path, searchTerm), page);
         setTagsAvailable(result.capabilities?.tags === true);
@@ -441,7 +510,7 @@ export function AssetPaletteDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, state.status, path, mode, providerId, searchTerm, cacheKey]);
+  }, [open, state.status, path, mode, providerId, searchTerm, cacheKey, requestParams]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -594,15 +663,26 @@ export function AssetPaletteDrawer({
                 mode={mode}
                 onOpenFolder={navigateTo}
               />
-              {state.truncated && (
-                <p className="mt-1 text-[10px] text-zinc-600">
-                  {/* This used to point at "the storyboard view" — a route
-                      deleted in #184, so the advice led nowhere. Search is the
-                      way through a library bigger than a page until the
-                      palette paginates. */}
-                  Showing the first {PALETTE_ASSET_LIMIT}
-                  {searchTerm ? " matches" : " assets"} — narrow it with search.
-                </p>
+              {state.nextCursor !== undefined && (
+                // This used to be a dead end: a line saying "showing the first
+                // 48" and pointing at the storyboard view, a route deleted in
+                // #184. There is now a way to actually reach the rest.
+                <div className="mt-1 flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={loadingMore}
+                    onClick={() => void loadMore()}
+                    className="h-6 px-2 text-[10px]"
+                  >
+                    {loadingMore ? "Loading…" : "Load more"}
+                  </Button>
+                  <span className="text-[10px] text-zinc-600">
+                    {state.assets.length} shown
+                    {searchTerm ? " · narrow the search to get there faster" : ""}
+                  </span>
+                </div>
               )}
             </>
           ))}
