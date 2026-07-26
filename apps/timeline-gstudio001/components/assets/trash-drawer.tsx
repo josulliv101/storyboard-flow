@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   Trash2,
@@ -15,6 +15,8 @@ import { Button } from "@/components/core/button";
 import { toast } from "@/components/core/sonner";
 import { trashRowCaption } from "@/lib/trash-provenance";
 import { groupTrashClips } from "@/lib/trash-groups";
+import { discardTrashClips } from "@/lib/graph-trash-discard";
+import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
   GRAPH_RESTORE_RESULT_EVENT,
@@ -109,6 +111,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   // single slot would leave every button but the last looking idle.
   const [restoringIds, setRestoringIds] = useState<readonly string[]>([]);
 
+  const uid = user?.uid;
   useEffect(() => {
     const onResult = (event: Event) => {
       const detail = (event as CustomEvent<GraphRestoreResultDetail>).detail;
@@ -121,11 +124,32 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
         // one yet" flag: React may invoke an updater more than once, and a
         // flag that survives between invocations made the second pass remove
         // nothing, leaving the restored row on screen.
+        const duplicates = addedGroupRef.current.get(detail.clipId) ?? [];
+        addedGroupRef.current.delete(detail.clipId);
         setClips((current) => {
-          const index = current.findIndex((clip) => clip.id === detail.clipId);
-          if (index === -1) return current;
-          return [...current.slice(0, index), ...current.slice(index + 1)];
+          // Drop the clip that was added, plus the duplicates that came with
+          // its row — the row stood for one image and that image is now taken.
+          const doomed = new Set([detail.clipId, ...duplicates]);
+          const kept: TimelineClip[] = [];
+          const removedOnce = new Set<string>();
+          for (const clip of current) {
+            // One removal per id: the bin can hold the same id twice, and only
+            // as many as this row accounted for may go.
+            if (doomed.has(clip.id) && !removedOnce.has(clip.id)) {
+              removedOnce.add(clip.id);
+              continue;
+            }
+            kept.push(clip);
+          }
+          return kept;
         });
+        // The add moved ONE clip out of the bin through the graph; these never
+        // move anywhere, so they need a real discard — which has to wait for
+        // the graph's own (debounced) trash write to land first, or it gets
+        // overwritten by it. See lib/graph-trash-discard.ts.
+        if (duplicates.length > 0 && uid) {
+          void discardTrashClips(duplicates, `trash-${uid}`, graphDocumentsGateway);
+        }
       }
       // Sonner, like every other surface in the app. This used to dispatch a
       // bespoke `gstudio-toast` event that the sidebar rendered as its own
@@ -137,7 +161,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
     };
     window.addEventListener(GRAPH_RESTORE_RESULT_EVENT, onResult);
     return () => window.removeEventListener(GRAPH_RESTORE_RESULT_EVENT, onResult);
-  }, []);
+  }, [uid]);
 
   const handleRestore = (clipId: string) => {
     setRestoringIds((current) => [...current, clipId]);
@@ -145,20 +169,32 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   };
 
   /**
-   * Take ONE copy out of the bin and add it to whatever timeline is open.
+   * Add the row's image to whatever timeline is open, and clear it from the
+   * bin entirely.
    *
    * This was never "put it back where it came from" — the graph inserts at
    * `resolveInsertPlacement`, i.e. into the FOCUSED timeline — but calling it
    * Restore implied otherwise. The bin is a place you take images from; where
    * they land is wherever you are.
    *
-   * One click takes one copy, so a row holding two still has one to give and
-   * stays, with its count down by one. That is why nothing needs a "discard
-   * from bin" primitive the graph would fight: every entry leaves the bin the
-   * same way, by being added somewhere.
+   * The bin holds one row per IMAGE. How many clips happen to back that row
+   * is bookkeeping the user never asked about, so taking the image takes ALL
+   * of them: one copy is added, and any duplicates are discarded rather than
+   * left behind as a row that looks unchanged after you just used it.
+   *
+   * The discard is deliberately AFTER the add succeeds. If the add is refused
+   * (no graph, an un-hydrated target), nothing has been taken and nothing may
+   * be thrown away.
    */
-  const handleAddToTimeline = (clipId: string) => {
-    handleRestore(clipId);
+  const addedGroupRef = useRef(new Map<string, readonly string[]>());
+  const handleAddToTimeline = (group: { key: string; clips: readonly TimelineClip[] }) => {
+    const [first, ...duplicates] = group.clips;
+    if (!first) return;
+    addedGroupRef.current.set(
+      first.id,
+      duplicates.map((clip) => clip.id),
+    );
+    handleRestore(first.id);
   };
 
   const handleEmptyTrash = async () => {
@@ -304,18 +340,6 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                         </span>
                       </div>
                     )}
-                    {group.clips.length > 1 && (
-                      // Not "pick one of these" — they are identical. It is
-                      // how many times this row can still be added before it
-                      // is spent, so the row staying after a click reads as
-                      // correct rather than broken.
-                      <span
-                        className="absolute left-1 top-1 rounded-full bg-black/85 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-100 ring-1 ring-white/15"
-                        title={`${group.clips.length} copies in the bin`}
-                      >
-                        ×{group.clips.length}
-                      </span>
-                    )}
                   </div>
                   <div className="mt-2 flex min-w-0 items-center gap-2">
                     <div className="min-w-0 flex-1">
@@ -342,7 +366,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                         variant="outline"
                         size="sm"
                         disabled={busy}
-                        onClick={() => handleAddToTimeline(clip.id)}
+                        onClick={() => handleAddToTimeline(group)}
                         title={`Add to ${focusedName}`}
                         aria-label={`Add ${(clip as any).title || clip.alt || "clip"} to ${focusedName}`}
                         className="h-6 shrink-0 border-zinc-800 px-2 text-[10px] text-zinc-300 hover:border-sky-500/50 hover:text-sky-300 cursor-pointer"

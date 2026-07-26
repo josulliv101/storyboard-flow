@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
-// Empty-the-bin tests over the REAL DELETE handler and the REAL
+// Bin-removal tests — DELETE (empty everything) and POST (discard specific
+// entries) — over the REAL handlers and the REAL
 // firebase-timeline-store save path — only the process boundaries are faked
 // (the Firestore SDK, the session cookie, Cloudinary). The endpoint could
 // never work before: the save path refuses an empty write over a non-empty
@@ -85,7 +86,7 @@ vi.mock("@/lib/cloudinary-media-store", () => ({
   },
 }));
 
-import { DELETE as emptyTrash } from "./route";
+import { DELETE as emptyTrash, POST as discardTrash } from "./route";
 import { GET as getTimeline } from "../timelines/[id]/route";
 
 const TRASH_ID = "trash-user-a";
@@ -227,6 +228,101 @@ describe("DELETE /api/trash", () => {
 
     // user-b empties THEIR bin (which doesn't exist) — user-a's is untouched.
     expect((await emptyTrash()).status).toBe(200);
+    expect(state.docs.get(TRASH_ID)).toEqual(before);
+  });
+});
+
+const discard = (clipIds: unknown) =>
+  discardTrash(
+    new Request("http://test.local/api/trash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clipIds }),
+    }),
+  );
+
+// POST removes SPECIFIC entries, which is what taking an image back out of the
+// bin needs: the drawer shows one row per image, the graph moves one copy into
+// the open timeline, and the copies that never moved have to go too — or the
+// row returns holding duplicates of something already taken back.
+describe("POST /api/trash", () => {
+  it("discards the named entries and leaves the rest", async () => {
+    seedTrash([
+      clip("c1", "https://example.test/a.png"),
+      clip("c2", "https://example.test/b.png"),
+      clip("c3", "https://example.test/c.png"),
+    ]);
+
+    const response = await discard(["c1", "c3"]);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, discarded: 2 });
+
+    expect(state.docs.get(TRASH_ID)?.clips).toEqual([
+      expect.objectContaining({ id: "c2" }),
+    ]);
+    expect((await readBack()).clips.map((entry) => entry.id)).toEqual(["c2"]);
+  });
+
+  it("drops ONE entry per id, not every clip sharing it", async () => {
+    // The bin legitimately holds the same id twice: stable per-asset clip ids
+    // mean one file trashed from two timelines arrives under one id. A caller
+    // discarding one copy must not lose the other.
+    seedTrash([
+      clip("dup", "https://example.test/a.png"),
+      clip("dup", "https://example.test/a.png"),
+      clip("c2", "https://example.test/b.png"),
+    ]);
+
+    expect(await (await discard(["dup"])).json()).toEqual({ success: true, discarded: 1 });
+    expect(state.docs.get(TRASH_ID)?.clips).toEqual([
+      expect.objectContaining({ id: "dup" }),
+      expect.objectContaining({ id: "c2" }),
+    ]);
+  });
+
+  it("discarding the LAST entries empties the document and it stays empty", async () => {
+    // `allowEmptying` is what makes this work: the save path refuses an empty
+    // write over a non-empty document, and the read path otherwise re-hydrates
+    // `lastNonEmptyDocument` whenever the stored clips are empty.
+    seedTrash([clip("c1", "https://example.test/a.png")]);
+
+    expect(await (await discard(["c1"])).json()).toEqual({ success: true, discarded: 1 });
+    expect(state.docs.get(TRASH_ID)?.clips).toEqual([]);
+    expect((await readBack()).clips).toEqual([]);
+  });
+
+  it("never deletes the uploaded file behind a discarded entry", async () => {
+    seedTrash([clip("c1", "https://res.cloudinary.com/demo/image/upload/v1/f/orphan.png")]);
+    await discard(["c1"]);
+    expect(state.cloudinaryDeletes).toEqual([]);
+  });
+
+  it("ignores ids that aren't in the bin, without writing", async () => {
+    seedTrash([clip("c1", "https://example.test/a.png")], 5);
+
+    expect(await (await discard(["nope"])).json()).toEqual({ success: true, discarded: 0 });
+    expect(state.docs.get(TRASH_ID)?.revision).toBe(5);
+    expect(state.docs.get(TRASH_ID)?.clips).toHaveLength(1);
+  });
+
+  it("rejects a request with no usable ids", async () => {
+    seedTrash([clip("c1", "https://example.test/a.png")]);
+
+    for (const body of [[], ["", "  ".trim()], "c1", undefined]) {
+      const response = await discard(body);
+      expect(response.status).toBe(400);
+    }
+    expect(state.docs.get(TRASH_ID)?.clips).toHaveLength(1);
+  });
+
+  it("leaves another user's trash document alone", async () => {
+    seedTrash([clip("c1", "https://example.test/a.png")]);
+    state.current.user = { uid: "user-b", email: null, name: null, picture: null };
+    const before = state.docs.get(TRASH_ID);
+
+    // The id exists — in SOMEONE ELSE'S bin. The handler only ever reads the
+    // caller's own `trash-<uid>` document, so there is nothing to remove.
+    expect(await (await discard(["c1"])).json()).toEqual({ success: true, discarded: 0 });
     expect(state.docs.get(TRASH_ID)).toEqual(before);
   });
 });
