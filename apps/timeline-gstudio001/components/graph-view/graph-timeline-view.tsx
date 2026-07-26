@@ -17,13 +17,17 @@ import {
   parseNodeId,
   type CollectionItemNode,
   type CollectionsGraph,
+  type AddNodesCommand,
   type CommandPolicy,
   type GraphNodeSpec,
+  type MoveNodesCommand,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 import {
   buildHydrationSpecs,
   collectUnhydratedDropTargets,
+  flattenMediaOrder,
+  resolveFlatDropTarget,
   type ClipDetail,
 } from "@storyboard/timeline-domain";
 
@@ -70,6 +74,7 @@ import {
   DEFAULT_ITEM_SIZE,
   DEFAULT_TIMELINE_PPS,
   FALLBACK_DETAIL,
+  MAX_SUBTREE_DEPTH,
 } from "./graph-view-config";
 import { GraphBreadcrumb } from "./graph-view-chrome";
 
@@ -399,6 +404,34 @@ export function GraphTimelineView({
     flatOnRef.current = flatOn;
   }, [flatOn]);
 
+  // FLAT drops: the strip publishes a boundary into the flat RUN, and the
+  // intent names the focused collection — neither of which is where the item
+  // belongs. `resolveFlatDropTarget` applies the rule the provenance label
+  // makes readable: a drop lands in the LEFT NEIGHBOUR's collection, right
+  // after it (at the very start, the head of the focused timeline).
+  //
+  // The flat list is rebuilt from the graph the provider hands over rather
+  // than shared from the board: it costs one walk per drop, and it can never
+  // be the stale copy a shared reference would risk mid-drag.
+  const handleMapDropCommand = useCallback(
+    (
+      command: MoveNodesCommand | AddNodesCommand,
+      _intent: unknown,
+      graph: CollectionsGraph,
+    ) => {
+      if (!flatOn) return command;
+      const focused = parseNodeId(focusedId);
+      const target = resolveFlatDropTarget(
+        graph,
+        flattenMediaOrder(graph, focused, MAX_SUBTREE_DEPTH),
+        focused,
+        command.toIndex,
+      );
+      return { ...command, toParentId: target.parentId, toIndex: target.index };
+    },
+    [flatOn, focusedId],
+  );
+
   const commandPolicy = useCallback<CommandPolicy>(
     (command) => {
       // FLAT MODE refuses POSITION-based commands.
@@ -414,11 +447,9 @@ export function GraphTimelineView({
       // committed today would insert at a flat index inside the wrong parent.
       // `resolveFlatDropTarget` is the rule that fixes it; until it is wired,
       // refusing beats landing items somewhere nobody chose.
-      if (flatOnRef.current && (command.type === "move-nodes" || command.type === "add-nodes")) {
+      if (flatOnRef.current && command.type === "move-nodes") {
         const message =
-          command.type === "move-nodes"
-            ? "Reordering is off while every item is shown — open the collection to reorder inside it."
-            : "Adding is off while every item is shown — open a collection to add to it.";
+          "Reordering is off while every item is shown — open the collection to reorder inside it.";
         toast.error(message, { id: "flat-mode-blocked" });
         return { reason: "blocked-by-policy", blockedIds: [], message };
       }
@@ -546,6 +577,7 @@ export function GraphTimelineView({
         onOpenNode={handleOpenNode}
         openOnClick={openOnClick}
         commandPolicy={commandPolicy}
+        mapDropCommand={handleMapDropCommand}
         onPaletteDiscard={handlePaletteDiscard}
         itemInstructions="Press O to open the focused collection, or F2 to rename it."
       >

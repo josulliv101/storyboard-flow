@@ -3,7 +3,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { type DragStartEvent } from "@dnd-kit/core";
 
-import { parseCollectionItemNode, type CollectionItemNode } from "../core/graph";
+import { parseCollectionItemNode, type CollectionItemNode, type CollectionsGraph } from "../core/graph";
+import type { AddNodesCommand } from "../core/commands";
 import { resolveAddCommandFromIntent, type DropIntent } from "../core/intents";
 import { type CollectionsStore } from "./collections-store";
 import { PALETTE_DATA_KEY } from "./palette";
@@ -26,6 +27,14 @@ export function usePaletteDrag(args: {
    * metadata lingers until some later event happens to clear it.
    */
   onDiscard?: (nodes: readonly CollectionItemNode[]) => void;
+  /** See `mapDropCommand` on the provider. A palette drop is a DROP — it
+   *  resolves its target from the same insert boundary a node drag does — so
+   *  it goes through the same correction. Identity when unset. */
+  mapDropCommand: (
+    command: AddNodesCommand,
+    intent: DropIntent,
+    graph: CollectionsGraph,
+  ) => AddNodesCommand;
 }): Readonly<{
   /** Nodes riding the current palette drag (null when none) — feeds the ghost. */
   paletteNodes: readonly CollectionItemNode[] | null;
@@ -33,7 +42,7 @@ export function usePaletteDrag(args: {
   endPaletteDrag: () => boolean;
   clearPaletteDrag: () => void;
 }> {
-  const { store, intentRef, announce, onDiscard } = args;
+  const { store, intentRef, announce, onDiscard, mapDropCommand } = args;
   // State (not a ref) so the overlay ghost renders. The ref mirror lets
   // clearPaletteDrag (the provider's cancel path) discard the current nodes
   // without depending on render state.
@@ -117,7 +126,8 @@ export function usePaletteDrag(args: {
       announce("Cannot add here.");
       return true;
     }
-    const dispatched = store.dispatch(resolved.value);
+    const command = mapDropCommand(resolved.value, intent, graph);
+    const dispatched = store.dispatch(command);
     if (!dispatched.ok) {
       onDiscard?.(nodes);
       // A policy veto carries the consumer's own explanation ("that
@@ -131,7 +141,7 @@ export function usePaletteDrag(args: {
       );
       return true;
     }
-    const targetName = graph.nodesById.get(resolved.value.toParentId)?.name ?? "collection";
+    const targetName = graph.nodesById.get(command.toParentId)?.name ?? "collection";
     announce(`Added "${nodes[0].name}" to "${targetName}".`);
     return true;
   }, [paletteNodes, store, intentRef, announce, onDiscard, setPaletteNodes]);
