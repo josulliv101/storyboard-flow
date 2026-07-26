@@ -26,3 +26,8 @@ export {
   type PlaybackLeaf,
   type PlaybackManifest,
 } from "./src/playback-manifest";
+export {
+  flattenMediaOrder,
+  resolveFlatDropTarget,
+  type FlatItem,
+} from "./src/flat-order";
