@@ -143,12 +143,26 @@ export function requestGraphItemAction(action: GraphItemAction): void {
 // to each rename site (card, breadcrumb, sub-row — all via useInlineRename).
 // This event carries the node id so the matching site opens its editor: the
 // keyboard twin of double-clicking the label.
+//
+// The SITE is part of the address, not decoration. One node id routinely names
+// three mounted sites at once — a collection at the focused level has a card, a
+// sub-timeline row, and (when focused) a breadcrumb. Broadcasting the id alone
+// opened an editor in every one of them, and because each editor focuses itself
+// on mount and commits on blur, they knocked each other out and ALL of them
+// closed: F2 appeared to do nothing at all.
 
 export const GRAPH_RENAME_ITEM_EVENT = "graph-view:rename-item";
 
-/** Ask the rename site for this node id to open its inline editor. */
-export function requestGraphRenameItem(nodeId: string): void {
-  window.dispatchEvent(new CustomEvent<string>(GRAPH_RENAME_ITEM_EVENT, { detail: nodeId }));
+/** Which of the three rename surfaces a request is addressed to. */
+export type GraphRenameSite = "card" | "sub-row" | "breadcrumb";
+
+export type GraphRenameRequest = Readonly<{ nodeId: string; site: GraphRenameSite }>;
+
+/** Ask ONE rename site to open its inline editor. */
+export function requestGraphRenameItem(nodeId: string, site: GraphRenameSite): void {
+  window.dispatchEvent(
+    new CustomEvent<GraphRenameRequest>(GRAPH_RENAME_ITEM_EVENT, { detail: { nodeId, site } }),
+  );
 }
 
 // The reverse hand-off: when a drag drops into the graph's sidebar trash

@@ -226,7 +226,9 @@ export function OpenKeyBoundary({
     if (!id) return;
     if (store.getSnapshot().graph.nodesById.get(parseNodeId(id))?.kind !== "collection") return;
     event.preventDefault();
-    requestGraphRenameItem(id);
+    // F2 is pressed ON a card, so the card is what should open — the id was
+    // resolved from the focused card's own element above.
+    requestGraphRenameItem(id, "card");
   };
 
   // Plain Delete/Backspace trashes EVERY selected card — the pointer twin of
