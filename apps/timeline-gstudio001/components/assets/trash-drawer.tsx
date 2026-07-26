@@ -12,6 +12,7 @@ import {
 import { usePathname } from "next/navigation";
 
 import { Button } from "@/components/core/button";
+import { toast } from "@/components/core/sonner";
 import { trashRowCaption } from "@/lib/trash-provenance";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
@@ -123,9 +124,13 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
           return [...current.slice(0, index), ...current.slice(index + 1)];
         });
       }
-      window.dispatchEvent(
-        new CustomEvent("gstudio-toast", { detail: { message: detail.message } }),
-      );
+      // Sonner, like every other surface in the app. This used to dispatch a
+      // bespoke `gstudio-toast` event that the sidebar rendered as its own
+      // fixed pill — see the commit that removed it: the sidebar has
+      // `backdrop-filter`, which makes it a containing block for `position:
+      // fixed`, so that pill resolved `left: 50%` against a 72px rail and
+      // hung half off the left edge of the screen.
+      toast(detail.message, { id: `trash-restore-${detail.clipId}` });
     };
     window.addEventListener(GRAPH_RESTORE_RESULT_EVENT, onResult);
     return () => window.removeEventListener(GRAPH_RESTORE_RESULT_EVENT, onResult);
@@ -158,11 +163,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
       // on the next commit that touches the trash. Tell it to rebuild.
       announceGraphTrashEmptied();
 
-      window.dispatchEvent(
-        new CustomEvent("gstudio-toast", {
-          detail: { message: "Trash bin emptied successfully" }
-        })
-      );
+      toast("Trash bin emptied.", { id: "trash-emptied" });
     } catch (err) {
       console.error(err);
       setError("Unable to empty trash.");
