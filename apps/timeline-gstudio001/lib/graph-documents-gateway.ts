@@ -32,6 +32,10 @@ const SAVE_RETRY_MS = 5000;
 // How long an ensure waits for a declared-incoming RSC prime before
 // fetching itself — roughly a streamed payload's round trip.
 const PRIME_WAIT_MS = 1000;
+// How many trailing save batches a refresh will wait out before fetching
+// anyway (see whenSavesSettled). Each round is a full round-trip, so this is
+// generous for any real burst of edits while still bounding the wait.
+const MAX_SAVE_DRAIN_ROUNDS = 10;
 // The fetch spec caps keepalive at 64 KiB across every in-flight keepalive
 // request on the page, and going over is a hard network error rather than a
 // truncation. Budget under it: headers count toward the quota, and other
@@ -352,15 +356,41 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     });
   };
 
+  /**
+   * Resolves when the save pipeline is idle — nothing in flight AND nothing
+   * queued behind it.
+   *
+   * A LOOP, not a single await, and that is the whole point. `settle()` starts
+   * a TRAILING batch for edits that arrived mid-flight, and that batch is a
+   * NEW promise: awaiting only the one that existed when we started resolves
+   * the moment the FIRST batch lands, while the trailing POST is still on the
+   * wire. A refresh that raced it read pre-save server state and — because the
+   * response also carries a revision — installed that stale content as
+   * current, so the queued edit could later be overwritten for good.
+   *
+   * Bounded rather than unbounded: each round costs a real network round-trip,
+   * and a session editing continuously could otherwise keep a reader waiting
+   * forever. On exhaustion we fall through and fetch anyway, which is no worse
+   * than the behaviour this replaced.
+   */
+  const whenSavesSettled = async (): Promise<void> => {
+    for (let round = 0; round < MAX_SAVE_DRAIN_ROUNDS; round += 1) {
+      const inFlight = saveInFlight;
+      if (inFlight === null) return;
+      // The batch promise absorbs its own failures (see the handlers on it),
+      // so this only ever waits — it never rethrows into the caller's chain.
+      await inFlight.catch(() => undefined);
+    }
+  };
+
   const ensure = (timelineId: string): Promise<TimelineDocument | null> => {
     const cached = documents[timelineId];
     if (cached && !staleIds.has(timelineId)) return Promise.resolve(cached);
     const pending = inflight.get(timelineId);
     if (pending) return pending;
-    // A stale doc may still have a batch in flight (flushed on refresh) —
-    // fetching before it settles would read the pre-save server state.
-    const settled = saveInFlight ?? Promise.resolve();
-    const request = settled
+    // A stale doc may still have writes in flight or queued (flushed on
+    // refresh) — fetching before they ALL settle would read pre-save state.
+    const request = whenSavesSettled()
       // An expected RSC prime gets a grace window to land before the
       // fallback fetch — the server is already streaming this document.
       .then(() => awaitExpectedPrime(timelineId))

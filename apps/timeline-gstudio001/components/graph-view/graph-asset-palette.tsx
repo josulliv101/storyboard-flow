@@ -361,10 +361,24 @@ export function AssetPaletteDrawer({
   // were reaching for. Its own flag rather than the shared `loading` status,
   // which swaps the whole rail for skeletons — that would be a worse answer
   // to "show me more" than showing nothing at all.
+  // The identity of the page the rail is showing right now. Held in a ref as
+  // well as computed, because an async completion needs the CURRENT value, not
+  // the one its closure captured — that is precisely the comparison.
+  const pageKey = cacheKey(providerId, mode, path, searchTerm);
+  const pageKeyRef = useRef(pageKey);
+  useEffect(() => {
+    pageKeyRef.current = pageKey;
+  }, [pageKey]);
+
   const [loadingMore, setLoadingMore] = useState(false);
   const loadMore = useCallback(async () => {
     const cursor = state.status === "ready" ? state.nextCursor : undefined;
     if (cursor === undefined || loadingMore) return;
+    // The page this request belongs to, by full identity. Unlike the browse
+    // effect — whose `cancelled` flag is scoped to the effect, so navigating
+    // away tears it down — nothing cancels this callback, so it has to
+    // recognise its own page on the way back.
+    const requestKey = pageKey;
     setLoadingMore(true);
     try {
       const response = await fetch(`/api/assets?${requestParams(cursor)}`, { cache: "no-store" });
@@ -373,17 +387,25 @@ export function AssetPaletteDrawer({
         nextCursor?: string;
       };
       if (!response.ok || !result.assets) return;
+      // The page the user was on may have been replaced while this was in
+      // flight (they searched, navigated, switched provider). Appending then
+      // would splice one folder's assets onto another's, and the user could
+      // drag an asset from a place they are not looking at.
+      //
+      // The CURSOR alone cannot detect that: cursors are plain offsets
+      // (`String(end)` in path-folders), so every folder paging at the same
+      // size produces the very same "48", and two different folders collide on
+      // every page rather than rarely. Identity is the whole key.
+      if (pageKeyRef.current !== requestKey) return;
       setState((current) => {
-        // The page the user was on may have been replaced while this was in
-        // flight (they searched, navigated, switched provider). Appending
-        // then would splice one folder's assets onto another's.
         if (current.status !== "ready" || current.nextCursor !== cursor) return current;
         const merged: PalettePage = {
           assets: [...current.assets, ...result.assets!],
           folders: current.folders,
           ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
         };
-        pageCacheRef.current.set(cacheKey(providerId, mode, path, searchTerm), merged);
+        // Cached under the key the request was ISSUED for, never the live one.
+        pageCacheRef.current.set(requestKey, merged);
         return { status: "ready", ...merged };
       });
     } catch {
@@ -393,7 +415,7 @@ export function AssetPaletteDrawer({
     } finally {
       setLoadingMore(false);
     }
-  }, [state, loadingMore, requestParams, cacheKey, providerId, mode, path, searchTerm]);
+  }, [state, loadingMore, requestParams, pageKey]);
 
   const navigateTo = useCallback(
     (next: readonly string[], nextMode?: BrowseMode) => {

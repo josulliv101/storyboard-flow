@@ -22,7 +22,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 import {
   graphChildrenToClips,
-  hydratedCollectionDuration,
+  hydratedCollectionPlayableDuration,
   manifestToClips,
   type DetailsById,
   type PlaybackManifest,
@@ -1580,8 +1580,20 @@ export function useSelectionAggregate(): Readonly<{ count: number; seconds: numb
       const node = graph.nodesById.get(id);
       if (!node) continue;
       if (node.kind === "collection") {
-        const hydrated = hydratedCollectionDuration(graph, details, id);
-        total += hydrated > 0 ? hydrated : (details[id as string]?.duration ?? 0);
+        const detail = details[id as string];
+        // Pick on HYDRATION, not on `duration > 0`. Zero is a legitimate live
+        // answer — every child deleted, or every child disabled — and treating
+        // it as "no live value yet" fell back to the stored summary, so the
+        // header kept quoting the old nonzero total for a collection that now
+        // plays nothing.
+        //
+        // And the PLAYABLE walk, not the layout one: this is a readout, so it
+        // has to agree with the number the collection's own card shows. The
+        // layout twin counts disabled children (it feeds the card's slot on
+        // the board) and would report more seconds here than the card claims.
+        total += detail?.hydrated
+          ? hydratedCollectionPlayableDuration(graph, details, id)
+          : (detail?.playableDuration ?? detail?.duration ?? 0);
       } else {
         total += mediaDurationSeconds(node);
       }
