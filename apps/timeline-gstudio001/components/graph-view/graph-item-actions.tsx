@@ -322,6 +322,22 @@ export function GraphItemActionsBridge({
         snapshot.interaction.selectedIds,
         focusedId,
       );
+      // Clear the trash stamp BEFORE dispatching, for the same reason the
+      // stamp is WRITTEN before its dispatch: the persistence bridge writes
+      // the affected documents from its `subscribeToChanges` callback, which
+      // runs during the dispatch. Clearing afterwards updates the in-memory
+      // table but misses the write, so the restored clip lands back in its
+      // timeline still carrying "deleted from X, 2h ago" — stale metadata on
+      // a live clip, and a wrong date the next time it IS deleted.
+      const stampedDetail = details.get(nodeId as string);
+      const hadStamp =
+        stampedDetail !== undefined &&
+        (stampedDetail.trashedAt !== undefined || stampedDetail.trashedFrom !== undefined);
+      if (hadStamp && stampedDetail) {
+        const { trashedAt: _at, trashedFrom: _from, ...rest } = stampedDetail;
+        details.merge({ [nodeId as string]: rest });
+      }
+
       const dispatched = store.dispatch({
         type: "move-nodes",
         nodeIds: [nodeId],
@@ -329,8 +345,12 @@ export function GraphItemActionsBridge({
         toIndex,
       });
       // A refusal already speaks through the commandPolicy's own toast; the
-      // drawer only needs to know the row is still trashed.
-      if (!dispatched.ok) return answer(false, "Couldn't restore that item here.");
+      // drawer only needs to know the row is still trashed. Put the stamp
+      // back with it — the clip is still in the bin, so it must still say so.
+      if (!dispatched.ok) {
+        if (hadStamp && stampedDetail) details.merge({ [nodeId as string]: stampedDetail });
+        return answer(false, "Couldn't restore that item here.");
+      }
 
       const name = graph.nodesById.get(nodeId)?.name ?? "Item";
       const target = graph.nodesById.get(parentId)?.name ?? "this timeline";
@@ -441,7 +461,7 @@ export function GraphItemActionsBridge({
       // mid-capture makes moveSelectionToTrash a no-op (returns 0, isDragging),
       // and clearing anyway would leave Cut silently behaving like Copy —
       // clipboard set, nothing trashed, selection gone.
-      const moved = moveSelectionToTrash(store, trashId, selected);
+      const moved = moveSelectionToTrash(store, trashId, selected, details);
       if (moved > 0) store.clearSelection();
     };
 
@@ -485,7 +505,7 @@ export function GraphItemActionsBridge({
           void runExclusive(duplicateSelection);
           break;
         case "delete":
-          moveSelectionToTrash(store, trashId);
+          moveSelectionToTrash(store, trashId, undefined, details);
           store.clearSelection();
           break;
         case "toggle-disabled": {

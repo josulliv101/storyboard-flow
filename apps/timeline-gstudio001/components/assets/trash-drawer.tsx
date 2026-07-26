@@ -12,6 +12,7 @@ import {
 import { usePathname } from "next/navigation";
 
 import { Button } from "@/components/core/button";
+import { trashRowCaption } from "@/lib/trash-provenance";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
   GRAPH_RESTORE_RESULT_EVENT,
@@ -278,9 +279,24 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                     )}
                   </div>
                   <div className="mt-2 flex min-w-0 items-center gap-2">
-                    <p className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-200">
-                      {(clip as any).title || clip.alt || "Clip"}
-                    </p>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-semibold text-zinc-200">
+                        {(clip as any).title || clip.alt || "Clip"}
+                      </p>
+                      {/* Where it came from and when it went. Two clips can be
+                          identical in every field the drawer paints — same
+                          name, same thumbnail, same duration — because placing
+                          one asset twice is ordinary and duplicating a clip
+                          copies its src verbatim. This caption is the only
+                          thing that tells those rows apart. Absent on clips
+                          trashed before it was recorded, and the row then
+                          simply prints nothing rather than an empty line. */}
+                      {trashRowCaption(clip.trashedFrom, clip.trashedAt) && (
+                        <p className="truncate text-[10px] text-zinc-500">
+                          {trashRowCaption(clip.trashedFrom, clip.trashedAt)}
+                        </p>
+                      )}
+                    </div>
                     {canRestore && (
                       <Button
                         type="button"

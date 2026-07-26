@@ -36,6 +36,21 @@ function isOptionalAssetSourceRef(value: unknown): boolean {
   );
 }
 
+/** Same null leniency as every optional field; when present BOTH halves must
+ *  be non-empty strings — a half-recorded origin prints as "from " in the
+ *  drawer, which is worse than printing nothing. */
+function isOptionalTrashOrigin(value: unknown): boolean {
+  if (value == null) return true;
+  if (typeof value !== "object") return false;
+  const origin = value as Record<string, unknown>;
+  return (
+    typeof origin.timelineId === "string" &&
+    origin.timelineId.length > 0 &&
+    typeof origin.title === "string" &&
+    origin.title.length > 0
+  );
+}
+
 function hasClipBase(clip: Record<string, unknown>): boolean {
   return (
     typeof clip.id === "string" &&
@@ -55,7 +70,9 @@ function hasClipBase(clip: Record<string, unknown>): boolean {
     // truthy non-boolean would be read as "skip this clip" by the playback
     // and summary passes — a stored string "false" would silently drop a
     // clip from the timeline.
-    (clip.disabled === undefined || typeof clip.disabled === "boolean")
+    (clip.disabled === undefined || typeof clip.disabled === "boolean") &&
+    isOptionalString(clip.trashedAt) &&
+    isOptionalTrashOrigin(clip.trashedFrom)
   );
 }
 

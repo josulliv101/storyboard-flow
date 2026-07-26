@@ -39,6 +39,12 @@ export type TimelineItemBase = {
    * `false`, so documents that never use the feature never grow the field.
    */
   disabled?: boolean;
+  /** ISO instant this clip was moved to trash. Absent on every live clip —
+   *  its presence IS the record that a clip is in the bin, which is why it is
+   *  cleared on restore rather than left as stale metadata. */
+  trashedAt?: string;
+  /** Which timeline this clip was deleted from. See {@link TrashOrigin}. */
+  trashedFrom?: TrashOrigin;
   /** Optional unscaled timeline position used when visual width differs from playback time. */
   playbackStartTime?: number;
   /** Optional unscaled playback duration used when visual width differs from playback time. */
@@ -70,6 +76,20 @@ export type TimelineItemBase = {
 export type AssetSourceRef = {
   providerId: string;
   assetId: string;
+};
+
+/** Where a clip was deleted FROM, and when. Written when a clip moves to
+ *  trash; cleared when it is restored.
+ *
+ *  The title is a SNAPSHOT, not a lookup key: it is what the trash drawer
+ *  prints, and it has to keep printing after the origin timeline is renamed or
+ *  itself deleted — which is exactly when someone is digging through the trash.
+ *  The id rides along for re-linking later (restore-to-origin), the same
+ *  division of labour as `sourceAsset`: the id is what it IS, the snapshot is
+ *  how it READS. */
+export type TrashOrigin = {
+  timelineId: string;
+  title: string;
 };
 
 export type ImageTimelineClip = TimelineItemBase & {
