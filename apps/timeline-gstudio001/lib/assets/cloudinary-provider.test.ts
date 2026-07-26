@@ -105,11 +105,13 @@ describe("cloudinaryAssetProvider.list", () => {
     expect(scenes.folders).toEqual([{ name: "Heist", path: ["Scenes", "Heist"] }]);
   });
 
-  it("declares folders and tags on, the not-yet-served capabilities off", () => {
+  it("declares folders, tags and search on; the write capabilities off", () => {
     expect(cloudinaryAssetProvider.capabilities).toEqual({
       folders: true,
       tags: true,
-      search: false,
+      // Derived in memory from the same full listing folders and tags come
+      // from — no vendor search API, so it is as complete as browsing is.
+      search: true,
       upload: false,
       delete: false,
     });

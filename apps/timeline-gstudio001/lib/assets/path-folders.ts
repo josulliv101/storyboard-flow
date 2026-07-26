@@ -86,3 +86,35 @@ export function pageFromTagListing(assets: readonly Asset[], query: AssetQuery):
     asset.tags.length === 0 ? [[]] : asset.tags.map(tagSegments);
   return pageFromLocations(assets, locationsOf, query.tagPath ?? [], query.limit);
 }
+
+/**
+ * Resolve a SEARCH against the same flat listing every browse mode uses.
+ *
+ * Search is a third derivation over one listing, not a call to a vendor
+ * search API — the same reason folders and tags are derived here. Every
+ * path-shaped backend gets it for the same code, and none of them needs a
+ * query language.
+ *
+ * It matches the asset's NAME, its folder PATH, and its TAGS, because all
+ * three are things a person types when they are looking for a file: the
+ * basename they remember, the folder they filed it under, or the label they
+ * gave it. Case-insensitive substring, not fuzzy — "heist" should find
+ * "Bank_Heist_01" without also ranking every file with an H, an E and an I.
+ *
+ * The result is FLAT and carries no folders. A search spans the whole
+ * library by definition, so grouping the hits back into the folders they
+ * came from would be answering a question the user just stopped asking.
+ */
+export function pageFromSearch(assets: readonly Asset[], query: AssetQuery): AssetPage {
+  const needle = (query.search ?? "").trim().toLowerCase();
+  if (needle.length === 0) return { assets: [], folders: [] };
+
+  const matches = assets.filter((asset) => {
+    if (asset.name.toLowerCase().includes(needle)) return true;
+    if (asset.folderPath.some((segment) => segment.toLowerCase().includes(needle))) return true;
+    return asset.tags.some((tag) => tag.toLowerCase().includes(needle));
+  });
+
+  const limited = query.limit === undefined ? matches : matches.slice(0, query.limit);
+  return { assets: limited, folders: [] };
+}

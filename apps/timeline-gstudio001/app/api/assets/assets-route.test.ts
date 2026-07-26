@@ -123,7 +123,7 @@ describe("GET /api/assets/providers", () => {
       {
         id: "cloudinary",
         label: "Cloudinary",
-        capabilities: { folders: true, tags: true, search: false, upload: false, delete: false },
+        capabilities: { folders: true, tags: true, search: true, upload: false, delete: false },
       },
     ]);
   });

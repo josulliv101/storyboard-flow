@@ -5,7 +5,7 @@
 
 import { listCloudinaryAssets, type CloudinaryAsset } from "@/lib/cloudinary-media-store";
 
-import { pageFromFlatListing, pageFromTagListing } from "./path-folders";
+import { pageFromFlatListing, pageFromSearch, pageFromTagListing } from "./path-folders";
 import type { AssetContext, AssetProvider } from "./provider";
 import type { Asset } from "./types";
 
@@ -47,7 +47,10 @@ export const cloudinaryAssetProvider: AssetProvider = {
     tags: true,
     // Declared OFF until the adapter actually serves them — the UI offers
     // only what list() honours today.
-    search: false,
+    // Derived in memory from the SAME full listing folders and tags are
+    // derived from (see pageFromSearch) — no vendor search API involved, so
+    // this is as complete as browsing is.
+    search: true,
     upload: false,
     delete: false,
   },
@@ -57,6 +60,12 @@ export const cloudinaryAssetProvider: AssetProvider = {
     // documented fallback in path-folders — a native `prefix`/tag query is
     // the upgrade path if libraries outgrow it).
     const assets = (await listCloudinaryAssets(ctx.uid)).map(cloudinaryAssetToAsset);
+    // Search wins over both browse modes: a query spans the whole library, so
+    // scoping it to the folder or tag the user happened to be standing in
+    // would hide the results they asked for.
+    if (query.search !== undefined && query.search.trim().length > 0) {
+      return pageFromSearch(assets, query);
+    }
     return query.tagPath !== undefined
       ? pageFromTagListing(assets, query)
       : pageFromFlatListing(assets, query);

@@ -265,13 +265,59 @@ export function AssetPaletteDrawer({
   // single-provider deployment is unchanged.
   const [providers, setProviders] = useState<readonly ProviderOption[]>([]);
   const [providerId, setProviderId] = useState<string | null>(null);
+  // Two pieces of state on purpose. `search` is what the box shows and must
+  // track every keystroke; `searchTerm` is what the EFFECT queries on, and
+  // lags it by a debounce so typing "alleyway" is one request rather than
+  // eight. Rendering off the debounced value instead would make the input
+  // feel broken.
+  const [search, setSearch] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchAvailable, setSearchAvailable] = useState(false);
 
   // The page cache is keyed by ALL THREE axes — provider, mode, path — so no
   // cached page can leak across a provider or hierarchy switch (a folder path
   // means nothing in another provider, nor in tag space).
   const cacheKey = useCallback(
-    (p: string | null, m: BrowseMode, segments: readonly string[]) =>
-      JSON.stringify([p ?? "", m, segments]),
+    (p: string | null, m: BrowseMode, segments: readonly string[], q: string) =>
+      // Search is a FOURTH axis, not a variant of the path: a result set for
+      // "alley" has nothing to do with the folder the user was standing in,
+      // and caching them under one key would serve one for the other.
+      JSON.stringify([p ?? "", m, segments, q]),
+    [],
+  );
+
+  // The debounce lives in the CHANGE HANDLER, not an effect: the repo's
+  // react-hooks/set-state-in-effect rule forbids synchronous setState in an
+  // effect body, and this is event-driven anyway — an effect would only be
+  // re-deriving what the keystroke already knows.
+  //
+  // 250ms is long enough that a typed word is one request and short enough
+  // that the grid feels like it is tracking you. CLEARING settles
+  // immediately: emptying the box should return to browsing at once rather
+  // than after a pause.
+  const searchTimerRef = useRef<number | null>(null);
+  const applySearch = useCallback(
+    (raw: string) => {
+      setSearch(raw);
+      const next = raw.trim();
+      if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current);
+      if (next === searchTerm) return;
+      if (next.length === 0) {
+        setSearchTerm("");
+        setState({ status: "loading" });
+        return;
+      }
+      searchTimerRef.current = window.setTimeout(() => {
+        setSearchTerm(next);
+        setState({ status: "loading" });
+      }, 250);
+    },
+    [searchTerm],
+  );
+  useEffect(
+    () => () => {
+      if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current);
+    },
     [],
   );
 
@@ -280,7 +326,12 @@ export function AssetPaletteDrawer({
       const targetMode = nextMode ?? mode;
       setMode(targetMode);
       setPath(next);
-      const cached = pageCacheRef.current.get(cacheKey(providerId, targetMode, next));
+      // Opening a folder is a request for a PLACE; leaving the query running
+      // would put the user in a folder while still showing library-wide hits.
+      setSearch("");
+      setSearchTerm("");
+      if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current);
+      const cached = pageCacheRef.current.get(cacheKey(providerId, targetMode, next, ""));
       setState(cached ? { status: "ready", ...cached } : { status: "loading" });
     },
     [mode, providerId, cacheKey],
@@ -296,7 +347,7 @@ export function AssetPaletteDrawer({
       setProviderId(targetId);
       setMode("folders");
       setPath([]);
-      const cached = pageCacheRef.current.get(cacheKey(targetId, "folders", []));
+      const cached = pageCacheRef.current.get(cacheKey(targetId, "folders", [], ""));
       setState(cached ? { status: "ready", ...cached } : { status: "loading" });
     },
     [providerId, cacheKey],
@@ -345,17 +396,23 @@ export function AssetPaletteDrawer({
         // segment (never a joined string — a segment containing "/" must
         // not fake a boundary). Tags mode swaps the param family, nothing
         // else: the response shape is identical.
-        const params =
-          mode === "tags"
+        // A search is library-wide and carries no place: no browse, no
+        // folder/tag params. The route treats a blank `q` as "not searching",
+        // so clearing the box returns to exactly the browse that was showing.
+        const params = searchTerm
+          ? new URLSearchParams({ q: searchTerm })
+          : mode === "tags"
             ? new URLSearchParams({ mode: "tags" })
             : new URLSearchParams({ browse: "1" });
         if (providerId !== null) params.set("provider", providerId);
-        for (const segment of path) params.append(mode === "tags" ? "tag" : "folder", segment);
+        if (!searchTerm) {
+          for (const segment of path) params.append(mode === "tags" ? "tag" : "folder", segment);
+        }
         const response = await fetch(`/api/assets?${params}`, { cache: "no-store" });
         const result = (await response.json().catch(() => ({}))) as {
           assets?: Asset[];
           folders?: AssetFolder[];
-          capabilities?: { tags?: boolean };
+          capabilities?: { tags?: boolean; search?: boolean };
           error?: string;
         };
         if (cancelled) return;
@@ -368,8 +425,9 @@ export function AssetPaletteDrawer({
           folders: result.folders ?? [],
           truncated: result.assets.length > PALETTE_ASSET_LIMIT,
         };
-        pageCacheRef.current.set(cacheKey(providerId, mode, path), page);
+        pageCacheRef.current.set(cacheKey(providerId, mode, path, searchTerm), page);
         setTagsAvailable(result.capabilities?.tags === true);
+        setSearchAvailable(result.capabilities?.search === true);
         setState({ status: "ready", ...page });
       } catch (cause) {
         if (!cancelled) {
@@ -383,7 +441,7 @@ export function AssetPaletteDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, state.status, path, mode, providerId, cacheKey]);
+  }, [open, state.status, path, mode, providerId, searchTerm, cacheKey]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -453,8 +511,31 @@ export function AssetPaletteDrawer({
               ))}
             </div>
           )}
+          {searchAvailable && (
+            <label className="flex shrink-0 items-center gap-1.5 text-[10px] text-zinc-500">
+              <span className="sr-only">Search assets</span>
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => applySearch(event.target.value)}
+                onKeyDown={(event) => {
+                  // Escape clears the query rather than closing the drawer —
+                  // the drawer's own Escape still works from anywhere else.
+                  if (event.key === "Escape" && search.length > 0) {
+                    event.stopPropagation();
+                    applySearch("");
+                  }
+                }}
+                placeholder="Search name, folder or tag…"
+                aria-label="Search assets"
+                className="h-6 w-52 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-[11px] text-zinc-100 placeholder:text-zinc-600 focus:border-sky-500/60 focus:outline-none"
+              />
+            </label>
+          )}
           <span className="shrink-0 text-[10px] text-zinc-600">
-            Drag a thumbnail into any timeline · Enter picks one up for keyboard placement
+            {searchTerm
+              ? "Results span the whole library · clear the box to browse"
+              : "Drag a thumbnail into any timeline · Enter picks one up for keyboard placement"}
           </span>
           <span className="grow" />
           <Button type="button" variant="ghost" size="sm" onClick={handleClose}>
@@ -490,13 +571,20 @@ export function AssetPaletteDrawer({
         {state.status === "ready" &&
           (state.assets.length === 0 && state.folders.length === 0 ? (
             <p className="rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
-              {path.length === 0
-                ? mode === "tags"
-                  ? "No tagged or untagged assets to show."
-                  : "No assets yet — upload some from the asset library on the storyboard view."
-                : mode === "tags"
-                  ? "No assets carry exactly this tag."
-                  : "This folder is empty."}
+              {/* A search that matches nothing is NOT an empty library — the
+                  old copy said "No assets yet" either way, which reads as
+                  data loss when you have hundreds and simply mistyped. It
+                  also sent people to "the storyboard view", a route deleted
+                  in #184. */}
+              {searchTerm
+                ? `No assets match "${searchTerm}".`
+                : path.length === 0
+                  ? mode === "tags"
+                    ? "No tagged or untagged assets to show."
+                    : "No assets yet — add some by dropping files onto a timeline."
+                  : mode === "tags"
+                    ? "No assets carry exactly this tag."
+                    : "This folder is empty."}
             </p>
           ) : (
             <>
@@ -508,8 +596,12 @@ export function AssetPaletteDrawer({
               />
               {state.truncated && (
                 <p className="mt-1 text-[10px] text-zinc-600">
-                  Showing the newest {PALETTE_ASSET_LIMIT} assets — the full library is on the
-                  storyboard view.
+                  {/* This used to point at "the storyboard view" — a route
+                      deleted in #184, so the advice led nowhere. Search is the
+                      way through a library bigger than a page until the
+                      palette paginates. */}
+                  Showing the first {PALETTE_ASSET_LIMIT}
+                  {searchTerm ? " matches" : " assets"} — narrow it with search.
                 </p>
               )}
             </>
