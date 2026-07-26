@@ -179,3 +179,81 @@ describe("pageFromSearch", () => {
     ).toEqual([]);
   });
 });
+
+describe("pagination", () => {
+  const many = Array.from({ length: 25 }, (_, i) =>
+    asset(`a${String(i).padStart(2, "0")}`, ["Bulk"]),
+  );
+
+  it("tiles the listing exactly — no gaps, no repeats", () => {
+    const walked: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const page = pageFromFlatListing(many, {
+        folderPath: [],
+        folder: ["Bulk"],
+        limit: 10,
+        ...(cursor === undefined ? {} : { cursor }),
+      } as never);
+      walked.push(...page.assets.map((a) => a.id));
+      cursor = page.nextCursor;
+      pages += 1;
+    } while (cursor !== undefined && pages < 10);
+
+    expect(pages).toBe(3);
+    expect(walked).toEqual(many.map((a) => a.id));
+    expect(new Set(walked).size).toBe(walked.length);
+  });
+
+  it("omits nextCursor on the LAST page, so paging terminates", () => {
+    const last = pageFromFlatListing(many, {
+      folderPath: [],
+      folder: ["Bulk"],
+      limit: 10,
+      cursor: "20",
+    } as never);
+    expect(last.assets).toHaveLength(5);
+    expect(last.nextCursor).toBeUndefined();
+  });
+
+  it("returns folders on the FIRST page only", () => {
+    const first = pageFromFlatListing(many, { folderPath: [], limit: 10 } as never);
+    const second = pageFromFlatListing(many, {
+      folderPath: [],
+      limit: 10,
+      cursor: "10",
+    } as never);
+    expect(first.folders.length).toBeGreaterThan(0);
+    // The place does not change because the user asked for more of its
+    // contents; redrawing the folder row under every page would.
+    expect(second.folders).toEqual([]);
+  });
+
+  it("treats an unparseable cursor as the first page rather than throwing", () => {
+    const page = pageFromFlatListing(many, {
+      folderPath: [],
+      folder: ["Bulk"],
+      limit: 10,
+      cursor: "not-a-number",
+    } as never);
+    expect(page.assets.map((a) => a.id)).toEqual(many.slice(0, 10).map((a) => a.id));
+  });
+
+  it("returns an empty terminal page for a cursor past the end", () => {
+    const page = pageFromFlatListing(many, {
+      folderPath: [],
+      folder: ["Bulk"],
+      limit: 10,
+      cursor: "9999",
+    } as never);
+    expect(page.assets).toEqual([]);
+    expect(page.nextCursor).toBeUndefined();
+  });
+
+  it("paginates SEARCH results too", () => {
+    const first = pageFromSearch(many, { folderPath: [], search: "a0", limit: 4 } as never);
+    expect(first.assets).toHaveLength(4);
+    expect(first.nextCursor).toBe("4");
+  });
+});

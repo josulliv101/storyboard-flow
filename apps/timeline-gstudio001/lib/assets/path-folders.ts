@@ -22,11 +22,46 @@ function isUnder(path: Location, base: Location): boolean {
   return path.length > base.length && base.every((segment, i) => segment === path[i]);
 }
 
+/**
+ * The cursor for these path-derived providers is simply an OFFSET into the
+ * listing, encoded as a decimal string.
+ *
+ * That is honest for what this is: the whole listing is already in memory and
+ * ordered, so there is nothing to keyset against that an index does not
+ * already give. The tradeoff is the usual one — if the underlying library
+ * changes between two page requests, an offset can repeat or skip an item.
+ * In practice the listing is TTL-cached for the whole paging session, so the
+ * window a user pages through is fixed; a provider that pushes paging down to
+ * a native query (see below) should emit that backend's own cursor instead
+ * and this becomes irrelevant.
+ *
+ * Anything unparseable reads as 0 rather than throwing: a bad cursor should
+ * show the first page, not an error.
+ */
+function offsetFromCursor(cursor: string | undefined): number {
+  if (cursor === undefined) return 0;
+  const parsed = Number.parseInt(cursor, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/** Slice one page out of the matches, and say whether more remain. */
+function paginate(matching: readonly Asset[], query: AssetQuery) {
+  const offset = offsetFromCursor(query.cursor);
+  if (query.limit === undefined || query.limit < 0) {
+    return { assets: matching.slice(offset), nextCursor: undefined };
+  }
+  const end = offset + query.limit;
+  return {
+    assets: matching.slice(offset, end),
+    nextCursor: end < matching.length ? String(end) : undefined,
+  };
+}
+
 function pageFromLocations(
   assets: readonly Asset[],
   locationsOf: (asset: Asset) => readonly Location[],
   base: Location | undefined,
-  limit: number | undefined,
+  query: AssetQuery,
 ): AssetPage {
   const matching =
     base === undefined
@@ -47,8 +82,15 @@ function pageFromLocations(
   }
   folders.sort((a, b) => a.name.localeCompare(b.name));
 
-  const limited = limit !== undefined && limit >= 0 ? matching.slice(0, limit) : matching;
-  return { assets: limited, folders };
+  const { assets: limited, nextCursor } = paginate(matching, query);
+  return {
+    assets: limited,
+    // Folders belong to the FIRST page only. They are the place, not the
+    // contents — repeating them under every page would redraw the whole
+    // folder row each time the user asked for more files.
+    folders: offsetFromCursor(query.cursor) === 0 ? folders : [],
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+  };
 }
 
 /**
@@ -65,7 +107,7 @@ function pageFromLocations(
  * adapter is a mapping function and nothing more.
  */
 export function pageFromFlatListing(assets: readonly Asset[], query: AssetQuery): AssetPage {
-  return pageFromLocations(assets, (asset) => [asset.folderPath], query.folder, query.limit);
+  return pageFromLocations(assets, (asset) => [asset.folderPath], query.folder, query);
 }
 
 /** How a tag nests: "scene/heist" is the path ["scene", "heist"]. */
@@ -84,7 +126,7 @@ function tagSegments(tag: string): Location {
 export function pageFromTagListing(assets: readonly Asset[], query: AssetQuery): AssetPage {
   const locationsOf = (asset: Asset): readonly Location[] =>
     asset.tags.length === 0 ? [[]] : asset.tags.map(tagSegments);
-  return pageFromLocations(assets, locationsOf, query.tagPath ?? [], query.limit);
+  return pageFromLocations(assets, locationsOf, query.tagPath ?? [], query);
 }
 
 /**
@@ -115,6 +157,6 @@ export function pageFromSearch(assets: readonly Asset[], query: AssetQuery): Ass
     return asset.tags.some((tag) => tag.toLowerCase().includes(needle));
   });
 
-  const limited = query.limit === undefined ? matches : matches.slice(0, query.limit);
-  return { assets: limited, folders: [] };
+  const { assets: page, nextCursor } = paginate(matches, query);
+  return { assets: page, folders: [], ...(nextCursor === undefined ? {} : { nextCursor }) };
 }

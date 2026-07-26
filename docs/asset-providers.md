@@ -47,6 +47,17 @@ queries, and safe deletion later.
 
 `GET /api/assets?provider=<id>&folder=<seg>&folder=<seg>&browse=1&limit=<n>`
 `GET /api/assets?q=<term>` — a library-wide search; carries no folder/tag/browse.
+`&cursor=<opaque>` — the next page, from the previous response's `nextCursor`.
+
+**Paging is per-provider and OPAQUE above the seam.** The route forwards
+`cursor` without reading it. For the path-derived providers it is an offset
+into the in-memory listing (see `offsetFromCursor`), which is honest because
+the whole listing is already loaded and ordered; a provider that pushes paging
+down to a native query should emit that backend's own token instead and
+nothing above changes. Folders ride the FIRST page only — they are the place,
+not the contents, and repeating them under every page would redraw the folder
+row each time the user asked for more files. A missing `nextCursor` means
+that was the last page.
 
 - `folder` repeats one param per **path segment**, so a segment containing
   `/` can never fake a boundary (NodeId lesson: assume ids contain your
