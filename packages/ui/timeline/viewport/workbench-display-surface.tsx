@@ -18,6 +18,14 @@ import { useTimelineDocuments } from "../timeline-document-store";
 
 import type { CollectionTimelineClip, TimelineClip } from "../types";
 import { formatSeconds } from "../utils";
+import {
+  clipContainsPlaybackTime,
+  getClipPlaybackDuration,
+  getClipPlaybackStart,
+  getContainingClip,
+  getTimelineDuration,
+  nextPlayableTime,
+} from "./playback-skip";
 
 type DisplayMedia = {
   key: string;
@@ -74,13 +82,9 @@ function getClipPlaybackRate(clip: TimelineClip) {
   return clamp(sourceRange / getClipPlaybackDuration(clip), 0.0625, 16);
 }
 
-function getClipPlaybackStart(clip: TimelineClip) {
-  return clip.playbackStartTime ?? clip.startTime;
-}
-
-function getClipPlaybackDuration(clip: TimelineClip) {
-  return Math.max(0.001, clip.playbackDuration ?? clip.duration);
-}
+// getClipPlaybackStart / getClipPlaybackDuration / clipContainsPlaybackTime /
+// getContainingClip / getTimelineDuration now live in ./playback-skip, beside
+// the skip rule that reads them — pure, and unit-tested without React.
 
 function getClipPlaybackProgress(clip: TimelineClip, timelineTime: number) {
   const playbackStart = getClipPlaybackStart(clip);
@@ -184,19 +188,6 @@ function resolveClipMedia(
   };
 }
 
-function clipContainsPlaybackTime(clip: TimelineClip, currentTime: number) {
-  const playbackStart = getClipPlaybackStart(clip);
-  const playbackDuration = getClipPlaybackDuration(clip);
-  return currentTime >= playbackStart && currentTime <= playbackStart + playbackDuration;
-}
-
-/** The clip that literally covers this time — never one held over from
- *  earlier. Callers deciding whether a time is INSIDE playable material (as
- *  opposed to what to draw at it) must use this. */
-function getContainingClip(clips: TimelineClip[], currentTime: number) {
-  return clips.find((clip) => clipContainsPlaybackTime(clip, currentTime)) ?? null;
-}
-
 function getActiveClip(
   clips: TimelineClip[],
   currentTime: number,
@@ -231,24 +222,11 @@ function getActiveClip(
   return held;
 }
 
-function getTimelineDuration(clips: TimelineClip[]) {
-  return clips.reduce(
-    (duration, clip) => Math.max(duration, getClipPlaybackStart(clip) + getClipPlaybackDuration(clip)),
-    0,
-  );
-}
-
-function normalizePlaybackTime(clips: TimelineClip[], time: number, duration: number) {
-  const boundedTime = clamp(time, 0, duration);
-  // Containment, NOT getActiveClip: this decides whether the time needs
-  // snapping forward to real material, and getActiveClip now answers "what
-  // should the surface draw" — which holds a frame across gaps and would
-  // make every gap look like a legitimate resting place.
-  if (getContainingClip(clips, boundedTime)) return boundedTime;
-
-  const nextClip = clips.find((clip) => getClipPlaybackStart(clip) > boundedTime);
-  return nextClip ? clamp(getClipPlaybackStart(nextClip), 0, duration) : duration;
-}
+// normalizePlaybackTime is `nextPlayableTime` (./playback-skip): it decides
+// whether the clock needs snapping forward to material that will actually be
+// drawn — over a gap, or over a DISABLED clip's whole span. Deliberately not
+// getActiveClip, which answers "what should the surface draw" and holds a
+// frame across gaps, making every gap look like a legitimate resting place.
 
 export function WorkbenchDisplaySurface({
   clips,
@@ -264,6 +242,7 @@ export function WorkbenchDisplaySurface({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cacheRef = useRef(new Map<string, CachedMedia>());
   const activeMediaRef = useRef<DisplayMedia | null>(null);
+  const activeClipDisabledRef = useRef(false);
   const animationFrameRef = useRef<number | null>(null);
   const timeoutFrameRef = useRef<number | null>(null);
   const pendingSeekDrawCleanupRef = useRef<(() => void) | null>(null);
@@ -394,7 +373,14 @@ export function WorkbenchDisplaySurface({
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     context.fillStyle = "#050505";
     context.fillRect(0, 0, cssWidth, cssHeight);
+    // A disabled clip is reachable only by scrubbing, and it draws GRAYED so
+    // the frame reads as "here, but not in the cut" — the same grayscale the
+    // card wears on the board, on the same content. Filter is set around the
+    // one drawImage and reset immediately: the backdrop fill above must stay
+    // its true black, and a leaked filter would tint the next frame drawn.
+    if (activeClipDisabledRef.current) context.filter = "grayscale(1) opacity(0.45)";
     context.drawImage(drawable, (cssWidth - width) / 2, (cssHeight - height) / 2, width, height);
+    context.filter = "none";
   }, []);
 
   const drawEmptyFrame = useCallback(() => {
@@ -507,6 +493,15 @@ export function WorkbenchDisplaySurface({
 
     activeMediaRef.current = media;
     lastRenderedMediaKeyRef.current = media?.key ?? null;
+    // A REF, not a draw argument: `drawDrawable` is reached from half a dozen
+    // async listeners (image load, video seeked/loadeddata) that have no idea
+    // which clip they belong to. Setting it here — the one place the active
+    // clip is resolved — makes every one of those redraws inherit the right
+    // treatment.
+    //
+    // Only reachable while SCRUBBING: playing snaps the clock out of a
+    // disabled span before anything is drawn (see nextPlayableTime).
+    activeClipDisabledRef.current = active?.disabled === true;
 
     if (!media) {
       pauseInactiveVideos(null);
@@ -609,7 +604,7 @@ export function WorkbenchDisplaySurface({
     }
 
     const clipsRef = sortedClipsRef;
-    const startTime = normalizePlaybackTime(clipsRef.current, currentTimeRef.current, durationRef.current);
+    const startTime = nextPlayableTime(clipsRef.current, currentTimeRef.current, durationRef.current);
     currentTimeRef.current = startTime;
     playbackAnchorRef.current = {
       timelineTime: startTime,
@@ -647,7 +642,7 @@ export function WorkbenchDisplaySurface({
         startedAtMs: now,
       };
       const rawTime = anchor.timelineTime + (now - anchor.startedAtMs) / 1000;
-      const nextTime = normalizePlaybackTime(clipsRef.current, rawTime, durationRef.current);
+      const nextTime = nextPlayableTime(clipsRef.current, rawTime, durationRef.current);
       if (Math.abs(nextTime - rawTime) > 0.001) {
         resetAnchor(nextTime, now);
       }
@@ -718,6 +713,17 @@ export function WorkbenchDisplaySurface({
           aria-label={activeMedia ? `${activeMedia.clipTitle} preview` : "Empty workbench preview"}
           data-testid="workbench-display-canvas"
         />
+        {/* Names what the grayed frame means. Only ever visible while
+            SCRUBBING — playing jumps the span, so the clock never rests here.
+            Top-LEFT: the close button owns the right corner. */}
+        {activeClip?.disabled === true && (
+          <span
+            className="absolute left-2 top-2 z-10 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] leading-none font-semibold tracking-[0.08em] text-amber-300 ring-1 ring-amber-400/40"
+            data-testid="workbench-display-disabled"
+          >
+            DISABLED
+          </span>
+        )}
         {/* Second way out of the preview, next to the sidebar's toggle. Pinned
             to the canvas's far-right corner, which is LETTERBOX: the frame is
             drawn centred at `min` scale, so this sits in the black gutter

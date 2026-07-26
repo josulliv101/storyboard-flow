@@ -58,6 +58,26 @@ export function enabledClips(clips: readonly TimelineClip[]): TimelineClip[] {
 }
 
 /**
+ * The span a document of these clips occupies — the number a referring
+ * collection clip carries as its own duration. Trailing padding mirrors the
+ * leading padding `packTimelineClips` adds.
+ *
+ * An EMPTY list is 3 seconds, not zero: a zero-width collection card cannot be
+ * seen or clicked, and a collection whose children are all disabled reaches
+ * this same floor through the enabled-only projection — all-disabled and empty
+ * are the same thing to a reader.
+ *
+ * One definition, two callers, and they must not drift: the summary derivation
+ * feeds it ALL clips for the layout span and the enabled ones for the playable
+ * span.
+ */
+export function collectionSpanSeconds(clips: readonly TimelineClip[]): number {
+  if (clips.length === 0) return 3;
+  const last = clips[clips.length - 1];
+  return last.startTime + last.duration + TIMELINE_LEADING_PADDING_SECONDS;
+}
+
+/**
  * A document as the READ models should see it: disabled clips dropped, and
  * the survivors repacked so the gap they left closes.
  *

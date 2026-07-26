@@ -1,10 +1,18 @@
-import { TIMELINE_LEADING_PADDING_SECONDS } from "@storyboard/timeline-model/constants";
 import {
+  CLIP_GAP_SECONDS,
+  TIMELINE_LEADING_PADDING_SECONDS,
+} from "@storyboard/timeline-model/constants";
+import {
+  collectionSpanSeconds,
   effectiveDocument,
+  enabledClips,
   packTimelineClips,
   previewItemsFrom,
 } from "@storyboard/timeline-model";
-import type { TimelineDocument } from "@storyboard/timeline-model/types";
+import type {
+  CollectionTimelineClip,
+  TimelineDocument,
+} from "@storyboard/timeline-model/types";
 
 // Read-time derivation of collection-clip summaries (review finding: stale
 // parents). A collection clip stores DENORMALIZED child facts — title,
@@ -23,6 +31,31 @@ import type { TimelineDocument } from "@storyboard/timeline-model/types";
 // Served, not persisted: writing back on every GET would add load and
 // races for a value the next GET rederives anyway.
 
+/**
+ * The playable span of a document — leading padding, each enabled clip's
+ * playable length, one gap between neighbours.
+ *
+ * Not simply `collectionSpanSeconds(enabledClips(...))`: a nested COLLECTION
+ * child is enabled yet may itself contain disabled descendants, and its
+ * `duration` is the layout span that counts them. Reading its own
+ * `playableDuration` is what carries a deep disable up through every ancestor
+ * — `deriveClosureSummaries` derives children first, so by the time a parent
+ * is summarized its collection children already carry the right number.
+ */
+function playableSpanOf(document: TimelineDocument): number {
+  const enabled = enabledClips(document.clips);
+  if (enabled.length === 0) return 3;
+  const content = enabled.reduce(
+    (total, clip) =>
+      total +
+      (clip.kind === "collection" ? (clip.playableDuration ?? clip.duration) : clip.duration),
+    0,
+  );
+  return (
+    TIMELINE_LEADING_PADDING_SECONDS + content + CLIP_GAP_SECONDS * (enabled.length - 1)
+  );
+}
+
 export function deriveCollectionSummaries(
   document: TimelineDocument,
   childDocuments: ReadonlyMap<string, TimelineDocument | null>,
@@ -37,37 +70,43 @@ export function deriveCollectionSummaries(
     if (!child) return clip;
 
     const title = child.title || clip.title;
-    // Summaries describe what the collection CONTRIBUTES, so they are derived
-    // from the child's ENABLED clips, repacked. That is what makes a disabled
-    // clip vanish from counts and time totals — and because
-    // `deriveClosureSummaries` runs bottom-up, disabling something three
-    // levels down shrinks every ancestor automatically, with no reverse index.
+    // GEOMETRY vs READOUT — the one distinction this derivation carries.
     //
-    // A collection whose children are ALL disabled falls to the same
-    // `duration = 3` an empty collection already gets: all-disabled and empty
-    // are the same thing to a reader, and inventing a zero-width case here
-    // would be new behaviour, not consistency.
+    // `duration` is the collection's LAYOUT span, so it counts every child
+    // including disabled ones. It has to: the manifest maps a parent's output
+    // span onto the child's local time range, so a duration that excluded a
+    // disabled grandchild would window the child's full content into a
+    // too-short span and play it fast. It is also the card's slot on the
+    // board, which is what the playhead jumps over.
+    //
+    // The READOUTS — itemCount, previewItems, playableDuration — describe what
+    // actually plays, so they come from the ENABLED projection. Because
+    // `deriveClosureSummaries` runs bottom-up, disabling something three levels
+    // down shrinks every ancestor's playable time automatically, with no
+    // reverse index.
     const effectiveChild = effectiveDocument(child);
     const itemCount = effectiveChild.clips.length;
     const previewItems = previewItemsFrom(effectiveChild.clips);
-    let duration = 3;
-    if (effectiveChild.clips.length > 0) {
-      const last = effectiveChild.clips[effectiveChild.clips.length - 1];
-      duration = last.startTime + last.duration + TIMELINE_LEADING_PADDING_SECONDS;
-    }
+    const duration = collectionSpanSeconds(child.clips);
+    const playable = playableSpanOf(child);
+    // Omitted when nothing under the collection is disabled — `duration` is
+    // already the playable time then, and documents that never use the feature
+    // never grow the field (same convention as `disabled` itself).
+    const playableDuration = playable === duration ? undefined : playable;
 
     if (
       clip.title === title &&
       clip.itemCount === itemCount &&
       clip.duration === duration &&
       clip.sourceDuration === duration &&
+      clip.playableDuration === playableDuration &&
       JSON.stringify(clip.previewItems ?? []) === JSON.stringify(previewItems)
     ) {
       return clip;
     }
 
     changed = true;
-    return {
+    const next: CollectionTimelineClip = {
       ...clip,
       title,
       alt: `${title} collection`,
@@ -76,6 +115,12 @@ export function deriveCollectionSummaries(
       duration,
       sourceDuration: duration,
     };
+    // Assign-or-DELETE, not a spread of `undefined`: a collection that had a
+    // disabled child and no longer does must lose the key outright, or the
+    // spread above would carry the stale playable time forward.
+    if (playableDuration === undefined) delete next.playableDuration;
+    else next.playableDuration = playableDuration;
+    return next;
   });
 
   if (!changed) return { document, changed: false };

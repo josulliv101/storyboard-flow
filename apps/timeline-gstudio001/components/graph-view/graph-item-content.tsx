@@ -33,13 +33,14 @@ import {
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 import {
-  hydratedCollectionDuration,
+  hydratedCollectionPlayableDuration,
   hydratedCollectionPreviews,
   type CollectionPreviewFrame,
   type DetailsById,
 } from "@storyboard/timeline-domain";
 
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
+import { isDisabledByAncestor } from "./graph-playhead-model";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TrimFramePreview } from "./graph-trim-frame-preview";
@@ -196,8 +197,12 @@ function useHydratedCollectionSeconds(id: string, enabled: boolean): number | nu
   const detailsStore = useGraphDetailsStore();
   const [derive] = useState(() =>
     createDerivedCache({
+      // PLAYABLE seconds, not the layout span: this is the card's readout, and
+      // it should say what a viewer would sit through. The layout twin
+      // (`hydratedCollectionDuration`) still drives the clip's duration in the
+      // projection, where the disabled slot has to survive.
       compute: (graph: CollectionsGraph, details: DetailsById, nodeId: NodeId) =>
-        hydratedCollectionDuration(graph, details, nodeId),
+        hydratedCollectionPlayableDuration(graph, details, nodeId),
       contentKey: (seconds) => String(Math.round(seconds * 1000)),
     }),
   );
@@ -240,6 +245,47 @@ function LiveDurationPill({ id, node }: { id: NodeId; node: MediaNode }) {
   );
 }
 
+/**
+ * Whether a COLLECTION above this card is disabled. Primitive return, per the
+ * store's selector contract — the walk itself is
+ * `isDisabledByAncestor` in graph-playhead-model, shared with the seek rail so
+ * the card and the rail can never disagree about what is off.
+ */
+function useDisabledByAncestor(id: NodeId): boolean {
+  return useCollectionsSelector((snapshot) => isDisabledByAncestor(snapshot.graph, id as string));
+}
+
+/**
+ * The card's "this will not play" badge, top-right.
+ *
+ * Two causes, two words, because the fix differs: a card disabled OUTRIGHT is
+ * re-enabled on itself, while one that is off because an ancestor collection
+ * is off cannot be re-enabled here at all — you have to go up and turn the
+ * collection back on. Muting them identically but labelling them the same
+ * would strand someone clicking a toggle that cannot help them.
+ */
+function DisabledChip({ inherited }: { inherited: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-disabled-chip={inherited ? "inherited" : "self"}
+      title={
+        inherited
+          ? "Skipped — a collection above this one is disabled"
+          : "Skipped during playback"
+      }
+      className={[
+        "pointer-events-none absolute right-1 top-1 z-10 rounded px-1 py-0.5 font-mono text-[8px] leading-none font-semibold tracking-[0.08em]",
+        inherited
+          ? "bg-black/75 text-zinc-300 ring-1 ring-zinc-500/40"
+          : "bg-black/80 text-amber-300 ring-1 ring-amber-400/40",
+      ].join(" ")}
+    >
+      {inherited ? "PARENT OFF" : "DISABLED"}
+    </span>
+  );
+}
+
 const GraphClipContent = memo(function GraphClipContent({
   id,
   node,
@@ -257,6 +303,8 @@ const GraphClipContent = memo(function GraphClipContent({
   const measuredFrames =
     cardSize.height > 0 ? Math.round(cardSize.width / cardSize.height) : 0;
   const settledFrames = useSettledFrameCount(measuredFrames);
+  // Above the collection early-return below — hooks may not be conditional.
+  const inheritedDisabled = useDisabledByAncestor(id);
 
   // MEDIA pixels only. Collections don't render through this seam anymore:
   // their card carries interactive controls (folder drill-in, inline rename),
@@ -304,9 +352,14 @@ const GraphClipContent = memo(function GraphClipContent({
         // and its full width (its duration still shapes the board), it just
         // stops looking like content that plays. Grayscale + reduced opacity
         // survives on top of any artwork, where a tint would not.
-        node.disabled ? "opacity-45 grayscale" : "",
+        //
+        // Inherited disabling looks IDENTICAL — a viewer sees neither — and
+        // only the chip distinguishes them.
+        node.disabled || inheritedDisabled ? "opacity-45 grayscale" : "",
       ].join(" ")}
-      data-disabled={node.disabled ? "true" : undefined}
+      // Distinct VALUES so e2e can assert which cause is in play; both are
+      // truthy for "this card is muted".
+      data-disabled={node.disabled ? "true" : inheritedDisabled ? "inherited" : undefined}
     >
       {frameSrcs.length === 0 ? (
         <span className="flex h-full w-full items-center justify-center text-[10px] text-zinc-500">
@@ -340,6 +393,9 @@ const GraphClipContent = memo(function GraphClipContent({
       >
         {isVideo ? "VIDEO" : "IMAGE"}
       </span>
+      {(node.disabled || inheritedDisabled) && (
+        <DisabledChip inherited={node.disabled !== true} />
+      )}
       {trimEnabled && <LiveDurationPill id={id} node={node} />}
       {/* Floating frame-at-the-edge panel during a trim drag (video only) —
           rides the same per-node live-trim channel as the pill. */}
@@ -560,9 +616,14 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   // the served summary (which derives itemCount from the effective document).
   // `childCount` from the primitive counts every child, disabled included.
   const count = hydrated ? enabledChildCount : (detail?.itemCount ?? enabledChildCount);
-  const totalSeconds = hydrated ? liveSeconds : detail?.duration;
+  // Playable seconds both ways: live for a hydrated collection, and for a
+  // placeholder the stored `playableDuration` summary — falling back to
+  // `duration` for documents saved before the split, where the two are equal.
+  const totalSeconds = hydrated ? liveSeconds : (detail?.playableDuration ?? detail?.duration);
   const previews = useCollectionPreviewFrames(id as string, hydrated, detail?.previewItems);
   const displayName = title ?? node.name;
+  const inheritedDisabled = useDisabledByAncestor(id);
+  const muted = node.disabled === true || inheritedDisabled;
 
   return (
     <>
@@ -577,18 +638,24 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         // displaying "9" until its clips load.
         ariaLabel={`${displayName} (collection, ${count} items)`}
         className={[
-          "flex h-full w-full flex-col justify-between overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.08] p-1.5",
+          // `relative` so the disabled chip below can pin to this card's own
+          // top-right corner rather than some ancestor's.
+          "relative flex h-full w-full flex-col justify-between overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.08] p-1.5",
           selected ? "ring-2 ring-amber-400" : "",
           rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
           isDragSource ? "opacity-40" : "",
           // No `data-disabled` twin here: SelectionSurface takes an explicit
           // prop list with no rest spread, so a hyphenated attribute passed to
           // it is silently dropped — and TS does not flag it, because excess
-          // property checks skip hyphenated JSX names. The marker class below
-          // is what tests and e2e can query on a collection card.
-          node.disabled ? "opacity-45 grayscale is-disabled-card" : "",
+          // property checks skip hyphenated JSX names. The marker classes below
+          // are what tests and e2e can query on a collection card; the
+          // inherited one gets its own so the two causes stay separable, the
+          // way `data-disabled`'s values do on a media card.
+          muted ? "opacity-45 grayscale is-disabled-card" : "",
+          muted && node.disabled !== true ? "is-parent-disabled-card" : "",
         ].join(" ")}
       >
+        {muted && <DisabledChip inherited={node.disabled !== true} />}
         <span className="flex min-h-0 flex-1 gap-0.5 overflow-hidden">
           {previews.length === 0 ? (
             <span className="flex flex-1 items-center justify-center text-[9px] text-zinc-500">

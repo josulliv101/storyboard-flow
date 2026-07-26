@@ -9,11 +9,14 @@ import {
   buildRulerTicks,
   cardSpansOf,
   childSpans,
+  disabledCardSegments,
+  isDisabledByAncestor,
   manifestTrailsLedger,
   MAX_MANIFEST_FETCH_RETRIES,
   mediaSpanKey,
   nextManifestClipsState,
   nextManifestFailureCount,
+  playableSpanSeconds,
   rulerMajorSpacing,
   rulerSubtierCount,
   shouldRetryManifestFetch,
@@ -132,6 +135,111 @@ describe("childSpans", () => {
       expect(x).toBeGreaterThanOrEqual(previousX);
       previousX = x;
     }
+  });
+});
+
+describe("disabled cards", () => {
+  const disabledMedia = (id: string, durationSeconds: number): GraphNodeSpec => ({
+    kind: "media",
+    id,
+    name: id,
+    durationSeconds,
+    disabled: true,
+  });
+
+  it("marks a card whose own node is disabled", () => {
+    const graph = graphOf([
+      collection("root", [media("a", 4), disabledMedia("b", 4), media("c", 4)]),
+    ]);
+
+    const cards = childSpans(graph, {}, "root", null, flatWidth);
+
+    expect(cards.map((card) => card.disabled)).toEqual([undefined, true, undefined]);
+  });
+
+  it("marks EVERY card when the focused collection itself is disabled", () => {
+    // Drilled into a disabled collection: none of these children carry the
+    // flag, but nothing here plays, so the rail must dim the whole level.
+    const graph = graphOf([
+      collection("root", [
+        { kind: "collection", id: "off", name: "off", disabled: true, children: [media("x", 4), media("y", 4)] },
+      ]),
+    ]);
+
+    const cards = childSpans(graph, {}, "off", null, flatWidth);
+
+    expect(cards.map((card) => card.disabled)).toEqual([true, true]);
+  });
+
+  it("marks cards nested any depth below a disabled collection", () => {
+    const graph = graphOf([
+      collection("root", [
+        {
+          kind: "collection",
+          id: "off",
+          name: "off",
+          disabled: true,
+          children: [collection("inner", [media("deep", 4)])],
+        },
+      ]),
+    ]);
+
+    expect(isDisabledByAncestor(graph, "inner")).toBe(true);
+    expect(isDisabledByAncestor(graph, "deep")).toBe(true);
+    expect(childSpans(graph, {}, "inner", null, flatWidth)[0].disabled).toBe(true);
+  });
+
+  it("does not report a node's OWN flag as inherited", () => {
+    // The card needs to tell the two apart — they show different chips, and
+    // only one of them can be fixed on the card itself.
+    const graph = graphOf([collection("root", [disabledMedia("b", 4)])]);
+
+    expect(isDisabledByAncestor(graph, "b")).toBe(false);
+  });
+});
+
+describe("playableSpanSeconds", () => {
+  const card = (startTime: number, endTime: number, disabled = false): ChildSpan => ({
+    startTime,
+    endTime,
+    width: 100,
+    ...(disabled ? { disabled: true } : {}),
+  });
+
+  it("equals the last card's end when nothing is disabled", () => {
+    // The number this replaced, so an untouched timeline reads identically.
+    const cards = [card(0, 4), card(4.12, 8.12), card(8.24, 12.24)];
+    expect(playableSpanSeconds(cards)).toBeCloseTo(12.24, 6);
+  });
+
+  it("drops a disabled card's span AND its gap", () => {
+    const cards = [card(0, 4), card(4.12, 8.12, true), card(8.24, 12.24)];
+    expect(playableSpanSeconds(cards)).toBeCloseTo(8.12, 6);
+  });
+
+  it("is zero when every card is disabled", () => {
+    expect(playableSpanSeconds([card(0, 4, true), card(4.12, 8.12, true)])).toBe(0);
+  });
+});
+
+describe("disabledCardSegments", () => {
+  it("places a segment under each disabled card, in strip coordinates", () => {
+    const cards: ChildSpan[] = [
+      { startTime: 0, endTime: 4, width: 100 },
+      { startTime: 4, endTime: 8, width: 60, disabled: true },
+      { startTime: 8, endTime: 12, width: 40, disabled: true },
+    ];
+
+    expect(disabledCardSegments(cards)).toEqual([
+      { x: 100 + STRIP_GAP_PX, width: 60 },
+      { x: 100 + 60 + STRIP_GAP_PX * 2, width: 40 },
+    ]);
+  });
+
+  it("returns nothing when every card plays", () => {
+    expect(
+      disabledCardSegments([{ startTime: 0, endTime: 4, width: 100 }]),
+    ).toEqual([]);
   });
 });
 

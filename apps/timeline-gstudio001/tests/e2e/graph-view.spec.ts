@@ -2269,6 +2269,70 @@ test.describe("graph view E2E", () => {
     await expect(undoButton(page)).toBeDisabled();
   });
 
+  test("a disabled clip keeps its slot: the rail marks it, scrubbing lands in it grayed, and play jumps it", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
+
+    // Disable the middle clip through the sidebar action.
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await page.getByRole("button", { name: "Disable", exact: true }).click();
+
+    // The card stays exactly where it was, muted and badged — never removed.
+    // `data-disabled` rides the CONTENT span inside the dnd button, not the
+    // button itself (which carries dnd-kit's own aria-disabled).
+    await expect(bravo.locator('[data-disabled="true"]')).toBeVisible();
+    await expect(bravo.locator('[data-disabled-chip="self"]')).toHaveText("DISABLED");
+    await expect.poll(() => stripOrder(page, PROJECT_ID)).toEqual([
+      "alpha",
+      "bravo",
+      CHILD_ID,
+      "charlie",
+    ]);
+
+    // Deselect: a live selection swaps the sidebar's layout controls (the
+    // preview toggle among them) for the item-action cluster.
+    // (Deselecting REMOVES data-selected rather than setting it false, so the
+    // aria state is what to wait on.)
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("aria-pressed", "false", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    await previewToggle(page).click();
+    const rail = page.locator("[data-graph-seek-rail]").first();
+    await expect(rail).toBeVisible();
+    // The skip is visible in the scrubber before anything is played.
+    await expect(page.locator("[data-rail-skip]").first()).toBeVisible();
+
+    // SCRUB into the disabled clip: allowed, and the frame reads as excluded.
+    // Its span is the second card's, so a press around 40% of the rail lands
+    // inside it; nudge along the rail until the badge shows.
+    const badge = page.getByTestId("workbench-display-disabled");
+    const box = (await rail.boundingBox())!;
+    await expect(async () => {
+      for (const fraction of [0.3, 0.35, 0.4, 0.45, 0.5]) {
+        await page.mouse.move(box.x + box.width * fraction, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.up();
+        if (await badge.isVisible()) return;
+      }
+      throw new Error("never scrubbed into the disabled clip");
+    }).toPass({ timeout: 10000 });
+
+    // PLAY from inside it: the playhead must leave the span immediately rather
+    // than sit through the clip's full duration showing a held frame. The
+    // badge clearing IS the jump — it only shows while the clock is inside a
+    // disabled clip.
+    await page.getByRole("button", { name: "Play workbench preview" }).click();
+    await expect(badge).toBeHidden({ timeout: 2000 });
+  });
+
   test("selecting a clip switches the rail to item actions; Duplicate clones it after itself; Delete returns to normal", async ({
     page,
   }) => {

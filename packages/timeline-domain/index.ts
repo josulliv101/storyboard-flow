@@ -9,6 +9,7 @@ export {
   collectUnhydratedDropTargets,
   graphChildrenToClips,
   hydratedCollectionDuration,
+  hydratedCollectionPlayableDuration,
   hydratedCollectionPreviews,
   type BuildFocusedGraphResult,
   type BuildHydrationSpecsResult,
