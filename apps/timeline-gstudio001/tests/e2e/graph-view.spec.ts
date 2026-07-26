@@ -3413,4 +3413,42 @@ test.describe("graph view E2E", () => {
     const afterScroll = await ruler.locator("> div").count();
     expect(afterScroll).toBeLessThan(800);
   });
+
+  // The seek rail's marks are PER ITEM — one boundary tick between every pair
+  // of cards — so unwindowed they scale with clip count, which is precisely
+  // the cost the strip's card virtualizer exists to avoid. It matters most for
+  // a flattened all-items strip, where the count is a whole project's rather
+  // than one collection's.
+  test("seek rail marks are windowed to the visible strip, not the whole timeline", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    const project = api.documents.get(PROJECT_ID)!;
+    project.clips = [
+      mediaClip("alpha", "video", 0, 6, 8),
+      ...Array.from({ length: 299 }, (_, i) => mediaClip(`long-${i}`, "image", i + 1, 4)),
+    ];
+    await openGraph(page);
+    // The rail is the PREVIEW's scrubber — it only mounts with the pane open.
+    await previewToggle(page).click();
+
+    const rail = page.locator("[data-graph-seek-rail][data-strip-rail]");
+    await expect(rail).toHaveCount(1);
+    // The rail's content layer holds the boundary ticks; each is absolutely
+    // positioned at a content x.
+    const markCount = () => rail.locator("span[aria-hidden='true']").count();
+
+    // 300 cards would be 299 boundary ticks unwindowed. Windowed, the count
+    // follows the viewport — generously bounded so this pins the ORDER of
+    // magnitude rather than an exact layout.
+    await expect.poll(markCount).toBeLessThan(120);
+    await expect.poll(markCount).toBeGreaterThan(0);
+
+    // Scrolling deep into the timeline keeps it bounded — the window moves,
+    // it does not accumulate.
+    await strip(page, PROJECT_ID).evaluate((el) => {
+      el.scrollLeft = 30_000;
+    });
+    await expect.poll(markCount).toBeLessThan(120);
+  });
 });

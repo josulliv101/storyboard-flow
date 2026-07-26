@@ -7,9 +7,9 @@ import {
   buildPlayheadMap,
   buildRulerCollectionSpans,
   buildRulerTicks,
+  buildStripOverlay,
   cardSpansOf,
   childSpans,
-  disabledCardSegments,
   isDisabledByAncestor,
   manifestTrailsLedger,
   MAX_MANIFEST_FETCH_RETRIES,
@@ -222,24 +222,78 @@ describe("playableSpanSeconds", () => {
   });
 });
 
-describe("disabledCardSegments", () => {
-  it("places a segment under each disabled card, in strip coordinates", () => {
-    const cards: ChildSpan[] = [
-      { startTime: 0, endTime: 4, width: 100 },
-      { startTime: 4, endTime: 8, width: 60, disabled: true },
-      { startTime: 8, endTime: 12, width: 40, disabled: true },
-    ];
+describe("buildStripOverlay", () => {
+  const cards: ChildSpan[] = [
+    { startTime: 0, endTime: 4, width: 100 },
+    { startTime: 4, endTime: 8, width: 60, disabled: true },
+    { startTime: 8, endTime: 12, width: 40, disabled: true },
+  ];
 
-    expect(disabledCardSegments(cards)).toEqual([
+  it("places a segment under each disabled card, in strip coordinates", () => {
+    expect(buildStripOverlay(cards).skips).toEqual([
       { x: 100 + STRIP_GAP_PX, width: 60 },
       { x: 100 + 60 + STRIP_GAP_PX * 2, width: 40 },
     ]);
   });
 
+  it("puts a boundary tick at each gap centre, and none before the first card", () => {
+    expect(buildStripOverlay(cards).boundaryTicks).toEqual([
+      100 + STRIP_GAP_PX / 2,
+      100 + 60 + STRIP_GAP_PX * 2 - STRIP_GAP_PX / 2,
+    ]);
+  });
+
+  it("reports the full extent, ending at the LAST card's right edge", () => {
+    expect(buildStripOverlay(cards).extent).toBe(100 + 60 + 40 + STRIP_GAP_PX * 2);
+  });
+
   it("returns nothing when every card plays", () => {
-    expect(
-      disabledCardSegments([{ startTime: 0, endTime: 4, width: 100 }]),
-    ).toEqual([]);
+    expect(buildStripOverlay([{ startTime: 0, endTime: 4, width: 100 }]).skips).toEqual([]);
+  });
+
+  // The reason this is windowed at all: one tick per card boundary plus one
+  // mark per disabled card is a DOM node PER ITEM, which is what the strip's
+  // virtualizer exists to avoid — and a flattened all-items strip is a whole
+  // project's worth of cards, not one collection's.
+  describe("windowed to the visible range", () => {
+    it("emits only the marks inside the window", () => {
+      // Window covers the FIRST boundary (x=104) but not the second (x=272).
+      const overlay = buildStripOverlay(cards, { startX: 0, endX: 150 });
+      expect(overlay.boundaryTicks).toEqual([100 + STRIP_GAP_PX / 2]);
+      expect(overlay.skips).toEqual([{ x: 108, width: 60 }]);
+    });
+
+    it("keeps the EXTENT unwindowed — it sizes the layer, not the marks", () => {
+      expect(buildStripOverlay(cards, { startX: 0, endX: 10 }).extent).toBe(
+        buildStripOverlay(cards).extent,
+      );
+    });
+
+    it("keeps a segment that spans the whole window", () => {
+      // Overlap, not containment: a disabled card wider than the viewport is
+      // still under the user, and dropping it would blank the mark they are
+      // standing on.
+      const wide: ChildSpan[] = [{ startTime: 0, endTime: 9, width: 5000, disabled: true }];
+      expect(buildStripOverlay(wide, { startX: 2000, endX: 2500 }).skips).toEqual([
+        { x: 0, width: 5000 },
+      ]);
+    });
+
+    it("adjacent windows together cover everything the full build has", () => {
+      const all = buildStripOverlay(cards);
+      const left = buildStripOverlay(cards, { startX: 0, endX: 150 });
+      const right = buildStripOverlay(cards, { startX: 150, endX: 10_000 });
+
+      // Ticks are points, so they partition cleanly.
+      expect([...left.boundaryTicks, ...right.boundaryTicks]).toEqual(all.boundaryTicks);
+
+      // Segments have WIDTH, so one straddling the seam belongs to both
+      // windows — that is the overlap rule, and the alternative (dropping it
+      // from one side) would blank the mark the user is standing on as they
+      // scroll across. Compare as a set.
+      const union = [...new Set([...left.skips, ...right.skips].map((s) => s.x))];
+      expect(union.sort((a, b) => a - b)).toEqual(all.skips.map((s) => s.x));
+    });
   });
 });
 
