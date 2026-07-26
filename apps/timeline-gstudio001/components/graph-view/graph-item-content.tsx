@@ -595,7 +595,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   const detail = useClipDetail(id as string);
   // Same source of truth as the tree/breadcrumb, so a rename shows here too.
   const title = useTimelineTitle(id as string);
-  const rename = useInlineRename(id, title ?? node.name);
+  const rename = useInlineRename(id, title ?? node.name, "card");
   const nav = useContext(GraphViewNavContext);
   // Hydrated collections derive their preview frames and total duration from
   // live children (like the count), so editing a loaded child refreshes this

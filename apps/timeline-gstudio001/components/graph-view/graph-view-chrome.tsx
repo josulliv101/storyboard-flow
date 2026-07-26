@@ -99,7 +99,7 @@ export function GraphBreadcrumb({
     (snapshot) => snapshot.graph.nodesById.get(focusedId as NodeId)?.name,
   );
   const focusedTitle = documents[focusedId]?.title ?? focusedNodeName ?? focusedId;
-  const rename = useInlineRename(focusedId as NodeId, focusedTitle);
+  const rename = useInlineRename(focusedId as NodeId, focusedTitle, "breadcrumb");
   const parentHref =
     timelinePath.length > 1
       ? `${base}/${timelinePath.slice(0, -1).map(encodeURIComponent).join("/")}`

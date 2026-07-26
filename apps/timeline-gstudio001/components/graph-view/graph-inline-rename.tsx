@@ -4,7 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useCollectionsStore, type NodeId } from "@storyboard/ui/dnd-collections";
 
-import { GRAPH_RENAME_ITEM_EVENT } from "@/lib/graph-view-events";
+import {
+  GRAPH_RENAME_ITEM_EVENT,
+  type GraphRenameRequest,
+  type GraphRenameSite,
+} from "@/lib/graph-view-events";
 
 /**
  * In-place rename LOGIC for a collection node, single-sourced so the card, the
@@ -18,7 +22,13 @@ import { GRAPH_RENAME_ITEM_EVENT } from "@/lib/graph-view-events";
  * or unchanged name is a no-op — the reducer would reject it anyway, but not
  * dispatching keeps a stray empty commit out of history.
  */
-export function useInlineRename(nodeId: NodeId, currentName: string) {
+export function useInlineRename(
+  nodeId: NodeId,
+  currentName: string,
+  /** Which surface this instance IS. A node id names up to three mounted sites
+   *  at once, and only the addressed one may open — see the event's own note. */
+  site: GraphRenameSite,
+) {
   const store = useCollectionsStore();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -33,11 +43,12 @@ export function useInlineRename(nodeId: NodeId, currentName: string) {
   // its editor — the keyboard twin of double-clicking the label.
   useEffect(() => {
     const onRename = (event: Event) => {
-      if ((event as CustomEvent<string>).detail === (nodeId as string)) begin();
+      const request = (event as CustomEvent<GraphRenameRequest>).detail;
+      if (request.nodeId === (nodeId as string) && request.site === site) begin();
     };
     window.addEventListener(GRAPH_RENAME_ITEM_EVENT, onRename);
     return () => window.removeEventListener(GRAPH_RENAME_ITEM_EVENT, onRename);
-  }, [nodeId, begin]);
+  }, [nodeId, site, begin]);
 
   const cancel = useCallback(() => setEditing(false), []);
 

@@ -483,11 +483,12 @@ const previewToggle = (page: Page): Locator =>
 const assetsButton = (page: Page): Locator =>
   page.getByRole("button", { name: "Assets", exact: true });
 
-// Each sub-graph row's drill-in control (formerly labelled "Focus").
-const drillButton = (page: Page, sectionName: string): Locator =>
-  page
-    .locator(`section[aria-label="Sub-timeline: ${sectionName}"]`)
-    .getByRole("button", { name: "Drill into timeline" });
+// Drilling in. The sub-timeline ROW no longer offers this — its folder toggle
+// opens the timeline in place, and the second control that navigated away was
+// removed deliberately (see graph-sub-timelines). The collection CARD's own
+// open button is the affordance now, so navigation tests go through it.
+const drillButton = (page: Page, timelineName: string): Locator =>
+  page.getByRole("button", { name: `Open ${timelineName}`, exact: true }).first();
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -694,10 +695,20 @@ test.describe("graph view E2E", () => {
     // and is verified with a real keypress (Playwright's Chromium doesn't
     // deliver the F2 function key to the page).
     await page.evaluate(
-      (id) => window.dispatchEvent(new CustomEvent("graph-view:rename-item", { detail: id })),
+      (id) =>
+        window.dispatchEvent(
+          new CustomEvent("graph-view:rename-item", { detail: { nodeId: id, site: "card" } }),
+        ),
       CHILD_ID,
     );
+
+    // EXACTLY one editor. Scene A has a card AND a sub-timeline row mounted for
+    // the same node id, and an unaddressed broadcast opened both: each editor
+    // focuses itself on mount and commits on blur, so they closed each other
+    // and F2 did nothing at all. The count is the regression — `fill` below
+    // would fail on a strict-mode violation, but only by accident.
     const editor = page.getByRole("textbox", { name: "Timeline name" });
+    await expect(editor).toHaveCount(1);
     await editor.fill("Heist Plan");
     await editor.press("Enter");
 
@@ -2176,7 +2187,10 @@ test.describe("graph view E2E", () => {
       .poll(() => api.patchesFor(TRASH_ID).at(-1)?.clipIds, { timeout: 5000 })
       .toEqual(["bravo"]);
     await page.getByRole("button", { name: "Trash", exact: true }).click();
-    const restore = page.getByRole("button", { name: /^Restore bravo/ });
+    // "Add <name> to <timeline>" — the drawer stopped saying "Restore" when it
+    // became one row per image: putting an image back is an insert into the
+    // timeline you are looking at, not an undo of where it came from.
+    const restore = page.getByRole("button", { name: /^Add bravo to/ });
     await expect(restore).toBeVisible();
     await restore.click();
 

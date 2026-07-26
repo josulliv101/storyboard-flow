@@ -130,7 +130,7 @@ function SubTimelineNode({
     (snapshot) => snapshot.graph.nodesById.get(collectionId)?.name ?? id,
   );
   const name = useTimelineTitle(id) ?? nodeName;
-  const rename = useInlineRename(collectionId, name);
+  const rename = useInlineRename(collectionId, name, "sub-row");
   const detail = useClipDetail(id);
   const hydrated = detail?.hydrated === true;
   // ENABLED children only — this row says what the timeline contributes, so

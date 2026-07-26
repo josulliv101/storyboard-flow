@@ -302,6 +302,12 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                 // because copies of one asset share them.
                 const clip = group.clips[0];
                 const busy = group.clips.some((entry) => restoringIds.includes(entry.id));
+                // `title` lives only on a COLLECTION clip, so it needs the
+                // discriminant to reach — media clips fall straight through to
+                // `alt`. Computed once: the visible label and the button's
+                // accessible name must not be able to drift apart.
+                const label =
+                  (clip.kind === "collection" ? clip.title : undefined) || clip.alt || "Clip";
                 return (
                 <div
                   // Keyed by SLOT as well as identity: the trash document can
@@ -318,7 +324,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                     {clip.kind === "video" ? (
                       <>
                         <img
-                          src={(clip as any).poster || (clip as any).src}
+                          src={clip.poster || clip.src}
                           alt={clip.alt}
                           className="w-full h-full object-cover opacity-80"
                         />
@@ -328,7 +334,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                       </>
                     ) : clip.kind === "image" ? (
                       <img
-                        src={(clip as any).src}
+                        src={clip.src}
                         alt={clip.alt}
                         className="w-full h-full object-cover"
                       />
@@ -344,7 +350,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                   <div className="mt-2 flex min-w-0 items-center gap-2">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs font-semibold text-zinc-200">
-                        {(clip as any).title || clip.alt || "Clip"}
+                        {label}
                       </p>
                       {/* Where it came from and when it went. Two clips can be
                           identical in every field the drawer paints — same
@@ -368,7 +374,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                         disabled={busy}
                         onClick={() => handleAddToTimeline(group)}
                         title={`Add to ${focusedName}`}
-                        aria-label={`Add ${(clip as any).title || clip.alt || "clip"} to ${focusedName}`}
+                        aria-label={`Add ${label} to ${focusedName}`}
                         className="h-6 shrink-0 border-zinc-800 px-2 text-[10px] text-zinc-300 hover:border-sky-500/50 hover:text-sky-300 cursor-pointer"
                       >
                         <Undo2 className="mr-1 h-3 w-3" />
