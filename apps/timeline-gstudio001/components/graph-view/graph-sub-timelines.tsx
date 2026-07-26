@@ -16,7 +16,7 @@ import {
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
-import { useCollectionPreviewFrames } from "./graph-item-content";
+import { useCollectionPreviewFrames, useEnabledChildCount } from "./graph-item-content";
 import { hydrateTimeline } from "./graph-hydration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { NativeDropGrid, NativeDropStrip } from "./graph-native-drop";
@@ -136,13 +136,7 @@ function SubTimelineNode({
   // ENABLED children only — this row says what the timeline contributes, so
   // it has to agree with the time totals and the served summary rather than
   // counting clips that are skipped.
-  const liveCount = useCollectionsSelector((snapshot) => {
-    let total = 0;
-    for (const child of getChildren(snapshot.graph, collectionId)) {
-      if (snapshot.graph.nodesById.get(child)?.disabled !== true) total += 1;
-    }
-    return total;
-  });
+  const liveCount = useEnabledChildCount(collectionId);
   // Same pair the card shows; empty until an un-hydrated row loads.
   const previewFrames = useCollectionPreviewFrames(id, hydrated, detail?.previewItems);
   const childIds = useCollectionChildIds(collectionId);
