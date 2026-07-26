@@ -24,6 +24,10 @@ import { useGraphDetailsStore } from "./graph-details-context";
 
 type GraphViewNav = Readonly<{
   openTimeline: (nodeId: NodeId) => void;
+  /** The timeline currently in focus. Cards read it to tell whether they are
+   *  being shown OUTSIDE their own collection — which is exactly the flat
+   *  strip, and what makes a provenance label worth drawing. */
+  focusedId: string;
 }>;
 
 export const GraphViewNavContext = createContext<GraphViewNav | null>(null);
@@ -61,6 +65,7 @@ export function GraphViewNavProvider({
 
   const value = useMemo<GraphViewNav>(
     () => ({
+      focusedId,
       openTimeline: (nodeId) => {
         const id = nodeId as string;
         const timelineId = detailsStore.get(id)?.duplicateOfTimelineId ?? id;
@@ -205,14 +210,27 @@ export function OpenKeyBoundary({
     const id = target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
     if (!id) return;
 
+    const graph = store.getSnapshot().graph;
     const nodeId = parseNodeId(id);
-    const node = store.getSnapshot().graph.nodesById.get(nodeId);
+    const node = graph.nodesById.get(nodeId);
     const opensTimeline =
       node?.kind === "collection" || detailsStore.get(id)?.duplicateOfTimelineId !== undefined;
-    if (!opensTimeline) return;
+    if (opensTimeline) {
+      event.preventDefault();
+      nav?.openTimeline(nodeId);
+      return;
+    }
 
+    // A card shown OUTSIDE its own collection — the flat strip — opens the
+    // collection it lives in. Same verb ("take me to where this is"), and the
+    // keyboard twin of double-clicking its provenance label, which cannot be a
+    // button because it renders inside the card's selection button.
+    // Null as well as undefined: a ROOT has an explicit null parent, and it is
+    // the one node with nowhere to reveal.
+    const parentId = graph.parentById.get(nodeId);
+    if (parentId == null || (parentId as string) === nav?.focusedId) return;
     event.preventDefault();
-    nav?.openTimeline(nodeId);
+    nav?.openTimeline(parentId);
   };
 
   // F2 opens the focused collection's inline rename editor — the keyboard twin

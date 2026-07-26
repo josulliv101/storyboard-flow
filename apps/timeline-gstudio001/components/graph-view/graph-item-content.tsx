@@ -293,6 +293,40 @@ function useDisabledByAncestor(id: NodeId): boolean {
 }
 
 /**
+ * Where a card's item actually LIVES, when that is not the timeline you are
+ * looking at — the flat strip's answer to the context it gives up.
+ *
+ * Returns null in the ordinary nested strip, and it needs no mode flag to do
+ * so: there, every card's parent IS the focused collection, so the comparison
+ * is false by construction. In a flat run the cards drawn from nested
+ * collections differ, and exactly those get a label. Direct children of the
+ * focused timeline stay unlabelled in both readings, which is right — their
+ * collection is the one on screen.
+ */
+function useCardProvenance(
+  id: NodeId,
+): Readonly<{ parentId: NodeId; name: string }> | null {
+  const nav = useContext(GraphViewNavContext);
+  const focusedId = nav?.focusedId ?? null;
+  // Primitive returns, per the store's selector contract.
+  const parentId = useCollectionsSelector(
+    (snapshot) => snapshot.graph.parentById.get(id) ?? null,
+  );
+  const nodeName = useCollectionsSelector((snapshot) => {
+    const parent = snapshot.graph.parentById.get(id);
+    return parent ? (snapshot.graph.nodesById.get(parent)?.name ?? null) : null;
+  });
+  // The document title is the source of truth for a collection's name (the
+  // graph node is the optimistic fallback until it loads) — same resolution
+  // the collection card and the breadcrumb use, so a rename shows here too.
+  const title = useTimelineTitle((parentId ?? "") as string);
+
+  if (parentId === null || focusedId === null) return null;
+  if ((parentId as string) === focusedId) return null;
+  return { parentId, name: title ?? nodeName ?? (parentId as string) };
+}
+
+/**
  * The card's "this will not play" badge, top-right.
  *
  * Two causes, two words, because the fix differs: a card disabled OUTRIGHT is
@@ -323,6 +357,47 @@ function DisabledChip({ inherited }: { inherited: boolean }) {
   );
 }
 
+/**
+ * Which collection this card's item lives in, drawn along the card's bottom
+ * edge — the flat strip's orientation, and what makes the drop rule ("lands in
+ * the left neighbour's collection") readable BEFORE you release.
+ *
+ * A SPAN, not a button, deliberately. This renders inside NodeCard's selection
+ * `<button>`, and nesting interactive semantics is invalid HTML and an
+ * ambiguous a11y tree — the package makes that an invariant and a story
+ * asserts it. So the reveal rides a double-click, which needs no role, and the
+ * O key covers the same action from the keyboard (see OpenKeyBoundary).
+ *
+ * KNOWN GAP: `aria-hidden`, matching the card's other chips, so the collection
+ * name is not announced. Fixing that means composing it into the card's
+ * accessible name, which lives in the package's NodeCard — a change worth
+ * making deliberately rather than smuggling in here.
+ */
+function ProvenanceLabel({
+  parentId,
+  name,
+}: Readonly<{ parentId: NodeId; name: string }>) {
+  const nav = useContext(GraphViewNavContext);
+  return (
+    <span
+      aria-hidden="true"
+      data-provenance={parentId as string}
+      title={`In "${name}" — double-click to open it (or press O)`}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        nav?.openTimeline(parentId);
+      }}
+      // TOP-LEFT: the bottom band is already three-deep (kind tag left,
+      // duration pill right, and the label spanning both would sit under
+      // them), and the top-right belongs to the disabled chip. Capped width so
+      // a long collection name truncates instead of running into that chip.
+      className="pointer-events-auto absolute left-1 top-1 z-10 max-w-[70%] cursor-pointer truncate rounded bg-sky-950/85 px-1 py-0.5 text-[8px] leading-none font-semibold text-sky-200 ring-1 ring-sky-400/30 hover:bg-sky-900/90 hover:text-sky-100"
+    >
+      {name}
+    </span>
+  );
+}
+
 const GraphClipContent = memo(function GraphClipContent({
   id,
   node,
@@ -342,6 +417,7 @@ const GraphClipContent = memo(function GraphClipContent({
   const settledFrames = useSettledFrameCount(measuredFrames);
   // Above the collection early-return below — hooks may not be conditional.
   const inheritedDisabled = useDisabledByAncestor(id);
+  const provenance = useCardProvenance(id);
 
   // MEDIA pixels only. Collections don't render through this seam anymore:
   // their card carries interactive controls (folder drill-in, inline rename),
@@ -433,6 +509,7 @@ const GraphClipContent = memo(function GraphClipContent({
       {(node.disabled || inheritedDisabled) && (
         <DisabledChip inherited={node.disabled !== true} />
       )}
+      {provenance && <ProvenanceLabel parentId={provenance.parentId} name={provenance.name} />}
       {trimEnabled && <LiveDurationPill id={id} node={node} />}
       {/* Floating frame-at-the-edge panel during a trim drag (video only) —
           rides the same per-node live-trim channel as the pill. */}
