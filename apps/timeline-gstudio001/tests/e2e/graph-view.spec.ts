@@ -3451,6 +3451,36 @@ test.describe("graph view E2E", () => {
     await expect(page.locator("[data-graph-ruler]")).toHaveCount(1);
   });
 
+  test("flat cards name their collection, and reveal it", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // Nested: every card's parent IS the focused timeline, so nothing is
+    // labelled — the mode needs no flag to stay quiet here.
+    await expect(page.locator("[data-provenance]")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Show all items in order" }).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID), { timeout: 15000 })
+      .toEqual(["alpha", "bravo", "c1", "c2", "charlie"]);
+
+    // Only the cards drawn from a NESTED collection carry a label: c1/c2 live
+    // in Scene A, while alpha/bravo/charlie are the focused timeline's own.
+    const labels = page.locator("[data-provenance]");
+    await expect(labels).toHaveCount(2);
+    await expect(labels.first()).toHaveText("Scene A");
+    await expect(
+      strip(page, PROJECT_ID).locator('[data-node-id="alpha"] [data-provenance]'),
+    ).toHaveCount(0);
+
+    // Double-click reveals — a span, not a button, because it renders inside
+    // the card's selection button and nesting interactive semantics is
+    // invalid. (The O key is its keyboard twin; see OpenKeyBoundary.)
+    await labels.first().dblclick();
+    await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+  });
+
   // The seek rail's marks are PER ITEM — one boundary tick between every pair
   // of cards — so unwindowed they scale with clip count, which is precisely
   // the cost the strip's card virtualizer exists to avoid. It matters most for
