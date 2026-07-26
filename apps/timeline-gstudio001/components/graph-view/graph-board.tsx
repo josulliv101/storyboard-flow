@@ -1,6 +1,6 @@
 "use client";
 
-import { useContext, useDeferredValue } from "react";
+import { useContext, useDeferredValue, useMemo } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { EllipsisVertical, FolderPlus, Redo2, Undo2 } from "lucide-react";
@@ -13,6 +13,8 @@ import {
   useCollectionsSelector,
   useCollectionsStore,
 } from "@storyboard/ui/dnd-collections";
+
+import { flattenMediaOrder } from "@storyboard/timeline-domain";
 
 import { requestGraphToolInsert } from "@/lib/graph-view-events";
 import { Button } from "@/components/core/button";
@@ -50,6 +52,7 @@ import {
   GRID_UNCAPPED_HEIGHT,
   ITEM_SIZE_DIMENSIONS,
   ITEM_SIZES,
+  MAX_SUBTREE_DEPTH,
   MAX_TIMELINE_PPS,
   MIN_TIMELINE_PPS,
   isItemSize,
@@ -314,6 +317,7 @@ export function GraphBoard({
   onPixelsPerSecondChange,
   previewOn,
   rulerOn,
+  flatOn,
   storyboardHref,
   childrenShown,
   timeChannel,
@@ -334,6 +338,9 @@ export function GraphBoard({
   previewOn: boolean;
   /** Toggled from the SIDEBAR's ruler icon (strip mode only). */
   rulerOn: boolean;
+  /** Strip's flat mode: render the whole closure in order, not this
+   *  collection's direct children. */
+  flatOn: boolean;
   /** For the overflow menu's "Storyboard view" item — routing stays the
    *  caller's business, like the breadcrumb slot. */
   storyboardHref: string;
@@ -360,6 +367,22 @@ export function GraphBoard({
   // below — strip, ruler, playheads, scrub bands, sub-rows — shares this ONE
   // deferred value, so their geometry can never disagree mid-drag.
   const deferredPixelsPerSecond = useDeferredValue(pixelsPerSecond);
+  // FLAT mode's item source: every media node in the focused closure, in
+  // playback order. Memoized on the committed graph's IDENTITY — the store
+  // notifies for interaction too, and VirtualStrip keys its measurements off
+  // this array, so a fresh one per notification would re-measure the whole
+  // strip mid-drag. `undefined` when flat is off, which is what makes the
+  // strip fall back to the focused collection's own children.
+  const graph = useCollectionsSelector((s) => s.graph);
+  const flatItemIds = useMemo(
+    () =>
+      flatOn
+        ? flattenMediaOrder(graph, parseNodeId(focusedId), MAX_SUBTREE_DEPTH).map(
+            (item) => item.nodeId,
+          )
+        : undefined,
+    [flatOn, graph, focusedId],
+  );
 
   return (
     <OpenKeyBoundary trashId={trashRootId}>
@@ -445,12 +468,20 @@ export function GraphBoard({
               <NativeDropStrip collectionId={focusedId}>
               <VirtualStrip
                 collectionId={parseNodeId(focusedId)}
+                itemIds={flatItemIds}
                 pixelsPerSecond={deferredPixelsPerSecond}
                 itemWidth={collectionCardWidth(deferredPixelsPerSecond)}
                 itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
-                  previewOn || rulerOn ? (
+                  // FLAT mode carries no time overlays yet. The ruler, the
+                  // playhead and the rail below all position through
+                  // `childSpans`, which maps the focused collection's DIRECT
+                  // children — in a flat run those are the wrong cards, so the
+                  // marks would land on items they do not describe. Showing
+                  // nothing is the honest state until the flat span model
+                  // lands; the preview pane itself still plays.
+                  !flatOn && (previewOn || rulerOn) ? (
                     <>
                       {rulerOn ? (
                         <GraphRuler
@@ -477,7 +508,7 @@ export function GraphBoard({
                   with the content; a drag held at the scroller's edge
                   auto-pans to reveal more items mid-scrub. Replaces the old
                   invisible PlayheadScrubBand. */}
-              {previewOn && (
+              {previewOn && !flatOn && (
                 <GraphStripSeekRail
                   focusedId={focusedId}
                   channel={timeChannel}

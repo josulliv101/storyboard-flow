@@ -51,6 +51,8 @@ function viewSpies() {
     rulerOn: false,
     childrenShown: false,
     previewOn: false,
+    flatOn: false,
+    flatLoading: false,
   };
   let playback = { time: 0, isPlaying: false };
   return {

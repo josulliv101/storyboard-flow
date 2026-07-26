@@ -1,26 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useSyncExternalStore } from "react";
-import {
-  Ban,
-  CircleCheck,
-  ClipboardPaste,
-  Copy,
-  CopyPlus,
-  Folder,
-  Images,
-  Layers,
-  FolderTree,
-  GalleryHorizontalEnd,
-  LayoutGrid,
-  Ruler,
-  Scissors,
-  Settings,
-  TvMinimal,
-  LogOut,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Ban, CircleCheck, ClipboardPaste, Copy, CopyPlus, Folder, FolderTree, GalleryHorizontalEnd, Images, Layers, LayoutGrid, ListOrdered, LogOut, Ruler, Scissors, Settings, Trash2, TvMinimal, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
@@ -35,6 +16,7 @@ import {
   requestGraphChildrenToggle,
   requestGraphItemAction,
   requestGraphPreviewToggle,
+  requestGraphFlatToggle,
   requestGraphRulerToggle,
   requestGraphSurface,
   type GraphItemAction,
@@ -375,6 +357,8 @@ export function TimelineSidebar() {
     rulerOn: false,
     childrenShown: false,
     previewOn: false,
+    flatOn: false,
+    flatLoading: false,
   });
   useEffect(() => {
     const onState = (event: Event) => {
@@ -593,6 +577,42 @@ export function TimelineSidebar() {
                   id="sidebar-tooltip-ruler"
                   label="Time ruler"
                   description="Tick marks over every strip"
+                />
+              </button>
+            )}
+
+            {/* Flat mode — strip only, like the ruler. Grid keeps its nesting,
+                so there is nothing to flatten there. */}
+            {onGraphRoute && graphView.surface === "strip" && (
+              <button
+                type="button"
+                aria-pressed={graphView.flatOn}
+                aria-label={graphView.flatOn ? "Show collections" : "Show all items in order"}
+                aria-describedby="sidebar-tooltip-flat"
+                aria-busy={graphView.flatLoading}
+                onClick={requestGraphFlatToggle}
+                className={cn(
+                  SIDEBAR_ICON_BASE,
+                  graphView.flatOn ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+                )}
+              >
+                <ListOrdered
+                  className={cn(
+                    "h-4 w-4 transition-colors",
+                    // Loading the closure can take a moment on a deep project,
+                    // and a half-built run would otherwise look like the real
+                    // answer.
+                    graphView.flatLoading ? "motion-safe:animate-pulse" : "",
+                  )}
+                />
+                <SidebarTooltipLabel
+                  id="sidebar-tooltip-flat"
+                  label="All items in order"
+                  description={
+                    graphView.flatLoading
+                      ? "Loading every collection…"
+                      : "One flat run — no collections. Reordering is off."
+                  }
                 />
               </button>
             )}

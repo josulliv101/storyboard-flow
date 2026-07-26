@@ -46,6 +46,9 @@ export function requestGraphToolInsert(tool: GraphInsertTool): void {
 
 export const GRAPH_SURFACE_EVENT = "graph-view:set-surface";
 export const GRAPH_RULER_TOGGLE_EVENT = "graph-view:toggle-ruler";
+/** Strip only: show every item in the focused closure in playback order, with
+ *  no collections and no nesting. */
+export const GRAPH_FLAT_TOGGLE_EVENT = "graph-view:toggle-flat";
 export const GRAPH_CHILDREN_TOGGLE_EVENT = "graph-view:toggle-children";
 export const GRAPH_PREVIEW_TOGGLE_EVENT = "graph-view:toggle-preview";
 export const GRAPH_VIEW_STATE_EVENT = "graph-view:view-state";
@@ -58,6 +61,12 @@ export type GraphViewStateDetail = Readonly<{
   rulerOn: boolean;
   childrenShown: boolean;
   previewOn: boolean;
+  /** Strip's flat mode. Strip-only, like the ruler — grid has no equivalent. */
+  flatOn: boolean;
+  /** True while flat mode is loading the closure it needs (every nested
+   *  collection has to be hydrated before the flat run is complete). The
+   *  sidebar shows it as a pending state rather than a silently short list. */
+  flatLoading: boolean;
 }>;
 
 /** Ask the graph view to switch its layout surface. */
@@ -70,6 +79,11 @@ export function requestGraphSurface(surface: GraphSurface): void {
 /** Ask the graph view to toggle the strip's time ruler. */
 export function requestGraphRulerToggle(): void {
   window.dispatchEvent(new Event(GRAPH_RULER_TOGGLE_EVENT));
+}
+
+/** Ask the strip to toggle flat mode (all items in order, no nesting). */
+export function requestGraphFlatToggle(): void {
+  window.dispatchEvent(new Event(GRAPH_FLAT_TOGGLE_EVENT));
 }
 
 /** Ask the graph view to toggle the children-timelines tree. */

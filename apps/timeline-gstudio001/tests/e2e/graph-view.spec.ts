@@ -3414,6 +3414,43 @@ test.describe("graph view E2E", () => {
     expect(afterScroll).toBeLessThan(800);
   });
 
+  test("flat mode shows the whole closure in order, with no collections", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // Nested reading: the project's four direct children, one of them a
+    // collection card.
+    expect(await stripOrder(page, PROJECT_ID)).toEqual([
+      "alpha",
+      "bravo",
+      CHILD_ID,
+      "charlie",
+    ]);
+
+    const flat = page.getByRole("button", { name: "Show all items in order" });
+    await expect(flat).toBeVisible();
+    await flat.click();
+
+    // Flat reading: Scene A is walked THROUGH — its clips take its place, in
+    // order, and the collection card itself is gone.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID), { timeout: 15000 })
+      .toEqual(["alpha", "bravo", "c1", "c2", "charlie"]);
+
+    // The time overlays stay off: they position through the focused
+    // collection's DIRECT children, so in a flat run they would mark the wrong
+    // cards. Showing nothing is deliberate until the flat span model lands.
+    await page.getByRole("button", { name: /show time ruler/i }).click();
+    await expect(page.locator("[data-graph-ruler]")).toHaveCount(0);
+
+    // Leaving flat mode restores the nested reading — and the ruler with it.
+    await page.getByRole("button", { name: "Show collections" }).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+    await expect(page.locator("[data-graph-ruler]")).toHaveCount(1);
+  });
+
   // The seek rail's marks are PER ITEM — one boundary tick between every pair
   // of cards — so unwindowed they scale with clip count, which is precisely
   // the cost the strip's card virtualizer exists to avoid. It matters most for
