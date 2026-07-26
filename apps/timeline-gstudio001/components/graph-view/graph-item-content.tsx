@@ -1,6 +1,15 @@
 "use client";
 
-import { memo, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { FolderInput } from "lucide-react";
 
 import {
@@ -141,6 +150,30 @@ function useHydratedCollectionPreviews(
     return derive(store.getSnapshot().graph, id);
   }, [store, derive, id, enabled]);
   return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * The frames a collection PRESENTS: first and last, live once hydrated and the
+ * stored summary until then.
+ *
+ * First and last only — "a timeline runs from here to there" is what two
+ * frames tell and three do not. A single-item collection has no "last"
+ * distinct from its first, so it yields one frame rather than the same image
+ * twice.
+ *
+ * Exported because the sub-timeline ROW shows the same frames as the card.
+ * Two copies of this rule would drift the moment either changed, and the two
+ * sit on screen together — the row is the tree view of the very cards beside
+ * it, so a disagreement would be visible rather than theoretical.
+ */
+export function useCollectionPreviewFrames(
+  id: string,
+  hydrated: boolean,
+  stored: readonly CollectionPreviewFrame[] | undefined,
+): readonly CollectionPreviewFrame[] {
+  const live = useHydratedCollectionPreviews(id, hydrated);
+  const all = hydrated ? live : (stored ?? NO_PREVIEWS);
+  return useMemo(() => (all.length > 1 ? [all[0], all[all.length - 1]] : all), [all]);
 }
 
 /**
@@ -521,7 +554,6 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
     }
     return total;
   });
-  const livePreviews = useHydratedCollectionPreviews(id as string, hydrated);
   const liveSeconds = useHydratedCollectionSeconds(id as string, hydrated);
 
   // ENABLED children only, so the card agrees with the time totals and with
@@ -529,14 +561,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   // `childCount` from the primitive counts every child, disabled included.
   const count = hydrated ? enabledChildCount : (detail?.itemCount ?? enabledChildCount);
   const totalSeconds = hydrated ? liveSeconds : detail?.duration;
-  // FIRST and LAST only — the card says "a timeline runs from here to
-  // there", which two frames tell and three do not. A single-item
-  // collection has no "last" distinct from its first, so it shows one
-  // frame across the full width rather than the same image twice.
-  const all: readonly CollectionPreviewFrame[] = hydrated
-    ? livePreviews
-    : (detail?.previewItems ?? []);
-  const previews = all.length > 1 ? [all[0], all[all.length - 1]] : all;
+  const previews = useCollectionPreviewFrames(id as string, hydrated, detail?.previewItems);
   const displayName = title ?? node.name;
 
   return (

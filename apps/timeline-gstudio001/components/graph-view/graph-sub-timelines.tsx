@@ -1,7 +1,7 @@
 "use client";
 
-import { useContext, useMemo, useRef, useState } from "react";
-import { FolderInput, Folder, FolderOpen } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Folder, FolderOpen } from "lucide-react";
 
 import {
   VirtualGrid,
@@ -16,6 +16,7 @@ import {
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
+import { useCollectionPreviewFrames } from "./graph-item-content";
 import { hydrateTimeline } from "./graph-hydration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { NativeDropGrid, NativeDropStrip } from "./graph-native-drop";
@@ -23,7 +24,6 @@ import {
   subTimelineRowStatus,
   subTimelineRowStatusLabel,
 } from "./graph-sub-timeline-status";
-import { GraphViewNavContext } from "./graph-navigation";
 import {
   GraphGridPlayhead,
   GraphPlayhead,
@@ -40,6 +40,7 @@ import {
   ITEM_SIZE_DIMENSIONS,
   MAX_SUBTREE_DEPTH,
   SUBTIMELINE_INDENT_PX,
+  SUBTIMELINE_PANEL_RIGHT_INSET_PX,
   type FocusSurface,
   type ItemSize,
 } from "./graph-view-config";
@@ -100,7 +101,6 @@ function SubTimelineNode({
   rulerOn: boolean;
   timeChannel: PreviewTimeChannel;
 }>) {
-  const nav = useContext(GraphViewNavContext);
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
   const spans = usePreviewCardSpans();
@@ -143,6 +143,8 @@ function SubTimelineNode({
     }
     return total;
   });
+  // Same pair the card shows; empty until an un-hydrated row loads.
+  const previewFrames = useCollectionPreviewFrames(id, hydrated, detail?.previewItems);
   const childIds = useCollectionChildIds(collectionId);
   const status = subTimelineRowStatus({ expanded, hydrated, failed });
 
@@ -221,20 +223,49 @@ function SubTimelineNode({
           </span>
         )}
         <span className="grow" />
-        <button
-          type="button"
-          aria-label="Drill into timeline"
-          title="Drill into this timeline"
-          onClick={() => nav?.openTimeline(collectionId)}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+        {/* DECORATIVE only — no drill-in. This row's affordance is the folder
+            toggle, which opens the timeline in place; a second control that
+            navigated away was answering a question the row does not ask. These
+            frames just say WHICH timeline the row is, which a name alone does
+            not when you are scanning a nested tree.
+            
+            aria-hidden and not focusable, so the row's accessible surface is
+            still exactly its toggle and its name.
+
+            The frames butt directly together and fill the box — no gap, no
+            backing colour showing through as a gutter — and the box is sized
+            to the row's full header height rather than sitting inside it.
+
+            Same first/last pair the card shows, from one shared hook: the row
+            is the tree view of the very cards beside it, so two derivations of
+            "what this timeline looks like" would drift in plain sight. */}
+        <span
+          aria-hidden="true"
+          data-subtimeline-thumbs
+          className="flex h-10 w-[72px] shrink-0 overflow-hidden rounded-sm bg-zinc-950/60"
+          // Cancel the right inset this row's ANCESTOR panels impose, so every
+          // preview in the tree lands on one vertical line however deeply the
+          // row is nested. Without it each level shifted the frames 13px left
+          // and the column read as ragged. The frames deliberately overhang
+          // the nested panels' right edges to get there — that is the point:
+          // they belong to the column, not to the panel they sit in.
+          style={{ marginRight: -(depth * SUBTIMELINE_PANEL_RIGHT_INSET_PX) }}
         >
-          {/* FolderInput — a folder with an arrow going INTO it. This button
-              NAVIGATES; the sidebar's FolderTree toggles whether the children
-              tree is shown. Those are different verbs and no longer share an
-              icon. The collection card's drill button is the same verb as
-              this one and uses the same icon. */}
-          <FolderInput aria-hidden="true" className="h-4 w-4" />
-        </button>
+          {previewFrames.map((frame, index) => (
+            // Keyed by SLOT, not content: the pair is order-stable and the
+            // same asset can be both first and last, so a content key would
+            // collide AND remount an already-loaded frame on every child edit.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={index}
+              src={frame.poster ?? frame.src}
+              alt=""
+              draggable={false}
+              loading="lazy"
+              className="h-full min-w-0 flex-1 object-cover"
+            />
+          ))}
+        </span>
       </div>
 
       {expanded && hydrated && (
