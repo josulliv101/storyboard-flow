@@ -701,7 +701,7 @@ describe("set-node-disabled", () => {
       const graph = fixture();
       const result = applyCommand(graph, {
         type: "set-node-disabled",
-        nodeId: parseNodeId(target),
+        nodeIds: [parseNodeId(target)],
         disabled: true,
       });
       if (!result.ok) throw new Error(JSON.stringify(result.error));
@@ -717,14 +717,14 @@ describe("set-node-disabled", () => {
   test("enabling DELETES the key rather than writing false", () => {
     const disabled = applyCommand(fixture(), {
       type: "set-node-disabled",
-      nodeId: parseNodeId("A"),
+      nodeIds: [parseNodeId("A")],
       disabled: true,
     });
     if (!disabled.ok) throw new Error("expected ok");
 
     const enabled = applyCommand(disabled.value.graph, {
       type: "set-node-disabled",
-      nodeId: parseNodeId("A"),
+      nodeIds: [parseNodeId("A")],
       disabled: false,
     });
     if (!enabled.ok) throw new Error("expected ok");
@@ -736,7 +736,7 @@ describe("set-node-disabled", () => {
   test("a no-op change is refused, so it never enters history", () => {
     const alreadyEnabled = applyCommand(fixture(), {
       type: "set-node-disabled",
-      nodeId: parseNodeId("A"),
+      nodeIds: [parseNodeId("A")],
       disabled: false,
     });
     expect(alreadyEnabled.ok).toBe(false);
@@ -746,7 +746,7 @@ describe("set-node-disabled", () => {
   test("a missing node is refused", () => {
     const result = applyCommand(fixture(), {
       type: "set-node-disabled",
-      nodeId: parseNodeId("nope"),
+      nodeIds: [parseNodeId("nope")],
       disabled: true,
     });
     expect(result.ok).toBe(false);
@@ -757,7 +757,7 @@ describe("set-node-disabled", () => {
     const graph = fixture();
     const result = applyCommand(graph, {
       type: "set-node-disabled",
-      nodeId: parseNodeId("A"),
+      nodeIds: [parseNodeId("A")],
       disabled: true,
     });
     if (!result.ok) throw new Error("expected ok");
@@ -766,5 +766,89 @@ describe("set-node-disabled", () => {
     expect("disabled" in nodeOf(undone, "A")).toBe(false);
     const redone = applyPatch(undone, result.value.patch);
     expect(nodeOf(redone, "A").disabled).toBe(true);
+  });
+
+  // Disabling a multi-selection is ONE user action. Per-node dispatch made it
+  // N history entries, so undo gave the items back one at a time.
+  test("a whole selection goes disabled in ONE patch, and comes back in one undo", () => {
+    const graph = fixture();
+    const result = applyCommand(graph, {
+      type: "set-node-disabled",
+      nodeIds: ids(["A", "B", "F"]),
+      disabled: true,
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+
+    expect(result.value.patch.type).toBe("nodes-updated");
+    if (result.value.patch.type === "nodes-updated") {
+      expect(result.value.patch.updates).toHaveLength(3);
+    }
+    for (const id of ["A", "B", "F"]) {
+      expect(nodeOf(result.value.graph, id).disabled).toBe(true);
+    }
+    expect(findGraphInvariantViolation(result.value.graph)).toBeNull();
+
+    // ONE inversion restores all three — not one item per undo.
+    const undone = applyPatch(result.value.graph, invertPatch(result.value.patch));
+    for (const id of ["A", "B", "F"]) {
+      expect("disabled" in nodeOf(undone, id)).toBe(false);
+    }
+  });
+
+  test("a partly-disabled selection resolves to one state, skipping what is already there", () => {
+    const first = applyCommand(fixture(), {
+      type: "set-node-disabled",
+      nodeIds: [parseNodeId("A")],
+      disabled: true,
+    });
+    if (!first.ok) throw new Error("expected ok");
+
+    // A is already disabled; B is not. The batch must still apply, carrying
+    // only the node that actually changes — otherwise a mixed selection would
+    // be refused outright.
+    const result = applyCommand(first.value.graph, {
+      type: "set-node-disabled",
+      nodeIds: ids(["A", "B"]),
+      disabled: true,
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    if (result.value.patch.type === "nodes-updated") {
+      expect(result.value.patch.updates.map((update) => String(update.nodeId))).toEqual(["B"]);
+    }
+  });
+
+  test("a batch where EVERY node is already in the target state is refused", () => {
+    const result = applyCommand(fixture(), {
+      type: "set-node-disabled",
+      nodeIds: ids(["A", "B"]),
+      disabled: false,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.reason).toBe("same-position");
+  });
+
+  test("a repeated id contributes ONE update, so the patch stays invertible", () => {
+    // Two updates for one node would leave the second's `before` equal to the
+    // first's `after`, and inverting that could not restore the original.
+    const result = applyCommand(fixture(), {
+      type: "set-node-disabled",
+      nodeIds: ids(["A", "A"]),
+      disabled: true,
+    });
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    if (result.value.patch.type === "nodes-updated") {
+      expect(result.value.patch.updates).toHaveLength(1);
+    }
+    const undone = applyPatch(result.value.graph, invertPatch(result.value.patch));
+    expect("disabled" in nodeOf(undone, "A")).toBe(false);
+  });
+
+  test("an empty batch is refused", () => {
+    const result = applyCommand(fixture(), {
+      type: "set-node-disabled",
+      nodeIds: [],
+      disabled: true,
+    });
+    expect(result.ok).toBe(false);
   });
 });
