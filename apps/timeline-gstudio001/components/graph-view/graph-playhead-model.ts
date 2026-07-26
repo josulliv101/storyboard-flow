@@ -275,24 +275,63 @@ export function childSpans(
  * Card lengths come from `childSpans`, so a collection contributes the
  * manifest's full-depth window rather than a stored summary guess.
  */
+export type StripSegment = Readonly<{ x: number; width: number }>;
+
+export type StripOverlay = Readonly<{
+  /** Full content width of the strip — always the total, never windowed: it
+   *  is the size of the layer everything else is positioned inside. */
+  extent: number;
+  /** Gap-centre x between adjacent cards — the rail's cell boundaries. */
+  boundaryTicks: readonly number[];
+  /** x ranges of the cards that will NOT play. */
+  skips: readonly StripSegment[];
+}>;
+
 /**
- * Content-space x ranges of the cards that will NOT play, in the strip's own
- * layout (widths plus the inter-card gutter — the same accumulation
- * `buildPlayheadMap` walks, so a segment lands exactly under its card).
+ * The strip's overlay geometry in ONE walk: the rail's cell-boundary ticks,
+ * the skipped (disabled) stretches, and the total extent — laid out in the
+ * strip's own coordinates (widths plus the inter-card gutter, the same
+ * accumulation `buildPlayheadMap` does, so every mark lands under its card).
  *
- * Shared by the strip's seek rail and the ruler band so the two mark the same
+ * Shared by the seek rail and the ruler band so the two mark the same
  * stretches; a disabled item reads as one continuous dimmed run across both.
+ *
+ * WINDOWED emission, like the ruler's ticks. Unwindowed this minted one
+ * absolutely-positioned element per card boundary plus one per disabled card,
+ * for EVERY card in the timeline — the exact per-item DOM cost the strip's
+ * virtualizer exists to avoid, and it would land hardest on a flattened
+ * all-items strip, where card count is a whole project's rather than one
+ * collection's.
+ *
+ * The WALK stays O(cards): a card's x depends on every width before it, so
+ * the cursor cannot skip ahead (unlike the ruler's ticks, which sit on a
+ * regular time grid and really are generated O(visible)). What is bounded
+ * here is the DOM, which is what actually costs.
  */
-export function disabledCardSegments(
+export function buildStripOverlay(
   cards: readonly ChildSpan[],
-): Array<Readonly<{ x: number; width: number }>> {
-  const segments: Array<Readonly<{ x: number; width: number }>> = [];
+  windowRange?: RulerWindow,
+): StripOverlay {
+  const boundaryTicks: number[] = [];
+  const skips: StripSegment[] = [];
+  const startX = windowRange?.startX ?? Number.NEGATIVE_INFINITY;
+  const endX = windowRange?.endX ?? Number.POSITIVE_INFINITY;
   let cursor = 0;
-  for (const card of cards) {
-    if (card.disabled === true) segments.push({ x: cursor, width: card.width });
+
+  cards.forEach((card, index) => {
+    if (index > 0) {
+      const tickX = cursor - STRIP_GAP_PX / 2;
+      if (tickX >= startX && tickX <= endX) boundaryTicks.push(tickX);
+    }
+    // Overlap, not containment: a segment wider than the viewport still has to
+    // be drawn while the user is inside it.
+    if (card.disabled === true && cursor + card.width >= startX && cursor <= endX) {
+      skips.push({ x: cursor, width: card.width });
+    }
     cursor += card.width + STRIP_GAP_PX;
-  }
-  return segments;
+  });
+
+  return { extent: Math.max(1, cursor - STRIP_GAP_PX), boundaryTicks, skips };
 }
 
 export function playableSpanSeconds(cards: readonly ChildSpan[]): number {

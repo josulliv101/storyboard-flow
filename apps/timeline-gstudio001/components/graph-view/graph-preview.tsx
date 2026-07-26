@@ -33,9 +33,9 @@ import {
   buildPlayheadMap,
   buildRulerCollectionSpans,
   buildRulerTicks,
+  buildStripOverlay,
   cardSpansOf,
   childSpans,
-  disabledCardSegments,
   formatRulerTick,
   manifestTrailsLedger,
   nextManifestClipsState,
@@ -300,22 +300,24 @@ const RULER_WINDOW_CHUNK_PX = 512;
 const INITIAL_RULER_WINDOW: RulerWindow = { startX: 0, endX: RULER_WINDOW_CHUNK_PX * 8 };
 
 /**
- * The chunk-quantized visible content-x range of the strip this element
- * renders inside — the ruler's tick window. Reads the scroll container via
- * the package's documented `[data-virtual-strip]` selector contract (the
- * ruler rides the strip's own overlay layer, so `closest` finds it). Updates
- * ride the scroller's scroll event and a ResizeObserver — both async, so no
- * synchronous setState-in-effect; the observer's initial delivery IS the
+ * The chunk-quantized visible content-x range of a strip scroller — the window
+ * every overlay on that strip builds against.
+ *
+ * Takes the SCROLLER rather than finding it, because its two callers reach it
+ * differently: the ruler rides the strip's own overlay layer (so it climbs
+ * with `closest`), while the seek rail is a SIBLING of the strip and has to
+ * query across. Both hand the same element here.
+ *
+ * Updates ride the scroller's scroll event and a ResizeObserver — both async,
+ * so no synchronous setState-in-effect; the observer's initial delivery IS the
  * first measurement.
  */
-function useStripTickWindow(rulerEl: HTMLElement | null): RulerWindow {
+function useScrollerTickWindow(scroller: HTMLElement | null): RulerWindow {
   const [tickWindow, setTickWindow] = useState<RulerWindow>(INITIAL_RULER_WINDOW);
 
   useEffect(() => {
-    if (!rulerEl) return;
-    const scroller = rulerEl.closest<HTMLElement>("[data-virtual-strip]");
-    // Not inside a strip (defensive): the initial window stands, degrading to
-    // the unwindowed behavior for the first few thousand pixels.
+    // No scroller yet (or not inside a strip): the initial window stands,
+    // degrading to the unwindowed behavior for the first few thousand pixels.
     if (!scroller) return;
     const update = () => {
       const chunk = RULER_WINDOW_CHUNK_PX;
@@ -334,10 +336,19 @@ function useStripTickWindow(rulerEl: HTMLElement | null): RulerWindow {
       scroller.removeEventListener("scroll", update);
       observer.disconnect();
     };
-  }, [rulerEl]);
+  }, [scroller]);
 
   return tickWindow;
 }
+
+/** The strip scroller for an element that rides the strip's own overlay layer
+ *  (the ruler climbs to it) or sits beside it (the rail queries across).
+ *  Resolved in a REF CALLBACK rather than an effect — the repo's lint forbids
+ *  the synchronous setState-in-effect this would otherwise be. */
+const stripScrollerAbove = (element: HTMLElement): HTMLElement | null =>
+  element.closest<HTMLElement>("[data-virtual-strip]");
+const stripScrollerBeside = (element: HTMLElement): HTMLElement | null =>
+  element.parentElement?.querySelector<HTMLElement>("[data-virtual-strip]") ?? null;
 
 /**
  * A second-ruler over the strip. It reads the SAME piecewise time↔x map the
@@ -369,10 +380,15 @@ export function GraphRuler({
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
   const spans = useContext(PreviewCardSpansContext);
-  // State, not a ref: the tick-window hook needs the element on the render
+  // State, not a ref: the tick-window hook needs the scroller on the render
   // pass after mount, and render-time ref reads are illegal.
-  const [rulerEl, setRulerEl] = useState<HTMLElement | null>(null);
-  const tickWindow = useStripTickWindow(rulerEl);
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  const rulerRef = useCallback(
+    (element: HTMLElement | null) =>
+      setScroller(element ? stripScrollerAbove(element) : null),
+    [],
+  );
+  const tickWindow = useScrollerTickWindow(scroller);
   const graph = useSyncExternalStore(
     store.subscribe,
     () => store.getSnapshot().graph,
@@ -400,14 +416,15 @@ export function GraphRuler({
       // (R7 #4), same live-derived total the card badge shows.
       collectionSpans: buildRulerCollectionSpans(cards, isCollection, tickWindow),
       // Same segments the seek rail dims, so a skipped stretch reads as one
-      // run down through the ruler and the scrubber.
-      skips: disabledCardSegments(cards),
+      // run down through the ruler and the scrubber — and windowed to the same
+      // range as the ticks beside them.
+      skips: buildStripOverlay(cards, tickWindow).skips,
     };
   }, [graph, details, spans, focusedId, pixelsPerSecond, tickWindow]);
 
   return (
     <div
-      ref={setRulerEl}
+      ref={rulerRef}
       aria-hidden="true"
       data-graph-ruler
       className="pointer-events-none absolute inset-x-0 top-0 z-10 h-[18px]"
@@ -420,9 +437,9 @@ export function GraphRuler({
       {/* Skipped stretches, under the ticks: the band goes flat and gray where
           playback will not travel, so the ruler reads as measuring a timeline
           with holes in it rather than one continuous run. */}
-      {skips.map((segment, index) => (
+      {skips.map((segment) => (
         <div
-          key={`skip-${index}`}
+          key={`skip-${segment.x}`}
           data-ruler-skip
           className="absolute top-0 h-[18px] bg-zinc-700/50"
           style={{ transform: `translateX(${segment.x}px)`, width: segment.width }}
@@ -1040,22 +1057,26 @@ export function GraphStripSeekRail({
   const map = useMemo(() => buildPlayheadMap(cards), [cards]);
   const start = cards.length > 0 ? cards[0].startTime : 0;
   const end = cards.length > 0 ? cards[cards.length - 1].endTime : 0;
+  // The rail is a SIBLING of the strip, so it queries across for the scroller
+  // rather than climbing to it like the ruler does — same window, two routes.
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  const setOuterRef = useCallback((element: HTMLDivElement | null) => {
+    outerRef.current = element;
+    setScroller(element ? stripScrollerBeside(element) : null);
+  }, []);
+  const tickWindow = useScrollerTickWindow(scroller);
   // The rail's content width ends at the LAST item's right edge, and the
   // interior ticks sit at the gap centres between cards — the strip twin of
   // the grid rails' cell-edge ticks.
-  const { extent, ticks, skips } = useMemo(() => {
-    let cursor = 0;
-    const tickXs: number[] = [];
-    cards.forEach((card, index) => {
-      if (index > 0) tickXs.push(cursor - STRIP_GAP_PX / 2);
-      cursor += card.width + STRIP_GAP_PX;
-    });
-    return {
-      extent: Math.max(1, cursor - STRIP_GAP_PX),
-      ticks: tickXs,
-      skips: disabledCardSegments(cards),
-    };
-  }, [cards]);
+  //
+  // WINDOWED to the visible scroll range, like the ruler's ticks above it:
+  // one tick per card boundary plus one mark per disabled card is a DOM node
+  // PER ITEM, which is exactly what the strip's virtualizer exists to avoid.
+  // `extent` stays the full width — it sizes the layer the marks live in.
+  const { extent, boundaryTicks: ticks, skips } = useMemo(
+    () => buildStripOverlay(cards, tickWindow),
+    [cards, tickWindow],
+  );
 
   // Window geometry over the scroller's padding band, measured like the
   // grid rails' (ResizeObserver; the strip has no dataset race — the map is
@@ -1221,7 +1242,7 @@ export function GraphStripSeekRail({
 
   return (
     <div
-      ref={outerRef}
+      ref={setOuterRef}
       data-graph-seek-rail
       data-strip-rail
       role="slider"
@@ -1328,18 +1349,21 @@ export function GraphStripSeekRail({
               neutral scrim rather than a colour of its own — the point is
               that this part of the rail is dead, and a dead stretch should
               look drained next to the live fill, not decorated. */}
-          {skips.map((segment, index) => (
+          {/* Keyed by POSITION, not index: the list is windowed, so indices
+              shift as the strip scrolls and index keys would remount every
+              mark on each chunk crossing. */}
+          {skips.map((segment) => (
             <span
-              key={`skip-${index}`}
+              key={`skip-${segment.x}`}
               data-rail-skip
               aria-hidden="true"
               className="absolute inset-y-0 bg-zinc-600/70"
               style={{ left: segment.x, width: segment.width }}
             />
           ))}
-          {ticks.map((x, index) => (
+          {ticks.map((x) => (
             <span
-              key={index}
+              key={x}
               aria-hidden="true"
               className="absolute inset-y-0 w-px bg-white/30"
               style={{ left: x }}
