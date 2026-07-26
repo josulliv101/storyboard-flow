@@ -2122,3 +2122,78 @@ export const OverlayRidesLeftTrimTransform: Story = {
     expect(Math.abs(playheadX() - (x0 - 48))).toBeLessThanOrEqual(1);
   },
 };
+
+// ── itemIds: the FLAT item source ───────────────────────────────────────────
+//
+// A strip normally renders `collectionId`'s own children. `itemIds` overrides
+// that so one strip can show media drawn from MANY collections — the "show all
+// items in order" mode, where a whole closure is laid out flat. `collectionId`
+// stays the view's identity (marker, accessible name, insert container); only
+// the item source changes.
+
+const nestedGraph = () => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "root",
+      name: "Root",
+      children: [
+        { kind: "media", id: "a", name: "A", durationSeconds: 4 },
+        {
+          kind: "collection",
+          id: "scene",
+          name: "Scene",
+          children: [
+            { kind: "media", id: "s1", name: "S1", durationSeconds: 4 },
+            {
+              kind: "media",
+              id: "s2",
+              name: "S2",
+              mediaKind: "video",
+              fullDurationSeconds: 6,
+            },
+          ],
+        },
+        { kind: "media", id: "b", name: "B", durationSeconds: 4 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+};
+
+/** The flat run, in playback order, spanning two parents. Module scope so the
+ *  reference is stable — the virtualizer keys its measurements off it. */
+const FLAT_IDS = ["a", "s1", "s2", "b"].map(parseNodeId);
+
+export const FlatItemSource: Story = {
+  render: () => (
+    <DndCollections initialGraph={nestedGraph()}>
+      <div className="w-[640px]">
+        <VirtualStrip collectionId={parseNodeId("root")} itemIds={FLAT_IDS} itemWidth={96} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    // Every card renders, in the supplied order — including s1/s2, which are
+    // children of "scene" and would never appear in root's own strip.
+    for (const id of ["a", "s1", "s2", "b"]) {
+      await waitForLayout(nodeCard(canvasElement, id));
+    }
+    const xs = ["a", "s1", "s2", "b"].map((id) =>
+      nodeCard(canvasElement, id).getBoundingClientRect().left,
+    );
+    expect(xs).toEqual([...xs].sort((left, right) => left - right));
+
+    // The collection itself is NOT drawn — a flat run has no collections in it.
+    expect(canvasElement.querySelector('[data-node-id="scene"]')).toBeNull();
+
+    // Selecting a video whose parent is a NESTED collection still raises the
+    // trim overview: the strip scopes by membership in `itemIds`, not by
+    // parentage, which the unmodified parent test would have rejected.
+    await userEvent.click(nodeCard(canvasElement, "s2"));
+    await waitFor(() =>
+      expect(nodeCard(canvasElement, "s2").getAttribute("data-selected")).toBe("true"),
+    );
+  },
+};

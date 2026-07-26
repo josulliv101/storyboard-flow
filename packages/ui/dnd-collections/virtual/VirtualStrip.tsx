@@ -116,6 +116,27 @@ const OVERLAY_Z_INDEX = 30;
 export type VirtualStripProps = Readonly<{
   collectionId: NodeId;
   /**
+   * Render THESE nodes instead of `collectionId`'s own children — the seam for
+   * a FLAT strip, which shows a whole closure's media in playback order and so
+   * spans many parents.
+   *
+   * `collectionId` still identifies the VIEW (its DOM marker, its accessible
+   * name, its insert-container key): a flat strip still belongs to the
+   * collection it was opened from. Only the item SOURCE changes.
+   *
+   * Caller owns reference stability — the virtualizer keys its measurements off
+   * this array, so a new array every render re-measures the whole strip. Memoize
+   * on the committed graph, as the store's own selectors do.
+   *
+   * CALLER OWNS INDEX MEANING TOO. Boundaries this strip publishes are indices
+   * into THIS list, and the drop intent still names `collectionId` — so a
+   * consumer that allows drops must translate (flat boundary → real parent +
+   * index) before the command commits, or items land at the wrong index in the
+   * wrong collection. The graph view vetoes position-based commands in flat
+   * mode for exactly this reason.
+   */
+  itemIds?: readonly NodeId[];
+  /**
    * THE timeline scale: media card widths derive from their effective
    * duration via `durationToWidth(seconds, pixelsPerSecond)`, and — unless
    * `trimPixelsPerSecond` overrides it — the trim handles convert drags at
@@ -196,6 +217,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
   function VirtualStrip(
     {
       collectionId,
+      itemIds,
       pixelsPerSecond: pixelsPerSecondOption,
       itemWidth: itemWidthOption,
       itemWidthFor,
@@ -228,8 +250,10 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const ItemShell: CollectionItemShellComponent = itemShell ?? registeredShell ?? NodeCard;
 
     // Stable array reference between commits — the virtualizer's item keys
-    // and index math stay coherent across drags for free.
-    const childIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
+    // and index math stay coherent across drags for free. An `itemIds`
+    // override (flat strip) supplies its own list and owns that stability.
+    const ownChildIds = useCollectionsSelector((s) => getChildren(s.graph, collectionId));
+    const childIds = itemIds ?? ownChildIds;
     const indexById = useMemo(
       () => new Map(childIds.map((id, index) => [id, index])),
       [childIds]
@@ -256,9 +280,19 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     // re-render. (Unscoped, it returned the first selected video ANYWHERE, so
     // every mounted strip received the same node and re-rendered on any video
     // selection — even though only one strip could ever display it.)
+    // Membership, not parentage, when an item source is supplied: a flat
+    // strip's cards live under many parents, so the parent test would reject
+    // every one of them and the trim overview would never appear.
+    const shownIds = useMemo(
+      () => (itemIds ? new Set<NodeId>(itemIds) : null),
+      [itemIds],
+    );
+    // The item source as the change-feed subscriber sees it (see its own note).
+    const shownIdsRef = useRef<readonly NodeId[] | null>(null);
+    shownIdsRef.current = itemIds ?? null;
     const selectedVideo = useCollectionsSelector((s) => {
       for (const id of s.interaction.selectedIds) {
-        if (s.graph.parentById.get(id) !== collectionId) continue;
+        if (shownIds ? !shownIds.has(id) : s.graph.parentById.get(id) !== collectionId) continue;
         const n = s.graph.nodesById.get(id);
         if (n && isVideoMedia(n)) return n;
       }
@@ -372,7 +406,14 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         // flush in order — a listener dispatching a MOVE before this update
         // drains would make any cached index stale. O(children) per update,
         // at commit cadence.
-        const children = change.graph.childrenById.get(collectionId);
+        // A supplied item source cannot be re-derived from the change's graph
+        // (only the consumer knows how the list was built), so it is read from
+        // a ref instead. Safe here specifically: `nodes-updated` is a DATA
+        // patch — a trim or a rename — which never changes membership or
+        // order, so the list this strip last rendered is still the one whose
+        // indices these updates address. Structural patches take the
+        // childIds-identity path above, not this one.
+        const children = shownIdsRef.current ?? change.graph.childrenById.get(collectionId);
         if (!children) return;
         for (const update of change.patch.updates) {
           const index = children.indexOf(update.nodeId);

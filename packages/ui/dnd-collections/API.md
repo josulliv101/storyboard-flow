@@ -981,6 +981,7 @@ only after Enter — navigation stands down while a drag is live.
 ```ts
 type VirtualStripProps = {
   collectionId: NodeId;
+  itemIds?: readonly NodeId[];                           // render THESE nodes instead of collectionId's own children — the seam for a FLAT strip spanning many parents. collectionId still identifies the VIEW (DOM marker, accessible name, insert-container key); only the item source changes. Caller owns reference stability (the virtualizer keys measurements off it) AND index meaning: published boundaries index into THIS list while the drop intent still names collectionId, so a consumer allowing drops must translate (flat boundary → real parent + index) before the command commits
   pixelsPerSecond?: number;                              // THE timeline scale: media widths = durationToWidth(duration, pps), and trim handles inherit it — one scale, no drift. The recommended sizing for duration-mapped strips
   itemWidth?: number;                                    // default 128; collections and non-duration fallbacks
   itemWidthFor?: (node: CollectionItemNode) => number | undefined; // ADVANCED per-node width override (beats pixelsPerSecond); memoized by node id
