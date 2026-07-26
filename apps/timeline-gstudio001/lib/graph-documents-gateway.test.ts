@@ -199,6 +199,59 @@ describe("graph-documents-gateway", () => {
     expect(batches[1].writes?.[0].expectedRevision).toBe(2);
   });
 
+  // The refresh/save race. Awaiting only the batch that happened to be in
+  // flight resolves the moment IT lands — while the trailing batch, carrying
+  // the edit that arrived mid-flight, is still on the wire. The read then
+  // returns pre-save content AND a revision, so the stale version installs as
+  // current and a later whole-document write can overwrite the queued edit for
+  // good.
+  it("a refresh waits out the TRAILING batch too, not just the one in flight", async () => {
+    const firstSave = deferred<MockResponse>();
+    const secondSave = deferred<MockResponse>();
+    let batchCount = 0;
+    const calls = installFetch((call) => {
+      if (call.method !== "POST") {
+        return jsonResponse({ document: doc("a", [clip("from-server")]), revision: 9 });
+      }
+      batchCount += 1;
+      if (batchCount === 1) return firstSave.promise;
+      if (batchCount === 2) return secondSave.promise;
+      return okResults(call.writes);
+    });
+    const gateway = createGraphDocumentsGateway();
+    await gateway.ensure("a");
+    expect(getsOf(calls, "a")).toHaveLength(1);
+
+    // Save A goes out…
+    gateway.writeClips("a", [clip("a2")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(1);
+
+    // …an edit lands WHILE it is in flight, so a trailing batch is queued…
+    gateway.writeClips("a", [clip("a3")]);
+    await vi.advanceTimersByTimeAsync(SAVE_DEBOUNCE_MS);
+    expect(batchesOf(calls)).toHaveLength(1);
+
+    // …and the view refreshes, which marks everything stale and re-reads.
+    gateway.refresh();
+    const refreshed = gateway.ensure("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getsOf(calls, "a")).toHaveLength(1);
+
+    // Save A lands and the TRAILING batch starts. THIS is the moment the old
+    // code fetched: its awaited promise had resolved, so the GET raced batch B.
+    firstSave.resolve(jsonResponse({ results: [{ id: "a", revision: 2 }] }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(batchesOf(calls)).toHaveLength(2);
+    expect(getsOf(calls, "a")).toHaveLength(1);
+
+    // Only once the pipeline is genuinely idle does the read go out.
+    secondSave.resolve(jsonResponse({ results: [{ id: "a", revision: 3 }] }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getsOf(calls, "a")).toHaveLength(2);
+    expect(clipIds(await refreshed)).toEqual(["from-server"]);
+  });
+
   it("flushPendingWrites sends the pending batch immediately, with keepalive", async () => {
     const calls = installFetch((call) =>
       call.method === "POST"

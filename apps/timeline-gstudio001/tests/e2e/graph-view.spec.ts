@@ -1169,6 +1169,95 @@ test.describe("graph view E2E", () => {
       .toBe(0);
   });
 
+  // Pagination is per-PLACE, and a slow page must never land somewhere else.
+  // The two folders here deliberately hand out the SAME cursor ("1") — real
+  // cursors are plain offsets (`String(end)`), so folders paging at the same
+  // size collide on every page, not rarely. A cursor-only guard passes here;
+  // only the page's full identity catches it.
+  test("a slow 'load more' from one folder never lands in another", async ({ page }) => {
+    await installGraphApi(page);
+    let releaseLatePage!: () => void;
+    const latePageHeld = new Promise<void>((resolve) => {
+      releaseLatePage = resolve;
+    });
+
+    const asset = (id: string) => ({
+      id,
+      providerId: "cloudinary",
+      name: id,
+      kind: "image" as const,
+      src: `https://cdn.test/${id}.jpg`,
+      thumbnailUrl: `https://cdn.test/${id}.jpg`,
+      width: 16,
+      height: 9,
+      tags: [] as string[],
+    });
+
+    // Registered AFTER installGraphApi, so it takes precedence.
+    await page.route("**/api/assets?*", async (route) => {
+      const url = new URL(route.request().url());
+      const folder = url.searchParams.getAll("folder");
+      const cursor = url.searchParams.get("cursor");
+      const body = (payload: Record<string, unknown>) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ providerId: "cloudinary", capabilities: {}, ...payload }),
+        });
+
+      if (folder.length === 0) {
+        return body({
+          assets: [],
+          folders: [
+            { name: "alpha", path: ["alpha"] },
+            { name: "beta", path: ["beta"] },
+          ],
+        });
+      }
+      if (folder[0] === "alpha" && cursor === null) {
+        return body({ assets: [asset("alpha-1")], folders: [], nextCursor: "1" });
+      }
+      if (folder[0] === "alpha") {
+        await latePageHeld; // the slow page, released after we have navigated away
+        return body({ assets: [asset("alpha-late")], folders: [] });
+      }
+      // beta hands out the SAME cursor value alpha did.
+      return body({ assets: [asset("beta-1")], folders: [], nextCursor: "1" });
+    });
+
+    await openGraph(page);
+    await assetsButton(page).click();
+    const drawer = page.getByRole("dialog", { name: "Asset palette" });
+    await expect(drawer).toBeVisible();
+
+    // Into alpha, and ask for its second page…
+    await drawer.locator('[data-palette-folder="alpha"]').click();
+    await expect(drawer.locator('[data-palette-item="asset-alpha-1"]')).toBeVisible();
+    await drawer.getByRole("button", { name: "Load more" }).click();
+
+    // …then leave for beta while that request is still out.
+    await drawer.getByRole("button", { name: "ASSETS" }).click();
+    await drawer.locator('[data-palette-folder="beta"]').click();
+    await expect(drawer.locator('[data-palette-item="asset-beta-1"]')).toBeVisible();
+
+    // Wait for the late page to actually REACH the client before asserting —
+    // otherwise "alpha-late is absent" would pass simply by checking too early,
+    // and the test would prove nothing.
+    const latePageDelivered = page.waitForResponse(
+      (response) =>
+        response.url().includes("folder=alpha") && response.url().includes("cursor="),
+    );
+    releaseLatePage();
+    await latePageDelivered;
+
+    // Beta's rail keeps exactly beta's asset. Without the identity guard
+    // alpha-late appends here, and the user could then drag an asset out of a
+    // folder they are not looking at.
+    await expect(drawer.locator("[data-palette-item]")).toHaveCount(1);
+    await expect(drawer.locator('[data-palette-item="asset-alpha-late"]')).toHaveCount(0);
+    await expect(drawer.locator('[data-palette-item="asset-beta-1"]')).toBeVisible();
+  });
+
   test("palette drag mints a fresh node from an asset and persists it", async ({ page }) => {
     const api = await installGraphApi(page);
     await openGraph(page);

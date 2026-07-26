@@ -12,6 +12,8 @@ import {
   collectAffectedCollectionIds,
   collectUnhydratedDropTargets,
   graphChildrenToClips,
+  hydratedCollectionDuration,
+  hydratedCollectionPlayableDuration,
   hydratedCollectionPreviews,
 } from "./adapter";
 import {
@@ -662,6 +664,71 @@ describe("hydrated collection durations", () => {
     // mid is hydrated: derived = 2 + gap + deep's SUMMARY 50 (deep is a
     // placeholder — its stored word is all anyone has).
     expect(clips[0].duration).toBeCloseTo(2 + 0.12 + 50, 5);
+  });
+});
+
+describe("hydratedCollectionPlayableDuration", () => {
+  // The READOUT twin of hydratedCollectionDuration. The two must diverge
+  // exactly where something is disabled: geometry keeps the slot (the playhead
+  // jumps it), the readout says what a viewer would sit through.
+  function docsWithDisabledChild(): Record<string, TimelineDocument> {
+    return {
+      root: {
+        id: "root",
+        title: "Root",
+        clips: [collectionClip("clip-kid", "kid", "Kid")],
+      },
+      kid: {
+        id: "kid",
+        title: "Kid",
+        clips: packTimelineClips([image("k-a", 4), { ...image("k-b", 5), disabled: true }]),
+      },
+    };
+  }
+
+  it("excludes a disabled child's seconds AND its gap, where the layout walk keeps them", () => {
+    const focused = buildFocusedGraph(docsWithDisabledChild(), "root");
+    if (!focused.ok) throw new Error(focused.error);
+    const { graph, details } = focused.value;
+    const kid = parseNodeId("kid");
+
+    expect(hydratedCollectionDuration(graph, details, kid)).toBeCloseTo(9.12, 5);
+    expect(hydratedCollectionPlayableDuration(graph, details, kid)).toBeCloseTo(4, 5);
+  });
+
+  it("returns ZERO when every child is disabled — a real answer, not 'unknown'", () => {
+    // This is what made the header's old `duration > 0 ? live : stored` test
+    // wrong: zero is a legitimate live value, so falling back on it re-quoted
+    // a stale nonzero summary for a collection that now plays nothing.
+    const documents = docsWithDisabledChild();
+    documents.kid.clips = packTimelineClips([
+      { ...image("k-a", 4), disabled: true },
+      { ...image("k-b", 5), disabled: true },
+    ]);
+    const focused = buildFocusedGraph(documents, "root");
+    if (!focused.ok) throw new Error(focused.error);
+
+    expect(
+      hydratedCollectionPlayableDuration(focused.value.graph, focused.value.details, parseNodeId("kid")),
+    ).toBe(0);
+  });
+
+  it("agrees with the layout walk when nothing is disabled", () => {
+    const focused = buildFocusedGraph(
+      {
+        root: { id: "root", title: "Root", clips: [collectionClip("clip-kid", "kid", "Kid")] },
+        kid: { id: "kid", title: "Kid", clips: packTimelineClips([image("k-a", 4), image("k-b", 5)]) },
+      },
+      "root",
+    );
+    if (!focused.ok) throw new Error(focused.error);
+    const { graph, details } = focused.value;
+    const kid = parseNodeId("kid");
+
+    expect(hydratedCollectionPlayableDuration(graph, details, kid)).toBeCloseTo(
+      hydratedCollectionDuration(graph, details, kid),
+      5,
+    );
   });
 });
 
