@@ -1,7 +1,7 @@
 "use client";
 
-import { useContext, useMemo, useRef, useState } from "react";
-import { FolderInput, Folder, FolderOpen } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Folder, FolderOpen } from "lucide-react";
 
 import {
   VirtualGrid,
@@ -23,7 +23,6 @@ import {
   subTimelineRowStatus,
   subTimelineRowStatusLabel,
 } from "./graph-sub-timeline-status";
-import { GraphViewNavContext } from "./graph-navigation";
 import {
   GraphGridPlayhead,
   GraphPlayhead,
@@ -100,7 +99,6 @@ function SubTimelineNode({
   rulerOn: boolean;
   timeChannel: PreviewTimeChannel;
 }>) {
-  const nav = useContext(GraphViewNavContext);
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
   const spans = usePreviewCardSpans();
@@ -220,21 +218,12 @@ function SubTimelineNode({
             {subTimelineRowStatusLabel(status)}
           </span>
         )}
-        <span className="grow" />
-        <button
-          type="button"
-          aria-label="Drill into timeline"
-          title="Drill into this timeline"
-          onClick={() => nav?.openTimeline(collectionId)}
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
-        >
-          {/* FolderInput — a folder with an arrow going INTO it. This button
-              NAVIGATES; the sidebar's FolderTree toggles whether the children
-              tree is shown. Those are different verbs and no longer share an
-              icon. The collection card's drill button is the same verb as
-              this one and uses the same icon. */}
-          <FolderInput aria-hidden="true" className="h-4 w-4" />
-        </button>
+        {/* No drill-in control here. This row already has the affordance that
+            matters — the folder toggle opens the timeline IN PLACE, which is
+            what the children tree is for — so a second control that navigated
+            AWAY from it was answering a question the row does not ask. The
+            collection CARD keeps its drill button; that is where "go to this
+            timeline" belongs. */}
       </div>
 
       {expanded && hydrated && (
