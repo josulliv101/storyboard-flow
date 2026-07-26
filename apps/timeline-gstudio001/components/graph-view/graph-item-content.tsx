@@ -154,6 +154,43 @@ function useHydratedCollectionPreviews(
 }
 
 /**
+ * A collection's ENABLED child count, from its live graph children.
+ *
+ * Memoized on the committed graph's IDENTITY for the same reason the preview
+ * frames are: as a bare `useCollectionsSelector` this scanned the children
+ * array on EVERY store notification — and the store notifies for
+ * interaction-only updates too, so every drop-intent tick during a drag
+ * re-counted the children of every hydrated collection on screen. Primitive
+ * equality stopped the re-RENDER; it never stopped the scan. `snapshot.graph`
+ * keeps its reference until a commit, so this is now a reference check during
+ * a drag and the walk runs once per commit.
+ *
+ * Exported because the sub-timeline ROW shows the same number as the card —
+ * two copies of "enabled children" would drift, and the two sit on screen
+ * together.
+ */
+export function useEnabledChildCount(id: NodeId): number {
+  const store = useCollectionsStore();
+  const [derive] = useState(() =>
+    createDerivedCache({
+      compute: (graph: CollectionsGraph, nodeId: NodeId) => {
+        let total = 0;
+        for (const child of graph.childrenById.get(nodeId) ?? []) {
+          if (graph.nodesById.get(child)?.disabled !== true) total += 1;
+        }
+        return total;
+      },
+      contentKey: (count) => String(count),
+    }),
+  );
+  const getSnapshot = useCallback(
+    () => derive(store.getSnapshot().graph, id),
+    [store, derive, id],
+  );
+  return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
+}
+
+/**
  * The frames a collection PRESENTS: first and last, live once hydrated and the
  * stored summary until then.
  *
@@ -601,15 +638,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   // live children (like the count), so editing a loaded child refreshes this
   // card without a reload; placeholders fall back to their stored summary.
   const hydrated = detail?.hydrated === true;
-  // Primitive return, per the store's selector contract.
-  const enabledChildCount = useCollectionsSelector((s) => {
-    const children = s.graph.childrenById.get(id) ?? [];
-    let total = 0;
-    for (const child of children) {
-      if (s.graph.nodesById.get(child)?.disabled !== true) total += 1;
-    }
-    return total;
-  });
+  const enabledChildCount = useEnabledChildCount(id);
   const liveSeconds = useHydratedCollectionSeconds(id as string, hydrated);
 
   // ENABLED children only, so the card agrees with the time totals and with

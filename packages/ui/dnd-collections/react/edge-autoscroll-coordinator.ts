@@ -32,6 +32,32 @@ import { type CollectionsStore } from "./collections-store";
 
 export type EdgeAutoScrollOptions = Readonly<{ edge?: number; maxSpeed?: number }>;
 
+/** The one bit of `Node` the containment rule below needs. Structural on
+ *  purpose: it lets the rule be unit-tested in the node-env project, which has
+ *  no DOM. */
+export type ContainmentNode = Readonly<{ contains: (other: never) => boolean }>;
+
+/**
+ * Whether a scroll on `scope` can have moved `el`'s box — the rule that keeps
+ * the frame loop off O(mounted views) forced layouts.
+ *
+ * - The scroller itself: NO. Scrolling a container moves its content, not its
+ *   own box. (This is also every frame of our own auto-scroll.)
+ * - Something inside it: yes, that content travelled.
+ * - Something outside it: NO. A sibling view cannot move because another
+ *   scroller scrolled.
+ * - `scope === null` (a resize, whose target is `window`, not a Node): yes,
+ *   anything may have moved.
+ *
+ * A window/document scroll needs no special case: `document.contains(el)` is
+ * true for every mounted element, so it measures all.
+ */
+export function scrollCanMoveBox(scope: ContainmentNode | null, el: ContainmentNode): boolean {
+  if (scope === null) return true;
+  if (scope === el) return false;
+  return scope.contains(el as never);
+}
+
 type Entry = {
   readonly el: HTMLElement;
   readonly axis: "x" | "y";
@@ -95,10 +121,16 @@ export function createEdgeAutoScrollCoordinator(
     for (const entry of entries) entry.rect = entry.el.getBoundingClientRect();
   };
   const remeasure = (event: Event) => {
-    // A container's OWN scroll (which this loop causes every frame) does not
-    // move its box — skip it; anything else may have.
+    // Scoped by `scrollCanMoveBox`, because this is the hottest path in the
+    // package: the listener is capture-phase on window, so it sees every
+    // scroll in the document — including the ones this very loop causes when
+    // it writes scrollLeft/scrollTop each frame. Measuring every entry there
+    // meant one forced layout per mounted view per frame, and the recursive
+    // sub-graph tree is exactly what multiplies mounted views.
+    const scope = event.target instanceof Node ? (event.target as ContainmentNode) : null;
     for (const entry of entries) {
-      if (event.target !== entry.el) entry.rect = entry.el.getBoundingClientRect();
+      if (!scrollCanMoveBox(scope, entry.el as unknown as ContainmentNode)) continue;
+      entry.rect = entry.el.getBoundingClientRect();
     }
   };
 
