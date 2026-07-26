@@ -4,6 +4,21 @@
 @source "../components";
 @source "../../../packages/ui";
 
+/* This app is dark-ONLY: `color-scheme: dark` below, `html { background:
+   #09090b }`, and every surface hardcoded on the zinc-950 scale. But Tailwind
+   v4's stock `dark:` variant is `@media (prefers-color-scheme: dark)`, so the
+   shadcn primitives copied into components/core (their light values are the
+   BASE, their dark values behind `dark:`) followed the reader's OS instead of
+   the app. On a light-mode machine the trash drawer's Restore buttons painted
+   pure white on a near-black panel, with zinc-300 text on top — invisible.
+   Nobody on a dark-mode machine could see it.
+
+   Rebinding the variant to a class, and putting that class on <html>, makes
+   `dark:` mean "this app" rather than "this operating system" — so every
+   primitive here and every one copied in later resolves to its dark branch
+   deterministically. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Design tokens for the dnd-collections package's own pixels (drop
    indicator, focus rings, ghost chrome — bg-primary, border-border, …).
    Registered `inline` so utilities reference the --gv-* custom properties

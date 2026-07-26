@@ -12,8 +12,11 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
+  // `dark` is what switches on every `dark:` utility — the variant is rebound
+  // to this class in globals.css, precisely so the app stops following the
+  // reader's OS theme.
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <body suppressHydrationWarning>
         {/* App-wide: the sidebar renders on every route, so anything it
             toasts needs a surface here rather than inside one view. */}
