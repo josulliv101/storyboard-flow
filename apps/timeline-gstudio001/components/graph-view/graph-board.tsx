@@ -2,7 +2,7 @@
 
 import { useContext, useDeferredValue, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { FolderPlus, Redo2, Scissors, Settings, Undo2 } from "lucide-react";
+import { FolderPlus, Maximize2, Redo2, Settings, Undo2 } from "lucide-react";
 
 import {
   CollectionsContainerContext,
@@ -48,8 +48,8 @@ import {
 } from "./graph-preview";
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
-import { TrimPanelProvider, useTrimPanel } from "./graph-trim-panel-context";
-import { GraphTrimModal } from "./graph-trim-modal";
+import { ItemDetailsProvider, useItemDetails } from "./graph-item-details-context";
+import { GraphItemDetailsModal } from "./graph-item-details-modal";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
   GRID_GAP,
@@ -248,20 +248,22 @@ function GraphUndoRedo() {
 }
 
 /**
- * Opens the trim view (PL10-004, now a modal per PL10-008). It lives in the
- * toolbar rather than on the card because a media card is NodeCard's single
- * `<button>` shell, where a nested button would be invalid HTML (the same
- * constraint that made the collection rename a contentEditable span).
- * Disabled with no video selected, since there would be nothing to open.
- * Discovery doesn't rest on finding this: dragging a card's own trim handle
- * still previews the edge in place, without the modal.
+ * Opens the ITEM DETAILS view (PL10-004 → PL10-012). It lives in the toolbar
+ * rather than on the card because a media card is NodeCard's single `<button>`
+ * shell, where a nested button would be invalid HTML (the same constraint that
+ * made the collection rename a contentEditable span). Disabled with no media
+ * item selected, since there would be nothing to open.
+ *
+ * Both surfaces: a grid card has no trim handles, but details are not a
+ * trimming idea — a grid item has a name, a duration, and (soon) tags like any
+ * other. Discovery doesn't rest on finding this either: in the strip, dragging
+ * a card's own trim handle still previews the edge in place.
  */
-function GraphTrimPanelToggle() {
-  const { pinned, setPinned } = useTrimPanel();
-  const hasVideo = useCollectionsSelector((s) => {
+function GraphItemDetailsToggle() {
+  const { open, setOpen } = useItemDetails();
+  const hasMedia = useCollectionsSelector((s) => {
     for (const id of s.interaction.selectedIds) {
-      const node = s.graph.nodesById.get(id);
-      if (node?.kind === "media" && node.mediaKind === "video") return true;
+      if (s.graph.nodesById.get(id)?.kind === "media") return true;
     }
     return false;
   });
@@ -271,21 +273,21 @@ function GraphTrimPanelToggle() {
       type="button"
       variant="ghost"
       size="icon"
-      disabled={!hasVideo}
-      aria-pressed={pinned}
-      aria-label={pinned ? "Close the trim view" : "Open the trim view"}
+      disabled={!hasMedia}
+      aria-pressed={open}
+      aria-label={open ? "Close item details" : "Open item details"}
       title={
-        hasVideo
-          ? "Trim view — open the clip on its own, with the whole source to trim against"
-          : "Trim view — select a video clip first"
+        hasMedia
+          ? "Item details — open the item on its own, with its name, duration and trim"
+          : "Item details — select a media item first"
       }
-      onClick={() => setPinned(!pinned)}
+      onClick={() => setOpen(!open)}
       className={[
         "h-8 w-8 disabled:opacity-40",
-        pinned ? "text-amber-300 hover:text-amber-200" : "text-zinc-400 hover:text-zinc-100",
+        open ? "text-amber-300 hover:text-amber-200" : "text-zinc-400 hover:text-zinc-100",
       ].join(" ")}
     >
-      <Scissors aria-hidden="true" className="h-4 w-4" />
+      <Maximize2 aria-hidden="true" className="h-4 w-4" />
     </Button>
   );
 }
@@ -431,7 +433,7 @@ export function GraphBoard({
     <OpenKeyBoundary trashId={trashRootId}>
       {/* Spans the header AND the surfaces: the toolbar toggle sets the mode,
           the selected card's panel reads it. */}
-      <TrimPanelProvider>
+      <ItemDetailsProvider>
       {/* Spans the surfaces AND the child rows below them, because the pairing
           it carries joins the two: a collection's card up here and its row
           down there light each other up on hover. Inert unless the children
@@ -444,6 +446,12 @@ export function GraphBoard({
         {/* Outside the surface branch on purpose: the sidebar's tool buttons
             must insert in grid mode too, where no NativeDropStrip exists. */}
         <SidebarToolInsertBridge collectionId={focusedId} />
+        {/* Also outside it (PL10-012): details are not a strip idea. A grid
+            card has no trim handles, but it has a name, a duration, and
+            whatever an item grows next — so it opens the same view. The modal
+            portals to the body, so where it mounts only decides which
+            providers it can see. */}
+        <GraphItemDetailsModal />
         <div className="flex flex-col gap-2">
           {/* Pinned so the controls stay reachable while scrolling the
               surfaces. It sticks just BELOW the sticky preview via the offset
@@ -510,7 +518,7 @@ export function GraphBoard({
                   <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
                 </>
               ) : null}
-              {surface === "strip" ? <GraphTrimPanelToggle /> : null}
+              <GraphItemDetailsToggle />
               <GraphUndoRedo />
               <BoardMenu
                 itemSize={itemSize}
@@ -599,11 +607,6 @@ export function GraphBoard({
               )}
                 </NativeDropStrip>
               </VideoFrameLookAhead>
-              {/* Trimming happens in a MODAL now (PL10-008): the board already
-                  carries a strip, a tree, a preview, a ruler and a rail, and
-                  the source map had nowhere left to sit that wasn't in
-                  something's way. The card grows into it instead. */}
-              <GraphTrimModal />
             </div>
           ) : (
             // Grid scrubbing is the per-row SEEK RAILS layer — one slim
@@ -691,7 +694,7 @@ export function GraphBoard({
       </PreviewShell>
       </FlatItemsProvider>
       </CollectionHoverProvider>
-      </TrimPanelProvider>
+      </ItemDetailsProvider>
     </OpenKeyBoundary>
   );
 }

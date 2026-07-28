@@ -168,7 +168,7 @@ export function requestGraphItemAction(action: GraphItemAction): void {
 export const GRAPH_RENAME_ITEM_EVENT = "graph-view:rename-item";
 
 /** Which rename surface a request is addressed to. */
-export type GraphRenameSite = "card" | "sub-row" | "breadcrumb" | "trim-modal";
+export type GraphRenameSite = "card" | "sub-row" | "breadcrumb" | "item-details";
 
 export type GraphRenameRequest = Readonly<{ nodeId: string; site: GraphRenameSite }>;
 

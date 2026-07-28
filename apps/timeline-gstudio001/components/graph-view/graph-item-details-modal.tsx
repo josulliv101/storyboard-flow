@@ -8,14 +8,16 @@ import { Redo2, Undo2, X } from "lucide-react";
 import {
   TrimOverviewStrip,
   isEditableKeyboardTarget,
+  mediaDurationSeconds,
   useCollectionsSelector,
   useCollectionsStore,
   useLiveTrim,
+  type MediaNode,
   type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
 
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
-import { useTrimPanel } from "./graph-trim-panel-context";
+import { useItemDetails } from "./graph-item-details-context";
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
 //
@@ -54,12 +56,25 @@ function withViewTransition(mutate: () => void): Promise<void> {
     mutate();
     return Promise.resolve();
   }
-  return doc.startViewTransition(() => {
-    flushSync(mutate);
-  }).finished.catch(() => {
-    // A transition can be abandoned (another one starts, the tab hides).
-    // The DOM change has already happened either way.
-  });
+  // Announce the transition on the root, SYNCHRONOUSLY, before it starts.
+  // While one runs the browser paints a snapshot over the page and every
+  // pointer event lands on <html>, so "is a transition in flight?" is a real
+  // question about whether the UI is inert — and polling
+  // `getAnimations()` cannot answer it, because the animations only exist
+  // after the browser has captured a frame. Anything waiting for the UI to be
+  // live again (the e2e does) watches this attribute instead.
+  doc.documentElement.dataset.viewTransition = "running";
+  return doc
+    .startViewTransition(() => {
+      flushSync(mutate);
+    })
+    .finished.catch(() => {
+      // A transition can be abandoned (another one starts, the tab hides).
+      // The DOM change has already happened either way.
+    })
+    .finally(() => {
+      delete doc.documentElement.dataset.viewTransition;
+    });
 }
 
 function cardElement(id: string): HTMLElement | null {
@@ -153,14 +168,19 @@ function useScopedHistory(nodeId: string) {
   };
 }
 
-function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: () => void }>) {
+function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () => void }>) {
   const live = useLiveTrim(node.id);
   const history = useScopedHistory(node.id);
-  const rename = useInlineRename(node.id, node.name, "trim-modal");
-  const trimIn = live ? live.trimInSeconds : node.trimInSeconds;
-  const trimOut = live ? live.trimOutSeconds : node.trimOutSeconds;
-  const showing = Math.max(0, node.fullDurationSeconds - trimIn - trimOut);
-  const rawTime = previewTime(node, trimIn, trimOut, live?.side ?? null);
+  const rename = useInlineRename(node.id, node.name, "item-details");
+  // A still has no source window to map, so the trim half of this view is
+  // video-only; everything else (name, duration, history, and whatever else
+  // an item grows later) applies to both.
+  const video = node.mediaKind === "video" ? node : null;
+  const trimIn = live ? live.trimInSeconds : (video?.trimInSeconds ?? 0);
+  const trimOut = live ? live.trimOutSeconds : (video?.trimOutSeconds ?? 0);
+  const fullDuration = video ? video.fullDurationSeconds : mediaDurationSeconds(node);
+  const showing = Math.max(0, fullDuration - trimIn - trimOut);
+  const rawTime = video ? previewTime(video, trimIn, trimOut, live?.side ?? null) : 0;
   const videoRef = useSeekedVideo(Math.round(rawTime * 25) / 25);
 
   const [stripWidth, setStripWidth] = useState(0);
@@ -195,10 +215,10 @@ function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: 
 
   return createPortal(
     <div
-      data-trim-modal={node.id}
+      data-item-details={node.id}
       role="dialog"
       aria-modal="true"
-      aria-label={`Trim ${node.name}`}
+      aria-label={`Details for ${node.name}`}
       className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm"
       onPointerDown={(event) => {
         // Scrim only: a press that starts on the panel must never close it,
@@ -236,7 +256,7 @@ function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: 
           )}
           <div className="flex items-center gap-3">
             <span className="font-mono text-[11px] tabular-nums text-zinc-400">
-              {showing.toFixed(2)}s of {node.fullDurationSeconds.toFixed(2)}s
+              {video ? `${showing.toFixed(2)}s of ${fullDuration.toFixed(2)}s` : `${showing.toFixed(2)}s`}
             </span>
             {/* Scoped to this clip's own trims — see useScopedHistory. Each
                 release is one commit, so these step through the adjustments
@@ -244,22 +264,22 @@ function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: 
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                data-trim-modal-undo
+                data-item-details-undo
                 disabled={!history.undoableHere}
                 onClick={history.undo}
-                aria-label="Undo the last trim"
-                title="Undo the last trim on this clip"
+                aria-label="Undo the last change"
+                title="Undo the last change to this item"
                 className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-30"
               >
                 <Undo2 aria-hidden="true" className="h-4 w-4" />
               </button>
               <button
                 type="button"
-                data-trim-modal-redo
+                data-item-details-redo
                 disabled={!history.redoableHere}
                 onClick={history.redo}
-                aria-label="Redo the last trim"
-                title="Redo the last trim on this clip"
+                aria-label="Redo the last change"
+                title="Redo the last change to this item"
                 className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-30"
               >
                 <Redo2 aria-hidden="true" className="h-4 w-4" />
@@ -268,7 +288,7 @@ function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: 
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close the trim view"
+              aria-label="Close the details view"
               className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
             >
               <X aria-hidden="true" className="h-4 w-4" />
@@ -278,52 +298,72 @@ function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: 
 
         {/* The hero: this is what the card morphs INTO. */}
         <div
-          data-trim-modal-frame
+          data-item-details-frame
           style={{ viewTransitionName: HERO }}
           className="relative overflow-hidden rounded-md bg-black"
         >
-          <video
-            ref={videoRef}
-            src={node.src}
-            poster={node.posterSrcs?.[0]}
-            muted
-            playsInline
-            preload="auto"
-            className="max-h-[46vh] w-full bg-black object-contain"
-          />
+          {video ? (
+            <video
+              ref={videoRef}
+              src={video.src}
+              poster={video.posterSrcs?.[0]}
+              muted
+              playsInline
+              preload="auto"
+              className="max-h-[46vh] w-full bg-black object-contain"
+            />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={node.src}
+              alt={node.name}
+              className="max-h-[46vh] w-full bg-black object-contain"
+            />
+          )}
           {live !== null && (
             <span
-              data-trim-modal-edge={live.side === "right" ? "right" : "left"}
+              data-item-details-edge={live.side === "right" ? "right" : "left"}
               className={[
                 "absolute inset-y-0 w-1.5 bg-amber-400",
                 live.side === "right" ? "right-0" : "left-0",
               ].join(" ")}
             />
           )}
-          <span className="absolute right-2 bottom-2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-amber-200">
-            {rawTime.toFixed(2)}s
-          </span>
+          {video && (
+            <span className="absolute right-2 bottom-2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-amber-200">
+              {rawTime.toFixed(2)}s
+            </span>
+          )}
         </div>
 
         {/* The whole source, with the showing window and its grips — the trim
             handles, at a width the board could never give them. */}
-        <div ref={stripSlot} className="w-full">
-          {stripWidth > 0 ? (
-            <TrimOverviewStrip
-              node={node}
-              width={stripWidth}
-              trimInSeconds={trimIn}
-              trimOutSeconds={trimOut}
-            />
-          ) : null}
-        </div>
+        {video ? (
+          <>
+            <div ref={stripSlot} className="w-full">
+              {stripWidth > 0 ? (
+                <TrimOverviewStrip
+                  node={video}
+                  width={stripWidth}
+                  trimInSeconds={trimIn}
+                  trimOutSeconds={trimOut}
+                />
+              ) : null}
+            </div>
 
-        <div className="flex items-center justify-between font-mono text-[10px] text-zinc-500">
-          <span className="text-amber-200/90">
-            in {trimIn.toFixed(2)}s → out {(trimIn + showing).toFixed(2)}s
-          </span>
-          <span>drag the amber edges to trim, the film to move the window</span>
-        </div>
+            <div className="flex items-center justify-between font-mono text-[10px] text-zinc-500">
+              <span className="text-amber-200/90">
+                in {trimIn.toFixed(2)}s → out {(trimIn + showing).toFixed(2)}s
+              </span>
+              <span>drag the amber edges to trim, the film to move the window</span>
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center justify-between font-mono text-[10px] text-zinc-500">
+            <span className="text-amber-200/90">still · {showing.toFixed(2)}s on screen</span>
+            <span>drag the card&apos;s edge on the strip to change how long it holds</span>
+          </div>
+        )}
       </div>
     </div>,
     document.body,
@@ -331,28 +371,31 @@ function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: 
 }
 
 /**
- * Opens when the toolbar's trim toggle is pinned and a video is selected. The
- * card grows into it and shrinks back out of it; closing goes through the same
- * transition in reverse, which is why the hero name is handed back to the card
- * INSIDE the closing callback rather than after it.
+ * Opens when the toolbar's details toggle is on and a media item is selected.
+ * The card grows into it and shrinks back out of it; closing goes through the
+ * same transition in reverse, which is why the hero name is handed back to the
+ * card INSIDE the closing callback rather than after it.
  */
-export function GraphTrimModal() {
-  const { pinned, setPinned } = useTrimPanel();
+export function GraphItemDetailsModal() {
+  const { open, setOpen } = useItemDetails();
+  // ANY selected media item, not just a video: the view is where an item's
+  // details live, and a still has details too (PL10-012). Videos get the
+  // frame + source strip; images get the still and their duration.
   const node = useCollectionsSelector((s) => {
     for (const id of s.interaction.selectedIds) {
       const found = s.graph.nodesById.get(id);
-      if (found?.kind === "media" && found.mediaKind === "video") return found;
+      if (found?.kind === "media") return found;
     }
     return null;
   });
-  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const openIdRef = useRef<string | null>(null);
 
-  // Opening and closing are driven by the pinned flag so the toolbar button,
-  // Escape, and the scrim all go through one path.
+  // Opening and closing are driven by the context flag so the toolbar button,
+  // Escape, the close button and the scrim all go through one path.
   useEffect(() => {
-    const wanted = pinned && node !== null && !!node.src;
-    if (wanted === open) return;
+    const wanted = open && node !== null && !!node.src;
+    if (wanted === mounted) return;
 
     if (wanted && node) {
       openIdRef.current = node.id;
@@ -362,21 +405,21 @@ export function GraphTrimModal() {
         // Hand the name over: the card gives it up in the same frame the
         // modal takes it, so exactly one element ever carries it.
         card?.style.removeProperty("view-transition-name");
-        setOpen(true);
+        setMounted(true);
       });
       return;
     }
 
     const card = openIdRef.current ? cardElement(openIdRef.current) : null;
     void withViewTransition(() => {
-      setOpen(false);
+      setMounted(false);
       card?.style.setProperty("view-transition-name", HERO);
     }).then(() => {
       card?.style.removeProperty("view-transition-name");
       openIdRef.current = null;
     });
-  }, [pinned, node, open]);
+  }, [open, node, mounted]);
 
-  if (!open || node === null || !node.src) return null;
-  return <ModalBody node={node} onClose={() => setPinned(false)} />;
+  if (!mounted || node === null || !node.src) return null;
+  return <ModalBody node={node} onClose={() => setOpen(false)} />;
 }

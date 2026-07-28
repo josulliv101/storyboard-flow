@@ -409,6 +409,42 @@ Acceptance criteria:
 - No tile has a border or a rounded corner in any state.
 - The logo's vertical centre matches the board header's.
 
+## PL10-012 — The trim modal becomes the ITEM DETAILS view
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-item-details-modal.tsx` + `graph-item-details-context.tsx`
+  (renamed from `graph-trim-*`), `graph-board.tsx`, `graph-view-events.ts`
+- Screenshot: Not captured
+
+The modal is where an item's details belong, not just its trim — tags are the
+next thing that wants this space. So it stops being trim-shaped:
+
+- The toolbar icon is `Maximize2` (open this item), not scissors.
+- It opens from the GRID as well as the strip. A grid card has no trim
+  handles, but details are not a trimming idea, so the toggle and the modal
+  both moved out of the strip-only branch.
+- Any MEDIA item opens it, image or video. A video gets the frame and the
+  source strip; a still gets its own image and the duration it holds.
+- Names throughout: "Open item details", `data-item-details*`,
+  `ItemDetailsProvider` / `useItemDetails`, rename site `item-details`.
+
+Acceptance criteria:
+
+- The toggle is enabled for any selected media item, in either surface.
+- A still opens the view with no source map and no frame readout.
+- Everything PL10-008/009/010 added still works from both surfaces.
+
+TRAP fixed here, and it had been passing by luck: the e2e's
+`settleViewTransition` polled `getAnimations()` for `::view-transition`
+pseudo-animations — but those do not exist until the browser has captured a
+frame, so a poll landing between the click and the capture reported "settled"
+and the drag that followed landed on the snapshot (i.e. on `<html>`) and did
+nothing. `withViewTransition` now flags `documentElement.dataset.viewTransition`
+SYNCHRONOUSLY before starting, and the helper waits on that. This is the same
+inertness the user sees mid-morph, so the flag is worth having in the app
+rather than only in the test.
+
 ## PL10-003 — The call-out must not flash a scrollbar
 
 - Status: Complete

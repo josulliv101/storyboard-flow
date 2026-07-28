@@ -448,15 +448,23 @@ async function settleMoveAnimations(page: Page): Promise<void> {
  */
 async function settleViewTransition(page: Page): Promise<void> {
   await page.waitForFunction(
-    () =>
-      !document.getAnimations().some((animation) => {
+    () => {
+      // The app flags the root while a transition is in flight. Polling
+      // `getAnimations()` alone is a RACE: those animations do not exist until
+      // the browser has captured a frame, so a poll landing between the click
+      // and the capture sees none, reports "settled", and the drag that
+      // follows lands on the snapshot — i.e. on <html> — doing nothing at all.
+      // The flag is set synchronously, before the transition starts.
+      if (document.documentElement.dataset.viewTransition) return false;
+      return !document.getAnimations().some((animation) => {
         // `pseudoElement` lives on KeyframeEffect, not the AnimationEffect
         // base the DOM types expose here.
         const effect = animation.effect as KeyframeEffect | null;
         return effect?.pseudoElement?.startsWith("::view-transition") ?? false;
-      }),
+      });
+    },
     undefined,
-    { timeout: 3000 },
+    { timeout: 5000 },
   );
 }
 
@@ -3962,7 +3970,7 @@ test.describe("graph view E2E", () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await expect(page.locator("[data-trim-modal]")).toHaveCount(0);
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
 
     const heroCount = () =>
       page.evaluate(
@@ -3973,14 +3981,14 @@ test.describe("graph view E2E", () => {
       );
     expect(await heroCount()).toBe(0);
 
-    await page.getByRole("button", { name: "Open the trim view" }).click();
+    await page.getByRole("button", { name: "Open item details" }).click();
     const modal = page.getByRole("dialog");
     await expect(modal).toHaveCount(1);
     // Only the modal's frame holds the name while it is open — the card gave
     // it up in the same frame.
     expect(await heroCount()).toBe(1);
     expect(
-      await page.locator("[data-trim-modal-frame]").evaluate((el) =>
+      await page.locator("[data-item-details-frame]").evaluate((el) =>
         el instanceof HTMLElement ? el.style.viewTransitionName : "",
       ),
     ).toBe("trim-subject");
@@ -3988,7 +3996,7 @@ test.describe("graph view E2E", () => {
     // The whole source is in there, and it is the only map on the page.
     const maps = page.locator("[data-trim-overview]");
     await expect(maps).toHaveCount(1);
-    expect(await maps.evaluate((el) => !!el.closest("[data-trim-modal]"))).toBe(true);
+    expect(await maps.evaluate((el) => !!el.closest("[data-item-details]"))).toBe(true);
     const windowBox = (await page.locator("[data-trim-overview-window]").boundingBox())!;
     const mapBox = (await maps.boundingBox())!;
     expect(windowBox.width / mapBox.width).toBeCloseTo(6 / 8, 1);
@@ -4006,7 +4014,7 @@ test.describe("graph view E2E", () => {
     await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
     await page.mouse.down();
     await page.mouse.move(gripBox.x - 40, gripBox.y + gripBox.height / 2, { steps: 6 });
-    await expect(page.locator("[data-trim-modal-edge]")).toHaveCount(1);
+    await expect(page.locator("[data-item-details-edge]")).toHaveCount(1);
     await page.mouse.up();
     await expect
       .poll(async () => (await page.locator("[data-trim-overview-window]").boundingBox())!.width)
@@ -4015,13 +4023,53 @@ test.describe("graph view E2E", () => {
     // Escape closes it and the name goes back where it came from — nothing
     // may be left holding it, or the next open has two.
     await page.keyboard.press("Escape");
-    await expect(page.locator("[data-trim-modal]")).toHaveCount(0);
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
     await expect.poll(heroCount).toBe(0);
 
     // And it reopens, which is what a stranded name would have broken.
-    await page.getByRole("button", { name: "Open the trim view" }).click();
+    await page.getByRole("button", { name: "Open item details" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(1);
     expect(await heroCount()).toBe(1);
+  });
+
+  test("item details open from the GRID too, and for a still", async ({ page }) => {
+    // PL10-012. Details are not a trimming idea: a grid card has no trim
+    // handles at all, and an image has no source window — but both have a
+    // name, a duration, and whatever an item grows next. Both open the view.
+    await installGraphApi(page);
+    await page.goto(`${GRAPH_URL}?surface=grid`);
+    await expect(page.locator(`[data-virtual-grid="${PROJECT_ID}"]`)).toHaveCount(1);
+
+    // bravo is an IMAGE, and we are in the grid — the two things the old
+    // trim-only toggle refused.
+    const bravo = page.locator('[data-node-id="bravo"]');
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    const toggle = page.getByRole("button", { name: "Open item details" });
+    await expect(toggle).toBeEnabled();
+    await toggle.click();
+    await settleViewTransition(page);
+
+    const details = page.getByRole("dialog");
+    await expect(details).toHaveCount(1);
+    await expect(details).toContainText("bravo");
+    // A still: its own image, no source map, and the duration it holds.
+    await expect(page.locator("[data-trim-overview]")).toHaveCount(0);
+    await expect(details).toContainText("still");
+    await expect(details.locator("img")).toHaveCount(1);
+
+    // The name is editable here as well — the point of the view generalizing.
+    await details.locator("text=bravo").first().dblclick();
+    const editor = page.getByRole("textbox", { name: "Clip name" });
+    await editor.fill("Establishing shot");
+    await editor.press("Enter");
+    await expect(details).toContainText("Establishing shot");
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
   });
 
   test("ctrl+z undoes and ctrl+shift+z redoes from the keyboard", async ({ page }) => {
@@ -4093,11 +4141,11 @@ test.describe("graph view E2E", () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await page.getByRole("button", { name: "Open the trim view" }).click();
+    await page.getByRole("button", { name: "Open item details" }).click();
     await settleViewTransition(page);
 
-    const undo = page.locator("[data-trim-modal-undo]");
-    const redo = page.locator("[data-trim-modal-redo]");
+    const undo = page.locator("[data-item-details-undo]");
+    const redo = page.locator("[data-item-details-redo]");
     // The newest entry is bravo's trim, not this clip's — so undo is offered
     // for nothing, even though the store itself can undo.
     await expect(undo).toBeDisabled();
@@ -4144,7 +4192,7 @@ test.describe("graph view E2E", () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await page.getByRole("button", { name: "Open the trim view" }).click();
+    await page.getByRole("button", { name: "Open item details" }).click();
     await settleViewTransition(page);
 
     const storedAlt = () =>
@@ -4152,25 +4200,25 @@ test.describe("graph view E2E", () => {
     expect(storedAlt()).toBe("alpha");
 
     // Double-click the name, type, Enter.
-    await page.locator("[data-trim-modal] >> text=alpha").first().dblclick();
+    await page.locator("[data-item-details] >> text=alpha").first().dblclick();
     const editor = page.getByRole("textbox", { name: "Clip name" });
     await expect(editor).toBeVisible();
     await editor.fill("Belushi close-up");
     await editor.press("Enter");
 
     // The graph took it...
-    await expect(page.locator("[data-trim-modal]")).toContainText("Belushi close-up");
+    await expect(page.locator("[data-item-details]")).toContainText("Belushi close-up");
     // ...and so did the write, once the gateway's debounce flushes.
     await expect.poll(storedAlt, { timeout: 5000 }).toBe("Belushi close-up");
 
     // Escape cancels an edit instead of closing the modal — the capture-phase
     // key handler has to yield to the editor.
-    await page.locator("[data-trim-modal] >> text=Belushi close-up").first().dblclick();
+    await page.locator("[data-item-details] >> text=Belushi close-up").first().dblclick();
     const reopened = page.getByRole("textbox", { name: "Clip name" });
     await reopened.fill("Discarded");
     await reopened.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(1);
-    await expect(page.locator("[data-trim-modal]")).toContainText("Belushi close-up");
+    await expect(page.locator("[data-item-details]")).toContainText("Belushi close-up");
     expect(storedAlt()).toBe("Belushi close-up");
   });
 
