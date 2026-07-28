@@ -12,7 +12,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { CornerRightDown } from "lucide-react";
+import { CornerRightDown, Maximize2 } from "lucide-react";
 
 import {
   CollectionItem,
@@ -45,6 +45,7 @@ import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-d
 import { isDisabledByAncestor } from "./graph-playhead-model";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { useCollectionHoverTarget } from "./graph-collection-hover";
+import { useItemDetails } from "./graph-item-details-context";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TrimPanel } from "./graph-trim-panel";
 import { createDerivedCache } from "@/lib/derived-cache";
@@ -992,17 +993,95 @@ const GraphCollectionItem = memo(function GraphCollectionItem({
 });
 
 /**
+ * The details trigger on a media card (PL11-002): top-right, revealed on
+ * hover or keyboard focus, and a real tab stop when its card is the roving
+ * one.
+ *
+ * It is a SIBLING of NodeCard, not a child. NodeCard's shell is a single
+ * `<button>`, and a button inside a button is invalid HTML — the same
+ * constraint that put this control in the toolbar to begin with, and that
+ * made the collection rename a contentEditable span. Living outside that
+ * button also means a press here never reaches the card's drag wiring.
+ *
+ * `tabIndex` follows the surface's ROVING value rather than being a flat 0:
+ * a virtualized strip mounts dozens of cards, and a fixed tab stop per card
+ * would put dozens of them in the tab order. Roving keeps the surface at one
+ * stop; this adds exactly one more, on the card the user is actually on.
+ */
+const ItemDetailsTrigger = memo(function ItemDetailsTrigger({
+  id,
+  rovingTabIndex,
+}: Readonly<{ id: NodeId; rovingTabIndex: number | undefined }>) {
+  const store = useCollectionsStore();
+  const { setOpenId } = useItemDetails();
+
+  return (
+    <button
+      type="button"
+      data-item-details-trigger={id}
+      aria-label="Open item details"
+      title="Open item details"
+      {...(rovingTabIndex !== undefined ? { tabIndex: rovingTabIndex } : {})}
+      onPointerDown={(event) => {
+        // Keep the press off the surface gestures underneath — the strip's
+        // pan and (in grid) the hold-drag both start on pointerdown.
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        // Open it AND select it: the details view is about one item, and
+        // leaving the selection on some other card makes every selection-scoped
+        // readout in the board disagree with what the modal is showing.
+        store.setSelection([id]);
+        setOpenId(id as string);
+      }}
+      className={[
+        "absolute top-1 right-1 z-20 flex size-6 items-center justify-center rounded",
+        "bg-zinc-950/80 text-zinc-300 shadow-sm shadow-black/40 backdrop-blur-[1px]",
+        "hover:bg-zinc-900 hover:text-zinc-50",
+        // Hidden until the card is hovered or something inside it has focus —
+        // including this button, which is why `focus-within` is on the group
+        // rather than `focus-visible` here alone.
+        "opacity-0 transition-opacity duration-150",
+        "group-hover/media-item:opacity-100 group-focus-within/media-item:opacity-100",
+        "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+      ].join(" ")}
+    >
+      <Maximize2 aria-hidden="true" className="h-3.5 w-3.5" />
+    </button>
+  );
+});
+
+/**
+ * The media card: the stock NodeCard, wrapped so a details trigger can sit
+ * beside it. The wrapper carries the surface's sizing className and the hover
+ * group; NodeCard fills it.
+ */
+const GraphMediaItem = memo(function GraphMediaItem({
+  className,
+  ...props
+}: CollectionItemShellProps) {
+  return (
+    <div className={["group/media-item relative", className ?? ""].join(" ")}>
+      <NodeCard {...props} className="h-full w-full" />
+      <ItemDetailsTrigger id={props.id} rovingTabIndex={props.rovingTabIndex} />
+    </div>
+  );
+});
+
+/**
  * The graph's per-item renderer (registered as the provider `ItemShell`):
  * media keeps the stock NodeCard shell (its content is presentational, so the
- * single-button card is exactly right); collections get the composed card
- * above. The kind subscription is a primitive, so the dispatcher re-renders
- * only if a node changes kind — which never happens after creation.
+ * single-button card is exactly right) with the details trigger beside it;
+ * collections get the composed card above. The kind subscription is a
+ * primitive, so the dispatcher re-renders only if a node changes kind — which
+ * never happens after creation.
  */
 const GraphItemShell = memo(function GraphItemShell(props: CollectionItemShellProps) {
   const isCollection = useCollectionsSelector(
     (s) => s.graph.nodesById.get(props.id)?.kind === "collection",
   );
-  return isCollection ? <GraphCollectionItem {...props} /> : <NodeCard {...props} />;
+  return isCollection ? <GraphCollectionItem {...props} /> : <GraphMediaItem {...props} />;
 });
 
 export const GRAPH_VIEW_COMPONENTS: CollectionsComponents = {

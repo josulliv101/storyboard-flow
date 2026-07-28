@@ -2,7 +2,7 @@
 
 import { useContext, useDeferredValue, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { FolderPlus, Maximize2, Redo2, Settings, Undo2 } from "lucide-react";
+import { FolderPlus, Redo2, Settings, Undo2 } from "lucide-react";
 
 import {
   CollectionsContainerContext,
@@ -48,7 +48,7 @@ import {
 } from "./graph-preview";
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
-import { ItemDetailsProvider, useItemDetails } from "./graph-item-details-context";
+import { ItemDetailsProvider } from "./graph-item-details-context";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
@@ -244,51 +244,6 @@ function GraphUndoRedo() {
         <Redo2 aria-hidden="true" className="h-4 w-4" />
       </Button>
     </div>
-  );
-}
-
-/**
- * Opens the ITEM DETAILS view (PL10-004 → PL10-012). It lives in the toolbar
- * rather than on the card because a media card is NodeCard's single `<button>`
- * shell, where a nested button would be invalid HTML (the same constraint that
- * made the collection rename a contentEditable span). Disabled with no media
- * item selected, since there would be nothing to open.
- *
- * Both surfaces: a grid card has no trim handles, but details are not a
- * trimming idea — a grid item has a name, a duration, and (soon) tags like any
- * other. Discovery doesn't rest on finding this either: in the strip, dragging
- * a card's own trim handle still previews the edge in place.
- */
-function GraphItemDetailsToggle() {
-  const { open, setOpen } = useItemDetails();
-  const hasMedia = useCollectionsSelector((s) => {
-    for (const id of s.interaction.selectedIds) {
-      if (s.graph.nodesById.get(id)?.kind === "media") return true;
-    }
-    return false;
-  });
-
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      disabled={!hasMedia}
-      aria-pressed={open}
-      aria-label={open ? "Close item details" : "Open item details"}
-      title={
-        hasMedia
-          ? "Item details — open the item on its own, with its name, duration and trim"
-          : "Item details — select a media item first"
-      }
-      onClick={() => setOpen(!open)}
-      className={[
-        "h-8 w-8 disabled:opacity-40",
-        open ? "text-amber-300 hover:text-amber-200" : "text-zinc-400 hover:text-zinc-100",
-      ].join(" ")}
-    >
-      <Maximize2 aria-hidden="true" className="h-4 w-4" />
-    </Button>
   );
 }
 
@@ -518,7 +473,6 @@ export function GraphBoard({
                   <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
                 </>
               ) : null}
-              <GraphItemDetailsToggle />
               <GraphUndoRedo />
               <BoardMenu
                 itemSize={itemSize}
