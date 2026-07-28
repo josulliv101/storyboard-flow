@@ -76,7 +76,7 @@ function TrashAreaIcon({ className }: Readonly<{ className?: string }>) {
       className={cn("relative inline-flex shrink-0 overflow-visible", className)}
     >
       <Folder className="h-full w-full" strokeWidth={2.1} />
-      <span className="absolute -top-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
+      <span className="absolute -bottom-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
         <Trash2 className="size-2.5" strokeWidth={2.7} />
       </span>
     </span>
@@ -92,7 +92,7 @@ function MediaFolderIcon({ className }: Readonly<{ className?: string }>) {
       className={cn("relative inline-flex shrink-0 overflow-visible", className)}
     >
       <Folder className="h-full w-full" strokeWidth={2.1} />
-      <span className="absolute -top-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
+      <span className="absolute -bottom-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
         <ImageIcon className="size-2.5" strokeWidth={2.5} />
       </span>
     </span>

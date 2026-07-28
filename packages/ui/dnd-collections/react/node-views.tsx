@@ -390,14 +390,24 @@ export function NodeCardIndicators({
         </div>
       )}
 
-      {/* Before/after drop indicator bars. */}
+      {/* Before/after drop indicator bars.
+
+          Each bar backs out by half a gap so it lands in the MIDDLE of the gap
+          it marks. The two sides read their own variable because a card's two
+          gaps are not always the same: the first card in a strip (and the first
+          in every grid row) has no space to its left to centre in, and pulling
+          the bar out there would put it under the container's padding, where
+          the scroll box clips it. That edge case belongs to the BEFORE side
+          only — zeroing both, as one shared variable forced, left the bar
+          jammed against the card on the side that did have a gap. Both fall
+          back to the old single variable, then to half of the default gap. */}
       {dropSide === "before" && (
         <div
           aria-hidden="true"
           data-drop-indicator="before"
           className="pointer-events-none absolute inset-y-0 z-20 w-1 -translate-x-1/2 rounded-full bg-primary"
           style={{
-            left: "calc(-1 * var(--dnd-drop-indicator-half-gap, 4px))",
+            left: "calc(-1 * var(--dnd-drop-indicator-half-gap-before, var(--dnd-drop-indicator-half-gap, 4px)))",
           }}
         />
       )}
@@ -407,7 +417,7 @@ export function NodeCardIndicators({
           data-drop-indicator="after"
           className="pointer-events-none absolute inset-y-0 z-20 w-1 translate-x-1/2 rounded-full bg-primary"
           style={{
-            right: "calc(-1 * var(--dnd-drop-indicator-half-gap, 4px))",
+            right: "calc(-1 * var(--dnd-drop-indicator-half-gap-after, var(--dnd-drop-indicator-half-gap, 4px)))",
           }}
         />
       )}

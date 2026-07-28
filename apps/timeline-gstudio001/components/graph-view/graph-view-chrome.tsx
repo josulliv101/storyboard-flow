@@ -12,6 +12,12 @@ import {
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/core/dropdown-menu";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { cn } from "@/lib/utils";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
@@ -128,6 +134,49 @@ function AncestorCrumb({
   );
 }
 
+/** How many ancestors the trail shows before it starts folding, and how many
+ *  it keeps visible when it does. Counting rather than measuring: a
+ *  width-driven collapse has to observe the header, re-measure on every rename
+ *  and resize, and still picks a threshold — this picks one honestly, and the
+ *  crumbs it does show already truncate at 180px each. */
+const MAX_VISIBLE_ANCESTORS = 2;
+const VISIBLE_TRAILING_ANCESTORS = 1;
+
+type CrumbEntry = Readonly<{ id: string; href: string; label: string }>;
+
+/**
+ * The folded ancestors, behind one "…" control. A real menu, not an ellipsis
+ * glyph: the whole point is that the hidden levels stay REACHABLE, so every
+ * one of them is a link you can navigate to.
+ *
+ * These crumbs stop being drop targets while folded — a target you cannot see
+ * is not one you can aim a card at. The visible crumbs keep theirs.
+ */
+function CollapsedCrumbs({ crumbs }: Readonly<{ crumbs: readonly CrumbEntry[] }>) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-graph-crumb-overflow
+          aria-label={`Show ${crumbs.length} hidden ${crumbs.length === 1 ? "timeline" : "timelines"}`}
+          title="Hidden timelines"
+          className="shrink-0 rounded-md px-1.5 py-1 text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70"
+        >
+          …
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start">
+        {crumbs.map((crumb) => (
+          <DropdownMenuItem key={crumb.id} asChild>
+            <Link href={crumb.href}>{crumb.label}</Link>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /**
  * Where you ARE and how to go up — the navigation unit, rendered inside the
  * board's own header rather than as page chrome above it. It sits where a
@@ -153,6 +202,27 @@ export function GraphBreadcrumb({
     (snapshot) => snapshot.graph.nodesById.get(focusedId as NodeId)?.name,
   );
   const focusedTitle = documents[focusedId]?.title ?? focusedNodeName ?? focusedId;
+  // Every ancestor between the root crumb and the focused one, resolved once
+  // so the overflow menu and the visible crumbs render the same thing.
+  const ancestors = timelinePath.slice(0, -1).map((segment, index) => ({
+    id: segment,
+    href: `${base}/${timelinePath
+      .slice(0, index + 1)
+      .map(encodeURIComponent)
+      .join("/")}`,
+    label: documents[segment]?.title ?? segment,
+  }));
+  // Deep paths crowd the header out. Past the threshold the EARLIEST ancestors
+  // fold into one "…" — the immediate parent stays put, because that is the
+  // one the eye actually uses, and the root and focused crumbs are never
+  // eligible (they are rendered outside this list).
+  const collapse = ancestors.length > MAX_VISIBLE_ANCESTORS;
+  const collapsedAncestors = collapse
+    ? ancestors.slice(0, ancestors.length - VISIBLE_TRAILING_ANCESTORS)
+    : [];
+  const visibleAncestors = collapse
+    ? ancestors.slice(ancestors.length - VISIBLE_TRAILING_ANCESTORS)
+    : ancestors;
   const parentHref =
     timelinePath.length > 1
       ? `${base}/${timelinePath.slice(0, -1).map(encodeURIComponent).join("/")}`
@@ -187,16 +257,15 @@ export function GraphBreadcrumb({
             <span aria-hidden="true" className="shrink-0">/</span>
           </>
         )}
-        {timelinePath.slice(0, -1).map((segment, index) => (
-          <span key={segment} className="flex min-w-0 shrink-[2] items-center gap-2">
-            <AncestorCrumb
-              crumbId={segment}
-              href={`${base}/${timelinePath
-                .slice(0, index + 1)
-                .map(encodeURIComponent)
-                .join("/")}`}
-              label={documents[segment]?.title ?? segment}
-            />
+        {collapsedAncestors.length > 0 && (
+          <span className="flex shrink-0 items-center gap-2">
+            <CollapsedCrumbs crumbs={collapsedAncestors} />
+            <span aria-hidden="true" className="shrink-0">/</span>
+          </span>
+        )}
+        {visibleAncestors.map((ancestor) => (
+          <span key={ancestor.id} className="flex min-w-0 shrink-[2] items-center gap-2">
+            <AncestorCrumb crumbId={ancestor.id} href={ancestor.href} label={ancestor.label} />
             <span aria-hidden="true" className="shrink-0">/</span>
           </span>
         ))}

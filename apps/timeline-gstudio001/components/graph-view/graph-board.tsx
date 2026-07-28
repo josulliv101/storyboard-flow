@@ -46,6 +46,7 @@ import {
   useSelectionAggregate,
   type PreviewTimeChannel,
 } from "./graph-preview";
+import { CollectionHoverProvider } from "./graph-collection-hover";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
   GRID_GAP,
@@ -382,6 +383,11 @@ export function GraphBoard({
 
   return (
     <OpenKeyBoundary trashId={trashRootId}>
+      {/* Spans the surfaces AND the child rows below them, because the pairing
+          it carries joins the two: a collection's card up here and its row
+          down there light each other up on hover. Inert unless the children
+          tree is actually shown — with it off there is no row to pair with. */}
+      <CollectionHoverProvider enabled={childrenShown}>
       {/* Published ABOVE the preview shell so the header aggregate and every
           time overlay inside it measure the run actually on screen. */}
       <FlatItemsProvider items={flatItems}>
@@ -618,6 +624,7 @@ export function GraphBoard({
         </div>
       </PreviewShell>
       </FlatItemsProvider>
+      </CollectionHoverProvider>
     </OpenKeyBoundary>
   );
 }

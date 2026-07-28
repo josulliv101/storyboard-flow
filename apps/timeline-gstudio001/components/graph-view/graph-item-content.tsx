@@ -44,6 +44,7 @@ import {
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import { isDisabledByAncestor } from "./graph-playhead-model";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
+import { useCollectionHoverPair } from "./graph-collection-hover";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TrimFramePreview } from "./graph-trim-frame-preview";
 import { createDerivedCache } from "@/lib/derived-cache";
@@ -764,6 +765,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   const title = useTimelineTitle(id as string);
   const rename = useInlineRename(id, title ?? node.name, "card");
   const nav = useContext(GraphViewNavContext);
+  const hoverPair = useCollectionHoverPair(id as string);
   // Hydrated collections derive their preview frames and total duration from
   // live children (like the count), so editing a loaded child refreshes this
   // card without a reload; placeholders fall back to their stored summary.
@@ -908,17 +910,28 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         aria-label={`Open ${displayName}`}
         title="Open this timeline"
         data-collections-keyboard-ignore
+        // Same collection, two places on screen once the children tree is
+        // shown. Hovering here lights up this collection's ROW, and hovering
+        // that row lights this up (`paired`) — see graph-collection-hover.
+        data-collection-paired={hoverPair.paired ? "true" : undefined}
+        onPointerEnter={hoverPair.onPointerEnter}
+        onPointerLeave={hoverPair.onPointerLeave}
         onClick={(event) => {
           event.stopPropagation();
           nav?.openTimeline(id);
         }}
-        className="absolute left-1/2 top-[41%] flex aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300"
+        className={[
+          "absolute left-1/2 top-[41%] flex aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300",
+          hoverPair.paired ? "bg-zinc-900/85 text-sky-100 ring-sky-300" : "ring-sky-400/50",
+        ].join(" ")}
       >
         {/* CornerRightDown — turn and descend, the verb this control performs:
             NAVIGATE into the timeline. The sidebar's FolderTree toggles whether
             the children tree is shown, which is a different verb and does not
             share this icon. */}
-        <CollectionFolderGlyph className="h-[55%] w-[55%]" />
+        {/* 45%, not 55%: the mark crowded the ring it sits in. The circle's
+            own size is unchanged — only the glyph inside it shrank. */}
+        <CollectionFolderGlyph className="h-[45%] w-[45%]" />
       </button>
 
       {/* The rename editor — a REAL input, overlaying the label row while

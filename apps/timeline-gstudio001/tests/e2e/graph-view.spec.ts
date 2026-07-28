@@ -1006,9 +1006,9 @@ test.describe("graph view E2E", () => {
     await expect.poll(heightOf).toBeGreaterThan(0);
     const initial = await heightOf();
 
-    // The divider is a compact 16px box — 4px of breathing room under the
-    // preview plus the 12px visible band, which is also its drag track — even
-    // though its centered transport overhangs it.
+    // The 16px box is the DRAG TARGET and never changes; the visible band is
+    // smaller and centred inside it (8px at desktop, 12 where it has to hold
+    // the grip), so the space above it reads as clearance under the preview.
     expect(
       await divider.evaluate((el) => Math.round(el.getBoundingClientRect().height)),
     ).toBe(16);
@@ -1016,7 +1016,7 @@ test.describe("graph view E2E", () => {
       await divider
         .locator("[data-divider-line]")
         .evaluate((el) => Math.round(el.getBoundingClientRect().height)),
-    ).toBe(12);
+    ).toBe(8);
     // The grip is for coarse pointers only: present in the DOM, not painted
     // at desktop width.
     await expect(divider.locator("[data-divider-grip]")).toBeHidden();
@@ -2214,15 +2214,17 @@ test.describe("graph view E2E", () => {
     // Grip marks are the coarse-pointer affordance; this runs at desktop
     // width, where the hover brighten does the job and the grip stays unpainted.
     await expect(divider.locator("[data-divider-grip]")).toBeHidden();
+    // RESTING (nothing hovered): background-free. The ACTIVE invert to a white
+    // disc is covered by the WorkbenchSplitPane story, which can hover the
+    // preview deterministically.
     expect(
       await primaryControl.evaluate(
         (element) => getComputedStyle(element).backgroundColor,
       ),
     ).toBe("rgba(0, 0, 0, 0)");
 
-    // All three 44px hit targets remain centered on the divider's 12px BAND
-    // (the box is 16 — 4px of padding holds the band off the preview), while
-    // their visible chrome stays deliberately compact.
+    // All three 44px hit targets remain centered on the divider's visible
+    // band, while their own chrome stays deliberately compact.
     const [surfaceBox, canvasBox, groupBox, dividerBox, dividerLineBox, timeBox] =
       await Promise.all([
         surface.boundingBox(),
@@ -2238,15 +2240,16 @@ test.describe("graph view E2E", () => {
     expect(dividerBox).not.toBeNull();
     expect(dividerLineBox).not.toBeNull();
     expect(timeBox).not.toBeNull();
+    // The BOX is the hit target and never changes; the visible band is
+    // smaller and centred on one fixed mid-line, so its height can differ by
+    // breakpoint (8 here at desktop, 12 where it hosts the grip) with nothing
+    // else moving.
     expect(dividerBox!.height).toBe(16);
-    expect(dividerLineBox!.height).toBe(12);
-    expect(dividerLineBox!.y + dividerLineBox!.height).toBeCloseTo(
-      dividerBox!.y + dividerBox!.height,
-      0,
-    );
+    expect(dividerLineBox!.height).toBe(8);
+    expect(dividerLineBox!.y + dividerLineBox!.height / 2).toBeCloseTo(dividerBox!.y + 10, 0);
     expect(groupBox!.width).toBe(132);
     expect(groupBox!.height).toBe(44);
-    // Centered on the BAND, not on the padded box.
+    // Centered on the BAND, not on the box.
     expect(dividerLineBox!.y + dividerLineBox!.height / 2).toBeCloseTo(
       groupBox!.y + groupBox!.height / 2,
       0,
@@ -3584,6 +3587,144 @@ test.describe("graph view E2E", () => {
       .poll(() => gridOrder(page, PROJECT_ID))
       .toEqual(["alpha", expect.stringMatching(/^timeline-/), "bravo", CHILD_ID, "charlie"]);
     await expect(indicator).toHaveCount(0);
+  });
+
+  test("a deep breadcrumb folds its middle crumbs behind a reachable ellipsis", async ({
+    page,
+  }) => {
+    // PL8-002. Every ancestor used to render, so a deep path crowded the
+    // header out. The root and the focused crumb are never folded, and the
+    // immediate parent stays visible — the folded ones stay REACHABLE.
+    const api = await installGraphApi(page);
+    const DEPTH_IDS = ["timeline-d1", "timeline-d2", "timeline-d3", "timeline-d4"];
+    const TITLES = ["Depth One", "Depth Two", "Depth Three", "Depth Four"];
+    // project → d1 → d2 → d3 → d4
+    api.documents.get(PROJECT_ID)!.clips.push(
+      collectionClip("clip-d1", DEPTH_IDS[0], 9, TITLES[0], 1),
+    );
+    DEPTH_IDS.forEach((id, index) => {
+      const child = DEPTH_IDS[index + 1];
+      api.documents.set(id, {
+        id,
+        title: TITLES[index],
+        clips: child
+          ? [collectionClip(`clip-${child}`, child, 0, TITLES[index + 1], 1)]
+          : [mediaClip("deep-leaf", "image", 0, 4)],
+      });
+    });
+
+    await page.goto(`${GRAPH_URL}/${DEPTH_IDS.join("/")}?surface=strip`);
+    await expect(strip(page, DEPTH_IDS[3])).toBeVisible({ timeout: 30000 });
+
+    const trail = page.getByRole("navigation", { name: "Timeline focus path" });
+    const overflow = trail.locator("[data-graph-crumb-overflow]");
+
+    // Three ancestors (d1, d2, d3) is past the threshold: the first two fold.
+    await expect(overflow).toBeVisible();
+    await expect(overflow).toHaveAttribute("aria-label", /2 hidden timelines/i);
+    await expect(trail.getByRole("link", { name: TITLES[0] })).toHaveCount(0);
+    await expect(trail.getByRole("link", { name: TITLES[1] })).toHaveCount(0);
+    // Kept: the root crumb, the immediate parent, and the focused crumb.
+    await expect(trail.getByRole("link", { name: "E2E Project" })).toBeVisible();
+    await expect(trail.getByRole("link", { name: TITLES[2] })).toBeVisible();
+    await expect(trail).toContainText(TITLES[3]);
+
+    // The folded levels are reachable: open the menu and navigate to one.
+    await overflow.click();
+    const hidden = page.getByRole("menuitem", { name: TITLES[1] });
+    await expect(hidden).toBeVisible();
+    await hidden.click();
+    await page.waitForURL(`**${GRAPH_URL}/${DEPTH_IDS[0]}/${DEPTH_IDS[1]}`);
+
+    // Two ancestors left — under the threshold, so nothing folds now.
+    await expect(trail.locator("[data-graph-crumb-overflow]")).toHaveCount(0);
+    await expect(trail.getByRole("link", { name: TITLES[0] })).toBeVisible();
+  });
+
+  test("a collection's card icon and its child-timeline row highlight together", async ({
+    page,
+  }) => {
+    // PL8-012. With the tree shown a collection is on screen twice, and
+    // nothing said the two were the same thing.
+    await installGraphApi(page);
+    await openGraph(page); // children timelines on
+    // The drill button is a SIBLING of the card's selection surface, not a
+    // child of it — `[data-node-id]` is the surface itself, so scoping to the
+    // card finds nothing.
+    const cardIcon = page.getByRole("button", { name: "Open Scene A" }).first();
+    const rowFolder = page
+      .locator('section[aria-label="Sub-timeline: Scene A"]')
+      .getByRole("button", { name: "Expand" })
+      .first();
+    const paired = page.locator('[data-collection-paired="true"]');
+
+    await expect(paired).toHaveCount(0);
+
+    // Card → row.
+    await cardIcon.hover();
+    await expect(rowFolder).toHaveAttribute("data-collection-paired", "true");
+    // Exactly the pair: the hovered element and its twin, nothing else.
+    await expect(paired).toHaveCount(2);
+
+    await page.mouse.move(0, 0);
+    await expect(paired).toHaveCount(0);
+
+    // Row → card.
+    await rowFolder.hover();
+    await expect(cardIcon).toHaveAttribute("data-collection-paired", "true");
+    await expect(paired).toHaveCount(2);
+
+    await page.mouse.move(0, 0);
+    await expect(paired).toHaveCount(0);
+
+    // With the tree hidden there is no row to pair with, so hovering the card
+    // highlights nothing.
+    await page.getByRole("button", { name: "Hide children timelines" }).click();
+    await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
+    await cardIcon.hover();
+    await expect(paired).toHaveCount(0);
+  });
+
+  test("clicking away anywhere that is not a control clears the selection", async ({
+    page,
+  }) => {
+    // PL8-001. The surfaces already cleared on their own empty space; this is
+    // the rest of the screen — the board's padding, the header, the space
+    // beside the strip — which left "nothing selected" unreachable unless the
+    // user found the right pixel inside a strip.
+    await installGraphApi(page);
+    await openGraph(page);
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const header = page.getByRole("navigation", { name: "Timeline focus path" });
+
+    const select = async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true");
+    };
+
+    // A CONTROL is an action, not a click-away. The sidebar's Copy button
+    // only exists WHILE something is selected, which makes it the sharpest
+    // case available: if the click cleared, the button it was on would vanish.
+    await select();
+    await page.getByRole("button", { name: "Copy", exact: true }).click();
+    await expect(alpha).toHaveAttribute("data-selected", "true");
+
+    // A card click still replaces rather than clears.
+    const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
+    await bravo.click();
+    await expect(bravo).toHaveAttribute("data-selected", "true");
+    await expect(alpha).not.toHaveAttribute("data-selected", "true");
+
+    // The breadcrumb row's own empty space — chrome, but not a control.
+    const headerBox = (await header.boundingBox())!;
+    await page.mouse.click(headerBox.x + headerBox.width - 4, headerBox.y + headerBox.height / 2);
+    await expect(bravo).not.toHaveAttribute("data-selected", "true");
+
+    // And well outside any surface: the page margin below the board.
+    await select();
+    const viewport = page.viewportSize()!;
+    await page.mouse.click(viewport.width - 8, viewport.height - 8);
+    await expect(alpha).not.toHaveAttribute("data-selected", "true");
   });
 
   test("the children toggle says so when the timeline has no child timelines", async ({
