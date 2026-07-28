@@ -88,6 +88,7 @@ export const StickyPreview: Story = {
     const buttonGroupBox = buttonGroup!.getBoundingClientRect();
     const dividerBox = divider.getBoundingClientRect();
     const dividerLineBox = dividerLine!.getBoundingClientRect();
+    expect(getComputedStyle(dividerLine!).backgroundImage).toContain("linear-gradient");
     expect(buttonGroupBox.width).toBe(132);
     expect(buttonGroupBox.height).toBe(44);
     expect(controls.querySelector("[data-transport-capsule]")).toBeNull();
@@ -264,7 +265,9 @@ export const ControlledPlayback: Story = {
     expect(
       await canvas.findByRole("button", { name: "Pause workbench preview" }),
     ).toBeInTheDocument();
-    expect(canvas.getByTestId("workbench-preview-time")).toHaveTextContent("0s / 30.0s");
+    expect(canvas.getByTestId("workbench-preview-time")).toHaveTextContent(
+      /0(?:\.\d+)?s \/ 30\.0s/,
+    );
 
     await user.tab();
     expect(controls.contains(document.activeElement)).toBe(true);

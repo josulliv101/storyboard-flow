@@ -1230,7 +1230,9 @@ export function WorkbenchSplitPane({
           aria-valuenow={Math.round(surfaceHeight)}
           aria-label="Resize workbench display"
           // The divider keeps a 12px interaction track while its one-pixel
-          // centerline runs directly through the transport controls.
+          // centerline runs directly through the transport controls. The line
+          // fades across the 132px transport group so no divider color shows
+          // behind its background-free icons.
           className="group relative block h-3 w-full cursor-row-resize bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
           data-workbench-divider
           onPointerDown={handleDividerPointerDown}
@@ -1240,7 +1242,7 @@ export function WorkbenchSplitPane({
         >
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-zinc-800 transition-colors group-hover:bg-zinc-600 group-active:bg-zinc-500"
+            className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-[linear-gradient(to_right,currentColor_0,currentColor_calc(50%_-_6.125rem),transparent_calc(50%_-_4.125rem),transparent_calc(50%_+_4.125rem),currentColor_calc(50%_+_6.125rem),currentColor_100%)] text-zinc-800 transition-colors group-hover:text-zinc-600 group-active:text-zinc-500"
             data-divider-line
           />
         </button>
