@@ -4,15 +4,19 @@ import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNod
 
 /**
  * With child timelines shown, a collection appears TWICE: as a card in the
- * surface and as its own row below. Hovering either one highlights the other,
- * so the pairing is visible instead of something the user has to infer from
- * two identical names.
+ * surface and as its own row below. Hovering the ROW's folder calls out the
+ * matching card, so the pairing is visible instead of something the user has
+ * to infer from two identical names.
+ *
+ * ONE DIRECTION. The card does not call out the row: the tree is a place you
+ * go looking for a card, not the other way round, and lighting both ends made
+ * every pass of the pointer across the surface twitch something below.
  *
  * A subscribable channel rather than context state: every collection card on
  * screen consumes this, and putting the hovered id in a context value would
  * re-render all of them (and their subtrees) on every pointer move between
- * cards. Each consumer subscribes with its own id and re-renders only when ITS
- * answer flips, so a hover repaints exactly the two elements that changed.
+ * rows. Each consumer subscribes with its own id and re-renders only when ITS
+ * answer flips, so a hover repaints exactly the card that changed.
  */
 type HoverListener = () => void;
 
@@ -65,43 +69,48 @@ export function CollectionHoverProvider({
   );
 }
 
-const NO_PAIR = {
-  paired: false,
+const NO_HANDLERS = {
   onPointerEnter: undefined,
   onPointerLeave: undefined,
 } as const;
 
 /**
- * Whether `collectionId`'s twin is currently hovered, plus the handlers that
- * announce this element as the hovered one. Undefined handlers when there is
- * no provider (or children are off) so the props simply don't attach.
+ * The SOURCE end, for a child timeline row's folder: the handlers that announce
+ * this collection as the hovered one. Undefined when there is no provider (or
+ * children are off), so the props simply don't attach.
  */
-export function useCollectionHoverPair(collectionId: string): Readonly<{
-  paired: boolean;
+export function useCollectionHoverSource(collectionId: string): Readonly<{
   onPointerEnter?: () => void;
   onPointerLeave?: () => void;
 }> {
   const channel = useContext(CollectionHoverContext);
-  const paired = useSyncExternalStore(
-    channel ? channel.subscribe : NO_SUBSCRIBE,
-    () => (channel ? channel.get() === collectionId : false),
-    () => false,
-  );
   return useMemo(
     () =>
       channel
         ? {
-            paired,
             onPointerEnter: () => channel.set(collectionId),
             // Clear only if we are still the hovered one: pointer events can
-            // arrive out of order when moving directly between the card and
-            // its row, and a late leave would otherwise wipe the enter that
-            // already landed.
+            // arrive out of order when moving between adjacent rows, and a
+            // late leave would otherwise wipe the enter that already landed.
             onPointerLeave: () => {
               if (channel.get() === collectionId) channel.set(null);
             },
           }
-        : NO_PAIR,
-    [channel, collectionId, paired],
+        : NO_HANDLERS,
+    [channel, collectionId],
+  );
+}
+
+/**
+ * The TARGET end, for a collection card: whether its row is being hovered
+ * right now. Drives a one-shot call-out on the card (see
+ * `graph-item-content`), so what matters is the transition into true.
+ */
+export function useCollectionHoverTarget(collectionId: string): boolean {
+  const channel = useContext(CollectionHoverContext);
+  return useSyncExternalStore(
+    channel ? channel.subscribe : NO_SUBSCRIBE,
+    () => (channel ? channel.get() === collectionId : false),
+    () => false,
   );
 }

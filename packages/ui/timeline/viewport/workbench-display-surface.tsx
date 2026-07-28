@@ -858,8 +858,14 @@ export function WorkbenchDisplaySurface({
   return (
     <section
       aria-label="Workbench display surface"
+      // BORDERLESS. The rounded corners, the near-black fill, and the shadow
+      // already separate the preview from the page; the outline on top read as
+      // a frame around a frame. Nothing else may move as it goes: the section's
+      // own box is what the split pane sizes and what
+      // `--workbench-preview-offset` is built from, so dropping the border
+      // only gives the canvas inside its 1px back.
       className={cn(
-        "relative flex min-h-0 flex-col overflow-visible rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl",
+        "relative flex min-h-0 flex-col overflow-visible rounded-lg bg-zinc-950 shadow-2xl",
         className,
       )}
       data-testid="workbench-display-surface"
@@ -910,7 +916,7 @@ export function WorkbenchDisplaySurface({
           <button
             type="button"
             onClick={onClose}
-            className="absolute right-4 top-4 z-10 grid size-7 place-items-center rounded-full border border-zinc-800 bg-zinc-900/80 text-zinc-400 backdrop-blur-sm transition-colors hover:border-zinc-600 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+            className="absolute right-4 top-2 z-10 grid size-7 place-items-center rounded-full border border-zinc-800 bg-zinc-900/80 text-zinc-400 backdrop-blur-sm transition-colors hover:border-zinc-600 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
             aria-label="Close preview"
             title="Close preview"
             data-testid="workbench-preview-close"
