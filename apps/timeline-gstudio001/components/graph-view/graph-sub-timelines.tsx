@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Folder, FolderOpen } from "lucide-react";
+import { Folder, FolderOpen, ListTree } from "lucide-react";
 
 import {
   VirtualGrid,
@@ -15,6 +15,7 @@ import {
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
+import { useCollectionHoverPair } from "./graph-collection-hover";
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import {
   VideoFrameLookAhead,
@@ -139,6 +140,7 @@ function SubTimelineNode({
   );
   const name = useTimelineTitle(id) ?? nodeName;
   const rename = useInlineRename(collectionId, name, "sub-row");
+  const hoverPair = useCollectionHoverPair(collectionId as string);
   const detail = useClipDetail(id);
   const hydrated = detail?.hydrated === true;
   // ENABLED children only — this row says what the timeline contributes, so
@@ -185,7 +187,16 @@ function SubTimelineNode({
           aria-label={expanded ? "Collapse" : "Expand"}
           aria-expanded={expanded}
           onClick={toggle}
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-sky-400 transition-colors hover:bg-zinc-800 hover:text-sky-300"
+          // The other half of the card↔row pairing: hovering this folder
+          // lights up the same collection's card icon in the surface above,
+          // and `paired` is this end lighting up when the card is hovered.
+          data-collection-paired={hoverPair.paired ? "true" : undefined}
+          onPointerEnter={hoverPair.onPointerEnter}
+          onPointerLeave={hoverPair.onPointerLeave}
+          className={[
+            "flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-zinc-800 hover:text-sky-300",
+            hoverPair.paired ? "bg-zinc-800 text-sky-300" : "text-sky-400",
+          ].join(" ")}
         >
           {expanded ? (
             <FolderOpen aria-hidden="true" className="h-4 w-4" />
@@ -417,13 +428,12 @@ export function SubTimelines({
     return (
       <div
         data-subtimelines-empty
-        className="rounded-lg border border-dashed border-zinc-800 bg-zinc-900/30 px-3 py-4 text-center"
+        className="flex items-center gap-2 rounded-lg border border-dashed border-zinc-800 bg-zinc-900/30 px-3 py-3"
       >
+        {/* The same mark the sub-timeline rows would be hanging off, so the
+            empty state reads as the tree itself rather than a notice. */}
+        <ListTree aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-500" />
         <p className="text-sm font-medium text-zinc-300">No child timelines</p>
-        <p className="mt-0.5 text-xs text-zinc-500">
-          Child timelines are shown. Add a collection to this timeline and it appears here as
-          its own row.
-        </p>
       </div>
     );
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Pause, Play, SkipBack, SkipForward, X } from "lucide-react";
+import { GripHorizontal, Pause, Play, SkipBack, SkipForward, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -78,19 +78,17 @@ const BUFFER_WINDOW_SIZE = 4;
 const DEFAULT_SURFACE_HEIGHT = 380;
 const MIN_SURFACE_HEIGHT = 120;
 const MIN_TIMELINE_SPACE = 260;
-/** The visible divider BAND, which is also its drag track (Tailwind h-3). */
-const DIVIDER_BAND_HEIGHT_PX = 12;
-/** Breathing room between the preview surface and the band. Part of the
- *  divider button's own box, not a margin, so the measured element and the
- *  published offset below cannot disagree. */
-const DIVIDER_TOP_PADDING_PX = 4;
-/** The divider element's full height — padding + band. Feeds
- *  `--workbench-preview-offset`, so it MUST stay equal to what the button
- *  actually renders (`pt-1` + `h-3`). */
-const DIVIDER_HEIGHT_PX = DIVIDER_TOP_PADDING_PX + DIVIDER_BAND_HEIGHT_PX;
-/** Where the band's mid-line falls inside that box. The transport is centered
- *  on it and may overhang it without changing layout. */
-const DIVIDER_BAND_CENTER_PX = DIVIDER_TOP_PADDING_PX + DIVIDER_BAND_HEIGHT_PX / 2;
+/** The divider button's full height — the DRAG HIT TARGET, and what
+ *  `--workbench-preview-offset` is built from. Constant at every breakpoint
+ *  (Tailwind h-4), so the band inside it can change height without moving the
+ *  preview, the transport, or anything sticking below. */
+const DIVIDER_HEIGHT_PX = 16;
+/** Where the visible band's mid-line falls inside that box. The band is
+ *  CENTERED on this line at every breakpoint rather than sized from the top,
+ *  which is what lets it be 8px on desktop and 12px on coarse-pointer widths
+ *  (where it hosts the grip) without the transport shifting. The transport is
+ *  centered on the same line and may overhang the band freely. */
+const DIVIDER_BAND_CENTER_PX = 10;
 
 type WorkbenchDividerTransportProps = {
   currentTime: number;
@@ -156,10 +154,15 @@ function WorkbenchDividerTransport({
           aria-label={isPlaying ? "Pause workbench preview" : "Play workbench preview"}
           title={isPlaying ? "Pause" : "Play"}
         >
+          {/* ACTIVE = the highlighted state (the preview is hovered, or this
+              button is), the same condition that used to only whiten the
+              glyph. It now INVERTS: a solid white disc with the mark punched
+              black out of it. Resting stays background-free, and the disc is
+              the well's own size, so nothing shifts as it lights up. */}
           <span
             className={cn(
-              "grid size-5 place-items-center rounded-full transition-colors group-hover/play:text-white group-focus-visible/play:ring-2 group-focus-visible/play:ring-sky-400 group-focus-visible/play:ring-offset-2 group-focus-visible/play:ring-offset-zinc-950",
-              previewHovered && "text-white",
+              "grid size-5 place-items-center rounded-full transition-colors group-hover/play:bg-white group-hover/play:text-zinc-950 group-focus-visible/play:ring-2 group-focus-visible/play:ring-sky-400 group-focus-visible/play:ring-offset-2 group-focus-visible/play:ring-offset-zinc-950",
+              previewHovered && "bg-white text-zinc-950",
             )}
             data-transport-primary-control
           >
@@ -907,7 +910,7 @@ export function WorkbenchDisplaySurface({
           <button
             type="button"
             onClick={onClose}
-            className="absolute right-2 top-2 z-10 grid size-7 place-items-center rounded-full border border-zinc-800 bg-zinc-900/80 text-zinc-400 backdrop-blur-sm transition-colors hover:border-zinc-600 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+            className="absolute right-4 top-4 z-10 grid size-7 place-items-center rounded-full border border-zinc-800 bg-zinc-900/80 text-zinc-400 backdrop-blur-sm transition-colors hover:border-zinc-600 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
             aria-label="Close preview"
             title="Close preview"
             data-testid="workbench-preview-close"
@@ -1239,10 +1242,11 @@ export function WorkbenchSplitPane({
           aria-valuemin={MIN_SURFACE_HEIGHT}
           aria-valuenow={Math.round(surfaceHeight)}
           aria-label="Resize workbench display"
-          // pt-1 + h-3 = DIVIDER_HEIGHT_PX. The padding is the gap under the
-          // preview; the band below it is both the visible divider and the
-          // drag track, and the transport rides centered on that band.
-          className="group relative block w-full cursor-row-resize bg-transparent pt-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+          // h-4 = DIVIDER_HEIGHT_PX: the whole box is the drag target, and it
+          // stays this height at every breakpoint. The visible band inside is
+          // smaller and centered, so the space above it reads as the gap under
+          // the preview without being separate padding.
+          className="group relative block h-4 w-full cursor-row-resize bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
           data-workbench-divider
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
@@ -1250,27 +1254,31 @@ export function WorkbenchSplitPane({
           onPointerCancel={handleDividerPointerUp}
         >
           {/* The band fades out across the 132px transport group so no divider
-              color shows behind its background-free icons — the same window
-              the one-pixel centerline used, now filling the full band. */}
+              color shows behind its background-free icons.
+
+              CENTERED on DIVIDER_BAND_CENTER_PX rather than sized from the
+              box's top: 8px at desktop, and 12px below `md`, where it has to
+              stay tall enough to hold the grip icon. Because both heights
+              share one mid-line, the transport that rides on it never moves. */}
           <span
             aria-hidden="true"
-            className="pointer-events-none block h-3 rounded-sm bg-[linear-gradient(to_right,currentColor_0,currentColor_calc(50%_-_6.125rem),transparent_calc(50%_-_4.125rem),transparent_calc(50%_+_4.125rem),currentColor_calc(50%_+_6.125rem),currentColor_100%)] text-zinc-800 transition-colors group-hover:text-zinc-700 group-active:text-zinc-600"
+            className="pointer-events-none absolute inset-x-0 h-3 rounded-sm bg-[linear-gradient(to_right,currentColor_0,currentColor_calc(50%_-_6.125rem),transparent_calc(50%_-_4.125rem),transparent_calc(50%_+_4.125rem),currentColor_calc(50%_+_6.125rem),currentColor_100%)] text-zinc-800 transition-colors group-hover:text-zinc-700 group-active:text-zinc-600 md:h-2"
+            style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
             data-divider-line
           />
           {/* Coarse-pointer devices never see the hover brighten, so at tablet
-              width and below the band carries a standing grip mark instead.
-              ONE mark, at 7rem left of centre: the centre belongs to the
-              transport (solid band resumes past ±6.125rem) and the band's
-              right end belongs to the time readout, whose opaque pill is up
-              to half the width — a mirrored mark over there is simply painted
-              over. Left of the transport is the only place on a phone-width
-              band that is reliably empty. */}
+              width and below the band carries a standing grip instead. At the
+              band's far LEFT: the centre belongs to the transport and the right
+              end to the time readout, whose opaque pill can span half the
+              width — anything placed there is simply painted over. */}
           <span
             aria-hidden="true"
             data-divider-grip
-            className="pointer-events-none absolute left-[calc(50%_-_7rem)] h-0.5 w-5 rounded-full bg-zinc-500 md:hidden"
+            className="pointer-events-none absolute left-2 text-zinc-500 md:hidden"
             style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
-          />
+          >
+            <GripHorizontal className="h-3 w-3" strokeWidth={2.5} />
+          </span>
         </button>
         </div>
       ) : null}

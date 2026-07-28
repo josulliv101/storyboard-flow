@@ -170,9 +170,14 @@ function DropZone({
         ZONE_BASE,
         active ? "pointer-events-auto scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0",
         hint
-          ? hint.invalid
-            ? "border-transparent bg-zinc-900/70 text-zinc-500"
-            : "border-transparent bg-zinc-800/75 text-zinc-200 shadow-sm"
+          ? // No fill: this is a READOUT borrowing the zone's pixels to name
+            // where the drop will land, not a target of its own — a panel
+            // behind it read as a second droppable. Valid vs invalid is
+            // carried by text color alone. The zone's own states below keep
+            // their backgrounds; only this branch goes bare.
+            hint.invalid
+            ? "border-transparent bg-transparent text-zinc-500"
+            : "border-transparent bg-transparent text-zinc-200"
           : state === "over"
             ? accent.over
             : state === "invalid"

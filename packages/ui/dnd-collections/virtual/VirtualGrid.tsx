@@ -414,11 +414,20 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                         {
                           width: fillCellWidth,
                           height: cellHeight,
-                          // A row-start boundary is the grid's left edge, not
-                          // the centre of a fictional gap outside the scroller.
-                          // Match the virtual indicator's clamped coordinate so
-                          // the two rendering paths can never alternate.
-                          "--dnd-drop-indicator-half-gap": colInRow === 0 ? "0px" : `${gap / 2}px`,
+                          // A row-EDGE boundary is the grid's own edge, not the
+                          // centre of a fictional gap outside the scroller, so
+                          // those bars sit flush; matching the virtual
+                          // indicator's clamped coordinate keeps the two
+                          // rendering paths from alternating. The sides are
+                          // separate because only ONE of a cell's two gaps is
+                          // ever the row edge — with a single shared value the
+                          // first cell in every row also lost the offset on its
+                          // interior side, and the bar sat against the card
+                          // instead of in the middle of a real gap.
+                          "--dnd-drop-indicator-half-gap-before":
+                            colInRow === 0 ? "0px" : `${gap / 2}px`,
+                          "--dnd-drop-indicator-half-gap-after":
+                            colInRow === cols - 1 ? "0px" : `${gap / 2}px`,
                         } as CSSProperties
                       }
                     >

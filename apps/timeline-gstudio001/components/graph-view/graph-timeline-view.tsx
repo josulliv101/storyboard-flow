@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import {
+  ClearSelectionOnOutsideClick,
   DndCollections,
   buildGraph,
   parseNodeId,
@@ -594,6 +595,11 @@ export function GraphTimelineView({
         itemInstructions="Press O to open the focused collection, or F2 to rename it."
       >
           <PersistenceBridge onSync={onSync} />
+          {/* The whole graph route is the collection's screen, so clicking
+              away ANYWHERE that is not a control deselects — not just inside a
+              strip or grid box, which was the only place that worked and made
+              "get back to nothing selected" a hunt for the right pixel. */}
+          <ClearSelectionOnOutsideClick />
           <GraphItemActionsBridge trashId={boot.trashRootId} focusedId={focusedId} />
           <McpToolsBridge
             projectId={projectId}

@@ -116,6 +116,10 @@ export {
   type CollectionsClickSelection,
   type CollectionsInteractionPolicy,
 } from "./react/interaction-policy";
+// Empty space clears the selection. The virtual surfaces do this for their own
+// box already; mount this inside the provider to widen it to the whole screen
+// the collection owns — the package cannot know where that ends.
+export { ClearSelectionOnOutsideClick } from "./react/use-background-clear";
 export {
   CollectionPanel,
   CollectionPanels,

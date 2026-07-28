@@ -2271,3 +2271,45 @@ export const BackgroundClickClearsSelection: Story = {
     );
   },
 };
+
+export const DropIndicatorCentersInGap: Story = {
+  // PL8-005: the bar must sit in the MIDDLE of the gap it marks. The card's
+  // own before/after bars back out by half a gap to do that, and the first
+  // card used to zero BOTH sides — so the boundary between card 0 and card 1,
+  // a perfectly ordinary gap, drew its bar jammed against card 0's edge.
+  render: () => (
+    <DndCollections initialGraph={variableGraph()}>
+      <div className="w-[640px]">
+        <VirtualStrip collectionId={parseNodeId("strip")} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const dragged = nodeHandle(canvasElement, "m2");
+    const m0 = nodeCard(canvasElement, "m0");
+    const m1 = nodeCard(canvasElement, "m1");
+    await waitForLayout(m1);
+
+    const barCenter = () => {
+      const bar = canvasElement.querySelector<HTMLElement>("[data-drop-indicator]");
+      if (!bar) return null;
+      const box = bar.getBoundingClientRect();
+      return box.left + box.width / 2;
+    };
+
+    // Aim INSIDE m0's right half, so the bar is drawn by the FIRST card's own
+    // trailing side. Releasing in the gap instead lets m1 win the collision
+    // and draw its leading bar, which never had the bug.
+    const m0Box = m0.getBoundingClientRect();
+    const m1Box = m1.getBoundingClientRect();
+    const insideM0Right = { x: m0Box.right - 4, y: m0Box.top + m0Box.height / 2 };
+    await dragHoldAt(dragged, insideM0Right);
+    await waitFor(() => expect(barCenter()).not.toBeNull());
+    expect(
+      canvasElement.querySelector("[data-drop-indicator]")!.getAttribute("data-drop-indicator"),
+    ).toBe("after");
+    expect(barCenter()!).toBeCloseTo((m0Box.right + m1Box.left) / 2, 0);
+
+    await releaseAt(insideM0Right);
+  },
+};

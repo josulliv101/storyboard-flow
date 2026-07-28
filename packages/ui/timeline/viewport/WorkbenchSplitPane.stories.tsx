@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import type { TimelineClip } from "../types";
 
@@ -96,11 +96,12 @@ export const StickyPreview: Story = {
     // only at tablet width and below (md:hidden), so presence is what this
     // story can assert without pinning the canvas width.
     expect(divider.querySelector("[data-divider-grip]")).not.toBeNull();
-    // 4px of padding above a 12px band: the box is 16 and the band is
-    // BOTTOM-aligned in it, so the gap lands under the preview surface.
+    // The box is the hit target and stays 16 at every breakpoint. The visible
+    // band is smaller and CENTERED on one fixed mid-line, so its height can
+    // change (8 desktop / 12 coarse-pointer) without moving anything.
     expect(dividerBox.height).toBe(16);
-    expect(dividerLineBox.height).toBe(12);
-    expect(dividerLineBox.bottom).toBeCloseTo(dividerBox.bottom, 0);
+    expect(dividerLineBox.height).toBeLessThan(dividerBox.height);
+    expect(dividerLineBox.y + dividerLineBox.height / 2).toBeCloseTo(dividerBox.y + 10, 0);
     // The transport centers on the BAND, not on the padded box.
     expect(dividerLineBox.y + dividerLineBox.height / 2).toBeCloseTo(
       buttonGroupBox.y + buttonGroupBox.height / 2,
@@ -248,6 +249,10 @@ export const ControlledPlayback: Story = {
     expect(canvas.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
     expect(previewCanvas).not.toHaveAttribute("tabindex");
 
+    // RESTING: background-free, so the mark reads straight off the divider.
+    expect(getComputedStyle(primaryControl!).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    const restingColor = getComputedStyle(primaryControl!).color;
+
     const previewBounds = previewCanvas.getBoundingClientRect();
     await user.pointer({
       target: previewCanvas,
@@ -257,8 +262,20 @@ export const ControlledPlayback: Story = {
       },
     });
     expect(getComputedStyle(previewCanvas).cursor).toBe("pointer");
-    expect(primaryControl).toHaveClass("text-white");
-    expect(getComputedStyle(primaryControl!).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    // ACTIVE: the control INVERTS — solid white disc, mark punched black out
+    // of it — rather than just brightening the glyph.
+    // POLLED, not read once: the control carries `transition-colors`, so an
+    // immediate getComputedStyle returns a value part-way through the fade —
+    // which read as "still transparent" and looked exactly like the class not
+    // applying at all.
+    await waitFor(() =>
+      expect(getComputedStyle(primaryControl!).backgroundColor).toBe("rgb(255, 255, 255)"),
+    );
+    // The glyph color is not pinned to a literal: the token serializes as
+    // oklch, and which color space a browser reports is not what this story is
+    // about. What matters is that it left the resting zinc for the dark mark
+    // the new white disc needs.
+    expect(getComputedStyle(primaryControl!).color).not.toBe(restingColor);
     expect(controls).toHaveAttribute("data-transport-layout", "static");
     await user.unhover(previewCanvas);
 

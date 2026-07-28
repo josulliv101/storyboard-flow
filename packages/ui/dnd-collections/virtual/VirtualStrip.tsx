@@ -890,8 +890,17 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                       width: item.size - gap,
                       height: itemHeight,
                       transform: `translateX(${item.start}px)`,
-                      "--dnd-drop-indicator-half-gap":
+                      // Only the FIRST card's leading side is special: there
+                      // is no gap before it, and the scroll box clips anything
+                      // pulled out into the container's padding. Its trailing
+                      // side has an ordinary gap and gets the ordinary offset.
+                      // Only the FIRST card's leading side is special: there
+                      // is no gap before it, and the scroll box clips anything
+                      // pulled out into the container's padding. Its trailing
+                      // side has an ordinary gap and gets the ordinary offset.
+                      "--dnd-drop-indicator-half-gap-before":
                         item.index === 0 ? "0px" : `${gap / 2}px`,
+                      "--dnd-drop-indicator-half-gap-after": `${gap / 2}px`,
                     } as CSSProperties
                   }
                 >
