@@ -372,6 +372,43 @@ Proven fail-first: with the bridge branch removed, the header reads the new
 name while the stored clip still says `alpha` — exactly the silent revert the
 branch exists to prevent.
 
+## PL10-011 — The icon rail goes full-width and flat
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `timeline-sidebar.tsx`
+- Screenshot: Not captured
+
+The rail's icons were hard to see: 44px tiles inset in a 72px rail with 16px
+glyphs. Now every tile — the logo included — is a square that spans the rail's
+full inner width, and the glyphs are 28px.
+
+Sized as `w-full aspect-square` rather than a fixed `size-*`, with the rail's
+horizontal padding removed, so the tile and the rail can never drift: change
+the rail's width and every tile follows.
+
+Also, on the same pass:
+
+- The two folder tiles' corner badges scale with the glyph — 14px → 24px, with
+  their inner mark 10px → 16px, so they stay in proportion rather than
+  becoming specks.
+- No borders and no rounded corners on any tile, in any state. `translate-y-px`
+  went with them: pressed tiles nudging down by a pixel opened a hairline seam
+  now that tiles are flush, reading as misalignment rather than as a press.
+- The logo has no background of its own, and its centre is aligned to the
+  board header's — measured 41.5px for both, so the mark and the breadcrumb
+  read as one horizontal plane.
+- No gaps between tiles: the column is continuous, with the explicit
+  separators (and their own margin) doing the grouping.
+
+Acceptance criteria:
+
+- Every tile is square and spans the rail's inner width (71px in a 72px rail —
+  the missing pixel is the rail's own right border).
+- Glyphs are legibly larger; badge marks stay in proportion.
+- No tile has a border or a rounded corner in any state.
+- The logo's vertical centre matches the board header's.
+
 ## PL10-003 — The call-out must not flash a scrollbar
 
 - Status: Complete
