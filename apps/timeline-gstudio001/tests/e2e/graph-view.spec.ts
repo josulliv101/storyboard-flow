@@ -440,6 +440,18 @@ async function settleMoveAnimations(page: Page): Promise<void> {
 }
 
 /**
+ * Opens an item's details the way a user does now (PL11-002): the trigger
+ * lives on the card, hidden until hover or focus. Playwright's click hovers
+ * first, so the reveal is implicit — but the click is FORCED past the
+ * opacity-0 idle state, which is a visibility rule rather than a hit-testing
+ * one.
+ */
+async function openItemDetails(page: Page, nodeId: string): Promise<void> {
+  await page.locator(`[data-item-details-trigger="${nodeId}"]`).click();
+  await settleViewTransition(page);
+}
+
+/**
  * Waits out a CSS view transition. While one runs, the browser paints a
  * SNAPSHOT of the page over the real DOM — and a snapshot is an image, so
  * every real pointer event during it lands on `<html>` instead of on whatever
@@ -3981,7 +3993,7 @@ test.describe("graph view E2E", () => {
       );
     expect(await heroCount()).toBe(0);
 
-    await page.getByRole("button", { name: "Open item details" }).click();
+    await openItemDetails(page, "alpha");
     const modal = page.getByRole("dialog");
     await expect(modal).toHaveCount(1);
     // Only the modal's frame holds the name while it is open — the card gave
@@ -4027,7 +4039,7 @@ test.describe("graph view E2E", () => {
     await expect.poll(heroCount).toBe(0);
 
     // And it reopens, which is what a stranded name would have broken.
-    await page.getByRole("button", { name: "Open item details" }).click();
+    await openItemDetails(page, "alpha");
     await expect(page.getByRole("dialog")).toHaveCount(1);
     expect(await heroCount()).toBe(1);
   });
@@ -4043,15 +4055,27 @@ test.describe("graph view E2E", () => {
     // bravo is an IMAGE, and we are in the grid — the two things the old
     // trim-only toggle refused.
     const bravo = page.locator('[data-node-id="bravo"]');
-    await expect(async () => {
-      await bravo.click();
-      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
-    }).toPass({ timeout: 10000 });
+    const trigger = page.locator('[data-item-details-trigger="bravo"]');
+    await expect(trigger).toHaveCount(1);
 
-    const toggle = page.getByRole("button", { name: "Open item details" });
-    await expect(toggle).toBeEnabled();
-    await toggle.click();
-    await settleViewTransition(page);
+    // Hidden until the card is hovered or focused. Asserted BEFORE anything is
+    // clicked: clicking a card focuses it, and focus legitimately reveals the
+    // trigger, so a click first would make the idle state untestable. (Real
+    // hover only — the reveal is a CSS `:hover` rule, which synthetic mouse
+    // events cannot produce.)
+    const opacity = () => trigger.evaluate((el) => getComputedStyle(el).opacity);
+    await expect.poll(opacity).toBe("0");
+    await bravo.hover();
+    await expect.poll(opacity).toBe("1");
+    await page.mouse.move(0, 0);
+    await expect.poll(opacity).toBe("0");
+    await trigger.focus();
+    await expect.poll(opacity).toBe("1");
+
+    // Pressing it selects the card as well, so the board's selection-scoped
+    // readouts agree with what the view is showing.
+    await openItemDetails(page, "bravo");
+    await expect(bravo).toHaveAttribute("data-selected", "true");
 
     const details = page.getByRole("dialog");
     await expect(details).toHaveCount(1);
@@ -4070,6 +4094,17 @@ test.describe("graph view E2E", () => {
 
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-item-details]")).toHaveCount(0);
+
+    // Keyboard reachable: the card is the surface's one roving tab stop, and
+    // its trigger is the next one — so Tab from the card lands on it and
+    // Enter opens the view. A flat tabIndex would have put every mounted
+    // card's trigger in the order instead.
+    await bravo.focus();
+    await page.keyboard.press("Tab");
+    await expect(page.locator('[data-item-details-trigger="bravo"]')).toBeFocused();
+    await page.keyboard.press("Enter");
+    await settleViewTransition(page);
+    await expect(page.getByRole("dialog")).toHaveCount(1);
   });
 
   test("ctrl+z undoes and ctrl+shift+z redoes from the keyboard", async ({ page }) => {
@@ -4141,8 +4176,7 @@ test.describe("graph view E2E", () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await page.getByRole("button", { name: "Open item details" }).click();
-    await settleViewTransition(page);
+    await openItemDetails(page, "alpha");
 
     const undo = page.locator("[data-item-details-undo]");
     const redo = page.locator("[data-item-details-redo]");
@@ -4192,8 +4226,7 @@ test.describe("graph view E2E", () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await page.getByRole("button", { name: "Open item details" }).click();
-    await settleViewTransition(page);
+    await openItemDetails(page, "alpha");
 
     const storedAlt = () =>
       api.documents.get(PROJECT_ID)?.clips.find((clip) => clip.id === "alpha")?.alt;

@@ -9,6 +9,7 @@ import {
   TrimOverviewStrip,
   isEditableKeyboardTarget,
   mediaDurationSeconds,
+  parseNodeId,
   useCollectionsSelector,
   useCollectionsStore,
   useLiveTrim,
@@ -377,16 +378,15 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
  * card INSIDE the closing callback rather than after it.
  */
 export function GraphItemDetailsModal() {
-  const { open, setOpen } = useItemDetails();
-  // ANY selected media item, not just a video: the view is where an item's
-  // details live, and a still has details too (PL10-012). Videos get the
-  // frame + source strip; images get the still and their duration.
+  const { openId, setOpenId } = useItemDetails();
+  // The item the TRIGGER named (PL11-002), not whatever happens to be
+  // selected: the trigger lives on a card, and a card can be pressed without
+  // being the selection. Any media item qualifies — a video gets the frame and
+  // the source strip, a still gets its image and its duration (PL10-012).
   const node = useCollectionsSelector((s) => {
-    for (const id of s.interaction.selectedIds) {
-      const found = s.graph.nodesById.get(id);
-      if (found?.kind === "media") return found;
-    }
-    return null;
+    if (openId === null) return null;
+    const found = s.graph.nodesById.get(parseNodeId(openId));
+    return found?.kind === "media" ? found : null;
   });
   const [mounted, setMounted] = useState(false);
   const openIdRef = useRef<string | null>(null);
@@ -394,7 +394,7 @@ export function GraphItemDetailsModal() {
   // Opening and closing are driven by the context flag so the toolbar button,
   // Escape, the close button and the scrim all go through one path.
   useEffect(() => {
-    const wanted = open && node !== null && !!node.src;
+    const wanted = openId !== null && node !== null && !!node.src;
     if (wanted === mounted) return;
 
     if (wanted && node) {
@@ -418,8 +418,8 @@ export function GraphItemDetailsModal() {
       card?.style.removeProperty("view-transition-name");
       openIdRef.current = null;
     });
-  }, [open, node, mounted]);
+  }, [openId, node, mounted]);
 
   if (!mounted || node === null || !node.src) return null;
-  return <ModalBody node={node} onClose={() => setOpen(false)} />;
+  return <ModalBody node={node} onClose={() => setOpenId(null)} />;
 }

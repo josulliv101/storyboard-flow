@@ -3,27 +3,29 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
 /**
- * Whether the item-details view is open (PL10-004, generalized by PL10-012).
+ * WHICH item has its details open (PL10-004 → PL11-002).
  *
- * A MODE, not a per-item flag: details work is done in passes, so opening it
- * once keeps it open as the selection moves from item to item. The view itself
- * decides what to draw for whatever is selected — and for a video it also
- * appears unpinned for the length of a trim drag, so the gesture that needs it
- * summons it whether or not the mode is on.
+ * It used to be a boolean mode paired with "whatever is selected", because the
+ * only trigger was a toolbar button. The trigger now lives on the card itself,
+ * and a card can be pressed without being the selection — so the open item is
+ * named here rather than inferred. `null` is closed.
  *
  * Session-scoped on purpose (state, not storage): the view costs a video
  * element and a filmstrip, and having it survive a reload would mean paying
- * that on every page load for a mode the user may have opened once, days ago.
+ * that on every page load for something the user opened once, days ago.
  */
-type ItemDetailsValue = Readonly<{ open: boolean; setOpen: (next: boolean) => void }>;
+type ItemDetailsValue = Readonly<{
+  openId: string | null;
+  setOpenId: (next: string | null) => void;
+}>;
 
 const ItemDetailsContext = createContext<ItemDetailsValue | null>(null);
 
-const CLOSED: ItemDetailsValue = { open: false, setOpen: () => {} };
+const CLOSED: ItemDetailsValue = { openId: null, setOpenId: () => {} };
 
 export function ItemDetailsProvider({ children }: Readonly<{ children: ReactNode }>) {
-  const [open, setOpen] = useState(false);
-  const value = useMemo(() => ({ open, setOpen }), [open]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const value = useMemo(() => ({ openId, setOpenId }), [openId]);
   return <ItemDetailsContext.Provider value={value}>{children}</ItemDetailsContext.Provider>;
 }
 
