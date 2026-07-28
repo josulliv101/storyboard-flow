@@ -10,12 +10,15 @@ import {
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
-// The live trim FRAME (PL10-005): during a drag, a small still of the source
-// at the edge you are moving, laid in the breadcrumb row's band above the
-// strip and hugging the edge being dragged — in-edge drags align its LEFT to
-// the clip's left, out-edge drags align its RIGHT to the clip's right. It is
-// the height of that row and no taller, so it borrows space that is already
-// chrome rather than taking a band of its own.
+// The live trim FRAME (PL10-005, placed by PL10-007): during a drag, a small
+// still of the source at the edge you are moving, hovering directly above the
+// clip and hugging the edge being dragged — in-edge drags align its LEFT to
+// the clip's left, out-edge drags align its RIGHT to the clip's right.
+//
+// It is sized to the breadcrumb row's height and no taller. That row is the
+// app's "one row of chrome" measure, so a frame that size reads as chrome
+// instead of as a panel — but it is a SIZE reference only. The frame follows
+// the clip, which in a nested strip is nowhere near the header.
 //
 // Its other half, the source MAP, is docked under the strip in
 // `graph-trim-dock` — not floated here. A floating panel anchored to a card
@@ -108,9 +111,11 @@ function LiveEdgeFrame({
     const frame = frameRef.current;
     if (!frame) return;
     const card = anchor.getBoundingClientRect();
-    // The band is MEASURED off the header rather than hardcoded: it is a
-    // sticky row whose offset moves with the preview pane, and a constant
-    // would drift the moment either changes.
+    // The breadcrumb row sets the SIZE, not the place: it is the app's
+    // established "one row of chrome" height, so a frame that tall reads as
+    // chrome rather than as a panel. Measured off the header rather than
+    // hardcoded because that row is sticky and its height travels with the
+    // toolbar's contents.
     const band = document
       .querySelector("[data-graph-board-header]")
       ?.getBoundingClientRect();
@@ -125,8 +130,13 @@ function LiveEdgeFrame({
       Math.max(PANEL_MARGIN, pinned),
       window.innerWidth - width - PANEL_MARGIN,
     );
+    // Directly above the CLIP being trimmed, not parked in the header band —
+    // the frame belongs to the card under the pointer, and in a nested strip
+    // the header is nowhere near it. It may end up over the header when the
+    // focused strip is the top row; that's incidental, not the anchor.
+    const top = Math.max(PANEL_MARGIN, card.top - height - PANEL_MARGIN);
     frame.style.left = `${left}px`;
-    frame.style.top = `${band?.top ?? PANEL_MARGIN}px`;
+    frame.style.top = `${top}px`;
     frame.style.width = `${width}px`;
     frame.style.height = `${height}px`;
   }, [anchor, live]);

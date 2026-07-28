@@ -4027,10 +4027,11 @@ test.describe("graph view E2E", () => {
     expect((await alpha.boundingBox())!.width).toBeCloseTo(cardWidthBefore, 0);
   });
 
-  test("a trim drag floats the edge frame in the header band", async ({ page }) => {
-    // PL10-005. The live frame is its own small surface now: the height of the
-    // breadcrumb row, borrowing a band that is already chrome, with the edge
-    // being dragged pinned to the matching edge of the frame.
+  test("a trim drag floats the edge frame above the clip", async ({ page }) => {
+    // PL10-005/007. The live frame is its own small surface: sized to the
+    // breadcrumb row (a size reference, not a location — it follows the CLIP,
+    // which in a nested strip is nowhere near the header) with the edge being
+    // dragged pinned to the matching edge of the frame.
     await installGraphApi(page);
     await openGraph(page);
 
@@ -4056,13 +4057,11 @@ test.describe("graph view E2E", () => {
     const band = (await page.locator("[data-graph-board-header]").boundingBox())!;
     const frameBox = (await frame.boundingBox())!;
     const cardBox = (await alpha.boundingBox())!;
-    // It lives in the band, at the band's height — not taller, and not
-    // pushing the strip down.
+    // Sized to the breadcrumb row, and 16:9 from that.
     expect(frameBox.height).toBeCloseTo(band.height, 0);
-    expect(frameBox.y).toBeCloseTo(band.y, 0);
-    expect(frameBox.y + frameBox.height).toBeLessThanOrEqual(
-      (await strip(page, PROJECT_ID).boundingBox())!.y + 1,
-    );
+    expect(frameBox.width).toBeCloseTo(Math.round((band.height * 16) / 9), 0);
+    // Placed against the CLIP: sitting just above it, not in the header band.
+    expect(frameBox.y + frameBox.height).toBeCloseTo(cardBox.y - 8, 0);
     // Out-edge drag: the frame's RIGHT edge rides the clip's right edge.
     expect(frameBox.x + frameBox.width).toBeCloseTo(cardBox.x + cardBox.width, 0);
 

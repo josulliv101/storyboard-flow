@@ -223,6 +223,40 @@ when a short clip comes from a long source. Fitted mode dims at 30% and lets
 the amber window's border carry the distinction; the unfitted path is
 unchanged.
 
+## PL10-007 — The live frame belongs to the clip, not the header
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-trim-panel.tsx`
+- Screenshot: Not captured
+
+PL10-005 read the brief wrong. "The height of the breadcrumb row" is a SIZE,
+not an address: the frame was being parked in the header band, which is fine
+when the focused strip is the top row and wrong everywhere else — trimming a
+clip in a sub-timeline put the preview a screen away from the pointer.
+
+It now hovers directly above the clip being trimmed, 8px up, still sized to
+the breadcrumb row's measured height (16:9 from it). It may still land over
+the header when the focused strip is the top row; that is incidental, not the
+anchor.
+
+Acceptance criteria:
+
+- The frame sits directly above the clip being trimmed, at any drill depth.
+- Height still equals the board header's, measured.
+- The dragged edge's side of the frame still aligns to the clip's matching
+  edge.
+
+Live-measured in a sub-timeline row: frame at y=302 for a card at y=367 — 8px
+above it and 232px BELOW the header, where the old placement would have put
+it. Focused-strip case unchanged: 8px above the card, right edge on the clip's
+right edge to the pixel.
+
+Known edge: when the clip is wider than the viewport its trimmed edge can be
+off-screen, and the frame clamps into view rather than following the edge out
+of it. Only reachable synthetically — a real drag holds the handle, which is
+on screen by definition.
+
 ## PL10-003 — The call-out must not flash a scrollbar
 
 - Status: Complete
