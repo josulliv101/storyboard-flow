@@ -75,9 +75,9 @@ function TrashAreaIcon({ className }: Readonly<{ className?: string }>) {
       data-sidebar-icon="trash"
       className={cn("relative inline-flex shrink-0 overflow-visible", className)}
     >
-      <Folder className="h-full w-full" strokeWidth={2.1} />
+      <Folder className="h-full w-full" strokeWidth={1.5} />
       <span className="absolute -bottom-1.5 -right-1.5 flex size-6 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
-        <Trash2 className="size-4" strokeWidth={2.7} />
+        <Trash2 className="size-4" strokeWidth={1.9} />
       </span>
     </span>
   );
@@ -91,9 +91,9 @@ function MediaFolderIcon({ className }: Readonly<{ className?: string }>) {
       aria-hidden="true"
       className={cn("relative inline-flex shrink-0 overflow-visible", className)}
     >
-      <Folder className="h-full w-full" strokeWidth={2.1} />
+      <Folder className="h-full w-full" strokeWidth={1.5} />
       <span className="absolute -bottom-1.5 -right-1.5 flex size-6 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
-        <ImageIcon className="size-4" strokeWidth={2.5} />
+        <ImageIcon className="size-4" strokeWidth={1.9} />
       </span>
     </span>
   );
@@ -107,7 +107,7 @@ const SIDEBAR_ICON_BASE =
   "group/sidebar-item relative flex w-full aspect-square items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-400";
 /** The glyph inside a tile. Larger than the old h-4: legibility is the point
  *  of the bigger tiles, and a 16px icon in a 72px square reads as a dot. */
-const SIDEBAR_GLYPH = "h-7 w-7 transition-colors";
+const SIDEBAR_GLYPH = "h-7 w-7 [stroke-width:1.5] transition-colors";
 const SIDEBAR_ICON_IDLE =
   "bg-zinc-900/40 text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100";
 // No `translate-y-px` any more: with the tiles flush against each other, a
@@ -556,7 +556,7 @@ export function TimelineSidebar() {
       <Link
         href="/"
         aria-label="Storyboard Workbench home"
-        className="flex w-full aspect-square items-center justify-center text-lg font-black text-zinc-400 transition-colors hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
+        className="flex w-full aspect-square items-center justify-center text-lg font-black text-white transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
       >
         SW
       </Link>
