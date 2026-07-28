@@ -790,7 +790,7 @@ test.describe("graph view E2E", () => {
     expect(patch?.clipIds).toEqual(["alpha", "bravo", "charlie", "clip-scene"]);
   });
 
-  test("renaming the focused BREADCRUMB crumb in place persists the collection title", async ({
+  test("only the current BREADCRUMB edits in place; every ancestor links to its view", async ({
     page,
   }) => {
     const api = await installGraphApi(page);
@@ -805,9 +805,9 @@ test.describe("graph view E2E", () => {
     const trail = page.getByRole("navigation", { name: "Timeline focus path" });
     await expect(trail).toContainText("Scene A");
 
-    // Double-click the current crumb → inline editor; commit with Enter.
-    await trail.getByText("Scene A", { exact: true }).dblclick();
-    const editor = page.getByRole("textbox", { name: "Timeline name" });
+    // One click edits the current crumb; Enter commits.
+    await trail.getByRole("button", { name: "Rename Scene A" }).click();
+    const editor = page.getByRole("textbox", { name: "Rename Scene A" });
     await editor.fill("Getaway");
     await editor.press("Enter");
 
@@ -815,6 +815,80 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
       .toBe("Getaway");
+
+    // Ancestors are navigation links, not rename controls.
+    const rootCrumb = trail.getByRole("link", { name: "E2E Project" });
+    await expect(rootCrumb).toHaveAttribute("href", `/timeline/${PROJECT_ID}/graph`);
+    await expect(trail.getByRole("button", { name: "Rename E2E Project" })).toHaveCount(0);
+    await rootCrumb.click();
+    await expect(page).toHaveURL(new RegExp(`/timeline/${PROJECT_ID}/graph$`));
+    await expect(
+      page
+        .getByRole("navigation", { name: "Timeline focus path" })
+        .getByRole("button", { name: "Rename E2E Project" }),
+    ).toBeVisible();
+  });
+
+  test("focused strip and grid surfaces have no outer shell padding", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+
+    await expect(page.getByRole("button", { name: "Board options" }).locator("svg"))
+      .toHaveClass(/lucide-settings/);
+    await expect(page.locator("aside").getByRole("button", { name: "Settings" })).toHaveCount(0);
+
+    const boxStyles = (selector: string) =>
+      page.locator(selector).evaluate((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return {
+          padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft],
+          border: [
+            style.borderTopWidth,
+            style.borderRightWidth,
+            style.borderBottomWidth,
+            style.borderLeftWidth,
+          ],
+          left: rect.left,
+          right: rect.right,
+        };
+      });
+
+    const headerBox = await boxStyles("[data-graph-board-header]");
+    await expect(page.locator("[data-board-header-edge-occluder]")).toHaveCount(2);
+    const stripBox = await boxStyles(`[data-virtual-strip="${PROJECT_ID}"]`);
+    expect(stripBox.padding).toEqual(["0px", "0px", "0px", "0px"]);
+    expect(stripBox.border).toEqual(["0px", "0px", "0px", "0px"]);
+    expect(stripBox.left).toBeCloseTo(headerBox.left, 1);
+    expect(stripBox.right).toBeCloseTo(headerBox.right, 1);
+
+    await surfaceButton(page, "grid").click();
+    await expect(page.locator('[data-focused-surface-shell="grid"]')).toBeVisible();
+    const gridBox = await boxStyles(`[data-virtual-grid="${PROJECT_ID}"]`);
+    expect(gridBox.padding).toEqual(["0px", "0px", "0px", "0px"]);
+    expect(gridBox.border).toEqual(["0px", "0px", "0px", "0px"]);
+    expect(gridBox.left).toBeCloseTo(headerBox.left, 1);
+    expect(gridBox.right).toBeCloseTo(headerBox.right, 1);
+  });
+
+  test("selected borders stay inside left and right grid edges", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await surfaceButton(page, "grid").click();
+
+    const grid = page.locator(`[data-virtual-grid="${PROJECT_ID}"]`);
+    const leftCard = grid.locator('[data-node-id="alpha"]');
+    const rightCard = grid.locator('[data-node-id="charlie"]');
+    const collectionCard = grid.locator(`[data-node-id="${CHILD_ID}"]`);
+
+    await leftCard.click();
+    await expect(leftCard.locator(".ring-inset")).toHaveCount(1);
+
+    await rightCard.click();
+    await expect(rightCard.locator(".ring-inset")).toHaveCount(1);
+
+    await collectionCard.click({ position: { x: 10, y: 10 } });
+    await expect(collectionCard).toHaveClass(/ring-inset/);
   });
 
   test("surface toggle is page-wide: sub-graph rows follow grid/strip mode", async ({ page }) => {
@@ -902,16 +976,30 @@ test.describe("graph view E2E", () => {
     await expect.poll(heightOf).toBeGreaterThan(0);
     const initial = await heightOf();
 
-    // Divider restyle: a slim 12px band with a centred grip pill; hovering
-    // tints the WHOLE band gray (the old amber line highlight is gone).
+    // The divider remains a compact 12px track even though its centered
+    // transport overhangs it.
     expect(
       await divider.evaluate((el) => Math.round(el.getBoundingClientRect().height)),
     ).toBe(12);
-    await expect(divider.locator("[data-divider-grip]")).toHaveCount(1);
-    const dividerBg = () => divider.evaluate((el) => getComputedStyle(el).backgroundColor);
-    const restBg = await dividerBg();
-    await divider.hover();
-    await expect.poll(dividerBg).not.toBe(restBg);
+    await expect(divider.locator("[data-divider-grip]")).toHaveCount(0);
+    const splitPane = page.getByTestId("workbench-split-pane");
+    const displaySurface = page.getByTestId("workbench-display-surface");
+    expect(
+      await splitPane.evaluate((element) => getComputedStyle(element).overflowX),
+    ).toBe("visible");
+    await expect(page.locator("[data-preview-edge-occluder]")).toHaveCount(2);
+    expect(
+      await displaySurface.evaluate(
+        (element) => getComputedStyle(element).borderBottomWidth,
+      ),
+    ).toBe("0px");
+    const dividerLine = divider.locator("[data-divider-line]");
+    await expect(dividerLine).toHaveCount(1);
+    const dividerLineColor = () =>
+      dividerLine.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const restLineColor = await dividerLineColor();
+    await divider.hover({ position: { x: 20, y: 6 } });
+    await expect.poll(dividerLineColor).not.toBe(restLineColor);
     await page.mouse.move(0, 0); // unhover before the resize steps below
 
     // Expanding a sub-graph grows the content BELOW the preview. The preview
@@ -959,6 +1047,32 @@ test.describe("graph view E2E", () => {
     await page.keyboard.press("Enter");
     await expect(divider).toBeVisible();
     await expect.poll(heightOf).toBe(initial);
+  });
+
+  test("opening preview preserves a long strip's horizontal scroll position", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await page.setViewportSize({ width: 640, height: 800 });
+    await openGraph(page);
+
+    const projectStrip = strip(page, PROJECT_ID);
+    const before = await projectStrip.evaluate((element) => {
+      const maxScroll = element.scrollWidth - element.clientWidth;
+      if (maxScroll <= 0) throw new Error("Fixture strip does not overflow horizontally.");
+      element.scrollLeft = Math.round(maxScroll * 0.7);
+      element.dataset.scrollIdentityWitness = "same-node";
+      return element.scrollLeft;
+    });
+    expect(before).toBeGreaterThan(0);
+
+    await previewToggle(page).click();
+    await expect(page.getByTestId("workbench-display-surface")).toBeVisible();
+
+    await expect(projectStrip).toHaveAttribute("data-scroll-identity-witness", "same-node");
+    await expect
+      .poll(() => projectStrip.evaluate((element) => element.scrollLeft))
+      .toBe(before);
   });
 
   test("hold-drag reorder persists a patch-scoped write to only the touched document", async ({
@@ -2016,6 +2130,308 @@ test.describe("graph view E2E", () => {
     await expect.poll(translateX).toBeLessThan(20);
   });
 
+  test("preview transport stays static in the divider with time aligned right", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await previewToggle(page).click();
+
+    const surface = page.getByTestId("workbench-display-surface");
+    const canvas = page.getByTestId("workbench-display-canvas");
+    const controls = page.getByTestId("workbench-preview-controls");
+    const buttonGroup = controls.locator("[data-transport-button-group]");
+    const primaryControl = controls.locator("[data-transport-primary-control]");
+    const time = page.getByTestId("workbench-preview-time");
+    const divider = page.getByRole("separator", {
+      name: "Resize workbench display",
+    });
+    const dividerLine = divider.locator("[data-divider-line]");
+    const playButton = page.getByRole("button", {
+      name: "Play workbench preview",
+    });
+
+    expect(await controls.evaluate((element) => getComputedStyle(element).position)).toBe(
+      "absolute",
+    );
+    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+    await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
+    await expect(time).toContainText("/");
+    await expect(controls.locator("[data-transport-capsule]")).toHaveCount(0);
+    await expect(divider.locator("[data-divider-grip]")).toHaveCount(0);
+    expect(
+      await primaryControl.evaluate(
+        (element) => getComputedStyle(element).backgroundColor,
+      ),
+    ).toBe("rgba(0, 0, 0, 0)");
+
+    // All three 44px hit targets remain centered on the fixed 12px divider,
+    // while their visible chrome stays deliberately compact.
+    const [surfaceBox, canvasBox, groupBox, dividerBox, dividerLineBox, timeBox] =
+      await Promise.all([
+        surface.boundingBox(),
+        canvas.boundingBox(),
+        buttonGroup.boundingBox(),
+        divider.boundingBox(),
+        dividerLine.boundingBox(),
+        time.boundingBox(),
+      ]);
+    expect(surfaceBox).not.toBeNull();
+    expect(canvasBox).not.toBeNull();
+    expect(groupBox).not.toBeNull();
+    expect(dividerBox).not.toBeNull();
+    expect(dividerLineBox).not.toBeNull();
+    expect(timeBox).not.toBeNull();
+    expect(dividerBox!.height).toBe(12);
+    expect(groupBox!.width).toBe(132);
+    expect(groupBox!.height).toBe(44);
+    expect(groupBox!.y + groupBox!.height / 2).toBeCloseTo(
+      dividerBox!.y + dividerBox!.height / 2,
+      0,
+    );
+    expect(dividerLineBox!.y + dividerLineBox!.height / 2).toBeCloseTo(
+      groupBox!.y + groupBox!.height / 2,
+      0,
+    );
+    expect(canvasBox!.y + canvasBox!.height).toBeCloseTo(dividerBox!.y, 0);
+    expect(
+      Math.abs(timeBox!.x + timeBox!.width - (surfaceBox!.x + surfaceBox!.width - 12)),
+    ).toBeLessThanOrEqual(1);
+
+    const [previousVisualBox, playVisualBox, nextVisualBox] = await Promise.all([
+      page
+        .getByRole("button", { name: "Previous workbench clip" })
+        .locator("span")
+        .boundingBox(),
+      page
+        .getByRole("button", { name: "Play workbench preview" })
+        .locator("span")
+        .boundingBox(),
+      page
+        .getByRole("button", { name: "Next workbench clip" })
+        .locator("span")
+        .boundingBox(),
+    ]);
+    expect(previousVisualBox).not.toBeNull();
+    expect(playVisualBox).not.toBeNull();
+    expect(nextVisualBox).not.toBeNull();
+    expect(
+      playVisualBox!.x +
+        playVisualBox!.width / 2 -
+        (previousVisualBox!.x + previousVisualBox!.width / 2),
+    ).toBeCloseTo(36, 0);
+    expect(
+      nextVisualBox!.x +
+        nextVisualBox!.width / 2 -
+        (playVisualBox!.x + playVisualBox!.width / 2),
+    ).toBeCloseTo(36, 0);
+
+    // Divider hover does not resize or move the transport.
+    await divider.hover({ position: { x: 20, y: 6 } });
+    const groupAfterHover = await buttonGroup.boundingBox();
+    expect(groupAfterHover).not.toBeNull();
+    expect(groupAfterHover!.x).toBeCloseTo(groupBox!.x, 0);
+    expect(groupAfterHover!.y).toBeCloseTo(groupBox!.y, 0);
+    expect(groupAfterHover!.width).toBe(groupBox!.width);
+    expect(groupAfterHover!.height).toBe(groupBox!.height);
+
+    const overhangPaintsAboveLowerContent = await playButton.evaluate((element) => {
+      const buttonBox = element.getBoundingClientRect();
+      const controls = element.closest("[data-testid='workbench-preview-controls']");
+      const hit = document.elementFromPoint(
+        buttonBox.left + buttonBox.width / 2,
+        buttonBox.bottom - 2,
+      );
+      return controls === hit || controls?.contains(hit) === true;
+    });
+    expect(overhangPaintsAboveLowerContent).toBe(true);
+
+    // Keyboard focus follows the visible previous/play/next DOM order without
+    // changing the transport's dimensions.
+    const stripButton = page.getByRole("button", {
+      name: "Strip layout",
+      exact: true,
+    });
+    await stripButton.focus();
+    let playHasFocus = false;
+    for (let step = 0; step < 16 && !playHasFocus; step += 1) {
+      await page.keyboard.press("Tab");
+      playHasFocus = await playButton.evaluate(
+        (element) => document.activeElement === element,
+      );
+    }
+    expect(playHasFocus).toBe(true);
+    expect(await playButton.evaluate((element) => element.matches(":focus-visible"))).toBe(
+      true,
+    );
+    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+    const groupAfterFocus = await buttonGroup.boundingBox();
+    expect(groupAfterFocus).not.toBeNull();
+    expect(groupAfterFocus!.width).toBe(groupBox!.width);
+    expect(groupAfterFocus!.height).toBe(groupBox!.height);
+
+    // Clicking the transport must not engage the divider's resize gesture.
+    const surfaceHeightBeforePlay = await divider.getAttribute("aria-valuenow");
+    await playButton.click();
+    await expect(surface).toHaveAttribute("data-preview-playing", "true");
+    await expect(divider).toHaveAttribute("aria-valuenow", surfaceHeightBeforePlay!);
+
+    // The rest of the divider remains a resize target.
+    const dividerBoxAfterPlay = await divider.boundingBox();
+    expect(dividerBoxAfterPlay).not.toBeNull();
+    await page.mouse.move(
+      dividerBoxAfterPlay!.x + 20,
+      dividerBoxAfterPlay!.y + dividerBoxAfterPlay!.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      dividerBoxAfterPlay!.x + 20,
+      dividerBoxAfterPlay!.y + dividerBoxAfterPlay!.height / 2 + 24,
+    );
+    await page.mouse.up();
+    await expect
+      .poll(() => divider.getAttribute("aria-valuenow"))
+      .not.toBe(surfaceHeightBeforePlay);
+  });
+
+  test("preview surface is a pointer shortcut that activates the compact control", async ({
+    page,
+  }) => {
+    const api = await installGraphApi(page);
+    // The fixture's video src is intentionally a tiny image data URI. Use the
+    // same first clip as an image here so the canvas can draw a real rectangle
+    // without reaching the network.
+    api.documents.get(PROJECT_ID)!.clips[0]!.kind = "image";
+    api.documents.get(PROJECT_ID)!.clips[0]!.startTime = 0;
+    await openGraph(page);
+    await previewToggle(page).click();
+
+    const surface = page.getByTestId("workbench-display-surface");
+    const canvas = page.getByTestId("workbench-display-canvas");
+    const controls = page.getByTestId("workbench-preview-controls");
+    const primaryControl = controls.locator("[data-transport-primary-control]");
+    const primaryColor = () =>
+      primaryControl.evaluate((element) => getComputedStyle(element).color);
+    const restingColor = await primaryColor();
+
+    await expect(canvas).toHaveAttribute("data-preview-playback-surface-ready", "true");
+
+    const canvasBox = await canvas.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    const playbackCenter = {
+      x: canvasBox!.width / 2,
+      y: canvasBox!.height / 2,
+    };
+    const emptyGutter = {
+      x: 2,
+      y: canvasBox!.height / 2,
+    };
+
+    await expect(canvas).toHaveAttribute("data-preview-playback-shortcut", "true");
+    await expect(canvas).not.toHaveAttribute("tabindex");
+
+    // Letterbox space is deliberately inert.
+    await canvas.hover({ position: emptyGutter });
+    expect(await canvas.evaluate((element) => getComputedStyle(element).cursor)).toBe(
+      "default",
+    );
+    await expect.poll(primaryColor).toBe(restingColor);
+    await canvas.click({ position: emptyGutter });
+    await expect(surface).toHaveAttribute("data-preview-playing", "false");
+
+    // The shortcut begins only inside the centered rendered-media rectangle.
+    await canvas.hover({ position: playbackCenter });
+    expect(await canvas.evaluate((element) => getComputedStyle(element).cursor)).toBe(
+      "pointer",
+    );
+    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+    await expect.poll(primaryColor).not.toBe(restingColor);
+
+    await canvas.click({ position: playbackCenter });
+    await expect(surface).toHaveAttribute("data-preview-playing", "true");
+    await expect(
+      page.getByRole("button", { name: "Pause workbench preview" }),
+    ).toBeVisible();
+    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+
+    await canvas.click({ position: playbackCenter });
+    await expect(surface).toHaveAttribute("data-preview-playing", "false");
+    await expect(
+      page.getByRole("button", { name: "Play workbench preview" }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "Strip layout", exact: true }).hover();
+    await expect.poll(primaryColor).toBe(restingColor);
+  });
+
+  test("preview divider transport keeps all controls visible for touch", async ({
+    page,
+  }) => {
+    const devtools = await page.context().newCDPSession(page);
+    await devtools.send("Emulation.setTouchEmulationEnabled", {
+      enabled: true,
+      maxTouchPoints: 5,
+    });
+    const api = await installGraphApi(page);
+    api.documents.get(PROJECT_ID)!.clips[0]!.kind = "image";
+    api.documents.get(PROJECT_ID)!.clips[0]!.startTime = 0;
+    await openGraph(page);
+    await previewToggle(page).click();
+
+    expect(
+      await page.evaluate(
+        () => window.matchMedia("(hover: hover) and (pointer: fine)").matches,
+      ),
+    ).toBe(false);
+
+    const controls = page.getByTestId("workbench-preview-controls");
+    const buttonGroup = controls.locator("[data-transport-button-group]");
+    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+    await expect
+      .poll(() =>
+        buttonGroup.evaluate((element) => Math.round(element.getBoundingClientRect().width)),
+      )
+      .toBe(132);
+    await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
+    await expect(page.getByTestId("workbench-preview-time")).toBeVisible();
+
+    const canvas = page.getByTestId("workbench-display-canvas");
+    await expect(canvas).toHaveAttribute("data-preview-playback-surface-ready", "true");
+    const canvasBox = await canvas.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    const playbackCenter = {
+      x: canvasBox!.width / 2,
+      y: canvasBox!.height / 2,
+    };
+    await canvas.click({ position: playbackCenter });
+    await expect(page.getByTestId("workbench-display-surface")).toHaveAttribute(
+      "data-preview-playing",
+      "true",
+    );
+    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+    await canvas.click({ position: playbackCenter });
+    await expect(page.getByTestId("workbench-display-surface")).toHaveAttribute(
+      "data-preview-playing",
+      "false",
+    );
+
+    await page.getByRole("button", { name: "Play workbench preview" }).click();
+    await expect
+      .poll(() =>
+        buttonGroup.evaluate((element) => Math.round(element.getBoundingClientRect().width)),
+      )
+      .toBe(132);
+    await expect(page.getByRole("button", { name: "Previous workbench clip" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
+
+    await page.getByTestId("workbench-display-canvas").click({
+      position: playbackCenter,
+    });
+    await expect(controls).toHaveAttribute("data-transport-layout", "static");
+  });
+
   test("strip seek rail auto-pans at the scroller's edge while scrubbing", async ({
     page,
   }) => {
@@ -2384,13 +2800,48 @@ test.describe("graph view E2E", () => {
       await bravo.click();
       await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await page.getByRole("button", { name: "Disable", exact: true }).click();
+    await page.getByRole("button", { name: "More item actions" }).click();
+    await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
 
     // The card stays exactly where it was, muted and badged — never removed.
     // `data-disabled` rides the CONTENT span inside the dnd button, not the
     // button itself (which carries dnd-kit's own aria-disabled).
     await expect(bravo.locator('[data-disabled="true"]')).toBeVisible();
     await expect(bravo.locator('[data-disabled-chip="self"]')).toHaveText("DISABLED");
+    const disabledContent = bravo.locator('[data-disabled="true"]');
+    await expect(disabledContent).toHaveClass(/ring-amber-300\/65/);
+    const disabledVisuals = disabledContent.locator('[data-disabled-visuals="true"]');
+    await expect
+      .poll(() => disabledVisuals.evaluate((element) => getComputedStyle(element).filter))
+      .toContain("grayscale");
+    await expect
+      .poll(() =>
+        disabledVisuals.evaluate((element) => Number(getComputedStyle(element).opacity)),
+      )
+      .toBeLessThan(1);
+    const disabledChip = disabledContent.locator('[data-disabled-chip="self"]');
+    await expect
+      .poll(() => disabledChip.evaluate((element) => getComputedStyle(element).opacity))
+      .toBe("1");
+    await expect
+      .poll(() => disabledChip.evaluate((element) => getComputedStyle(element).filter))
+      .toBe("none");
+    await expect
+      .poll(() =>
+        disabledChip.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return [style.right, style.bottom];
+        }),
+      )
+      .toEqual(["8px", "8px"]);
+    const mediaKind = disabledContent.locator("[data-media-kind]");
+    await expect(mediaKind).toHaveText("IMAGE");
+    await expect
+      .poll(() => mediaKind.evaluate((element) => getComputedStyle(element).opacity))
+      .toBe("1");
+    await expect
+      .poll(() => mediaKind.evaluate((element) => getComputedStyle(element).filter))
+      .toBe("none");
     await expect.poll(() => stripOrder(page, PROJECT_ID)).toEqual([
       "alpha",
       "bravo",
@@ -2448,18 +2899,25 @@ test.describe("graph view E2E", () => {
     await expect(page.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
 
     // Select alpha → the contextual cluster switches to item actions, the
-    // layout controls give way, and Paste is disabled (clipboard empty).
+    // layout controls give way, and Paste is absent while the clipboard is empty.
     await expect(async () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await expect(page.getByRole("button", { name: "Duplicate", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "More item actions" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Grid layout" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
+    await expect(page.locator("[data-item-actions-cluster] + div")).toHaveClass(
+      /bg-amber-300\/65/,
+    );
 
     // Duplicate → the clone lands right AFTER alpha (index 1), and the focused
     // document persists the add (one write, five clips).
-    await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+    await page.getByRole("button", { name: "More item actions" }).click();
+    await page.getByRole("menuitem", { name: "Duplicate", exact: true }).click();
     await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(5);
     const order = await stripOrder(page, PROJECT_ID);
     expect(order[0]).toBe("alpha");
@@ -2491,6 +2949,8 @@ test.describe("graph view E2E", () => {
     // Copy → Paste becomes enabled.
     await page.getByRole("button", { name: "Copy", exact: true }).click();
     await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Copy", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Cut", exact: true })).toHaveCount(0);
 
     // Drill into the child collection. The clipboard is a module singleton, so
     // it survives the client-side navigation: the rail stays in item mode with
@@ -2689,7 +3149,8 @@ test.describe("graph view E2E", () => {
 
     // Both copies land as one contiguous block after the LAST source (bravo),
     // keeping the sources' relative order.
-    await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+    await page.getByRole("button", { name: "More item actions" }).click();
+    await page.getByRole("menuitem", { name: "Duplicate", exact: true }).click();
     await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(6);
     const order = await stripOrder(page, PROJECT_ID);
     expect(order.slice(0, 2)).toEqual(["alpha", "bravo"]);
@@ -2990,6 +3451,58 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => gridOrder(page, PROJECT_ID).then((order) => order.at(-1) ?? ""))
       .toMatch(/^timeline-/);
+  });
+
+  test("native grid collection drop centers its indicator in the chosen gap and inserts there", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await surfaceButton(page, "grid").click();
+
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+    const grid = page.locator(`[data-virtual-grid="${PROJECT_ID}"]`);
+    const alphaBox = (await grid.locator('[data-node-id="alpha"]').boundingBox())!;
+    const bravoBox = (await grid.locator('[data-node-id="bravo"]').boundingBox())!;
+    const point = {
+      x: (alphaBox.x + alphaBox.width + bravoBox.x) / 2,
+      y: bravoBox.y + bravoBox.height / 2,
+    };
+
+    const accepted = await dropZone.evaluate((element, position) => {
+      const transfer = new DataTransfer();
+      transfer.setData("application/x-gstudio-type", "collection");
+      const event = new DragEvent("dragover", {
+        bubbles: true,
+        cancelable: true,
+        clientX: position.x,
+        clientY: position.y,
+        dataTransfer: transfer,
+      });
+      return !element.dispatchEvent(event);
+    }, point);
+    expect(accepted).toBe(true);
+
+    const indicator = dropZone.locator("[data-native-drop-indicator]");
+    await expect(indicator).toBeVisible();
+    const indicatorBox = (await indicator.boundingBox())!;
+    expect(indicatorBox.x + indicatorBox.width / 2).toBeCloseTo(point.x, 0);
+
+    const transfer = await page.evaluateHandle(() => {
+      const value = new DataTransfer();
+      value.setData("application/x-gstudio-type", "collection");
+      return value;
+    });
+    await dropZone.dispatchEvent("drop", {
+      dataTransfer: transfer,
+      clientX: point.x,
+      clientY: point.y,
+    });
+
+    await expect
+      .poll(() => gridOrder(page, PROJECT_ID))
+      .toEqual(["alpha", expect.stringMatching(/^timeline-/), "bravo", CHILD_ID, "charlie"]);
+    await expect(indicator).toHaveCount(0);
   });
 
   test("a 2xx upload with no usable url adds nothing and says so", async ({ page }) => {
@@ -3448,6 +3961,68 @@ test.describe("graph view E2E", () => {
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
     await expect(page.locator("[data-graph-ruler]")).toHaveCount(1);
+  });
+
+  test("flat mode keeps expanded child playheads synchronized with preview", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await expandSubGraph(page, "Scene A");
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+
+    await previewToggle(page).click();
+    await expect(page.locator("[data-preview-source]")).toHaveAttribute(
+      "data-preview-source",
+      "manifest",
+    );
+    await page.getByRole("button", { name: "Show all items in order" }).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID), { timeout: 15000 })
+      .toEqual(["alpha", "bravo", "c1", "c2", "charlie"]);
+
+    const focusedRail = page.getByRole("slider", {
+      name: "Seek preview",
+      exact: true,
+    });
+    const childRail = page.getByRole("slider", {
+      name: "Seek preview in Scene A",
+      exact: true,
+    });
+    const maxOf = (rail: Locator) =>
+      rail.evaluate((element) => Number(element.getAttribute("aria-valuemax")));
+
+    // The focused rail measures the flat closure. The expanded child remains
+    // structured, so its rail must cover only Scene A instead of inheriting
+    // the focused run's full timing map.
+    const focusedMax = await maxOf(focusedRail);
+    const childMax = await maxOf(childRail);
+    expect(childMax).toBeGreaterThan(0);
+    expect(childMax).toBeLessThan(focusedMax);
+
+    // Seeking the child to its start uses Scene A's GLOBAL manifest window:
+    // its own playhead lands at x=0 while Preview draws that first child clip.
+    await childRail.focus();
+    await page.keyboard.press("Home");
+    await expect(childRail).toHaveAttribute("aria-valuenow", "0.0");
+
+    const childSection = page.locator(`section[aria-label="Sub-timeline: Scene A"]`);
+    const childPlayhead = childSection.locator("[data-graph-playhead]");
+    await expect(childPlayhead).toBeVisible();
+    await expect
+      .poll(() =>
+        childPlayhead.evaluate((element) => {
+          const match = /translateX\(([-\d.]+)px\)/.exec(
+            (element as HTMLElement).style.transform,
+          );
+          return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+        }),
+      )
+      .toBeLessThan(5);
+    await expect(page.getByTestId("workbench-display-canvas")).toHaveAttribute(
+      "aria-label",
+      "c1 preview",
+    );
   });
 
   test("flat cards name their collection, and reveal it", async ({ page }) => {

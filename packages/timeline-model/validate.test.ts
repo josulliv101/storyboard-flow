@@ -61,6 +61,28 @@ describe("isTimelineClip", () => {
     expect(isTimelineClip({ ...image, sourceAsset: null })).toBe(true);
   });
 
+  it("accepts a finite preview trim and rejects malformed preview trims", () => {
+    const preview = collection.previewItems[0];
+    expect(
+      isTimelineClip({
+        ...collection,
+        previewItems: [{ ...preview, kind: "video", trimIn: 2.5 }],
+      }),
+    ).toBe(true);
+    expect(
+      isTimelineClip({
+        ...collection,
+        previewItems: [{ ...preview, kind: "video", trimIn: "2.5" }],
+      }),
+    ).toBe(false);
+    expect(
+      isTimelineClip({
+        ...collection,
+        previewItems: [{ ...preview, kind: "video", trimIn: Number.NaN }],
+      }),
+    ).toBe(false);
+  });
+
   it("accepts a whole sourceAsset ref and rejects a half-recorded one", () => {
     const ref = { providerId: "cloudinary", assetId: "gstudio/u/pic-1" };
     expect(isTimelineClip({ ...image, sourceAsset: ref })).toBe(true);

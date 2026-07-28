@@ -60,22 +60,28 @@ describe("createS3AssetProvider", () => {
 
   it("maps object keys to neutral assets, folders from the key path", async () => {
     const s3 = provider([
-      { key: "media/root.png", size: 10, lastModified: "2026-07-01T00:00:00Z" },
-      { key: "media/Scenes/a.jpg" },
-      { key: "media/Scenes/Heist/b.png" },
+      {
+        key: "media/u/project-a/root.png",
+        size: 10,
+        lastModified: "2026-07-01T00:00:00Z",
+      },
+      { key: "media/u/project-a/Scenes/a.jpg" },
+      { key: "media/u/project-a/Scenes/Heist/b.png" },
+      { key: "media/u/project-b/other.png" },
     ]);
-    const flat = await s3.list({ uid: "u" }, {});
+    const flat = await s3.list({ uid: "u", projectId: "project-a" }, {});
     expect(flat.assets.map((entry) => entry.id)).toEqual([
-      "media/root.png",
-      "media/Scenes/a.jpg",
-      "media/Scenes/Heist/b.png",
+      "media/u/project-a/root.png",
+      "media/u/project-a/Scenes/a.jpg",
+      "media/u/project-a/Scenes/Heist/b.png",
     ]);
     expect(flat.assets[0]).toMatchObject({
       providerId: S3_PROVIDER_ID,
+      projectIds: ["project-a"],
       name: "root.png",
       kind: "image",
-      src: "https://cdn.test/media/root.png",
-      thumbnailUrl: "https://cdn.test/media/root.png",
+      src: "https://cdn.test/media/u/project-a/root.png",
+      thumbnailUrl: "https://cdn.test/media/u/project-a/root.png",
       folderPath: [], // the configured prefix is stripped — user-visible tree
       bytes: 10,
       createdAt: "2026-07-01T00:00:00Z",
@@ -85,38 +91,51 @@ describe("createS3AssetProvider", () => {
 
   it("scopes a folder query exactly like the Cloudinary adapter (shared derivation)", async () => {
     const s3 = provider([
-      { key: "media/root.png" },
-      { key: "media/Scenes/a.jpg" },
-      { key: "media/Scenes/Heist/b.png" },
+      { key: "media/u/project-a/root.png" },
+      { key: "media/u/project-a/Scenes/a.jpg" },
+      { key: "media/u/project-a/Scenes/Heist/b.png" },
     ]);
-    const scenes = await s3.list({ uid: "u" }, { folder: ["Scenes"] });
-    expect(scenes.assets.map((entry) => entry.id)).toEqual(["media/Scenes/a.jpg"]);
+    const scenes = await s3.list(
+      { uid: "u", projectId: "project-a" },
+      { folder: ["Scenes"] },
+    );
+    expect(scenes.assets.map((entry) => entry.id)).toEqual([
+      "media/u/project-a/Scenes/a.jpg",
+    ]);
     expect(scenes.folders).toEqual([{ name: "Heist", path: ["Scenes", "Heist"] }]);
   });
 
   it("skips non-media keys instead of surfacing broken tiles", async () => {
     const s3 = provider([
-      { key: "media/a.png" },
-      { key: "media/notes.txt" },
-      { key: "media/manifest.json" },
-      { key: "media/subdir/" }, // S3 directory marker
+      { key: "media/u/project-a/a.png" },
+      { key: "media/u/project-a/notes.txt" },
+      { key: "media/u/project-a/manifest.json" },
+      { key: "media/u/project-a/subdir/" }, // S3 directory marker
     ]);
-    expect((await s3.list({ uid: "u" }, {})).assets.map((entry) => entry.id)).toEqual([
-      "media/a.png",
-    ]);
+    expect(
+      (
+        await s3.list({ uid: "u", projectId: "project-a" }, {})
+      ).assets.map((entry) => entry.id),
+    ).toEqual(["media/u/project-a/a.png"]);
   });
 
   it("uses a sibling image as a video's poster, and an empty thumb when none", async () => {
     const s3 = provider([
-      { key: "media/clip.mp4" },
-      { key: "media/clip.jpg" },
-      { key: "media/lonely.mp4" },
+      { key: "media/u/project-a/clip.mp4" },
+      { key: "media/u/project-a/clip.jpg" },
+      { key: "media/u/project-a/lonely.mp4" },
     ]);
-    const assets = (await s3.list({ uid: "u" }, {})).assets;
-    const withPoster = assets.find((entry) => entry.id === "media/clip.mp4");
-    const noPoster = assets.find((entry) => entry.id === "media/lonely.mp4");
-    expect(withPoster?.thumbnailUrl).toBe("https://cdn.test/media/clip.jpg");
-    expect(withPoster?.src).toBe("https://cdn.test/media/clip.mp4");
+    const assets = (await s3.list({ uid: "u", projectId: "project-a" }, {})).assets;
+    const withPoster = assets.find(
+      (entry) => entry.id === "media/u/project-a/clip.mp4",
+    );
+    const noPoster = assets.find(
+      (entry) => entry.id === "media/u/project-a/lonely.mp4",
+    );
+    expect(withPoster?.thumbnailUrl).toBe(
+      "https://cdn.test/media/u/project-a/clip.jpg",
+    );
+    expect(withPoster?.src).toBe("https://cdn.test/media/u/project-a/clip.mp4");
     expect(noPoster?.thumbnailUrl).toBe("");
   });
 
@@ -132,7 +151,10 @@ describe("createS3AssetProvider", () => {
       delete: false,
     });
     // A stray tagPath is ignored (contract: never throw), served as folders.
-    const page = await s3.list({ uid: "u" }, { tagPath: ["anything"] });
+    const page = await s3.list(
+      { uid: "u", projectId: "project-a" },
+      { tagPath: ["anything"] },
+    );
     expect(page.assets).toEqual([]);
   });
 
@@ -141,14 +163,20 @@ describe("createS3AssetProvider", () => {
   });
 
   it("caches the listing within its TTL — one sweep serves several browses", async () => {
-    const listObjects = vi.fn(async () => [{ key: "media/a.png" }] as S3ObjectSummary[]);
+    const listObjects = vi.fn(
+      async () =>
+        [
+          { key: "media/u/project-a/a.png" },
+          { key: "media/u/project-b/b.png" },
+        ] as S3ObjectSummary[],
+    );
     const created = createS3AssetProvider(ENV, {
       listObjects,
       urlFor: async (key) => `https://cdn.test/${key}`,
     });
     if (created === null) throw new Error("expected provider");
-    await created.list({ uid: "u" }, {});
-    await created.list({ uid: "u" }, { folder: ["x"] });
+    await created.list({ uid: "u", projectId: "project-a" }, {});
+    await created.list({ uid: "u", projectId: "project-b" }, { folder: ["x"] });
     expect(listObjects).toHaveBeenCalledTimes(1);
   });
 });

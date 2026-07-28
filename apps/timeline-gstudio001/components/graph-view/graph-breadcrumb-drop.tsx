@@ -109,7 +109,7 @@ export function DragChromeFade({
 }
 
 const ZONE_BASE =
-  "flex h-10 min-w-[150px] items-center justify-center gap-2 rounded-md border text-xs font-medium transition-all duration-200";
+  "flex h-10 min-w-[150px] items-center justify-center gap-2 rounded-md border px-4 text-xs font-medium transition-all duration-200";
 
 type ZoneAccent = Readonly<{ over: string; icon: string }>;
 
@@ -171,8 +171,8 @@ function DropZone({
         active ? "pointer-events-auto scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0",
         hint
           ? hint.invalid
-            ? "border-zinc-700 bg-zinc-900/90 text-zinc-500"
-            : "border-sky-400 bg-sky-950/80 text-sky-100"
+            ? "border-transparent bg-zinc-900/70 text-zinc-500"
+            : "border-transparent bg-zinc-800/75 text-zinc-200 shadow-sm"
           : state === "over"
             ? accent.over
             : state === "invalid"
@@ -186,7 +186,7 @@ function DropZone({
           {/* One line that GROWS the box to fit — the readout must always be the
               right size for the name. The generous cap only engages for an
               absurdly long name, so it can never overflow the header. */}
-          <span className="max-w-[min(70vw,420px)] truncate whitespace-nowrap">
+          <span className="max-w-[min(38vw,320px)] truncate whitespace-nowrap">
             {hint.invalid ? "Can’t drop into " : "Drop into "}
             <span className="font-semibold">{hint.name}</span>
           </span>

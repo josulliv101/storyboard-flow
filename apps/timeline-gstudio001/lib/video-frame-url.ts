@@ -43,6 +43,30 @@ export const cloudinaryVideoFrameUrl: VideoFrameUrlBuilder = (frameUrl, timeSeco
  *  another provider — nothing above the seam names Cloudinary. */
 export const defaultVideoFrameUrlBuilder: VideoFrameUrlBuilder = cloudinaryVideoFrameUrl;
 
+/**
+ * Resolve the still shown when a media item represents a collection.
+ *
+ * Images keep their source unchanged. A video with a front trim asks the
+ * provider seam for the frame at that exact source time, so the collection
+ * represents the first usable frame rather than the discarded beginning.
+ * Providers that cannot address frames return the existing poster unchanged.
+ */
+export function collectionPreviewFrameUrl(
+  preview: Readonly<{
+    kind: "image" | "video";
+    src: string;
+    poster?: string;
+    trimIn?: number;
+  }>,
+  build: VideoFrameUrlBuilder = defaultVideoFrameUrlBuilder,
+): string {
+  const base = preview.poster ?? preview.src;
+  if (preview.kind !== "video" || !preview.poster || (preview.trimIn ?? 0) <= 0) {
+    return base;
+  }
+  return build(base, preview.trimIn ?? 0);
+}
+
 /** How far short of the range's exact end the LAST slot samples. The very
  *  final frame of an encode is often black or a fade-out remnant; a beat
  *  before it is the frame a person means by "the end of the clip". */

@@ -1,7 +1,27 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useSyncExternalStore } from "react";
-import { Ban, CircleCheck, ClipboardPaste, Copy, CopyPlus, Folder, FolderTree, GalleryHorizontalEnd, Images, Layers, LayoutGrid, ListOrdered, LogOut, Ruler, Scissors, Settings, Trash2, TvMinimal, X } from "lucide-react";
+import {
+  Ban,
+  CircleCheck,
+  ClipboardPaste,
+  Copy,
+  CopyPlus,
+  EllipsisVertical,
+  Folder,
+  FolderTree,
+  GalleryHorizontalEnd,
+  Image as ImageIcon,
+  Layers,
+  LayoutGrid,
+  ListOrdered,
+  LogOut,
+  Ruler,
+  Scissors,
+  Trash2,
+  TvMinimal,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
@@ -27,44 +47,54 @@ import {
 import { graphClipboard } from "@/lib/graph-clipboard";
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/core/dropdown-menu";
 
 import { SidebarTooltipLabel } from "./sidebar-tooltip-label";
 
 type UtilityItem = {
-  id: "assets" | "trash" | "settings";
+  id: "assets" | "trash";
   label: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
 };
 
-/**
- * The trash BIN as this app means it: a folder (it holds timeline items, and
- * they come back) with a trash can sitting in its body. Lucide has no such
- * glyph, so it is composed — the folder at full size, the can scaled into the
- * pocket below the tab. Both strokes inherit `currentColor`, so every state
- * the button paints (idle, pressed, drop-hover) still styles one icon.
- *
- * `className` sizes the WRAPPER (the call site passes the same `h-4 w-4` every
- * other sidebar icon gets) and the parts size off it, so the composition can
- * never drift from the row.
- */
-function FolderTrashIcon({ className }: Readonly<{ className?: string }>) {
+/** A folder establishes this as an AREA, while the prominent inset trash
+ * glyph keeps it distinct from both an ordinary folder and the delete action. */
+function TrashAreaIcon({ className }: Readonly<{ className?: string }>) {
   return (
     <span
       aria-hidden="true"
-      // The animated element: the sidebar hands its drop-hover / arrival
-      // classes to THIS wrapper (both glyphs move together), so it is also
-      // what the e2e watches.
+      // The sidebar hands its drop-hover / arrival classes to this wrapper,
+      // which is also what the e2e watches.
       data-sidebar-icon="trash"
-      className={cn("relative inline-block shrink-0", className)}
+      className={cn("relative inline-flex shrink-0 overflow-visible", className)}
     >
-      <Folder className="h-full w-full" />
-      {/* Nudged below the folder's tab so the can reads as sitting INSIDE the
-          pocket; the heavier stroke keeps it legible at 16px. */}
-      <Trash2
-        className="absolute left-1/2 top-[58%] h-[52%] w-[52%] -translate-x-1/2 -translate-y-1/2"
-        strokeWidth={2.75}
-      />
+      <Folder className="h-full w-full" strokeWidth={2.1} />
+      <span className="absolute -top-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
+        <Trash2 className="size-2.5" strokeWidth={2.7} />
+      </span>
+    </span>
+  );
+}
+
+/** Media lives in a folder, but its image badge prevents the destination from
+ * reading like the collection/tree controls elsewhere in the rail. */
+function MediaFolderIcon({ className }: Readonly<{ className?: string }>) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn("relative inline-flex shrink-0 overflow-visible", className)}
+    >
+      <Folder className="h-full w-full" strokeWidth={2.1} />
+      <span className="absolute -top-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
+        <ImageIcon className="size-2.5" strokeWidth={2.5} />
+      </span>
     </span>
   );
 }
@@ -75,6 +105,20 @@ const SIDEBAR_ICON_IDLE =
   "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-zinc-100";
 const SIDEBAR_ICON_PRESSED =
   "translate-y-px border-zinc-600 bg-zinc-800 text-zinc-100 shadow-inner shadow-black/50 ring-1 ring-inset ring-zinc-700/70";
+const SIDEBAR_SEPARATOR_CLASS = "h-px w-7 shrink-0";
+
+function SidebarSeparator({ selected = false }: Readonly<{ selected?: boolean }>) {
+  return (
+    <div
+      aria-hidden="true"
+      data-sidebar-separator={selected ? "selected" : "normal"}
+      className={cn(
+        SIDEBAR_SEPARATOR_CLASS,
+        selected ? "bg-amber-300/65" : "bg-zinc-500",
+      )}
+    />
+  );
+}
 
 type SurfaceIconControlProps = {
   surface: GraphSurface;
@@ -133,23 +177,16 @@ function SurfaceIconControl({
   );
 }
 
-// Recessed, not invisible. This used to dim TWICE — a zinc-600 glyph and then
-// `opacity-50` over it — which on the near-black rail left the Paste icon
-// (item mode's resting state, disabled until something is copied) barely
-// legible. One dimming step is enough: a solid zinc-500 glyph reads as
-// available-but-not-now, and the flat border plus the missing hover response
-// carry "disabled" on their own.
+// Recessed, not invisible. One dimming step is enough: a solid zinc-500 glyph
+// reads as available-but-not-now, and the flat border plus the missing hover
+// response carry "disabled" on their own.
 const SIDEBAR_ICON_DISABLED =
   "cursor-not-allowed border-zinc-800/70 bg-zinc-900/20 text-zinc-500";
 
-// Item mode borrows the SELECTION colour. A selected card is ring-2
-// ring-amber-400 (graph-item-content), and these buttons act on that card, so
-// they carry the same amber — but only in the FILL. Bordering them in amber
-// too was too loud next to the card it is meant to refer to; the tint alone
-// carries the connection. Disabled buttons stay ZINC: an amber-tinted
-// disabled button reads as available, and Paste is disabled most of the time.
+// Item mode borrows a restrained trace of the selection colour. These actions
+// relate to the selected card, but should remain secondary to the content.
 const SIDEBAR_ICON_ITEM_IDLE =
-  "border-zinc-800 bg-amber-400/10 text-amber-200/80 hover:border-zinc-600 hover:bg-amber-400/20 hover:text-amber-100";
+  "border-zinc-800 bg-amber-200/[0.035] text-amber-100/60 hover:border-zinc-600 hover:bg-amber-200/[0.075] hover:text-amber-100/85";
 
 /** One button in the item-actions cluster — dispatches its action across the
  *  window-event seam for the graph provider to perform on the selection. */
@@ -194,12 +231,72 @@ function ItemActionButton({
   );
 }
 
+function ItemActionsOverflow({
+  hasSelection,
+  busy,
+  allDisabled,
+}: Readonly<{
+  hasSelection: boolean;
+  busy: boolean;
+  allDisabled: boolean;
+}>) {
+  const disabled = busy || !hasSelection;
+  const tooltipId = "sidebar-tooltip-item-more";
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="More item actions"
+          aria-describedby={tooltipId}
+          disabled={disabled}
+          className={cn(
+            SIDEBAR_ICON_BASE,
+            disabled ? SIDEBAR_ICON_DISABLED : SIDEBAR_ICON_ITEM_IDLE,
+          )}
+        >
+          <EllipsisVertical className="h-4 w-4 transition-colors" />
+          <SidebarTooltipLabel
+            id={tooltipId}
+            label="More"
+            description="More actions for the selected item"
+          />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right" align="start">
+        <DropdownMenuGroup>
+          <DropdownMenuItem
+            disabled={disabled}
+            onSelect={() => requestGraphItemAction("duplicate")}
+          >
+            <CopyPlus className="mr-2 h-4 w-4" />
+            Duplicate
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={disabled}
+            onSelect={() => requestGraphItemAction("toggle-disabled")}
+          >
+            {allDisabled ? (
+              <CircleCheck className="mr-2 h-4 w-4" />
+            ) : (
+              <Ban className="mr-2 h-4 w-4" />
+            )}
+            {allDisabled ? "Enable" : "Disable"}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /**
  * The contextual cluster shown while an item is selected (or something is on
  * the clipboard). Replaces the layout/toggle controls with actions on the
- * selected item. Copy/Cut/Duplicate/Delete need a live selection; Paste needs
- * a non-empty clipboard; Done exits back to the normal controls (clearing the
- * clipboard — with contents kept, item mode couldn't close). While an async
+ * selected item. Copy/Cut are replaced by Paste while the clipboard is armed;
+ * Duplicate/Delete need a live selection. Done exits back to the normal
+ * controls (clearing the clipboard — with contents kept, item mode couldn't
+ * close). While an async
  * action is in flight (`busy`) every button disables, so nothing double-fires.
  */
 function ItemActionsCluster({
@@ -216,43 +313,42 @@ function ItemActionsCluster({
 }>) {
   return (
     <div className="flex flex-col items-center gap-2">
-      {/* Only the five actions that touch the SELECTION sit inside the amber
+      {/* Only actions that operate on the selection or clipboard sit inside the amber
           block — a wash, no border, so the group reads as one thing tied to
           the selected card without drawing a box around itself. Done is
           deliberately outside it: it exits the mode, it does nothing to the
           card, and it keeps the sidebar's ordinary zinc. */}
       <div
         data-item-actions-cluster
-        className="flex flex-col items-center gap-2 rounded-xl bg-amber-400/[0.07] px-1.5 py-2"
+        className="flex flex-col items-center gap-2 rounded-xl bg-amber-200/[0.025] px-1.5 py-2"
       >
-        <ItemActionButton
-          action="copy"
-          icon={Copy}
-          label="Copy"
-          description="Copy the selected item"
-          disabled={busy || !hasSelection}
-        />
-        <ItemActionButton
-          action="cut"
-          icon={Scissors}
-          label="Cut"
-          description="Cut the selected item — paste to move it"
-          disabled={busy || !hasSelection}
-        />
-        <ItemActionButton
-          action="paste"
-          icon={ClipboardPaste}
-          label="Paste"
-          description="Paste into this timeline"
-          disabled={busy || !canPaste}
-        />
-        <ItemActionButton
-          action="duplicate"
-          icon={CopyPlus}
-          label="Duplicate"
-          description="Duplicate the selected item in place"
-          disabled={busy || !hasSelection}
-        />
+        {!canPaste ? (
+          <>
+            <ItemActionButton
+              action="copy"
+              icon={Copy}
+              label="Copy"
+              description="Copy the selected item"
+              disabled={busy || !hasSelection}
+            />
+            <ItemActionButton
+              action="cut"
+              icon={Scissors}
+              label="Cut"
+              description="Cut the selected item — paste to move it"
+              disabled={busy || !hasSelection}
+            />
+          </>
+        ) : null}
+        {canPaste ? (
+          <ItemActionButton
+            action="paste"
+            icon={ClipboardPaste}
+            label="Paste"
+            description="Paste into this timeline"
+            disabled={busy}
+          />
+        ) : null}
         <ItemActionButton
           action="delete"
           icon={Trash2}
@@ -260,22 +356,13 @@ function ItemActionsCluster({
           description="Move the selected item to trash"
           disabled={busy || !hasSelection}
         />
-        {/* The button shows the icon of the ACTION it performs, so it reads
-            Ban ("disable this") until everything selected is already
-            disabled, then offers the way back. */}
-        <ItemActionButton
-          action="toggle-disabled"
-          icon={allDisabled ? CircleCheck : Ban}
-          label={allDisabled ? "Enable" : "Disable"}
-          description={
-            allDisabled
-              ? "Play this item again, and count it in the totals"
-              : "Skip this item in playback, counts and time totals"
-          }
-          disabled={busy || !hasSelection}
+        <ItemActionsOverflow
+          hasSelection={hasSelection}
+          busy={busy}
+          allDisabled={allDisabled}
         />
       </div>
-      <div className="h-px w-8 shrink-0 bg-zinc-700" />
+      <SidebarSeparator selected />
       <ItemActionButton
         action="cancel"
         icon={X}
@@ -293,19 +380,13 @@ const UTILITY_ITEMS: UtilityItem[] = [
     id: "assets",
     label: "Assets",
     description: "Media and project assets",
-    icon: Images,
+    icon: MediaFolderIcon,
   },
   {
     id: "trash",
     label: "Trash",
     description: "Deleted timeline items",
-    icon: FolderTrashIcon,
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    description: "App-wide settings",
-    icon: Settings,
+    icon: TrashAreaIcon,
   },
 ];
 
@@ -502,7 +583,7 @@ export function TimelineSidebar() {
       {activeProjectId && !itemMode && (
         <>
           {/* zinc-500: the old zinc-800/80 vanished against the rail. */}
-          <div className="h-px w-10 shrink-0 bg-zinc-500" />
+          <SidebarSeparator />
 
           <div className="flex flex-col items-center gap-2">
             {/* The preview-pane toggle leads the cluster (was the breadcrumb
@@ -628,6 +709,7 @@ export function TimelineSidebar() {
           // asset into — it could browse and do nothing. Rather than leave a
           // button that opens nothing, it is hidden off the graph.
           if (item.id === "assets" && !onGraphRoute) return null;
+          if (item.id === "trash" && pathname === "/") return null;
 
           const Icon = item.icon;
           const tooltipId = `sidebar-tooltip-utility-${item.id}`;
@@ -640,13 +722,7 @@ export function TimelineSidebar() {
                   window.dispatchEvent(new CustomEvent(GRAPH_ASSETS_TOGGLE_EVENT));
                   setIsTrashOpen(false);
                 }
-              : item.id === "trash"
-                ? () => setIsTrashOpen(!isTrashOpen)
-                : // Placeholder until real settings exist.
-                  () =>
-                    toast("Settings", {
-                      description: "App-wide settings aren’t wired up yet.",
-                    });
+              : () => setIsTrashOpen(!isTrashOpen);
 
           return (
             <button
@@ -654,7 +730,7 @@ export function TimelineSidebar() {
               type="button"
               aria-label={item.label}
               aria-describedby={tooltipId}
-              aria-pressed={item.id === "settings" ? undefined : isPressed}
+              aria-pressed={isPressed}
               onClick={handleClick}
               className={cn(
                 SIDEBAR_ICON_BASE,

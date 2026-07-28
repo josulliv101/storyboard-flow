@@ -31,6 +31,7 @@ export function previewItemsFrom(clips: TimelineClip[]) {
     kind: clip.kind,
     src: clip.src,
     poster: clip.poster,
+    ...(clip.kind === "video" && clip.trimIn > 0 ? { trimIn: clip.trimIn } : {}),
     alt: clip.alt,
   }));
 }

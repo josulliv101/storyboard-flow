@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { assetProviders } from "@/lib/assets/registry";
 import type { AssetQuery } from "@/lib/assets/types";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
+import {
+  ProjectAssetScopeError,
+  requireProjectAssetScope,
+} from "@/lib/project-asset-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +14,7 @@ export const dynamic = "force-dynamic";
 /**
  * List assets through the provider seam.
  *
+ *   ?projectId=<id>     required root project asset scope
  *   ?provider=<id>      which provider (default: the registry's first)
  *   ?folder=<segment>   repeatable — one param per PATH SEGMENT, so a
  *                       segment containing "/" can never fake a boundary.
@@ -31,6 +36,10 @@ export async function GET(request: Request) {
     if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const url = new URL(request.url);
+    const projectId = await requireProjectAssetScope(
+      url.searchParams.get("projectId"),
+      user.uid,
+    );
     const providerId = url.searchParams.get("provider");
     const provider =
       providerId === null ? assetProviders.defaultProvider() : assetProviders.get(providerId);
@@ -69,13 +78,16 @@ export async function GET(request: Request) {
       ...(url.searchParams.get("cursor") ? { cursor: url.searchParams.get("cursor")! } : {}),
     };
 
-    const page = await provider.list({ uid: user.uid }, query);
+    const page = await provider.list({ uid: user.uid, projectId }, query);
     return NextResponse.json({
       providerId: provider.id,
       capabilities: provider.capabilities,
       ...page,
     });
   } catch (error) {
+    if (error instanceof ProjectAssetScopeError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error("[GSTUDIO_ASSETS_LIST_ERROR]", error);
     const message = error instanceof Error ? error.message : "Unable to load assets.";
     return NextResponse.json({ error: message }, { status: 500 });

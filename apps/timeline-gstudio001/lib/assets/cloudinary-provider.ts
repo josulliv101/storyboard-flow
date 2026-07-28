@@ -19,12 +19,16 @@ export const CLOUDINARY_PROVIDER_ID = "cloudinary";
  * root prefix stripped by the store), so folders are the folders the USER
  * sees, not the storage-internal `<root>/<uid>/` plumbing.
  */
-export function cloudinaryAssetToAsset(vendorAsset: CloudinaryAsset): Asset {
+export function cloudinaryAssetToAsset(
+  vendorAsset: CloudinaryAsset,
+  projectId: string,
+): Asset {
   const relative = vendorAsset.relativePath ?? vendorAsset.pathname;
   const segments = relative.split("/").filter((segment) => segment.length > 0);
   return {
     id: vendorAsset.id,
     providerId: CLOUDINARY_PROVIDER_ID,
+    projectIds: [projectId],
     name: segments[segments.length - 1] ?? relative,
     kind: vendorAsset.resourceType,
     src: vendorAsset.url,
@@ -37,6 +41,14 @@ export function cloudinaryAssetToAsset(vendorAsset: CloudinaryAsset): Asset {
     ...(vendorAsset.size === undefined ? {} : { bytes: vendorAsset.size }),
     ...(vendorAsset.createdAt === undefined ? {} : { createdAt: vendorAsset.createdAt }),
   };
+}
+
+export async function listCloudinaryProjectAssets(
+  ctx: AssetContext,
+): Promise<readonly Asset[]> {
+  return (await listCloudinaryAssets(ctx.uid, ctx.projectId)).map((asset) =>
+    cloudinaryAssetToAsset(asset, ctx.projectId),
+  );
 }
 
 export const cloudinaryAssetProvider: AssetProvider = {
@@ -55,11 +67,11 @@ export const cloudinaryAssetProvider: AssetProvider = {
     delete: false,
   },
   async list(ctx: AssetContext, query) {
-    // The store's listing is already user-scoped and paginated at the vendor
+    // The store's listing is already user/project-scoped and paginated at the vendor
     // boundary; folder/tag scoping is derived from it in memory (the
     // documented fallback in path-folders — a native `prefix`/tag query is
     // the upgrade path if libraries outgrow it).
-    const assets = (await listCloudinaryAssets(ctx.uid)).map(cloudinaryAssetToAsset);
+    const assets = await listCloudinaryProjectAssets(ctx);
     // Search wins over both browse modes: a query spans the whole library, so
     // scoping it to the folder or tag the user happened to be standing in
     // would hide the results they asked for.

@@ -105,7 +105,8 @@ export function isTimelineClip(value: unknown): value is TimelineClip {
         (preview.kind === "image" || preview.kind === "video") &&
         typeof preview.src === "string" &&
         typeof preview.alt === "string" &&
-        isOptionalString(preview.poster)
+        isOptionalString(preview.poster) &&
+        isOptionalFiniteNumber(preview.trimIn)
       );
     });
   }

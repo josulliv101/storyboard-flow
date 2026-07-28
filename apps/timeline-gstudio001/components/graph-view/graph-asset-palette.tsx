@@ -249,9 +249,11 @@ function PaletteRail({
 }
 
 export function AssetPaletteDrawer({
+  projectId,
   open,
   onClose,
 }: Readonly<{
+  projectId: string;
   open: boolean;
   onClose: () => void;
 }>) {
@@ -296,8 +298,8 @@ export function AssetPaletteDrawer({
       // Search is a FOURTH axis, not a variant of the path: a result set for
       // "alley" has nothing to do with the folder the user was standing in,
       // and caching them under one key would serve one for the other.
-      JSON.stringify([p ?? "", m, segments, q]),
-    [],
+      JSON.stringify([projectId, p ?? "", m, segments, q]),
+    [projectId],
   );
 
   // The debounce lives in the CHANGE HANDLER, not an effect: the repo's
@@ -346,6 +348,7 @@ export function AssetPaletteDrawer({
           ? new URLSearchParams({ mode: "tags" })
           : new URLSearchParams({ browse: "1" });
       params.set("limit", String(PALETTE_PAGE_SIZE));
+      params.set("projectId", projectId);
       if (providerId !== null) params.set("provider", providerId);
       if (!searchTerm) {
         for (const segment of path) params.append(mode === "tags" ? "tag" : "folder", segment);
@@ -353,7 +356,7 @@ export function AssetPaletteDrawer({
       if (cursor !== undefined) params.set("cursor", cursor);
       return params;
     },
-    [searchTerm, mode, providerId, path],
+    [searchTerm, mode, providerId, path, projectId],
   );
 
   // Appending, not replacing: the rail keeps everything already loaded so a

@@ -40,8 +40,8 @@ describe("resolveBoundaryIndex", () => {
 });
 
 describe("indicatorLeftOffset", () => {
-  it("insets half a gap plus the indicator half-width", () => {
-    expect(indicatorLeftOffset(120, 8)).toBe(114); // 120 - 4 - 2
+  it("returns the geometric center of the preceding gap", () => {
+    expect(indicatorLeftOffset(120, 8)).toBe(116);
   });
 
   it("never goes negative", () => {
@@ -50,7 +50,7 @@ describe("indicatorLeftOffset", () => {
   });
 
   it("handles a zero gap", () => {
-    expect(indicatorLeftOffset(50, 0)).toBe(48);
+    expect(indicatorLeftOffset(50, 0)).toBe(50);
   });
 });
 

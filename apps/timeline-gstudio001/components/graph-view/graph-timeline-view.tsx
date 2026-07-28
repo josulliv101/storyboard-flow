@@ -57,6 +57,7 @@ import { bootSessionKey } from "./boot-session-key";
 import { trashDocumentId as deriveTrashDocumentId } from "./trash-document-id";
 
 import { GraphBoard, type FocusSurface, type ItemSize } from "./graph-board";
+import { GraphViewLoadingSkeleton } from "./graph-view-loading";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { FlatClosureHydrator, HydrationController } from "./graph-hydration";
 import { GraphItemActionsBridge } from "./graph-item-actions";
@@ -505,13 +506,7 @@ export function GraphTimelineView({
   );
 
   if (boot.status === "loading") {
-    return (
-      <div className="grid gap-3" aria-label="Loading graph view">
-        <div className="h-8 w-1/2 animate-pulse rounded-lg bg-zinc-900" />
-        <div className="h-28 w-full animate-pulse rounded-lg bg-zinc-900" />
-        <div className="h-20 w-full animate-pulse rounded-lg bg-zinc-900/60" />
-      </div>
-    );
+    return <GraphViewLoadingSkeleton />;
   }
 
   if (boot.status === "error") {
@@ -528,13 +523,6 @@ export function GraphTimelineView({
       </div>
     );
   }
-
-  // The old "Storyboard view" chrome row above the preview is gone — the
-  // link lives in the board's overflow menu now, so the page starts at the
-  // preview itself.
-  const storyboardHref = `/timeline/${encodeURIComponent(projectId)}/storyboard${
-    focusedId === projectId ? "" : `/${encodeURIComponent(focusedId)}`
-  }`;
 
   return (
     <div className="flex flex-col gap-4">
@@ -591,7 +579,12 @@ export function GraphTimelineView({
             timeChannel={timeChannel}
           />
           <GraphDetailsJanitor />
-          <AssetPaletteDrawer open={assetsOpen} onClose={() => setAssetsOpen(false)} />
+          <AssetPaletteDrawer
+            key={projectId}
+            projectId={projectId}
+            open={assetsOpen}
+            onClose={() => setAssetsOpen(false)}
+          />
           <HydrationController
             projectId={projectId}
             segments={timelinePath}
@@ -626,6 +619,7 @@ export function GraphTimelineView({
               </div>
             ) : (
               <GraphBoard
+                projectId={projectId}
                 focusedId={focusedId}
                 breadcrumb={
                   <GraphBreadcrumb projectId={projectId} timelinePath={timelinePath} />
@@ -638,7 +632,6 @@ export function GraphTimelineView({
                 previewOn={previewOn}
                 rulerOn={rulerOn}
                 flatOn={flatOn}
-                storyboardHref={storyboardHref}
                 childrenShown={childrenShown}
                 timeChannel={timeChannel}
                 trashRootId={boot.trashRootId}

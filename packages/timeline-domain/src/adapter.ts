@@ -29,7 +29,6 @@ import {
   CLIP_GAP_SECONDS,
   TIMELINE_LEADING_PADDING_SECONDS,
 } from "@storyboard/timeline-model/constants";
-import { previewItemsFrom } from "@storyboard/timeline-model/documents";
 import type {
   AssetSourceRef,
   CollectionTimelineClip,
@@ -409,29 +408,28 @@ export function hydratedCollectionPlayableDuration(
 }
 
 /**
- * Preview frames of a HYDRATED collection, derived from its live children with
- * the SAME `previewItemsFrom` the read-time summary derivation uses — so the
- * projection and the served document agree byte-for-byte.
- *
- * This exists for the same reason `hydratedCollectionDuration` does: a stored
- * summary's `previewItems` goes stale the moment the CHILD document is edited
- * (add to the front, delete the first clip, reorder), and because the write
- * path persists documents THROUGH this projection, an unrelated parent write
- * RE-PERSISTED the stale frames — baking the wrong preview into storage.
- * Deriving from the live children makes the UI's collection card and the
- * stored document agree, and writes self-healing. Placeholders keep their
- * stored summary — it is all anyone knows about them.
+ * Preview frames of a hydrated collection, derived recursively from its live
+ * descendants. Persisting the same result makes collection-only ancestors
+ * self-healing after edits instead of baking a stale or blank summary back
+ * into storage.
  */
 function hydratedCollectionPreviewItems(
   graph: CollectionsGraph,
   details: DetailsById,
   collectionId: NodeId,
 ): CollectionTimelineClip["previewItems"] {
-  return previewItemsFrom(graphChildrenToClips(graph, details, collectionId as string));
+  return [...hydratedCollectionPreviews(graph, collectionId as string, details)];
 }
 
 /** A collection card's preview frame: exactly the fields the card paints. */
-export type CollectionPreviewFrame = Readonly<{ id: string; src: string; poster?: string }>;
+export type CollectionPreviewFrame = Readonly<{
+  id: string;
+  kind: "image" | "video";
+  src: string;
+  poster?: string;
+  trimIn?: number;
+  alt: string;
+}>;
 
 /**
  * Preview frames for a HYDRATED collection CARD, derived from its LIVE media
@@ -446,37 +444,48 @@ export type CollectionPreviewFrame = Readonly<{ id: string; src: string; poster?
  * `itemCount` once hydrated. Placeholders have no live children, so callers
  * keep their stored summary.
  *
- * Graph-only (no side-table needed): a media node already carries the
- * thumbnail the card paints — `posterSrcs` for video, `src` for an image —
- * and the same first/middle/last selection `previewItemsFrom` uses keeps the
- * card in step with the persisted preview.
+ * Media source URLs live on graph nodes. The optional details table adds the
+ * image poster and display alt text when this helper is used for persistence.
  *
  * RECURSES into sub-collections: a collection whose direct children are all
  * nested collections has no media of its own to show, so the walk descends
  * depth-first (in child order) to surface the first nested image — and the
  * rest, from which first/middle/last is picked. A placeholder sub-collection
  * has no children in the graph, so the descent stops there naturally (its
- * nested media aren't loaded and can't be shown until it hydrates). This is a
- * LIVE-card enrichment only; the persisted summary (`hydratedCollectionPreviewItems`
- * / `previewItemsFrom`) stays direct-media, since it can't resolve documents
- * it doesn't hold.
+ * nested media aren't loaded and can't be shown until it hydrates). The
+ * persisted recursive summary then lets higher, unhydrated ancestors reuse
+ * the resolved descendant frame.
  */
 export function hydratedCollectionPreviews(
   graph: CollectionsGraph,
   collectionId: string,
+  details?: DetailsById,
 ): readonly CollectionPreviewFrame[] {
   const media: CollectionPreviewFrame[] = [];
-  const seen = new Set<string>();
+  const seen = new Set<string>([collectionId]);
   const collect = (id: NodeId): void => {
     for (const childId of getChildren(graph, id)) {
       const node = graph.nodesById.get(childId);
       if (!node) continue;
       if (node.kind === "media") {
-        const poster = node.mediaKind === "video" ? node.posterSrcs?.[0] : undefined;
+        const detail = details?.[node.id as string];
+        const src = node.src?.trim() ?? "";
+        const poster =
+          node.mediaKind === "video"
+            ? node.posterSrcs?.find((candidate) => candidate.trim().length > 0)
+            : detail?.poster;
+        if (node.mediaKind === "video" ? poster === undefined : src.length === 0) {
+          continue;
+        }
         media.push({
           id: node.id as string,
-          src: node.src ?? "",
+          kind: node.mediaKind === "video" ? "video" : "image",
+          src,
           ...(poster === undefined ? {} : { poster }),
+          ...(node.mediaKind === "video" && node.trimInSeconds > 0
+            ? { trimIn: node.trimInSeconds }
+            : {}),
+          alt: detail?.alt ?? node.name,
         });
       } else if (node.kind === "collection") {
         // Descend to find nested images. `seen` guards a pathological cycle

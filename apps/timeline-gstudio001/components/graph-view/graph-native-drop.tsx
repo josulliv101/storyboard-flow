@@ -340,7 +340,7 @@ function acceptsNativeDrag(event: DragEvent<HTMLElement>): boolean {
  * they are shared unchanged: only turning a POINTER into an anchor (1-D for a
  * strip, 2-D for a grid) and drawing the indicator are surface-specific.
  */
-function useNativeDrop(collectionId: string) {
+function useNativeDrop(collectionId: string, projectId: string) {
   const store = useCollectionsStore();
   const { addNodes, insertTool } = useToolInsertion(collectionId);
   // Keyed BY DROP, not one shared slot. Several drops can be live at once
@@ -455,18 +455,31 @@ function useNativeDrop(collectionId: string) {
             const duration = probe?.durationSeconds ?? IMAGE_CLIP_SECONDS;
             let hosted: Awaited<ReturnType<typeof uploadTimelineMedia>>;
             try {
-              hosted = await uploadTimelineMedia(file.name, file, undefined, {
+              hosted = await uploadTimelineMedia(file.name, file, projectId, undefined, {
                 thumbnail: probe?.thumbnail ?? null,
                 signal,
               });
-            } catch {
-              return { node: null, detail: null, error: `"${file.name}" could not be uploaded.` };
+            } catch (error) {
+              const reason =
+                error instanceof Error
+                  ? error.message.replace(/^Media upload failed:\s*/i, "").trim()
+                  : "";
+              const detail = reason ? ` ${reason.slice(0, 220)}` : "";
+              return {
+                node: null,
+                detail: null,
+                error: `"${file.name}" could not be uploaded.${detail}`,
+              };
             }
             if (isVideo && !hosted.thumbnailUrl) {
               return { node: null, detail: null, error: `"${file.name}" has no video thumbnail.` };
             }
 
             const id = mintId(isVideo ? "video" : "image");
+            const sourceAsset =
+              hosted.providerId && hosted.assetId
+                ? { providerId: hosted.providerId, assetId: hosted.assetId }
+                : undefined;
             if (isVideo) {
               const node: CollectionItemNode = {
                 id: parseNodeId(id),
@@ -482,7 +495,13 @@ function useNativeDrop(collectionId: string) {
               };
               return {
                 node,
-                detail: { alt: file.name, aspect: 16 / 9, trackIndex: 0, poster: hosted.thumbnailUrl },
+                detail: {
+                  alt: file.name,
+                  aspect: 16 / 9,
+                  trackIndex: 0,
+                  poster: hosted.thumbnailUrl,
+                  ...(sourceAsset === undefined ? {} : { sourceAsset }),
+                },
                 error: null,
               };
             }
@@ -503,6 +522,7 @@ function useNativeDrop(collectionId: string) {
                 sourceDuration: IMAGE_CLIP_SECONDS,
                 trimIn: 0,
                 trimOut: 0,
+                ...(sourceAsset === undefined ? {} : { sourceAsset }),
               },
               error: null,
             };
@@ -565,7 +585,7 @@ function useNativeDrop(collectionId: string) {
         dropAbortsRef.current.delete(controller);
       }
     },
-    [addNodes, resolveAnchoredIndex, setDropStatus],
+    [addNodes, resolveAnchoredIndex, setDropStatus, projectId],
   );
 
   /** Commit a drop whose insert boundary the surface already resolved. Tools
@@ -616,10 +636,11 @@ function NativeDropStatus({ upload }: Readonly<{ upload: DropSummary | null }>) 
  */
 export function NativeDropStrip({
   collectionId,
+  projectId,
   children,
-}: Readonly<{ collectionId: string; children: ReactNode }>) {
+}: Readonly<{ collectionId: string; projectId: string; children: ReactNode }>) {
   const store = useCollectionsStore();
-  const { commitDrop, upload } = useNativeDrop(collectionId);
+  const { commitDrop, upload } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicatorX, setIndicatorX] = useState<number | null>(null);
 
@@ -809,6 +830,7 @@ type GridCellGeometry = Readonly<{
 type GridDragGeometry = Readonly<{
   wrapperLeft: number;
   wrapperTop: number;
+  gap: number;
   cells: readonly GridCellGeometry[];
 }>;
 
@@ -825,10 +847,11 @@ type GridIndicator = Readonly<{ x: number; y: number; height: number }>;
  */
 export function NativeDropGrid({
   collectionId,
+  projectId,
   children,
-}: Readonly<{ collectionId: string; children: ReactNode }>) {
+}: Readonly<{ collectionId: string; projectId: string; children: ReactNode }>) {
   const store = useCollectionsStore();
-  const { commitDrop, upload } = useNativeDrop(collectionId);
+  const { commitDrop, upload } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState<GridIndicator | null>(null);
 
@@ -841,6 +864,11 @@ export function NativeDropGrid({
     const wrapper = wrapperRef.current;
     if (!wrapper) return null;
     const wrapperRect = wrapper.getBoundingClientRect();
+    const virtualRow = wrapper.querySelector<HTMLElement>("[data-virtual-row]");
+    const measuredGap = virtualRow
+      ? Number.parseFloat(window.getComputedStyle(virtualRow).columnGap)
+      : 0;
+    const gap = Number.isFinite(measuredGap) ? measuredGap : 0;
     const cells = [...wrapper.querySelectorAll<HTMLElement>("[data-node-id]")].map((cell) => {
       const rect = cell.getBoundingClientRect();
       return {
@@ -852,7 +880,7 @@ export function NativeDropGrid({
         midX: rect.left + rect.width / 2,
       };
     });
-    return { wrapperLeft: wrapperRect.left, wrapperTop: wrapperRect.top, cells };
+    return { wrapperLeft: wrapperRect.left, wrapperTop: wrapperRect.top, gap, cells };
   }, []);
 
   /** The mounted cell the insertion boundary sits BEFORE, or null to append. */
@@ -902,31 +930,33 @@ export function NativeDropGrid({
     }
     const { x: clientX, y: clientY } = pointerRef.current;
     const before = cellBeforeWhichPointerFalls(geometry, clientX, clientY);
-    // Where the bar draws. The boundary before a cell that STARTS a new row is
-    // the same insertion point as "after the previous row's last cell" — so
-    // when the pointer is actually on that previous row (dragged past its right
-    // end), draw at the previous cell's RIGHT edge instead of jumping to the
-    // far left of the next row, which read as the indicator landing in the
-    // wrong place. Otherwise: left edge of the cell the boundary precedes, or
-    // the right edge of the last cell when appending at the very end.
+    // Draw at the CENTER of the visual gap represented by the resolved
+    // boundary. The same `before` cell resolves the actual DropAnchor below,
+    // so the line cannot advertise one insertion point and commit another.
     const beforeIndex = before ? geometry.cells.indexOf(before) : -1;
     const previous = beforeIndex > 0 ? geometry.cells[beforeIndex - 1] : null;
     const boundaryStartsRow = before !== null && previous !== null && previous.top < before.top - 1;
     const anchorPreviousRowEnd = boundaryStartsRow && previous !== null && clientY <= previous.bottom;
+    const halfGap = geometry.gap / 2;
+    const halfIndicator = 1;
     let x: number;
     let y: number;
     let height: number;
     if (!before) {
       const last = geometry.cells[geometry.cells.length - 1];
-      x = last.right + 3 - geometry.wrapperLeft;
+      x = last.right + halfGap - halfIndicator - geometry.wrapperLeft;
       y = last.top - geometry.wrapperTop;
       height = last.bottom - last.top;
     } else if (anchorPreviousRowEnd && previous) {
-      x = previous.right + 3 - geometry.wrapperLeft;
+      x = previous.right + halfGap - halfIndicator - geometry.wrapperLeft;
       y = previous.top - geometry.wrapperTop;
       height = previous.bottom - previous.top;
+    } else if (previous && !boundaryStartsRow) {
+      x = (previous.right + before.left) / 2 - halfIndicator - geometry.wrapperLeft;
+      y = before.top - geometry.wrapperTop;
+      height = before.bottom - before.top;
     } else {
-      x = before.left - 3 - geometry.wrapperLeft;
+      x = before.left - halfGap - halfIndicator - geometry.wrapperLeft;
       y = before.top - geometry.wrapperTop;
       height = before.bottom - before.top;
     }

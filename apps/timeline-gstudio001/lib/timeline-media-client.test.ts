@@ -38,7 +38,7 @@ describe("uploadTimelineMedia", () => {
 
   it("returns the parsed result for a well-formed response", async () => {
     stubUpload(response({ pathname: "media/a.png", url: "https://cdn.test/a.png" }));
-    await expect(uploadTimelineMedia("a.png", png())).resolves.toEqual({
+    await expect(uploadTimelineMedia("a.png", png(), "project-a")).resolves.toEqual({
       pathname: "media/a.png",
       url: "https://cdn.test/a.png",
     });
@@ -53,9 +53,24 @@ describe("uploadTimelineMedia", () => {
         thumbnailUrl: "https://cdn.test/thumbs/a.jpg",
       }),
     );
-    await expect(uploadTimelineMedia("a.png", png())).resolves.toMatchObject({
+    await expect(uploadTimelineMedia("a.png", png(), "project-a")).resolves.toMatchObject({
       thumbnailPathname: "thumbs/a.jpg",
       thumbnailUrl: "https://cdn.test/thumbs/a.jpg",
+    });
+  });
+
+  it("keeps provider provenance returned by the upload route", async () => {
+    stubUpload(
+      response({
+        pathname: "media/a.png",
+        url: "https://cdn.test/a.png",
+        providerId: "firebase",
+        assetId: "media/a.png",
+      }),
+    );
+    await expect(uploadTimelineMedia("a.png", png(), "project-a")).resolves.toMatchObject({
+      providerId: "firebase",
+      assetId: "media/a.png",
     });
   });
 
@@ -76,18 +91,41 @@ describe("uploadTimelineMedia", () => {
     ],
   ])("rejects a 2xx response with %s", async (_label, body) => {
     stubUpload(response(body));
-    await expect(uploadTimelineMedia("a.png", png())).rejects.toThrow(/without a usable url/);
+    await expect(
+      uploadTimelineMedia("a.png", png(), "project-a"),
+    ).rejects.toThrow(/without a usable url/);
   });
 
   it("rejects a 2xx response whose body is not JSON at all", async () => {
     // A proxy returning an HTML error page with a 200 — .json() itself throws.
     stubUpload(response(new Error("Unexpected token <")));
-    await expect(uploadTimelineMedia("a.png", png())).rejects.toThrow(/without a usable url/);
+    await expect(
+      uploadTimelineMedia("a.png", png(), "project-a"),
+    ).rejects.toThrow(/without a usable url/);
   });
 
   it("still reports non-2xx responses as upload failures", async () => {
     stubUpload(response("storage is full", 507));
-    await expect(uploadTimelineMedia("a.png", png())).rejects.toThrow(/Media upload failed/);
+    await expect(
+      uploadTimelineMedia("a.png", png(), "project-a"),
+    ).rejects.toThrow(/Media upload failed/);
+  });
+
+  it("extracts the server error from a failed JSON upload response", async () => {
+    stubUpload(
+      response(
+        {
+          error:
+            "Cloudinary rejected the file because it exceeds this account's upload-size limit.",
+        },
+        413,
+      ),
+    );
+    await expect(
+      uploadTimelineMedia("a.png", png(), "project-a"),
+    ).rejects.toThrow(
+      "Media upload failed: Cloudinary rejected the file because it exceeds this account's upload-size limit.",
+    );
   });
 });
 
@@ -118,10 +156,13 @@ describe("uploadTimelineMedia video thumbnails", () => {
     const poster = new Blob([new Uint8Array([255, 216])], { type: "image/jpeg" });
 
     await expect(
-      uploadTimelineMedia("a.mp4", mp4(), undefined, { thumbnail: poster }),
+      uploadTimelineMedia("a.mp4", mp4(), "project-a", undefined, {
+        thumbnail: poster,
+      }),
     ).resolves.toEqual(ok);
 
     expect(bodies).toHaveLength(1);
+    expect(bodies[0].get("projectId")).toBe("project-a");
     // FormData re-wraps a Blob as a File, so compare content, not identity.
     const sent = bodies[0].get("thumbnail");
     expect(sent).toBeInstanceOf(Blob);
@@ -136,7 +177,9 @@ describe("uploadTimelineMedia video thumbnails", () => {
     const bodies = stubUploadCapturing();
 
     await expect(
-      uploadTimelineMedia("a.mp4", mp4(), undefined, { thumbnail: null }),
+      uploadTimelineMedia("a.mp4", mp4(), "project-a", undefined, {
+        thumbnail: null,
+      }),
     ).resolves.toEqual(ok);
 
     expect(bodies[0].get("thumbnail")).toBeNull();
@@ -151,7 +194,7 @@ describe("uploadTimelineMedia video thumbnails", () => {
     }) as unknown as typeof fetch);
     const controller = new AbortController();
 
-    await uploadTimelineMedia("a.mp4", mp4(), undefined, {
+    await uploadTimelineMedia("a.mp4", mp4(), "project-a", undefined, {
       thumbnail: null,
       signal: controller.signal,
     });

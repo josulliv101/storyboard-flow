@@ -24,6 +24,11 @@ export type Asset = Readonly<{
    *  `providerId` (an `AssetSourceRef`) anywhere two providers can meet. */
   id: string;
   providerId: string;
+  /**
+   * Project memberships for this asset. Today this contains exactly one id;
+   * the array leaves the model ready for explicitly shared assets later.
+   */
+  projectIds: readonly string[];
   /** Display name — the basename, not a path. */
   name: string;
   kind: AssetKind;

@@ -7,6 +7,7 @@ import type { CloudinaryAsset } from "@/lib/cloudinary-media-store";
 
 const state = vi.hoisted(() => ({
   vendorAssets: [] as CloudinaryAsset[],
+  listedFor: null as { uid: string; projectId: string } | null,
   user: { uid: "user-a", email: null as string | null, name: null, picture: null } as {
     uid: string;
   } | null,
@@ -20,8 +21,30 @@ vi.mock("@/lib/firebase-auth-session", () => ({
       : { user: null, response: new Response(null, { status: 401 }) },
 }));
 vi.mock("@/lib/cloudinary-media-store", () => ({
-  listCloudinaryAssets: async () => state.vendorAssets,
+  listCloudinaryAssets: async (uid: string, projectId: string) => {
+    state.listedFor = { uid, projectId };
+    return state.vendorAssets;
+  },
 }));
+vi.mock("@/lib/project-asset-scope", () => {
+  class ProjectAssetScopeError extends Error {
+    constructor(
+      message: string,
+      readonly status: number,
+    ) {
+      super(message);
+    }
+  }
+  return {
+    ProjectAssetScopeError,
+    requireProjectAssetScope: async (value: unknown) => {
+      if (typeof value !== "string" || !value.startsWith("project-")) {
+        throw new ProjectAssetScopeError("A valid projectId is required.", 400);
+      }
+      return value;
+    },
+  };
+});
 
 import { GET as listAssets } from "./route";
 import { GET as listProviders } from "./providers/route";
@@ -37,7 +60,13 @@ function vendorAsset(id: string, relativePath: string): CloudinaryAsset {
   };
 }
 
-const request = (query = "") => new Request(`http://test.local/api/assets${query}`);
+const request = (query = "") => {
+  const url = new URL("http://test.local/api/assets");
+  url.searchParams.set("projectId", "project-a");
+  const supplied = new URLSearchParams(query.replace(/^\?/, ""));
+  supplied.forEach((value, key) => url.searchParams.append(key, value));
+  return new Request(url);
+};
 
 beforeEach(() => {
   state.vendorAssets = [
@@ -46,6 +75,7 @@ beforeEach(() => {
     vendorAsset("c", "Scenes/Heist/c.png"),
   ];
   state.user = { uid: "user-a" };
+  state.listedFor = null;
 });
 
 describe("GET /api/assets", () => {
@@ -54,12 +84,14 @@ describe("GET /api/assets", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
     expect(body.providerId).toBe("cloudinary");
+    expect(state.listedFor).toEqual({ uid: "user-a", projectId: "project-a" });
     expect(body.capabilities).toMatchObject({ folders: true });
     const assets = body.assets as { id: string; providerId: string; src: string; kind: string }[];
     // Flat listing: everything, regardless of folder.
     expect(assets.map((entry) => entry.id)).toEqual(["a", "b", "c"]);
     expect(assets[0]).toMatchObject({
       providerId: "cloudinary",
+      projectIds: ["project-a"],
       kind: "image",
       src: "https://cdn.test/a",
     });
@@ -110,6 +142,11 @@ describe("GET /api/assets", () => {
   it("requires a session", async () => {
     state.user = null;
     expect((await listAssets(request())).status).toBe(401);
+  });
+
+  it("requires a project scope", async () => {
+    const response = await listAssets(new Request("http://test.local/api/assets"));
+    expect(response.status).toBe(400);
   });
 });
 
