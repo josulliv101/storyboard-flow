@@ -265,6 +265,22 @@ function useToolInsertion(collectionId: string) {
   return { addNodes, insertTool };
 }
 
+/**
+ * Append a fresh nested timeline to `collectionId`, at the index the caller
+ * names. The trailing add slot's route in — the same mint-and-insert the
+ * sidebar tool and the native tool drop use, so a timeline added this way is
+ * indistinguishable from one added any other way (undo, persistence, the
+ * pending-detail bookkeeping all come along).
+ *
+ * Deliberately NOT routed through `resolveInsertPlacement` like the sidebar
+ * button: that rule lands next to the SELECTION, and a control sitting at the
+ * end of one particular surface plainly means "here".
+ */
+export function useAppendCollection(collectionId: string): (toIndex: number) => boolean {
+  const { insertTool } = useToolInsertion(collectionId);
+  return useCallback((toIndex: number) => insertTool("collection", toIndex), [insertTool]);
+}
+
 /** Human label for an inserted tool, for the announcement. */
 const TOOL_LABELS: Readonly<Record<SidebarTool, string>> = {
   collection: "collection",

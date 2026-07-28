@@ -46,6 +46,7 @@ import {
   useSelectionAggregate,
   type PreviewTimeChannel,
 } from "./graph-preview";
+import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
@@ -495,6 +496,10 @@ export function GraphBoard({
                 overscan={GRAPH_STRIP_OVERSCAN_ITEMS}
                 itemWidth={collectionCardWidth(deferredPixelsPerSecond, dims.strip)}
                 itemHeight={dims.strip}
+                // "One more, at the end of THIS timeline" — the sidebar tool
+                // lands next to the selection, which is a different intent.
+                // Flat mode has no single parent to append to, so no slot.
+                trailingSlot={flatOn ? undefined : <AddCollectionSlot collectionId={focusedId} />}
                 itemDragActivation="hold"
                 overlay={
                   previewOn || rulerOn ? (
@@ -566,6 +571,7 @@ export function GraphBoard({
                   // drag. "body" (the default) drags instantly, which ate the
                   // drill click and made drags ambiguous.
                   itemDragActivation="hold"
+                  trailingSlot={<AddCollectionSlot collectionId={focusedId} />}
                   overlay={
                     previewOn ? (
                       <GraphGridPlayhead

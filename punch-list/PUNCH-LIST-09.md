@@ -2,7 +2,7 @@
 
 ## PL9-001 — Trailing "add a collection" placeholder in every strip and grid
 
-- Status: Open
+- Status: Complete
 - URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
 - Area: Strip and grid surfaces — trailing add affordance
 - Screenshot: Not captured
@@ -163,7 +163,7 @@ Acceptance criteria:
 
 ## PL9-005 — Scrubbing across an empty collection loses the cursor
 
-- Status: STRIP done; GRID rails still to do
+- Status: Complete
 - URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
 - Area: Seek rails and playhead (`graph-playhead-model.ts`,
   `graph-preview.tsx`)
@@ -185,16 +185,13 @@ directly, emitting whatever time that x maps to, and hand back to the
 time-driven position on release. Confirm the empty-collection span really is
 zero-width in time before building on that.
 
-DONE (strip): the channel now carries a scrub POSITION beside the time —
-`PreviewScrubPosition`, scoped by surface id — and the strip's playhead line
-and rail thumb both ride it while that surface is being dragged. Proven
-fail-first: without it the line does not move AT ALL across an empty card
-(824.33 → 824.33 over the whole crossing).
-
-NOT DONE (grid): `buildGridPlayheadMap.posAt` collapses a zero-duration cell
-the same way, so the grid's rails need the same treatment. It needs a `y` on
-the scrub payload (a grid position is a row as well as an offset) and the
-grid rail computing both in grid content coordinates.
+The channel carries a scrub POSITION beside the time
+(`PreviewScrubPosition`, scoped by surface id) and the line, the strip's rail
+thumb, and the grid's playhead all ride it while that surface is dragged. The
+grid payload adds a `y` — a grid position is a row as well as an offset — and
+its rail wraps its UNWRAPPED seek offset back onto the grid the playhead
+paints on. Proven fail-first on both: strip 824.33 → 824.33, grid 1032 →
+1032, i.e. no movement at all across the empty card.
 
 Acceptance criteria:
 
@@ -253,3 +250,23 @@ Acceptance criteria:
   with the folder.
 - It shares its visual language with the "No child timelines" empty state's
   tree icon (PL8-010), so the two do not look like different systems.
+
+## PL9-007 — Scrub readout is clipped under the breadcrumb row
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-preview.tsx` — seek-rail scrub readout (follows PL9-003)
+- Screenshot: Not captured
+
+The timestamp readout added in PL9-003 draws ABOVE its rail (`bottom-full`).
+When the surface sits directly under the sticky breadcrumb header there is no
+room there, and the readout is cut off.
+
+Acceptance criteria:
+
+- The readout is fully visible while scrubbing, wherever the surface sits —
+  including hard against the header.
+- It stays attached to the playhead rather than jumping to a fixed corner.
+- It is not occluded by the sticky header, the preview region, or a card.
+- Both the strip rail and the grid's per-row rails.
+- Still drag-only, still pointer-events-none, still no layout shift.

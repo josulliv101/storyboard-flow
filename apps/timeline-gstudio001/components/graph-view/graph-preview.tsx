@@ -87,7 +87,13 @@ import { GRID_GAP, TIMELINE_PPS } from "./graph-view-config";
  * pointer; every other playhead (sub-rows, the other layout) stays on the
  * clock, which is what keeps them in agreement with each other.
  */
-export type PreviewScrubPosition = Readonly<{ surfaceId: string; x: number }>;
+export type PreviewScrubPosition = Readonly<{
+  surfaceId: string;
+  x: number;
+  /** Grid only: a position there is a ROW as well as an offset. Absent for
+   *  the strip, which is one line. */
+  y?: number;
+}>;
 
 export type PreviewTimeChannel = Readonly<{
   get: () => number;
@@ -685,7 +691,16 @@ export function GraphGridPlayhead({
         !activeWindow || (time >= activeWindow.start - 0.04 && time <= activeWindow.end + 0.04);
       line.style.display = inside ? "" : "none";
       if (!inside) return;
-      const { x, y } = map.posAt(time);
+      // While THIS grid is being scrubbed the line rides the pointer rather
+      // than the clock: a collection with no items is a full cell of width
+      // holding no time, so `posAt` of that instant can only ever return the
+      // cell's left edge (see PreviewScrubPosition).
+      const scrub = channel.getScrub();
+      const pos = map.posAt(time);
+      const { x, y } =
+        scrub && scrub.surfaceId === focusedId && scrub.y !== undefined
+          ? { x: scrub.x, y: scrub.y }
+          : pos;
       // Reach up through the band's clearance so the stem meets its row
       // rail's underside (the strip line does the same via -top-1).
       line.style.transform = `translate(${x}px, ${y - SEEK_RAIL_BAND_INSET_PX}px)`;
@@ -790,6 +805,9 @@ function SeekRailRow({
   channel,
   ariaLabel,
   rowIndex,
+  columns,
+  rowPitchY,
+  surfaceId,
 }: Readonly<{
   rowCards: readonly ChildSpan[];
   isLastRow: boolean;
@@ -803,6 +821,13 @@ function SeekRailRow({
   channel: PreviewTimeChannel;
   ariaLabel: string;
   rowIndex: number;
+  /** Columns and row pitch, so a pointer offset can be wrapped back into the
+   *  grid's own {x, y} for the scrub position — the rail seeks along an
+   *  UNWRAPPED line, the playhead paints on the wrapped grid. */
+  columns: number;
+  rowPitchY: number;
+  /** The surface this rail scrubs, so its playhead (and no other) follows. */
+  surfaceId: string;
 }>) {
   const railRef = useRef<HTMLDivElement>(null);
   const fillRef = useRef<HTMLDivElement>(null);
@@ -868,7 +893,19 @@ function SeekRailRow({
     // timeline's unwrapped line at this row's offset, so a drag that
     // overshoots either end keeps scrubbing into the neighbouring rows
     // (timeAt clamps to the timeline's own bounds).
-    channel.set(map.timeAt(offsetX + (event.clientX - rect.left), 0));
+    const unwrapped = Math.max(0, offsetX + (event.clientX - rect.left));
+    // Wrap that back onto the grid the playhead actually paints on. Position
+    // FIRST, then time — both notify the same listeners, and the other order
+    // paints one frame from the new time against a stale position.
+    const pitch = cellWidth + GRID_GAP;
+    const cell = Math.floor(unwrapped / pitch);
+    const within = Math.min(cellWidth, unwrapped - cell * pitch);
+    channel.setScrub({
+      surfaceId,
+      x: (cell % columns) * pitch + within,
+      y: Math.floor(cell / columns) * rowPitchY,
+    });
+    channel.set(map.timeAt(unwrapped, 0));
   };
 
   return (
@@ -904,11 +941,13 @@ function SeekRailRow({
         if (event.pointerId !== pointerIdRef.current) return;
         pointerIdRef.current = null;
         setScrubbing(false);
+        channel.setScrub(null);
       }}
       onPointerCancel={(event) => {
         if (event.pointerId !== pointerIdRef.current) return;
         pointerIdRef.current = null;
         setScrubbing(false);
+        channel.setScrub(null);
       }}
       onKeyDown={(event) => {
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -997,7 +1036,11 @@ function SeekRailRow({
           ref={timeRef}
           data-rail-time
           aria-hidden="true"
-          className="pointer-events-none absolute bottom-full z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
+          // BELOW the rail, not above: the surfaces sit hard against the
+          // sticky breadcrumb header, and there is nothing overhead to draw
+          // into — the readout was simply cut off (PL9-007). Downward it
+          // overlays the cards, which are its own surface and beneath it.
+          className="pointer-events-none absolute top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
         />
       )}
     </div>
@@ -1149,6 +1192,9 @@ export function GraphSeekRails({
           y={geometry.top + row * (cellHeight + GRID_GAP) - GRID_GAP}
           channel={channel}
           rowIndex={row}
+          columns={geometry.columns}
+          rowPitchY={cellHeight + GRID_GAP}
+          surfaceId={focusedId}
           ariaLabel={rows.length > 1 ? `${ariaLabel}, row ${row + 1}` : ariaLabel}
         />
       ))}
@@ -1584,7 +1630,11 @@ export function GraphStripSeekRail({
           ref={timeRef}
           data-rail-time
           aria-hidden="true"
-          className="pointer-events-none absolute bottom-full z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
+          // BELOW the rail, not above: the surfaces sit hard against the
+          // sticky breadcrumb header, and there is nothing overhead to draw
+          // into — the readout was simply cut off (PL9-007). Downward it
+          // overlays the cards, which are its own surface and beneath it.
+          className="pointer-events-none absolute top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
         />
       )}
     </div>

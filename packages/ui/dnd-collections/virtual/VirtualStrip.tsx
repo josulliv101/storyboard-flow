@@ -163,6 +163,17 @@ export type VirtualStripProps = Readonly<{
    */
   itemWidthFor?: (node: CollectionItemNode) => number | undefined;
   itemHeight?: number;
+  /**
+   * Rendered in a slot AFTER the last card, at the content's true end, so it
+   * scrolls with the strip rather than hovering over it. The seam for an
+   * "add one here" affordance without the surface having to know what
+   * adding means.
+   *
+   * NOT AN ITEM. It sits past `getTotalSize()`, which is what every
+   * boundary, model, and roving-focus calculation is built on, so nothing
+   * counts it and a drop at the end still lands after the last real card.
+   */
+  trailingSlot?: ReactNode;
   gap?: number;
   /** Extra items rendered on each side of the viewport. */
   overscan?: number;
@@ -225,6 +236,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       itemWidth: itemWidthOption,
       itemWidthFor,
       itemHeight: itemHeightOption,
+      trailingSlot,
       gap: gapOption,
       overscan: overscanOption,
       panToScroll = true,
@@ -855,7 +867,11 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
               ref={contentRef}
               {...(childIds.length > 0 ? { role: "row", "aria-rowindex": 1 } : {})}
               style={{
-                width: virtualizer.getTotalSize(),
+                // The slot's width is ADDED here and nowhere else: every
+                // boundary and model reads `getTotalSize()`, which stays the
+                // cards' own extent, so the slot cannot shift an index.
+                width:
+                  virtualizer.getTotalSize() + (trailingSlot ? itemWidth + gap : 0),
                 height: itemHeight,
                 position: "relative",
                 // The left-handle "grows left" anchor (0 unless a left trim is
@@ -917,6 +933,20 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   />
                 </div>
               ))}
+              {trailingSlot && (
+                <div
+                  data-virtual-trailing-slot
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: virtualizer.getTotalSize(),
+                    width: itemWidth,
+                    height: itemHeight,
+                  }}
+                >
+                  {trailingSlot}
+                </div>
+              )}
               {/* Consumer overlay (playhead, region markers) in CONTENT
                   coordinates: living inside the spacer means scroll,
                   auto-scroll, and the live-trim anchor transform all apply
