@@ -180,11 +180,42 @@ body {
   animation: trash-hover-attention 800ms ease-in-out infinite;
 }
 
+/* A collection CARD, called out while its child-timeline row's folder is
+   hovered: one pass of a sky glow that rises and falls, then the card rests.
+   A one-shot, not a loop — the pointer sits on a folder for as long as the
+   user is reading the tree, and a throb for all of that is noise.
+
+   Glow and ring only. Never the element's opacity (see the trash note above),
+   and nothing that changes the box: these cards sit in a virtualized strip
+   where a size change would shove every neighbour. */
+@keyframes collection-paired-callout {
+  0% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+  }
+  35% {
+    box-shadow: 0 0 18px 4px rgba(56, 189, 248, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+  }
+}
+
+.animate-collection-paired-callout {
+  animation: collection-paired-callout 260ms ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-trash-arrival,
   .animate-trash-armed-pulse,
-  .animate-trash-hover-attention {
+  .animate-trash-hover-attention,
+  .animate-collection-paired-callout {
     animation: none;
+  }
+
+  /* The connection still has to READ without motion: hold the glow steady
+     for as long as the row is hovered instead of playing it. */
+  .animate-collection-paired-callout {
+    box-shadow: 0 0 16px 3px rgba(56, 189, 248, 0.5);
   }
 }
 

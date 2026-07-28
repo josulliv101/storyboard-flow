@@ -101,10 +101,13 @@ export function stepDownItemSize(size: ItemSize): ItemSize {
  */
 export const GRID_UNCAPPED_HEIGHT = 100_000;
 /** Sub-graph tree: left indent of a row's body (strip + nested rows) so the
- *  strip lines up with the LABEL, past the folder icon. Matches the header's
- *  folder button (h-5 = 20px) + gap-2 (8px). Applied structurally per level,
- *  so nesting accumulates it. */
-export const SUBTIMELINE_INDENT_PX = 28;
+ *  strip lines up with the LABEL, past everything before it in the header.
+ *  Sums the header's own leading run: the tree elbow (w-2 = 8px, pulled 2px
+ *  closer by -mr-0.5) + gap-2 (8px) + the folder button (h-5 = 20px) + gap-2
+ *  (8px) = 42. Applied structurally per level, so nesting accumulates it.
+ *  KEEP IN STEP with that row header — an e2e pins the strip's left edge to
+ *  the label's, which is what catches it when they drift. */
+export const SUBTIMELINE_INDENT_PX = 42;
 /** Stop RECURSING past this depth (render the row, omit its nested children) —
  *  defensive insurance against pathological data; the graph is otherwise a
  *  single-parent tree for navigable collections. */

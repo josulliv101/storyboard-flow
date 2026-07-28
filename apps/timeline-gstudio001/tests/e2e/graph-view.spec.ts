@@ -577,6 +577,21 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => stripOrder(page, GRANDCHILD_ID), { timeout: 15000 })
       .toEqual(["g1"]);
+
+    // PL9-006: every row leads with a tree elbow, at every depth — and it
+    // takes width, so the thing to guard is that the preview frames still
+    // land on ONE vertical line across depths (the column the nested panels'
+    // negative right inset exists to keep straight).
+    for (const label of ["Scene A", "Scene B"]) {
+      await expect(
+        page.locator(`section[aria-label="Sub-timeline: ${label}"] [data-subtimeline-elbow]`).first(),
+      ).toBeVisible();
+    }
+    const thumbRights = await page
+      .locator("[data-subtimeline-thumbs]")
+      .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().right)));
+    expect(thumbRights.length).toBeGreaterThan(1);
+    expect(new Set(thumbRights).size).toBe(1);
   });
 
   test("a collection id containing a comma is one row, not two broken ones", async ({ page }) => {
@@ -3641,48 +3656,88 @@ test.describe("graph view E2E", () => {
     await expect(trail.getByRole("link", { name: TITLES[0] })).toBeVisible();
   });
 
-  test("a collection's card icon and its child-timeline row highlight together", async ({
-    page,
-  }) => {
-    // PL8-012. With the tree shown a collection is on screen twice, and
-    // nothing said the two were the same thing.
+  test("a scrub drag shows the timestamp at the playhead, and only then", async ({ page }) => {
+    // PL9-003. The transport's clock is up in the preview chrome; mid-drag the
+    // number has to be where the pointer is.
+    await installGraphApi(page);
+    await openGraph(page);
+    await previewToggle(page).click();
+    const rail = page.getByRole("slider", { name: "Seek preview" }).first();
+    await expect(rail).toBeVisible();
+    const readout = page.locator("[data-rail-time]");
+
+    // Not on hover, and not while parked.
+    await rail.hover();
+    await expect(readout).toHaveCount(0);
+
+    const box = (await rail.boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.25, box.y + box.height / 2);
+    await page.mouse.down();
+    await expect(readout).toHaveCount(1);
+    const atQuarter = await readout.textContent();
+    expect(atQuarter).toMatch(/^\d+(\.\d+)?s$/);
+
+    // It tracks the drag: further along the rail reads a later time.
+    await page.mouse.move(box.x + box.width * 0.75, box.y + box.height / 2, { steps: 8 });
+    await expect
+      .poll(async () => Number.parseFloat((await readout.textContent()) ?? "0"))
+      .toBeGreaterThan(Number.parseFloat(atQuarter ?? "0"));
+
+    // It rides WITH the thumb rather than sitting in a fixed corner.
+    const thumbBox = (await page.locator("[data-rail-thumb]").first().boundingBox())!;
+    const readoutBox = (await readout.boundingBox())!;
+    expect(Math.abs(readoutBox.x + readoutBox.width / 2 - (thumbBox.x + thumbBox.width / 2)))
+      .toBeLessThan(40);
+
+    // Gone on release.
+    await page.mouse.up();
+    await expect(readout).toHaveCount(0);
+  });
+
+  test("hovering a child row's folder calls out its collection card", async ({ page }) => {
+    // PL9-002, revising PL8-012: ONE direction now, and the card is called out
+    // by an animation rather than its icon changing.
     await installGraphApi(page);
     await openGraph(page); // children timelines on
-    // The drill button is a SIBLING of the card's selection surface, not a
-    // child of it — `[data-node-id]` is the surface itself, so scoping to the
-    // card finds nothing.
     const cardIcon = page.getByRole("button", { name: "Open Scene A" }).first();
     const rowFolder = page
       .locator('section[aria-label="Sub-timeline: Scene A"]')
       .getByRole("button", { name: "Expand" })
       .first();
-    const paired = page.locator('[data-collection-paired="true"]');
+    const calledOut = page.locator("[data-collection-called-out]");
 
-    await expect(paired).toHaveCount(0);
+    await expect(calledOut).toHaveCount(0);
 
-    // Card → row.
-    await cardIcon.hover();
-    await expect(rowFolder).toHaveAttribute("data-collection-paired", "true");
-    // Exactly the pair: the hovered element and its twin, nothing else.
-    await expect(paired).toHaveCount(2);
-
-    await page.mouse.move(0, 0);
-    await expect(paired).toHaveCount(0);
-
-    // Row → card.
+    // Row folder → the matching card, and only that one.
     await rowFolder.hover();
-    await expect(cardIcon).toHaveAttribute("data-collection-paired", "true");
-    await expect(paired).toHaveCount(2);
+    await expect(calledOut).toHaveCount(1);
+    const inCard = await calledOut.evaluate((el) =>
+      el.closest("[data-node-wrapper]")?.querySelector("[data-node-id]")?.getAttribute("data-node-id"),
+    );
+    expect(inCard).toBe(CHILD_ID);
 
+    // The call-out is drawn, not laid out: the card's box is untouched.
+    const cardBefore = (await strip(page, PROJECT_ID)
+      .locator(`[data-node-id="${CHILD_ID}"]`)
+      .boundingBox())!;
     await page.mouse.move(0, 0);
-    await expect(paired).toHaveCount(0);
+    await expect(calledOut).toHaveCount(0);
+    const cardAfter = (await strip(page, PROJECT_ID)
+      .locator(`[data-node-id="${CHILD_ID}"]`)
+      .boundingBox())!;
+    expect(cardAfter.x).toBeCloseTo(cardBefore.x, 0);
+    expect(cardAfter.width).toBeCloseTo(cardBefore.width, 0);
 
-    // With the tree hidden there is no row to pair with, so hovering the card
-    // highlights nothing.
+    // The reverse direction is GONE: hovering the card touches nothing.
+    await cardIcon.hover();
+    await expect(calledOut).toHaveCount(0);
+    await expect(rowFolder).not.toHaveAttribute("data-collection-paired", "true");
+
+    // And with the tree hidden there is no row to hover from at all.
+    await page.mouse.move(0, 0);
     await page.getByRole("button", { name: "Hide children timelines" }).click();
     await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
-    await cardIcon.hover();
-    await expect(paired).toHaveCount(0);
+    await expect(calledOut).toHaveCount(0);
   });
 
   test("clicking away anywhere that is not a control clears the selection", async ({

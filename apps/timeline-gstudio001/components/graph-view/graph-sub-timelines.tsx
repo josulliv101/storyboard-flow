@@ -15,7 +15,7 @@ import {
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
-import { useCollectionHoverPair } from "./graph-collection-hover";
+import { useCollectionHoverSource } from "./graph-collection-hover";
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import {
   VideoFrameLookAhead,
@@ -140,7 +140,7 @@ function SubTimelineNode({
   );
   const name = useTimelineTitle(id) ?? nodeName;
   const rename = useInlineRename(collectionId, name, "sub-row");
-  const hoverPair = useCollectionHoverPair(collectionId as string);
+  const hoverSource = useCollectionHoverSource(collectionId as string);
   const detail = useClipDetail(id);
   const hydrated = detail?.hydrated === true;
   // ENABLED children only — this row says what the timeline contributes, so
@@ -182,21 +182,29 @@ function SubTimelineNode({
       className="min-w-0 rounded-lg border border-zinc-800/70 bg-zinc-900/40 p-3"
     >
       <div className="mb-1.5 flex items-center gap-2">
+        {/* Tree elbow. Nesting is otherwise carried only by the panels'
+            indentation, which reads as "inset boxes" rather than "branches";
+            the corner in front of the folder names the relationship. Drawn
+            with borders on an empty box rather than as a glyph so it lines up
+            with the folder's optical centre at any font size, and given a
+            fixed width so the header's other columns — name, badges, and the
+            preview frames' shared right-hand column — do not move. */}
+        <span
+          aria-hidden="true"
+          data-subtimeline-elbow
+          className="-mr-0.5 -mt-2 h-2.5 w-2 shrink-0 rounded-bl-[3px] border-b border-l border-zinc-700"
+        />
         <button
           type="button"
           aria-label={expanded ? "Collapse" : "Expand"}
           aria-expanded={expanded}
           onClick={toggle}
-          // The other half of the card↔row pairing: hovering this folder
-          // lights up the same collection's card icon in the surface above,
-          // and `paired` is this end lighting up when the card is hovered.
-          data-collection-paired={hoverPair.paired ? "true" : undefined}
-          onPointerEnter={hoverPair.onPointerEnter}
-          onPointerLeave={hoverPair.onPointerLeave}
-          className={[
-            "flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:bg-zinc-800 hover:text-sky-300",
-            hoverPair.paired ? "bg-zinc-800 text-sky-300" : "text-sky-400",
-          ].join(" ")}
+          // Hovering this folder calls out the same collection's CARD in the
+          // surface above (graph-collection-hover). One direction only: the
+          // card does not reach back down here.
+          onPointerEnter={hoverSource.onPointerEnter}
+          onPointerLeave={hoverSource.onPointerLeave}
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-sky-400 transition-colors hover:bg-zinc-800 hover:text-sky-300"
         >
           {expanded ? (
             <FolderOpen aria-hidden="true" className="h-4 w-4" />

@@ -62,6 +62,7 @@ import {
   useTimelineDocuments,
 } from "@storyboard/ui/timeline/timeline-document-store";
 import { createTimelineDocumentsState } from "@storyboard/ui/timeline/timeline-documents";
+import { formatSeconds } from "@storyboard/ui/timeline/utils";
 import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
@@ -774,6 +775,10 @@ function SeekRailRow({
   const fillRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<HTMLDivElement>(null);
   const pointerIdRef = useRef<number | null>(null);
+  const timeRef = useRef<HTMLSpanElement>(null);
+  // Mounted only during a scrub (PL9-003); `scrubbing` is a paint dep so the
+  // imperative writer below picks up the freshly mounted node.
+  const [scrubbing, setScrubbing] = useState(false);
 
   const cells = rowCards.length;
   const pitch = cellWidth + GRID_GAP;
@@ -803,6 +808,15 @@ function SeekRailRow({
       const fraction = Math.min(1, Math.max(0, (map.posAt(clamped).x - offsetX) / extent));
       fill.style.width = `${fraction * 100}%`;
       thumb.style.left = `${fraction * 100}%`;
+      const label = timeRef.current;
+      if (label) {
+        label.textContent = formatSeconds(clamped);
+        label.style.visibility = active ? "" : "hidden";
+        // Clamped into the rail so the readout stays legible at both ends.
+        const half = label.offsetWidth / 2;
+        const x = fraction * rail.clientWidth;
+        label.style.left = `${Math.min(rail.clientWidth - half, Math.max(half, x))}px`;
+      }
       rail.setAttribute("aria-valuenow", (clamped - rowStart).toFixed(1));
       rail.setAttribute(
         "aria-valuetext",
@@ -811,7 +825,7 @@ function SeekRailRow({
     };
     paint();
     return channel.subscribe(paint);
-  }, [channel, map, offsetX, extent, rowStart, rowEnd, isLastRow]);
+  }, [channel, map, offsetX, extent, rowStart, rowEnd, isLastRow, scrubbing]);
 
   const seekToPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     const rail = railRef.current;
@@ -847,16 +861,21 @@ function SeekRailRow({
           // Synthetic pointer without capture support: moves still arrive
           // while the pointer stays over the rail, which tests rely on.
         }
+        setScrubbing(true);
         seekToPointer(event);
       }}
       onPointerMove={(event) => {
         if (event.pointerId === pointerIdRef.current) seekToPointer(event);
       }}
       onPointerUp={(event) => {
-        if (event.pointerId === pointerIdRef.current) pointerIdRef.current = null;
+        if (event.pointerId !== pointerIdRef.current) return;
+        pointerIdRef.current = null;
+        setScrubbing(false);
       }}
       onPointerCancel={(event) => {
-        if (event.pointerId === pointerIdRef.current) pointerIdRef.current = null;
+        if (event.pointerId !== pointerIdRef.current) return;
+        pointerIdRef.current = null;
+        setScrubbing(false);
       }}
       onKeyDown={(event) => {
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -936,6 +955,18 @@ function SeekRailRow({
         aria-hidden="true"
         className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
       />
+      {/* Where the playhead is HEADING, at the pointer — the transport's own
+          clock is up in the preview chrome, too far to read mid-drag. Only
+          during a drag: on hover it would follow a playhead nobody is moving.
+          pointer-events-none so it can never take the drag's own pointer. */}
+      {scrubbing && (
+        <span
+          ref={timeRef}
+          data-rail-time
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-full z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
+        />
+      )}
     </div>
   );
 }
@@ -1143,6 +1174,12 @@ export function GraphStripSeekRail({
   const pointerIdRef = useRef<number | null>(null);
   const lastClientXRef = useRef(0);
   const panFrameRef = useRef<number | null>(null);
+  const timeRef = useRef<HTMLSpanElement>(null);
+  // Rendered ONLY while a scrub drag is live (PL9-003). State, not a style
+  // toggle, so the label does not exist to be measured or read the rest of
+  // the time; the paint effect below lists it as a dep so the imperative
+  // writer picks up the freshly mounted node.
+  const [scrubbing, setScrubbing] = useState(false);
 
   const graph = useSyncExternalStore(
     store.subscribe,
@@ -1255,6 +1292,13 @@ export function GraphStripSeekRail({
         windowX >= -overhang &&
         windowX <= outer.clientWidth + overhang;
       thumb.style.visibility = visible ? "" : "hidden";
+      // The scrub readout rides the thumb. Clamped into the rail so it stays
+      // legible at both ends instead of hanging off the timeline.
+      const label = timeRef.current;
+      if (label) {
+        const half = label.offsetWidth / 2;
+        label.style.left = `${Math.min(outer.clientWidth - half, Math.max(half, windowX))}px`;
+      }
     };
     const syncScroll = () => {
       inner.style.transform = `translateX(${-scroller.scrollLeft}px)`;
@@ -1266,6 +1310,7 @@ export function GraphStripSeekRail({
       const clamped = Math.min(end, Math.max(start, time));
       contentX = map.xAt(clamped);
       fill.style.width = `${contentX}px`;
+      if (timeRef.current) timeRef.current.textContent = formatSeconds(clamped);
       placeThumb();
       outer.setAttribute("aria-valuenow", (clamped - start).toFixed(1));
       outer.setAttribute(
@@ -1281,7 +1326,7 @@ export function GraphStripSeekRail({
       unsubscribe();
       scroller.removeEventListener("scroll", syncScroll);
     };
-  }, [channel, map, start, end]);
+  }, [channel, map, start, end, scrubbing]);
 
   const scrollerOf = (): HTMLElement | null =>
     outerRef.current?.parentElement?.querySelector<HTMLElement>("[data-virtual-strip]") ?? null;
@@ -1369,6 +1414,7 @@ export function GraphStripSeekRail({
           // Synthetic pointer without capture support: moves still arrive
           // while the pointer stays over the rail, which tests rely on.
         }
+        setScrubbing(true);
         seekAtClientX(event.clientX);
         startPanLoop();
       }}
@@ -1380,11 +1426,13 @@ export function GraphStripSeekRail({
       onPointerUp={(event) => {
         if (event.pointerId !== pointerIdRef.current) return;
         pointerIdRef.current = null;
+        setScrubbing(false);
         stopPanLoop();
       }}
       onPointerCancel={(event) => {
         if (event.pointerId !== pointerIdRef.current) return;
         pointerIdRef.current = null;
+        setScrubbing(false);
         stopPanLoop();
       }}
       onKeyDown={(event) => {
@@ -1484,6 +1532,16 @@ export function GraphStripSeekRail({
         aria-hidden="true"
         className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.7)] ring-2 ring-zinc-950 transition-transform group-hover:scale-110"
       />
+      {/* The scrub readout, twin of the strip rail's — see there for why it
+          exists and why it is drag-only. */}
+      {scrubbing && (
+        <span
+          ref={timeRef}
+          data-rail-time
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-full z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
+        />
+      )}
     </div>
   );
 }

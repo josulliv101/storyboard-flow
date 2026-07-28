@@ -44,7 +44,7 @@ import {
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import { isDisabledByAncestor } from "./graph-playhead-model";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
-import { useCollectionHoverPair } from "./graph-collection-hover";
+import { useCollectionHoverTarget } from "./graph-collection-hover";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TrimFramePreview } from "./graph-trim-frame-preview";
 import { createDerivedCache } from "@/lib/derived-cache";
@@ -765,7 +765,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   const title = useTimelineTitle(id as string);
   const rename = useInlineRename(id, title ?? node.name, "card");
   const nav = useContext(GraphViewNavContext);
-  const hoverPair = useCollectionHoverPair(id as string);
+  const calledOut = useCollectionHoverTarget(id as string);
   // Hydrated collections derive their preview frames and total duration from
   // live children (like the count), so editing a loaded child refreshes this
   // card without a reload; placeholders fall back to their stored summary.
@@ -894,6 +894,25 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         </span>
       </CollectionItem.SelectionSurface>
 
+      {/* The call-out for PL9-002, mounted only while this collection's row is
+          hovered. MOUNTING is what restarts the one-shot: moving between
+          folders unmounts one card's overlay and mounts the next card's, so
+          the animation re-fires without a counter or a manual restart, and
+          re-entering the same folder replays it.
+
+          A SIBLING of the selection surface, not a child: the surface is
+          `overflow-hidden` (its preview frames bleed to the edges), and an
+          outward glow drawn inside it would be clipped away to nothing. Out
+          here it also cannot collide with the selected/rejected ring states
+          the card already carries. */}
+      {calledOut && (
+        <span
+          aria-hidden="true"
+          data-collection-called-out
+          className="animate-collection-paired-callout pointer-events-none absolute inset-0 rounded-md"
+        />
+      )}
+
       {/* The drill affordance — a REAL button now that it composes as a
           SIBLING of the selection surface. Centred over the preview area (the
           card minus its label row), sized as a fraction of the card so it
@@ -910,20 +929,11 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         aria-label={`Open ${displayName}`}
         title="Open this timeline"
         data-collections-keyboard-ignore
-        // Same collection, two places on screen once the children tree is
-        // shown. Hovering here lights up this collection's ROW, and hovering
-        // that row lights this up (`paired`) — see graph-collection-hover.
-        data-collection-paired={hoverPair.paired ? "true" : undefined}
-        onPointerEnter={hoverPair.onPointerEnter}
-        onPointerLeave={hoverPair.onPointerLeave}
         onClick={(event) => {
           event.stopPropagation();
           nav?.openTimeline(id);
         }}
-        className={[
-          "absolute left-1/2 top-[41%] flex aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300",
-          hoverPair.paired ? "bg-zinc-900/85 text-sky-100 ring-sky-300" : "ring-sky-400/50",
-        ].join(" ")}
+        className="absolute left-1/2 top-[41%] flex aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300"
       >
         {/* CornerRightDown — turn and descend, the verb this control performs:
             NAVIGATE into the timeline. The sidebar's FolderTree toggles whether
