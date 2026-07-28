@@ -59,16 +59,19 @@ export function PersistenceBridge({
               void graphDocumentsGateway.renameTimeline(update.nodeId as string, update.after.name);
               continue;
             }
-            // A MEDIA rename has to land in the side table, because that is
-            // what the write path reads: `graphChildrenToClips` emits
-            // `alt: detail?.alt ?? node.name`, and every clip loaded from a
-            // document has `detail.alt` set — so a rename that only touched
-            // the graph would look right, then be overwritten by the stored
-            // alt on the next write and revert on reload. Same patch shape on
-            // undo/redo, so the round-trip reverses for free.
+            // A MEDIA rename lands in the side table, because that is what the
+            // write path reads — a rename that only touched the graph would
+            // look right and then be overwritten on the next write.
+            //
+            // It writes `title`, NOT `alt` (PL11-004): `alt` is the derived
+            // accessibility description and must survive naming, and absence
+            // of `title` is what tells the card this clip is unnamed. Same
+            // patch shape on undo/redo, so the round-trip reverses for free.
             const detail = detailsStore.get(update.nodeId as string);
             if (!detail) continue;
-            detailsStore.merge({ [update.nodeId as string]: { ...detail, alt: update.after.name } });
+            detailsStore.merge({
+              [update.nodeId as string]: { ...detail, title: update.after.name },
+            });
           }
         }
 

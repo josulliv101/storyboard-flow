@@ -4107,6 +4107,48 @@ test.describe("graph view E2E", () => {
     await expect(page.getByRole("dialog")).toHaveCount(1);
   });
 
+  test("the header says whether the work is saved", async ({ page }) => {
+    // PL11-003. The app autosaves on a 900ms debounce and used to say nothing
+    // about it — and undo history dies on reload, so "did that save?" is a
+    // question with consequences.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const status = page.locator("[data-save-status]");
+    // Nothing written yet: no claim either way.
+    await expect(status).toHaveCount(0);
+
+    // Any edit puts it into flight. A trim commits on release.
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const wrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    const handle = wrapper.locator("[data-trim-handle]").last();
+    const handleBox = (await handle.boundingBox())!;
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x - 30, handleBox.y + handleBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+
+    // "Saving…" covers both halves of the write path — the debounce window and
+    // the batch in flight — so the poll is on the STATE, not on catching a
+    // particular instant of it.
+    await expect.poll(() => status.getAttribute("data-save-status"), { timeout: 3000 })
+      .toBe("saving");
+    await expect.poll(() => status.getAttribute("data-save-status"), { timeout: 8000 })
+      .toBe("saved");
+    await expect(status).toContainText("Saved");
+
+    // It OWNS the centre slot while it speaks: the clip/duration readout is
+    // displaced, not pushed aside, and comes back when the flash ends.
+    await expect(page.locator("[data-focused-aggregate], [data-selection-summary]"))
+      .toHaveCount(0);
+    await expect(status).toHaveCount(0, { timeout: 6000 });
+    await expect(page.locator("[data-selection-summary]")).toHaveCount(1);
+  });
+
   test("ctrl+z undoes and ctrl+shift+z redoes from the keyboard", async ({ page }) => {
     // PL10-009. Undo/redo had NO keyboard binding — only the toolbar buttons,
     // which is fine until something covers them (the trim modal) or the page
@@ -4228,9 +4270,11 @@ test.describe("graph view E2E", () => {
     }).toPass({ timeout: 10000 });
     await openItemDetails(page, "alpha");
 
-    const storedAlt = () =>
-      api.documents.get(PROJECT_ID)?.clips.find((clip) => clip.id === "alpha")?.alt;
-    expect(storedAlt()).toBe("alpha");
+    const storedClip = () =>
+      api.documents.get(PROJECT_ID)?.clips.find((clip) => clip.id === "alpha");
+    const storedTitle = () => storedClip()?.title;
+    expect(storedTitle()).toBeUndefined();
+    expect(storedClip()?.alt).toBe("alpha");
 
     // Double-click the name, type, Enter.
     await page.locator("[data-item-details] >> text=alpha").first().dblclick();
@@ -4241,8 +4285,22 @@ test.describe("graph view E2E", () => {
 
     // The graph took it...
     await expect(page.locator("[data-item-details]")).toContainText("Belushi close-up");
-    // ...and so did the write, once the gateway's debounce flushes.
-    await expect.poll(storedAlt, { timeout: 5000 }).toBe("Belushi close-up");
+    // ...and so did the write, once the gateway's debounce flushes — as
+    // `title`, with `alt` untouched. Renaming a clip must not rewrite the
+    // accessibility description derived from its source (PL11-004).
+    await expect.poll(storedTitle, { timeout: 5000 }).toBe("Belushi close-up");
+    expect(storedClip()?.alt).toBe("alpha");
+
+    // And the card now shows it, because someone chose it. Unnamed cards
+    // stay bare — that is what keeps a two-thousand-clip library from
+    // reading as a rename backlog.
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
+    await expect(strip(page, PROJECT_ID).locator('[data-node-id="alpha"] [data-clip-title]'))
+      .toHaveText("Belushi close-up");
+    await expect(strip(page, PROJECT_ID).locator('[data-node-id="bravo"] [data-clip-title]'))
+      .toHaveCount(0);
+    await openItemDetails(page, "alpha");
 
     // Escape cancels an edit instead of closing the modal — the capture-phase
     // key handler has to yield to the editor.
@@ -4252,7 +4310,7 @@ test.describe("graph view E2E", () => {
     await reopened.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(1);
     await expect(page.locator("[data-item-details]")).toContainText("Belushi close-up");
-    expect(storedAlt()).toBe("Belushi close-up");
+    expect(storedTitle()).toBe("Belushi close-up");
   });
 
   test("a trim drag floats the edge frame above the clip", async ({ page }) => {

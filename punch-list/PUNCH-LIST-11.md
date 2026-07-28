@@ -1,5 +1,85 @@
 # Punch List 11
 
+## PL11-003 — The header says whether the work is saved
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `lib/graph-documents-gateway.ts`, `graph-save-status.tsx` (new),
+  `graph-board.tsx`
+- Screenshot: Not captured
+
+The app autosaves on a 900ms debounce and said nothing about it — the only
+readout was a dev-gated panel behind `?dev`. That gap has teeth: undo history
+lives in memory, so a reload ends it, and an autosaved mistake the user never
+saw commit has no path back.
+
+The gateway now exposes `saveState()` — pending (waiting out the debounce),
+inFlight (in the batch being sent), lastSavedAt, error — and notifies when a
+batch starts and settles, which it did not do before. Three states and no
+more: `Saving…`, `Saved` (~2.6s), and `Not saved` with the error on its
+tooltip.
+
+It lives in the header's CENTRE slot and takes it over while it has something
+to say, handing it back to the clip/duration readout when it doesn't — one
+slot, whichever fact matters more at that moment. A total you can re-read at
+any time loses to "your last edit isn't on the server yet". Nothing shows
+before the session's first write, and there is no permanent resting "Saved":
+chrome that never changes says nothing.
+
+TRAP: `saveState()` first returned a fresh object per call, and
+`useSyncExternalStore` compares snapshots by IDENTITY — so it re-rendered
+forever and React tore the tree down. The board stopped rendering entirely and
+every e2e using it timed out waiting for a card. The getter now caches its
+snapshot and re-allocates only when a field actually changes.
+
+Acceptance criteria:
+
+- No indicator before the first write of a session.
+- An edit shows `Saving…`, then `Saved` once the batch lands, then the centre
+  slot returns to the clip/duration readout.
+- A failure says so, carries the reason, and holds the slot.
+
+## PL11-004 — A clip's name is `title`, and only shows when authored
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `packages/timeline-model/types.ts`,
+  `packages/timeline-domain/src/adapter.ts`, `graph-persistence.tsx`,
+  `graph-item-content.tsx`
+- Screenshot: Not captured
+
+PL10-010 wrote renames into `alt`, which was two problems in one: it rewrote
+the accessibility description, and it left no way to tell a name a person
+chose from a filename the import supplied.
+
+`title` is now its own optional field on the clip, absent until someone types
+one. `alt` goes back to being the derived description and survives renaming.
+The node's `name` reads `title ?? alt`, so aria labels, drag ghosts and
+announcements show the best available name; the CARD reads `detail.title`
+directly, so it shows a label only when one was authored.
+
+That absence is the point. Every clip has an `alt`, so a card rendering "the
+name" renders something for all of them — and two thousand machine-named
+clips read as a rename backlog. Unnamed cards stay bare; named ones look
+deliberate.
+
+What names are FOR here, from the user: similar-looking clips (ten close-ups
+of one actor, cut from ten different takes) are indistinguishable by
+thumbnail and carry no mechanical discriminator — each is 0→N of its own
+source, so in/out says nothing. A title is the only thing that can say which
+moment it is.
+
+Acceptance criteria:
+
+- Renaming writes `title` and leaves `alt` untouched.
+- A card shows a name only when `title` is set.
+- The details view still shows the best name, and renaming round-trips
+  through a reload.
+
+Rejected on the way: positional suffixes for naming a run ("Jake reacts 1…4").
+Reorder is free in this app, so the numbers would start lying the moment
+anyone moved a clip — a name that lies is worse than no name.
+
 ## PL11-002 — The details trigger moves onto the item
 
 - Status: Complete
