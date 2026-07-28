@@ -257,6 +257,41 @@ off-screen, and the frame clamps into view rather than following the edge out
 of it. Only reachable synthetically — a real drag holds the handle, which is
 on screen by definition.
 
+## PL10-008 — Experiment: the clip grows into a modal
+
+- Status: Complete (experiment — keep or discard)
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-trim-modal.tsx` (new, replacing `graph-trim-dock.tsx`),
+  `graph-board.tsx`, `app/globals.css`
+- Screenshot: Not captured
+
+The board already carries a strip, a tree, a preview, a ruler and a rail. Every
+placement for the source map was a fight with one of them. So instead of
+placing it: the toolbar icon now grows the selected clip into a MODAL via CSS
+view transitions, the rest goes behind a scrim, and the clip has the screen.
+
+Inside: the frame (large, seeked to the edge being dragged), the whole source
+with its window and grips (the trim handles, at 734px), and the in/out
+readout. Escape, the scrim, the close button and the toolbar icon all close it
+through the same reverse transition.
+
+Acceptance criteria:
+
+- The card morphs into the modal's frame rather than the modal fading in.
+- Exactly one element carries the shared `view-transition-name` at any time.
+- The grips still trim, and the film still moves the window.
+- Escape closes it and it reopens correctly — a stranded transition name
+  would silently kill the morph on the second open.
+
+TRAP worth remembering: while a view transition runs, the browser paints a
+SNAPSHOT over the page, and a snapshot is an image — real pointer events land
+on `<html>` for those ~260ms, so anything clicked mid-morph does nothing at
+all. It cost an hour reading like a dead gesture: `elementFromPoint` returned
+the grip while the real pointerdown reported `target=HTML`. Synthetic events
+dispatched straight at an element skip hit-testing entirely, which is why the
+same drag "worked" when scripted and failed with a real mouse. The e2e now
+settles the transition first (`settleViewTransition`).
+
 ## PL10-003 — The call-out must not flash a scrollbar
 
 - Status: Complete

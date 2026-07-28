@@ -49,7 +49,7 @@ import {
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
 import { TrimPanelProvider, useTrimPanel } from "./graph-trim-panel-context";
-import { GraphTrimDock } from "./graph-trim-dock";
+import { GraphTrimModal } from "./graph-trim-modal";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
   GRID_GAP,
@@ -248,14 +248,13 @@ function GraphUndoRedo() {
 }
 
 /**
- * Pins the trim panel open (PL10-004). Trimming is a deliberate task done in
- * passes, so this is a MODE the user turns on once, not a per-clip control —
- * and it lives in the toolbar rather than on the card because a media card is
- * NodeCard's single `<button>` shell, where a nested button would be invalid
- * HTML (the same constraint that made the collection rename a contentEditable
- * span). Disabled with no video selected, since there would be nothing to
- * show. Discovery doesn't rest on finding this: dragging a card's own trim
- * handle summons the panel for the length of the gesture either way.
+ * Opens the trim view (PL10-004, now a modal per PL10-008). It lives in the
+ * toolbar rather than on the card because a media card is NodeCard's single
+ * `<button>` shell, where a nested button would be invalid HTML (the same
+ * constraint that made the collection rename a contentEditable span).
+ * Disabled with no video selected, since there would be nothing to open.
+ * Discovery doesn't rest on finding this: dragging a card's own trim handle
+ * still previews the edge in place, without the modal.
  */
 function GraphTrimPanelToggle() {
   const { pinned, setPinned } = useTrimPanel();
@@ -274,11 +273,11 @@ function GraphTrimPanelToggle() {
       size="icon"
       disabled={!hasVideo}
       aria-pressed={pinned}
-      aria-label={pinned ? "Hide the trim panel" : "Show the trim panel"}
+      aria-label={pinned ? "Close the trim view" : "Open the trim view"}
       title={
         hasVideo
-          ? "Trim panel — the source frame at the edge you're moving, over a map of the whole clip"
-          : "Trim panel — select a video clip first"
+          ? "Trim view — open the clip on its own, with the whole source to trim against"
+          : "Trim view — select a video clip first"
       }
       onClick={() => setPinned(!pinned)}
       className={[
@@ -600,12 +599,11 @@ export function GraphBoard({
               )}
                 </NativeDropStrip>
               </VideoFrameLookAhead>
-              {/* The source map, IN THE FLOW under the strip it belongs to.
-                  Floating it over the board (PL10-004) meant it eventually
-                  covered something — inside a sub-timeline it parked on the
-                  row above. Docked, it also spans the strip, which is where
-                  its precision comes from. */}
-              <GraphTrimDock />
+              {/* Trimming happens in a MODAL now (PL10-008): the board already
+                  carries a strip, a tree, a preview, a ruler and a rail, and
+                  the source map had nowhere left to sit that wasn't in
+                  something's way. The card grows into it instead. */}
+              <GraphTrimModal />
             </div>
           ) : (
             // Grid scrubbing is the per-row SEEK RAILS layer — one slim

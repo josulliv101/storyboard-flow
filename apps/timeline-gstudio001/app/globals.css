@@ -223,6 +223,22 @@ body {
   transform-origin: center center;
 }
 
+/* The trim view's grow-from-the-card (PL10-008). The browser morphs the
+   shared `trim-subject` between the clip card and the modal's frame on its
+   own; this only slows it enough to be read as the same object moving, and
+   eases it so the growth decelerates into place instead of arriving flat.
+   The scrim and the panel chrome cross-fade on the root transition. */
+::view-transition-old(trim-subject),
+::view-transition-new(trim-subject) {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-trash-arrival,
   .animate-trash-armed-pulse,

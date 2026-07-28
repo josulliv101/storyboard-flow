@@ -439,6 +439,27 @@ async function settleMoveAnimations(page: Page): Promise<void> {
   );
 }
 
+/**
+ * Waits out a CSS view transition. While one runs, the browser paints a
+ * SNAPSHOT of the page over the real DOM — and a snapshot is an image, so
+ * every real pointer event during it lands on `<html>` instead of on whatever
+ * is visible. Interacting mid-transition therefore does nothing at all, which
+ * reads as a dead control rather than as a timing problem.
+ */
+async function settleViewTransition(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () =>
+      !document.getAnimations().some((animation) => {
+        // `pseudoElement` lives on KeyframeEffect, not the AnimationEffect
+        // base the DOM types expose here.
+        const effect = animation.effect as KeyframeEffect | null;
+        return effect?.pseudoElement?.startsWith("::view-transition") ?? false;
+      }),
+    undefined,
+    { timeout: 3000 },
+  );
+}
+
 /** Press-and-hold drag: hold past the 250ms activation delay, travel, dwell,
  *  release. Used for strip cards AND palette thumbnails (both hold-marked). */
 async function holdDrag(
@@ -3926,105 +3947,81 @@ test.describe("graph view E2E", () => {
     await expect(calledOut).toHaveCount(0);
   });
 
-  test("the docked source map fits the strip and covers nothing", async ({ page }) => {
-    // PL10-004/006. The old overview drew the source at TIMELINE scale, so its
-    // width was fullDuration × px/s — unbounded, off-screen in both directions
-    // for any long clip. Its floating replacement fitted the source but landed
-    // on whatever was above the card. Docked under the strip, it does neither.
+  test("the trim view opens as a modal and hands the hero name back", async ({ page }) => {
+    // PL10-008. Trimming moved into a modal the card grows into, so the board
+    // stops competing with it. The load-bearing invariant is the view
+    // transition's: exactly ONE element may carry the shared
+    // `view-transition-name` at a time — leave it on both and the browser
+    // silently skips the morph on the NEXT open, which looks like nothing at
+    // all rather than like a bug.
     await installGraphApi(page);
     await openGraph(page);
 
-    // alpha is a video: 6s showing out of an 8s source.
     const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
     await expect(async () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
+    await expect(page.locator("[data-trim-modal]")).toHaveCount(0);
 
-    // Selection alone must NOT summon it — that was the old behavior's cost:
-    // a trimming instrument on the cheapest, most frequent action there is.
-    await expect(page.locator("[data-trim-dock]")).toHaveCount(0);
+    const heroCount = () =>
+      page.evaluate(
+        () =>
+          [...document.querySelectorAll<HTMLElement>("*")].filter(
+            (el) => el.style?.viewTransitionName === "trim-subject",
+          ).length,
+      );
+    expect(await heroCount()).toBe(0);
 
-    await page.getByRole("button", { name: "Show the trim panel" }).click();
-    const dock = page.locator("[data-trim-dock]");
-    await expect(dock).toHaveCount(1);
+    await page.getByRole("button", { name: "Open the trim view" }).click();
+    const modal = page.getByRole("dialog");
+    await expect(modal).toHaveCount(1);
+    // Only the modal's frame holds the name while it is open — the card gave
+    // it up in the same frame.
+    expect(await heroCount()).toBe(1);
+    expect(
+      await page.locator("[data-trim-modal-frame]").evaluate((el) =>
+        el instanceof HTMLElement ? el.style.viewTransitionName : "",
+      ),
+    ).toBe("trim-subject");
 
-    const box = (await dock.boundingBox())!;
-    const viewport = page.viewportSize()!;
-    expect(box.x).toBeGreaterThanOrEqual(0);
-    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
-
-    // PL10-006, the regression that sent this back to the drawing board: the
-    // floating version only asked whether the VIEWPORT had room above the
-    // card, so inside a sub-timeline it parked on the row above. Docked, it is
-    // IN THE FLOW — assert it overlaps nothing, which is a property placement
-    // math can't promise and layout gives for free.
-    const collisions = await page.evaluate(() => {
-      const dockEl = document.querySelector("[data-trim-dock]");
-      if (!dockEl) return ["no dock"];
-      const d = dockEl.getBoundingClientRect();
-      const hits: string[] = [];
-      for (const el of document.querySelectorAll(
-        '[data-node-id], section[aria-label^="Sub-timeline"]',
-      )) {
-        const r = el.getBoundingClientRect();
-        if (r.width === 0 || r.height === 0) continue;
-        if (r.right <= d.left || r.left >= d.right || r.bottom <= d.top || r.top >= d.bottom) {
-          continue;
-        }
-        hits.push(el.getAttribute("aria-label") ?? el.getAttribute("data-node-id") ?? "?");
-      }
-      return hits;
-    });
-    expect(collisions).toEqual([]);
-
-    // Exactly one source map on the page, and it is the dock's: the package's
-    // own floating overview is off for this view.
+    // The whole source is in there, and it is the only map on the page.
     const maps = page.locator("[data-trim-overview]");
     await expect(maps).toHaveCount(1);
-    expect(await maps.evaluate((el) => !!el.closest("[data-trim-dock]"))).toBe(true);
-
-    // Docked, the map spans the strip instead of a 304px panel — which is
-    // where the resolution comes from (~0.05 s/px against 0.17).
-    const mapBox = (await maps.boundingBox())!;
-    expect(mapBox.width).toBeGreaterThan(500);
+    expect(await maps.evaluate((el) => !!el.closest("[data-trim-modal]"))).toBe(true);
     const windowBox = (await page.locator("[data-trim-overview-window]").boundingBox())!;
+    const mapBox = (await maps.boundingBox())!;
     expect(windowBox.width / mapBox.width).toBeCloseTo(6 / 8, 1);
 
-    // Dragging the map's body MOVES the window through the source — the
-    // gesture the map exists for, and the one that would have been lost if the
-    // map only existed mid-drag. Direction matters: fitted, the film is nailed
-    // to the panel and the window is what travels, so drag right must send the
-    // window right. (Unfitted the package drags the FILM under a pinned
-    // window, where the same pull means the opposite.)
-    const cardWidthBefore = (await alpha.boundingBox())!.width;
-    // Measured INSIDE the map: trimming the first clip in a strip shifts the
-    // content under it (firstItemGutter), so a viewport-absolute reading moves
-    // for reasons that aren't this gesture.
-    const windowOffset = async () => {
-      const map = (await maps.boundingBox())!;
-      const win = (await page.locator("[data-trim-overview-window]").boundingBox())!;
-      return win.x - map.x;
-    };
-    const offsetBefore = await windowOffset();
+    // The grips trim from in here, at the modal's scale.
+    // A view transition holds a SNAPSHOT over the page while it runs, and a
+    // snapshot is an image: real input during those ~260ms lands on <html>,
+    // not on anything in the modal. Settle it before touching the grips —
+    // without this the drag below silently does nothing, which looks exactly
+    // like a broken gesture.
+    await settleViewTransition(page);
 
-    await page.mouse.move(mapBox.x + mapBox.width / 2, mapBox.y + mapBox.height / 2);
+    const grip = page.locator('[data-trim-overview-handle="right"]');
+    const gripBox = (await grip.boundingBox())!;
+    await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
     await page.mouse.down();
-    for (let step = 1; step <= 6; step += 1) {
-      await page.mouse.move(
-        mapBox.x + mapBox.width / 2 + step * 5,
-        mapBox.y + mapBox.height / 2,
-        { steps: 2 },
-      );
-    }
+    await page.mouse.move(gripBox.x - 40, gripBox.y + gripBox.height / 2, { steps: 6 });
+    await expect(page.locator("[data-trim-modal-edge]")).toHaveCount(1);
     await page.mouse.up();
+    await expect
+      .poll(async () => (await page.locator("[data-trim-overview-window]").boundingBox())!.width)
+      .toBeLessThan(windowBox.width - 5);
 
-    expect(await windowOffset()).toBeGreaterThan(offsetBefore + 10);
-    // A move, not a trim: the window keeps its length, so the clip keeps its
-    // duration and the card keeps its width.
-    const movedWindow = (await page.locator("[data-trim-overview-window]").boundingBox())!;
-    expect(movedWindow.width).toBeCloseTo(windowBox.width, 0);
-    expect((await alpha.boundingBox())!.width).toBeCloseTo(cardWidthBefore, 0);
+    // Escape closes it and the name goes back where it came from — nothing
+    // may be left holding it, or the next open has two.
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-trim-modal]")).toHaveCount(0);
+    await expect.poll(heroCount).toBe(0);
+
+    // And it reopens, which is what a stranded name would have broken.
+    await page.getByRole("button", { name: "Open the trim view" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    expect(await heroCount()).toBe(1);
   });
 
   test("a trim drag floats the edge frame above the clip", async ({ page }) => {
