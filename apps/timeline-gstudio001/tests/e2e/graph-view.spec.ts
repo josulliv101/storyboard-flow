@@ -4014,9 +4014,10 @@ test.describe("graph view E2E", () => {
     expect((await alpha.boundingBox())!.width).toBeCloseTo(cardWidthBefore, 0);
   });
 
-  test("a trim drag summons the panel and tracks the moving edge", async ({ page }) => {
-    // PL10-004: the gesture that needs the panel summons it, pinned or not —
-    // which is what keeps it discoverable now that selection no longer does.
+  test("a trim drag floats the edge frame in the header band", async ({ page }) => {
+    // PL10-005. The live frame is its own small surface now: the height of the
+    // breadcrumb row, borrowing a band that is already chrome, with the edge
+    // being dragged pinned to the matching edge of the frame.
     await installGraphApi(page);
     await openGraph(page);
 
@@ -4026,7 +4027,7 @@ test.describe("graph view E2E", () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await expect(page.locator("[data-trim-panel]")).toHaveCount(0);
+    await expect(page.locator("[data-trim-edge-frame]")).toHaveCount(0);
 
     // Drag the OUT edge in. A video shows two handles; the second is the back
     // edge (the first is the front/in edge).
@@ -4036,15 +4037,25 @@ test.describe("graph view E2E", () => {
     await page.mouse.down();
     await page.mouse.move(handleBox.x - 24, handleBox.y + handleBox.height / 2, { steps: 6 });
 
-    const panel = page.locator("[data-trim-panel]");
-    await expect(panel).toHaveCount(1);
-    await expect(panel).toHaveAttribute("data-trim-panel-mode", "trimming");
-    // The amber bar marks the edge being dragged — the back one here.
-    await expect(page.locator('[data-trim-panel-edge="right"]')).toHaveCount(1);
+    const frame = page.locator('[data-trim-edge-frame="right"]');
+    await expect(frame).toHaveCount(1);
+
+    const band = (await page.locator("[data-graph-board-header]").boundingBox())!;
+    const frameBox = (await frame.boundingBox())!;
+    const cardBox = (await alpha.boundingBox())!;
+    // It lives in the band, at the band's height — not taller, and not
+    // pushing the strip down.
+    expect(frameBox.height).toBeCloseTo(band.height, 0);
+    expect(frameBox.y).toBeCloseTo(band.y, 0);
+    expect(frameBox.y + frameBox.height).toBeLessThanOrEqual(
+      (await strip(page, PROJECT_ID).boundingBox())!.y + 1,
+    );
+    // Out-edge drag: the frame's RIGHT edge rides the clip's right edge.
+    expect(frameBox.x + frameBox.width).toBeCloseTo(cardBox.x + cardBox.width, 0);
 
     await page.mouse.up();
-    // Unpinned, it retracts with the gesture that summoned it.
-    await expect(panel).toHaveCount(0);
+    // It belongs to the gesture, and goes with it.
+    await expect(frame).toHaveCount(0);
   });
 
   test("the call-out's scale never grows a scroll area", async ({ page }) => {

@@ -155,6 +155,38 @@ Note: verifying this on the demo project changed a clip's trim in `Intro`. It
 was restored to trim-in 0 / 30.16s showing (measured original: 30.15s); the
 ~0.01s is measurement error, not a second edit.
 
+## PL10-005 — The live frame moves into the breadcrumb band
+
+- Status: Complete (first half — the map panel is still open)
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-trim-panel.tsx`
+- Screenshot: Not captured
+
+PL10-004's panel was wrong in three ways, two of them measured: the frame took
+65% of its area against the map's 15% (the instrument got the sliver), and at
+304px wide the map ran 0.172 s/px where a strip-wide one would run 0.048 —
+the bound I chose set the precision. Third, it floated in empty space under
+the card, reading as a popup that wandered in.
+
+First half of the fix: the live frame becomes its own surface. During a trim
+drag it sits in the BOARD HEADER's band — the breadcrumb row, already chrome —
+at exactly that row's height, with the edge being dragged pinned to the
+matching edge of the frame: out-edge drags hang its right on the clip's right,
+in-edge drags its left on the clip's left. It grows inward over the clip, so
+it never runs off the ends, and it displaces nothing.
+
+The map panel keeps its place for now (pinned only) and lost its frame zone,
+which was the 65%. Where the map itself should live — docked full-width under
+the strip is the leading candidate, at ~0.05 s/px — is still open.
+
+Acceptance criteria:
+
+- The live frame appears only during a trim gesture and goes with it.
+- Its height equals the board header's, measured (that row is sticky and its
+  offset moves with the preview pane).
+- The dragged edge's side of the frame aligns to the clip's matching edge.
+- It clears the strip: nothing is displaced or covered below the band.
+
 ## PL10-003 — The call-out must not flash a scrollbar
 
 - Status: Complete
