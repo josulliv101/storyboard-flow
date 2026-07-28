@@ -558,11 +558,11 @@ const GraphClipContent = memo(function GraphClipContent({
       )}
       {provenance && <ProvenanceLabel parentId={provenance.parentId} name={provenance.name} />}
       {trimEnabled && !muted && <LiveDurationPill id={id} node={node} />}
-      {/* The trim panel (video only): frame at the working edge over a fitted
-          map of the source. Rides the same per-node live-trim channel as the
-          pill, and shows on trim intent — a live gesture, or pinned while
-          this card is the selected one. */}
-      {trimEnabled && <TrimPanel id={id} node={node} selected={selected} />}
+      {/* The live trim frame (video only): the source at the edge being
+          dragged, floated into the header band for the length of the gesture.
+          Rides the same per-node live-trim channel as the pill. Its other
+          half, the source map, is docked under the strip by the board. */}
+      {trimEnabled && <TrimPanel id={id} node={node} />}
     </span>
   );
 });

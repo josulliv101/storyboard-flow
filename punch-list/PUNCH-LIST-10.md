@@ -187,6 +187,42 @@ Acceptance criteria:
 - The dragged edge's side of the frame aligns to the clip's matching edge.
 - It clears the strip: nothing is displaced or covered below the band.
 
+## PL10-006 — Dock the source map under the strip
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-trim-dock.tsx` (new), `graph-trim-panel.tsx`, `graph-board.tsx`,
+  `packages/ui/dnd-collections/react/trim-overview.tsx`
+- Screenshot: Not captured
+
+Reported from a nested view: the pinned map was sitting on top of the
+`Mugshots` sub-timeline row. Measured — 21,600px² of that row covered, plus
+two collection cards.
+
+Cause: the placement rule only asked whether the VIEWPORT had room above the
+card. Inside a sub-timeline there is plenty of viewport up there — occupied by
+the row above. Anything anchored to a card in a nested, scrolling board will
+eventually cover something, so the fix is not better placement math.
+
+The map is now IN THE FLOW, docked under the focused strip, full width. No
+placement, no flip, no overlap — and it spans the strip, so the resolution
+problem goes with it: ~0.05 s/px against the floating panel's 0.17.
+
+Acceptance criteria:
+
+- The dock overlaps no card and no sub-timeline row, at any drill depth.
+- It appears only when pinned with a video selected, and takes no layout
+  space otherwise.
+- The map spans the strip; window, grips and slide gesture all still work.
+- Pressing the dock's own chrome does not clear the selection out from under
+  it.
+
+Knock-on found while verifying: at fitted scale the trimmed-room dim (55%)
+covered 850 of 942px and read as an empty black bar — the proportions invert
+when a short clip comes from a long source. Fitted mode dims at 30% and lets
+the amber window's border carry the distinction; the unfitted path is
+unchanged.
+
 ## PL10-003 — The call-out must not flash a scrollbar
 
 - Status: Complete

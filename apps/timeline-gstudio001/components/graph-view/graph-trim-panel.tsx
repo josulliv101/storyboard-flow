@@ -4,38 +4,27 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 
 import {
-  TrimOverviewStrip,
   useLiveTrim,
   type LiveTrim,
   type MediaNode,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
-import { useTrimPanel } from "./graph-trim-panel-context";
-
-// The trim surfaces (PL10-004, revised by PL10-005). TWO things, each doing
-// one job, instead of the timeline-scale overview band and the frame panel
-// that only coincidentally lined up with it:
+// The live trim FRAME (PL10-005): during a drag, a small still of the source
+// at the edge you are moving, laid in the breadcrumb row's band above the
+// strip and hugging the edge being dragged — in-edge drags align its LEFT to
+// the clip's left, out-edge drags align its RIGHT to the clip's right. It is
+// the height of that row and no taller, so it borrows space that is already
+// chrome rather than taking a band of its own.
 //
-// 1. The live FRAME, during a drag only: a small still of the source at the
-//    edge you are moving, laid in the breadcrumb row's band above the strip
-//    and hugging the edge being dragged — in-edge drags align its LEFT to the
-//    clip's left, out-edge drags align its RIGHT to the clip's right. It is
-//    the height of that row and no taller, so it borrows space that is
-//    already chrome rather than taking a band of its own.
-//
-// 2. The source MAP, while pinned: the whole clip fitted into a bounded
-//    panel, with the showing window and its grips. No frame in it — the frame
-//    is (1), and a still inside the map panel was 65% of its area for a job
-//    the map is doing.
+// Its other half, the source MAP, is docked under the strip in
+// `graph-trim-dock` — not floated here. A floating panel anchored to a card
+// in a nested, scrolling board always ends up on top of something (PL10-006).
 //
 // Video-only by design: an image has no source to map and no frame that
 // changes under trim (only its duration, which the pill already tracks).
 
-const PANEL_WIDTH = 320;
 const PANEL_MARGIN = 8;
-/** Panel border + the map's own padding — what the map can't have. */
-const MAP_INSET = 16;
 /** Fallback band height if the board header can't be measured. */
 const FALLBACK_BAND_PX = 44;
 
@@ -180,98 +169,17 @@ function LiveEdgeFrame({
 }
 
 /**
- * The pinned source map: the whole clip fitted into a bounded panel with the
- * showing window and its grips. Placed above the card when there is room and
- * below when there isn't, so it never sits on the clip it describes.
- */
-function PinnedSourceMap({
-  node,
-  live,
-  anchor,
-}: Readonly<{ node: MediaNode; live: LiveTrim | null; anchor: HTMLElement }>) {
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useLayoutEffect(() => {
-    const panel = panelRef.current;
-    if (!panel) return;
-    const rect = anchor.getBoundingClientRect();
-    const left = Math.min(
-      Math.max(PANEL_MARGIN, rect.left + rect.width / 2 - PANEL_WIDTH / 2),
-      window.innerWidth - PANEL_WIDTH - PANEL_MARGIN,
-    );
-    // Measured, not assumed: the panel is already laid out offscreen, and a
-    // constant would drift from the real height every time the contents
-    // change by a few pixels — which is exactly what puts a "floating above"
-    // panel over the thing it floats above.
-    const height = panel.offsetHeight;
-    const above = rect.top - height - PANEL_MARGIN;
-    const below = rect.bottom + PANEL_MARGIN;
-    const top =
-      above >= PANEL_MARGIN
-        ? above
-        : Math.min(below, Math.max(PANEL_MARGIN, window.innerHeight - height - PANEL_MARGIN));
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
-    panel.dataset.trimPanelPlacement = above >= PANEL_MARGIN ? "above" : "below";
-  }, [anchor, live]);
-
-  if (node.mediaKind !== "video" || !node.src) return null;
-
-  // Live values (mid-drag) win over the committed trim so the window tracks
-  // the drag frame-for-frame — the same rule VirtualStrip used for the old
-  // overview.
-  const trimIn = live ? live.trimInSeconds : node.trimInSeconds;
-  const trimOut = live ? live.trimOutSeconds : node.trimOutSeconds;
-
-  return createPortal(
-    <div
-      ref={panelRef}
-      data-trim-panel={node.id}
-      data-trim-panel-mode={live === null ? "resting" : "trimming"}
-      // A React portal bubbles through the REACT tree, not the DOM one, and
-      // this panel is rendered inside the card's content — so every press and
-      // click inside it arrived at the card's own handlers, which toggled the
-      // selection off and unmounted the panel mid-gesture. Stopping here is
-      // after the panel's own children have had the event, so the map's grips
-      // and slide gesture still work.
-      onPointerDown={(event) => event.stopPropagation()}
-      onPointerUp={(event) => event.stopPropagation()}
-      onClick={(event) => event.stopPropagation()}
-      className="fixed z-[55] overflow-hidden rounded-md border border-zinc-700 bg-zinc-950 px-2 pt-2 pb-1.5 shadow-xl shadow-black/50"
-      style={{ left: -9999, top: -9999, width: PANEL_WIDTH }}
-    >
-      <TrimOverviewStrip
-        node={node}
-        width={PANEL_WIDTH - MAP_INSET}
-        trimInSeconds={trimIn}
-        trimOutSeconds={trimOut}
-      />
-      <div className="mt-1 flex items-center justify-between font-mono text-[9px] text-zinc-500">
-        <span>whole source {node.fullDurationSeconds.toFixed(1)}s</span>
-        <span>drag to move the window</span>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-/**
- * Mount inside a video card's content. Renders nothing at rest unless the map
- * is pinned for THIS (selected) card; during a trim gesture on this node it
- * also floats the live edge frame. Trim INTENT is what shows either — not
- * selection, which is the cheap action people do all day.
+ * Mount inside a video card's content. Renders nothing at rest; during a trim
+ * gesture on this node it floats the live edge frame. Trim INTENT is what
+ * shows it — not selection, which is the cheap action people do all day.
  *
  * The wrapper span is the position anchor — it spans the card (absolute
  * inset-0), so measuring it measures the card. Tracked as STATE (callback
  * ref), not a ref read in render: the surfaces must render on the same pass
  * the anchor appears, and render-time ref reads are illegal.
  */
-export function TrimPanel({
-  id,
-  node,
-  selected,
-}: Readonly<{ id: NodeId; node: MediaNode; selected: boolean }>) {
+export function TrimPanel({ id, node }: Readonly<{ id: NodeId; node: MediaNode }>) {
   const live = useLiveTrim(id);
-  const { pinned } = useTrimPanel();
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
 
   if (node.mediaKind !== "video" || !node.src) return null;
@@ -279,9 +187,6 @@ export function TrimPanel({
     <span ref={setAnchor} aria-hidden="true" className="pointer-events-none absolute inset-0">
       {anchor !== null && live !== null ? (
         <LiveEdgeFrame node={node} live={live} anchor={anchor} />
-      ) : null}
-      {anchor !== null && pinned && selected ? (
-        <PinnedSourceMap node={node} live={live} anchor={anchor} />
       ) : null}
     </span>
   );

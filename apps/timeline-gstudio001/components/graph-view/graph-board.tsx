@@ -49,6 +49,7 @@ import {
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
 import { TrimPanelProvider, useTrimPanel } from "./graph-trim-panel-context";
+import { GraphTrimDock } from "./graph-trim-dock";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
   GRID_GAP,
@@ -599,6 +600,12 @@ export function GraphBoard({
               )}
                 </NativeDropStrip>
               </VideoFrameLookAhead>
+              {/* The source map, IN THE FLOW under the strip it belongs to.
+                  Floating it over the board (PL10-004) meant it eventually
+                  covered something — inside a sub-timeline it parked on the
+                  row above. Docked, it also spans the strip, which is where
+                  its precision comes from. */}
+              <GraphTrimDock />
             </div>
           ) : (
             // Grid scrubbing is the per-row SEEK RAILS layer — one slim

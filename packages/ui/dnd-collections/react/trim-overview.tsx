@@ -183,10 +183,19 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
         fullWidth={fullWidth}
       />
 
-      {/* Dim the trimmed room on each side. */}
-      <div className="absolute inset-y-0 left-0 bg-background/55" style={{ width: trimInWidth }} />
+      {/* Dim the trimmed room on each side.
+          Lighter when FITTED, because the proportions invert: at timeline
+          scale the room is a margin around the window, but fitted, a short
+          clip of a long source means the room is nearly the whole strip — and
+          at 55% over dark frames that reads as an empty black bar, which is
+          the one thing this control cannot afford to look like. The amber
+          window's border and tint carry the distinction there. */}
       <div
-        className="absolute inset-y-0 right-0 bg-background/55"
+        className={fitted ? "absolute inset-y-0 left-0 bg-background/30" : "absolute inset-y-0 left-0 bg-background/55"}
+        style={{ width: trimInWidth }}
+      />
+      <div
+        className={fitted ? "absolute inset-y-0 right-0 bg-background/30" : "absolute inset-y-0 right-0 bg-background/55"}
         style={{ width: trimOut * scale }}
       />
 

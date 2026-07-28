@@ -3926,11 +3926,11 @@ test.describe("graph view E2E", () => {
     await expect(calledOut).toHaveCount(0);
   });
 
-  test("the trim panel fits the viewport and holds the whole source", async ({ page }) => {
-    // PL10-004. The old overview drew the source at TIMELINE scale, so its
-    // width was fullDuration × px/s — unbounded, and off-screen in both
-    // directions for any long clip. The panel is a fixed box: whatever the
-    // source, it fits, and the map inside it is the whole source.
+  test("the docked source map fits the strip and covers nothing", async ({ page }) => {
+    // PL10-004/006. The old overview drew the source at TIMELINE scale, so its
+    // width was fullDuration × px/s — unbounded, off-screen in both directions
+    // for any long clip. Its floating replacement fitted the source but landed
+    // on whatever was above the card. Docked under the strip, it does neither.
     await installGraphApi(page);
     await openGraph(page);
 
@@ -3943,37 +3943,51 @@ test.describe("graph view E2E", () => {
 
     // Selection alone must NOT summon it — that was the old behavior's cost:
     // a trimming instrument on the cheapest, most frequent action there is.
-    await expect(page.locator("[data-trim-panel]")).toHaveCount(0);
+    await expect(page.locator("[data-trim-dock]")).toHaveCount(0);
 
     await page.getByRole("button", { name: "Show the trim panel" }).click();
-    const panel = page.locator("[data-trim-panel]");
-    await expect(panel).toHaveCount(1);
-    await expect(panel).toHaveAttribute("data-trim-panel-mode", "resting");
+    const dock = page.locator("[data-trim-dock]");
+    await expect(dock).toHaveCount(1);
 
-    const box = (await panel.boundingBox())!;
+    const box = (await dock.boundingBox())!;
     const viewport = page.viewportSize()!;
-    expect(box.width).toBeLessThanOrEqual(340);
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
-    expect(box.y).toBeGreaterThanOrEqual(0);
-    expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
 
-    // It never sits on the clip it describes — above by preference, below
-    // when there's no room, which on the focused strip is the usual case.
-    const cardBox = (await alpha.boundingBox())!;
-    expect(box.y >= cardBox.y + cardBox.height || box.y + box.height <= cardBox.y).toBe(true);
+    // PL10-006, the regression that sent this back to the drawing board: the
+    // floating version only asked whether the VIEWPORT had room above the
+    // card, so inside a sub-timeline it parked on the row above. Docked, it is
+    // IN THE FLOW — assert it overlaps nothing, which is a property placement
+    // math can't promise and layout gives for free.
+    const collisions = await page.evaluate(() => {
+      const dockEl = document.querySelector("[data-trim-dock]");
+      if (!dockEl) return ["no dock"];
+      const d = dockEl.getBoundingClientRect();
+      const hits: string[] = [];
+      for (const el of document.querySelectorAll(
+        '[data-node-id], section[aria-label^="Sub-timeline"]',
+      )) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        if (r.right <= d.left || r.left >= d.right || r.bottom <= d.top || r.top >= d.bottom) {
+          continue;
+        }
+        hits.push(el.getAttribute("aria-label") ?? el.getAttribute("data-node-id") ?? "?");
+      }
+      return hits;
+    });
+    expect(collisions).toEqual([]);
 
-    // Exactly one source map on the page, and it is INSIDE the panel: the
-    // package's own floating overview is off for this view.
+    // Exactly one source map on the page, and it is the dock's: the package's
+    // own floating overview is off for this view.
     const maps = page.locator("[data-trim-overview]");
     await expect(maps).toHaveCount(1);
-    expect(await maps.evaluate((el) => !!el.closest("[data-trim-panel]"))).toBe(true);
+    expect(await maps.evaluate((el) => !!el.closest("[data-trim-dock]"))).toBe(true);
 
-    // The map is bounded by the panel, and the window inside it is the
-    // showing fraction of the source (6 of 8 seconds) — not the clip's width
-    // on the strip, which is what the old timeline-scale overview drew.
+    // Docked, the map spans the strip instead of a 304px panel — which is
+    // where the resolution comes from (~0.05 s/px against 0.17).
     const mapBox = (await maps.boundingBox())!;
-    expect(mapBox.width).toBeLessThanOrEqual(box.width);
+    expect(mapBox.width).toBeGreaterThan(500);
     const windowBox = (await page.locator("[data-trim-overview-window]").boundingBox())!;
     expect(windowBox.width / mapBox.width).toBeCloseTo(6 / 8, 1);
 
@@ -3984,10 +3998,9 @@ test.describe("graph view E2E", () => {
     // window right. (Unfitted the package drags the FILM under a pinned
     // window, where the same pull means the opposite.)
     const cardWidthBefore = (await alpha.boundingBox())!.width;
-    // Measured INSIDE the map: the panel re-centres on the card, and trimming
-    // the first clip in a strip shifts the content under it (firstItemGutter),
-    // so a viewport-absolute reading moves for reasons that aren't this
-    // gesture.
+    // Measured INSIDE the map: trimming the first clip in a strip shifts the
+    // content under it (firstItemGutter), so a viewport-absolute reading moves
+    // for reasons that aren't this gesture.
     const windowOffset = async () => {
       const map = (await maps.boundingBox())!;
       const win = (await page.locator("[data-trim-overview-window]").boundingBox())!;
