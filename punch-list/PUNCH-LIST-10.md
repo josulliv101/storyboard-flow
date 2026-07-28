@@ -292,6 +292,46 @@ dispatched straight at an element skip hit-testing entirely, which is why the
 same drag "worked" when scripted and failed with a real mouse. The e2e now
 settles the transition first (`settleViewTransition`).
 
+## PL10-009 — Undo where the trims happen
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-item-actions.tsx` (keyboard), `graph-trim-modal.tsx` (buttons)
+- Screenshot: Not captured
+
+Each trim drag commits on release, so overshooting is normal and stepping back
+is the common need. Two things were missing.
+
+First, the app had NO keyboard undo at all — `Ctrl/Cmd` + C/X/V/D and nothing
+else. Undo/redo existed only as the toolbar's two buttons, which the trim modal
+covers. Ctrl/Cmd+Z now undoes and Ctrl/Cmd+Shift+Z (or Ctrl+Y) redoes, from the
+same window-level handler, app-wide — the grid and the tree get it too. Key
+repeat is deliberately allowed here (holding steps back) where the clipboard
+actions refuse it.
+
+Second, the modal has its own undo/redo, SCOPED to this clip. A bare pair would
+have been wrong: history is global and linear, so a third press could revert a
+delete made on the board before the modal opened, behind the scrim, unseen.
+They are enabled only while the next entry is an `update-media` on this node,
+so they walk back the trims made in here and grey out at the boundary of them.
+
+Redo is COUNTED rather than inspected — `historyEntries` is the applied log and
+the redo branch isn't in it. Each scoped undo adds one, each redo spends one,
+and a commit from anywhere drops the branch (`canRedo` false), which zeroes the
+count.
+
+Acceptance criteria:
+
+- Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y work anywhere in the graph view, including
+  with the modal open, and never fire inside a text field.
+- The modal's undo is disabled when the newest entry belongs to another node,
+  even though the store itself can undo.
+- One press per trim; the neighbouring clip's earlier edit stays untouched.
+
+Both e2e-pinned, and the scoping proven to fail without its gate (with the
+selector relaxed to plain `canUndo`, the button was enabled over another
+node's edit).
+
 ## PL10-003 — The call-out must not flash a scrollbar
 
 - Status: Complete

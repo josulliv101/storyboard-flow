@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
 import {
+  CollectionsContainerContext,
   getChildren,
   isEditableKeyboardTarget,
   parseNodeId,
@@ -235,6 +236,9 @@ export function GraphItemActionsBridge({
 }: Readonly<{ trashId: string | null; focusedId: string }>) {
   const store = useCollectionsStore();
   const details = useGraphDetailsStore();
+  // Same best-effort live region the toolbar's undo/redo buttons announce
+  // through, so the keyboard path says the same thing the click path does.
+  const announce = useContext(CollectionsContainerContext)?.announce;
   const selectionSize = useCollectionsSelector((s) => s.interaction.selectedIds.size);
   // Returns a PRIMITIVE, per the store's selector contract — allocating here
   // (an array of the selected nodes, say) would re-render on every snapshot.
@@ -568,10 +572,30 @@ export function GraphItemActionsBridge({
       d: "duplicate",
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (event.defaultPrevented) return;
+      // Undo/redo, app-wide. They had NO keyboard binding at all — the only
+      // way to reach them was the toolbar's two buttons, which is fine until
+      // something covers the toolbar (the trim modal) or scrolls it away.
+      // Ctrl/Cmd+Shift+Z redoes, the platform-neutral spelling; Ctrl+Y is the
+      // Windows habit and costs nothing to accept.
+      if (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y") {
+        if (isEditableKeyboardTarget(event.target)) return;
+        // Auto-repeat IS wanted here (holding undo steps back), unlike the
+        // clipboard actions below where a repeat would paste a dozen copies.
+        const redo = event.key.toLowerCase() === "y" || event.shiftKey;
+        event.preventDefault();
+        if (redo) {
+          if (store.redo()) announce?.("Change redone.");
+        } else if (store.undo()) {
+          announce?.("Change undone.");
+        }
+        return;
+      }
+      if (event.shiftKey) return;
       const action = KEY_TO_ACTION[event.key.toLowerCase()];
       if (action === undefined) return;
-      if (event.repeat || event.defaultPrevented) return;
+      if (event.repeat) return;
       // Inputs and the rename editor own their clipboard keys (the package's
       // shared keyboard policy).
       if (isEditableKeyboardTarget(event.target)) return;
@@ -596,7 +620,7 @@ export function GraphItemActionsBridge({
       window.removeEventListener(GRAPH_ITEM_ACTION_EVENT, onAction);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [store, details, trashId, focusedId]);
+  }, [store, details, trashId, focusedId, announce]);
 
   return null;
 }

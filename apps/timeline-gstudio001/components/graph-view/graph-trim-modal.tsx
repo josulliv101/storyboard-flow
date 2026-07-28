@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { flushSync } from "react-dom";
-import { X } from "lucide-react";
+import { Redo2, Undo2, X } from "lucide-react";
 
 import {
   TrimOverviewStrip,
   useCollectionsSelector,
+  useCollectionsStore,
   useLiveTrim,
   type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
@@ -107,8 +108,52 @@ function useSeekedVideo(time: number) {
   return attachVideo;
 }
 
+/**
+ * Undo/redo SCOPED to this clip's trims (PL10-009).
+ *
+ * History is global and linear, so a bare undo button in a modal would reach
+ * past what the scrim is covering — three presses could revert a delete made
+ * on the board before the modal opened, invisibly. Undo is therefore offered
+ * only while the next entry to be undone is an `update-media` on THIS node:
+ * it steps back through the trims you made in here and then greys out at the
+ * boundary of them, which teaches the limit without a word of copy.
+ *
+ * Redo is counted rather than inspected, because `historyEntries` is the
+ * APPLIED log — the redo branch isn't in it. Every scoped undo adds one, every
+ * redo spends one, and any fresh commit clears the branch (canRedo goes false)
+ * which zeroes the count.
+ */
+function useScopedHistory(nodeId: string) {
+  const store = useCollectionsStore();
+  const canRedo = useCollectionsSelector((s) => s.canRedo);
+  const undoableHere = useCollectionsSelector((s) => {
+    if (!s.canUndo) return false;
+    const last = s.historyEntries[s.historyEntries.length - 1];
+    return last?.command.type === "update-media" && last.command.nodeId === nodeId;
+  });
+  const [undoneHere, setUndoneHere] = useState(0);
+  const redoableHere = canRedo && undoneHere > 0;
+  // A commit from anywhere else drops the redo branch; the count has to follow
+  // it down or the button would offer a redo the store no longer has.
+  if (!canRedo && undoneHere !== 0) setUndoneHere(0);
+
+  return {
+    undoableHere,
+    redoableHere,
+    undo: () => {
+      if (!undoableHere) return;
+      if (store.undo()) setUndoneHere((n) => n + 1);
+    },
+    redo: () => {
+      if (!redoableHere) return;
+      if (store.redo()) setUndoneHere((n) => Math.max(0, n - 1));
+    },
+  };
+}
+
 function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: () => void }>) {
   const live = useLiveTrim(node.id);
+  const history = useScopedHistory(node.id);
   const trimIn = live ? live.trimInSeconds : node.trimInSeconds;
   const trimOut = live ? live.trimOutSeconds : node.trimOutSeconds;
   const showing = Math.max(0, node.fullDurationSeconds - trimIn - trimOut);
@@ -157,6 +202,33 @@ function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: 
             <span className="font-mono text-[11px] tabular-nums text-zinc-400">
               {showing.toFixed(2)}s of {node.fullDurationSeconds.toFixed(2)}s
             </span>
+            {/* Scoped to this clip's own trims — see useScopedHistory. Each
+                release is one commit, so these step through the adjustments
+                one at a time. */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                data-trim-modal-undo
+                disabled={!history.undoableHere}
+                onClick={history.undo}
+                aria-label="Undo the last trim"
+                title="Undo the last trim on this clip"
+                className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-30"
+              >
+                <Undo2 aria-hidden="true" className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                data-trim-modal-redo
+                disabled={!history.redoableHere}
+                onClick={history.redo}
+                aria-label="Redo the last trim"
+                title="Redo the last trim on this clip"
+                className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-30"
+              >
+                <Redo2 aria-hidden="true" className="h-4 w-4" />
+              </button>
+            </div>
             <button
               type="button"
               onClick={onClose}

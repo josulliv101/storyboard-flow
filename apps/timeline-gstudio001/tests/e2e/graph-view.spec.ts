@@ -4024,6 +4024,112 @@ test.describe("graph view E2E", () => {
     expect(await heroCount()).toBe(1);
   });
 
+  test("ctrl+z undoes and ctrl+shift+z redoes from the keyboard", async ({ page }) => {
+    // PL10-009. Undo/redo had NO keyboard binding — only the toolbar buttons,
+    // which is fine until something covers them (the trim modal) or the page
+    // scrolls them away.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const wrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    const widthNow = async () => (await alpha.boundingBox())!.width;
+    const original = await widthNow();
+
+    // Trim the out edge in, which commits on release.
+    const handle = wrapper.locator("[data-trim-handle]").last();
+    const handleBox = (await handle.boundingBox())!;
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x - 40, handleBox.y + handleBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await expect.poll(widthNow).toBeLessThan(original - 10);
+    const trimmed = await widthNow();
+
+    await page.keyboard.press("Control+z");
+    await expect.poll(widthNow).toBeCloseTo(original, 0);
+
+    await page.keyboard.press("Control+Shift+z");
+    await expect.poll(widthNow).toBeCloseTo(trimmed, 0);
+
+    // Ctrl+Y is the Windows spelling of redo; after an undo it must land the
+    // same way.
+    await page.keyboard.press("Control+z");
+    await expect.poll(widthNow).toBeCloseTo(original, 0);
+    await page.keyboard.press("Control+y");
+    await expect.poll(widthNow).toBeCloseTo(trimmed, 0);
+  });
+
+  test("the modal's undo is scoped to this clip's own trims", async ({ page }) => {
+    // PL10-009. History is global and linear, so a bare undo in a modal would
+    // reach past the scrim — undoing something on the board that the user
+    // cannot see. These step back through THIS clip's trims and then stop.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // An edit on a DIFFERENT node first: this is what the modal's undo must
+    // refuse to touch.
+    const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
+    const bravoWrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="bravo"]');
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    const bravoHandle = bravoWrapper.locator("[data-trim-handle]").last();
+    const bravoBox = (await bravoHandle.boundingBox())!;
+    await page.mouse.move(bravoBox.x + bravoBox.width / 2, bravoBox.y + bravoBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bravoBox.x - 30, bravoBox.y + bravoBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    const bravoWidth = (await bravo.boundingBox())!.width;
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await page.getByRole("button", { name: "Open the trim view" }).click();
+    await settleViewTransition(page);
+
+    const undo = page.locator("[data-trim-modal-undo]");
+    const redo = page.locator("[data-trim-modal-redo]");
+    // The newest entry is bravo's trim, not this clip's — so undo is offered
+    // for nothing, even though the store itself can undo.
+    await expect(undo).toBeDisabled();
+    await expect(redo).toBeDisabled();
+
+    // Trim in here, and it lights up.
+    const grip = page.locator('[data-trim-overview-handle="right"]');
+    const gripBox = (await grip.boundingBox())!;
+    const windowWidth = async () =>
+      (await page.locator("[data-trim-overview-window]").boundingBox())!.width;
+    const before = await windowWidth();
+    await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(gripBox.x - 40, gripBox.y + gripBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await expect.poll(windowWidth).toBeLessThan(before - 5);
+    await expect(undo).toBeEnabled();
+
+    // One press steps that trim back, and then the boundary is reached again:
+    // bravo's edit is next in the stack and must stay out of reach.
+    await undo.click();
+    await expect.poll(windowWidth).toBeCloseTo(before, 0);
+    await expect(undo).toBeDisabled();
+    await expect(redo).toBeEnabled();
+    expect((await bravo.boundingBox())!.width).toBeCloseTo(bravoWidth, 0);
+
+    // Redo puts this clip's trim back, and spends the only redo it had.
+    await redo.click();
+    await expect.poll(windowWidth).toBeLessThan(before - 5);
+    await expect(redo).toBeDisabled();
+  });
+
   test("a trim drag floats the edge frame above the clip", async ({ page }) => {
     // PL10-005/007. The live frame is its own small surface: sized to the
     // breadcrumb row (a size reference, not a location — it follows the CLIP,
