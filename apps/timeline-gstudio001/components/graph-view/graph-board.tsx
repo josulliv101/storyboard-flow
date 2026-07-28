@@ -2,7 +2,7 @@
 
 import { useContext, useDeferredValue, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { FolderPlus, Redo2, Settings, Undo2 } from "lucide-react";
+import { FolderPlus, Redo2, Scissors, Settings, Undo2 } from "lucide-react";
 
 import {
   CollectionsContainerContext,
@@ -48,6 +48,7 @@ import {
 } from "./graph-preview";
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
+import { TrimPanelProvider, useTrimPanel } from "./graph-trim-panel-context";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
   GRID_GAP,
@@ -246,6 +247,50 @@ function GraphUndoRedo() {
 }
 
 /**
+ * Pins the trim panel open (PL10-004). Trimming is a deliberate task done in
+ * passes, so this is a MODE the user turns on once, not a per-clip control —
+ * and it lives in the toolbar rather than on the card because a media card is
+ * NodeCard's single `<button>` shell, where a nested button would be invalid
+ * HTML (the same constraint that made the collection rename a contentEditable
+ * span). Disabled with no video selected, since there would be nothing to
+ * show. Discovery doesn't rest on finding this: dragging a card's own trim
+ * handle summons the panel for the length of the gesture either way.
+ */
+function GraphTrimPanelToggle() {
+  const { pinned, setPinned } = useTrimPanel();
+  const hasVideo = useCollectionsSelector((s) => {
+    for (const id of s.interaction.selectedIds) {
+      const node = s.graph.nodesById.get(id);
+      if (node?.kind === "media" && node.mediaKind === "video") return true;
+    }
+    return false;
+  });
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      disabled={!hasVideo}
+      aria-pressed={pinned}
+      aria-label={pinned ? "Hide the trim panel" : "Show the trim panel"}
+      title={
+        hasVideo
+          ? "Trim panel — the source frame at the edge you're moving, over a map of the whole clip"
+          : "Trim panel — select a video clip first"
+      }
+      onClick={() => setPinned(!pinned)}
+      className={[
+        "h-8 w-8 disabled:opacity-40",
+        pinned ? "text-amber-300 hover:text-amber-200" : "text-zinc-400 hover:text-zinc-100",
+      ].join(" ")}
+    >
+      <Scissors aria-hidden="true" className="h-4 w-4" />
+    </Button>
+  );
+}
+
+/**
  * The Collection tool, relocated from the icon sidebar into the board header
  * (right cluster). Same two affordances it always had: CLICK (or keyboard)
  * appends a nested timeline to the open collection through the insert bridge,
@@ -384,6 +429,9 @@ export function GraphBoard({
 
   return (
     <OpenKeyBoundary trashId={trashRootId}>
+      {/* Spans the header AND the surfaces: the toolbar toggle sets the mode,
+          the selected card's panel reads it. */}
+      <TrimPanelProvider>
       {/* Spans the surfaces AND the child rows below them, because the pairing
           it carries joins the two: a collection's card up here and its row
           down there light each other up on hover. Inert unless the children
@@ -462,6 +510,7 @@ export function GraphBoard({
                   <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
                 </>
               ) : null}
+              {surface === "strip" ? <GraphTrimPanelToggle /> : null}
               <GraphUndoRedo />
               <BoardMenu
                 itemSize={itemSize}
@@ -501,6 +550,12 @@ export function GraphBoard({
                 // Flat mode has no single parent to append to, so no slot.
                 trailingSlot={flatOn ? undefined : <AddCollectionSlot collectionId={focusedId} />}
                 itemDragActivation="hold"
+                // The package's floating overview draws the source at TIMELINE
+                // scale, so its width grows with source duration — an 80s clip
+                // ran three screens wide. This view shows a FITTED source map
+                // inside the trim panel instead (PL10-004), composed with the
+                // frame preview it used to only coincidentally line up with.
+                trimOverview="off"
                 overlay={
                   previewOn || rulerOn ? (
                     <>
@@ -631,6 +686,7 @@ export function GraphBoard({
       </PreviewShell>
       </FlatItemsProvider>
       </CollectionHoverProvider>
+      </TrimPanelProvider>
     </OpenKeyBoundary>
   );
 }

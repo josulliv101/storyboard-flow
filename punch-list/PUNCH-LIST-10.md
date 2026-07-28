@@ -89,6 +89,72 @@ Note: a fast sweep DOWN the tree now leaves several cards animating at once,
 one per folder passed. That is the same rule applied to each — say if you
 want a sweep to call out only the folder the pointer settles on.
 
+## PL10-004 — One trim panel, bounded and gated
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-trim-panel.tsx` (new, replacing `graph-trim-frame-preview.tsx`),
+  `graph-trim-panel-context.tsx` (new), `graph-board.tsx`,
+  `packages/ui/dnd-collections/react/trim-overview.tsx`,
+  `packages/ui/dnd-collections/virtual/VirtualStrip.tsx`
+- Screenshot: Not captured
+
+Selecting a video summoned a source-window overview drawn at TIMELINE scale —
+`fullDuration × pixelsPerSecond`, measured live at 4042px in a 1160px viewport
+for an 80.8s source, running off both edges. Two problems in one: it is
+unbounded, and it appears on selection, which is the cheapest and most frequent
+action in the view.
+
+Resolved as one panel above the selected card: the live frame on top, the whole
+source fitted below it with the showing window and its grips. It shows on trim
+INTENT — a live trim gesture, or pinned from the toolbar — never on selection
+alone.
+
+Why compose rather than shrink: the separate frame preview anchored to the
+CARD's edge and only appeared to point at the overview's grip because both were
+drawn in timeline scale. Fitting the map breaks that coincidence. In one panel
+the grip and the frame cannot drift apart at any scale.
+
+Acceptance criteria:
+
+- The panel is a fixed width and always fully inside the viewport, whatever
+  the source duration.
+- The map inside it is the WHOLE source, with the window at the showing
+  fraction.
+- Selection alone does not show it; a trim drag does, pinned or not, and an
+  unpinned panel retracts with the gesture.
+- It never covers the clip it describes.
+- The map still drives both gestures: grips trim, body moves the window.
+- The package's own floating overview is off for this view — exactly one
+  source map on screen, inside the panel.
+
+Built as: `TrimOverviewStrip` gained an optional `width` (fitted mode: its own
+scale for picture AND gestures), `VirtualStrip` gained `trimOverview: "auto" |
+"off"`, and the app composes the two. Panel 320px, map 304px, placed above the
+card by preference and below when there is no room (measured, not assumed —
+the strip is the first row, so below is the usual case).
+
+Two things that only showed up live:
+
+1. A React portal bubbles through the REACT tree, so every press inside the
+   panel reached the card that renders it and toggled the selection off,
+   unmounting the panel mid-gesture. The old frame preview never hit this: it
+   was `pointer-events-none`. The panel stops propagation at its root, after
+   its own children have had the event.
+2. The body drag was inverted. Unfitted, the caller slides the whole strip to
+   keep the window over the clip, so the gesture is "drag the film". Fitted,
+   the film is nailed to the panel and the window is what moves — the same
+   pull sent the window the wrong way. Fitted mode negates the delta, so it is
+   direct manipulation: drag right, window goes right.
+
+Coarser by design: ~0.26s per pixel in the panel against the timeline's ~0.02.
+The panel is the COARSE instrument (where in the source am I); the card's own
+trim handles stay the fine one.
+
+Note: verifying this on the demo project changed a clip's trim in `Intro`. It
+was restored to trim-in 0 / 30.16s showing (measured original: 30.15s); the
+~0.01s is measurement error, not a second edit.
+
 ## PL10-003 — The call-out must not flash a scrollbar
 
 - Status: Complete

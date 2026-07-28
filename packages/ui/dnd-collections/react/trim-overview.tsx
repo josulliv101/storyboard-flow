@@ -97,21 +97,45 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   pixelsPerSecond,
   trimInSeconds,
   trimOutSeconds,
+  width,
 }: {
   node: VideoMediaNode;
-  pixelsPerSecond: number;
+  /** The timeline scale. Optional only because `width` replaces it: a fitted
+   *  strip derives its own scale and never reads this. */
+  pixelsPerSecond?: number;
   /** Live values during a drag override the node's committed trim. */
   trimInSeconds: number;
   trimOutSeconds: number;
+  /**
+   * FITTED mode: render the whole source into exactly this many pixels, at a
+   * scale of its own (`width / fullDuration`) instead of the timeline's.
+   *
+   * Unset keeps the original behavior — source at timeline scale, which makes
+   * the amber window exactly as wide as the clip on the strip and lets the
+   * caller lay the two on top of each other. That alignment is the reason the
+   * strip is otherwise unbounded: width grows with source duration, so a long
+   * source runs off the viewport in both directions and the one thing the
+   * overview exists to show (the WHOLE source) is the thing you cannot see.
+   * A fitted strip trades the alignment for always fitting, which is why the
+   * consumer that fits it also has to place the frame preview itself — see
+   * the graph view's trim panel.
+   */
+  width?: number;
 }) {
   const full = Math.max(0, node.fullDurationSeconds);
   const trimIn = Math.max(0, trimInSeconds);
   const trimOut = Math.max(0, trimOutSeconds);
   const showing = Math.max(0, full - trimIn - trimOut);
 
-  const fullWidth = Math.max(1, full * pixelsPerSecond);
-  const trimInWidth = trimIn * pixelsPerSecond;
-  const windowWidth = Math.max(2, showing * pixelsPerSecond);
+  const fitted = width !== undefined && width > 0;
+  const fullWidth = fitted ? width : Math.max(1, full * (pixelsPerSecond ?? 0));
+  // Seconds→pixels for EVERYTHING this component draws and drags. Fitted, one
+  // pixel covers more source, so gestures here are coarser by exactly the
+  // ratio the picture shrank by — the pointer keeps landing where it looks
+  // like it lands, which is the property that has to hold.
+  const scale = fitted && full > 0 ? fullWidth / full : (pixelsPerSecond ?? 0);
+  const trimInWidth = trimIn * scale;
+  const windowWidth = Math.max(2, showing * scale);
 
   const OverviewContent =
     useCollectionsComponents().OverviewContent ?? DefaultTrimOverviewContent;
@@ -119,12 +143,21 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
   const beginDrag = useTrimPointerDrag(node);
   const startTrim = useCallback(
     (side: TrimSide) => (event: ReactPointerEvent) =>
-      beginDrag(event, pixelsPerSecond, (delta) => resolveTrim(node, side, delta)),
-    [beginDrag, node, pixelsPerSecond]
+      beginDrag(event, scale, (delta) => resolveTrim(node, side, delta)),
+    [beginDrag, node, scale]
   );
   const startMove = useCallback(
-    (event: ReactPointerEvent) => beginDrag(event, pixelsPerSecond, (delta) => resolveMove(node, delta)),
-    [beginDrag, node, pixelsPerSecond]
+    (event: ReactPointerEvent) =>
+      // Same command, opposite sign, because the two modes move different
+      // things. Unfitted, the caller keeps the WINDOW pinned over the clip and
+      // this whole element slides, so the gesture is "drag the film": pull the
+      // film left and a later part of the source ends up in the window.
+      // Fitted, the film is nailed to the panel and the window is what moves,
+      // so the same pull-left would send the window right — backwards from
+      // what the picture says. Here the gesture is direct manipulation of the
+      // window instead: drag right, window goes right.
+      beginDrag(event, scale, (delta) => resolveMove(node, fitted ? -delta : delta)),
+    [beginDrag, node, scale, fitted]
   );
 
   return (
@@ -144,7 +177,7 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
       {/* Background pixels (filmstrip + labels): the OverviewContent slot. */}
       <OverviewContent
         node={node}
-        pixelsPerSecond={pixelsPerSecond}
+        pixelsPerSecond={scale}
         trimInSeconds={trimIn}
         trimOutSeconds={trimOut}
         fullWidth={fullWidth}
@@ -154,7 +187,7 @@ export const TrimOverviewStrip = memo(function TrimOverviewStrip({
       <div className="absolute inset-y-0 left-0 bg-background/55" style={{ width: trimInWidth }} />
       <div
         className="absolute inset-y-0 right-0 bg-background/55"
-        style={{ width: trimOut * pixelsPerSecond }}
+        style={{ width: trimOut * scale }}
       />
 
       {/* The amber "showing" window, with draggable trim grips on each edge. */}

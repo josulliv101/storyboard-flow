@@ -192,6 +192,15 @@ export type VirtualStripProps = Readonly<{
    * whose scale differs. Trim handles render when either is set.
    */
   trimPixelsPerSecond?: number;
+  /**
+   * The floating source-window overview above a selected video: "auto"
+   * (default) is the behavior described on `TrimOverviewStrip` — the source
+   * at timeline scale, laid over the clip. "off" suppresses it entirely, for
+   * consumers that present the source window themselves (the graph view puts
+   * a FITTED one inside its trim panel, alongside the live frame, because at
+   * timeline scale a long source is wider than any viewport).
+   */
+  trimOverview?: "auto" | "off";
   /** Per-view card pixels — overrides the provider `components` registry.
    *  MUST be identity-stable (module scope). */
   itemContent?: CollectionItemContentComponent;
@@ -242,6 +251,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       panToScroll = true,
       itemDragActivation = "handle",
       trimPixelsPerSecond: trimPixelsPerSecondOption,
+      trimOverview = "auto",
       itemContent,
       itemShell,
       overlay,
@@ -688,6 +698,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
         ? liveTrim.trim
         : { trimInSeconds: selectedVideo.trimInSeconds, trimOutSeconds: selectedVideo.trimOutSeconds });
     const showOverview =
+      trimOverview !== "off" &&
       selectedVideo !== null &&
       selectedVideoItem !== undefined &&
       !!overviewTrim &&

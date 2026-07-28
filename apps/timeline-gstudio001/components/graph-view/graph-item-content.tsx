@@ -46,7 +46,7 @@ import { isDisabledByAncestor } from "./graph-playhead-model";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { useCollectionHoverTarget } from "./graph-collection-hover";
 import { GraphViewNavContext } from "./graph-navigation";
-import { TrimFramePreview } from "./graph-trim-frame-preview";
+import { TrimPanel } from "./graph-trim-panel";
 import { createDerivedCache } from "@/lib/derived-cache";
 import {
   collectionPreviewFrameUrl,
@@ -558,9 +558,11 @@ const GraphClipContent = memo(function GraphClipContent({
       )}
       {provenance && <ProvenanceLabel parentId={provenance.parentId} name={provenance.name} />}
       {trimEnabled && !muted && <LiveDurationPill id={id} node={node} />}
-      {/* Floating frame-at-the-edge panel during a trim drag (video only) —
-          rides the same per-node live-trim channel as the pill. */}
-      {trimEnabled && <TrimFramePreview id={id} node={node} />}
+      {/* The trim panel (video only): frame at the working edge over a fitted
+          map of the source. Rides the same per-node live-trim channel as the
+          pill, and shows on trim intent — a live gesture, or pinned while
+          this card is the selected one. */}
+      {trimEnabled && <TrimPanel id={id} node={node} selected={selected} />}
     </span>
   );
 });

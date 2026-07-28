@@ -3926,6 +3926,127 @@ test.describe("graph view E2E", () => {
     await expect(calledOut).toHaveCount(0);
   });
 
+  test("the trim panel fits the viewport and holds the whole source", async ({ page }) => {
+    // PL10-004. The old overview drew the source at TIMELINE scale, so its
+    // width was fullDuration × px/s — unbounded, and off-screen in both
+    // directions for any long clip. The panel is a fixed box: whatever the
+    // source, it fits, and the map inside it is the whole source.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // alpha is a video: 6s showing out of an 8s source.
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    // Selection alone must NOT summon it — that was the old behavior's cost:
+    // a trimming instrument on the cheapest, most frequent action there is.
+    await expect(page.locator("[data-trim-panel]")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Show the trim panel" }).click();
+    const panel = page.locator("[data-trim-panel]");
+    await expect(panel).toHaveCount(1);
+    await expect(panel).toHaveAttribute("data-trim-panel-mode", "resting");
+
+    const box = (await panel.boundingBox())!;
+    const viewport = page.viewportSize()!;
+    expect(box.width).toBeLessThanOrEqual(340);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+
+    // It never sits on the clip it describes — above by preference, below
+    // when there's no room, which on the focused strip is the usual case.
+    const cardBox = (await alpha.boundingBox())!;
+    expect(box.y >= cardBox.y + cardBox.height || box.y + box.height <= cardBox.y).toBe(true);
+
+    // Exactly one source map on the page, and it is INSIDE the panel: the
+    // package's own floating overview is off for this view.
+    const maps = page.locator("[data-trim-overview]");
+    await expect(maps).toHaveCount(1);
+    expect(await maps.evaluate((el) => !!el.closest("[data-trim-panel]"))).toBe(true);
+
+    // The map is bounded by the panel, and the window inside it is the
+    // showing fraction of the source (6 of 8 seconds) — not the clip's width
+    // on the strip, which is what the old timeline-scale overview drew.
+    const mapBox = (await maps.boundingBox())!;
+    expect(mapBox.width).toBeLessThanOrEqual(box.width);
+    const windowBox = (await page.locator("[data-trim-overview-window]").boundingBox())!;
+    expect(windowBox.width / mapBox.width).toBeCloseTo(6 / 8, 1);
+
+    // Dragging the map's body MOVES the window through the source — the
+    // gesture the map exists for, and the one that would have been lost if the
+    // map only existed mid-drag. Direction matters: fitted, the film is nailed
+    // to the panel and the window is what travels, so drag right must send the
+    // window right. (Unfitted the package drags the FILM under a pinned
+    // window, where the same pull means the opposite.)
+    const cardWidthBefore = (await alpha.boundingBox())!.width;
+    // Measured INSIDE the map: the panel re-centres on the card, and trimming
+    // the first clip in a strip shifts the content under it (firstItemGutter),
+    // so a viewport-absolute reading moves for reasons that aren't this
+    // gesture.
+    const windowOffset = async () => {
+      const map = (await maps.boundingBox())!;
+      const win = (await page.locator("[data-trim-overview-window]").boundingBox())!;
+      return win.x - map.x;
+    };
+    const offsetBefore = await windowOffset();
+
+    await page.mouse.move(mapBox.x + mapBox.width / 2, mapBox.y + mapBox.height / 2);
+    await page.mouse.down();
+    for (let step = 1; step <= 6; step += 1) {
+      await page.mouse.move(
+        mapBox.x + mapBox.width / 2 + step * 5,
+        mapBox.y + mapBox.height / 2,
+        { steps: 2 },
+      );
+    }
+    await page.mouse.up();
+
+    expect(await windowOffset()).toBeGreaterThan(offsetBefore + 10);
+    // A move, not a trim: the window keeps its length, so the clip keeps its
+    // duration and the card keeps its width.
+    const movedWindow = (await page.locator("[data-trim-overview-window]").boundingBox())!;
+    expect(movedWindow.width).toBeCloseTo(windowBox.width, 0);
+    expect((await alpha.boundingBox())!.width).toBeCloseTo(cardWidthBefore, 0);
+  });
+
+  test("a trim drag summons the panel and tracks the moving edge", async ({ page }) => {
+    // PL10-004: the gesture that needs the panel summons it, pinned or not —
+    // which is what keeps it discoverable now that selection no longer does.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const wrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await expect(page.locator("[data-trim-panel]")).toHaveCount(0);
+
+    // Drag the OUT edge in. A video shows two handles; the second is the back
+    // edge (the first is the front/in edge).
+    const handle = wrapper.locator("[data-trim-handle]").last();
+    const handleBox = (await handle.boundingBox())!;
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x - 24, handleBox.y + handleBox.height / 2, { steps: 6 });
+
+    const panel = page.locator("[data-trim-panel]");
+    await expect(panel).toHaveCount(1);
+    await expect(panel).toHaveAttribute("data-trim-panel-mode", "trimming");
+    // The amber bar marks the edge being dragged — the back one here.
+    await expect(page.locator('[data-trim-panel-edge="right"]')).toHaveCount(1);
+
+    await page.mouse.up();
+    // Unpinned, it retracts with the gesture that summoned it.
+    await expect(panel).toHaveCount(0);
+  });
+
   test("the call-out's scale never grows a scroll area", async ({ page }) => {
     // PL10-003. A transform that spills past its box counts as SCROLLABLE
     // overflow, so the call-out used to grow whichever scroller held the card

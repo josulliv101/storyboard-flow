@@ -146,7 +146,7 @@ export {
 } from "./react/collections-components";
 export { DefaultItemContent } from "./react/default-item-content";
 export { DefaultTrimHandleContent } from "./react/trim-handles";
-export { DefaultTrimOverviewContent } from "./react/trim-overview";
+export { DefaultTrimOverviewContent, TrimOverviewStrip } from "./react/trim-overview";
 // Compound primitives — the FULL-custom escape hatch: consumer-owned DOM
 // shape (interactive controls included) over package-owned behavior,
 // delivered through context. See "Compound items" in API.md.
