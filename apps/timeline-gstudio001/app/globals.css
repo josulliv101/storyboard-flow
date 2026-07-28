@@ -181,27 +181,43 @@ body {
 }
 
 /* A collection CARD, called out while its child-timeline row's folder is
-   hovered: one pass of a sky glow that rises and falls, then the card rests.
-   A one-shot, not a loop — the pointer sits on a folder for as long as the
-   user is reading the tree, and a throb for all of that is noise.
+   hovered (PL10-001, replacing PL9-002's glow): one elastic grow that
+   overshoots and springs back to rest. A one-shot, not a loop — the pointer
+   sits on a folder for as long as the user is reading the tree, and a throb
+   for all of that is noise.
 
-   Glow and ring only. Never the element's opacity (see the trash note above),
-   and nothing that changes the box: these cards sit in a virtualized strip
-   where a size change would shove every neighbour. */
+   TRANSFORM only. Never the element's opacity (see the trash note above),
+   and never a width/height/margin: these cards sit in a virtualized strip
+   where a box-model change would shove every neighbour. A scale composites
+   on its own layer and moves nothing else on the board — which is exactly
+   why this one is allowed where the box change the old comment forbade is
+   not. */
 @keyframes collection-paired-callout {
   0% {
-    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+    transform: scale(1);
   }
-  35% {
-    box-shadow: 0 0 18px 4px rgba(56, 189, 248, 0.55);
+  /* Out fast... */
+  40% {
+    transform: scale(1.06);
+  }
+  /* ...then past rest, and settle. The undershoot is what reads as elastic;
+     without it the card just inflates and deflates. */
+  68% {
+    transform: scale(0.985);
+  }
+  86% {
+    transform: scale(1.012);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+    transform: scale(1);
   }
 }
 
 .animate-collection-paired-callout {
-  animation: collection-paired-callout 260ms ease-out;
+  animation: collection-paired-callout 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Grow from the card's middle, so a card at either end of the strip pushes
+     out symmetrically instead of sliding off its own origin. */
+  transform-origin: center center;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -212,8 +228,10 @@ body {
     animation: none;
   }
 
-  /* The connection still has to READ without motion: hold the glow steady
-     for as long as the row is hovered instead of playing it. */
+  /* The connection still has to READ without motion: with the scale off,
+     hold a steady glow for as long as the row is hovered instead. This is
+     the old PL9-002 call-out, kept for exactly the users who cannot see the
+     new one. */
   .animate-collection-paired-callout {
     box-shadow: 0 0 16px 3px rgba(56, 189, 248, 0.5);
   }

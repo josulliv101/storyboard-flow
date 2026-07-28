@@ -3846,7 +3846,9 @@ test.describe("graph view E2E", () => {
 
   test("hovering a child row's folder calls out its collection card", async ({ page }) => {
     // PL9-002, revising PL8-012: ONE direction now, and the card is called out
-    // by an animation rather than its icon changing.
+    // by an animation rather than its icon changing. PL10-001 made that
+    // animation an elastic SCALE on the card itself (the old inset glow
+    // overlay is gone), so the marker moved onto the card.
     await installGraphApi(page);
     await openGraph(page); // children timelines on
     const cardIcon = page.getByRole("button", { name: "Open Scene A" }).first();
@@ -3854,9 +3856,16 @@ test.describe("graph view E2E", () => {
       .locator('section[aria-label="Sub-timeline: Scene A"]')
       .getByRole("button", { name: "Expand" })
       .first();
-    const calledOut = page.locator("[data-collection-called-out]");
+    const calledOut = page.locator(".is-called-out-card");
 
     await expect(calledOut).toHaveCount(0);
+
+    // A NEIGHBOUR card, to prove the call-out moves nothing but itself, and
+    // the called-out card's own resting box to compare against afterwards.
+    const neighbour = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
+    const neighbourBefore = (await neighbour.boundingBox())!;
+    const cardBefore = (await card.boundingBox())!;
 
     // Row folder → the matching card, and only that one.
     await rowFolder.hover();
@@ -3866,15 +3875,36 @@ test.describe("graph view E2E", () => {
     );
     expect(inCard).toBe(CHILD_ID);
 
-    // The call-out is drawn, not laid out: the card's box is untouched.
-    const cardBefore = (await strip(page, PROJECT_ID)
-      .locator(`[data-node-id="${CHILD_ID}"]`)
-      .boundingBox())!;
+    // The class is not the point — the KEYFRAMES are. Assert the card is
+    // actually running them, and that they scale it (an animation whose name
+    // resolves but whose rule was renamed away would still pass on class
+    // presence alone).
+    const running = await calledOut.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        name: style.animationName,
+        scales: el.getAnimations().some((animation) =>
+          (animation as CSSAnimation).animationName === "collection-paired-callout",
+        ),
+      };
+    });
+    expect(running.name).toBe("collection-paired-callout");
+    expect(running.scales).toBe(true);
+
+    // It is a TRANSFORM, so it reflows nothing: the neighbour must not budge
+    // while the called-out card is mid-animation. (The called-out card's own
+    // box does change under the scale — that is the effect, and measuring it
+    // mid-flight would only race the keyframes.)
+    const neighbourDuring = (await neighbour.boundingBox())!;
+    expect(neighbourDuring.x).toBeCloseTo(neighbourBefore.x, 0);
+    expect(neighbourDuring.width).toBeCloseTo(neighbourBefore.width, 0);
+
     await page.mouse.move(0, 0);
     await expect(calledOut).toHaveCount(0);
-    const cardAfter = (await strip(page, PROJECT_ID)
-      .locator(`[data-node-id="${CHILD_ID}"]`)
-      .boundingBox())!;
+    // And the card comes back to exactly the box it started in.
+    const cardAfter = (await card.boundingBox())!;
+    const neighbourAfter = (await neighbour.boundingBox())!;
+    expect(neighbourAfter.x).toBeCloseTo(neighbourBefore.x, 0);
     expect(cardAfter.x).toBeCloseTo(cardBefore.x, 0);
     expect(cardAfter.width).toBeCloseTo(cardBefore.width, 0);
 
