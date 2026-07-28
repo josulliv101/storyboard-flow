@@ -637,33 +637,8 @@ export function TimelineSidebar() {
               </button>
             )}
 
-            {/* The strip's time-ruler toggle (was in the breadcrumb row). It
-                rides under the children toggle and only exists in strip
-                layout — the grid has no single time axis for a ruler to
-                mark. */}
-            {onGraphRoute && graphView.surface === "strip" && (
-              <button
-                type="button"
-                aria-pressed={graphView.rulerOn}
-                aria-label={graphView.rulerOn ? "Hide time ruler" : "Show time ruler"}
-                aria-describedby="sidebar-tooltip-ruler"
-                onClick={requestGraphRulerToggle}
-                className={cn(
-                  SIDEBAR_ICON_BASE,
-                  graphView.rulerOn ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
-                )}
-              >
-                <Ruler className="h-4 w-4 transition-colors" />
-                <SidebarTooltipLabel
-                  id="sidebar-tooltip-ruler"
-                  label="Time ruler"
-                  description="Tick marks over every strip"
-                />
-              </button>
-            )}
-
-            {/* Flat mode — strip only, like the ruler. Grid keeps its nesting,
-                so there is nothing to flatten there. */}
+            {/* Flat mode — strip only. Grid keeps its nesting, so there is
+                nothing to flatten there. */}
             {onGraphRoute && graphView.surface === "strip" && (
               <button
                 type="button"
@@ -694,6 +669,35 @@ export function TimelineSidebar() {
                       ? "Loading every collection…"
                       : "One flat run — no collections. Reordering is off."
                   }
+                />
+              </button>
+            )}
+
+            {/* The strip's time-ruler toggle, BELOW flat mode and scoped to
+                it: a ruler is a single continuous time axis, which only the
+                flat run actually is. In the nested strip a collection card
+                holds an arbitrary duration in a fixed width, so the ticks
+                beside it measure nothing the user can act on. Grid has no
+                time axis at all. Flat turning off also turns the ruler off
+                (see graph-timeline-view) — otherwise this control vanishes
+                while its ruler stays painted. */}
+            {onGraphRoute && graphView.surface === "strip" && graphView.flatOn && (
+              <button
+                type="button"
+                aria-pressed={graphView.rulerOn}
+                aria-label={graphView.rulerOn ? "Hide time ruler" : "Show time ruler"}
+                aria-describedby="sidebar-tooltip-ruler"
+                onClick={requestGraphRulerToggle}
+                className={cn(
+                  SIDEBAR_ICON_BASE,
+                  graphView.rulerOn ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+                )}
+              >
+                <Ruler className="h-4 w-4 transition-colors" />
+                <SidebarTooltipLabel
+                  id="sidebar-tooltip-ruler"
+                  label="Time ruler"
+                  description="Tick marks over every strip"
                 />
               </button>
             )}

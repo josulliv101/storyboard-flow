@@ -78,9 +78,19 @@ const BUFFER_WINDOW_SIZE = 4;
 const DEFAULT_SURFACE_HEIGHT = 380;
 const MIN_SURFACE_HEIGHT = 120;
 const MIN_TIMELINE_SPACE = 260;
-/** The resize divider's own height (Tailwind h-3). The transport is centered
- *  on this stable track and may overhang it without changing layout. */
-const DIVIDER_HEIGHT_PX = 12;
+/** The visible divider BAND, which is also its drag track (Tailwind h-3). */
+const DIVIDER_BAND_HEIGHT_PX = 12;
+/** Breathing room between the preview surface and the band. Part of the
+ *  divider button's own box, not a margin, so the measured element and the
+ *  published offset below cannot disagree. */
+const DIVIDER_TOP_PADDING_PX = 4;
+/** The divider element's full height — padding + band. Feeds
+ *  `--workbench-preview-offset`, so it MUST stay equal to what the button
+ *  actually renders (`pt-1` + `h-3`). */
+const DIVIDER_HEIGHT_PX = DIVIDER_TOP_PADDING_PX + DIVIDER_BAND_HEIGHT_PX;
+/** Where the band's mid-line falls inside that box. The transport is centered
+ *  on it and may overhang it without changing layout. */
+const DIVIDER_BAND_CENTER_PX = DIVIDER_TOP_PADDING_PX + DIVIDER_BAND_HEIGHT_PX / 2;
 
 type WorkbenchDividerTransportProps = {
   currentTime: number;
@@ -118,7 +128,7 @@ function WorkbenchDividerTransport({
       <div
         className="pointer-events-auto absolute left-1/2 flex h-11 w-[8.25rem] items-center justify-center"
         data-transport-button-group
-        style={{ top: DIVIDER_HEIGHT_PX / 2, transform: "translate(-50%, -50%)" }}
+        style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translate(-50%, -50%)" }}
         onPointerDown={(event) => {
           // The transport visually occupies the divider, but remains its own
           // interaction island. A transport press must never begin a resize.
@@ -134,7 +144,7 @@ function WorkbenchDividerTransport({
           title="Previous clip"
         >
           <span className="grid size-5 translate-x-2 place-items-center rounded-full transition-colors group-focus-visible/previous:ring-2 group-focus-visible/previous:ring-sky-400 group-focus-visible/previous:ring-offset-2 group-focus-visible/previous:ring-offset-zinc-950">
-            <SkipBack className="size-3 fill-current" />
+            <SkipBack className="size-3.5 fill-current" />
           </span>
         </button>
 
@@ -154,9 +164,9 @@ function WorkbenchDividerTransport({
             data-transport-primary-control
           >
             {isPlaying ? (
-              <Pause className="size-2.5 fill-current" />
+              <Pause className="size-3 fill-current" />
             ) : (
-              <Play className="ml-0.5 size-2.5 fill-current" />
+              <Play className="ml-0.5 size-3 fill-current" />
             )}
           </span>
         </button>
@@ -170,7 +180,7 @@ function WorkbenchDividerTransport({
           title="Next clip"
         >
           <span className="grid size-5 -translate-x-2 place-items-center rounded-full transition-colors group-focus-visible/next:ring-2 group-focus-visible/next:ring-sky-400 group-focus-visible/next:ring-offset-2 group-focus-visible/next:ring-offset-zinc-950">
-            <SkipForward className="size-3 fill-current" />
+            <SkipForward className="size-3.5 fill-current" />
           </span>
         </button>
       </div>
@@ -179,7 +189,7 @@ function WorkbenchDividerTransport({
         className="absolute right-3 max-w-[calc(50%_-_5rem)] overflow-hidden text-ellipsis whitespace-nowrap rounded-full bg-zinc-900/90 px-2 py-0.5 font-mono text-[10px] text-zinc-400 shadow-sm"
         aria-label={`Preview time ${formatSeconds(currentTime)} of ${formatSeconds(duration)}`}
         data-testid="workbench-preview-time"
-        style={{ top: DIVIDER_HEIGHT_PX / 2, transform: "translateY(-50%)" }}
+        style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
       >
         <span className="sm:hidden">{formatSeconds(currentTime)}</span>
         <span className="hidden sm:inline">
@@ -1229,21 +1239,37 @@ export function WorkbenchSplitPane({
           aria-valuemin={MIN_SURFACE_HEIGHT}
           aria-valuenow={Math.round(surfaceHeight)}
           aria-label="Resize workbench display"
-          // The divider keeps a 12px interaction track while its one-pixel
-          // centerline runs directly through the transport controls. The line
-          // fades across the 132px transport group so no divider color shows
-          // behind its background-free icons.
-          className="group relative block h-3 w-full cursor-row-resize bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+          // pt-1 + h-3 = DIVIDER_HEIGHT_PX. The padding is the gap under the
+          // preview; the band below it is both the visible divider and the
+          // drag track, and the transport rides centered on that band.
+          className="group relative block w-full cursor-row-resize bg-transparent pt-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
           data-workbench-divider
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
           onPointerUp={handleDividerPointerUp}
           onPointerCancel={handleDividerPointerUp}
         >
+          {/* The band fades out across the 132px transport group so no divider
+              color shows behind its background-free icons — the same window
+              the one-pixel centerline used, now filling the full band. */}
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-[linear-gradient(to_right,currentColor_0,currentColor_calc(50%_-_6.125rem),transparent_calc(50%_-_4.125rem),transparent_calc(50%_+_4.125rem),currentColor_calc(50%_+_6.125rem),currentColor_100%)] text-zinc-800 transition-colors group-hover:text-zinc-600 group-active:text-zinc-500"
+            className="pointer-events-none block h-3 rounded-sm bg-[linear-gradient(to_right,currentColor_0,currentColor_calc(50%_-_6.125rem),transparent_calc(50%_-_4.125rem),transparent_calc(50%_+_4.125rem),currentColor_calc(50%_+_6.125rem),currentColor_100%)] text-zinc-800 transition-colors group-hover:text-zinc-700 group-active:text-zinc-600"
             data-divider-line
+          />
+          {/* Coarse-pointer devices never see the hover brighten, so at tablet
+              width and below the band carries a standing grip mark instead.
+              ONE mark, at 7rem left of centre: the centre belongs to the
+              transport (solid band resumes past ±6.125rem) and the band's
+              right end belongs to the time readout, whose opaque pill is up
+              to half the width — a mirrored mark over there is simply painted
+              over. Left of the transport is the only place on a phone-width
+              band that is reliably empty. */}
+          <span
+            aria-hidden="true"
+            data-divider-grip
+            className="pointer-events-none absolute left-[calc(50%_-_7rem)] h-0.5 w-5 rounded-full bg-zinc-500 md:hidden"
+            style={{ top: DIVIDER_BAND_CENTER_PX, transform: "translateY(-50%)" }}
           />
         </button>
         </div>

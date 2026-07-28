@@ -40,6 +40,7 @@ import { findNodeElement, isEditableKeyboardTarget } from "../react/node-dom";
 import { NodeCard, type NodeCardDragActivation } from "../react/node-views";
 import { TrimOverviewStrip } from "../react/trim-overview";
 import { TrimPreviewContext, type LiveTrim, type TrimPreview } from "../react/trim-preview-context";
+import { useBackgroundSelectionClear } from "../react/use-background-clear";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
 import {
   usePanWithMomentum,
@@ -620,6 +621,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       [panToScroll, store]
     );
     usePanWithMomentum(scrollRef, "x", panOptions);
+    const backgroundClear = useBackgroundSelectionClear(store);
 
     const scrollToNode = useCallback(
       (id: NodeId): boolean => {
@@ -832,6 +834,11 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
             aria-rowcount={childIds.length === 0 ? 0 : 1}
             aria-colcount={childIds.length}
             onKeyDown={onKeyDown}
+            // Empty space is the "deselect" target. The pointerdown half only
+            // records where the press started, so a PAN (which also ends in a
+            // click here) can be told apart from a real background click.
+            onPointerDown={backgroundClear.onPointerDown}
+            onClick={backgroundClear.onClick}
             className={twMerge(
               "relative overflow-x-auto rounded-md border border-dashed border-border p-2",
               className,

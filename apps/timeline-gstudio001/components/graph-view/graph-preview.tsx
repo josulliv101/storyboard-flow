@@ -126,19 +126,34 @@ export function createPreviewTimeChannel(): PreviewTimeChannel {
  * read the SAME number — the two must agree or the marker drifts off the cards.
  */
 const COLLECTION_CARD_BASE_PX = 128;
-export function collectionCardWidth(pixelsPerSecond: number): number {
-  return Math.max(MIN_ITEM_WIDTH, COLLECTION_CARD_BASE_PX * (pixelsPerSecond / TIMELINE_PPS));
+/** Collections never render narrower than a 16:9 box against the card height
+ *  they are drawn at. Zooming out used to squeeze them into slivers no one
+ *  could read or hit; the aspect floor keeps the poster frame intact and
+ *  scales with item size, so `xs` rows and `xl` rows each get a proportionate
+ *  minimum instead of one flat pixel count. */
+const COLLECTION_MIN_ASPECT = 16 / 9;
+export function collectionCardWidth(pixelsPerSecond: number, cardHeight: number): number {
+  return Math.max(
+    MIN_ITEM_WIDTH,
+    cardHeight * COLLECTION_MIN_ASPECT,
+    COLLECTION_CARD_BASE_PX * (pixelsPerSecond / TIMELINE_PPS),
+  );
 }
 
 /**
  * The strip's width resolution at a given zoom, injected into the pure
  * playhead model so its cards use EXACTLY the widths the strip renders —
- * collections at the shared fixed-per-zoom width, media by duration.
+ * collections at the shared per-zoom width (with its aspect floor), media by
+ * duration. `cardHeight` is the strip's own `itemHeight`, which the floor
+ * needs; pass 0 where widths are not read (see `cardsFor` callers).
  */
-function clipWidthAt(pixelsPerSecond: number): (clip: TimelineClip) => number {
+function clipWidthAt(
+  pixelsPerSecond: number,
+  cardHeight: number,
+): (clip: TimelineClip) => number {
   return (clip) =>
     clip.kind === "collection"
-      ? collectionCardWidth(pixelsPerSecond)
+      ? collectionCardWidth(pixelsPerSecond, cardHeight)
       : durationToWidth(clip.duration, pixelsPerSecond);
 }
 
@@ -182,13 +197,16 @@ function cardsFor(
   focusedId: string,
   spans: PreviewCardSpans | null,
   pixelsPerSecond: number,
+  /** The strip's `itemHeight` — only the collection aspect floor reads it.
+   *  Callers that consume times and counts rather than geometry pass 0. */
+  cardHeight: number,
   flatItems: readonly FlatItem[] | null,
 ): ChildSpan[] {
   return flatItems
     ? flatCardSpans(graph, flatItems, focusedId, spans, (seconds) =>
         durationToWidth(seconds, pixelsPerSecond),
       )
-    : childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond));
+    : childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond, cardHeight));
 }
 
 /** The global-clock windows the pane is playing, or null when it is on the
@@ -224,7 +242,9 @@ export function useFocusedTimelineAggregate(
   );
   const flatItems = useContext(FlatItemsContext);
   return useMemo(() => {
-    const cards = cardsFor(graph, details, focusedId, spans, pixelsPerSecond, flatItems);
+    // 0 card height: this readout is counts and seconds, never geometry, so
+    // the collection aspect floor has nothing to act on here.
+    const cards = cardsFor(graph, details, focusedId, spans, pixelsPerSecond, 0, flatItems);
     // Enabled-only, both numbers: this readout says what a viewer would sit
     // through, which is NOT how far the playhead travels now that disabled
     // cards keep their span. The two disagree by design — the ruler runs
@@ -241,11 +261,15 @@ export function GraphPlayhead({
   focusedId,
   channel,
   pixelsPerSecond,
+  cardHeight,
   activeWindow,
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
   pixelsPerSecond: number;
+  /** The strip's `itemHeight`. Feeds the collection aspect floor, so this
+   *  marker lands on the same card edges the strip actually draws. */
+  cardHeight: number;
   /** When set (sub-rows), the marker is hidden while the global clock is
    *  outside this collection's window — only the row the clock is currently
    *  inside shows it, so one clock appears to sweep through the tree. The
@@ -272,7 +296,7 @@ export function GraphPlayhead({
       lastGraph = graph;
       lastDetails = details;
       map = buildPlayheadMap(
-        cardsFor(graph, details, focusedId, spans, pixelsPerSecond, flatItems),
+        cardsFor(graph, details, focusedId, spans, pixelsPerSecond, cardHeight, flatItems),
       );
       return true;
     };
@@ -311,7 +335,17 @@ export function GraphPlayhead({
       unsubscribeStore();
       unsubscribeDetails();
     };
-  }, [store, detailsStore, focusedId, channel, spans, pixelsPerSecond, activeWindow, flatItems]);
+  }, [
+    store,
+    detailsStore,
+    focusedId,
+    channel,
+    spans,
+    pixelsPerSecond,
+    cardHeight,
+    activeWindow,
+    flatItems,
+  ]);
 
   // No cap on the line: the seek rail's circular thumb above IS the
   // playhead's head now — the old triangle poked up over it. The stem
@@ -423,7 +457,14 @@ const stripScrollerBeside = (element: HTMLElement): HTMLElement | null =>
 export function GraphRuler({
   focusedId,
   pixelsPerSecond,
-}: Readonly<{ focusedId: string; pixelsPerSecond: number }>) {
+  cardHeight,
+}: Readonly<{
+  focusedId: string;
+  pixelsPerSecond: number;
+  /** The strip's `itemHeight` — feeds the collection aspect floor so ticks
+   *  and collection stretches land on the widths the strip draws. */
+  cardHeight: number;
+}>) {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
   const spans = useContext(PreviewCardSpansContext);
@@ -454,7 +495,7 @@ export function GraphRuler({
   // tick count follows the VIEWPORT, not the duration. Scrolling recomputes
   // only on chunk crossings (tickWindow identity is stable between them).
   const { ticks, collectionSpans, skips } = useMemo(() => {
-    const cards = cardsFor(graph, details, focusedId, spans, pixelsPerSecond, flatItems);
+    const cards = cardsFor(graph, details, focusedId, spans, pixelsPerSecond, cardHeight, flatItems);
     // A flat run holds no collections at all, so every card is ruled — the
     // blank-interior rule exists only for collection cards.
     const isCollection = flatItems
@@ -473,7 +514,7 @@ export function GraphRuler({
       // range as the ticks beside them.
       skips: buildStripOverlay(cards, tickWindow).skips,
     };
-  }, [graph, details, spans, focusedId, pixelsPerSecond, tickWindow, flatItems]);
+  }, [graph, details, spans, focusedId, pixelsPerSecond, cardHeight, tickWindow, flatItems]);
 
   return (
     <div
@@ -591,7 +632,10 @@ export function GraphGridPlayhead({
       lastColumns = columns;
       lastCellWidth = cellWidth;
       map = buildGridPlayheadMap(
-        childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
+        // 0 card height: grid cells are uniform and this map lays out by
+        // `cellWidth`, never by the per-clip width, so the strip's collection
+        // aspect floor has nothing to act on here.
+        childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond, 0)),
         columns,
         cellWidth,
         cellHeight,
@@ -944,7 +988,9 @@ export function GraphSeekRails({
     () => detailsStore.read(),
   );
   const cards = useMemo(
-    () => childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond)),
+    // 0 card height, as in GraphGridPlayhead: the grid rails measure their
+    // row from `cellWidth`, so per-clip widths never reach the geometry.
+    () => childSpans(graph, details, focusedId, spans, clipWidthAt(pixelsPerSecond, 0)),
     [graph, details, spans, focusedId, pixelsPerSecond],
   );
   const cardCount = cards.length;
@@ -1075,11 +1121,15 @@ export function GraphStripSeekRail({
   focusedId,
   channel,
   pixelsPerSecond,
+  cardHeight,
   ariaLabel = "Seek preview",
 }: Readonly<{
   focusedId: string;
   channel: PreviewTimeChannel;
   pixelsPerSecond: number;
+  /** The strip's `itemHeight` — feeds the collection aspect floor, keeping
+   *  the rail's thumb in lockstep with the playhead line below it. */
+  cardHeight: number;
   ariaLabel?: string;
 }>) {
   const store = useCollectionsStore();
@@ -1105,8 +1155,8 @@ export function GraphStripSeekRail({
     () => detailsStore.read(),
   );
   const cards = useMemo(
-    () => cardsFor(graph, details, focusedId, spans, pixelsPerSecond, flatItems),
-    [graph, details, spans, focusedId, pixelsPerSecond, flatItems],
+    () => cardsFor(graph, details, focusedId, spans, pixelsPerSecond, cardHeight, flatItems),
+    [graph, details, spans, focusedId, pixelsPerSecond, cardHeight, flatItems],
   );
   const map = useMemo(() => buildPlayheadMap(cards), [cards]);
   const start = cards.length > 0 ? cards[0].startTime : 0;

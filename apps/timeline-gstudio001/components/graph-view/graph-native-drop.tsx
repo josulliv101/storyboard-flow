@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type DragEvent,
   type ReactNode,
 } from "react";
@@ -323,9 +324,111 @@ export function SidebarToolInsertBridge({
   return null;
 }
 
-function acceptsNativeDrag(event: DragEvent<HTMLElement>): boolean {
-  const types = event.dataTransfer.types;
+function acceptsDragTypes(types: readonly string[] | undefined): boolean {
+  if (!types) return false;
   return types.includes(TOOL_MIME) || types.includes("Files");
+}
+
+function acceptsNativeDrag(event: DragEvent<HTMLElement>): boolean {
+  return acceptsDragTypes(event.dataTransfer.types);
+}
+
+/**
+ * "A droppable drag is somewhere over the page right now" — the signal every
+ * drop zone lights up on, so the targets announce themselves BEFORE the
+ * pointer finds one. Kept module-level and reference-counted because the
+ * answer is global while the subscribers are many (the focused surface plus
+ * every rendered sub-timeline); one window listener serves all of them.
+ *
+ * Armed by `dragover` rather than tracked with dragenter/dragleave pairs:
+ * those fire in a well-known flickering interleave as the pointer crosses
+ * child elements, and every counter-based fix leaks a stuck state on some
+ * path (drag out of the window, drop on another app, ESC). `dragover` fires
+ * continuously while a drag is over the page, so a short expiry that each
+ * event refreshes is self-healing — nothing can leave it stuck on.
+ *
+ * dnd-kit card drags are POINTER drags and emit no HTML5 drag events at all,
+ * so they never arm this.
+ */
+const NATIVE_DRAG_IDLE_MS = 200;
+
+const nativeDragSignal = {
+  active: false,
+  listeners: new Set<() => void>(),
+  timer: null as ReturnType<typeof setTimeout> | null,
+  detach: null as (() => void) | null,
+};
+
+function setNativeDragActive(next: boolean): void {
+  if (nativeDragSignal.active === next) return;
+  nativeDragSignal.active = next;
+  for (const listener of nativeDragSignal.listeners) listener();
+}
+
+function clearNativeDragTimer(): void {
+  if (nativeDragSignal.timer !== null) {
+    clearTimeout(nativeDragSignal.timer);
+    nativeDragSignal.timer = null;
+  }
+}
+
+function subscribeNativeDrag(listener: () => void): () => void {
+  nativeDragSignal.listeners.add(listener);
+  if (nativeDragSignal.detach === null && typeof window !== "undefined") {
+    const onDragOver = (event: globalThis.DragEvent) => {
+      if (!acceptsDragTypes(event.dataTransfer?.types)) return;
+      setNativeDragActive(true);
+      clearNativeDragTimer();
+      nativeDragSignal.timer = setTimeout(() => {
+        nativeDragSignal.timer = null;
+        setNativeDragActive(false);
+      }, NATIVE_DRAG_IDLE_MS);
+    };
+    const onEnd = () => {
+      clearNativeDragTimer();
+      setNativeDragActive(false);
+    };
+    window.addEventListener("dragover", onDragOver, true);
+    window.addEventListener("drop", onEnd, true);
+    window.addEventListener("dragend", onEnd, true);
+    nativeDragSignal.detach = () => {
+      window.removeEventListener("dragover", onDragOver, true);
+      window.removeEventListener("drop", onEnd, true);
+      window.removeEventListener("dragend", onEnd, true);
+    };
+  }
+  return () => {
+    nativeDragSignal.listeners.delete(listener);
+    if (nativeDragSignal.listeners.size === 0) {
+      nativeDragSignal.detach?.();
+      nativeDragSignal.detach = null;
+      clearNativeDragTimer();
+      nativeDragSignal.active = false;
+    }
+  };
+}
+
+/** True while a droppable native drag is over the page. */
+function useNativeDragArmed(): boolean {
+  return useSyncExternalStore(
+    subscribeNativeDrag,
+    () => nativeDragSignal.active,
+    () => false,
+  );
+}
+
+/**
+ * The drop-zone affordance: every eligible target outlines itself for the
+ * duration of the drag, and the one under the pointer is filled in. Ring and
+ * background only — nothing here may change the box, or arming the affordance
+ * would reflow the strips mid-drag and move the very gaps being aimed at.
+ */
+function dropZoneClassName(armed: boolean, hovered: boolean): string {
+  if (!armed) return "relative rounded-lg";
+  return [
+    "relative rounded-lg ring-1 transition-colors duration-150 motion-reduce:transition-none",
+    hovered ? "bg-sky-400/10 ring-2 ring-sky-400" : "bg-sky-400/[0.03] ring-sky-400/40",
+  ].join(" ");
 }
 
 /**
@@ -643,6 +746,10 @@ export function NativeDropStrip({
   const { commitDrop, upload } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicatorX, setIndicatorX] = useState<number | null>(null);
+  const armed = useNativeDragArmed();
+  // "The pointer is over THIS zone" — separate from the indicator, which an
+  // empty strip has nothing to draw.
+  const [dragSessionActive, setDragSessionActive] = useState(false);
 
   // Drag-session geometry (see measureDragGeometry) plus the rAF coalescing
   // state for the drop indicator. All refs: none of it should drive a render.
@@ -750,6 +857,7 @@ export function NativeDropStrip({
     dragGeometryRef.current = null;
     indicatorXRef.current = null;
     setIndicatorX(null);
+    setDragSessionActive(false);
   }, [invalidateDragGeometry]);
 
   // A drag can end anywhere (dropped on another target, cancelled with Esc),
@@ -764,6 +872,7 @@ export function NativeDropStrip({
 
     if (!dragSessionRef.current) {
       dragSessionRef.current = true;
+      setDragSessionActive(true);
       // Capture phase: the strip scrolls in its own container, not the window.
       window.addEventListener("scroll", invalidateDragGeometry, true);
       window.addEventListener("resize", invalidateDragGeometry);
@@ -798,7 +907,9 @@ export function NativeDropStrip({
     <div
       ref={wrapperRef}
       data-native-drop={collectionId}
-      className="relative"
+      data-native-drop-armed={armed || undefined}
+      data-native-drop-hovered={armed && dragSessionActive ? true : undefined}
+      className={dropZoneClassName(armed, dragSessionActive)}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -808,7 +919,10 @@ export function NativeDropStrip({
         <div
           data-native-drop-indicator
           aria-hidden="true"
-          className="pointer-events-none absolute inset-y-1 z-20 w-0.5 rounded bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)]"
+          // left-0 for the same reason the grid's indicator needs it: the
+          // translate is measured from the wrapper's origin, so the element
+          // must be anchored there rather than left at its static position.
+          className="pointer-events-none absolute inset-y-1 left-0 z-30 w-0.5 rounded bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)]"
           style={{ transform: `translateX(${indicatorX}px)` }}
         />
       )}
@@ -854,6 +968,10 @@ export function NativeDropGrid({
   const { commitDrop, upload } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState<GridIndicator | null>(null);
+  const armed = useNativeDragArmed();
+  // "The pointer is over THIS zone" — separate from the indicator, which an
+  // empty grid has nothing to draw.
+  const [dragSessionActive, setDragSessionActive] = useState(false);
 
   const dragGeometryRef = useRef<GridDragGeometry | null>(null);
   const dragSessionRef = useRef(false);
@@ -978,6 +1096,7 @@ export function NativeDropGrid({
     }
     dragGeometryRef.current = null;
     setIndicator(null);
+    setDragSessionActive(false);
   }, [invalidateDragGeometry]);
 
   useEffect(() => endDragSession, [endDragSession]);
@@ -989,6 +1108,7 @@ export function NativeDropGrid({
 
     if (!dragSessionRef.current) {
       dragSessionRef.current = true;
+      setDragSessionActive(true);
       window.addEventListener("scroll", invalidateDragGeometry, true);
       window.addEventListener("resize", invalidateDragGeometry);
       window.addEventListener("dragend", endDragSession, { once: true });
@@ -1016,7 +1136,9 @@ export function NativeDropGrid({
     <div
       ref={wrapperRef}
       data-native-drop={collectionId}
-      className="relative"
+      data-native-drop-armed={armed || undefined}
+      data-native-drop-hovered={armed && dragSessionActive ? true : undefined}
+      className={dropZoneClassName(armed, dragSessionActive)}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -1026,7 +1148,14 @@ export function NativeDropGrid({
         <div
           data-native-drop-indicator
           aria-hidden="true"
-          className="pointer-events-none absolute z-20 w-0.5 rounded bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)]"
+          // left-0/top-0 are LOAD-BEARING. `absolute` with neither offset
+          // resolves to the element's STATIC position — and this div is the
+          // wrapper's last child, so that position is directly BELOW the
+          // grid. The transform below is measured from the wrapper's origin
+          // (`wrapperLeft`/`wrapperTop`), so without the anchor the line drew
+          // a whole grid's height too low. z-30 clears the grid's own
+          // overlay tier as well as its cards.
+          className="pointer-events-none absolute left-0 top-0 z-30 w-0.5 rounded bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)]"
           style={{
             transform: `translate(${indicator.x}px, ${indicator.y}px)`,
             height: `${indicator.height}px`,

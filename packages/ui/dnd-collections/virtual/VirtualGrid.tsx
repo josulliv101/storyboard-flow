@@ -29,6 +29,7 @@ import {
 import { useCollectionsSelector, useCollectionsStore } from "../react/collections-store";
 import { NodeCard } from "../react/node-views";
 import { isContiguousReorderNoOp } from "./insert-noop";
+import { useBackgroundSelectionClear } from "../react/use-background-clear";
 import { useEdgeAutoScroll } from "../react/use-edge-autoscroll";
 import {
   useFocusNode,
@@ -235,6 +236,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
     // row, ±cols between rows), scrolling offscreen rows into view. Alt+arrows
     // stay item MOVES (handled by the keyboard controller via data-grid-columns).
     const store = useCollectionsStore();
+    const backgroundClear = useBackgroundSelectionClear(store);
     const name = useCollectionsSelector(
       (s) => s.graph.nodesById.get(collectionId)?.name ?? String(collectionId)
     );
@@ -346,6 +348,11 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         aria-rowcount={rowCount}
         aria-colcount={cols}
         onKeyDown={onKeyDown}
+        // Empty space is the "deselect" target; the pointerdown half records
+        // the press position so a drag that ends over the background is not
+        // mistaken for a click. (See useBackgroundSelectionClear.)
+        onPointerDown={backgroundClear.onPointerDown}
+        onClick={backgroundClear.onClick}
         className={twMerge(
           "relative overflow-y-auto rounded-md border border-dashed border-border p-2",
           className,

@@ -12,7 +12,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { FolderInput } from "lucide-react";
+import { CornerRightDown } from "lucide-react";
 
 import {
   CollectionItem,
@@ -382,10 +382,11 @@ function DisabledChip({ inherited }: { inherited: boolean }) {
 }
 
 /** Shared collection glyph for both the card affordance and an empty drag
- * ghost. The lighter stroke keeps the compound folder/arrow mark readable at
- * small sizes without looking heavier than the surrounding icon system. */
+ * ghost. A single-stroke turn-and-descend mark reads at small sizes where the
+ * old compound folder/arrow went muddy, and it says the verb the control
+ * actually performs: go DOWN into this timeline. */
 function CollectionFolderGlyph({ className }: Readonly<{ className?: string }>) {
-  return <FolderInput aria-hidden="true" className={className} strokeWidth={1.5} />;
+  return <CornerRightDown aria-hidden="true" className={className} strokeWidth={1.5} />;
 }
 
 /**
@@ -906,10 +907,10 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         }}
         className="absolute left-1/2 top-[41%] flex aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300"
       >
-        {/* FolderInput — a folder with an arrow going INTO it, matching the
-            sub-timeline row's drill button. Both NAVIGATE; the sidebar's
-            FolderTree toggles whether the children tree is shown, which is a
-            different verb and no longer shares this icon. */}
+        {/* CornerRightDown — turn and descend, the verb this control performs:
+            NAVIGATE into the timeline. The sidebar's FolderTree toggles whether
+            the children tree is shown, which is a different verb and does not
+            share this icon. */}
         <CollectionFolderGlyph className="h-[55%] w-[55%]" />
       </button>
 

@@ -220,6 +220,17 @@ export function GraphTimelineView({
     if (surface !== "strip" && flatOn) setFlatOn(false);
   }
 
+  // The ruler is scoped to flat mode (its toggle only mounts there), so flat
+  // going off has to take the ruler with it — otherwise the control vanishes
+  // while the ruler it armed stays painted on every strip, with no way back.
+  // Watched on flatOn rather than folded into the toggle handler because the
+  // block above turns flat off too; one watcher catches both paths.
+  const [prevFlatOn, setPrevFlatOn] = useState(flatOn);
+  if (prevFlatOn !== flatOn) {
+    setPrevFlatOn(flatOn);
+    if (!flatOn && rulerOn) setRulerOn(false);
+  }
+
   // The closure hydration flat mode needs runs in `FlatClosureHydrator`, which
   // is mounted INSIDE the provider below — the collections store only exists
   // there. This component owns the flag and the pending state; the hydrator

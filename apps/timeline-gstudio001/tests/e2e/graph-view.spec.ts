@@ -384,6 +384,13 @@ async function openGraph(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Show children timelines" }).click();
 }
 
+/** The ruler toggle only mounts in FLAT mode (a ruler is one continuous time
+ *  axis, which only the flat run is), so every ruler test enters flat first. */
+async function enableRuler(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Show all items in order" }).click();
+  await page.getByRole("button", { name: /show time ruler/i }).click();
+}
+
 /** Sub-graph rows start COLLAPSED — expand one to reveal its (lazy-hydrated)
  *  strip and its own nested rows. `.first()` guards against nested rows once
  *  children exist under the same section name. */
@@ -938,11 +945,17 @@ test.describe("graph view E2E", () => {
     ).toHaveAttribute("aria-pressed", "false");
     await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
 
-    // Strip icon → strip layout, and the ruler toggle appears in the
-    // sidebar under the tool cluster.
+    // Strip icon → strip layout. The ruler toggle is scoped to FLAT mode, so
+    // a plain strip still shows no ruler control.
     await surfaceButton(page, "strip").click();
     await expect(strip(page, PROJECT_ID)).toBeVisible();
     await expect(surfaceButton(page, "strip")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: /show time ruler/i })).toHaveCount(0);
+
+    // Flat mode is what mints a single continuous time axis, and only then
+    // does the ruler toggle appear — below the flat icon in the rail.
+    const flatToggle = page.getByRole("button", { name: "Show all items in order" });
+    await flatToggle.click();
     const rulerToggle = page.getByRole("button", { name: /show time ruler/i });
     await expect(rulerToggle).toBeVisible();
 
@@ -953,6 +966,13 @@ test.describe("graph view E2E", () => {
       "true",
     );
     await expect(page.locator("[data-graph-ruler]").first()).toBeVisible();
+
+    // Leaving flat mode takes the ruler with it: the control unmounts and the
+    // ruler it armed stops painting, so no strip is left ruled with no way
+    // back.
+    await page.getByRole("button", { name: "Show collections" }).click();
+    await expect(page.getByRole("button", { name: /time ruler/i })).toHaveCount(0);
+    await expect(page.locator("[data-graph-ruler]")).toHaveCount(0);
   });
 
   test("preview height is the user's: tree growth never steals it, and a toggle restores it", async ({
@@ -976,12 +996,20 @@ test.describe("graph view E2E", () => {
     await expect.poll(heightOf).toBeGreaterThan(0);
     const initial = await heightOf();
 
-    // The divider remains a compact 12px track even though its centered
-    // transport overhangs it.
+    // The divider is a compact 16px box — 4px of breathing room under the
+    // preview plus the 12px visible band, which is also its drag track — even
+    // though its centered transport overhangs it.
     expect(
       await divider.evaluate((el) => Math.round(el.getBoundingClientRect().height)),
+    ).toBe(16);
+    expect(
+      await divider
+        .locator("[data-divider-line]")
+        .evaluate((el) => Math.round(el.getBoundingClientRect().height)),
     ).toBe(12);
-    await expect(divider.locator("[data-divider-grip]")).toHaveCount(0);
+    // The grip is for coarse pointers only: present in the DOM, not painted
+    // at desktop width.
+    await expect(divider.locator("[data-divider-grip]")).toBeHidden();
     const splitPane = page.getByTestId("workbench-split-pane");
     const displaySurface = page.getByTestId("workbench-display-surface");
     expect(
@@ -998,10 +1026,15 @@ test.describe("graph view E2E", () => {
     expect(
       await dividerLine.evaluate((element) => getComputedStyle(element).backgroundImage),
     ).toContain("linear-gradient");
+    // The band is painted by a gradient built from `currentColor`, so COLOR
+    // is what hover changes. (This read used to be `backgroundColor`, which
+    // is transparent on a gradient-backed element in both states — the
+    // assertion could not fail and, once the gradient landed, could not pass
+    // either.)
     const dividerLineColor = () =>
-      dividerLine.evaluate((el) => getComputedStyle(el).backgroundColor);
+      dividerLine.evaluate((el) => getComputedStyle(el).color);
     const restLineColor = await dividerLineColor();
-    await divider.hover({ position: { x: 20, y: 6 } });
+    await divider.hover({ position: { x: 20, y: 10 } });
     await expect.poll(dividerLineColor).not.toBe(restLineColor);
     await page.mouse.move(0, 0); // unhover before the resize steps below
 
@@ -2162,15 +2195,18 @@ test.describe("graph view E2E", () => {
     await expect(page.getByRole("button", { name: "Next workbench clip" })).toBeVisible();
     await expect(time).toContainText("/");
     await expect(controls.locator("[data-transport-capsule]")).toHaveCount(0);
-    await expect(divider.locator("[data-divider-grip]")).toHaveCount(0);
+    // Grip marks are the coarse-pointer affordance; this runs at desktop
+    // width, where the hover brighten does the job and the grip stays unpainted.
+    await expect(divider.locator("[data-divider-grip]")).toBeHidden();
     expect(
       await primaryControl.evaluate(
         (element) => getComputedStyle(element).backgroundColor,
       ),
     ).toBe("rgba(0, 0, 0, 0)");
 
-    // All three 44px hit targets remain centered on the fixed 12px divider,
-    // while their visible chrome stays deliberately compact.
+    // All three 44px hit targets remain centered on the divider's 12px BAND
+    // (the box is 16 — 4px of padding holds the band off the preview), while
+    // their visible chrome stays deliberately compact.
     const [surfaceBox, canvasBox, groupBox, dividerBox, dividerLineBox, timeBox] =
       await Promise.all([
         surface.boundingBox(),
@@ -2186,13 +2222,15 @@ test.describe("graph view E2E", () => {
     expect(dividerBox).not.toBeNull();
     expect(dividerLineBox).not.toBeNull();
     expect(timeBox).not.toBeNull();
-    expect(dividerBox!.height).toBe(12);
-    expect(groupBox!.width).toBe(132);
-    expect(groupBox!.height).toBe(44);
-    expect(groupBox!.y + groupBox!.height / 2).toBeCloseTo(
-      dividerBox!.y + dividerBox!.height / 2,
+    expect(dividerBox!.height).toBe(16);
+    expect(dividerLineBox!.height).toBe(12);
+    expect(dividerLineBox!.y + dividerLineBox!.height).toBeCloseTo(
+      dividerBox!.y + dividerBox!.height,
       0,
     );
+    expect(groupBox!.width).toBe(132);
+    expect(groupBox!.height).toBe(44);
+    // Centered on the BAND, not on the padded box.
     expect(dividerLineBox!.y + dividerLineBox!.height / 2).toBeCloseTo(
       groupBox!.y + groupBox!.height / 2,
       0,
@@ -3490,6 +3528,30 @@ test.describe("graph view E2E", () => {
     await expect(indicator).toBeVisible();
     const indicatorBox = (await indicator.boundingBox())!;
     expect(indicatorBox.x + indicatorBox.width / 2).toBeCloseTo(point.x, 0);
+    // …and it must sit ON the row it marks. The line is positioned by a
+    // transform measured from the wrapper's origin, so an unanchored
+    // `absolute` resolved to its static position — the wrapper's LAST child,
+    // i.e. below the whole grid — and the line drew a grid's height too low
+    // while still passing the x check above.
+    expect(indicatorBox.y).toBeCloseTo(bravoBox.y, 0);
+    expect(indicatorBox.height).toBeCloseTo(bravoBox.height, 0);
+    // It also has to paint ABOVE the grid. elementFromPoint can't confirm
+    // that (the line is pointer-events-none, so hit-testing looks straight
+    // through it), so pin the stacking instead: a positive z-index on a
+    // later sibling of a z-auto grid puts the line in the positive layer.
+    const stacking = await indicator.evaluate((line) => {
+      const zone = line.closest("[data-native-drop]")!;
+      const grid = zone.querySelector("[data-virtual-grid]")!;
+      return {
+        lineZ: Number(getComputedStyle(line).zIndex),
+        gridZ: getComputedStyle(grid).zIndex,
+        lineIsLaterSibling:
+          Boolean(grid.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING),
+      };
+    });
+    expect(stacking.lineZ).toBeGreaterThan(0);
+    expect(stacking.gridZ).toBe("auto");
+    expect(stacking.lineIsLaterSibling).toBe(true);
 
     const transfer = await page.evaluateHandle(() => {
       const value = new DataTransfer();
@@ -3506,6 +3568,102 @@ test.describe("graph view E2E", () => {
       .poll(() => gridOrder(page, PROJECT_ID))
       .toEqual(["alpha", expect.stringMatching(/^timeline-/), "bravo", CHILD_ID, "charlie"]);
     await expect(indicator).toHaveCount(0);
+  });
+
+  test("the children toggle says so when the timeline has no child timelines", async ({
+    page,
+  }) => {
+    // PL7-004: with the toggle on and nothing to show, the board used to
+    // render nothing at all, so the control read as broken.
+    const api = await installGraphApi(page);
+    const project = api.documents.get(PROJECT_ID)!;
+    // Media only — no collections, so the tree has no rows to draw.
+    project.clips = [mediaClip("alpha", "video", 0, 6, 8), mediaClip("bravo", "image", 1, 4)];
+    await page.goto(`${GRAPH_URL}?surface=strip`);
+    await strip(page, PROJECT_ID)
+      .locator('[data-node-id="alpha"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+
+    const empty = page.locator("[data-subtimelines-empty]");
+    const childrenToggle = page.getByRole("button", { name: "Show children timelines" });
+    // OFF: nothing renders — the empty state belongs to the ON state only.
+    await expect(empty).toHaveCount(0);
+
+    await childrenToggle.click();
+    await expect(empty).toBeVisible();
+    await expect(empty).toContainText(/no child timelines/i);
+
+    // Adding a collection replaces it with the real row, no reload.
+    await page.getByRole("button", { name: /add collection/i }).click();
+    await expect(empty).toHaveCount(0);
+    await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(1);
+
+    // Turning the toggle back off leaves neither.
+    await page.getByRole("button", { name: "Hide children timelines" }).click();
+    await expect(empty).toHaveCount(0);
+    await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
+  });
+
+  test("every drop zone announces itself for the whole native drag", async ({ page }) => {
+    // PL7-003: before this, the only feedback was the insertion line, which
+    // appears after the pointer has already found a target. Now a droppable
+    // drag anywhere on the page outlines every zone, and the one under the
+    // pointer is filled in.
+    await installGraphApi(page);
+    await openGraph(page);
+    await expandSubGraph(page, "Scene A");
+    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
+
+    const zones = page.locator("[data-native-drop]");
+    await expect.poll(() => zones.count()).toBeGreaterThan(1);
+    const armed = page.locator("[data-native-drop-armed]");
+    const hovered = page.locator("[data-native-drop-hovered]");
+    await expect(armed).toHaveCount(0);
+
+    // A drag that is over the PAGE but not over any zone: every zone arms,
+    // none is hovered. The header is a safe "not a drop zone" target.
+    const dragOverPage = () =>
+      page.evaluate(() => {
+        const transfer = new DataTransfer();
+        transfer.setData("application/x-gstudio-type", "collection");
+        document.body.dispatchEvent(
+          new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: transfer }),
+        );
+      });
+    await dragOverPage();
+    const zoneCount = await zones.count();
+    await expect(armed).toHaveCount(zoneCount);
+    await expect(hovered).toHaveCount(0);
+
+    // Layout must not move as the affordance comes and goes — the ring and
+    // tint are drawn outside the box, so the cards keep their coordinates.
+    const box = (await page.locator(`[data-native-drop="${PROJECT_ID}"]`).boundingBox())!;
+
+    // Now over one zone specifically: it alone reads hovered.
+    await page.locator(`[data-native-drop="${PROJECT_ID}"]`).evaluate((zone, point) => {
+      const transfer = new DataTransfer();
+      transfer.setData("application/x-gstudio-type", "collection");
+      zone.dispatchEvent(
+        new DragEvent("dragover", {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: transfer,
+          clientX: point.x,
+          clientY: point.y,
+        }),
+      );
+    }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    await expect(hovered).toHaveCount(1);
+    await expect(armed).toHaveCount(zoneCount);
+    const armedBox = (await page.locator(`[data-native-drop="${PROJECT_ID}"]`).boundingBox())!;
+    expect(armedBox.x).toBeCloseTo(box.x, 0);
+    expect(armedBox.y).toBeCloseTo(box.y, 0);
+    expect(armedBox.width).toBeCloseTo(box.width, 0);
+
+    // The drag ending anywhere disarms everything — no residue.
+    await page.evaluate(() => window.dispatchEvent(new DragEvent("dragend")));
+    await expect(armed).toHaveCount(0);
+    await expect(hovered).toHaveCount(0);
   });
 
   test("a 2xx upload with no usable url adds nothing and says so", async ({ page }) => {
@@ -3872,8 +4030,8 @@ test.describe("graph view E2E", () => {
   }) => {
     await installGraphApi(page);
     await openGraph(page);
-    // Ruler is strip-only and off by default; turn it on.
-    await page.getByRole("button", { name: /show time ruler/i }).click();
+    // Ruler lives in flat mode and is off by default; turn both on.
+    await enableRuler(page);
     await expect(page.locator("[data-graph-ruler]")).toHaveCount(1);
 
     // Expand a sub-collection — its strip must get its OWN ruler (R6 #1), so a
@@ -3897,7 +4055,7 @@ test.describe("graph view E2E", () => {
       ...Array.from({ length: 299 }, (_, i) => mediaClip(`long-${i}`, "image", i + 1, 4)),
     ];
     await openGraph(page);
-    await page.getByRole("button", { name: /show time ruler/i }).click();
+    await enableRuler(page);
     const ruler = page.locator("[data-graph-ruler]");
     await expect(ruler).toHaveCount(1);
 
@@ -3958,12 +4116,13 @@ test.describe("graph view E2E", () => {
     await page.getByRole("button", { name: /show time ruler/i }).click();
     await expect(page.locator("[data-graph-ruler]")).toHaveCount(1);
 
-    // Leaving flat mode restores the nested reading.
+    // Leaving flat mode restores the nested reading — and takes the ruler
+    // with it, since the ruler is scoped to the flat run.
     await page.getByRole("button", { name: "Show collections" }).click();
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
-    await expect(page.locator("[data-graph-ruler]")).toHaveCount(1);
+    await expect(page.locator("[data-graph-ruler]")).toHaveCount(0);
   });
 
   test("flat mode keeps expanded child playheads synchronized with preview", async ({
