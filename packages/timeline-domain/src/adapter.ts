@@ -54,6 +54,10 @@ export type DocumentsById = Readonly<Record<string, TimelineDocument>>;
 /** App-level clip detail the graph deliberately doesn't model. */
 export type ClipDetail = Readonly<{
   alt: string;
+  /** The user's own name for this clip, when they gave it one. Absent means
+   *  unnamed — which is what the card reads to decide whether to show a name
+   *  at all, so "" and undefined are not interchangeable here. */
+  title?: string;
   aspect: number;
   trackIndex: number;
   poster?: string;
@@ -116,7 +120,7 @@ function mediaSpec(clip: Exclude<TimelineClip, CollectionTimelineClip>): GraphNo
       kind: "media",
       mediaKind: "video",
       id: clip.id,
-      name: clip.alt,
+      name: clip.title ?? clip.alt,
       src: clip.src,
       posterSrcs: clip.poster === undefined ? undefined : [clip.poster],
       fullDurationSeconds: clip.sourceDuration,
@@ -128,7 +132,7 @@ function mediaSpec(clip: Exclude<TimelineClip, CollectionTimelineClip>): GraphNo
   return {
     kind: "media",
     id: clip.id,
-    name: clip.alt,
+    name: clip.title ?? clip.alt,
     src: clip.src,
     durationSeconds: clip.duration,
     ...(clip.disabled ? { disabled: true } : {}),
@@ -138,6 +142,7 @@ function mediaSpec(clip: Exclude<TimelineClip, CollectionTimelineClip>): GraphNo
 function mediaDetail(clip: Exclude<TimelineClip, CollectionTimelineClip>): ClipDetail {
   return {
     alt: clip.alt,
+    ...(clip.title === undefined ? {} : { title: clip.title }),
     aspect: clip.aspect,
     trackIndex: clip.trackIndex,
     ...(clip.poster === undefined ? {} : { poster: clip.poster }),
@@ -530,7 +535,12 @@ export function graphChildrenToClips(
         // A demoted duplicate (see clipSpecs) writes back its STORED id.
         id: detail?.sourceClipId ?? (node.id as string),
         index,
+        // `alt` stays the DERIVED description: a rename writes `title` (see
+        // the persistence bridge), so accessibility text survives naming.
+        // The `?? node.name` fallback is for nodes minted in-session, which
+        // have no detail entry yet.
         alt: detail?.alt ?? node.name,
+        ...(detail?.title === undefined ? {} : { title: detail.title }),
         aspect: detail?.aspect ?? 16 / 9,
         trackIndex: detail?.trackIndex ?? 0,
         startTime,

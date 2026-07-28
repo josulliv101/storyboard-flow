@@ -139,6 +139,22 @@ export type GraphDocumentsGateway = Readonly<{
   isConflicted: (timelineId: string) => boolean;
   /** Cache-change notifications (documents landing, clips written). */
   subscribe: (listener: () => void) => () => void;
+  /**
+   * Where the write path currently stands, for a save indicator. The app
+   * autosaves on a debounce, so without this the user has no way to know
+   * whether an edit is committed — and undo history does not survive a
+   * reload, which makes "did that save?" a question with consequences.
+   *
+   * `pending` counts documents waiting out the debounce window, `inFlight`
+   * those in the batch being sent. Both zero with a `lastSavedAt` means
+   * everything is on the server.
+   */
+  saveState: () => Readonly<{
+    pending: number;
+    inFlight: number;
+    lastSavedAt: number | null;
+    error: string | null;
+  }>;
   /** Outstanding load/save failures, for a status banner. Null when every
    *  document is healthy; multiple failures are all listed. */
   lastError: () => string | null;
@@ -233,6 +249,32 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
   // `boundUid` is still null — dropping them there left every child doc
   // un-warmed. Held here and replayed on bind (foreign uids discarded then).
   let pendingPrimes: { document: TimelineDocument; revision: number; forUid: string }[] = [];
+
+  // When the last batch settled OK — the "Saved" half of the indicator.
+  let lastSavedAt: number | null = null;
+  // CACHED, and re-allocated only when a field actually changes.
+  // `useSyncExternalStore` compares snapshots by identity: a getter that
+  // builds a fresh object per call re-renders forever and React tears the
+  // tree down. (It did — the board stopped rendering entirely.)
+  let saveStateSnapshot: {
+    pending: number;
+    inFlight: number;
+    lastSavedAt: number | null;
+    error: string | null;
+  } = { pending: 0, inFlight: 0, lastSavedAt: null, error: null };
+  const readSaveState = () => {
+    const pending = dirtyIds.size;
+    const inFlight = saveInFlightIds.length;
+    if (
+      saveStateSnapshot.pending !== pending ||
+      saveStateSnapshot.inFlight !== inFlight ||
+      saveStateSnapshot.lastSavedAt !== lastSavedAt ||
+      saveStateSnapshot.error !== errorBanner
+    ) {
+      saveStateSnapshot = { pending, inFlight, lastSavedAt, error: errorBanner };
+    }
+    return saveStateSnapshot;
+  };
 
   const notify = () => {
     for (const listener of listeners) listener();
@@ -479,6 +521,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
       saveInFlightKeepalive = false;
       saveInFlightIds = [];
       abandonSaveInFlight = null;
+      notify();
       // Trailing batch: edits that landed mid-flight go out now, from the
       // latest cache.
       if (saveQueued) {
@@ -508,6 +551,9 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
 
     saveInFlightIds = batchIds;
     saveInFlightKeepalive = wantsKeepalive && !overKeepaliveBudget;
+    // The dirty set just moved into a flight: same total work, different
+    // state, and the indicator distinguishes them.
+    notify();
     saveInFlight = fetch("/api/timelines/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -525,6 +571,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
               results?: { id: string; revision: number }[];
             };
             if (gen !== generation) return;
+            lastSavedAt = Date.now();
             for (const write of writes) setError(write.document.id, null);
             for (const entry of result.results ?? []) {
               if (typeof entry.revision === "number") revisions.set(entry.id, entry.revision);
@@ -730,6 +777,7 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     hasPendingWrite: (timelineId) =>
       dirtyIds.has(timelineId) || saveInFlightIds.includes(timelineId),
     isConflicted: (timelineId) => conflictedIds.has(timelineId),
+    saveState: readSaveState,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {

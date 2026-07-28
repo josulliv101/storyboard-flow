@@ -453,6 +453,10 @@ const GraphClipContent = memo(function GraphClipContent({
   const inheritedDisabled = useDisabledByAncestor(id);
   const provenance = useCardProvenance(id);
   const frameLoading = useContext(VideoFrameLoadingContext);
+  // The AUTHORED name, read straight from the side table rather than from
+  // `node.name`: the node's name falls back to the derived alt, so it can't
+  // tell "named by someone" from "named by the file system".
+  const detail = useClipDetail(id as string);
 
   // MEDIA pixels only. Collections don't render through this seam anymore:
   // their card carries interactive controls (folder drill-in, inline rename),
@@ -554,6 +558,22 @@ const GraphClipContent = memo(function GraphClipContent({
       >
         {isVideo ? "VIDEO" : "IMAGE"}
       </span>
+      {/* The clip's NAME, shown only when someone gave it one (PL11-004).
+          Every clip has an `alt` — a filename, usually — so a card that
+          rendered "the name" would render something on all of them, and a
+          library of two thousand machine-named clips reads as a rename
+          backlog. `detail.title` is absent until authored, so an unnamed card
+          simply has no label rather than an empty-looking slot.
+          Decorative for AT: the card's own aria-label already names it. */}
+      {detail?.title && !muted && (
+        <span
+          aria-hidden="true"
+          data-clip-title
+          className="pointer-events-none absolute inset-x-2 top-2 z-10 truncate rounded bg-black/75 px-1.5 py-0.5 text-[11px] leading-tight font-semibold text-zinc-100"
+        >
+          {detail.title}
+        </span>
+      )}
       {muted && (
         <DisabledChip inherited={node.disabled !== true} />
       )}

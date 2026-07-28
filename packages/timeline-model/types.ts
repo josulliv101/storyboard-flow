@@ -13,7 +13,27 @@ export type CollectionEndpoint = "first" | "last";
 export type TimelineItemBase = {
   id: string;
   index: number;
+  /**
+   * What this clip IS, for assistive tech and image fallbacks — derived from
+   * the source when a clip is created, never authored. Distinct from `title`
+   * on purpose: renaming a clip must not rewrite its accessibility text.
+   */
   alt: string;
+  /**
+   * A NAME the user chose, absent until they choose one.
+   *
+   * Absence is the point. Every clip has an `alt` (a filename, usually), so a
+   * card that displayed "the name" would display something for all of them —
+   * and a library of two thousand machine-named clips reads as a rename
+   * backlog rather than a set of finished items. Only authored titles are
+   * shown, so a named clip looks deliberate and an unnamed one looks neutral.
+   *
+   * The job it does: similar-looking clips (ten close-ups of one actor, cut
+   * from ten different takes) are indistinguishable by thumbnail and carry no
+   * mechanical discriminator at all. A title is the only thing that can say
+   * which moment this is.
+   */
+  title?: string;
   aspect: number;
   trackIndex: number;
 

@@ -49,6 +49,7 @@ import {
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
 import { ItemDetailsProvider } from "./graph-item-details-context";
+import { GraphSaveStatus } from "./graph-save-status";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
@@ -446,10 +447,16 @@ export function GraphBoard({
                 drag readout that overlays this row, and fade back on drop. The
                 breadcrumb stays — it IS the drop target. */}
             <DragChromeFade className="flex items-center">
-              <FocusedAggregate
-                focusedId={focusedId}
-                pixelsPerSecond={deferredPixelsPerSecond}
-              />
+              {/* One centre slot, two possible occupants. The save state takes
+                  it while it has something to say and hands it back after —
+                  the clip/duration total is a fact you can re-read at any
+                  time, "not saved yet" is not. */}
+              <GraphSaveStatus>
+                <FocusedAggregate
+                  focusedId={focusedId}
+                  pixelsPerSecond={deferredPixelsPerSecond}
+                />
+              </GraphSaveStatus>
             </DragChromeFade>
             {/* flex-wrap + wrap-capable controls so a narrow viewport folds the
                 toolbar onto a second line instead of pushing controls
