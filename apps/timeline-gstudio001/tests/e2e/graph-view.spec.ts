@@ -3899,7 +3899,13 @@ test.describe("graph view E2E", () => {
     expect(neighbourDuring.x).toBeCloseTo(neighbourBefore.x, 0);
     expect(neighbourDuring.width).toBeCloseTo(neighbourBefore.width, 0);
 
+    // PL10-002: a flick still plays the whole animation. The pointer is gone
+    // and the call-out is still on the card — without the hold it would be
+    // torn off mid-keyframe, one or two frames in.
     await page.mouse.move(0, 0);
+    expect(await calledOut.count()).toBe(1);
+
+    // ...and then it ends on its own.
     await expect(calledOut).toHaveCount(0);
     // And the card comes back to exactly the box it started in.
     const cardAfter = (await card.boundingBox())!;
@@ -3918,6 +3924,53 @@ test.describe("graph view E2E", () => {
     await page.getByRole("button", { name: "Hide children timelines" }).click();
     await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
     await expect(calledOut).toHaveCount(0);
+  });
+
+  test("the call-out's scale never grows a scroll area", async ({ page }) => {
+    // PL10-003. A transform that spills past its box counts as SCROLLABLE
+    // overflow, so the call-out used to grow whichever scroller held the card
+    // and flash a scrollbar for the length of the animation. The card's
+    // wrapper is `overflow: clip` (with a margin wide enough for the growth
+    // and for the drop bars) so nothing above it ever hears about the scale.
+    await installGraphApi(page);
+    await openGraph(page);
+    const rowFolder = page
+      .locator('section[aria-label="Sub-timeline: Scene A"]')
+      .getByRole("button", { name: "Expand" })
+      .first();
+
+    await rowFolder.hover();
+    await expect(page.locator(".is-called-out-card")).toHaveCount(1);
+
+    // Measure every ancestor at rest and at the animation's peak. Pausing the
+    // animation is what makes this deterministic — sampling a 320ms one-shot
+    // from the test side would race it.
+    const changed = await page.evaluate(() => {
+      const card = document.querySelector(".is-called-out-card");
+      if (!card) return ["no call-out"];
+      const animation = card.getAnimations()[0];
+      if (!animation) return ["no animation"];
+      const chain: Element[] = [];
+      // Start ABOVE the clip box itself: a clip container still reports its
+      // own scrollWidth, it just stops handing it upward, and that upward
+      // propagation is the whole bug.
+      for (let n = card.closest("[data-node-wrapper]")?.parentElement; n; n = n.parentElement) {
+        chain.push(n);
+      }
+      const snap = () => chain.map((n) => `${n.scrollWidth}x${n.scrollHeight}`);
+      animation.pause();
+      animation.currentTime = 0;
+      const rest = snap();
+      animation.currentTime = 128; // the 1.06 peak
+      const peak = snap();
+      animation.play();
+      return peak.flatMap((size, i) =>
+        size === rest[i]
+          ? []
+          : [`${chain[i].tagName}.${chain[i].className}: ${rest[i]} -> ${size}`],
+      );
+    });
+    expect(changed).toEqual([]);
   });
 
   test("clicking away anywhere that is not a control clears the selection", async ({

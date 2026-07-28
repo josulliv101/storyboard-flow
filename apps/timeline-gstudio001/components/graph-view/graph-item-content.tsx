@@ -968,7 +968,21 @@ const GraphCollectionItem = memo(function GraphCollectionItem({
     <CollectionItem.Root
       id={id}
       rovingTabIndex={rovingTabIndex}
-      className={["h-full w-full", className ?? ""].join(" ")}
+      className={[
+        "h-full w-full",
+        // PL10-003: the call-out's scale pushes the card ~7px past this
+        // wrapper, and a transform that spills counts as SCROLLABLE overflow —
+        // so calling out the last card in a strip or a grid row grew the
+        // scroller and flashed a scrollbar for the length of the animation.
+        //
+        // `clip` (not `hidden`) makes this box swallow that overflow without
+        // becoming a scroll container itself, and the clip margin is what keeps
+        // it from being a cure worse than the disease: the card's own growth
+        // (~7px) stays visible, and so do the drop-indicator bars, which sit
+        // half a gap OUTSIDE the card by design.
+        "overflow-clip [overflow-clip-margin:12px]",
+        className ?? "",
+      ].join(" ")}
     >
       <GraphCollectionItemParts dragActivation={dragActivation} />
     </CollectionItem.Root>

@@ -1,6 +1,14 @@
 "use client";
 
-import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
 /**
  * With child timelines shown, a collection appears TWICE: as a card in the
@@ -102,15 +110,57 @@ export function useCollectionHoverSource(collectionId: string): Readonly<{
 }
 
 /**
+ * How long the card's call-out animation runs. MUST stay in sync with
+ * `collection-paired-callout` in globals.css — this is the hold below, and a
+ * hold shorter than the keyframes would cut them off again.
+ */
+export const COLLECTION_CALLOUT_MS = 320;
+
+/**
  * The TARGET end, for a collection card: whether its row is being hovered
  * right now. Drives a one-shot call-out on the card (see
  * `graph-item-content`), so what matters is the transition into true.
+ *
+ * It HOLDS past the pointer leaving. The call-out is an animation, and the
+ * card only carries it for as long as this returns true — so a flick across a
+ * folder used to start the elastic scale and then kill it a frame or two in,
+ * leaving a card that twitched and stopped. Once triggered it now plays out,
+ * whether or not the pointer stayed.
+ *
+ * The hold is timed from the FIRST trigger, not extended by later ones: it
+ * tracks the animation that is already running, so re-entering the same folder
+ * mid-play lets that play finish rather than restarting it (a wiggle over one
+ * row shouldn't strobe). Re-entering after it ends drops the class and re-adds
+ * it, which is what restarts the animation.
  */
 export function useCollectionHoverTarget(collectionId: string): boolean {
   const channel = useContext(CollectionHoverContext);
-  return useSyncExternalStore(
+  const hovered = useSyncExternalStore(
     channel ? channel.subscribe : NO_SUBSCRIBE,
     () => (channel ? channel.get() === collectionId : false),
     () => false,
   );
+
+  const [holding, setHolding] = useState(false);
+  const [wasHovered, setWasHovered] = useState(hovered);
+
+  // Latch on the RISING edge, adjusted during render (the repo's
+  // cascading-render-safe pattern — a synchronous setState in an effect trips
+  // the lint). Edge-triggered, not level-triggered: latching on every render
+  // where `hovered` is true would re-arm the timer forever while the pointer
+  // rests on a folder.
+  if (hovered !== wasHovered) {
+    setWasHovered(hovered);
+    if (hovered) setHolding(true);
+  }
+
+  useEffect(() => {
+    if (!holding) return;
+    // Deliberately NOT keyed on `hovered`: the whole point is that the pointer
+    // leaving must not cancel this timer.
+    const timer = window.setTimeout(() => setHolding(false), COLLECTION_CALLOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [holding]);
+
+  return hovered || holding;
 }
