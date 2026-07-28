@@ -54,9 +54,21 @@ export function PersistenceBridge({
         // diverging again the moment someone undoes a rename.
         if (change.patch.type === "nodes-updated") {
           for (const update of change.patch.updates) {
-            if (update.after.kind !== "collection") continue;
             if (update.after.name === update.before.name) continue;
-            void graphDocumentsGateway.renameTimeline(update.nodeId as string, update.after.name);
+            if (update.after.kind === "collection") {
+              void graphDocumentsGateway.renameTimeline(update.nodeId as string, update.after.name);
+              continue;
+            }
+            // A MEDIA rename has to land in the side table, because that is
+            // what the write path reads: `graphChildrenToClips` emits
+            // `alt: detail?.alt ?? node.name`, and every clip loaded from a
+            // document has `detail.alt` set — so a rename that only touched
+            // the graph would look right, then be overwritten by the stored
+            // alt on the next write and revert on reload. Same patch shape on
+            // undo/redo, so the round-trip reverses for free.
+            const detail = detailsStore.get(update.nodeId as string);
+            if (!detail) continue;
+            detailsStore.merge({ [update.nodeId as string]: { ...detail, alt: update.after.name } });
           }
         }
 

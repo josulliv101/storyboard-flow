@@ -332,6 +332,46 @@ Both e2e-pinned, and the scoping proven to fail without its gate (with the
 selector relaxed to plain `canUndo`, the button was enabled over another
 node's edit).
 
+## PL10-010 — The clip's name is editable in the modal
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-trim-modal.tsx`, `graph-persistence.tsx`, `graph-view-events.ts`
+- Screenshot: Not captured
+
+The modal shows the clip's name, so it should be the place to fix it. Double-
+click (or F2) opens the same `InlineNameEditor` the collection card, the
+breadcrumb and the sub-timeline row use — one grammar everywhere: Enter
+commits, Escape cancels, blur commits.
+
+The half that isn't UI: a media node's name IS the stored `alt`. The adapter
+reads `name: clip.alt` and writes back `alt: detail?.alt ?? node.name`, and
+every clip loaded from a document has `detail.alt` set — so a `rename-node`
+that only touched the graph would look correct, be overwritten by the stored
+alt on the very next write, and revert on reload. The persistence bridge now
+mirrors its collection branch for media: a rename patch updates `detail.alt`
+in the side table, which is what the write path reads. Undo/redo produce the
+same patch shape, so the round-trip reverses for free.
+
+Note `alt` is doing double duty — display name AND image alt text. Renaming
+improves both, which is why they were left as one field; say if they should
+diverge.
+
+Acceptance criteria:
+
+- Double-click or F2 opens the editor; Enter commits, Escape cancels WITHOUT
+  closing the modal.
+- The new name reaches the stored document, not just the header.
+- Undo reverts the rename in both places.
+
+Escape needed care: the modal's key handler listens in CAPTURE, so it ran
+before the editor's own keydown and would have closed the whole modal instead
+of cancelling the edit. It now yields on `isEditableKeyboardTarget`.
+
+Proven fail-first: with the bridge branch removed, the header reads the new
+name while the stored clip still says `alpha` — exactly the silent revert the
+branch exists to prevent.
+
 ## PL10-003 — The call-out must not flash a scrollbar
 
 - Status: Complete

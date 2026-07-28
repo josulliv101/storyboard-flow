@@ -4130,6 +4130,50 @@ test.describe("graph view E2E", () => {
     await expect(redo).toBeDisabled();
   });
 
+  test("renaming a clip in the modal reaches the stored document", async ({ page }) => {
+    // PL10-010. A media node's name IS the clip's stored `alt` — the adapter
+    // reads `name: clip.alt` and writes `alt: detail?.alt ?? node.name`. Every
+    // loaded clip has `detail.alt` set, so renaming the GRAPH alone would look
+    // right and then be overwritten by the stored alt on the next write. The
+    // assertion that matters is therefore on the DOCUMENT, not the header.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await page.getByRole("button", { name: "Open the trim view" }).click();
+    await settleViewTransition(page);
+
+    const storedAlt = () =>
+      api.documents.get(PROJECT_ID)?.clips.find((clip) => clip.id === "alpha")?.alt;
+    expect(storedAlt()).toBe("alpha");
+
+    // Double-click the name, type, Enter.
+    await page.locator("[data-trim-modal] >> text=alpha").first().dblclick();
+    const editor = page.getByRole("textbox", { name: "Clip name" });
+    await expect(editor).toBeVisible();
+    await editor.fill("Belushi close-up");
+    await editor.press("Enter");
+
+    // The graph took it...
+    await expect(page.locator("[data-trim-modal]")).toContainText("Belushi close-up");
+    // ...and so did the write, once the gateway's debounce flushes.
+    await expect.poll(storedAlt, { timeout: 5000 }).toBe("Belushi close-up");
+
+    // Escape cancels an edit instead of closing the modal — the capture-phase
+    // key handler has to yield to the editor.
+    await page.locator("[data-trim-modal] >> text=Belushi close-up").first().dblclick();
+    const reopened = page.getByRole("textbox", { name: "Clip name" });
+    await reopened.fill("Discarded");
+    await reopened.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await expect(page.locator("[data-trim-modal]")).toContainText("Belushi close-up");
+    expect(storedAlt()).toBe("Belushi close-up");
+  });
+
   test("a trim drag floats the edge frame above the clip", async ({ page }) => {
     // PL10-005/007. The live frame is its own small surface: sized to the
     // breadcrumb row (a size reference, not a location — it follows the CLIP,

@@ -7,12 +7,14 @@ import { Redo2, Undo2, X } from "lucide-react";
 
 import {
   TrimOverviewStrip,
+  isEditableKeyboardTarget,
   useCollectionsSelector,
   useCollectionsStore,
   useLiveTrim,
   type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
 
+import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { useTrimPanel } from "./graph-trim-panel-context";
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
@@ -154,6 +156,7 @@ function useScopedHistory(nodeId: string) {
 function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: () => void }>) {
   const live = useLiveTrim(node.id);
   const history = useScopedHistory(node.id);
+  const rename = useInlineRename(node.id, node.name, "trim-modal");
   const trimIn = live ? live.trimInSeconds : node.trimInSeconds;
   const trimOut = live ? live.trimOutSeconds : node.trimOutSeconds;
   const showing = Math.max(0, node.fullDurationSeconds - trimIn - trimOut);
@@ -166,18 +169,29 @@ function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: 
     setStripWidth(element.getBoundingClientRect().width);
   }, []);
 
-  // Escape closes, and the scrim swallows every other key the board would
-  // otherwise act on — the point of a modal is that the rest is not live.
+  // Escape closes and F2 renames. Both listen in CAPTURE, which is what makes
+  // the editable guard load-bearing rather than defensive: a capture listener
+  // on the document runs BEFORE the rename input's own keydown, so without it
+  // Escape would close the whole modal instead of cancelling the edit — the
+  // input's stopPropagation never gets the chance to speak.
+  const beginRename = rename.begin;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableKeyboardTarget(event.target)) return;
       if (event.key === "Escape") {
         event.stopPropagation();
         onClose();
+        return;
+      }
+      if (event.key === "F2") {
+        event.preventDefault();
+        event.stopPropagation();
+        beginRename();
       }
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose]);
+  }, [onClose, beginRename]);
 
   return createPortal(
     <div
@@ -197,7 +211,29 @@ function ModalBody({ node, onClose }: Readonly<{ node: VideoMediaNode; onClose: 
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
-          <span className="truncate text-sm font-semibold text-zinc-100">{node.name}</span>
+          {/* The clip's name, editable here (PL10-010) — the same hook the
+              collection card, breadcrumb and sub-row rename through, so the
+              grammar is identical: double-click or F2 to open, Enter commits,
+              Escape cancels, blur commits. For MEDIA the name is the stored
+              `alt`, which the persistence bridge updates on this patch. */}
+          {rename.editing ? (
+            <InlineNameEditor
+              initialValue={node.name}
+              onInput={rename.setDraft}
+              onCommit={rename.commit}
+              onCancel={rename.cancel}
+              ariaLabel="Clip name"
+              className="min-w-0 flex-1 rounded-sm bg-zinc-900 px-1 py-0.5 text-sm font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
+            />
+          ) : (
+            <span
+              onDoubleClick={rename.begin}
+              title="Double-click or press F2 to rename"
+              className="min-w-0 flex-1 cursor-text truncate text-sm font-semibold text-zinc-100"
+            >
+              {node.name}
+            </span>
+          )}
           <div className="flex items-center gap-3">
             <span className="font-mono text-[11px] tabular-nums text-zinc-400">
               {showing.toFixed(2)}s of {node.fullDurationSeconds.toFixed(2)}s
