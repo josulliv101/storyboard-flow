@@ -851,6 +851,13 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         </span>
         <span
           data-collection-metadata
+          // Whether this card's numbers come from LIVE children or from the
+          // stored summary. The two look identical now that the placeholder's
+          // "Open to load" text is gone (PL6-001 made the empty preview
+          // icon-only), and hydration decides whether a drop into this
+          // collection is legal at all — so the state needs to stay
+          // observable to the drop-policy e2e that asserts on it.
+          data-collection-hydrated={hydrated ? "true" : "false"}
           className={[
             "mt-1.5 flex items-center justify-between gap-1.5 pl-1 pb-0.5",
             muted ? "pr-[4.75rem]" : "pr-1",

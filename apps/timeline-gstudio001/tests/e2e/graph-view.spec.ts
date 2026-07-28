@@ -384,6 +384,16 @@ async function openGraph(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Show children timelines" }).click();
 }
 
+/** A collection card's metadata row in the project strip, which carries
+ *  `data-collection-hydrated` — whether its numbers come from live children
+ *  or from the stored summary. Hydration decides whether a drop into the
+ *  collection is legal, and nothing else on the card shows it. */
+function placeholderCard(page: Page, collectionId: string) {
+  return strip(page, PROJECT_ID)
+    .locator(`[data-node-id="${collectionId}"]`)
+    .locator("[data-collection-metadata]");
+}
+
 /** The ruler toggle only mounts in FLAT mode (a ruler is one continuous time
  *  axis, which only the flat run is), so every ruler test enters flat first. */
 async function enableRuler(page: Page): Promise<void> {
@@ -1850,8 +1860,13 @@ test.describe("graph view E2E", () => {
     const projectStrip = strip(page, PROJECT_ID);
 
     // The child document never loads: the collection stays a placeholder.
-    await expect(projectStrip.locator(`[data-node-id="${CHILD_ID}"]`)).toContainText(
-      "Open to load",
+    // (Read off `data-collection-hydrated`. This used to assert the card's
+    // "Open to load" text, which PL6-001 deleted when it made the empty
+    // collection preview icon-only — a placeholder and a loaded collection
+    // now look the same, so the attribute is the signal.)
+    await expect(placeholderCard(page, CHILD_ID)).toHaveAttribute(
+      "data-collection-hydrated",
+      "false",
     );
 
     // Nest alpha into the placeholder (drop dead-center): the commandPolicy
@@ -1908,8 +1923,9 @@ test.describe("graph view E2E", () => {
     // The premise: the child is STILL an un-hydrated placeholder here, after
     // the drag/undo above. Without this the drop below would be legal and the
     // test would pass while exercising nothing.
-    await expect(projectStrip.locator(`[data-node-id="${CHILD_ID}"]`)).toContainText(
-      "Open to load",
+    await expect(placeholderCard(page, CHILD_ID)).toHaveAttribute(
+      "data-collection-hydrated",
+      "false",
     );
 
     // Now attempt a drop the policy refuses. Must be alpha (index 0, the
@@ -4217,14 +4233,20 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 
-  // RETRIED, deliberately. This is a real-mouse drag, and dnd-kit recomputes
+  // RETRIED, deliberately. These are real-mouse drags, and dnd-kit recomputes
   // `over` on a measure cadence — releasing before it catches up is the
   // documented CI-only flake class (see the package CLAUDE.md), which the
-  // suite already carries two of. It passes 4/4 in isolation and fails
-  // roughly one run in three under full parallel load, with flat mode
-  // correctly on in the captured snapshot: the state is right, the drag is
-  // starved. Retries buy the coverage without making the suite red; the RULE
-  // itself is pinned deterministically by resolveFlatDropTarget's unit tests.
+  // suite already carries two of. Retries buy the coverage without making the
+  // suite red; the RULE itself is pinned deterministically by
+  // resolveFlatDropTarget's unit tests.
+  //
+  // HISTORY, so the flake note is not read as covering everything: these were
+  // failing DETERMINISTICALLY, not flaking, because the flat translator ran on
+  // every drop command — including the card-relative ones that were already
+  // correct — and re-read a parent-relative index as a flat-run boundary. The
+  // two tests below are the two halves that must stay apart: a drop resolved
+  // against a CARD passes through, a drop resolved against the STRIP is
+  // translated.
   test.describe(() => {
     test.describe.configure({ retries: 2 });
     test("in flat mode a palette drop joins the LEFT neighbour's collection", async ({
@@ -4271,6 +4293,55 @@ test.describe("graph view E2E", () => {
       // would have inserted here, at a flat index inside the wrong parent.
       const projectIds = api.patchesFor(PROJECT_ID).at(-1)?.clipIds;
       if (projectIds) expect(projectIds).toHaveLength(4);
+    });
+
+    test("in flat mode a drop in the GAP is still translated off the flat run", async ({
+      page,
+    }) => {
+      // The other half of the card-vs-strip split. With the pointer over no
+      // card, the flat STRIP wins the collision and publishes a boundary into
+      // the flat run — which does need translating. Guarding the translator
+      // too broadly (skipping it altogether) lands this in the project at a
+      // flat index instead of in Scene A.
+      const api = await installGraphApi(page);
+      await openGraph(page);
+      await page.getByRole("button", { name: "Show all items in order" }).click();
+      await expect
+        .poll(() => stripOrder(page, PROJECT_ID), { timeout: 15000 })
+        .toEqual(["alpha", "bravo", "c1", "c2", "charlie"]);
+      await expect(
+        page.getByRole("button", { name: "Show collections" }),
+      ).toHaveAttribute("aria-busy", "false");
+
+      await assetsButton(page).click();
+      const drawer = page.getByRole("dialog", { name: "Asset palette" });
+      await expect(drawer).toBeVisible();
+
+      // The gutter between c1 and c2 — boundary 3 of the flat run. Translated,
+      // its left neighbour is c1, so the clip joins Scene A after c1.
+      const c1Box = (await strip(page, PROJECT_ID).locator('[data-node-id="c1"]').boundingBox())!;
+      const c2Box = (await strip(page, PROJECT_ID).locator('[data-node-id="c2"]').boundingBox())!;
+      const gapX = (c1Box.x + c1Box.width + c2Box.x) / 2;
+      expect(gapX).toBeGreaterThan(c1Box.x + c1Box.width);
+      expect(gapX).toBeLessThan(c2Box.x);
+
+      const source = drawer.locator('[data-palette-item="asset-img-1"]');
+      const sourceBox = (await source.boundingBox())!;
+      await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+      await page.mouse.down();
+      await page.waitForTimeout(400); // past the hold delay
+      await page.mouse.move(gapX, c1Box.y + c1Box.height / 2, { steps: 12 });
+      await page.waitForTimeout(150); // dwell: let collision/intent settle
+      await page.mouse.up();
+      await page.waitForTimeout(80); // dnd-kit's post-drop click suppressor
+
+      // Scene A gained it, between c1 and c2.
+      await expect
+        .poll(() => api.patchesFor(CHILD_ID).at(-1)?.clipIds, { timeout: 8000 })
+        .toHaveLength(3);
+      const childIds = api.patchesFor(CHILD_ID).at(-1)!.clipIds!;
+      expect(childIds[0]).toBe("c1");
+      expect(childIds[2]).toBe("c2");
     });
   });
 
