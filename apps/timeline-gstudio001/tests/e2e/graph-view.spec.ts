@@ -995,6 +995,9 @@ test.describe("graph view E2E", () => {
     ).toBe("0px");
     const dividerLine = divider.locator("[data-divider-line]");
     await expect(dividerLine).toHaveCount(1);
+    expect(
+      await dividerLine.evaluate((element) => getComputedStyle(element).backgroundImage),
+    ).toContain("linear-gradient");
     const dividerLineColor = () =>
       dividerLine.evaluate((el) => getComputedStyle(el).backgroundColor);
     const restLineColor = await dividerLineColor();
