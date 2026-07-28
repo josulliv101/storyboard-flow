@@ -3714,6 +3714,98 @@ test.describe("graph view E2E", () => {
     expect(samples[samples.length - 1]).toBeGreaterThan(card.x + card.width * 0.6);
   });
 
+  test("the GRID playhead also stays under the pointer over an empty collection", async ({
+    page,
+  }) => {
+    // PL9-005's other half: `buildGridPlayheadMap.posAt` collapses a
+    // zero-duration CELL exactly as the strip map collapses a zero-width span.
+    const api = await installGraphApi(page);
+    const EMPTY_ID = "timeline-e2e-empty-grid";
+    api.documents.get(PROJECT_ID)!.clips.push(
+      collectionClip("clip-empty-grid", EMPTY_ID, 9, "Nothing Here", 0),
+    );
+    api.documents.set(EMPTY_ID, { id: EMPTY_ID, title: "Nothing Here", clips: [] });
+    await page.goto(GRAPH_URL);
+    await expect(page.locator(`[data-virtual-grid="${PROJECT_ID}"]`)).toBeVisible();
+    await previewToggle(page).click();
+
+    const emptyCell = page
+      .locator(`[data-virtual-grid="${PROJECT_ID}"] [data-node-id="${EMPTY_ID}"]`);
+    await expect(emptyCell).toBeVisible();
+    const cell = (await emptyCell.boundingBox())!;
+    // The rail for the row the empty cell is in.
+    const rails = page.locator("[data-graph-seek-rail]");
+    const railCount = await rails.count();
+    let rail = rails.first();
+    for (let i = 0; i < railCount; i++) {
+      const box = (await rails.nth(i).boundingBox())!;
+      if (box.y < cell.y && box.y > cell.y - 60) rail = rails.nth(i);
+    }
+    const railBox = (await rail.boundingBox())!;
+    // The grid's marker is its own element — the strip's [data-graph-playhead]
+    // does not exist here.
+    const line = page.locator("[data-graph-grid-playhead]").first();
+    const y = railBox.y + railBox.height / 2;
+
+    await page.mouse.move(cell.x + 2, y);
+    await page.mouse.down();
+    const samples: number[] = [];
+    for (const fraction of [0.3, 0.6, 0.9]) {
+      await page.mouse.move(cell.x + cell.width * fraction, y, { steps: 4 });
+      samples.push((await line.boundingBox())!.x);
+    }
+    await page.mouse.up();
+
+    for (let i = 1; i < samples.length; i++) {
+      expect(samples[i]).toBeGreaterThan(samples[i - 1]);
+    }
+    expect(samples[samples.length - 1]).toBeGreaterThan(cell.x + cell.width * 0.5);
+  });
+
+  test("every surface ends with an add-timeline slot that appends there", async ({ page }) => {
+    // PL9-001. The sidebar tool lands next to the SELECTION; this appends to
+    // the surface it sits in, which is what "one more, at the end" means.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+    await expandSubGraph(page, "Scene A");
+    await expect.poll(() => stripOrder(page, CHILD_ID), { timeout: 15000 }).toEqual(["c1", "c2"]);
+
+    // One per surface: the focused strip and the expanded child's strip.
+    await expect(page.locator("[data-add-collection-slot]")).toHaveCount(2);
+
+    // It is NOT an item — the surfaces still report only their real cards.
+    expect(await stripOrder(page, PROJECT_ID)).toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+
+    // Selecting a card elsewhere must not steer where it lands.
+    await strip(page, PROJECT_ID).locator('[data-node-id="alpha"]').click();
+    await expect(strip(page, PROJECT_ID).locator('[data-node-id="alpha"]')).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+
+    // Append into the CHILD's strip: it lands last there, and the project is
+    // untouched.
+    await page
+      .locator(`[data-add-collection-slot="${CHILD_ID}"]`)
+      .click();
+    await expect
+      .poll(() => stripOrder(page, CHILD_ID), { timeout: 10000 })
+      .toEqual(["c1", "c2", expect.stringMatching(/^timeline-/)]);
+    expect(await stripOrder(page, PROJECT_ID)).toEqual([
+      "alpha",
+      "bravo",
+      CHILD_ID,
+      "charlie",
+    ]);
+
+    // It persists like any other insert, and undo takes it back.
+    await expect
+      .poll(() => api.patchesFor(CHILD_ID).at(-1)?.clipIds?.length, { timeout: 10000 })
+      .toBe(3);
+    await undoButton(page).click();
+    await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+  });
+
   test("a scrub drag shows the timestamp at the playhead, and only then", async ({ page }) => {
     // PL9-003. The transport's clock is up in the preview chrome; mid-drag the
     // number has to be where the pointer is.

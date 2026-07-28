@@ -93,6 +93,13 @@ export type VirtualGridProps = Readonly<{
    *  markers. aria-hidden and pointer-events: none — scroll and the drop
    *  spacer height apply for free, and gestures pass through to the cards. */
   overlay?: ReactNode;
+  /**
+   * Rendered in the cell AFTER the last card — the seam for an "add one here"
+   * affordance. NOT AN ITEM: `childIds.length` still drives every index,
+   * boundary, and roving calculation, so the slot cannot shift a drop or take
+   * a tab stop; it only lengthens the row spacer when it starts a new row.
+   */
+  trailingSlot?: ReactNode;
   className?: string;
 }>;
 
@@ -115,6 +122,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       itemShell,
       itemDragActivation = "body",
       overlay,
+      trailingSlot,
       className,
     },
     ref
@@ -176,7 +184,11 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         ? Math.max(1, (measuredWidth - (cols - 1) * gap) / cols)
         : cellWidth;
 
-    const rowCount = Math.ceil(childIds.length / cols);
+    // The trailing slot occupies the cell position AFTER the last card, so
+    // it can start a new row. Counted for the SPACER's height only — every
+    // index, boundary and roving calculation still reads `childIds.length`,
+    // so the slot cannot shift a drop or take a tab stop.
+    const rowCount = Math.ceil((childIds.length + (trailingSlot ? 1 : 0)) / cols);
     const rowSize = cellHeight + gap;
 
     const virtualizer = useVirtualizer({
@@ -400,6 +412,19 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                 transform: `translateY(${row.start}px)`,
               }}
             >
+              {trailingSlot &&
+                Math.floor(childIds.length / cols) === row.index && (
+                  <div
+                    data-virtual-trailing-slot
+                    style={{
+                      order: childIds.length % cols,
+                      width: fillCellWidth,
+                      height: cellHeight,
+                    }}
+                  >
+                    {trailingSlot}
+                  </div>
+                )}
               {childIds
                 .slice(row.index * cols, Math.min(childIds.length, (row.index + 1) * cols))
                 .map((id, colInRow) => {

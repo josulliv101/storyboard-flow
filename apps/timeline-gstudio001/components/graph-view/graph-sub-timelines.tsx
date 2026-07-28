@@ -15,6 +15,7 @@ import {
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
+import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { useCollectionHoverSource } from "./graph-collection-hover";
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
 import {
@@ -313,6 +314,7 @@ function SubTimelineNode({
                   cellHeight={dims.gridHeight}
                   gap={GRID_GAP}
                   height={GRID_UNCAPPED_HEIGHT}
+                  trailingSlot={<AddCollectionSlot collectionId={id} />}
                   overlay={
                     showPlayhead ? (
                       <GraphGridPlayhead
@@ -347,6 +349,7 @@ function SubTimelineNode({
                 overscan={GRAPH_STRIP_OVERSCAN_ITEMS}
                 itemWidth={collectionCardWidth(pixelsPerSecond, dims.strip)}
                 itemHeight={dims.strip}
+                trailingSlot={<AddCollectionSlot collectionId={id} />}
                 itemDragActivation="hold"
                 overlay={
                   showPlayhead || rulerOn ? (
