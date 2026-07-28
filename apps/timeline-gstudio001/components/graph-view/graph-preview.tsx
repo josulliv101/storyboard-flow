@@ -71,10 +71,32 @@ import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
 import { useGraphDetailsStore } from "./graph-details-context";
 import { GRID_GAP, TIMELINE_PPS } from "./graph-view-config";
 
+/**
+ * Where a live scrub's POINTER is, in the dragged surface's own content
+ * coordinates — published alongside the time, and only while a drag is live.
+ *
+ * It exists because time alone cannot answer "where is the pointer". A
+ * collection with no items occupies width on screen but contributes NO time,
+ * so the whole of that card maps to one instant: `timeAt` returns the same
+ * value across it, and `xAt` of that value can only come back to one edge.
+ * Driven by time, the playhead jumps to the far side while the pointer is
+ * still crossing — right for playback, where there is nothing to play, and
+ * wrong for a drag, where the user is steering a position on screen.
+ *
+ * Scoped by `surfaceId` so only the surface being dragged follows the
+ * pointer; every other playhead (sub-rows, the other layout) stays on the
+ * clock, which is what keeps them in agreement with each other.
+ */
+export type PreviewScrubPosition = Readonly<{ surfaceId: string; x: number }>;
+
 export type PreviewTimeChannel = Readonly<{
   get: () => number;
   set: (time: number) => void;
   subscribe: (listener: () => void) => () => void;
+  /** The live scrub's pointer position, or null when nothing is being
+   *  dragged. Changing it notifies the same listeners `set` does. */
+  getScrub: () => PreviewScrubPosition | null;
+  setScrub: (scrub: PreviewScrubPosition | null) => void;
   /** Play state, held here (above the preview pane's mount) so it survives the
    *  pane toggling off/on and can be driven before the pane exists — that's how
    *  "play turns the preview on and it's already playing" works. */
@@ -86,12 +108,18 @@ export type PreviewTimeChannel = Readonly<{
 export function createPreviewTimeChannel(): PreviewTimeChannel {
   let time = 0;
   let playing = false;
+  let scrub: PreviewScrubPosition | null = null;
   const listeners = new Set<() => void>();
   const playListeners = new Set<() => void>();
   return {
     get: () => time,
     set: (next) => {
       time = next;
+      for (const listener of listeners) listener();
+    },
+    getScrub: () => scrub,
+    setScrub: (next) => {
+      scrub = next;
       for (const listener of listeners) listener();
     },
     subscribe: (listener) => {
@@ -301,17 +329,22 @@ export function GraphPlayhead({
       );
       return true;
     };
-    // Position-only style write, for the current clock time.
+    // Position-only style write, for the current clock time — or, while this
+    // surface is being scrubbed, for the POINTER (see PreviewScrubPosition:
+    // an empty collection is width with no time, so time alone cannot say
+    // where the pointer is inside it).
     const paint = () => {
       const line = lineRef.current;
       if (!line || !map) return;
+      const scrub = channel.getScrub();
+      const scrubX = scrub && scrub.surfaceId === focusedId ? scrub.x : null;
       const time = channel.get();
       // 40ms of slack so the marker doesn't blink off at the exact seam
       // between two adjacent collections.
       const inside =
         !activeWindow || (time >= activeWindow.start - 0.04 && time <= activeWindow.end + 0.04);
       line.style.display = inside ? "" : "none";
-      if (inside) line.style.transform = `translateX(${map.xAt(time)}px)`;
+      if (inside) line.style.transform = `translateX(${scrubX ?? map.xAt(time)}px)`;
     };
     // The clock moved: always reposition, cheaply picking up any pending
     // geometry change on the way (the rebuild is a no-op when nothing changed).
@@ -1308,7 +1341,12 @@ export function GraphStripSeekRail({
       const time = channel.get();
       thumb.dataset.active = String(time >= start && time <= end);
       const clamped = Math.min(end, Math.max(start, time));
-      contentX = map.xAt(clamped);
+      // Same rule as the playhead line: while THIS surface is being scrubbed
+      // the head rides the pointer, so thumb, line and cursor stay together
+      // across a collection that has width but no time.
+      const scrub = channel.getScrub();
+      contentX =
+        scrub && scrub.surfaceId === focusedId ? scrub.x : map.xAt(clamped);
       fill.style.width = `${contentX}px`;
       if (timeRef.current) timeRef.current.textContent = formatSeconds(clamped);
       placeThumb();
@@ -1326,7 +1364,7 @@ export function GraphStripSeekRail({
       unsubscribe();
       scroller.removeEventListener("scroll", syncScroll);
     };
-  }, [channel, map, start, end, scrubbing]);
+  }, [channel, map, start, end, scrubbing, focusedId]);
 
   const scrollerOf = (): HTMLElement | null =>
     outerRef.current?.parentElement?.querySelector<HTMLElement>("[data-virtual-strip]") ?? null;
@@ -1336,7 +1374,12 @@ export function GraphStripSeekRail({
     if (!scroller || !geometry) return;
     const rect = scroller.getBoundingClientRect();
     const contentX = clientX - rect.left - geometry.padLeft + scroller.scrollLeft;
-    channel.set(map.timeAt(Math.min(extent, Math.max(0, contentX))));
+    const clamped = Math.min(extent, Math.max(0, contentX));
+    // Position FIRST, then time: both notify the same listeners, and a
+    // playhead that read the new time against a stale scrub x would paint one
+    // frame in the wrong place at the start of every drag.
+    channel.setScrub({ surfaceId: focusedId, x: clamped });
+    channel.set(map.timeAt(clamped));
   };
 
   const stopPanLoop = () => {
@@ -1427,12 +1470,14 @@ export function GraphStripSeekRail({
         if (event.pointerId !== pointerIdRef.current) return;
         pointerIdRef.current = null;
         setScrubbing(false);
+        channel.setScrub(null);
         stopPanLoop();
       }}
       onPointerCancel={(event) => {
         if (event.pointerId !== pointerIdRef.current) return;
         pointerIdRef.current = null;
         setScrubbing(false);
+        channel.setScrub(null);
         stopPanLoop();
       }}
       onKeyDown={(event) => {

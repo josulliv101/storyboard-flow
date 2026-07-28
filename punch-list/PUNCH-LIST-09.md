@@ -163,7 +163,7 @@ Acceptance criteria:
 
 ## PL9-005 — Scrubbing across an empty collection loses the cursor
 
-- Status: Open
+- Status: STRIP done; GRID rails still to do
 - URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
 - Area: Seek rails and playhead (`graph-playhead-model.ts`,
   `graph-preview.tsx`)
@@ -184,6 +184,17 @@ pointer is. While a scrub drag is live the line wants to follow the POINTER
 directly, emitting whatever time that x maps to, and hand back to the
 time-driven position on release. Confirm the empty-collection span really is
 zero-width in time before building on that.
+
+DONE (strip): the channel now carries a scrub POSITION beside the time —
+`PreviewScrubPosition`, scoped by surface id — and the strip's playhead line
+and rail thumb both ride it while that surface is being dragged. Proven
+fail-first: without it the line does not move AT ALL across an empty card
+(824.33 → 824.33 over the whole crossing).
+
+NOT DONE (grid): `buildGridPlayheadMap.posAt` collapses a zero-duration cell
+the same way, so the grid's rails need the same treatment. It needs a `y` on
+the scrub payload (a grid position is a row as well as an offset) and the
+grid rail computing both in grid content coordinates.
 
 Acceptance criteria:
 

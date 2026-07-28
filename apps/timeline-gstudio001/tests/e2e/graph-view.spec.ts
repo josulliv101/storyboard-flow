@@ -3656,6 +3656,64 @@ test.describe("graph view E2E", () => {
     await expect(trail.getByRole("link", { name: TITLES[0] })).toBeVisible();
   });
 
+  test("scrubbing across an empty collection keeps the playhead under the pointer", async ({
+    page,
+  }) => {
+    // PL9-005. An empty collection is WIDTH with no TIME, so every x across it
+    // maps to one instant — and a playhead driven by that instant can only
+    // paint at one edge while the pointer crosses the rest.
+    const api = await installGraphApi(page);
+    const EMPTY_ID = "timeline-e2e-empty";
+    api.documents.get(PROJECT_ID)!.clips.push(
+      collectionClip("clip-empty", EMPTY_ID, 9, "Nothing Here", 0),
+      // Trailing content so the empty card is not the LAST thing in the
+      // strip: parked at the timeline's end it sits in the rail's edge
+      // auto-pan zone, and the content sliding under a stationary pointer
+      // moves the line's viewport x backwards — the pan working correctly,
+      // but indistinguishable here from the bug under test.
+      mediaClip("tail-1", "image", 10, 4),
+      mediaClip("tail-2", "image", 11, 4),
+    );
+    api.documents.set(EMPTY_ID, { id: EMPTY_ID, title: "Nothing Here", clips: [] });
+    await openGraph(page);
+    await previewToggle(page).click();
+
+    const emptyCard = strip(page, PROJECT_ID).locator(`[data-node-id="${EMPTY_ID}"]`);
+    await emptyCard.scrollIntoViewIfNeeded();
+    await expect(emptyCard).toBeVisible();
+    // Centre it, so neither end of the crossing lands in the pan zone.
+    await strip(page, PROJECT_ID).evaluate((el, id) => {
+      const card = el.querySelector(`[data-node-id="${id}"]`) as HTMLElement | null;
+      if (card) el.scrollLeft += card.getBoundingClientRect().left
+        - el.getBoundingClientRect().left
+        - (el.clientWidth - card.getBoundingClientRect().width) / 2;
+    }, EMPTY_ID);
+    const card = (await emptyCard.boundingBox())!;
+    const rail = page.getByRole("slider", { name: "Seek preview" }).first();
+    const railBox = (await rail.boundingBox())!;
+    const line = page.locator("[data-graph-playhead]").first();
+    const y = railBox.y + railBox.height / 2;
+
+    // Press at the empty card's left edge, then walk across it.
+    await page.mouse.move(card.x + 2, y);
+    await page.mouse.down();
+    const samples: number[] = [];
+    for (const fraction of [0.25, 0.5, 0.75, 0.95]) {
+      await page.mouse.move(card.x + card.width * fraction, y, { steps: 4 });
+      const lineBox = (await line.boundingBox())!;
+      samples.push(lineBox.x);
+    }
+    await page.mouse.up();
+
+    // The line tracked the pointer across the card instead of pinning to one
+    // edge: each sample is further right than the last, and the last one is
+    // near the card's far side rather than back at its start.
+    for (let i = 1; i < samples.length; i++) {
+      expect(samples[i]).toBeGreaterThan(samples[i - 1]);
+    }
+    expect(samples[samples.length - 1]).toBeGreaterThan(card.x + card.width * 0.6);
+  });
+
   test("a scrub drag shows the timestamp at the playhead, and only then", async ({ page }) => {
     // PL9-003. The transport's clock is up in the preview chrome; mid-drag the
     // number has to be where the pointer is.
