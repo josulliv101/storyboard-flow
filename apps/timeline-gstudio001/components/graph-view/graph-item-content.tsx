@@ -813,6 +813,17 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           // way `data-disabled`'s values do on a media card.
           muted ? "is-disabled-card" : "",
           muted && node.disabled !== true ? "is-parent-disabled-card" : "",
+          // PL10-001: the call-out lives ON the card because it SCALES the
+          // card — a transform on the inset overlay this used to be would
+          // animate nothing anyone can see. Same marker-class trick as the
+          // disabled states above, and for the same reason: a hyphenated
+          // `data-` attribute passed to SelectionSurface is silently dropped.
+          //
+          // Toggling the class is also what restarts the one-shot. Moving
+          // between folders drops it off one card and adds it to the next, so
+          // the animation re-fires without a counter or a manual restart, and
+          // re-entering the same folder replays it.
+          calledOut ? "is-called-out-card animate-collection-paired-callout" : "",
         ].join(" ")}
       >
         {muted && <DisabledChip inherited={node.disabled !== true} />}
@@ -894,24 +905,10 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         </span>
       </CollectionItem.SelectionSurface>
 
-      {/* The call-out for PL9-002, mounted only while this collection's row is
-          hovered. MOUNTING is what restarts the one-shot: moving between
-          folders unmounts one card's overlay and mounts the next card's, so
-          the animation re-fires without a counter or a manual restart, and
-          re-entering the same folder replays it.
-
-          A SIBLING of the selection surface, not a child: the surface is
-          `overflow-hidden` (its preview frames bleed to the edges), and an
-          outward glow drawn inside it would be clipped away to nothing. Out
-          here it also cannot collide with the selected/rejected ring states
-          the card already carries. */}
-      {calledOut && (
-        <span
-          aria-hidden="true"
-          data-collection-called-out
-          className="animate-collection-paired-callout pointer-events-none absolute inset-0 rounded-md"
-        />
-      )}
+      {/* (PL10-001 moved the call-out itself onto the selection surface above.
+          The overlay span that used to live here painted a glow; a scale has
+          to be on the card, and an element's own `overflow-hidden` clips its
+          children, never its own transform.) */}
 
       {/* The drill affordance — a REAL button now that it composes as a
           SIBLING of the selection surface. Centred over the preview area (the
@@ -971,7 +968,21 @@ const GraphCollectionItem = memo(function GraphCollectionItem({
     <CollectionItem.Root
       id={id}
       rovingTabIndex={rovingTabIndex}
-      className={["h-full w-full", className ?? ""].join(" ")}
+      className={[
+        "h-full w-full",
+        // PL10-003: the call-out's scale pushes the card ~7px past this
+        // wrapper, and a transform that spills counts as SCROLLABLE overflow —
+        // so calling out the last card in a strip or a grid row grew the
+        // scroller and flashed a scrollbar for the length of the animation.
+        //
+        // `clip` (not `hidden`) makes this box swallow that overflow without
+        // becoming a scroll container itself, and the clip margin is what keeps
+        // it from being a cure worse than the disease: the card's own growth
+        // (~7px) stays visible, and so do the drop-indicator bars, which sit
+        // half a gap OUTSIDE the card by design.
+        "overflow-clip [overflow-clip-margin:12px]",
+        className ?? "",
+      ].join(" ")}
     >
       <GraphCollectionItemParts dragActivation={dragActivation} />
     </CollectionItem.Root>

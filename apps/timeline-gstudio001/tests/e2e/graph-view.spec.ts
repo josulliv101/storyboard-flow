@@ -3846,7 +3846,9 @@ test.describe("graph view E2E", () => {
 
   test("hovering a child row's folder calls out its collection card", async ({ page }) => {
     // PL9-002, revising PL8-012: ONE direction now, and the card is called out
-    // by an animation rather than its icon changing.
+    // by an animation rather than its icon changing. PL10-001 made that
+    // animation an elastic SCALE on the card itself (the old inset glow
+    // overlay is gone), so the marker moved onto the card.
     await installGraphApi(page);
     await openGraph(page); // children timelines on
     const cardIcon = page.getByRole("button", { name: "Open Scene A" }).first();
@@ -3854,9 +3856,16 @@ test.describe("graph view E2E", () => {
       .locator('section[aria-label="Sub-timeline: Scene A"]')
       .getByRole("button", { name: "Expand" })
       .first();
-    const calledOut = page.locator("[data-collection-called-out]");
+    const calledOut = page.locator(".is-called-out-card");
 
     await expect(calledOut).toHaveCount(0);
+
+    // A NEIGHBOUR card, to prove the call-out moves nothing but itself, and
+    // the called-out card's own resting box to compare against afterwards.
+    const neighbour = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const card = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
+    const neighbourBefore = (await neighbour.boundingBox())!;
+    const cardBefore = (await card.boundingBox())!;
 
     // Row folder → the matching card, and only that one.
     await rowFolder.hover();
@@ -3866,15 +3875,42 @@ test.describe("graph view E2E", () => {
     );
     expect(inCard).toBe(CHILD_ID);
 
-    // The call-out is drawn, not laid out: the card's box is untouched.
-    const cardBefore = (await strip(page, PROJECT_ID)
-      .locator(`[data-node-id="${CHILD_ID}"]`)
-      .boundingBox())!;
+    // The class is not the point — the KEYFRAMES are. Assert the card is
+    // actually running them, and that they scale it (an animation whose name
+    // resolves but whose rule was renamed away would still pass on class
+    // presence alone).
+    const running = await calledOut.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        name: style.animationName,
+        scales: el.getAnimations().some((animation) =>
+          (animation as CSSAnimation).animationName === "collection-paired-callout",
+        ),
+      };
+    });
+    expect(running.name).toBe("collection-paired-callout");
+    expect(running.scales).toBe(true);
+
+    // It is a TRANSFORM, so it reflows nothing: the neighbour must not budge
+    // while the called-out card is mid-animation. (The called-out card's own
+    // box does change under the scale — that is the effect, and measuring it
+    // mid-flight would only race the keyframes.)
+    const neighbourDuring = (await neighbour.boundingBox())!;
+    expect(neighbourDuring.x).toBeCloseTo(neighbourBefore.x, 0);
+    expect(neighbourDuring.width).toBeCloseTo(neighbourBefore.width, 0);
+
+    // PL10-002: a flick still plays the whole animation. The pointer is gone
+    // and the call-out is still on the card — without the hold it would be
+    // torn off mid-keyframe, one or two frames in.
     await page.mouse.move(0, 0);
+    expect(await calledOut.count()).toBe(1);
+
+    // ...and then it ends on its own.
     await expect(calledOut).toHaveCount(0);
-    const cardAfter = (await strip(page, PROJECT_ID)
-      .locator(`[data-node-id="${CHILD_ID}"]`)
-      .boundingBox())!;
+    // And the card comes back to exactly the box it started in.
+    const cardAfter = (await card.boundingBox())!;
+    const neighbourAfter = (await neighbour.boundingBox())!;
+    expect(neighbourAfter.x).toBeCloseTo(neighbourBefore.x, 0);
     expect(cardAfter.x).toBeCloseTo(cardBefore.x, 0);
     expect(cardAfter.width).toBeCloseTo(cardBefore.width, 0);
 
@@ -3888,6 +3924,53 @@ test.describe("graph view E2E", () => {
     await page.getByRole("button", { name: "Hide children timelines" }).click();
     await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
     await expect(calledOut).toHaveCount(0);
+  });
+
+  test("the call-out's scale never grows a scroll area", async ({ page }) => {
+    // PL10-003. A transform that spills past its box counts as SCROLLABLE
+    // overflow, so the call-out used to grow whichever scroller held the card
+    // and flash a scrollbar for the length of the animation. The card's
+    // wrapper is `overflow: clip` (with a margin wide enough for the growth
+    // and for the drop bars) so nothing above it ever hears about the scale.
+    await installGraphApi(page);
+    await openGraph(page);
+    const rowFolder = page
+      .locator('section[aria-label="Sub-timeline: Scene A"]')
+      .getByRole("button", { name: "Expand" })
+      .first();
+
+    await rowFolder.hover();
+    await expect(page.locator(".is-called-out-card")).toHaveCount(1);
+
+    // Measure every ancestor at rest and at the animation's peak. Pausing the
+    // animation is what makes this deterministic — sampling a 320ms one-shot
+    // from the test side would race it.
+    const changed = await page.evaluate(() => {
+      const card = document.querySelector(".is-called-out-card");
+      if (!card) return ["no call-out"];
+      const animation = card.getAnimations()[0];
+      if (!animation) return ["no animation"];
+      const chain: Element[] = [];
+      // Start ABOVE the clip box itself: a clip container still reports its
+      // own scrollWidth, it just stops handing it upward, and that upward
+      // propagation is the whole bug.
+      for (let n = card.closest("[data-node-wrapper]")?.parentElement; n; n = n.parentElement) {
+        chain.push(n);
+      }
+      const snap = () => chain.map((n) => `${n.scrollWidth}x${n.scrollHeight}`);
+      animation.pause();
+      animation.currentTime = 0;
+      const rest = snap();
+      animation.currentTime = 128; // the 1.06 peak
+      const peak = snap();
+      animation.play();
+      return peak.flatMap((size, i) =>
+        size === rest[i]
+          ? []
+          : [`${chain[i].tagName}.${chain[i].className}: ${rest[i]} -> ${size}`],
+      );
+    });
+    expect(changed).toEqual([]);
   });
 
   test("clicking away anywhere that is not a control clears the selection", async ({
