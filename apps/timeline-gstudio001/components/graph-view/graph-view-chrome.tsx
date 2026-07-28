@@ -13,6 +13,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+import { cn } from "@/lib/utils";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 
 function useGraphPathTitles() {
@@ -32,6 +33,50 @@ function focusedIdOf(projectId: string, timelinePath: readonly string[]) {
 }
 
 type CrumbDropState = "idle" | "droppable" | "hovered";
+
+function EditableCrumbName({
+  crumbId,
+  label,
+}: Readonly<{
+  crumbId: string;
+  label: string;
+}>) {
+  const nodeName = useCollectionsSelector(
+    (snapshot) => snapshot.graph.nodesById.get(crumbId as NodeId)?.name,
+  );
+  const displayName = nodeName ?? label;
+  const rename = useInlineRename(crumbId as NodeId, displayName, "breadcrumb");
+
+  if (rename.editing) {
+    return (
+      <InlineNameEditor
+        initialValue={displayName}
+        ariaLabel={`Rename ${displayName}`}
+        onInput={rename.setDraft}
+        onCommit={rename.commit}
+        onCancel={rename.cancel}
+        className="h-7 min-w-0 w-full max-w-[250px] truncate rounded-md bg-zinc-800 px-1.5 font-semibold text-zinc-100 outline-none ring-1 ring-sky-500/60"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      aria-label={`Rename ${displayName}`}
+      aria-current="page"
+      title={`Rename ${displayName}`}
+      onClick={rename.begin}
+      className={cn(
+        "min-w-0 max-w-[250px] shrink cursor-text truncate rounded-md px-1.5 py-1 text-left transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
+        "font-semibold text-zinc-100 hover:bg-zinc-800/70",
+      )}
+    >
+      {displayName}
+    </button>
+  );
+}
 
 /**
  * A breadcrumb crumb that DOUBLES AS a drop target while a card is dragged.
@@ -59,15 +104,24 @@ function AncestorCrumb({
       ? "hovered"
       : "droppable";
   });
-  const className =
-    state === "hovered"
-      ? "text-sky-200 underline decoration-sky-400 decoration-2 underline-offset-4"
-      : state === "droppable"
-        ? "text-zinc-300 underline decoration-dotted decoration-zinc-500 underline-offset-4"
-        : "text-zinc-400 transition-colors hover:text-white";
   return (
-    <span ref={setNodeRef} data-graph-ancestor-drop={crumbId}>
-      <Link href={href} className={className}>
+    <span
+      ref={setNodeRef}
+      data-graph-ancestor-drop={crumbId}
+      className="flex min-w-0 shrink-[2]"
+    >
+      <Link
+        href={href}
+        className={cn(
+          "block min-w-0 max-w-[180px] truncate rounded-md px-1.5 py-1 transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
+          state === "hovered"
+            ? "text-sky-200 underline decoration-sky-400 decoration-2 underline-offset-4"
+            : state === "droppable"
+              ? "text-zinc-300 underline decoration-dotted decoration-zinc-500 underline-offset-4"
+              : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100",
+        )}
+      >
         {label}
       </Link>
     </span>
@@ -99,7 +153,6 @@ export function GraphBreadcrumb({
     (snapshot) => snapshot.graph.nodesById.get(focusedId as NodeId)?.name,
   );
   const focusedTitle = documents[focusedId]?.title ?? focusedNodeName ?? focusedId;
-  const rename = useInlineRename(focusedId as NodeId, focusedTitle, "breadcrumb");
   const parentHref =
     timelinePath.length > 1
       ? `${base}/${timelinePath.slice(0, -1).map(encodeURIComponent).join("/")}`
@@ -108,7 +161,7 @@ export function GraphBreadcrumb({
         : "/";
 
   return (
-    <div className="flex min-w-0 items-center gap-3">
+    <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
       <Link
         href={parentHref}
         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950/50 text-zinc-400 transition-all hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-100"
@@ -118,7 +171,7 @@ export function GraphBreadcrumb({
       </Link>
       <nav
         aria-label="Timeline focus path"
-        className="flex min-w-0 items-center gap-2 text-xs text-zinc-400 select-none"
+        className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-xs text-zinc-400 select-none"
       >
         {/* The project is the ROOT crumb, not a child of a "Projects / Graph"
             chrome path: the trail reads as the timeline tree the user is
@@ -131,11 +184,11 @@ export function GraphBreadcrumb({
               href={base}
               label={documents[projectId]?.title ?? projectId}
             />
-            <span>/</span>
+            <span aria-hidden="true" className="shrink-0">/</span>
           </>
         )}
         {timelinePath.slice(0, -1).map((segment, index) => (
-          <span key={segment} className="flex items-center gap-2">
+          <span key={segment} className="flex min-w-0 shrink-[2] items-center gap-2">
             <AncestorCrumb
               crumbId={segment}
               href={`${base}/${timelinePath
@@ -144,26 +197,10 @@ export function GraphBreadcrumb({
                 .join("/")}`}
               label={documents[segment]?.title ?? segment}
             />
-            <span>/</span>
+            <span aria-hidden="true" className="shrink-0">/</span>
           </span>
         ))}
-        {rename.editing ? (
-          <InlineNameEditor
-            initialValue={focusedTitle}
-            onInput={rename.setDraft}
-            onCommit={rename.commit}
-            onCancel={rename.cancel}
-            className="max-w-[250px] truncate rounded-sm bg-zinc-800 px-1 font-semibold text-zinc-100 outline-none ring-1 ring-sky-500/60"
-          />
-        ) : (
-          <span
-            onDoubleClick={rename.begin}
-            title="Double-click to rename"
-            className="max-w-[250px] cursor-text truncate font-semibold text-zinc-100"
-          >
-            {focusedTitle}
-          </span>
-        )}
+        <EditableCrumbName crumbId={focusedId} label={focusedTitle} />
       </nav>
     </div>
   );

@@ -1,9 +1,8 @@
 "use client";
 
 import { useContext, useDeferredValue, useMemo } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { EllipsisVertical, FolderPlus, Redo2, Undo2 } from "lucide-react";
+import { FolderPlus, Redo2, Settings, Undo2 } from "lucide-react";
 
 import {
   CollectionsContainerContext,
@@ -21,16 +20,16 @@ import { Button } from "@/components/core/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuGroup,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/core/dropdown-menu";
 import { Slider } from "@/components/core/slider";
 
 import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
+import { VideoFrameLookAhead } from "./graph-item-content";
 import { BreadcrumbDropZones, DragChromeFade } from "./graph-breadcrumb-drop";
 import { OpenKeyBoundary } from "./graph-navigation";
 import { SyncPanel, type SyncEntry } from "./graph-persistence";
@@ -51,6 +50,7 @@ import { SubTimelines } from "./graph-sub-timelines";
 import {
   GRID_GAP,
   GRID_UNCAPPED_HEIGHT,
+  GRAPH_STRIP_OVERSCAN_ITEMS,
   ITEM_SIZE_DIMENSIONS,
   ITEM_SIZES,
   MAX_SUBTREE_DEPTH,
@@ -73,11 +73,9 @@ export type { FocusSurface, ItemSize };
 function BoardMenu({
   itemSize,
   onItemSizeChange,
-  storyboardHref,
 }: Readonly<{
   itemSize: ItemSize;
   onItemSizeChange: (size: ItemSize) => void;
-  storyboardHref: string;
 }>) {
   return (
     <DropdownMenu>
@@ -90,30 +88,25 @@ function BoardMenu({
           title="Board options"
           className="h-8 w-8 text-zinc-500 hover:text-zinc-200"
         >
-          <EllipsisVertical aria-hidden="true" className="h-4 w-4" />
+          <Settings aria-hidden="true" className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuLabel>View</DropdownMenuLabel>
-        {/* Children visibility moved to the icon SIDEBAR (under the
-            Collection tool) — only the leave-the-graph link lives here. */}
-        <DropdownMenuItem asChild>
-          <Link href={storyboardHref}>Storyboard view</Link>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel>Thumbnail size</DropdownMenuLabel>
-        <DropdownMenuRadioGroup
-          value={itemSize}
-          onValueChange={(value) => {
-            if (isItemSize(value)) onItemSizeChange(value);
-          }}
-        >
-          {ITEM_SIZES.map((option) => (
-            <DropdownMenuRadioItem key={option} value={option}>
-              {option.toUpperCase()}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Thumbnail size</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={itemSize}
+            onValueChange={(value) => {
+              if (isItemSize(value)) onItemSizeChange(value);
+            }}
+          >
+            {ITEM_SIZES.map((option) => (
+              <DropdownMenuRadioItem key={option} value={option}>
+                {option.toUpperCase()}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -162,7 +155,7 @@ function FocusedAggregate({
   return (
     <span
       data-focused-aggregate
-      className="hidden shrink-0 px-3 text-center font-mono text-[11px] tabular-nums text-zinc-500 sm:block"
+      className="hidden shrink-0 px-3 text-center font-mono text-[11px] tabular-nums text-zinc-400 sm:block"
       title="Focused timeline total"
     >
       {count} {count === 1 ? "clip" : "clips"} · {formatAggregateSeconds(seconds)}
@@ -276,20 +269,22 @@ function GraphAddCollectionButton() {
     // actual add. A matching document drop swallows a stray drop that misses
     // every strip so the browser takes no default action.
     const onDocDragOver = (e: DragEvent) => {
-      if (!e.dataTransfer?.types.includes("application/x-gstudio-type")) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     };
     const onDocDrop = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes("application/x-gstudio-type")) e.preventDefault();
+      e.preventDefault();
     };
     const cleanup = () => {
-      document.removeEventListener("dragover", onDocDragOver);
-      document.removeEventListener("drop", onDocDrop);
+      document.removeEventListener("dragover", onDocDragOver, true);
+      document.removeEventListener("drop", onDocDrop, true);
       document.removeEventListener("dragend", cleanup);
     };
-    document.addEventListener("dragover", onDocDragOver);
-    document.addEventListener("drop", onDocDrop);
+    // Capture before nested surfaces. Chromium can briefly expose an empty
+    // `types` list while crossing DOM boundaries, so the drag-lifetime guard
+    // must not depend on reading our MIME type back from each event.
+    document.addEventListener("dragover", onDocDragOver, true);
+    document.addEventListener("drop", onDocDrop, true);
     document.addEventListener("dragend", cleanup, { once: true });
   };
 
@@ -309,6 +304,7 @@ function GraphAddCollectionButton() {
 }
 
 export function GraphBoard({
+  projectId,
   focusedId,
   breadcrumb,
   surface,
@@ -319,12 +315,12 @@ export function GraphBoard({
   previewOn,
   rulerOn,
   flatOn,
-  storyboardHref,
   childrenShown,
   timeChannel,
   trashRootId,
   syncEntries,
 }: Readonly<{
+  projectId: string;
   focusedId: string;
   /** Slot, not routing props: the board renders where you are without
    *  knowing how a route is shaped. */
@@ -342,9 +338,6 @@ export function GraphBoard({
   /** Strip's flat mode: render the whole closure in order, not this
    *  collection's direct children. */
   flatOn: boolean;
-  /** For the overflow menu's "Storyboard view" item — routing stays the
-   *  caller's business, like the breadcrumb slot. */
-  storyboardHref: string;
   /** Toggled from the SIDEBAR's children icon; the board only renders it. */
   childrenShown: boolean;
   timeChannel: PreviewTimeChannel;
@@ -396,7 +389,7 @@ export function GraphBoard({
         {/* Outside the surface branch on purpose: the sidebar's tool buttons
             must insert in grid mode too, where no NativeDropStrip exists. */}
         <SidebarToolInsertBridge collectionId={focusedId} />
-        <div className="flex flex-col gap-5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
+        <div className="flex flex-col gap-2">
           {/* Pinned so the controls stay reachable while scrolling the
               surfaces. It sticks just BELOW the sticky preview via the offset
               the split pane publishes (0 when the preview is closed). The
@@ -409,9 +402,24 @@ export function GraphBoard({
               margins let that background span the card's full width past its
               p-4 padding. */}
           <div
-            className="sticky z-40 -mx-4 -mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-t-xl border-b border-zinc-800/70 bg-zinc-950/95 px-4 py-3 backdrop-blur-sm"
+            data-graph-board-header=""
+            className="sticky z-40 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-3 border-b border-zinc-800/70 bg-zinc-950/95 py-3 backdrop-blur-sm"
             style={{ top: "var(--workbench-preview-offset, 0px)" }}
           >
+            {/* Seek thumbs are centered on the timeline edge and intentionally
+                extend six pixels beyond it. Mask that overhang only while it
+                passes behind this sticky row; clipping the board would also
+                truncate the thumb once it is normally visible below. */}
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 right-full w-2 bg-zinc-950"
+              data-board-header-edge-occluder="start"
+            />
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 left-full w-2 bg-zinc-950"
+              data-board-header-edge-occluder="end"
+            />
             {/* Equal-flex wings keep the aggregate at the row's true centre
                 (under the transport's play cluster). min-w-0 lets a long
                 breadcrumb truncate inside its wing. */}
@@ -428,7 +436,7 @@ export function GraphBoard({
             {/* flex-wrap + wrap-capable controls so a narrow viewport folds the
                 toolbar onto a second line instead of pushing controls
                 off-screen. No effect when it fits. */}
-            <DragChromeFade className="flex flex-1 flex-wrap items-center justify-end gap-2">
+            <DragChromeFade className="flex min-w-0 items-center justify-end gap-2">
               {/* The Collection tool (moved here from the icon sidebar): the
                   view's one "add structure" action leads the cluster, fenced
                   off from the surface/history controls to its right. */}
@@ -451,7 +459,6 @@ export function GraphBoard({
               <BoardMenu
                 itemSize={itemSize}
                 onItemSizeChange={onItemSizeChange}
-                storyboardHref={storyboardHref}
               />
             </DragChromeFade>
 
@@ -467,15 +474,19 @@ export function GraphBoard({
             // The focused surface spans the card's FULL width (-mx-4 cancels
             // the card's p-4), so its edges line up with the full-bleed
             // breadcrumb bar above instead of sitting inset like a panel
-            // nested under it. Padding lives on THIS wrapper, never on
-            // NativeDropStrip: its drop math is clientX-vs-own-rect, and
-            // padding there drifts the indicator.
-            <div className="-mx-4 border-y border-zinc-800/70 bg-zinc-900/40 p-3">
-              <NativeDropStrip collectionId={focusedId}>
+            // nested under it. The focused surface is intentionally
+            // edge-to-edge; padding here adds dead space around every side.
+            <div
+              data-focused-surface-shell="strip"
+              className=""
+            >
+              <VideoFrameLookAhead>
+                <NativeDropStrip collectionId={focusedId} projectId={projectId}>
               <VirtualStrip
                 collectionId={parseNodeId(focusedId)}
                 itemIds={flatItemIds}
                 pixelsPerSecond={deferredPixelsPerSecond}
+                overscan={GRAPH_STRIP_OVERSCAN_ITEMS}
                 itemWidth={collectionCardWidth(deferredPixelsPerSecond)}
                 itemHeight={dims.strip}
                 itemDragActivation="hold"
@@ -500,7 +511,10 @@ export function GraphBoard({
                 }
                 // pt-4: the 16px top band the seek rail centres in — same
                 // clearance system as the grid's GRID_GAP row bands.
-                className="bg-black/25 pt-4"
+                className={[
+                  "rounded-none border-0 bg-transparent p-0",
+                  previewOn || rulerOn ? "pt-4" : "",
+                ].join(" ")}
               />
               {/* The strip's scrub control — the same rail treatment as the
                   grid's, riding the strip's top padding band and scrolling
@@ -514,7 +528,8 @@ export function GraphBoard({
                   pixelsPerSecond={deferredPixelsPerSecond}
                 />
               )}
-              </NativeDropStrip>
+                </NativeDropStrip>
+              </VideoFrameLookAhead>
             </div>
           ) : (
             // Grid scrubbing is the per-row SEEK RAILS layer — one slim
@@ -525,11 +540,12 @@ export function GraphBoard({
             // indicator. The layer overlays the grid as a SIBLING (outside
             // NativeDropGrid, whose drop math measures its own wrapper, and
             // outside the aria-hidden overlay — rails are focusable). Same
-            // gray panel as the strip branch; the rails' geometry is
-            // measured live from the grid's own rect, so the padding is
-            // accounted for automatically.
-            <div className="relative -mx-4 border-y border-zinc-800/70 bg-zinc-900/40 p-3">
-              <NativeDropGrid collectionId={focusedId}>
+            // gray panel as the strip branch, with no extra shell padding.
+            <div
+              data-focused-surface-shell="grid"
+              className="relative"
+            >
+              <NativeDropGrid collectionId={focusedId} projectId={projectId}>
                 <VirtualGrid
                   collectionId={parseNodeId(focusedId)}
                   cellWidth={dims.gridWidth}
@@ -552,7 +568,10 @@ export function GraphBoard({
                     ) : undefined
                   }
                   // pt-4 = GRID_GAP: row 0's rail band matches the row gaps.
-                  className="bg-black/25 pt-4"
+                  className={[
+                    "rounded-none border-0 bg-transparent p-0",
+                    previewOn ? "pt-4" : "",
+                  ].join(" ")}
                 />
               </NativeDropGrid>
               {previewOn && (
@@ -569,17 +588,24 @@ export function GraphBoard({
           {/* Children render one size step below the focused timeline (flat —
               every descendant is this one size, see stepDownItemSize). The
               FolderTree toggle unmounts them entirely rather than hiding with
-              CSS, so their strips/grids and sub-row playheads leave the DOM. */}
+              CSS, so their strips/grids and sub-row playheads leave the DOM.
+              Flat mode belongs only to the FOCUSED surface above: child rows
+              remain structured and must map their own cards onto the shared
+              preview clock. Reset the outer flat run here so its item list
+              cannot leak into every nested rail/playhead. */}
           {childrenShown && (
-            <SubTimelines
-              focusedId={focusedId}
-              surface={surface}
-              itemSize={stepDownItemSize(itemSize)}
-              pixelsPerSecond={deferredPixelsPerSecond}
-              previewOn={previewOn}
-              rulerOn={rulerOn}
-              timeChannel={timeChannel}
-            />
+            <FlatItemsProvider items={null}>
+              <SubTimelines
+                projectId={projectId}
+                focusedId={focusedId}
+                surface={surface}
+                itemSize={stepDownItemSize(itemSize)}
+                pixelsPerSecond={deferredPixelsPerSecond}
+                previewOn={previewOn}
+                rulerOn={rulerOn}
+                timeChannel={timeChannel}
+              />
+            </FlatItemsProvider>
           )}
 
           {/* Card-drag drop targets (trash + move-to-parent) live in the

@@ -56,6 +56,26 @@ function playableSpanOf(document: TimelineDocument): number {
   );
 }
 
+/**
+ * Preview media in playback order, including summaries carried by nested
+ * collection clips. The closure pass derives children before parents, so a
+ * grandchild video poster can bubble all the way to the root without loading
+ * that branch again when the root card is later rendered.
+ */
+function nestedPreviewItemsFrom(clips: readonly TimelineDocument["clips"][number][]) {
+  const nested = clips.flatMap((clip) =>
+    clip.kind === "collection"
+      ? (clip.previewItems ?? [])
+      : previewItemsFrom([clip]),
+  );
+  if (nested.length <= 3) return nested;
+  return [
+    nested[0],
+    nested[Math.floor(nested.length / 2)],
+    nested[nested.length - 1],
+  ];
+}
+
 export function deriveCollectionSummaries(
   document: TimelineDocument,
   childDocuments: ReadonlyMap<string, TimelineDocument | null>,
@@ -86,7 +106,7 @@ export function deriveCollectionSummaries(
     // reverse index.
     const effectiveChild = effectiveDocument(child);
     const itemCount = effectiveChild.clips.length;
-    const previewItems = previewItemsFrom(effectiveChild.clips);
+    const previewItems = nestedPreviewItemsFrom(effectiveChild.clips);
     const duration = collectionSpanSeconds(child.clips);
     const playable = playableSpanOf(child);
     // Omitted when nothing under the collection is disabled — `duration` is

@@ -7,6 +7,7 @@ function asset(id: string, folderPath: string[], tags: string[] = []): Asset {
   return {
     id,
     providerId: "test",
+    projectIds: ["project-test"],
     name: id,
     kind: "image",
     src: `https://cdn.test/${id}`,

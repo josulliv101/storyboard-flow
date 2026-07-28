@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { encodePublicIdPath } from "./cloudinary-public-id";
 
@@ -14,6 +14,16 @@ export type CloudinaryMediaUpload = {
   contentType?: string;
   size?: number;
 };
+
+export class CloudinaryUploadError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "CloudinaryUploadError";
+  }
+}
 
 export type CloudinaryAsset = {
   id: string;
@@ -43,11 +53,21 @@ type CloudinaryConfig = {
 
 type CloudinaryUploadResponse = {
   bytes?: number;
+  done?: boolean;
   format?: string;
   public_id: string;
   resource_type: "image" | "video" | "raw";
   secure_url: string;
 };
+
+type CloudinaryUploadApiResponse = Partial<CloudinaryUploadResponse> & {
+  error?: { message?: string };
+};
+
+// Cloudinary requires chunked uploads above 100 MB. Starting at one 20 MB
+// chunk also makes medium/large video uploads more tolerant of transient
+// network failures without adding requests for ordinary images and clips.
+const CLOUDINARY_UPLOAD_CHUNK_BYTES = 20 * 1024 * 1024;
 
 type CloudinaryResource = {
   bytes?: number;
@@ -130,11 +150,11 @@ function cloudinaryImageThumbnailUrl(config: CloudinaryConfig, publicId: string)
 function toAsset(
   config: CloudinaryConfig,
   resource: CloudinaryResource,
-  userId?: string,
+  scopePrefix?: string,
 ): CloudinaryAsset | null {
   if (resource.resource_type !== "image" && resource.resource_type !== "video") return null;
 
-  const prefix = userId ? `${config.folder}/${userId}/` : `${config.folder}/`;
+  const prefix = scopePrefix ? `${scopePrefix}/` : `${config.folder}/`;
   const relativePath = resource.public_id.startsWith(prefix)
     ? resource.public_id.slice(prefix.length)
     : resource.public_id;
@@ -163,7 +183,7 @@ async function listCloudinaryResources(
   config: CloudinaryConfig,
   resourceType: "image" | "video",
   folderPrefix: string,
-  userId: string,
+  relativePrefix: string,
 ) {
   const assets: CloudinaryAsset[] = [];
   let nextCursor: string | undefined;
@@ -200,7 +220,7 @@ async function listCloudinaryResources(
 
     assets.push(
       ...(body.resources || [])
-        .map((resource) => toAsset(config, resource, userId))
+        .map((resource) => toAsset(config, resource, relativePrefix))
         .filter((asset): asset is CloudinaryAsset => !!asset),
     );
     nextCursor = body.next_cursor;
@@ -219,7 +239,7 @@ async function listCloudinaryResources(
 async function searchCloudinaryVideos(
   config: CloudinaryConfig,
   folderPrefix: string,
-  userId: string,
+  relativePrefix: string,
 ) {
   const assets: CloudinaryAsset[] = [];
   let nextCursor: string | undefined;
@@ -253,7 +273,7 @@ async function searchCloudinaryVideos(
 
     assets.push(
       ...(body.resources || [])
-        .map((resource) => toAsset(config, resource, userId))
+        .map((resource) => toAsset(config, resource, relativePrefix))
         .filter((asset): asset is CloudinaryAsset => !!asset),
     );
     nextCursor = body.next_cursor;
@@ -263,8 +283,10 @@ async function searchCloudinaryVideos(
   return assets;
 }
 
-// Per-user TTL cache over the full asset listing. Every timeline GET runs a
-// listing for document healing, and the graph view's eager hydration can GET
+// Per-user/project TTL cache over the requested asset listing. Timeline
+// healing can still request the user's full legacy listing by omitting a
+// project id, but the asset API always supplies one. The graph view's eager
+// hydration can GET
 // dozens of timelines in one burst — without this each GET pays multiple
 // paginated Cloudinary API calls (rate-limit and latency risk). Caching the
 // PROMISE also dedupes the burst: concurrent callers share one in-flight
@@ -273,32 +295,42 @@ async function searchCloudinaryVideos(
 const ASSET_LIST_TTL_MS = 60_000;
 const assetListCache = new Map<string, { at: number; promise: Promise<CloudinaryAsset[]> }>();
 
+const assetListCacheKey = (userId: string, projectId?: string) =>
+  `${userId}\u0000${projectId ?? ""}`;
+
 function invalidateAssetListCache(userId?: string) {
-  if (userId) assetListCache.delete(userId);
-  else assetListCache.clear();
+  if (!userId) {
+    assetListCache.clear();
+    return;
+  }
+  const prefix = `${userId}\u0000`;
+  for (const key of assetListCache.keys()) {
+    if (key.startsWith(prefix)) assetListCache.delete(key);
+  }
 }
 
-export async function listCloudinaryAssets(userId: string) {
-  const cached = assetListCache.get(userId);
+export async function listCloudinaryAssets(userId: string, projectId?: string) {
+  const key = assetListCacheKey(userId, projectId);
+  const cached = assetListCache.get(key);
   if (cached && Date.now() - cached.at < ASSET_LIST_TTL_MS) return cached.promise;
 
-  const promise = listCloudinaryAssetsUncached(userId);
-  assetListCache.set(userId, { at: Date.now(), promise });
+  const promise = listCloudinaryAssetsUncached(userId, projectId);
+  assetListCache.set(key, { at: Date.now(), promise });
   // Failures are never cached — the next caller retries immediately.
-  promise.catch(() => assetListCache.delete(userId));
+  promise.catch(() => assetListCache.delete(key));
   return promise;
 }
 
-async function listCloudinaryAssetsUncached(userId: string) {
+async function listCloudinaryAssetsUncached(userId: string, projectId?: string) {
   const config = getCloudinaryConfig();
-  const userFolder = `${config.folder}/${userId}`;
+  const scopeFolder = [config.folder, userId, projectId].filter(Boolean).join("/");
   const [images, videos] = await Promise.all([
-    listCloudinaryResources(config, "image", userFolder, userId),
+    listCloudinaryResources(config, "image", scopeFolder, scopeFolder),
     // Degrade to the duration-less Admin list if search is unavailable —
     // consumers fall back to default durations, nothing else changes.
-    searchCloudinaryVideos(config, userFolder, userId).catch((error) => {
+    searchCloudinaryVideos(config, scopeFolder, scopeFolder).catch((error) => {
       console.warn("[GSTUDIO_CLOUDINARY_SEARCH_FALLBACK]", error);
-      return listCloudinaryResources(config, "video", userFolder, userId);
+      return listCloudinaryResources(config, "video", scopeFolder, scopeFolder);
     }),
   ]);
 
@@ -314,6 +346,7 @@ export async function uploadCloudinaryMedia(
   data: Buffer,
   explicitContentType?: string,
   userId?: string,
+  projectId?: string,
   folderPath?: string,
 ): Promise<CloudinaryMediaUpload> {
   const config = getCloudinaryConfig();
@@ -325,8 +358,19 @@ export async function uploadCloudinaryMedia(
   let folder = config.folder;
   if (userId) {
     folder = `${config.folder}/${userId}`;
+    if (projectId) {
+      folder = `${folder}/${projectId}`;
+    }
     if (folderPath) {
-      folder = `${folder}/${folderPath}`;
+      const segments = folderPath
+        .replace(/\\/g, "/")
+        .split("/")
+        .map((segment) => segment.trim())
+        .filter((segment) => segment.length > 0);
+      if (segments.some((segment) => segment === "." || segment === "..")) {
+        throw new Error("Asset folder paths cannot contain relative segments.");
+      }
+      if (segments.length > 0) folder = `${folder}/${segments.join("/")}`;
     }
   }
 
@@ -336,30 +380,57 @@ export async function uploadCloudinaryMedia(
     timestamp,
   };
   const signature = signCloudinaryParams(params, config.apiSecret);
-  const uploadForm = new FormData();
-  const uploadBlob = new Blob([new Uint8Array(data)], { type: contentType });
+  const uploadUrl =
+    `https://api.cloudinary.com/v1_1/${config.cloudName}/${resourceType}/upload`;
+  const uploadId = randomUUID();
+  let body: CloudinaryUploadApiResponse | null = null;
 
-  uploadForm.append("file", uploadBlob, filename);
-  uploadForm.append("api_key", config.apiKey);
-  uploadForm.append("folder", params.folder);
-  uploadForm.append("public_id", params.public_id);
-  uploadForm.append("timestamp", String(params.timestamp));
-  uploadForm.append("signature", signature);
+  for (let start = 0; start < data.byteLength; start += CLOUDINARY_UPLOAD_CHUNK_BYTES) {
+    const endExclusive = Math.min(start + CLOUDINARY_UPLOAD_CHUNK_BYTES, data.byteLength);
+    const isChunked = data.byteLength > CLOUDINARY_UPLOAD_CHUNK_BYTES;
+    const uploadForm = new FormData();
+    const uploadBlob = new Blob(
+      [new Uint8Array(data.subarray(start, endExclusive))],
+      { type: contentType },
+    );
 
-  const response = await fetch(
-    `https://api.cloudinary.com/v1_1/${config.cloudName}/${resourceType}/upload`,
-    {
+    uploadForm.append("file", uploadBlob, filename);
+    uploadForm.append("api_key", config.apiKey);
+    uploadForm.append("folder", params.folder);
+    uploadForm.append("public_id", params.public_id);
+    uploadForm.append("timestamp", String(params.timestamp));
+    uploadForm.append("signature", signature);
+
+    const response = await fetch(uploadUrl, {
       method: "POST",
       body: uploadForm,
-    },
-  );
+      headers: isChunked
+        ? {
+            "Content-Range": `bytes ${start}-${endExclusive - 1}/${data.byteLength}`,
+            "X-Unique-Upload-Id": uploadId,
+          }
+        : undefined,
+    });
 
-  const body = (await response.json().catch(() => null)) as
-    | (CloudinaryUploadResponse & { error?: { message?: string } })
-    | null;
+    body = (await response.json().catch(() => null)) as
+      | CloudinaryUploadApiResponse
+      | null;
 
-  if (!response.ok || !body?.secure_url) {
-    throw new Error(body?.error?.message || `Cloudinary upload failed with ${response.status}.`);
+    if (!response.ok) {
+      const fallback =
+        response.status === 413
+          ? "Cloudinary rejected the file because it exceeds this account's upload-size limit."
+          : `Cloudinary upload failed with ${response.status}.`;
+      throw new CloudinaryUploadError(body?.error?.message || fallback, response.status);
+    }
+
+    if (endExclusive < data.byteLength && body?.done !== false) {
+      throw new Error("Cloudinary ended a chunked upload before the complete file was sent.");
+    }
+  }
+
+  if (!body?.secure_url || !body.public_id || !body.resource_type) {
+    throw new Error("Cloudinary completed the upload without returning a usable media URL.");
   }
 
   const thumbnailUrl =

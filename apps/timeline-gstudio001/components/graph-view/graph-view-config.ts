@@ -20,6 +20,15 @@ export const MAX_TIMELINE_PPS = 200;
 /** Opens a notch wider than the packing constant's 40 so clips breathe. */
 export const DEFAULT_TIMELINE_PPS = 50;
 
+/**
+ * Cards kept mounted beyond each horizontal edge of a graph strip.
+ *
+ * Video filmstrips discover their frame URLs only when their card mounts.
+ * Eight cards gives fast pans roughly a viewport of look-ahead at ordinary
+ * clip widths while keeping large timelines bounded by virtualization.
+ */
+export const GRAPH_STRIP_OVERSCAN_ITEMS = 8;
+
 /** Gap between grid cells — sized as the seek-rail BAND: the slim track
  *  centres inside it with clear space on both sides, so the rail (and its
  *  thumb) never touches the cards above or below. The strips reserve the

@@ -9,9 +9,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { twMerge } from "tailwind-merge";
 
 import {
   getChildren,
@@ -830,10 +832,10 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
             aria-rowcount={childIds.length === 0 ? 0 : 1}
             aria-colcount={childIds.length}
             onKeyDown={onKeyDown}
-            className={[
+            className={twMerge(
               "relative overflow-x-auto rounded-md border border-dashed border-border p-2",
-              className ?? "",
-            ].join(" ")}
+              className,
+            )}
             // When WE own horizontal scrolling (pan hook), reserve horizontal
             // touch gestures for it and leave vertical native ("pan-y"). With
             // panToScroll off there is no pan hook, so the browser must keep
@@ -860,7 +862,7 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                 <div
                   aria-hidden="true"
                   data-drop-indicator="virtual"
-                  className="pointer-events-none absolute inset-y-0 z-20 w-1 rounded-full bg-primary"
+                  className="pointer-events-none absolute inset-y-0 z-20 w-1 -translate-x-1/2 rounded-full bg-primary"
                   style={{ left: indicatorLeft }}
                 />
               )}
@@ -873,14 +875,18 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
                   // Sync the roving index to whatever card actually gains focus
                   // (click, programmatic focus), not just keyboard navigation.
                   onFocus={() => onItemFocus(childIds[item.index])}
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: item.size - gap,
-                    height: itemHeight,
-                    transform: `translateX(${item.start}px)`,
-                  }}
+                  style={
+                    {
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: item.size - gap,
+                      height: itemHeight,
+                      transform: `translateX(${item.start}px)`,
+                      "--dnd-drop-indicator-half-gap":
+                        item.index === 0 ? "0px" : `${gap / 2}px`,
+                    } as CSSProperties
+                  }
                 >
                   {/* Explicit sizing: the item fills its (possibly variable) slot.
                       With panToScroll, item drags move to the grip bar or behind

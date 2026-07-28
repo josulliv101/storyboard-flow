@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  createContext,
   memo,
   useCallback,
   useContext,
@@ -9,6 +10,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import { FolderInput } from "lucide-react";
 
@@ -45,10 +47,30 @@ import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TrimFramePreview } from "./graph-trim-frame-preview";
 import { createDerivedCache } from "@/lib/derived-cache";
-import { videoFrameUrls } from "@/lib/video-frame-url";
+import {
+  collectionPreviewFrameUrl,
+  videoFrameUrls,
+} from "@/lib/video-frame-url";
 
 /** Never sample more than this many frames for one card, however wide. */
 const VIDEO_FRAME_CAP = 16;
+
+/**
+ * Marks the bounded virtual-strip window as safe to load eagerly. The same
+ * card renderer is used in grid view, where eager loading would request every
+ * video at once, so lazy remains the default outside this boundary.
+ */
+const VideoFrameLoadingContext = createContext<"lazy" | "eager">("lazy");
+
+export function VideoFrameLookAhead({
+  children,
+}: Readonly<{ children: ReactNode }>) {
+  return (
+    <VideoFrameLoadingContext.Provider value="eager">
+      {children}
+    </VideoFrameLoadingContext.Provider>
+  );
+}
 
 /** Live width/height of a card, via ResizeObserver — drives how many frames a
  *  video filmstrip shows, so it stays a sensible sequence at every zoom (R6
@@ -143,7 +165,9 @@ function useHydratedCollectionPreviews(
       compute: (graph: CollectionsGraph, nodeId: string) =>
         hydratedCollectionPreviews(graph, nodeId),
       contentKey: (previews) =>
-        previews.map((p) => `${p.id}\0${p.poster ?? p.src}`).join("\x01"),
+        previews
+          .map((p) => `${p.id}\0${p.poster ?? p.src}\0${p.trimIn ?? 0}`)
+          .join("\x01"),
     }),
   );
   const getSnapshot = useCallback(() => {
@@ -346,15 +370,22 @@ function DisabledChip({ inherited }: { inherited: boolean }) {
           : "Skipped during playback"
       }
       className={[
-        "pointer-events-none absolute right-1 top-1 z-10 rounded px-1 py-0.5 font-mono text-[8px] leading-none font-semibold tracking-[0.08em]",
+        "pointer-events-none absolute right-2 bottom-2 z-20 rounded px-1 py-0.5 font-mono text-[8px] leading-none font-semibold tracking-[0.08em]",
         inherited
-          ? "bg-black/75 text-zinc-300 ring-1 ring-zinc-500/40"
-          : "bg-black/80 text-amber-300 ring-1 ring-amber-400/40",
+          ? "bg-zinc-950/95 text-zinc-100 ring-1 ring-zinc-400/70"
+          : "bg-zinc-950/95 text-amber-200",
       ].join(" ")}
     >
       {inherited ? "PARENT OFF" : "DISABLED"}
     </span>
   );
+}
+
+/** Shared collection glyph for both the card affordance and an empty drag
+ * ghost. The lighter stroke keeps the compound folder/arrow mark readable at
+ * small sizes without looking heavier than the surrounding icon system. */
+function CollectionFolderGlyph({ className }: Readonly<{ className?: string }>) {
+  return <FolderInput aria-hidden="true" className={className} strokeWidth={1.5} />;
 }
 
 /**
@@ -418,6 +449,7 @@ const GraphClipContent = memo(function GraphClipContent({
   // Above the collection early-return below — hooks may not be conditional.
   const inheritedDisabled = useDisabledByAncestor(id);
   const provenance = useCardProvenance(id);
+  const frameLoading = useContext(VideoFrameLoadingContext);
 
   // MEDIA pixels only. Collections don't render through this seam anymore:
   // their card carries interactive controls (folder drill-in, inline rename),
@@ -428,6 +460,7 @@ const GraphClipContent = memo(function GraphClipContent({
   if (node.kind === "collection") return null;
 
   const isVideo = node.mediaKind === "video";
+  const muted = node.disabled === true || inheritedDisabled;
   // A wider clip shows MORE distinct frames rather than the same still tiled
   // — falling back to a duration-based count until first measured.
   const frames = isVideo
@@ -458,9 +491,8 @@ const GraphClipContent = memo(function GraphClipContent({
         // the identical adjacency, so full-bleed pressed into it there too.
         // The card's outer box (and so width = duration) is unchanged.
         "relative flex h-full w-full overflow-hidden rounded-md bg-zinc-900 p-1.5",
-        selected ? "ring-2 ring-amber-400" : "ring-1 ring-white/15",
+        selected ? "ring-1 ring-inset ring-amber-300/65" : "ring-1 ring-white/15",
         rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
-        isDragSource ? "opacity-40" : "",
         // Disabled reads as MUTED, never as missing: the card keeps its slot
         // and its full width (its duration still shapes the board), it just
         // stops looking like content that plays. Grayscale + reduced opacity
@@ -468,12 +500,19 @@ const GraphClipContent = memo(function GraphClipContent({
         //
         // Inherited disabling looks IDENTICAL — a viewer sees neither — and
         // only the chip distinguishes them.
-        node.disabled || inheritedDisabled ? "opacity-45 grayscale" : "",
       ].join(" ")}
       // Distinct VALUES so e2e can assert which cause is in play; both are
       // truthy for "this card is muted".
       data-disabled={node.disabled ? "true" : inheritedDisabled ? "inherited" : undefined}
     >
+      <span
+        data-disabled-visuals={muted ? "true" : undefined}
+        className={[
+          "relative flex h-full w-full overflow-hidden rounded-sm",
+          isDragSource ? "opacity-40" : muted ? "opacity-45" : "",
+          muted ? "grayscale" : "",
+        ].join(" ")}
+      >
       {frameSrcs.length === 0 ? (
         <span className="flex h-full w-full items-center justify-center text-[10px] text-zinc-500">
           No preview
@@ -487,12 +526,18 @@ const GraphClipContent = memo(function GraphClipContent({
               src={src}
               alt=""
               draggable={false}
-              loading="lazy"
+              // The virtual strip itself is the loading boundary: only the
+              // visible cards plus its bounded look-ahead are mounted. Start
+              // those frames immediately so a fast horizontal pan cannot
+              // outrun the browser's native lazy-load distance.
+              loading={frameLoading}
+              decoding="async"
               className="h-full min-w-0 flex-1 border-r border-black/60 object-cover last:border-r-0"
             />
           ))}
         </span>
       )}
+      </span>
       {/* Kind tag (R6 #7): a WORD, bottom-left. The glyph version (a 4px film
           or picture icon in the top corner) was ambiguous at small item sizes
           — the two lucide marks read as the same smudge — so it says which it
@@ -502,15 +547,15 @@ const GraphClipContent = memo(function GraphClipContent({
       <span
         aria-hidden="true"
         data-media-kind={isVideo ? "video" : "image"}
-        className="pointer-events-none absolute bottom-1 left-1 z-10 rounded bg-black/75 px-1 py-0.5 font-mono text-[8px] leading-none font-semibold tracking-[0.08em] text-zinc-100"
+        className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[9px] leading-none font-semibold tracking-[0.08em] text-zinc-100"
       >
         {isVideo ? "VIDEO" : "IMAGE"}
       </span>
-      {(node.disabled || inheritedDisabled) && (
+      {muted && (
         <DisabledChip inherited={node.disabled !== true} />
       )}
       {provenance && <ProvenanceLabel parentId={provenance.parentId} name={provenance.name} />}
-      {trimEnabled && <LiveDurationPill id={id} node={node} />}
+      {trimEnabled && !muted && <LiveDurationPill id={id} node={node} />}
       {/* Floating frame-at-the-edge panel during a trim drag (video only) —
           rides the same per-node live-trim channel as the pill. */}
       {trimEnabled && <TrimFramePreview id={id} node={node} />}
@@ -637,7 +682,7 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
   // card picks its two representative frames.
   const chosen = all.length > 1 ? [all[0], all[all.length - 1]] : all;
   const derivedFrames: string[] = isCollection
-    ? chosen.map((preview) => preview.poster ?? preview.src).filter(Boolean)
+    ? chosen.map((preview) => collectionPreviewFrameUrl(preview)).filter(Boolean)
     : (() => {
         const src = mediaGhostSrc(node);
         return src ? [src] : [];
@@ -672,11 +717,18 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
             />
           ))}
         </span>
+      ) : isCollection ? (
+        <span
+          data-empty-collection-ghost
+          className="flex h-full w-full items-center justify-center"
+        >
+          <CollectionFolderGlyph className="h-7 w-7 text-sky-200" />
+        </span>
       ) : (
         <span className="flex h-full w-full flex-col items-center justify-center gap-1 p-2 text-center">
           <span className="truncate text-[11px] font-semibold text-zinc-100">{node.name}</span>
           <span className="font-mono text-[9px] text-zinc-400">
-            {node.kind === "collection" ? "Timeline" : `${mediaDurationSeconds(node).toFixed(2)}s`}
+            {mediaDurationSeconds(node).toFixed(2)}s
           </span>
         </span>
       )}
@@ -742,14 +794,13 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         // placeholder, the live children once hydrated. The primitive's default
         // reads live childCount alone, which speaks "0 items" over a card
         // displaying "9" until its clips load.
-        ariaLabel={`${displayName} (collection, ${count} items)`}
+        ariaLabel={`${displayName} (collection, ${count} ${count === 1 ? "item" : "items"})`}
         className={[
           // `relative` so the disabled chip below can pin to this card's own
           // top-right corner rather than some ancestor's.
           "relative flex h-full w-full flex-col justify-between overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.08] p-1.5",
-          selected ? "ring-2 ring-amber-400" : "",
+          selected ? "ring-1 ring-inset ring-amber-300/65" : "",
           rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
-          isDragSource ? "opacity-40" : "",
           // No `data-disabled` twin here: SelectionSurface takes an explicit
           // prop list with no rest spread, so a hyphenated attribute passed to
           // it is silently dropped — and TS does not flag it, because excess
@@ -757,19 +808,25 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           // are what tests and e2e can query on a collection card; the
           // inherited one gets its own so the two causes stay separable, the
           // way `data-disabled`'s values do on a media card.
-          muted ? "opacity-45 grayscale is-disabled-card" : "",
+          muted ? "is-disabled-card" : "",
           muted && node.disabled !== true ? "is-parent-disabled-card" : "",
         ].join(" ")}
       >
         {muted && <DisabledChip inherited={node.disabled !== true} />}
-        <span className="flex min-h-0 flex-1 gap-0.5 overflow-hidden">
+        <span
+          data-disabled-visuals={muted ? "true" : undefined}
+          className={[
+            "flex min-h-0 flex-1 gap-0.5 overflow-hidden",
+            isDragSource ? "opacity-40" : muted ? "opacity-45" : "",
+            muted ? "grayscale" : "",
+          ].join(" ")}
+        >
           {previews.length === 0 ? (
-            <span className="flex flex-1 items-center justify-center text-[9px] text-zinc-500">
-              {/* Previews are direct MEDIA children only, so a collection of
-                  nothing but sub-collections has none — that is not "Empty"
-                  (count > 0). Reserve "Empty" for a truly childless collection. */}
-              {!hydrated ? "Open to load" : count === 0 ? "Empty" : "No media preview"}
-            </span>
+            <span
+              data-empty-collection-preview
+              aria-hidden="true"
+              className="flex flex-1 items-center justify-center"
+            />
           ) : (
             previews.map((preview, index) => (
               // eslint-disable-next-line @next/next/no-img-element
@@ -782,7 +839,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
                 // already-loaded frame. The slot is the stable identity, so the
                 // element persists and only its `src` swaps.
                 key={index}
-                src={preview.poster ?? preview.src}
+                src={collectionPreviewFrameUrl(preview)}
                 alt=""
                 draggable={false}
                 loading="lazy"
@@ -791,7 +848,13 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             ))
           )}
         </span>
-        <span className="mt-1 flex items-center justify-between gap-1">
+        <span
+          data-collection-metadata
+          className={[
+            "mt-1.5 flex items-center justify-between gap-1.5 pl-1 pb-0.5",
+            muted ? "pr-[4.75rem]" : "pr-1",
+          ].join(" ")}
+        >
           <span
             onDoubleClick={(event) => {
               event.stopPropagation();
@@ -799,17 +862,24 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
               // (keyboard: F2 on the focused card — see OpenKeyBoundary)
             }}
             title="Double-click or press F2 to rename"
-            className="min-w-0 flex-1 cursor-text truncate text-[10px] font-semibold text-zinc-100"
+            className="min-w-0 flex-1 cursor-text truncate text-xs font-semibold text-zinc-100"
           >
             {displayName}
           </span>
-          <span className="flex shrink-0 items-center gap-1 font-mono text-[9px] text-zinc-400">
+          <span className="flex shrink-0 items-center gap-1 font-mono text-[11px] font-medium text-zinc-300">
             {typeof totalSeconds === "number" && totalSeconds > 0 ? (
-              <span className="text-sky-300/90" title="Total duration of contents">
-                {formatCollectionSeconds(totalSeconds)}
-              </span>
+              <>
+                <span className="text-sky-300/90" title="Total duration of contents">
+                  {formatCollectionSeconds(totalSeconds)}
+                </span>
+                <span aria-hidden="true" className="text-zinc-500">
+                  /
+                </span>
+              </>
             ) : null}
-            <span>{count}</span>
+            <span>
+              {count} {count === 1 ? "item" : "items"}
+            </span>
           </span>
         </span>
       </CollectionItem.SelectionSurface>
@@ -840,7 +910,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             sub-timeline row's drill button. Both NAVIGATE; the sidebar's
             FolderTree toggles whether the children tree is shown, which is a
             different verb and no longer shares this icon. */}
-        <FolderInput className="h-[55%] w-[55%]" />
+        <CollectionFolderGlyph className="h-[55%] w-[55%]" />
       </button>
 
       {/* The rename editor — a REAL input, overlaying the label row while
@@ -851,7 +921,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           onInput={rename.setDraft}
           onCommit={rename.commit}
           onCancel={rename.cancel}
-          className="absolute inset-x-1.5 bottom-1.5 z-20 rounded-sm bg-zinc-950/95 px-1 py-0.5 text-[10px] font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
+          className="absolute inset-x-2.5 bottom-2 z-20 rounded-sm bg-zinc-950/95 px-1 py-0.5 text-xs font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
         />
       )}
 

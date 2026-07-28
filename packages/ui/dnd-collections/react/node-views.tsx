@@ -373,13 +373,18 @@ export function NodeCardIndicators({
         <div
           data-nest-state={nestState}
           className={[
-            "pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md border-2 text-[10px] font-bold",
+            "pointer-events-none absolute inset-0 z-10 flex items-end justify-center rounded-md border-2 px-2 pb-2 text-xs font-bold",
             nestState === "valid"
-              ? "border-primary bg-primary/15 text-primary"
-              : "border-destructive bg-destructive/15 text-destructive",
+              ? "border-primary bg-muted/70 text-foreground backdrop-blur-[2px]"
+              : "border-destructive bg-destructive/20 text-destructive backdrop-blur-[1px]",
           ].join(" ")}
         >
-          <span className="rounded bg-background/95 px-1.5 py-0.5 shadow">
+          <span
+            className={[
+              "rounded-md bg-background/95 px-2 py-1 shadow-lg ring-1",
+              nestState === "valid" ? "ring-primary/60" : "ring-destructive/50",
+            ].join(" ")}
+          >
             {nestState === "valid" ? "Drop to nest" : "Cannot drop (cycle)"}
           </span>
         </div>
@@ -390,14 +395,20 @@ export function NodeCardIndicators({
         <div
           aria-hidden="true"
           data-drop-indicator="before"
-          className="pointer-events-none absolute inset-y-0 -left-1.5 z-20 w-1 rounded-full bg-primary"
+          className="pointer-events-none absolute inset-y-0 z-20 w-1 -translate-x-1/2 rounded-full bg-primary"
+          style={{
+            left: "calc(-1 * var(--dnd-drop-indicator-half-gap, 4px))",
+          }}
         />
       )}
       {dropSide === "after" && (
         <div
           aria-hidden="true"
           data-drop-indicator="after"
-          className="pointer-events-none absolute inset-y-0 -right-1.5 z-20 w-1 rounded-full bg-primary"
+          className="pointer-events-none absolute inset-y-0 z-20 w-1 translate-x-1/2 rounded-full bg-primary"
+          style={{
+            right: "calc(-1 * var(--dnd-drop-indicator-half-gap, 4px))",
+          }}
         />
       )}
     </>

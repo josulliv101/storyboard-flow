@@ -6,9 +6,21 @@ import {
   isAllowedMediaPathname,
 } from "@/lib/firebase-media-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
+import {
+  ProjectAssetScopeError,
+  requireProjectAssetScope,
+} from "@/lib/project-asset-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function projectScopeFromMediaPathname(pathname: string) {
+  const match =
+    /^(?:timeline-videos|timeline-thumbnails)\/projects\/([^/]+)\/([^/]+)\//.exec(
+      pathname,
+    );
+  return match ? { uid: match[1], projectId: match[2] } : null;
+}
 
 async function handleMediaRequest(request: Request, includeBody: boolean) {
   const pathname = new URL(request.url).searchParams.get("pathname");
@@ -18,8 +30,15 @@ async function handleMediaRequest(request: Request, includeBody: boolean) {
   }
 
   try {
-    const { response } = await requireAuthUser();
-    if (response) return response;
+    const { user, response } = await requireAuthUser();
+    if (response || !user) {
+      return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const scope = projectScopeFromMediaPathname(pathname);
+    if (scope && scope.uid !== user.uid) {
+      return new NextResponse("Media not found.", { status: 404 });
+    }
+    if (scope) await requireProjectAssetScope(scope.projectId, user.uid);
 
     const media = await getMediaMetadata(pathname);
     if (!media) {
@@ -68,6 +87,9 @@ async function handleMediaRequest(request: Request, includeBody: boolean) {
       },
     });
   } catch (error) {
+    if (error instanceof ProjectAssetScopeError) {
+      return new NextResponse("Media not found.", { status: 404 });
+    }
     console.error("[GSTUDIO_FIREBASE_MEDIA_READ_ERROR]", error);
     return new NextResponse("Unable to load hosted media.", { status: 500 });
   }

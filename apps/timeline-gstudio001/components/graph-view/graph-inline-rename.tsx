@@ -94,12 +94,14 @@ export function InlineNameEditor({
   onCommit,
   onCancel,
   className,
+  ariaLabel = "Timeline name",
 }: Readonly<{
   initialValue: string;
   onInput: (value: string) => void;
   onCommit: () => void;
   onCancel: () => void;
   className?: string;
+  ariaLabel?: string;
 }>) {
   const setRef = useCallback((element: HTMLInputElement | null) => {
     if (!element) return;
@@ -111,7 +113,7 @@ export function InlineNameEditor({
   return (
     <input
       ref={setRef}
-      aria-label="Timeline name"
+      aria-label={ariaLabel}
       defaultValue={initialValue}
       spellCheck={false}
       onChange={(event) => onInput(event.target.value)}

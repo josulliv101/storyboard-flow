@@ -16,7 +16,12 @@ import {
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
-import { useCollectionPreviewFrames, useEnabledChildCount } from "./graph-item-content";
+import {
+  VideoFrameLookAhead,
+  useCollectionPreviewFrames,
+  useEnabledChildCount,
+} from "./graph-item-content";
+import { collectionPreviewFrameUrl } from "@/lib/video-frame-url";
 import { hydrateTimeline } from "./graph-hydration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { NativeDropGrid, NativeDropStrip } from "./graph-native-drop";
@@ -37,6 +42,7 @@ import {
 import {
   GRID_GAP,
   GRID_UNCAPPED_HEIGHT,
+  GRAPH_STRIP_OVERSCAN_ITEMS,
   ITEM_SIZE_DIMENSIONS,
   MAX_SUBTREE_DEPTH,
   SUBTIMELINE_INDENT_PX,
@@ -83,6 +89,7 @@ function useCollectionChildIds(collectionId: NodeId): readonly NodeId[] {
  *  lazy-hydrate its clips then reveal its strip AND its own collection children
  *  as further-indented rows (recursively). */
 function SubTimelineNode({
+  projectId,
   collectionId,
   depth,
   surface,
@@ -92,6 +99,7 @@ function SubTimelineNode({
   rulerOn,
   timeChannel,
 }: Readonly<{
+  projectId: string;
   collectionId: NodeId;
   depth: number;
   surface: FocusSurface;
@@ -252,7 +260,7 @@ function SubTimelineNode({
             // eslint-disable-next-line @next/next/no-img-element
             <img
               key={index}
-              src={frame.poster ?? frame.src}
+              src={collectionPreviewFrameUrl(frame)}
               alt=""
               draggable={false}
               loading="lazy"
@@ -279,7 +287,7 @@ function SubTimelineNode({
             // cards keep every pointerdown and the in-grid line is a
             // passive indicator.
             <div className="relative min-w-0">
-              <NativeDropGrid collectionId={id}>
+              <NativeDropGrid collectionId={id} projectId={projectId}>
                 <VirtualGrid
                   collectionId={collectionId}
                   cellWidth={dims.gridWidth}
@@ -312,10 +320,12 @@ function SubTimelineNode({
               )}
             </div>
           ) : (
-            <NativeDropStrip collectionId={id}>
+            <VideoFrameLookAhead>
+              <NativeDropStrip collectionId={id} projectId={projectId}>
               <VirtualStrip
                 collectionId={collectionId}
                 pixelsPerSecond={pixelsPerSecond}
+                overscan={GRAPH_STRIP_OVERSCAN_ITEMS}
                 itemWidth={collectionCardWidth(pixelsPerSecond)}
                 itemHeight={dims.strip}
                 itemDragActivation="hold"
@@ -347,12 +357,14 @@ function SubTimelineNode({
                   ariaLabel={`Seek preview in ${name}`}
                 />
               )}
-            </NativeDropStrip>
+              </NativeDropStrip>
+            </VideoFrameLookAhead>
           )}
 
           {depth + 1 < MAX_SUBTREE_DEPTH &&
             childIds.map((childId) => (
               <SubTimelineNode
+                projectId={projectId}
                 key={childId as string}
                 collectionId={childId}
                 depth={depth + 1}
@@ -371,6 +383,7 @@ function SubTimelineNode({
 }
 
 export function SubTimelines({
+  projectId,
   focusedId,
   surface,
   itemSize,
@@ -379,6 +392,7 @@ export function SubTimelines({
   rulerOn,
   timeChannel,
 }: Readonly<{
+  projectId: string;
   focusedId: string;
   surface: FocusSurface;
   itemSize: ItemSize;
@@ -394,6 +408,7 @@ export function SubTimelines({
     <div className="flex min-w-0 flex-col gap-3">
       {childIds.map((collectionId) => (
         <SubTimelineNode
+          projectId={projectId}
           key={collectionId as string}
           collectionId={collectionId}
           depth={0}

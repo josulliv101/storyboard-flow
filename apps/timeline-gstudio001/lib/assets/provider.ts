@@ -13,7 +13,7 @@ import type {
 /** Per-request context. Today just the signed-in user; per-user OAuth
  *  credentials (Drive/Dropbox) will arrive here when that track lands, which
  *  is why every provider method takes it rather than reading globals. */
-export type AssetContext = Readonly<{ uid: string }>;
+export type AssetContext = Readonly<{ uid: string; projectId: string }>;
 
 export type AssetProvider = AssetProviderDescriptor &
   Readonly<{

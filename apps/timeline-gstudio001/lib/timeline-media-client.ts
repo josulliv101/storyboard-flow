@@ -3,6 +3,8 @@ export type TimelineMediaUploadResult = {
   url: string;
   thumbnailPathname?: string;
   thumbnailUrl?: string;
+  providerId?: string;
+  assetId?: string;
 };
 
 // A `Promise<TimelineMediaUploadResult>` annotation on a function that returns
@@ -22,7 +24,7 @@ function parseUploadResult(value: unknown): TimelineMediaUploadResult | null {
   if (typeof value !== "object" || value === null) return null;
   const candidate = value as Record<string, unknown>;
   if (!nonEmptyString(candidate.pathname) || !nonEmptyString(candidate.url)) return null;
-  for (const key of ["thumbnailPathname", "thumbnailUrl"] as const) {
+  for (const key of ["thumbnailPathname", "thumbnailUrl", "providerId", "assetId"] as const) {
     if (candidate[key] !== undefined && !nonEmptyString(candidate[key])) return null;
   }
   return {
@@ -34,6 +36,10 @@ function parseUploadResult(value: unknown): TimelineMediaUploadResult | null {
     ...(candidate.thumbnailUrl !== undefined
       ? { thumbnailUrl: candidate.thumbnailUrl as string }
       : {}),
+    ...(candidate.providerId !== undefined
+      ? { providerId: candidate.providerId as string }
+      : {}),
+    ...(candidate.assetId !== undefined ? { assetId: candidate.assetId as string } : {}),
   };
 }
 
@@ -213,6 +219,7 @@ export async function probeVideoFile(
 export async function uploadTimelineMedia(
   filename: string,
   file: Blob,
+  projectId: string,
   folderPath?: string,
   options?: {
     /**
@@ -230,10 +237,10 @@ export async function uploadTimelineMedia(
   const formData = new FormData();
   formData.append("file", file);
   formData.append("filename", safeFilename);
+  formData.append("projectId", projectId);
   if (folderPath) {
     formData.append("folderPath", folderPath);
   }
-
   if (isVideoUpload(safeFilename, file)) {
     const thumbnail =
       options && "thumbnail" in options
@@ -256,8 +263,24 @@ export async function uploadTimelineMedia(
   });
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`Media upload failed: ${message}`);
+    const responseText = await response.text();
+    let message = responseText.trim();
+    try {
+      const payload: unknown = JSON.parse(responseText);
+      if (
+        typeof payload === "object" &&
+        payload !== null &&
+        "error" in payload &&
+        typeof payload.error === "string"
+      ) {
+        message = payload.error.trim();
+      }
+    } catch {
+      // Plain-text and proxy responses remain useful as-is.
+    }
+    throw new Error(
+      `Media upload failed: ${message || `the server returned ${response.status}`}`,
+    );
   }
 
   // `.json()` itself rejects on a 2xx body that isn't JSON at all (an HTML

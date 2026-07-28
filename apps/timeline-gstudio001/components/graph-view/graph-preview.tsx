@@ -53,7 +53,10 @@ import {
 } from "./graph-playhead-model";
 
 export type { PreviewCardSpans } from "./graph-playhead-model";
-import { WorkbenchSplitPane } from "@storyboard/ui/timeline/viewport/workbench-display-surface";
+import {
+  WorkbenchDisplaySurface,
+  WorkbenchSplitPane,
+} from "@storyboard/ui/timeline/viewport/workbench-display-surface";
 import {
   TimelineDocumentsProvider,
   useTimelineDocuments,
@@ -1756,43 +1759,35 @@ export function PreviewShell({
     createTimelineDocumentsState({ ...graphDocumentsGateway.read() }, {}),
   );
 
-  // Toggling the preview off UNMOUNTS the split pane, losing its height. Held
-  // here (this component stays mounted) so reopening restores the height the
-  // user last chose. A ref, not state — restoring only needs it at mount, and
-  // the pane reports on every drag frame.
-  const surfaceHeightRef = useRef<number | undefined>(undefined);
-  const getInitialSurfaceHeight = useCallback(() => surfaceHeightRef.current, []);
-  const handleSurfaceHeightChange = useCallback((height: number) => {
-    surfaceHeightRef.current = height;
-  }, []);
-
   // The pane's own close button goes through the SAME window event as the
   // sidebar's toggle, so `previewOn` in graph-timeline-view stays the one
   // owner of the state. Only reachable while open, so toggle IS close.
   const handleClose = useCallback(() => requestGraphPreviewToggle(), []);
 
-  if (!enabled) return <>{children}</>;
-
   return (
     <TimelineDocumentsProvider initialState={initialDocumentsState}>
-      <GatewayDocumentsBridge />
+      {enabled ? <GatewayDocumentsBridge /> : null}
       {/* Test/debug witness for which read model the pane is playing. */}
-      <span data-preview-source={manifest !== null ? "manifest" : "projection"} hidden />
+      {enabled ? (
+        <span data-preview-source={manifest !== null ? "manifest" : "projection"} hidden />
+      ) : null}
       <WorkbenchSplitPane
-        // NOT keyed by focusedId any more. That remount existed only to force
-        // the player off the previous collection's frame; the surface now
-        // repaints when its clip list changes, so a drill-in keeps the canvas,
-        // the decoded media cache and the chosen height instead of tearing the
-        // pane down and flashing black — the most visible part of "clicking
-        // into a collection updates the whole screen".
-        clips={clips}
-        currentTime={time}
-        onCurrentTimeChange={handleTimeChange}
-        playing={playing}
-        onPlayingChange={channel.setPlaying}
-        getInitialSurfaceHeight={getInitialSurfaceHeight}
-        onSurfaceHeightChange={handleSurfaceHeightChange}
-        onClose={handleClose}
+        // The shell and lower pane stay mounted whether the surface is open or
+        // closed. That keeps the virtual strip DOM node—and therefore its
+        // horizontal scroll position—alive through the preview toggle.
+        surface={
+          enabled ? (
+            <WorkbenchDisplaySurface
+              clips={clips}
+              currentTime={time}
+              onCurrentTimeChange={handleTimeChange}
+              playing={playing}
+              onPlayingChange={channel.setPlaying}
+              onClose={handleClose}
+              className="h-full rounded-b-none border-b-0"
+            />
+          ) : null
+        }
       >
         {/* The playhead and scrub band live in `children`; they read these
             spans so their time↔x mapping is the pane's clock, not their own. */}

@@ -13,10 +13,8 @@
 //                          presigned GETs (private buckets work untouched)
 // Credentials ride the SDK's default chain (AWS_ACCESS_KEY_ID / role / …).
 //
-// The bucket is APP-level, not per-user (unlike Cloudinary's per-uid
-// folder): listing still requires a session, but every signed-in user sees
-// the same bucket. Fine for a personal deployment; revisit if this app ever
-// becomes multi-tenant.
+// Objects are listed from the configured bucket but exposed only beneath
+// `<prefix>/<uid>/<projectId>/`, matching the Cloudinary ownership boundary.
 
 import { pageFromFlatListing, pageFromSearch } from "./path-folders";
 import type { AssetProvider } from "./provider";
@@ -89,7 +87,8 @@ const LISTING_TTL_MS = 30_000;
 
 async function mapObjects(
   objects: readonly S3ObjectSummary[],
-  config: S3Config,
+  scopePrefix: string,
+  projectId: string,
   urlFor: (key: string) => Promise<string>,
 ): Promise<Asset[]> {
   // Key set for the sibling-poster lookup, before any filtering: the poster
@@ -102,8 +101,8 @@ async function mapObjects(
     // Not renderable media (manifests, sidecar files, "directory" markers) —
     // skipped rather than surfaced as broken tiles.
     if (kind === null) continue;
-    if (!object.key.startsWith(config.prefix)) continue;
-    const relative = object.key.slice(config.prefix.length);
+    if (!object.key.startsWith(scopePrefix)) continue;
+    const relative = object.key.slice(scopePrefix.length);
     const segments = relative.split("/").filter((segment) => segment.length > 0);
     if (segments.length === 0) continue;
 
@@ -120,6 +119,7 @@ async function mapObjects(
     assets.push({
       id: object.key,
       providerId: S3_PROVIDER_ID,
+      projectIds: [projectId],
       name: segments[segments.length - 1],
       kind,
       src,
@@ -225,16 +225,16 @@ export function createS3AssetProvider(
   if (config === null) return null;
   const deps = depsOverride ?? createSdkDeps(config);
 
-  let cached: { at: number; assets: Promise<Asset[]> } | null = null;
+  let cached: { at: number; objects: Promise<readonly S3ObjectSummary[]> } | null = null;
   const listing = () => {
-    if (cached !== null && Date.now() - cached.at < LISTING_TTL_MS) return cached.assets;
-    const assets = deps.listObjects().then((objects) => mapObjects(objects, config, deps.urlFor));
+    if (cached !== null && Date.now() - cached.at < LISTING_TTL_MS) return cached.objects;
+    const objects = deps.listObjects();
     // A failed sweep must not poison the cache window with a rejection.
-    assets.catch(() => {
+    objects.catch(() => {
       cached = null;
     });
-    cached = { at: Date.now(), assets };
-    return assets;
+    cached = { at: Date.now(), objects };
+    return objects;
   };
 
   return {
@@ -253,8 +253,15 @@ export function createS3AssetProvider(
       upload: false,
       delete: false,
     },
-    async list(_ctx, query) {
-      const assets = await listing();
+    async list(ctx, query) {
+      const objects = await listing();
+      const scopePrefix = `${config.prefix}${ctx.uid}/${ctx.projectId}/`;
+      const assets = await mapObjects(
+        objects,
+        scopePrefix,
+        ctx.projectId,
+        deps.urlFor,
+      );
       // Search outranks browsing: a query spans the whole library, so scoping
       // it to the folder the user was standing in would hide the hits.
       if (query.search !== undefined && query.search.trim().length > 0) {

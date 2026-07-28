@@ -6,6 +6,7 @@ import type { ClipDetail } from "@storyboard/timeline-domain";
 import {
   DndCollections,
   buildGraph,
+  type CollectionGhostContentComponent,
   type CollectionItemShellComponent,
   type CollectionItemShellProps,
   type CollectionTrimOverviewContentComponent,
@@ -14,7 +15,10 @@ import {
   type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
 
-import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
+import {
+  GRAPH_VIEW_COMPONENTS,
+  VideoFrameLookAhead,
+} from "./graph-item-content";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { createGraphDetailsStore } from "@/lib/graph-details-store";
 
@@ -30,8 +34,10 @@ import { createGraphDetailsStore } from "@/lib/graph-details-store";
 // The registry field is optional in the type; the graph view always registers
 // it, so narrow to the defined component for `Meta`.
 const ItemShell: CollectionItemShellComponent = GRAPH_VIEW_COMPONENTS.ItemShell!;
+const GhostContent: CollectionGhostContentComponent = GRAPH_VIEW_COMPONENTS.GhostContent!;
 
 const COLLECTION_ID = "col-1" as NodeId;
+const EMPTY_COLLECTION_ID = "empty-col" as NodeId;
 
 /** A one-node graph: the shell reads the node (kind, name) from the store.
  *  The card renders un-hydrated here, so its preview frames come from the
@@ -41,6 +47,19 @@ const providerGraph = (() => {
   if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.value;
 })();
+
+const emptyCollectionGraph = (() => {
+  const result = buildGraph([
+    { kind: "collection", id: EMPTY_COLLECTION_ID, name: "Empty timeline", children: [] },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
+const emptyCollectionNode = emptyCollectionGraph.nodesById.get(EMPTY_COLLECTION_ID);
+if (emptyCollectionNode?.kind !== "collection") {
+  throw new Error("Empty collection ghost fixture did not build.");
+}
 
 /** A deterministic, fully-offline poster (a solid-colour SVG data URI). */
 function poster(label: string, fill: string): string {
@@ -77,6 +96,7 @@ function renderWithDetail(previewItems: PreviewItem[]) {
     trackIndex: 0,
     hydrated: false,
     itemCount: previewItems.length,
+    duration: previewItems.length * 4,
     previewItems,
   };
   const store = createGraphDetailsStore({ [COLLECTION_ID]: detail });
@@ -151,6 +171,7 @@ export const SingleFrame: Story = {
   play: async ({ canvasElement }) => {
     const images = previewImages(canvasElement);
     await expect(images).toHaveLength(1);
+    await expect(canvasElement).toHaveTextContent(/4\.0s\s*\/\s*1 item/);
   },
 };
 
@@ -168,6 +189,35 @@ export const PlaceholderAriaCountMatchesBadge: Story = {
     const surface = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
     // The stored summary (itemCount 2), not the live childCount (0).
     await expect(surface.getAttribute("aria-label")).toBe("A timeline (collection, 2 items)");
+    await expect(canvasElement).toHaveTextContent(/8\.0s\s*\/\s*2 items/);
+
+    const name = canvasElement.querySelector<HTMLElement>(
+      '[title="Double-click or press F2 to rename"]',
+    )!;
+    const surfaceRect = surface.getBoundingClientRect();
+    const nameRect = name.getBoundingClientRect();
+    await expect(nameRect.left - surfaceRect.left).toBeGreaterThanOrEqual(9);
+    await expect(surfaceRect.right - nameRect.right).toBeGreaterThanOrEqual(9);
+    await expect(surfaceRect.bottom - nameRect.bottom).toBeGreaterThanOrEqual(7);
+  },
+};
+
+/** An empty or unresolved collection shows only the collection affordance;
+ * no fallback copy is allowed to bleed through behind the folder glyph. */
+export const EmptyCardUsesCleanIconFallback: Story = {
+  args: baseArgs,
+  decorators: [renderWithDetail([])],
+  play: async ({ canvasElement }) => {
+    const fallback = canvasElement.querySelector<HTMLElement>(
+      "[data-empty-collection-preview]",
+    );
+    await expect(fallback).not.toBeNull();
+    await expect(fallback!.textContent).toBe("");
+    await expect(previewImages(canvasElement)).toHaveLength(0);
+    await expect(canvasElement).not.toHaveTextContent(/open to load|empty|no media preview/i);
+
+    const folder = canvasElement.querySelector<HTMLElement>('button[aria-label^="Open "]');
+    await expect(folder).not.toBeNull();
   },
 };
 
@@ -283,6 +333,10 @@ export const DisabledCard: Story = {
     await expect(chip).not.toBeNull();
     await expect(chip.dataset.disabledChip).toBe("self");
     await expect(chip.textContent).toBe("DISABLED");
+    await expect(getComputedStyle(surface).opacity).toBe("1");
+    await expect(getComputedStyle(surface).filter).toBe("none");
+    await expect(getComputedStyle(chip).opacity).toBe("1");
+    await expect(getComputedStyle(chip).filter).toBe("none");
   },
 };
 
@@ -302,6 +356,10 @@ export const DisabledByParentCard: Story = {
     const chip = canvasElement.querySelector<HTMLElement>("[data-disabled-chip]")!;
     await expect(chip.dataset.disabledChip).toBe("inherited");
     await expect(chip.textContent).toBe("PARENT OFF");
+    await expect(getComputedStyle(surface).opacity).toBe("1");
+    await expect(getComputedStyle(surface).filter).toBe("none");
+    await expect(getComputedStyle(chip).opacity).toBe("1");
+    await expect(getComputedStyle(chip).filter).toBe("none");
   },
 };
 
@@ -351,9 +409,11 @@ function FilmstripSettleHarness() {
   return (
     <DndCollections initialGraph={videoGraph} components={GRAPH_VIEW_COMPONENTS}>
       <GraphDetailsProvider store={store}>
-        <div data-resize-host style={{ width: 192, height: 96 }}>
-          <ItemShell id={VIDEO_ID} className="h-full w-full" />
-        </div>
+        <VideoFrameLookAhead>
+          <div data-resize-host style={{ width: 192, height: 96 }}>
+            <ItemShell id={VIDEO_ID} className="h-full w-full" />
+          </div>
+        </VideoFrameLookAhead>
       </GraphDetailsProvider>
     </DndCollections>
   );
@@ -375,6 +435,17 @@ export const FilmstripResampleSettles: Story = {
     const host = canvasElement.querySelector<HTMLElement>("[data-resize-host]")!;
     // First measurement adopts immediately: 192×96 → 2 frames.
     await waitFor(() => expect(previewImages(canvasElement)).toHaveLength(2));
+    // Mounted video cards are already inside the virtual strip's bounded
+    // look-ahead window, so their frames must be discovered immediately.
+    expect(previewImages(canvasElement).every((image) => image.loading === "eager")).toBe(true);
+    const kind = canvasElement.querySelector<HTMLElement>('[data-media-kind="video"]')!;
+    const card = kind.parentElement?.parentElement;
+    expect(card).not.toBeNull();
+    expect(getComputedStyle(kind).fontSize).toBe("9px");
+    const kindRect = kind.getBoundingClientRect();
+    const cardRect = card!.getBoundingClientRect();
+    expect(kindRect.left - cardRect.left).toBeGreaterThanOrEqual(7);
+    expect(cardRect.bottom - kindRect.bottom).toBeGreaterThanOrEqual(7);
 
     // Grow the card as a zoom drag would. The filmstrip must NOT adopt the
     // new count as soon as the resize lands (80ms is plenty for the
@@ -464,6 +535,33 @@ export const TrimOverviewSamplesDistinctFrames: Story = {
   },
 };
 
+/** An empty collection has no preview frame to paint, so its drag ghost uses
+ * the exact same light-stroke folder/arrow glyph as the collection card. */
+export const EmptyCollectionGhostUsesFolderGlyph: Story = {
+  args: baseArgs,
+  render: () => {
+    const store = createGraphDetailsStore({});
+    return (
+      <DndCollections initialGraph={emptyCollectionGraph}>
+        <GraphDetailsProvider store={store}>
+          <div className="h-24 w-24">
+            <GhostContent node={emptyCollectionNode} extraCount={0} />
+          </div>
+        </GraphDetailsProvider>
+      </DndCollections>
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const ghost = canvasElement.querySelector<HTMLElement>("[data-empty-collection-ghost]")!;
+    await expect(ghost).not.toBeNull();
+    await expect(ghost.textContent).toBe("");
+    const glyph = ghost.querySelector<SVGElement>("svg")!;
+    await expect(glyph.getAttribute("stroke-width")).toBe("1.5");
+    await expect(glyph.classList.contains("h-7")).toBe(true);
+    await expect(glyph.classList.contains("w-7")).toBe(true);
+  },
+};
+
 /**
  * A DISABLED collection: skipped in playback, counts and time totals, but it
  * keeps its slot and its full width — its duration still shapes the board.
@@ -492,6 +590,7 @@ export const DisabledCollection: Story = {
           trackIndex: 0,
           hydrated: false,
           itemCount: 2,
+          duration: 8,
           previewItems: [ASSET_A, ASSET_B],
         },
       });
@@ -509,7 +608,29 @@ export const DisabledCollection: Story = {
   play: async ({ canvasElement }) => {
     const card = canvasElement.querySelector(".is-disabled-card");
     await expect(card).not.toBeNull();
-    await expect(getComputedStyle(card as Element).filter).toBe("grayscale(1)");
+    await expect(getComputedStyle(card as Element).filter).toBe("none");
+    await expect(getComputedStyle(card as Element).opacity).toBe("1");
+    const visuals = canvasElement.querySelector<HTMLElement>("[data-disabled-visuals]")!;
+    await expect(getComputedStyle(visuals).filter).toBe("grayscale(1)");
+    await expect(Number(getComputedStyle(visuals).opacity)).toBeLessThan(1);
+    const chip = canvasElement.querySelector<HTMLElement>("[data-disabled-chip]")!;
+    await expect(getComputedStyle(chip).filter).toBe("none");
+    await expect(getComputedStyle(chip).opacity).toBe("1");
+    await expect(chip.classList.contains("right-2")).toBe(true);
+    await expect(chip.classList.contains("bottom-2")).toBe(true);
+    const metadata = canvasElement.querySelector<HTMLElement>("[data-collection-metadata]")!;
+    await expect(getComputedStyle(metadata).filter).toBe("none");
+    await expect(getComputedStyle(metadata).opacity).toBe("1");
+    await expect(metadata.textContent).toContain("A timeline");
+    await expect(metadata.textContent).toContain("8.0s");
+    await expect(metadata.textContent).toContain("2 items");
+    const folderGlyph = canvasElement.querySelector<SVGElement>(
+      'button[aria-label="Open A timeline"] svg',
+    )!;
+    await expect(folderGlyph.getAttribute("stroke-width")).toBe("1.5");
+    await userEvent.click(card as HTMLElement);
+    await expect((card as HTMLElement).className).toContain("ring-amber-300/65");
+    await expect((card as HTMLElement).className).toContain("ring-inset");
     // The frames still render — a disabled card shows its content, muted.
     await expect(previewImages(canvasElement)).toHaveLength(2);
   },

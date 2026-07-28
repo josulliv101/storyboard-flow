@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   cloudinaryVideoFrameUrl,
+  collectionPreviewFrameUrl,
   videoFrameUrls,
   type VideoFrameUrlBuilder,
 } from "./video-frame-url";
@@ -43,6 +44,43 @@ describe("cloudinaryVideoFrameUrl", () => {
     expect(cloudinaryVideoFrameUrl("https://example.com/frame.jpg", 3)).toBe(
       "https://example.com/frame.jpg",
     );
+  });
+});
+
+describe("collectionPreviewFrameUrl", () => {
+  it("uses the exact front-trim time for a video collection preview", () => {
+    expect(
+      collectionPreviewFrameUrl({
+        kind: "video",
+        src: "https://res.cloudinary.com/demo/video/upload/folder/clip.mp4",
+        poster: CLOUDINARY_FRAME,
+        trimIn: 6.25,
+      }),
+    ).toContain("/so_6.25,");
+  });
+
+  it("keeps image and untrimmed video previews unchanged", () => {
+    const image = "https://cdn.test/image.jpg";
+    expect(collectionPreviewFrameUrl({ kind: "image", src: image })).toBe(image);
+    expect(
+      collectionPreviewFrameUrl({
+        kind: "video",
+        src: "https://cdn.test/video.mp4",
+        poster: CLOUDINARY_FRAME,
+      }),
+    ).toBe(CLOUDINARY_FRAME);
+  });
+
+  it("degrades to the existing poster when a provider cannot address frames", () => {
+    const poster = "https://cdn.test/video-poster.jpg";
+    expect(
+      collectionPreviewFrameUrl({
+        kind: "video",
+        src: "https://cdn.test/video.mp4",
+        poster,
+        trimIn: 4,
+      }),
+    ).toBe(poster);
   });
 });
 

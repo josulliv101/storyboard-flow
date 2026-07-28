@@ -10,9 +10,6 @@ import {
   type NodeId,
 } from "../core/graph";
 
-/** Half the drop-indicator line's width (px) — used to center it in a gap. */
-const INDICATOR_HALF_WIDTH = 2;
-
 /**
  * A fully trimmed clip can derive a 0px width from its duration. The slot
  * still needs to be visible and clickable: NodeCard's `w-full` fills the slot
@@ -46,12 +43,12 @@ export function resolveBoundaryIndex(
 
 /**
  * Left offset (content coords) for the drop indicator at a boundary whose gap
- * begins at `edgeStart` — half a gap back, centered on the indicator line, and
+ * begins at `edgeStart` — half a gap back at the line's geometric centre, and
  * never negative. `edgeStart` is the following item's `start`, or the strip's
  * total size when appending at the far end.
  */
 export function indicatorLeftOffset(edgeStart: number, gap: number): number {
-  return Math.max(0, edgeStart - gap / 2 - INDICATOR_HALF_WIDTH);
+  return Math.max(0, edgeStart - gap / 2);
 }
 
 /**

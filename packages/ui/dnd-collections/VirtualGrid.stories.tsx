@@ -436,11 +436,30 @@ export const PaletteIntoGridAndNestIntoCollection: Story = {
       expect(gridOrder(canvasElement, "grid")[1]).toMatch(/^vid-/);
     });
 
-    // Palette collection onto the folder card's center: nest-add inside.
+    // Palette collection onto the folder card's center: the label remains
+    // visible at the bottom-center while the drag ghost occupies the middle.
     const collectionButton = canvasElement.querySelector<HTMLElement>(
       '[data-palette-item="new-collection"]'
     )!;
-    await dragToPoint(collectionButton, rectCenter(nodeCard(canvasElement, "folder")));
+    const folderPoint = rectCenter(nodeCard(canvasElement, "folder"));
+    await dragHoldAt(collectionButton, folderPoint);
+    await waitFor(() => {
+      const overlay = canvasElement.querySelector<HTMLElement>('[data-nest-state="valid"]');
+      expect(overlay).not.toBeNull();
+      const label = overlay!.querySelector<HTMLElement>("span");
+      expect(label).not.toBeNull();
+      const overlayRect = overlay!.getBoundingClientRect();
+      const labelRect = label!.getBoundingClientRect();
+      expect(labelRect.top).toBeGreaterThan(overlayRect.top + overlayRect.height / 2);
+      expect(labelRect.left + labelRect.width / 2).toBeCloseTo(
+        overlayRect.left + overlayRect.width / 2,
+        0,
+      );
+      expect(getComputedStyle(label!).fontSize).toBe("12px");
+      expect(getComputedStyle(overlay!).backdropFilter).toContain("blur");
+      expect(overlay!.className).toContain("bg-muted/70");
+    });
+    await releaseAt(folderPoint);
     await waitFor(() => {
       expect(nodeCard(canvasElement, "folder").getAttribute("aria-label")).toMatch(
         /collection, 2 items/i
@@ -507,6 +526,64 @@ export const GridGapDropInsertsAtBoundary: Story = {
       );
       expect(ids.slice(0, 7)).toEqual(["m1", "m2", "m3", "m4", "m5", "m0", "m6"]);
     });
+  },
+};
+
+export const CardBoundaryIndicatorStaysCenteredInGap: Story = {
+  render: () => <GridHarness />,
+  play: async ({ canvasElement }) => {
+    const m0 = nodeCard(canvasElement, "m0");
+    const m5 = nodeCard(canvasElement, "m5");
+    const m6 = nodeCard(canvasElement, "m6");
+    await waitForLayout(m6);
+    const m5Rect = m5.getBoundingClientRect();
+    const m6Rect = m6.getBoundingClientRect();
+    const target = {
+      x: m6Rect.left + 2,
+      y: m6Rect.top + m6Rect.height / 2,
+    };
+
+    await dragHoldAt(m0, target);
+    await waitFor(() => {
+      const indicator = canvasElement.querySelector<HTMLElement>(
+        '[data-drop-indicator="before"]',
+      );
+      expect(indicator).not.toBeNull();
+      const indicatorRect = indicator!.getBoundingClientRect();
+      const indicatorCenter = indicatorRect.left + indicatorRect.width / 2;
+      const gapCenter = (m5Rect.right + m6Rect.left) / 2;
+      expect(indicatorCenter).toBeCloseTo(gapCenter, 0);
+    });
+    await releaseAt(target);
+  },
+};
+
+export const RowStartIndicatorsShareOnePosition: Story = {
+  render: () => <GridHarness />,
+  play: async ({ canvasElement }) => {
+    const m4 = nodeCard(canvasElement, "m4");
+    const m7 = nodeCard(canvasElement, "m7");
+    await waitForLayout(m7);
+    const m4Rect = m4.getBoundingClientRect();
+    const target = {
+      x: m4Rect.left + 2,
+      y: m4Rect.top + m4Rect.height / 2,
+    };
+
+    await dragHoldAt(m7, target);
+    await waitFor(() => {
+      const indicators = [
+        ...canvasElement.querySelectorAll<HTMLElement>(
+          '[data-drop-indicator="before"], [data-drop-indicator="virtual-grid"]',
+        ),
+      ];
+      expect(indicators.length).toBeGreaterThan(0);
+      for (const indicator of indicators) {
+        const rect = indicator.getBoundingClientRect();
+        expect(rect.left + rect.width / 2).toBeCloseTo(m4Rect.left, 0);
+      }
+    });
+    await releaseAt(target);
   },
 };
 

@@ -31,7 +31,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
                   the preview pane mounting at main's top must not scroll
                   the page out from under its own sticky logic. */}
               <main
-                className="min-w-0 flex-1 px-8 pt-6"
+                className="min-w-0 flex-1 px-8 pt-[13px]"
                 style={{
                   paddingBottom: "var(--asset-library-height, 0px)",
                 }}

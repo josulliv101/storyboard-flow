@@ -192,6 +192,36 @@ describe("deriveClosureSummaries", () => {
     expect(closure.root.clips[0].duration).toBe(10);
   });
 
+  it("bubbles a nested media preview through collection-only ancestors", () => {
+    const videoLeaf: TimelineClip = {
+      ...mediaClip("nested-video", { duration: 12 }),
+      kind: "video",
+      src: "https://cdn.test/nested-video.mp4",
+      poster: "https://cdn.test/nested-video.jpg",
+      sourceDuration: 15,
+      trimIn: 3,
+    };
+    const leaf = docOf("leaf", [videoLeaf]);
+    const middle = docOf("middle", [collectionClip("leaf-ref", "leaf")]);
+    const root = docOf("root", [collectionClip("middle-ref", "middle")]);
+
+    const closure = deriveClosureSummaries(closureOf(root, middle, leaf));
+    const middlePreview = (closure.middle.clips[0] as CollectionTimelineClip).previewItems;
+    const rootPreview = (closure.root.clips[0] as CollectionTimelineClip).previewItems;
+
+    expect(middlePreview).toEqual([
+      {
+        id: "nested-video",
+        kind: "video",
+        src: "https://cdn.test/nested-video.mp4",
+        poster: "https://cdn.test/nested-video.jpg",
+        trimIn: 3,
+        alt: "nested-video",
+      },
+    ]);
+    expect(rootPreview).toEqual(middlePreview);
+  });
+
   it("keeps the stored summary for ids the loader could not resolve", () => {
     // The closure loader substitutes an unloadable branch with an EMPTY
     // document so it falls silent; deriving from that would overwrite a real

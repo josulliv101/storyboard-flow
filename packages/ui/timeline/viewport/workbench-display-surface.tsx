@@ -43,6 +43,19 @@ type CachedMedia =
   | { kind: "image"; element: HTMLImageElement }
   | { kind: "video"; element: HTMLVideoElement };
 
+type PlaybackSurfaceRect = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+type CanvasPointEvent = {
+  clientX: number;
+  clientY: number;
+  currentTarget: HTMLCanvasElement;
+};
+
 type WorkbenchDisplaySurfaceProps = {
   clips: TimelineClip[];
   currentTime: number;
@@ -65,9 +78,117 @@ const BUFFER_WINDOW_SIZE = 4;
 const DEFAULT_SURFACE_HEIGHT = 380;
 const MIN_SURFACE_HEIGHT = 120;
 const MIN_TIMELINE_SPACE = 260;
-/** The resize divider's own height (Tailwind h-3). Part of the sticky preview
- *  region, so the published sticky offset must include it. */
+/** The resize divider's own height (Tailwind h-3). The transport is centered
+ *  on this stable track and may overhang it without changing layout. */
 const DIVIDER_HEIGHT_PX = 12;
+
+type WorkbenchDividerTransportProps = {
+  currentTime: number;
+  duration: number;
+  isPlaying: boolean;
+  canPlay: boolean;
+  canSeekPrevious: boolean;
+  canSeekNext: boolean;
+  previewHovered: boolean;
+  onTogglePlaying: () => void;
+  onSeekPrevious: () => void;
+  onSeekNext: () => void;
+};
+
+function WorkbenchDividerTransport({
+  currentTime,
+  duration,
+  isPlaying,
+  canPlay,
+  canSeekPrevious,
+  canSeekNext,
+  previewHovered,
+  onTogglePlaying,
+  onSeekPrevious,
+  onSeekNext,
+}: WorkbenchDividerTransportProps) {
+  return (
+    <div
+      role="group"
+      aria-label="Preview transport"
+      className="pointer-events-none absolute inset-x-0 top-full z-50 h-0"
+      data-testid="workbench-preview-controls"
+      data-transport-layout="static"
+    >
+      <div
+        className="pointer-events-auto absolute left-1/2 flex h-11 w-[8.25rem] items-center justify-center"
+        data-transport-button-group
+        style={{ top: DIVIDER_HEIGHT_PX / 2, transform: "translate(-50%, -50%)" }}
+        onPointerDown={(event) => {
+          // The transport visually occupies the divider, but remains its own
+          // interaction island. A transport press must never begin a resize.
+          event.stopPropagation();
+        }}
+      >
+        <button
+          type="button"
+          onClick={onSeekPrevious}
+          disabled={!canSeekPrevious}
+          className="group/previous relative z-10 grid size-11 shrink-0 place-items-center text-zinc-400 transition-colors hover:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+          aria-label="Previous workbench clip"
+          title="Previous clip"
+        >
+          <span className="grid size-5 translate-x-2 place-items-center rounded-full transition-colors group-focus-visible/previous:ring-2 group-focus-visible/previous:ring-sky-400 group-focus-visible/previous:ring-offset-2 group-focus-visible/previous:ring-offset-zinc-950">
+            <SkipBack className="size-3 fill-current" />
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onTogglePlaying}
+          disabled={!canPlay}
+          className="group/play relative z-10 grid size-11 shrink-0 place-items-center text-zinc-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label={isPlaying ? "Pause workbench preview" : "Play workbench preview"}
+          title={isPlaying ? "Pause" : "Play"}
+        >
+          <span
+            className={cn(
+              "grid size-5 place-items-center rounded-full transition-colors group-hover/play:text-white group-focus-visible/play:ring-2 group-focus-visible/play:ring-sky-400 group-focus-visible/play:ring-offset-2 group-focus-visible/play:ring-offset-zinc-950",
+              previewHovered && "text-white",
+            )}
+            data-transport-primary-control
+          >
+            {isPlaying ? (
+              <Pause className="size-2.5 fill-current" />
+            ) : (
+              <Play className="ml-0.5 size-2.5 fill-current" />
+            )}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onSeekNext}
+          disabled={!canSeekNext}
+          className="group/next relative z-10 grid size-11 shrink-0 place-items-center text-zinc-400 transition-colors hover:text-white focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+          aria-label="Next workbench clip"
+          title="Next clip"
+        >
+          <span className="grid size-5 -translate-x-2 place-items-center rounded-full transition-colors group-focus-visible/next:ring-2 group-focus-visible/next:ring-sky-400 group-focus-visible/next:ring-offset-2 group-focus-visible/next:ring-offset-zinc-950">
+            <SkipForward className="size-3 fill-current" />
+          </span>
+        </button>
+      </div>
+
+      <span
+        className="absolute right-3 max-w-[calc(50%_-_5rem)] overflow-hidden text-ellipsis whitespace-nowrap rounded-full bg-zinc-900/90 px-2 py-0.5 font-mono text-[10px] text-zinc-400 shadow-sm"
+        aria-label={`Preview time ${formatSeconds(currentTime)} of ${formatSeconds(duration)}`}
+        data-testid="workbench-preview-time"
+        style={{ top: DIVIDER_HEIGHT_PX / 2, transform: "translateY(-50%)" }}
+      >
+        <span className="sm:hidden">{formatSeconds(currentTime)}</span>
+        <span className="hidden sm:inline">
+          {formatSeconds(currentTime)} / {formatSeconds(duration)}
+        </span>
+      </span>
+    </div>
+  );
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -240,6 +361,7 @@ export function WorkbenchDisplaySurface({
 }: WorkbenchDisplaySurfaceProps) {
   const { getCollectionClipFramePreview } = useTimelineDocuments();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const playbackSurfaceRectRef = useRef<PlaybackSurfaceRect | null>(null);
   const cacheRef = useRef(new Map<string, CachedMedia>());
   const activeMediaRef = useRef<DisplayMedia | null>(null);
   const activeClipDisabledRef = useRef(false);
@@ -257,6 +379,7 @@ export function WorkbenchDisplaySurface({
   // (the default, preserving every existing consumer's behavior).
   const isControlledPlayback = playing !== undefined;
   const [uncontrolledPlaying, setUncontrolledPlaying] = useState(false);
+  const [previewHovered, setPreviewHovered] = useState(false);
   const isPlaying = playing ?? uncontrolledPlaying;
   const setPlaying = useCallback(
     (next: boolean) => {
@@ -369,6 +492,10 @@ export function WorkbenchDisplaySurface({
     const scale = Math.min(cssWidth / sourceWidth, cssHeight / sourceHeight);
     const width = sourceWidth * scale;
     const height = sourceHeight * scale;
+    const left = (cssWidth - width) / 2;
+    const top = (cssHeight - height) / 2;
+    playbackSurfaceRectRef.current = { left, top, width, height };
+    canvas.dataset.previewPlaybackSurfaceReady = "true";
 
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     context.fillStyle = "#050505";
@@ -379,7 +506,7 @@ export function WorkbenchDisplaySurface({
     // one drawImage and reset immediately: the backdrop fill above must stay
     // its true black, and a leaked filter would tint the next frame drawn.
     if (activeClipDisabledRef.current) context.filter = "grayscale(1) opacity(0.45)";
-    context.drawImage(drawable, (cssWidth - width) / 2, (cssHeight - height) / 2, width, height);
+    context.drawImage(drawable, left, top, width, height);
     context.filter = "none";
   }, []);
 
@@ -399,6 +526,8 @@ export function WorkbenchDisplaySurface({
 
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) return;
+    playbackSurfaceRectRef.current = null;
+    canvas.dataset.previewPlaybackSurfaceReady = "false";
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     context.fillStyle = "#050505";
     context.fillRect(0, 0, cssWidth, cssHeight);
@@ -695,30 +824,66 @@ export function WorkbenchDisplaySurface({
   const canSeekPrevious = sortedClips.length > 0 && currentTime > 0;
   const canSeekNext = sortedClips.length > 0 && activeClipIndex < sortedClips.length - 1;
 
+  const isPointerOverPlaybackSurface = useCallback(
+    (event: CanvasPointEvent) => {
+      const playbackSurface = playbackSurfaceRectRef.current;
+      if (!canPlay || !playbackSurface) return false;
+
+      const canvasBounds = event.currentTarget.getBoundingClientRect();
+      const pointerX = event.clientX - canvasBounds.left;
+      const pointerY = event.clientY - canvasBounds.top;
+      return (
+        pointerX >= playbackSurface.left &&
+        pointerX <= playbackSurface.left + playbackSurface.width &&
+        pointerY >= playbackSurface.top &&
+        pointerY <= playbackSurface.top + playbackSurface.height
+      );
+    },
+    [canPlay],
+  );
+
   return (
     <section
       aria-label="Workbench display surface"
       className={cn(
-        "flex min-h-0 flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl",
+        "relative flex min-h-0 flex-col overflow-visible rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl",
         className,
       )}
       data-testid="workbench-display-surface"
       data-buffered-media-count={bufferedMedia.length}
+      data-preview-playing={isPlaying}
     >
-      <div className="relative min-h-0 flex-1 bg-black">
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-[inherit] bg-black">
         <canvas
           ref={canvasRef}
-          className="block h-full w-full bg-black"
+          className={cn(
+            "block h-full w-full bg-black",
+            previewHovered ? "cursor-pointer" : "cursor-default",
+          )}
           role="img"
           aria-label={activeMedia ? `${activeMedia.clipTitle} preview` : "Empty workbench preview"}
           data-testid="workbench-display-canvas"
+          data-preview-playback-shortcut={canPlay}
+          onPointerEnter={(event) => {
+            setPreviewHovered(isPointerOverPlaybackSurface(event));
+          }}
+          onPointerMove={(event) => {
+            const nextHovered = isPointerOverPlaybackSurface(event);
+            setPreviewHovered((wasHovered) =>
+              wasHovered === nextHovered ? wasHovered : nextHovered,
+            );
+          }}
+          onPointerLeave={() => setPreviewHovered(false)}
+          onClick={(event) => {
+            if (isPointerOverPlaybackSurface(event)) setPlaying(!isPlaying);
+          }}
         />
         {/* Names what the grayed frame means. Only ever visible while
             SCRUBBING — playing jumps the span, so the clock never rests here.
             Top-LEFT: the close button owns the right corner. */}
         {activeClip?.disabled === true && (
           <span
-            className="absolute left-2 top-2 z-10 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] leading-none font-semibold tracking-[0.08em] text-amber-300 ring-1 ring-amber-400/40"
+            className="pointer-events-none absolute left-2 top-2 z-10 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] leading-none font-semibold tracking-[0.08em] text-amber-300 ring-1 ring-amber-400/40"
             data-testid="workbench-display-disabled"
           >
             DISABLED
@@ -741,56 +906,29 @@ export function WorkbenchDisplaySurface({
           </button>
         )}
       </div>
-      <div className="relative flex shrink-0 items-center justify-center border-t border-zinc-800 bg-zinc-950 px-4 py-2 text-xs text-zinc-200">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => seekToClip(-1)}
-            disabled={!canSeekPrevious}
-            className="grid size-8 place-items-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-35"
-            aria-label="Previous workbench clip"
-            title="Previous clip"
-          >
-            <SkipBack className="h-3.5 w-3.5 fill-current" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPlaying(!isPlaying)}
-            disabled={!canPlay}
-            className="grid size-9 place-items-center rounded-full border border-zinc-700 bg-zinc-900 text-zinc-100 transition-colors hover:border-amber-400 hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label={isPlaying ? "Pause workbench preview" : "Play workbench preview"}
-            title={isPlaying ? "Pause" : "Play"}
-          >
-            {isPlaying ? <Pause className="h-3.5 w-3.5 fill-current" /> : <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />}
-          </button>
-          <button
-            type="button"
-            onClick={() => seekToClip(1)}
-            disabled={!canSeekNext}
-            className="grid size-8 place-items-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-35"
-            aria-label="Next workbench clip"
-            title="Next clip"
-          >
-            <SkipForward className="h-3.5 w-3.5 fill-current" />
-          </button>
-        </div>
-        <div className="absolute right-4 shrink-0 font-mono text-[11px] text-zinc-300">
-          {formatSeconds(currentTime)} / {formatSeconds(duration)}
-        </div>
-      </div>
+      <WorkbenchDividerTransport
+        currentTime={currentTime}
+        duration={duration}
+        isPlaying={isPlaying}
+        canPlay={canPlay}
+        canSeekPrevious={canSeekPrevious}
+        canSeekNext={canSeekNext}
+        previewHovered={canPlay && previewHovered}
+        onTogglePlaying={() => setPlaying(!isPlaying)}
+        onSeekPrevious={() => seekToClip(-1)}
+        onSeekNext={() => seekToClip(1)}
+      />
     </section>
   );
 }
 
 type WorkbenchSplitPaneProps = {
-  clips: TimelineClip[];
-  currentTime: number;
-  onCurrentTimeChange: (time: number) => void;
+  /**
+   * Upper-pane content. Pass `null` to close it while keeping the lower pane
+   * mounted, preserving stateful content such as a virtual strip's scroll.
+   */
+  surface: ReactNode | null;
   children: ReactNode;
-  preferredClipId?: string | null;
-  /** Controlled playback, forwarded to the display surface. See there. */
-  playing?: boolean;
-  onPlayingChange?: (playing: boolean) => void;
   /** Read ONCE at mount for a height carried over from a previous mount (e.g.
    *  the consumer toggled this pane off and back on). Returning a number makes
    *  the pane start there and SKIP the one-time fit — a height the user chose
@@ -801,22 +939,15 @@ type WorkbenchSplitPaneProps = {
    *  across unmounts. Store it in a ref: this fires per pointer move during a
    *  divider drag. */
   onSurfaceHeightChange?: (height: number) => void;
-  /** Forwarded to the display surface's close button. See there. */
-  onClose?: () => void;
 };
 
 export function WorkbenchSplitPane({
-  clips,
-  currentTime,
-  onCurrentTimeChange,
+  surface,
   children,
-  preferredClipId,
-  playing,
-  onPlayingChange,
   getInitialSurfaceHeight,
   onSurfaceHeightChange,
-  onClose,
 }: WorkbenchSplitPaneProps) {
+  const hasSurface = surface !== null;
   // Read once, at mount. `undefined` means nothing to restore → fit instead.
   const [restoredSurfaceHeight] = useState(() => getInitialSurfaceHeight?.());
   const [surfaceHeight, setSurfaceHeight] = useState(
@@ -937,6 +1068,7 @@ export function WorkbenchSplitPane({
   // and animate the difference. Two frames is "after the next paint" without
   // guessing at a duration.
   useEffect(() => {
+    if (!hasSurface) return;
     let second = 0;
     const first = requestAnimationFrame(() => {
       second = requestAnimationFrame(() => setHeightAnimated(true));
@@ -945,12 +1077,13 @@ export function WorkbenchSplitPane({
       cancelAnimationFrame(first);
       cancelAnimationFrame(second);
     };
-  }, []);
+  }, [hasSurface]);
 
   useLayoutEffect(() => {
-    // Size ONCE on mount. After that the height belongs to the user: only a
-    // divider drag changes it, and a shrinking viewport may clamp it.
-    if (!didInitialSizeRef.current) {
+    // Size ONCE, when the surface first opens. The split pane itself may have
+    // mounted earlier with only its lower pane so that the lower content keeps
+    // its DOM identity and scroll position across this toggle.
+    if (hasSurface && !didInitialSizeRef.current) {
       didInitialSizeRef.current = true;
       if (restoredSurfaceHeight !== undefined) clampToViewport();
       else initialSurfaceHeight();
@@ -977,7 +1110,13 @@ export function WorkbenchSplitPane({
         clampFrameRef.current = null;
       }
     };
-  }, [initialSurfaceHeight, clampToViewport, scheduleClamp, restoredSurfaceHeight]);
+  }, [
+    initialSurfaceHeight,
+    clampToViewport,
+    scheduleClamp,
+    restoredSurfaceHeight,
+    hasSurface,
+  ]);
 
   // Report the height so a consumer can restore it after an unmount.
   useEffect(() => {
@@ -1028,23 +1167,40 @@ export function WorkbenchSplitPane({
       data-testid="workbench-split-pane"
       // The sticky preview region's height (surface + divider), published so a
       // descendant that wants to pin BELOW it — e.g. a sticky board header —
-      // has a live offset to stick to as the divider resizes. Absent when the
-      // preview is closed (this component isn't mounted then), so consumers
-      // fall back to 0.
+      // has a live offset to stick to as the divider resizes. The split pane
+      // remains mounted while closed, so publish an explicit zero then.
       style={
         {
-          "--workbench-preview-offset": `${surfaceHeight + DIVIDER_HEIGHT_PX}px`,
+          "--workbench-preview-offset": hasSurface
+            ? `${surfaceHeight + DIVIDER_HEIGHT_PX}px`
+            : "0px",
         } as React.CSSProperties
       }
     >
-      <div
+      {hasSurface ? (
+        <div
         // z-40 (above the strip's z-30 consumer overlay) so a playhead marker
         // in a timeline scrolling underneath is occluded by the sticky
         // preview, not painted over it. At z-30 the marker tied the preview
         // and, being later in the DOM, bled through into the preview area.
-        className="sticky top-0 z-40 min-w-0 bg-zinc-950"
+        className="sticky top-0 z-40 min-w-0 overflow-visible bg-zinc-950"
         data-testid="workbench-preview-region"
       >
+        {/* A seek thumb is intentionally centered on the timeline edge, so
+            half of it sits outside the split pane. These narrow side masks
+            hide that overhang only while it passes BEHIND the sticky preview.
+            Clipping the split pane itself also cut the thumb off after it
+            scrolled below the preview, where it should be fully visible. */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 right-full w-2 bg-zinc-950"
+          data-preview-edge-occluder="start"
+        />
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 left-full w-2 bg-zinc-950"
+          data-preview-edge-occluder="end"
+        />
         <div
           className={cn(
             "min-h-0",
@@ -1062,18 +1218,9 @@ export function WorkbenchSplitPane({
             height: `${surfaceHeight}px`,
             minHeight: `${MIN_SURFACE_HEIGHT}px`,
           }}
-        >
-          <WorkbenchDisplaySurface
-            clips={clips}
-            currentTime={currentTime}
-            onCurrentTimeChange={onCurrentTimeChange}
-            preferredClipId={preferredClipId}
-            playing={playing}
-            onPlayingChange={onPlayingChange}
-            onClose={onClose}
-            className="h-full"
-          />
-        </div>
+          >
+            {surface}
+          </div>
         <button
           ref={dividerRef}
           type="button"
@@ -1082,17 +1229,10 @@ export function WorkbenchSplitPane({
           aria-valuemin={MIN_SURFACE_HEIGHT}
           aria-valuenow={Math.round(surfaceHeight)}
           aria-label="Resize workbench display"
-          // The divider's OWN height is the only source of the gap on either
-          // side: it centres the grip, so the space above and below is h/2
-          // each (h-3 — kept in sync with DIVIDER_HEIGHT_PX).
-          // Nothing else may add padding against it — the lower pane used to
-          // carry a pt-3 that made the bottom gap 22px against the top's
-          // 10px, which read as misaligned. Affordance: a centred grip pill
-          // says "draggable" at rest (half-opacity so it stays quiet), and
-          // hovering brings it to full strength and tints the whole band gray
-          // — no full-width rule (the old amber line highlight is gone too;
-          // focus ring is sky, matching the seek rails).
-          className="group relative flex h-3 w-full cursor-row-resize items-center justify-center bg-transparent transition-colors hover:bg-zinc-800/70 active:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+          // The divider keeps a 12px interaction track while its one-pixel
+          // centerline runs directly through the transport controls.
+          className="group relative block h-3 w-full cursor-row-resize bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+          data-workbench-divider
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
           onPointerUp={handleDividerPointerUp}
@@ -1100,12 +1240,21 @@ export function WorkbenchSplitPane({
         >
           <span
             aria-hidden="true"
-            data-divider-grip
-            className="relative h-1 w-10 rounded-full bg-zinc-600 opacity-50 transition-[color,background-color,opacity] group-hover:bg-zinc-400 group-hover:opacity-100 group-active:bg-zinc-300 group-active:opacity-100"
+            className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-zinc-800 transition-colors group-hover:bg-zinc-600 group-active:bg-zinc-500"
+            data-divider-line
           />
         </button>
-      </div>
-      <div ref={lowerPaneRef} className="min-h-0">
+        </div>
+      ) : null}
+      {/* Keep every lower-pane layer in one z-0 stacking context. Virtual
+          strips intentionally use z-50 for local overlays; without this
+          boundary those later layers could cover the transport where it
+          grows below the divider. */}
+      <div
+        ref={lowerPaneRef}
+        className="relative z-0 min-h-0 isolate"
+        data-testid="workbench-lower-pane"
+      >
         {children}
       </div>
     </div>

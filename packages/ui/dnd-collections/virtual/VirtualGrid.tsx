@@ -8,8 +8,10 @@ import {
   useMemo,
   useState,
   type ReactNode,
+  type CSSProperties,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { twMerge } from "tailwind-merge";
 
 import { getChildren, type NodeId } from "../core/graph";
 import {
@@ -319,7 +321,9 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         : Math.floor(indicatorIndex / cols);
       const col = appendAfterFullRow ? cols : indicatorIndex % cols;
       return {
-        left: Math.max(0, col * (fillCellWidth + gap) - gap / 2 - 2),
+        // Match the leading-gap center used by a card's "before" indicator.
+        // Clamping created a second position at the first item in every row.
+        left: Math.max(0, col * (fillCellWidth + gap) - gap / 2),
         top: row * rowSize,
       };
     })();
@@ -342,11 +346,16 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
         aria-rowcount={rowCount}
         aria-colcount={cols}
         onKeyDown={onKeyDown}
-        className={[
+        className={twMerge(
           "relative overflow-y-auto rounded-md border border-dashed border-border p-2",
-          className ?? "",
-        ].join(" ")}
-        style={{ maxHeight: height }}
+          className,
+        )}
+        style={
+          {
+            maxHeight: height,
+            "--dnd-drop-indicator-half-gap": `${gap / 2}px`,
+          } as CSSProperties
+        }
       >
         <VirtualEmptyHint visible={childIds.length === 0} />
         <div
@@ -364,7 +373,7 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
             <div
               aria-hidden="true"
               data-drop-indicator="virtual-grid"
-              className="pointer-events-none absolute z-20 w-1 rounded-full bg-primary"
+              className="pointer-events-none absolute z-20 w-1 -translate-x-1/2 rounded-full bg-primary"
               style={{ left: indicator.left, top: indicator.top, height: cellHeight }}
             />
           )}
@@ -394,7 +403,17 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
                       role="gridcell"
                       aria-colindex={colInRow + 1}
                       onFocus={() => onItemFocus(id)}
-                      style={{ width: fillCellWidth, height: cellHeight }}
+                      style={
+                        {
+                          width: fillCellWidth,
+                          height: cellHeight,
+                          // A row-start boundary is the grid's left edge, not
+                          // the centre of a fictional gap outside the scroller.
+                          // Match the virtual indicator's clamped coordinate so
+                          // the two rendering paths can never alternate.
+                          "--dnd-drop-indicator-half-gap": colInRow === 0 ? "0px" : `${gap / 2}px`,
+                        } as CSSProperties
+                      }
                     >
                       <ItemShell
                         id={id}

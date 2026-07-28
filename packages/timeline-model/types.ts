@@ -131,6 +131,8 @@ export type CollectionTimelineClip = TimelineItemBase & {
     kind: MediaKind;
     src: string;
     poster?: string;
+    /** Source-time offset represented by a video preview. Absent means 0. */
+    trimIn?: number;
     alt: string;
   }>;
 };

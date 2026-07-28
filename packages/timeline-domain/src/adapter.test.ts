@@ -827,7 +827,12 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     const previews = hydratedCollectionPreviews(focused.value.graph, "kid");
     // The stored summary was a single "p1" frame; live children are k-a, k-b.
     expect(previews.map((p) => p.id)).toEqual(["k-a", "k-b"]);
-    expect(previews[0]).toEqual({ id: "k-a", src: "https://example.com/k-a.jpg" });
+    expect(previews[0]).toEqual({
+      id: "k-a",
+      kind: "image",
+      src: "https://example.com/k-a.jpg",
+      alt: "k-a alt",
+    });
   });
 
   it("reflects a front-insertion into the live child", () => {
@@ -850,7 +855,7 @@ describe("hydratedCollectionPreviews (card frames)", () => {
       docs([
         image("k-a", 1),
         image("k-b", 1),
-        video("k-vid", 6, 0, 0),
+        video("k-vid", 8, 2, 0),
         image("k-d", 1),
         image("k-e", 1),
       ]),
@@ -864,8 +869,11 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     // The video frame paints its poster, not the source url.
     expect(previews[1]).toEqual({
       id: "k-vid",
+      kind: "video",
       src: "https://example.com/k-vid.mp4",
       poster: "https://example.com/k-vid-poster.jpg",
+      trimIn: 2,
+      alt: "k-vid alt",
     });
   });
 
@@ -918,5 +926,48 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     if (!focused.ok) throw new Error(focused.error);
 
     expect(hydratedCollectionPreviews(focused.value.graph, "kid")).toEqual([]);
+  });
+
+  it("skips unusable media and continues to the next nested preview", () => {
+    const graphResult = buildGraph([
+      {
+        kind: "collection",
+        id: "kid",
+        name: "Kid",
+        children: [
+          {
+            kind: "media",
+            mediaKind: "video",
+            id: "posterless",
+            name: "Posterless",
+            src: "https://example.com/posterless.mp4",
+            fullDurationSeconds: 10,
+          },
+          {
+            kind: "media",
+            mediaKind: "image",
+            id: "missing-image",
+            name: "Missing image",
+          },
+          {
+            kind: "media",
+            mediaKind: "image",
+            id: "usable",
+            name: "Usable",
+            src: "https://example.com/usable.jpg",
+          },
+        ],
+      },
+    ]);
+    if (!graphResult.ok) throw new Error(JSON.stringify(graphResult.error));
+
+    expect(hydratedCollectionPreviews(graphResult.value, "kid")).toEqual([
+      {
+        id: "usable",
+        kind: "image",
+        src: "https://example.com/usable.jpg",
+        alt: "Usable",
+      },
+    ]);
   });
 });

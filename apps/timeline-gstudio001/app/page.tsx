@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/core/button";
+import { Skeleton } from "@/components/core/skeleton";
 import { cn } from "@/lib/utils";
 
 type TimelineProjectSummary = {
@@ -38,6 +39,28 @@ function formatUpdatedAt(value?: string) {
   } catch {
     return "No save timestamp";
   }
+}
+
+function ProjectCardSkeleton() {
+  return (
+    <div
+      aria-hidden="true"
+      data-project-card-skeleton
+      className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/55"
+    >
+      <Skeleton className="aspect-video w-full rounded-none border-b border-zinc-800" />
+      <div className="grid gap-3 p-4">
+        <div className="grid gap-2">
+          <Skeleton className="h-4 w-3/5" />
+          <Skeleton className="h-3 w-4/5" />
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-3 w-14" />
+          <Skeleton className="h-3 w-28" />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function Home() {
@@ -166,10 +189,12 @@ export default function Home() {
     }
   };
 
+  const initialLoading = isLoading && projects.length === 0;
+
   return (
-    <div className="mx-auto grid w-full max-w-[1400px] gap-6 animate-fade-in">
-      <header className="flex flex-col gap-4 border-b border-zinc-800 pb-5 lg:flex-row lg:items-end lg:justify-between">
-        <div className="grid gap-2">
+    <div className="mx-auto grid w-full max-w-[1400px] gap-6 pt-7 animate-fade-in">
+      <header className="flex flex-col gap-4 border-b border-zinc-800 pb-5 md:flex-row md:items-end md:justify-between">
+        <div className="grid min-w-0 flex-1 gap-2">
           <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.24em] text-amber-300">
             <FolderOpen className="h-4 w-4" />
             Projects
@@ -182,7 +207,7 @@ export default function Home() {
 
         <form
           onSubmit={handleCreateProject}
-          className="flex w-full flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900/55 p-3 sm:w-auto sm:min-w-[420px] sm:flex-row"
+          className="flex w-full flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900/55 p-3 sm:flex-row md:w-[420px] md:shrink-0"
         >
           <label htmlFor="project-title" className="sr-only">
             Project title
@@ -206,14 +231,23 @@ export default function Home() {
         </form>
       </header>
 
-      <section className="grid gap-4">
+      <section
+        aria-busy={initialLoading}
+        aria-labelledby="saved-projects-heading"
+        className="grid gap-4"
+      >
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-xs font-bold uppercase tracking-widest text-zinc-400">
+            <h2
+              id="saved-projects-heading"
+              className="text-xs font-bold uppercase tracking-widest text-zinc-400"
+            >
               Saved Projects
             </h2>
             <p className="mt-1 text-[10px] font-mono uppercase tracking-widest text-zinc-600">
-              {isLoading ? "Loading" : `${projects.length} ${projects.length === 1 ? "project" : "projects"}`}
+              {initialLoading
+                ? "Project library"
+                : `${projects.length} ${projects.length === 1 ? "project" : "projects"}`}
             </p>
           </div>
           <Button
@@ -236,10 +270,12 @@ export default function Home() {
           </div>
         ) : null}
 
-        {isLoading && projects.length === 0 ? (
-          <div className="flex h-40 items-center justify-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/35 text-sm text-zinc-500">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Loading projects
+        {initialLoading ? (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <span className="sr-only">Loading projects</span>
+            {Array.from({ length: 3 }, (_, index) => (
+              <ProjectCardSkeleton key={index} />
+            ))}
           </div>
         ) : projects.length === 0 ? (
           <div className="grid min-h-56 place-items-center rounded-lg border border-dashed border-zinc-800 bg-zinc-900/25 p-6 text-center">
