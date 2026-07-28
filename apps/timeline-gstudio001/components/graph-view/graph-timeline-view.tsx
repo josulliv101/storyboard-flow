@@ -19,6 +19,7 @@ import {
   type CollectionsGraph,
   type AddNodesCommand,
   type CommandPolicy,
+  type DropIntent,
   type GraphNodeSpec,
   type MoveNodesCommand,
   type NodeId,
@@ -416,11 +417,21 @@ export function GraphTimelineView({
     flatOnRef.current = flatOn;
   }, [flatOn]);
 
-  // FLAT drops: the strip publishes a boundary into the flat RUN, and the
-  // intent names the focused collection — neither of which is where the item
-  // belongs. `resolveFlatDropTarget` applies the rule the provenance label
-  // makes readable: a drop lands in the LEFT NEIGHBOUR's collection, right
-  // after it (at the very start, the head of the focused timeline).
+  // FLAT drops: the flat STRIP publishes a boundary into the flat RUN, and
+  // the intent names the focused collection — neither of which is where the
+  // item belongs. `resolveFlatDropTarget` applies the rule the provenance
+  // label makes readable: a drop lands in the LEFT NEIGHBOUR's collection,
+  // right after it (at the very start, the head of the focused timeline).
+  //
+  // ONLY that container-level boundary is translated. A drop resolved
+  // against a CARD is already parent-relative and already correct: dnd-kit's
+  // collision pass deliberately prefers a node hit over its container ("a
+  // node card always beats a container"), and `resolveDropIntent` reads that
+  // card's real parent out of the graph — so dropping onto c2 in the flat run
+  // resolves to Scene A directly, which IS the left-neighbour rule. Running
+  // that command through the translator too treats a parent-relative index as
+  // a flat-run boundary and lands the item in a different collection
+  // entirely (it put a drop meant for Scene A into the project instead).
   //
   // The flat list is rebuilt from the graph the provider hands over rather
   // than shared from the board: it costs one walk per drop, and it can never
@@ -428,11 +439,13 @@ export function GraphTimelineView({
   const handleMapDropCommand = useCallback(
     (
       command: MoveNodesCommand | AddNodesCommand,
-      _intent: unknown,
+      intent: DropIntent,
       graph: CollectionsGraph,
     ) => {
       if (!flatOn) return command;
       const focused = parseNodeId(focusedId);
+      // The flat strip's own boundary, and nothing else.
+      if (intent.type !== "insert-at-index" || intent.collectionId !== focused) return command;
       const target = resolveFlatDropTarget(
         graph,
         flattenMediaOrder(graph, focused, MAX_SUBTREE_DEPTH),
