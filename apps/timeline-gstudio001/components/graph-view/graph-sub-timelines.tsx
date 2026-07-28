@@ -326,20 +326,25 @@ function SubTimelineNode({
                 collectionId={collectionId}
                 pixelsPerSecond={pixelsPerSecond}
                 overscan={GRAPH_STRIP_OVERSCAN_ITEMS}
-                itemWidth={collectionCardWidth(pixelsPerSecond)}
+                itemWidth={collectionCardWidth(pixelsPerSecond, dims.strip)}
                 itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
                   showPlayhead || rulerOn ? (
                     <>
                       {rulerOn ? (
-                        <GraphRuler focusedId={id} pixelsPerSecond={pixelsPerSecond} />
+                        <GraphRuler
+                          focusedId={id}
+                          pixelsPerSecond={pixelsPerSecond}
+                          cardHeight={dims.strip}
+                        />
                       ) : null}
                       {showPlayhead ? (
                         <GraphPlayhead
                           focusedId={id}
                           channel={timeChannel}
                           pixelsPerSecond={pixelsPerSecond}
+                          cardHeight={dims.strip}
                           activeWindow={clockWindow}
                         />
                       ) : null}
@@ -354,6 +359,7 @@ function SubTimelineNode({
                   focusedId={id}
                   channel={timeChannel}
                   pixelsPerSecond={pixelsPerSecond}
+                  cardHeight={dims.strip}
                   ariaLabel={`Seek preview in ${name}`}
                 />
               )}
@@ -402,7 +408,25 @@ export function SubTimelines({
   timeChannel: PreviewTimeChannel;
 }>) {
   const childIds = useCollectionChildIds(parseNodeId(focusedId));
-  if (childIds.length === 0) return null;
+  // Rendering nothing here made the sidebar's children toggle look broken:
+  // "the feature is on and this timeline has none" was indistinguishable from
+  // "the button did nothing". Only the TOP-LEVEL surface says so — repeating
+  // it under every childless nested row would be noise, and nested rows go
+  // through SubTimelineNode, which never reaches this branch.
+  if (childIds.length === 0) {
+    return (
+      <div
+        data-subtimelines-empty
+        className="rounded-lg border border-dashed border-zinc-800 bg-zinc-900/30 px-3 py-4 text-center"
+      >
+        <p className="text-sm font-medium text-zinc-300">No child timelines</p>
+        <p className="mt-0.5 text-xs text-zinc-500">
+          Child timelines are shown. Add a collection to this timeline and it appears here as
+          its own row.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-w-0 flex-col gap-3">

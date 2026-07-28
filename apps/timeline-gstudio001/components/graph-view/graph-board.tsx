@@ -487,7 +487,7 @@ export function GraphBoard({
                 itemIds={flatItemIds}
                 pixelsPerSecond={deferredPixelsPerSecond}
                 overscan={GRAPH_STRIP_OVERSCAN_ITEMS}
-                itemWidth={collectionCardWidth(deferredPixelsPerSecond)}
+                itemWidth={collectionCardWidth(deferredPixelsPerSecond, dims.strip)}
                 itemHeight={dims.strip}
                 itemDragActivation="hold"
                 overlay={
@@ -497,6 +497,7 @@ export function GraphBoard({
                         <GraphRuler
                           focusedId={focusedId}
                           pixelsPerSecond={deferredPixelsPerSecond}
+                          cardHeight={dims.strip}
                         />
                       ) : null}
                       {previewOn ? (
@@ -504,6 +505,7 @@ export function GraphBoard({
                           focusedId={focusedId}
                           channel={timeChannel}
                           pixelsPerSecond={deferredPixelsPerSecond}
+                          cardHeight={dims.strip}
                         />
                       ) : null}
                     </>
@@ -526,6 +528,7 @@ export function GraphBoard({
                   focusedId={focusedId}
                   channel={timeChannel}
                   pixelsPerSecond={deferredPixelsPerSecond}
+                  cardHeight={dims.strip}
                 />
               )}
                 </NativeDropStrip>

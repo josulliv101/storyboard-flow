@@ -2197,3 +2197,77 @@ export const FlatItemSource: Story = {
     );
   },
 };
+
+/** A handful of cards in a wide strip, so there is real empty space to the
+ *  right of the last one — the "click away to deselect" target. */
+const shortGraph = () => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "strip",
+      name: "Strip",
+      children: [
+        { kind: "media", id: "m0", name: "M0", durationSeconds: 4 },
+        { kind: "media", id: "m1", name: "M1", durationSeconds: 4 },
+        { kind: "media", id: "m2", name: "M2", durationSeconds: 4 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+};
+
+export const BackgroundClickClearsSelection: Story = {
+  // PL7-001: a click on empty strip space is the only mouse route back to
+  // "nothing selected" — cards themselves only ever replace or toggle.
+  //
+  // A pan across that same empty space must NOT clear, but on a strip the pan
+  // hook already squashes its own trailing click, so asserting it here would
+  // pass with or without the press-position guard. The guard is pinned where
+  // it is actually load-bearing — VirtualGrid, which has no pan hook — in
+  // `BackgroundDragKeepsSelection`.
+  render: () => (
+    <DndCollections initialGraph={shortGraph()}>
+      <div className="w-[640px]">
+        <VirtualStrip collectionId={parseNodeId("strip")} itemWidth={96} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const strip = canvasElement.querySelector<HTMLElement>('[data-virtual-strip="strip"]')!;
+    const m1 = nodeCard(canvasElement, "m1");
+    await waitForLayout(m1);
+
+    await userEvent.click(m1);
+    await waitFor(() => expect(nodeCard(canvasElement, "m1")).toHaveAttribute("data-selected", "true"));
+
+    // Empty space: past the last card's right edge, still inside the strip.
+    const last = nodeCard(canvasElement, "m2").getBoundingClientRect();
+    const stripBox = strip.getBoundingClientRect();
+    const emptyX = (last.right + stripBox.right) / 2;
+    const emptyY = stripBox.top + stripBox.height / 2;
+    expect(emptyX).toBeGreaterThan(last.right);
+
+    const pressBackground = (x: number, y: number) =>
+      dispatchPointerSequence([
+        { element: strip, type: "pointerdown", clientX: x, clientY: y },
+      ]);
+    const releaseBackground = (x: number, y: number) =>
+      dispatchPointerSequence([{ element: strip, type: "pointerup", clientX: x, clientY: y }]);
+    const clickBackground = (x: number, y: number) => {
+      strip.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1, clientX: x, clientY: y }),
+      );
+    };
+
+    // A stationary click on empty space clears it.
+    await pressBackground(emptyX, emptyY);
+    await releaseBackground(emptyX, emptyY);
+    clickBackground(emptyX, emptyY);
+    // Unselected cards carry no data-selected at all, so absence is the
+    // assertion — not the string "false".
+    await waitFor(() =>
+      expect(nodeCard(canvasElement, "m1")).not.toHaveAttribute("data-selected", "true"),
+    );
+  },
+};

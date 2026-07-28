@@ -8,6 +8,7 @@ import { PaletteItem } from "./react/palette";
 import { VirtualGrid } from "./virtual/VirtualGrid";
 import { VirtualStrip } from "./virtual/VirtualStrip";
 import {
+  dispatchPointerSequence,
   dragHoldAt,
   dragToPoint,
   gapBetween,
@@ -704,5 +705,83 @@ export const KeyboardRovingNavigation: Story = {
       expect(first).not.toBeNull();
       expect(first!.ownerDocument.activeElement).toBe(first);
     });
+  },
+};
+
+/** Three cards in a four-column grid: the fourth slot and everything below
+ *  the first row are real background — the deselect target. */
+function shortGridGraph() {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "grid",
+      name: "Grid",
+      children: [
+        { kind: "media", id: "m0", name: "M0", durationSeconds: 4 },
+        { kind: "media", id: "m1", name: "M1", durationSeconds: 4 },
+        { kind: "media", id: "m2", name: "M2", durationSeconds: 4 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+export const BackgroundDragKeepsSelection: Story = {
+  // PL7-001's guard, pinned where it carries weight. The grid has no pan hook
+  // to squash a trailing click, so a press that TRAVELS across the background
+  // and releases delivers a plain click to the container — indistinguishable
+  // from a deliberate background click except by where the press started.
+  // Without the press-position check, dragging across empty space silently
+  // dropped the selection.
+  render: () => (
+    <DndCollections initialGraph={shortGridGraph()}>
+      <div className="w-[600px]">
+        <VirtualGrid collectionId={parseNodeId("grid")} columns={COLUMNS} />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const grid = canvasElement.querySelector<HTMLElement>('[data-virtual-grid="grid"]')!;
+    const m1 = nodeCard(canvasElement, "m1");
+    await waitForLayout(m1);
+
+    await userEvent.click(m1);
+    await waitFor(() => expect(nodeCard(canvasElement, "m1")).toHaveAttribute("data-selected", "true"));
+
+    // Background: below the only row, inside the container.
+    const rowBottom = nodeCard(canvasElement, "m0").getBoundingClientRect().bottom;
+    const gridBox = grid.getBoundingClientRect();
+    const emptyY = (rowBottom + gridBox.bottom) / 2;
+    const emptyX = gridBox.left + gridBox.width / 2;
+    expect(emptyY).toBeGreaterThan(rowBottom);
+
+    const click = (x: number, y: number) =>
+      grid.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1, clientX: x, clientY: y }),
+      );
+
+    // Press, travel well past the slop, release: the selection survives.
+    await dispatchPointerSequence([
+      { element: grid, type: "pointerdown", clientX: emptyX, clientY: emptyY },
+      { element: grid, type: "pointermove", clientX: emptyX - 80, clientY: emptyY, delayAfterMs: 16 },
+      { element: grid, type: "pointerup", clientX: emptyX - 80, clientY: emptyY },
+    ]);
+    click(emptyX - 80, emptyY);
+    // Settle first: a clear would land on a later render, so asserting
+    // synchronously here would pass even when the guard is gone.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(nodeCard(canvasElement, "m1")).toHaveAttribute("data-selected", "true");
+
+    // A stationary press on the same spot DOES clear — so the assertion above
+    // is about the movement, not about background clicks being inert here.
+    await dispatchPointerSequence([
+      { element: grid, type: "pointerdown", clientX: emptyX, clientY: emptyY },
+      { element: grid, type: "pointerup", clientX: emptyX, clientY: emptyY },
+    ]);
+    click(emptyX, emptyY);
+    await waitFor(() =>
+      expect(nodeCard(canvasElement, "m1")).not.toHaveAttribute("data-selected", "true"),
+    );
   },
 };

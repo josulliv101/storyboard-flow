@@ -92,12 +92,16 @@ export const StickyPreview: Story = {
     expect(buttonGroupBox.width).toBe(132);
     expect(buttonGroupBox.height).toBe(44);
     expect(controls.querySelector("[data-transport-capsule]")).toBeNull();
-    expect(divider.querySelector("[data-divider-grip]")).toBeNull();
-    expect(dividerBox.height).toBe(12);
-    expect(buttonGroupBox.y + buttonGroupBox.height / 2).toBeCloseTo(
-      dividerBox.y + dividerBox.height / 2,
-      0,
-    );
+    // The grip is the coarse-pointer affordance — always in the DOM, painted
+    // only at tablet width and below (md:hidden), so presence is what this
+    // story can assert without pinning the canvas width.
+    expect(divider.querySelector("[data-divider-grip]")).not.toBeNull();
+    // 4px of padding above a 12px band: the box is 16 and the band is
+    // BOTTOM-aligned in it, so the gap lands under the preview surface.
+    expect(dividerBox.height).toBe(16);
+    expect(dividerLineBox.height).toBe(12);
+    expect(dividerLineBox.bottom).toBeCloseTo(dividerBox.bottom, 0);
+    // The transport centers on the BAND, not on the padded box.
     expect(dividerLineBox.y + dividerLineBox.height / 2).toBeCloseTo(
       buttonGroupBox.y + buttonGroupBox.height / 2,
       0,
