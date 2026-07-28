@@ -439,6 +439,35 @@ async function settleMoveAnimations(page: Page): Promise<void> {
   );
 }
 
+/**
+ * Waits out a CSS view transition. While one runs, the browser paints a
+ * SNAPSHOT of the page over the real DOM — and a snapshot is an image, so
+ * every real pointer event during it lands on `<html>` instead of on whatever
+ * is visible. Interacting mid-transition therefore does nothing at all, which
+ * reads as a dead control rather than as a timing problem.
+ */
+async function settleViewTransition(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      // The app flags the root while a transition is in flight. Polling
+      // `getAnimations()` alone is a RACE: those animations do not exist until
+      // the browser has captured a frame, so a poll landing between the click
+      // and the capture sees none, reports "settled", and the drag that
+      // follows lands on the snapshot — i.e. on <html> — doing nothing at all.
+      // The flag is set synchronously, before the transition starts.
+      if (document.documentElement.dataset.viewTransition) return false;
+      return !document.getAnimations().some((animation) => {
+        // `pseudoElement` lives on KeyframeEffect, not the AnimationEffect
+        // base the DOM types expose here.
+        const effect = animation.effect as KeyframeEffect | null;
+        return effect?.pseudoElement?.startsWith("::view-transition") ?? false;
+      });
+    },
+    undefined,
+    { timeout: 5000 },
+  );
+}
+
 /** Press-and-hold drag: hold past the 250ms activation delay, travel, dwell,
  *  release. Used for strip cards AND palette thumbnails (both hold-marked). */
 async function holdDrag(
@@ -3924,6 +3953,316 @@ test.describe("graph view E2E", () => {
     await page.getByRole("button", { name: "Hide children timelines" }).click();
     await expect(page.locator('section[aria-label^="Sub-timeline"]')).toHaveCount(0);
     await expect(calledOut).toHaveCount(0);
+  });
+
+  test("the trim view opens as a modal and hands the hero name back", async ({ page }) => {
+    // PL10-008. Trimming moved into a modal the card grows into, so the board
+    // stops competing with it. The load-bearing invariant is the view
+    // transition's: exactly ONE element may carry the shared
+    // `view-transition-name` at a time — leave it on both and the browser
+    // silently skips the morph on the NEXT open, which looks like nothing at
+    // all rather than like a bug.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
+
+    const heroCount = () =>
+      page.evaluate(
+        () =>
+          [...document.querySelectorAll<HTMLElement>("*")].filter(
+            (el) => el.style?.viewTransitionName === "trim-subject",
+          ).length,
+      );
+    expect(await heroCount()).toBe(0);
+
+    await page.getByRole("button", { name: "Open item details" }).click();
+    const modal = page.getByRole("dialog");
+    await expect(modal).toHaveCount(1);
+    // Only the modal's frame holds the name while it is open — the card gave
+    // it up in the same frame.
+    expect(await heroCount()).toBe(1);
+    expect(
+      await page.locator("[data-item-details-frame]").evaluate((el) =>
+        el instanceof HTMLElement ? el.style.viewTransitionName : "",
+      ),
+    ).toBe("trim-subject");
+
+    // The whole source is in there, and it is the only map on the page.
+    const maps = page.locator("[data-trim-overview]");
+    await expect(maps).toHaveCount(1);
+    expect(await maps.evaluate((el) => !!el.closest("[data-item-details]"))).toBe(true);
+    const windowBox = (await page.locator("[data-trim-overview-window]").boundingBox())!;
+    const mapBox = (await maps.boundingBox())!;
+    expect(windowBox.width / mapBox.width).toBeCloseTo(6 / 8, 1);
+
+    // The grips trim from in here, at the modal's scale.
+    // A view transition holds a SNAPSHOT over the page while it runs, and a
+    // snapshot is an image: real input during those ~260ms lands on <html>,
+    // not on anything in the modal. Settle it before touching the grips —
+    // without this the drag below silently does nothing, which looks exactly
+    // like a broken gesture.
+    await settleViewTransition(page);
+
+    const grip = page.locator('[data-trim-overview-handle="right"]');
+    const gripBox = (await grip.boundingBox())!;
+    await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(gripBox.x - 40, gripBox.y + gripBox.height / 2, { steps: 6 });
+    await expect(page.locator("[data-item-details-edge]")).toHaveCount(1);
+    await page.mouse.up();
+    await expect
+      .poll(async () => (await page.locator("[data-trim-overview-window]").boundingBox())!.width)
+      .toBeLessThan(windowBox.width - 5);
+
+    // Escape closes it and the name goes back where it came from — nothing
+    // may be left holding it, or the next open has two.
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
+    await expect.poll(heroCount).toBe(0);
+
+    // And it reopens, which is what a stranded name would have broken.
+    await page.getByRole("button", { name: "Open item details" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    expect(await heroCount()).toBe(1);
+  });
+
+  test("item details open from the GRID too, and for a still", async ({ page }) => {
+    // PL10-012. Details are not a trimming idea: a grid card has no trim
+    // handles at all, and an image has no source window — but both have a
+    // name, a duration, and whatever an item grows next. Both open the view.
+    await installGraphApi(page);
+    await page.goto(`${GRAPH_URL}?surface=grid`);
+    await expect(page.locator(`[data-virtual-grid="${PROJECT_ID}"]`)).toHaveCount(1);
+
+    // bravo is an IMAGE, and we are in the grid — the two things the old
+    // trim-only toggle refused.
+    const bravo = page.locator('[data-node-id="bravo"]');
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    const toggle = page.getByRole("button", { name: "Open item details" });
+    await expect(toggle).toBeEnabled();
+    await toggle.click();
+    await settleViewTransition(page);
+
+    const details = page.getByRole("dialog");
+    await expect(details).toHaveCount(1);
+    await expect(details).toContainText("bravo");
+    // A still: its own image, no source map, and the duration it holds.
+    await expect(page.locator("[data-trim-overview]")).toHaveCount(0);
+    await expect(details).toContainText("still");
+    await expect(details.locator("img")).toHaveCount(1);
+
+    // The name is editable here as well — the point of the view generalizing.
+    await details.locator("text=bravo").first().dblclick();
+    const editor = page.getByRole("textbox", { name: "Clip name" });
+    await editor.fill("Establishing shot");
+    await editor.press("Enter");
+    await expect(details).toContainText("Establishing shot");
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
+  });
+
+  test("ctrl+z undoes and ctrl+shift+z redoes from the keyboard", async ({ page }) => {
+    // PL10-009. Undo/redo had NO keyboard binding — only the toolbar buttons,
+    // which is fine until something covers them (the trim modal) or the page
+    // scrolls them away.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const wrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    const widthNow = async () => (await alpha.boundingBox())!.width;
+    const original = await widthNow();
+
+    // Trim the out edge in, which commits on release.
+    const handle = wrapper.locator("[data-trim-handle]").last();
+    const handleBox = (await handle.boundingBox())!;
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x - 40, handleBox.y + handleBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await expect.poll(widthNow).toBeLessThan(original - 10);
+    const trimmed = await widthNow();
+
+    await page.keyboard.press("Control+z");
+    await expect.poll(widthNow).toBeCloseTo(original, 0);
+
+    await page.keyboard.press("Control+Shift+z");
+    await expect.poll(widthNow).toBeCloseTo(trimmed, 0);
+
+    // Ctrl+Y is the Windows spelling of redo; after an undo it must land the
+    // same way.
+    await page.keyboard.press("Control+z");
+    await expect.poll(widthNow).toBeCloseTo(original, 0);
+    await page.keyboard.press("Control+y");
+    await expect.poll(widthNow).toBeCloseTo(trimmed, 0);
+  });
+
+  test("the modal's undo is scoped to this clip's own trims", async ({ page }) => {
+    // PL10-009. History is global and linear, so a bare undo in a modal would
+    // reach past the scrim — undoing something on the board that the user
+    // cannot see. These step back through THIS clip's trims and then stop.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // An edit on a DIFFERENT node first: this is what the modal's undo must
+    // refuse to touch.
+    const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
+    const bravoWrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="bravo"]');
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    const bravoHandle = bravoWrapper.locator("[data-trim-handle]").last();
+    const bravoBox = (await bravoHandle.boundingBox())!;
+    await page.mouse.move(bravoBox.x + bravoBox.width / 2, bravoBox.y + bravoBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bravoBox.x - 30, bravoBox.y + bravoBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    const bravoWidth = (await bravo.boundingBox())!.width;
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await page.getByRole("button", { name: "Open item details" }).click();
+    await settleViewTransition(page);
+
+    const undo = page.locator("[data-item-details-undo]");
+    const redo = page.locator("[data-item-details-redo]");
+    // The newest entry is bravo's trim, not this clip's — so undo is offered
+    // for nothing, even though the store itself can undo.
+    await expect(undo).toBeDisabled();
+    await expect(redo).toBeDisabled();
+
+    // Trim in here, and it lights up.
+    const grip = page.locator('[data-trim-overview-handle="right"]');
+    const gripBox = (await grip.boundingBox())!;
+    const windowWidth = async () =>
+      (await page.locator("[data-trim-overview-window]").boundingBox())!.width;
+    const before = await windowWidth();
+    await page.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(gripBox.x - 40, gripBox.y + gripBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await expect.poll(windowWidth).toBeLessThan(before - 5);
+    await expect(undo).toBeEnabled();
+
+    // One press steps that trim back, and then the boundary is reached again:
+    // bravo's edit is next in the stack and must stay out of reach.
+    await undo.click();
+    await expect.poll(windowWidth).toBeCloseTo(before, 0);
+    await expect(undo).toBeDisabled();
+    await expect(redo).toBeEnabled();
+    expect((await bravo.boundingBox())!.width).toBeCloseTo(bravoWidth, 0);
+
+    // Redo puts this clip's trim back, and spends the only redo it had.
+    await redo.click();
+    await expect.poll(windowWidth).toBeLessThan(before - 5);
+    await expect(redo).toBeDisabled();
+  });
+
+  test("renaming a clip in the modal reaches the stored document", async ({ page }) => {
+    // PL10-010. A media node's name IS the clip's stored `alt` — the adapter
+    // reads `name: clip.alt` and writes `alt: detail?.alt ?? node.name`. Every
+    // loaded clip has `detail.alt` set, so renaming the GRAPH alone would look
+    // right and then be overwritten by the stored alt on the next write. The
+    // assertion that matters is therefore on the DOCUMENT, not the header.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await page.getByRole("button", { name: "Open item details" }).click();
+    await settleViewTransition(page);
+
+    const storedAlt = () =>
+      api.documents.get(PROJECT_ID)?.clips.find((clip) => clip.id === "alpha")?.alt;
+    expect(storedAlt()).toBe("alpha");
+
+    // Double-click the name, type, Enter.
+    await page.locator("[data-item-details] >> text=alpha").first().dblclick();
+    const editor = page.getByRole("textbox", { name: "Clip name" });
+    await expect(editor).toBeVisible();
+    await editor.fill("Belushi close-up");
+    await editor.press("Enter");
+
+    // The graph took it...
+    await expect(page.locator("[data-item-details]")).toContainText("Belushi close-up");
+    // ...and so did the write, once the gateway's debounce flushes.
+    await expect.poll(storedAlt, { timeout: 5000 }).toBe("Belushi close-up");
+
+    // Escape cancels an edit instead of closing the modal — the capture-phase
+    // key handler has to yield to the editor.
+    await page.locator("[data-item-details] >> text=Belushi close-up").first().dblclick();
+    const reopened = page.getByRole("textbox", { name: "Clip name" });
+    await reopened.fill("Discarded");
+    await reopened.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await expect(page.locator("[data-item-details]")).toContainText("Belushi close-up");
+    expect(storedAlt()).toBe("Belushi close-up");
+  });
+
+  test("a trim drag floats the edge frame above the clip", async ({ page }) => {
+    // PL10-005/007. The live frame is its own small surface: sized to the
+    // breadcrumb row (a size reference, not a location — it follows the CLIP,
+    // which in a nested strip is nowhere near the header) with the edge being
+    // dragged pinned to the matching edge of the frame.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const wrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await expect(page.locator("[data-trim-edge-frame]")).toHaveCount(0);
+
+    // Drag the OUT edge in. A video shows two handles; the second is the back
+    // edge (the first is the front/in edge).
+    const handle = wrapper.locator("[data-trim-handle]").last();
+    const handleBox = (await handle.boundingBox())!;
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x - 24, handleBox.y + handleBox.height / 2, { steps: 6 });
+
+    const frame = page.locator('[data-trim-edge-frame="right"]');
+    await expect(frame).toHaveCount(1);
+
+    const band = (await page.locator("[data-graph-board-header]").boundingBox())!;
+    const frameBox = (await frame.boundingBox())!;
+    const cardBox = (await alpha.boundingBox())!;
+    // Sized to the breadcrumb row, and 16:9 from that.
+    expect(frameBox.height).toBeCloseTo(band.height, 0);
+    expect(frameBox.width).toBeCloseTo(Math.round((band.height * 16) / 9), 0);
+    // Placed against the CLIP: sitting just above it, not in the header band.
+    expect(frameBox.y + frameBox.height).toBeCloseTo(cardBox.y - 8, 0);
+    // Out-edge drag: the frame's RIGHT edge rides the clip's right edge.
+    expect(frameBox.x + frameBox.width).toBeCloseTo(cardBox.x + cardBox.width, 0);
+
+    await page.mouse.up();
+    // It belongs to the gesture, and goes with it.
+    await expect(frame).toHaveCount(0);
   });
 
   test("the call-out's scale never grows a scroll area", async ({ page }) => {

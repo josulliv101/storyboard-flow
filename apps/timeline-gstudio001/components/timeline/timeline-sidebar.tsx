@@ -76,8 +76,8 @@ function TrashAreaIcon({ className }: Readonly<{ className?: string }>) {
       className={cn("relative inline-flex shrink-0 overflow-visible", className)}
     >
       <Folder className="h-full w-full" strokeWidth={2.1} />
-      <span className="absolute -bottom-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
-        <Trash2 className="size-2.5" strokeWidth={2.7} />
+      <span className="absolute -bottom-1.5 -right-1.5 flex size-6 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
+        <Trash2 className="size-4" strokeWidth={2.7} />
       </span>
     </span>
   );
@@ -92,20 +92,31 @@ function MediaFolderIcon({ className }: Readonly<{ className?: string }>) {
       className={cn("relative inline-flex shrink-0 overflow-visible", className)}
     >
       <Folder className="h-full w-full" strokeWidth={2.1} />
-      <span className="absolute -bottom-1 -right-1 flex size-3.5 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
-        <ImageIcon className="size-2.5" strokeWidth={2.5} />
+      <span className="absolute -bottom-1.5 -right-1.5 flex size-6 items-center justify-center rounded-full bg-zinc-950 ring-1 ring-zinc-600">
+        <ImageIcon className="size-4" strokeWidth={2.5} />
       </span>
     </span>
   );
 }
 
+// Full-width SQUARES: the rail has no horizontal padding, so `w-full` is the
+// rail's width and `aspect-square` makes the height follow it. Sized this way
+// rather than with a fixed `size-*` so the two can never drift — change the
+// rail's width and every tile (and the logo) resizes with it.
 const SIDEBAR_ICON_BASE =
-  "group/sidebar-item relative flex size-11 items-center justify-center rounded-lg border transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400";
+  "group/sidebar-item relative flex w-full aspect-square items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-400";
+/** The glyph inside a tile. Larger than the old h-4: legibility is the point
+ *  of the bigger tiles, and a 16px icon in a 72px square reads as a dot. */
+const SIDEBAR_GLYPH = "h-7 w-7 transition-colors";
 const SIDEBAR_ICON_IDLE =
-  "border-zinc-800 bg-zinc-900/40 text-zinc-400 hover:border-zinc-600 hover:bg-zinc-800/80 hover:text-zinc-100";
+  "bg-zinc-900/40 text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100";
+// No `translate-y-px` any more: with the tiles flush against each other, a
+// pressed tile nudging down by a pixel opened a hairline seam above it and
+// read as misalignment rather than as a press. The lifted background and the
+// inset shadow carry the state on their own.
 const SIDEBAR_ICON_PRESSED =
-  "translate-y-px border-zinc-600 bg-zinc-800 text-zinc-100 shadow-inner shadow-black/50 ring-1 ring-inset ring-zinc-700/70";
-const SIDEBAR_SEPARATOR_CLASS = "h-px w-7 shrink-0";
+  "bg-zinc-800 text-zinc-100 shadow-inner shadow-black/50";
+const SIDEBAR_SEPARATOR_CLASS = "mx-auto my-2 h-px w-7 shrink-0";
 
 function SidebarSeparator({ selected = false }: Readonly<{ selected?: boolean }>) {
   return (
@@ -149,7 +160,7 @@ function SurfaceIconControl({
   );
   const content = (
     <>
-      <Icon className="h-4 w-4 transition-colors" />
+      <Icon className={SIDEBAR_GLYPH} />
       <SidebarTooltipLabel id={tooltipId} label={label} description={description} />
     </>
   );
@@ -181,12 +192,12 @@ function SurfaceIconControl({
 // reads as available-but-not-now, and the flat border plus the missing hover
 // response carry "disabled" on their own.
 const SIDEBAR_ICON_DISABLED =
-  "cursor-not-allowed border-zinc-800/70 bg-zinc-900/20 text-zinc-500";
+  "cursor-not-allowed bg-zinc-900/20 text-zinc-500";
 
 // Item mode borrows a restrained trace of the selection colour. These actions
 // relate to the selected card, but should remain secondary to the content.
 const SIDEBAR_ICON_ITEM_IDLE =
-  "border-zinc-800 bg-amber-200/[0.035] text-amber-100/60 hover:border-zinc-600 hover:bg-amber-200/[0.075] hover:text-amber-100/85";
+  "bg-amber-200/[0.035] text-amber-100/60 hover:bg-amber-200/[0.075] hover:text-amber-100/85";
 
 /** One button in the item-actions cluster — dispatches its action across the
  *  window-event seam for the graph provider to perform on the selection. */
@@ -225,7 +236,7 @@ function ItemActionButton({
             : SIDEBAR_ICON_IDLE,
       )}
     >
-      <Icon className="h-4 w-4 transition-colors" />
+      <Icon className={SIDEBAR_GLYPH} />
       <SidebarTooltipLabel id={tooltipId} label={label} description={description} />
     </button>
   );
@@ -256,7 +267,7 @@ function ItemActionsOverflow({
             disabled ? SIDEBAR_ICON_DISABLED : SIDEBAR_ICON_ITEM_IDLE,
           )}
         >
-          <EllipsisVertical className="h-4 w-4 transition-colors" />
+          <EllipsisVertical className={SIDEBAR_GLYPH} />
           <SidebarTooltipLabel
             id={tooltipId}
             label="More"
@@ -312,7 +323,7 @@ function ItemActionsCluster({
   allDisabled: boolean;
 }>) {
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="flex w-full flex-col items-stretch gap-0">
       {/* Only actions that operate on the selection or clipboard sit inside the amber
           block — a wash, no border, so the group reads as one thing tied to
           the selected card without drawing a box around itself. Done is
@@ -320,7 +331,7 @@ function ItemActionsCluster({
           card, and it keeps the sidebar's ordinary zinc. */}
       <div
         data-item-actions-cluster
-        className="flex flex-col items-center gap-2 rounded-xl bg-amber-200/[0.025] px-1.5 py-2"
+        className="flex w-full flex-col items-stretch gap-0 bg-amber-200/[0.025]"
       >
         {!canPaste ? (
           <>
@@ -536,12 +547,16 @@ export function TimelineSidebar() {
   return (
     <aside
       ref={railRef}
-      className="sticky top-0 z-50 flex h-screen w-[72px] shrink-0 flex-col items-center gap-5 overflow-visible border-r border-zinc-800 bg-zinc-900/50 px-3 py-5 backdrop-blur-md"
+      // No horizontal padding and `items-stretch`: the tiles ARE the rail's
+      // width, which is what makes them full-width squares. Vertical padding
+      // stays — it separates the rail's contents from the screen edges, which
+      // the side padding was not doing for the tiles.
+      className="sticky top-0 z-50 flex h-screen w-[72px] shrink-0 flex-col items-stretch gap-0 overflow-visible border-r border-zinc-800 bg-zinc-900/50 pt-1.5 pb-5 backdrop-blur-md"
     >
       <Link
         href="/"
         aria-label="Storyboard Workbench home"
-        className="flex size-11 items-center justify-center rounded-lg border border-zinc-700/55 bg-zinc-800/35 text-[13px] font-black text-zinc-400 shadow-sm shadow-black/10 transition-colors hover:border-zinc-600/70 hover:bg-zinc-800/55 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+        className="flex w-full aspect-square items-center justify-center text-lg font-black text-zinc-400 transition-colors hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-500"
       >
         SW
       </Link>
@@ -556,7 +571,7 @@ export function TimelineSidebar() {
       )}
 
       {activeProjectId && !itemMode && (
-        <div className="flex flex-col items-center gap-2">
+        <div className="flex w-full flex-col items-stretch gap-0">
           {/* The graph's layout switch (was the breadcrumb row's strip/grid
               toggle). Grid first: it is the initial-load default. */}
           <SurfaceIconControl
@@ -585,7 +600,7 @@ export function TimelineSidebar() {
           {/* zinc-500: the old zinc-800/80 vanished against the rail. */}
           <SidebarSeparator />
 
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex w-full flex-col items-stretch gap-0">
             {/* The preview-pane toggle leads the cluster (was the breadcrumb
                 row's TV icon). */}
             {onGraphRoute && (
@@ -600,7 +615,7 @@ export function TimelineSidebar() {
                   graphView.previewOn ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
                 )}
               >
-                <TvMinimal className="h-4 w-4 transition-colors" />
+                <TvMinimal className={SIDEBAR_GLYPH} />
                 <SidebarTooltipLabel
                   id="sidebar-tooltip-preview"
                   label="Preview"
@@ -628,7 +643,7 @@ export function TimelineSidebar() {
                   graphView.childrenShown ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
                 )}
               >
-                <FolderTree className="h-4 w-4 transition-colors" />
+                <FolderTree className={SIDEBAR_GLYPH} />
                 <SidebarTooltipLabel
                   id="sidebar-tooltip-children"
                   label="Children timelines"
@@ -654,7 +669,7 @@ export function TimelineSidebar() {
               >
                 <ListOrdered
                   className={cn(
-                    "h-4 w-4 transition-colors",
+                    SIDEBAR_GLYPH,
                     // Loading the closure can take a moment on a deep project,
                     // and a half-built run would otherwise look like the real
                     // answer.
@@ -693,7 +708,7 @@ export function TimelineSidebar() {
                   graphView.rulerOn ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
                 )}
               >
-                <Ruler className="h-4 w-4 transition-colors" />
+                <Ruler className={SIDEBAR_GLYPH} />
                 <SidebarTooltipLabel
                   id="sidebar-tooltip-ruler"
                   label="Time ruler"
@@ -705,7 +720,7 @@ export function TimelineSidebar() {
         </>
       )}
 
-      <div className="mt-auto flex flex-col items-center gap-2 relative">
+      <div className="relative mt-auto flex w-full flex-col items-stretch gap-0">
         {UTILITY_ITEMS.map((item) => {
           // Assets is a GRAPH-ROUTE affordance now. The legacy drawer that
           // used to answer it elsewhere is gone: its one remaining route was
@@ -746,7 +761,7 @@ export function TimelineSidebar() {
                 // even when drops land back-to-back.
                 key={item.id === "trash" ? trashArrival : undefined}
                 className={cn(
-                  "h-4 w-4 transition-colors",
+                  SIDEBAR_GLYPH,
                   // Continuous wiggle while a card hovers the trash drop zone;
                   // the one-shot arrival pop takes over on the actual drop.
                   item.id === "trash" && trashDropHover && "animate-trash-hover-attention",
@@ -778,10 +793,10 @@ export function TimelineSidebar() {
             <img
               src={user.picture}
               alt={user.name || user.email || "Profile"}
-              className="h-5 w-5 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors"
+              className="h-8 w-8 rounded-full object-cover border border-zinc-700 group-hover/sidebar-item:border-zinc-500 transition-colors"
             />
           ) : (
-            <div className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-[9px] font-bold text-zinc-400 transition-colors select-none group-hover/sidebar-item:border-zinc-600 group-hover/sidebar-item:bg-zinc-800 group-hover/sidebar-item:text-zinc-100">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800/60 text-xs font-bold text-zinc-400 transition-colors select-none group-hover/sidebar-item:border-zinc-600 group-hover/sidebar-item:bg-zinc-800 group-hover/sidebar-item:text-zinc-100">
               {user?.name ? user.name[0].toUpperCase() : (user?.email ? user.email[0].toUpperCase() : "U")}
             </div>
           )}
@@ -795,7 +810,7 @@ export function TimelineSidebar() {
         {isProfileOpen && (
           <div
             ref={profileMenuRef}
-            className="absolute bottom-0 left-[52px] z-50 w-64 rounded-xl border border-zinc-800/80 bg-zinc-950/90 p-4 shadow-[0_10px_40px_rgba(0,0,0,0.7)] backdrop-blur-md profile-popover-animate"
+            className="absolute bottom-0 left-full z-50 ml-2 w-64 rounded-xl border border-zinc-800/80 bg-zinc-950/90 p-4 shadow-[0_10px_40px_rgba(0,0,0,0.7)] backdrop-blur-md profile-popover-animate"
           >
             <div className="flex items-center gap-3 border-b border-zinc-800/60 pb-3">
               {user?.picture ? (

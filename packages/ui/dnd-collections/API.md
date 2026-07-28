@@ -1050,6 +1050,18 @@ to mount and no layout band that displaces the row. The overview's amber
 window is pixel-aligned to the clip's rendered edges at rest and during a live
 trim because its position is derived from the mounted clip rect.
 
+That alignment is bought with an UNBOUNDED width: the overview draws the whole
+source at timeline scale, so it is `fullDuration × pixelsPerSecond` wide, and a
+long source is wider than the viewport in both directions. Pass
+`trimOverview="off"` and render `TrimOverviewStrip` yourself with an explicit
+`width` when that trade is wrong for your screen. A `width` makes the strip
+FITTED: it derives its own scale (`width / fullDuration`) for the picture and
+for its gestures, so the whole source is always visible and drags stay
+proportional to what is drawn — coarser per pixel, and no longer aligned to the
+clip, which is why a fitted strip's owner also owns placing it. The body drag
+flips meaning with it: unfitted you drag the FILM under a pinned window, fitted
+you drag the WINDOW along a pinned film.
+
 `itemWidthFor` is evaluated lazily per index (never by rendering the node) and
 the virtualizer memoizes its measurements, so it runs once per layout, not per
 render. With `panToScroll` on, item drags move to a grip bar or behind a
