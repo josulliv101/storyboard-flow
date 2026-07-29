@@ -7,22 +7,32 @@
  * The one access rule:
  *
  * - `owned`  — the record belongs to the requester.
- * - `claim`  — the record predates ownership stamping (no ownerUid). It is
- *   CLAIMED by the first authenticated user who touches it — a self-executing
- *   migration for legacy documents, chosen deliberately over treating them as
- *   public or breaking the existing user's access until a manual script runs.
- *   The exposure window is deploy-until-the-owner's-next-visit; after that
- *   every document is stamped and strictly enforced.
- * - `denied` — the record belongs to someone else.
+ * - `denied` — anything else: another user's record, OR a record with no
+ *   owner at all.
+ *
+ * An UNOWNED record is denied, not granted. There used to be a third answer,
+ * `claim`, which handed an ownerless record to the first authenticated user
+ * who touched it — a self-executing migration for documents predating
+ * ownership stamping. It worked, but its exposure window only closed once no
+ * ownerless records remained, and nothing measured that: listing projects
+ * batch-stamped every ownerless project it saw, and knowing a bare id was
+ * enough to take or delete the document behind it.
+ *
+ * The migration is done — `npm run audit:ownership` reported 0 ownerless
+ * records across all 144 documents after
+ * `scripts/stamp-ownerless-timelines.mjs` ran — so the window is shut for
+ * good. Re-run that audit before assuming a new ownerless record cannot
+ * appear; the answer here is now deliberately unforgiving, and a record that
+ * somehow loses its owner becomes unreachable rather than up for grabs.
  */
-export type OwnershipDecision = "owned" | "claim" | "denied";
+export type OwnershipDecision = "owned" | "denied";
 
 export function resolveOwnership(
   recordOwnerUid: string | null | undefined,
   requesterUid: string,
 ): OwnershipDecision {
   if (recordOwnerUid === null || recordOwnerUid === undefined || recordOwnerUid === "") {
-    return "claim";
+    return "denied";
   }
   return recordOwnerUid === requesterUid ? "owned" : "denied";
 }

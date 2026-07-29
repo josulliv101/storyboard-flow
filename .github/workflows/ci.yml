@@ -1,10 +1,17 @@
 name: CI
 
-# The validation gate every PR must pass before auto-merge can complete.
-# Kept to the fast, deterministic checks (typecheck + lint + unit); the
-# Playwright e2e suite is intentionally excluded here — it needs a dev server
-# and real browsers, too slow/flaky to gate every merge on. Run it locally or
-# in a separate manual workflow when a change warrants it.
+# The validation gate every PR must pass before auto-merge can complete:
+# typecheck + lint + unit + the Storybook browser suite.
+#
+# The Storybook `play` functions ARE this repo's interaction test suite, so
+# leaving them out meant interaction and visual contracts could drift while CI
+# stayed green — and they did: a badge's type floor moved 9px -> 11px and the
+# assertion demanding 9px went unnoticed because nothing ran it. They need a
+# real Chromium but no dev server, which is what makes them affordable here.
+#
+# The Playwright e2e suite is still intentionally excluded — it needs a running
+# dev server and real trusted mouse input, too slow to gate every merge on. Run
+# it locally or in a separate manual workflow when a change warrants it.
 
 on:
   pull_request:
@@ -50,3 +57,12 @@ jobs:
       - name: App tests (routes, gateway, model)
         working-directory: apps/timeline-gstudio001
         run: npx vitest run
+
+      # Only Chromium — the browser project pins a single chromium instance,
+      # so installing the other engines is pure download time.
+      - name: Install Chromium for browser stories
+        run: npx playwright install --with-deps chromium
+
+      - name: Story interaction tests (headless Chromium)
+        working-directory: apps/storybook
+        run: npx vitest run --project=storybook

@@ -15,8 +15,9 @@ type TimelineDocumentRecord = {
   lastNonEmptyDocument?: TimelineDocument;
   clips?: TimelineClip[];
   isProject?: boolean;
-  /** Authorization boundary: absent only on legacy records, which are
-   *  claimed by the first authenticated toucher (see lib/timeline-ownership). */
+  /** Authorization boundary. Optional only because Firestore documents are
+   *  untyped at rest — every live record carries one, and a record without an
+   *  owner is unreachable rather than up for grabs (see lib/timeline-ownership). */
   ownerUid?: string;
   /** Monotonic save counter, stamped on EVERY write (absent = 0, legacy).
    *  Clients that carry an expected revision into a batch write get
@@ -199,26 +200,22 @@ export async function listFirebaseTimelineProjects(requesterUid: string) {
     "Loading timeline projects",
   );
 
-  // The scan (not an ownerUid where-clause) is deliberate while legacy
-  // records exist: unowned projects must surface here so the first
-  // authenticated visit CLAIMS them — otherwise they'd silently vanish from
-  // the list until a manual migration ran. Other users' projects are
-  // filtered out; claims are stamped before returning.
+  // Listing is now READ ONLY. It used to stamp `ownerUid` onto every ownerless
+  // project in the result set — one batch write per list, granting ownership to
+  // whoever happened to look first. The legacy records that justified it have
+  // been migrated (see lib/timeline-ownership), so unowned projects are simply
+  // not visible to anyone.
+  //
+  // The `.limit(100)` still precedes the ownership filter, so this reads other
+  // users' rows and can miss a user's own projects once the collection exceeds
+  // 100 documents across all users. Fixing that needs a
+  // `.where("ownerUid", "==", requesterUid)` with a composite index deployed
+  // alongside it.
   const visible: { id: string; data: TimelineDocumentRecord }[] = [];
-  const toClaim: string[] = [];
   for (const doc of snapshot.docs) {
     const data = doc.data() as TimelineDocumentRecord;
-    const decision = resolveOwnership(data.ownerUid, requesterUid);
-    if (decision === "denied") continue;
-    if (decision === "claim") toClaim.push(doc.id);
+    if (resolveOwnership(data.ownerUid, requesterUid) !== "owned") continue;
     visible.push({ id: doc.id, data });
-  }
-  if (toClaim.length > 0) {
-    const batch = getFirebaseDb().batch();
-    for (const id of toClaim) {
-      batch.set(collection().doc(id), { ownerUid: requesterUid }, { merge: true });
-    }
-    await withFirebaseTimeout(batch.commit(), "Claiming legacy timeline projects");
   }
 
   return visible
@@ -241,13 +238,10 @@ export async function getFirebaseTimelineEntry(
 
   if (!snapshot.exists) return null;
   const data = snapshot.data() as TimelineDocumentRecord;
-  const decision = resolveOwnership(data.ownerUid, requesterUid);
-  if (decision === "denied") throw new TimelineAccessDeniedError(id);
-  if (decision === "claim") {
-    await withFirebaseTimeout(
-      collection().doc(id).set({ ownerUid: requesterUid }, { merge: true }),
-      "Claiming legacy timeline document",
-    );
+  // Reads no longer write. An ownerless record is denied like any other record
+  // the requester does not own — knowing its id is not a claim to it.
+  if (resolveOwnership(data.ownerUid, requesterUid) !== "owned") {
+    throw new TimelineAccessDeniedError(id);
   }
   return {
     document: toTimelineDocument(snapshot.id, data),
@@ -274,7 +268,7 @@ export type SaveOptions = Readonly<{
 }>;
 
 /** The one Firestore payload both write paths (single save, atomic batch)
- *  produce — shared so revision stamping and ownership claiming can't drift
+ *  produce — shared so revision and ownership stamping can't drift
  *  between them. */
 function buildSavePayload(
   normalizedDocument: TimelineDocument,
@@ -476,39 +470,93 @@ export async function createFirebaseTimelineProject(requesterUid: string, title?
   return document;
 }
 
+/**
+ * Ceiling on how many documents one cascade may touch. Real collection trees
+ * are a handful of documents a few levels deep, so hitting this means the
+ * structure is pathological — and a pathological tree must fail LOUDLY before
+ * anything is deleted rather than half-delete and leave unreachable orphans
+ * the user can no longer see or retry from.
+ */
+const MAX_CASCADE_DOCUMENTS = 500;
+
+export class TimelineCascadeTooLargeError extends Error {
+  constructor(id: string) {
+    super(
+      `Deleting timeline "${id}" would touch more than ${MAX_CASCADE_DOCUMENTS} documents.`,
+    );
+    this.name = "TimelineCascadeTooLargeError";
+  }
+}
+
+/**
+ * Delete a document and the collection sub-timelines beneath it.
+ *
+ * The traversal is breadth-first with a VISITED SET, which is what keeps a
+ * malformed graph from taking the process down: `childTimelineId` values live
+ * in stored clips and are attacker-suppliable, nothing in the write path
+ * forbids a cycle, and the previous recursive walk re-entered A → B → A until
+ * the stack gave out (it deleted the parent only AFTER recursing, so the cycle
+ * never broke itself). A diamond — two clips pointing at one child — likewise
+ * used to enqueue that child twice.
+ *
+ * Reads and writes are separated: the whole id set is collected first, so a
+ * refusal (foreign owner at the root, oversized tree) happens before any
+ * document is removed.
+ *
+ * NOT addressed here, deliberately: a child referenced by a DIFFERENT project
+ * is still deleted along with this one. Fixing that needs inbound-reference
+ * counting or explicit per-document parentage in the stored model, which is a
+ * schema decision rather than a traversal fix.
+ */
 export async function deleteFirebaseTimelineDocument(id: string, requesterUid: string) {
-  const ref = collection().doc(id);
-  const docSnap = await withFirebaseTimeout(ref.get(), "Loading timeline document for deletion");
+  const visited = new Set<string>([id]);
+  const queue: string[] = [id];
+  // Root-first, so reversing it deletes the deepest documents first and the
+  // root last — a failure part-way leaves a visibly broken parent the user can
+  // retry from, rather than invisible orphans under a vanished root.
+  const toDelete: string[] = [];
 
-  if (docSnap.exists) {
-    const data = docSnap.data() as TimelineDocumentRecord;
-    if (resolveOwnership(data.ownerUid, requesterUid) === "denied") {
-      throw new TimelineAccessDeniedError(id);
+  while (queue.length > 0) {
+    const currentId = queue.shift() as string;
+    const snapshot = await withFirebaseTimeout(
+      collection().doc(currentId).get(),
+      "Loading timeline document for deletion",
+    );
+
+    if (!snapshot.exists) {
+      // A dangling child reference is nothing to delete. The ROOT still gets a
+      // (no-op) delete so callers see the same success as before.
+      if (currentId === id) toDelete.push(currentId);
+      continue;
     }
-    const document = data.document;
-    if (document && document.clips) {
-      const deleteQueue: string[] = [];
-      const extractChildTimelineIds = (clips: TimelineClip[]) => {
-        for (const clip of clips) {
-          if (clip.kind === "collection" && clip.childTimelineId) {
-            deleteQueue.push(clip.childTimelineId);
-          }
-        }
-      };
-      extractChildTimelineIds(document.clips);
 
-      for (const childId of deleteQueue) {
-        try {
-          await deleteFirebaseTimelineDocument(childId, requesterUid);
-        } catch (error) {
-          // A child owned by someone else (shouldn't happen, but ids are
-          // attacker-suppliable in stored clips) is skipped, not fatal —
-          // the requester's own tree still deletes.
-          if (!(error instanceof TimelineAccessDeniedError)) throw error;
-        }
+    const data = snapshot.data() as TimelineDocumentRecord;
+    if (resolveOwnership(data.ownerUid, requesterUid) === "denied") {
+      // At the root this is the authorization answer. Deeper it means a stored
+      // clip pointed at someone else's document: skip it, and keep deleting
+      // the requester's own tree.
+      if (currentId === id) throw new TimelineAccessDeniedError(id);
+      continue;
+    }
+
+    toDelete.push(currentId);
+
+    for (const clip of data.document?.clips ?? []) {
+      if (clip.kind !== "collection" || !clip.childTimelineId) continue;
+      // Already queued or already deleted — a cycle or a diamond.
+      if (visited.has(clip.childTimelineId)) continue;
+      if (visited.size >= MAX_CASCADE_DOCUMENTS) {
+        throw new TimelineCascadeTooLargeError(id);
       }
+      visited.add(clip.childTimelineId);
+      queue.push(clip.childTimelineId);
     }
   }
 
-  await withFirebaseTimeout(ref.delete(), "Deleting timeline document");
+  for (const documentId of toDelete.reverse()) {
+    await withFirebaseTimeout(
+      collection().doc(documentId).delete(),
+      "Deleting timeline document",
+    );
+  }
 }
