@@ -16,6 +16,7 @@ import {
   DndCollections,
   buildGraph,
   parseNodeId,
+  useCollectionsStore,
   type CollectionItemNode,
   type CollectionsGraph,
   type AddNodesCommand,
@@ -94,6 +95,83 @@ type BootState =
  * Session orchestration for the graph route. Feature behavior lives in the
  * sibling graph-* modules; this root owns only boot data and durable view state.
  */
+/**
+ * Says what flat mode just put on screen: "Showing 12 items from 3
+ * collections".
+ *
+ * Announced when the run is COMPLETE, not when the toggle is pressed. Flat mode
+ * has to hydrate every nested collection before the order is whole (see
+ * FlatClosureHydrator), so a toast fired on the click would state a number that
+ * was still growing — the counts land with `loading` going false.
+ *
+ * It says SHOWING, not "added". Nothing moves: flat mode is a view over items
+ * that were already there, and a toast claiming otherwise would describe an
+ * edit the undo stack knows nothing about.
+ *
+ * The collection count includes the focused timeline when it has direct
+ * children of its own, because it IS one of the collections the run is drawn
+ * from — counting only the nested ones would under-report the moment a timeline
+ * mixes loose clips with folders. With nothing nested the phrase drops entirely
+ * rather than reading "from 1 collection", which tells nobody anything.
+ *
+ * Once per activation: a ref keeps a re-render — or a child edit re-running the
+ * flatten — from re-announcing, and it resets when flat mode goes off.
+ */
+function FlatRunAnnouncement({
+  enabled,
+  loading,
+  focusedId,
+}: Readonly<{ enabled: boolean; loading: boolean; focusedId: string }>) {
+  const store = useCollectionsStore();
+  const announcedRef = useRef(false);
+  // Whether hydration has actually STARTED for this activation. Without it the
+  // announcement fires at t0, when `loading` is false only because the closure
+  // hydrator has not run its effect yet — the probe that found this read
+  // `loading=false count=2`, then `loading=true count=2`, then
+  // `loading=false count=15`. The first of those is the trap: "not started"
+  // and "finished" are the same boolean.
+  //
+  // The true→false EDGE is deterministic rather than a settle heuristic,
+  // because FlatClosureHydrator raises the flag unconditionally before it
+  // fetches anything (see its effect) — so every activation passes through
+  // true, including one with nothing left to load.
+  const hydratingRef = useRef(false);
+
+  useEffect(() => {
+    if (!enabled) {
+      announcedRef.current = false;
+      hydratingRef.current = false;
+      return;
+    }
+    if (loading) {
+      hydratingRef.current = true;
+      return;
+    }
+    if (!hydratingRef.current || announcedRef.current) return;
+    announcedRef.current = true;
+
+    const items = flattenMediaOrder(
+      store.getSnapshot().graph,
+      parseNodeId(focusedId),
+      MAX_SUBTREE_DEPTH,
+    );
+    if (items.length === 0) return;
+
+    const parents = new Set(
+      items.map((item) => item.collectionPath[item.collectionPath.length - 1] ?? focusedId),
+    );
+    const itemLabel = `${items.length} item${items.length === 1 ? "" : "s"}`;
+    toast(
+      parents.size > 1
+        ? `Showing ${itemLabel} from ${parents.size} collections`
+        : `Showing ${itemLabel} in order`,
+      { id: "flat-run-announced" },
+    );
+  }, [enabled, loading, focusedId, store]);
+
+  return null;
+}
+
 export function GraphTimelineView({
   projectId,
   bootstrap,
@@ -621,6 +699,11 @@ export function GraphTimelineView({
             enabled={flatOn}
             focusedId={focusedId}
             onLoadingChange={setFlatLoading}
+          />
+          <FlatRunAnnouncement
+            enabled={flatOn}
+            loading={flatLoading}
+            focusedId={focusedId}
           />
 
           <GraphViewNavProvider

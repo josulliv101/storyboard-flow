@@ -215,6 +215,96 @@ the mark says "nothing" about something with plenty. The card already publishes
 `data-collection-hydrated`, so telling them apart is cheap; what it should look
 like is undecided.
 
+## PL13-009 — Details moves off the card and into the item actions
+
+- Status: Not started
+- Area: `graph-item-content.tsx` (remove the trigger), `timeline-sidebar.tsx`
+  (item-actions cluster), `graph-item-details-context.tsx`
+- Supersedes: the details trigger placed by PL11-002 / PL11-012
+
+**Take the details icon off both card kinds.** It is a per-item control living
+on the artwork, and PL13-005 had just made it permanent — so every card, media
+and collection alike, now carries a mark for a view most people open rarely.
+That is the wrong trade, and it is also the honest answer to the
+consistency question that produced PL13-005: the two kinds stop disagreeing
+about where the trigger sits by not having one.
+
+Instead: an **Edit** icon, FIRST in the rail's contextual item-actions cluster
+(the Copy / Cut / Delete / More group that already appears when something is
+selected). Pressing it opens the same details modal.
+
+**Disabled on a multi-selection.** The view is about ONE item — it shows that
+clip's frames, its in/out points, its name — and there is no honest way to
+render it for six. Disabled, not hidden: a control that vanishes teaches
+nothing, while a disabled one says "this is the wrong shape of selection for
+that". PL8 has the precedent and the trap: disabled rail icons were dimmed
+TWICE (zinc-600 plus opacity-50 = 1.47:1 on the near-black rail, near-invisible)
+and the fix was a solid zinc-500 at 4.12:1.
+
+Consequences to handle rather than discover:
+
+- The card's control cluster loses a member. On a collection only the drill
+  chevron remains — which is a reason to re-check whether the cluster is still
+  the right shape, or whether a lone chevron wants a different home. On a media
+  card the cluster empties entirely and the artwork is clean.
+- `openId` in the details context is currently set by the trigger, which also
+  SELECTS the card so the board's selection-scoped readouts agree with the
+  modal. From the rail the selection is already the input, so that coupling can
+  invert: open what is selected, and refuse when that is not exactly one.
+- Several e2e tests drive the details view through the per-card trigger
+  (`[data-item-details-trigger]`, the Tab-then-Enter path, the hover/touch
+  reveal tests). They retarget to the rail control. The touch test in
+  particular loses its subject — it exists because the trigger used to hide on
+  hover-less devices, and a rail button has no such problem.
+
+Acceptance criteria:
+
+- No details trigger on any card.
+- With exactly one item selected, an Edit control leads the item actions and
+  opens that item's details.
+- With two or more selected it is present and disabled, at a contrast that
+  reads as available-but-not-now rather than invisible.
+- With nothing selected the item actions do not appear at all, as today.
+
+## PL13-010 — The strip should look like a strip when it is empty
+
+- Status: Not started
+- Area: `graph-board.tsx` (the strip's shell), `packages/ui/dnd-collections`
+  (VirtualStrip's content box)
+
+A strip with zero, one or two items currently reads as a couple of cards
+floating on the page — the surface itself is invisible, so there is nothing to
+say "things go here, in a row". Give the strip a TRACK: a background a step
+lighter than the board's near-black, present whether or not anything is in it.
+
+An empty track is also the honest empty state for this surface. The board's
+other empty affordance ("Add timeline") is a slot INSIDE a row; this is the row.
+
+Two halves, and the second is where the care is:
+
+- **The track spans the full width**, not just the cards' extent, with a little
+  inset at the trailing end rather than running flush to the viewport edge.
+- **When the content is LONGER than the viewport, that trailing inset is not a
+  thing** — the track continues under the cards and scrolls with them, and what
+  you see on the right is simply more track. Padding at the end of a scrollable
+  run would be a gap in the middle of the content as soon as you scrolled.
+
+So the track's width is `max(viewport width − inset, content extent)`, and the
+inset only ever applies in the first case. Worth checking against what already
+exists there: the strip's scroller sizes its content div to
+`getTotalSize()` plus the trailing-slot width (PL9), and `getTotalSize()`
+deliberately stays the CARDS' extent so drops still append — so the track is a
+third measurement and should not be folded into either of those.
+
+Acceptance criteria:
+
+- An empty strip shows a full-width track, visibly lighter than the board.
+- One or two cards sit ON that track, with the remainder of it visible.
+- A strip whose content overflows shows track under the whole run, and no
+  trailing gap appears mid-scroll.
+- The ruler, seek rail and drop indicator keep their current alignment — the
+  track is behind them, and it must not shift the geometry any of them measure.
+
 ## PL13-002 — Click selects everywhere, including duplicate references
 
 - Status: Not started
