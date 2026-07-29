@@ -90,6 +90,31 @@ describe("project-scoped Firebase media reads", () => {
     expect(state.scopedProject).toBeNull();
     expect(state.metadataReads).toBe(0);
   });
+
+  // The regression: a path that does not carry `projects/<uid>/<projectId>/`
+  // used to skip BOTH checks — the uid comparison and the project-scope read
+  // were each guarded on the scope parsing successfully — so any signed-in
+  // caller could stream any legacy or manually-uploaded object under the two
+  // allowed prefixes. Only the name's entropy stood in the way, which is not
+  // an authorization decision.
+  it.each([
+    "timeline-thumbnails/legacy-thumb.jpg",
+    "timeline-videos/legacy.mp4",
+    "timeline-videos/projects/user-a/large.mp4", // scoped prefix, missing projectId
+    "timeline-thumbnails/projects/shot.jpg",
+  ])("denies the unscoped path %s before reading storage", async (pathname) => {
+    const response = await HEAD(request(pathname));
+
+    expect(response.status).toBe(404);
+    expect(state.scopedProject).toBeNull();
+    expect(state.metadataReads).toBe(0);
+  });
+
+  it("marks media responses nosniff", async () => {
+    const response = await HEAD(request(OWNED));
+
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
 });
 
 describe("range responses", () => {

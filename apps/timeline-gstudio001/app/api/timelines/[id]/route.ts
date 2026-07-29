@@ -6,6 +6,7 @@ import {
   deleteFirebaseTimelineDocument,
 } from "@/lib/firebase-timeline-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
+import { readJsonObject } from "@/lib/read-json-body";
 import {
   isStoredTimelineDocument,
   isUnsavedProjectPlaceholder,
@@ -111,9 +112,7 @@ export async function PATCH(
     const mismatch = scopedIdMismatch(id, user.uid);
     if (mismatch) return mismatch;
 
-    const body = (await request.json().catch(() => ({}))) as {
-      document?: unknown;
-    };
+    const body = await readJsonObject(request);
 
     // Full runtime validation (every clip, discriminated by kind) — the
     // same guard the batch endpoint uses; a malformed payload must never

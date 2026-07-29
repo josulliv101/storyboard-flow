@@ -2,7 +2,11 @@ import "server-only";
 
 import { collectionChildIds } from "./derive-collection-summaries";
 import type { GraphServerPayload } from "./graph-documents-gateway";
-import { serveTimelineDocument, serveTrashDocument } from "./serve-timeline";
+import {
+  createTimelineEntryReader,
+  serveTimelineDocument,
+  serveTrashDocument,
+} from "./serve-timeline";
 
 // RSC read-path loaders (fold-in of the codex/rsc-graph-poc direction):
 // server components deliver served documents + revisions as PROPS, and the
@@ -19,6 +23,16 @@ export type { GraphServerPayload };
 const MAX_PATH_PAYLOADS = 16;
 
 /**
+ * Ceiling on documents ATTEMPTED, as distinct from payloads produced.
+ *
+ * `MAX_PATH_PAYLOADS` counts successes, so it bounded nothing when serves
+ * failed: `activeTimelinePath` is a catch-all route segment, so a URL carrying
+ * hundreds of unknown segments produced zero payloads while still costing one
+ * storage read per segment. This is the bound that actually holds.
+ */
+const MAX_PATH_ATTEMPTS = 48;
+
+/**
  * The boot payloads: the project document and the user's trash — the two
  * roots the graph builds from. Null when the project can't be served
  * (missing or denied): the client boots through its legacy fetch path and
@@ -29,9 +43,12 @@ export async function loadGraphBootstrapPayloads(
   requesterUid: string,
 ): Promise<readonly GraphServerPayload[] | null> {
   try {
-    const project = await serveTimelineDocument(projectId, requesterUid);
+    // One reader for the whole render: the project's own serve reads every
+    // child to derive summaries, and the trash read joins the same cache.
+    const read = createTimelineEntryReader(requesterUid);
+    const project = await serveTimelineDocument(projectId, requesterUid, read);
     if (!project) return null;
-    const trash = await serveTrashDocument(`trash-${requesterUid}`, requesterUid);
+    const trash = await serveTrashDocument(`trash-${requesterUid}`, requesterUid, read);
     // forUid lets the client's prime refuse payloads that survive an auth
     // transition in the router cache.
     return [
@@ -63,29 +80,47 @@ export async function loadFocusPathPayloads(
 ): Promise<readonly GraphServerPayload[]> {
   const payloads: GraphServerPayload[] = [];
   const seen = new Set<string>();
+  // Shared across every serve below, so a child read once for its parent's
+  // summaries is not read again to become a payload, and its own children are
+  // not read a third time.
+  const read = createTimelineEntryReader(requesterUid);
 
-  const serve = async (id: string) => {
-    if (seen.has(id) || payloads.length >= MAX_PATH_PAYLOADS) return null;
+  const serve = async (id: string): Promise<GraphServerPayload | null> => {
+    if (seen.has(id) || seen.size >= MAX_PATH_ATTEMPTS) return null;
+    if (payloads.length >= MAX_PATH_PAYLOADS) return null;
     seen.add(id);
     try {
-      const served = await serveTimelineDocument(id, requesterUid);
+      const served = await serveTimelineDocument(id, requesterUid, read);
       if (!served) return null;
-      const payload: GraphServerPayload = { ...served, forUid: requesterUid };
-      payloads.push(payload);
-      return payload;
+      return { ...served, forUid: requesterUid };
     } catch {
       return null;
     }
   };
 
+  // The focus chain stays SEQUENTIAL: it is an ancestor path, and each segment
+  // is only worth reading if the one above it resolved.
   const segments = options?.focusedOnly ? path.slice(-1) : path;
   let focused: GraphServerPayload | null = null;
   for (const segment of segments) {
-    focused = (await serve(segment)) ?? focused;
+    const payload = await serve(segment);
+    if (payload) {
+      payloads.push(payload);
+      focused = payload;
+    }
   }
+
   if (focused) {
-    for (const childId of collectionChildIds(focused.document)) {
-      await serve(childId);
+    // The eager child level is a FLAT set of independent documents — nothing
+    // about one gates another, so serialising them only added latency. Results
+    // are pushed in child order regardless of completion order, so the primes
+    // the client receives are deterministic.
+    const children = collectionChildIds(focused.document).slice(
+      0,
+      Math.max(0, MAX_PATH_PAYLOADS - payloads.length),
+    );
+    for (const payload of await Promise.all(children.map((childId) => serve(childId)))) {
+      if (payload) payloads.push(payload);
     }
   }
 

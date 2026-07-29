@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { formatSeconds } from "@/lib/format-duration";
 
 import {
@@ -44,53 +45,6 @@ function edgeSourceTime(node: MediaNode, live: LiveTrim): number {
     : Math.max(0, live.trimInSeconds);
 }
 
-/**
- * Keeps the preview element seeked to `time`, one in-flight seek at a time: a
- * per-frame settle loop issues a seek only while none is in flight and the
- * element isn't already on target, so a fast drag lands on the newest frame
- * without queueing dozens of decodes. A rAF loop rather than `seeked`
- * bookkeeping on purpose — it is self-healing (a missed event or a seek the
- * browser coalesced can't strand a stale frame; the next frame catches up),
- * and it only runs while the preview is mounted, i.e. during the gesture.
- * (`currentTime` reads back as the seek TARGET mid-seek, so the on-target
- * check doesn't re-issue while decoding either.)
- */
-function useSeekedVideo(time: number) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const targetRef = useRef(time);
-
-  useEffect(() => {
-    targetRef.current = time;
-  }, [time]);
-
-  const attachVideo = useCallback((video: HTMLVideoElement | null) => {
-    videoRef.current = video;
-  }, []);
-
-  useEffect(() => {
-    let raf = 0;
-    const tick = () => {
-      const video = videoRef.current;
-      if (
-        video &&
-        video.readyState >= 1 &&
-        !video.seeking &&
-        Math.abs(video.currentTime - targetRef.current) > 0.03
-      ) {
-        try {
-          video.currentTime = targetRef.current;
-        } catch {
-          // metadata raced away; next frame retries
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  return attachVideo;
-}
 
 /**
  * The live frame, during a trim drag. Sized to the board header's band and

@@ -38,10 +38,32 @@ async function readAuthResponse(response: Response) {
   return result.user ?? null;
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({
+  initialUser,
+  children,
+}: {
+  /**
+   * The session the SERVER already resolved for this render (root layout).
+   *
+   * Without it this provider started at `isLoading: true` and AuthGate held
+   * the entire tree behind a spinner until `/api/auth/me` answered — one
+   * blocking round trip per page load, re-deriving an identity the RSC pass
+   * had in hand. It also negated the graph route's own work: the layout
+   * streams boot documents so the client boots with zero fetches, and none of
+   * it could render until that unrelated request landed.
+   *
+   * `null` means the server saw no session, which is a real answer, not an
+   * absent one — so nothing blocks in that case either. The mount effect below
+   * still revalidates.
+   */
+  initialUser: AuthUser | null;
+  children: React.ReactNode;
+}) {
   const router = useRouter();
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(initialUser);
+  // The server answered, so there is nothing to wait for. Revalidation runs in
+  // the background; only a session we have never resolved gates the UI.
+  const [isLoading, setIsLoading] = useState(false);
 
   // Pure request: resolves to the session user (or null) and never touches
   // state — so the mount effect can consume it through promise CALLBACKS
@@ -67,18 +89,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [requestUser]);
 
   useEffect(() => {
-    // Mount needs no sync loading reset — isLoading INITIALIZES true. The
-    // cancelled flag keeps a slow answer from writing into an unmounted tree.
+    // BACKGROUND revalidation, not a gate. The server already resolved the
+    // session for this render (see `initialUser`), so this only catches a
+    // cookie that expired between the RSC pass and hydration — it must never
+    // raise `isLoading`, or it would reintroduce the blocking spinner it
+    // replaced. The cancelled flag keeps a slow answer out of an unmounted
+    // tree.
     let cancelled = false;
     requestUser()
       .then((next) => {
         if (!cancelled) setUser(next);
       })
       .catch(() => {
-        if (!cancelled) setUser(null);
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
+        // A failed revalidation is not evidence of signing out — a network
+        // blip must not throw the user back to the sign-in form. Keep what the
+        // server told us; a genuinely dead session fails the next API call.
       });
     return () => {
       cancelled = true;

@@ -151,3 +151,80 @@ describe("healTimelineDocument", () => {
     expect(changed).toBe(false);
   });
 });
+
+// The matcher used to reduce BOTH sides to a bare filename leaf, so assets
+// sharing a leaf across folders/projects overwrote each other in one flat map
+// and a clip was silently re-pointed at whichever was listed last — with the
+// caller persisting the result, from a plain GET.
+describe("asset resolution", () => {
+  /** `videoClip` is typed as the whole TimelineClip union, so spreading it to
+   *  add `sourceAsset` (a MEDIA-only field) needs the narrowed variant. */
+  function videoOf(publicId: string): Extract<TimelineClip, { kind: "video" }> {
+    const clip = videoClip(publicId, 0, 0, 8);
+    if (clip.kind !== "video") throw new Error("fixture is a video");
+    return clip;
+  }
+
+  function inFolder(folder: string, publicId: string, duration: number, url: string): CloudinaryAsset {
+    return {
+      ...videoAsset(publicId, duration, url),
+      id: `${folder}/${publicId}`,
+      pathname: `${folder}/${publicId}`,
+      relativePath: `${folder}/${publicId}`,
+    };
+  }
+
+  it("refuses a legacy filename that names more than one asset", () => {
+    const input = doc([videoClip("alley", 0, 0, 8)]);
+
+    const { document, changed } = healTimelineDocument(input, [
+      inFolder("project-a", "alley", 3, `${CLOUD}/a/alley.mp4`),
+      inFolder("project-b", "alley", 30, `${CLOUD}/b/alley.mp4`),
+    ]);
+
+    // Ambiguous: no rewrite in either direction, and no duration guess.
+    expect(changed).toBe(false);
+    expect(document).toBe(input);
+  });
+
+  it("still heals a legacy filename that names exactly one asset", () => {
+    const input = doc([videoClip("alley", 0, 0, 8)]);
+
+    const { document, changed } = healTimelineDocument(input, [
+      inFolder("project-a", "alley", 3, `${CLOUD}/a/alley.mp4`),
+      inFolder("project-b", "brook", 30, `${CLOUD}/b/brook.mp4`),
+    ]);
+
+    expect(changed).toBe(true);
+    expect(srcOf(document.clips[0])).toBe(`${CLOUD}/a/alley.mp4`);
+  });
+
+  it("resolves by sourceAsset provenance even when the leaf is ambiguous", () => {
+    const input = doc([
+      { ...videoOf("alley"), sourceAsset: { providerId: "cloudinary", assetId:"project-b/alley" } },
+    ]);
+
+    const { document, changed } = healTimelineDocument(input, [
+      inFolder("project-a", "alley", 3, `${CLOUD}/a/alley.mp4`),
+      inFolder("project-b", "alley", 30, `${CLOUD}/b/alley.mp4`),
+    ]);
+
+    expect(changed).toBe(true);
+    expect(srcOf(document.clips[0])).toBe(`${CLOUD}/b/alley.mp4`);
+    expect(document.clips[0].duration).toBe(30);
+  });
+
+  it("does not fall back to a same-named asset when provenance names a missing one", () => {
+    const input = doc([
+      { ...videoOf("alley"), sourceAsset: { providerId: "cloudinary", assetId:"deleted/alley" } },
+    ]);
+
+    const { document, changed } = healTimelineDocument(input, [
+      inFolder("project-a", "alley", 3, `${CLOUD}/a/alley.mp4`),
+    ]);
+
+    // The asset it was placed from is gone. A same-named neighbour is not it.
+    expect(changed).toBe(false);
+    expect(document).toBe(input);
+  });
+});

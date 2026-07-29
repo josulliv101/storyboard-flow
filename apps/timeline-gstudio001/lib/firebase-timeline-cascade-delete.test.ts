@@ -21,6 +21,14 @@ const state = vi.hoisted(() => {
       data: () => (data ? { ...data } : undefined),
     };
   };
+  /** Ids in commit order, per batch — the deletion ORDER assertions read this,
+   *  and its shape proves the cascade travels as batches rather than as N
+   *  independent writes. */
+  const commits: string[][] = [];
+  /** Set to make the next commit reject, standing in for a transient failure
+   *  part-way through a large deletion. */
+  const failNextCommit = { value: false };
+
   const db = {
     collection: () => ({
       doc: (id: string) => ({
@@ -29,13 +37,27 @@ const state = vi.hoisted(() => {
           reads.push(id);
           return snapshot(id);
         },
-        delete: async () => {
-          docs.delete(id);
-        },
       }),
     }),
+    batch: () => {
+      const queued: string[] = [];
+      return {
+        delete: (ref: { id: string }) => {
+          queued.push(ref.id);
+        },
+        commit: async () => {
+          if (failNextCommit.value) {
+            failNextCommit.value = false;
+            throw new Error("simulated commit failure");
+          }
+          commits.push([...queued]);
+          // Atomic: every id in the batch lands, or none of them did.
+          for (const id of queued) docs.delete(id);
+        },
+      };
+    },
   };
-  return { docs, reads, db };
+  return { docs, reads, commits, failNextCommit, db };
 });
 
 vi.mock("server-only", () => ({}));
@@ -96,6 +118,8 @@ function seed(id: string, ownerUid: string | undefined, childIds: string[] = [])
 beforeEach(() => {
   state.docs.clear();
   state.reads.length = 0;
+  state.commits.length = 0;
+  state.failNextCommit.value = false;
 });
 
 describe("cascade deletion", () => {
@@ -196,30 +220,36 @@ describe("cascade deletion", () => {
     seed("child", "user-a", ["grandchild"]);
     seed("grandchild", "user-a");
 
-    const deleteOrder: string[] = [];
-    const original = state.db.collection;
-    state.db.collection = () => {
-      const inner = original();
-      return {
-        doc: (id: string) => {
-          const ref = inner.doc(id);
-          return {
-            ...ref,
-            delete: async () => {
-              deleteOrder.push(id);
-              await ref.delete();
-            },
-          };
-        },
-      };
-    };
+    await deleteFirebaseTimelineDocument("root", "user-a");
 
-    try {
-      await deleteFirebaseTimelineDocument("root", "user-a");
-    } finally {
-      state.db.collection = original;
-    }
+    expect(state.commits.flat()).toEqual(["grandchild", "child", "root"]);
+  });
 
-    expect(deleteOrder).toEqual(["grandchild", "child", "root"]);
+  // The walk used to await one read at a time and then one delete at a time,
+  // so a 500-document tree was 1000 sequential round trips and a transient
+  // failure mid-loop left the project half removed with no way to tell.
+  it("removes the whole cascade in a single atomic batch", async () => {
+    seed("root", "user-a", ["child"]);
+    seed("child", "user-a", ["grandchild"]);
+    seed("grandchild", "user-a");
+
+    await deleteFirebaseTimelineDocument("root", "user-a");
+
+    expect(state.commits).toHaveLength(1);
+    expect(state.docs.size).toBe(0);
+  });
+
+  it("leaves nothing deleted when the batch fails", async () => {
+    seed("root", "user-a", ["child"]);
+    seed("child", "user-a", ["grandchild"]);
+    seed("grandchild", "user-a");
+    state.failNextCommit.value = true;
+
+    await expect(deleteFirebaseTimelineDocument("root", "user-a")).rejects.toThrow(
+      /simulated commit failure/,
+    );
+
+    // All three still present: no partial deletion to reason about.
+    expect([...state.docs.keys()].sort()).toEqual(["child", "grandchild", "root"]);
   });
 });

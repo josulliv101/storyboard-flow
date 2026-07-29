@@ -4,7 +4,10 @@ import { compilePlaybackManifest } from "@storyboard/timeline-domain";
 import { deriveClosureSummaries } from "@/lib/derive-collection-summaries";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import { getFirebaseTimelineEntry } from "@/lib/firebase-timeline-store";
-import { loadTimelineClosure } from "@/lib/load-timeline-closure";
+import {
+  loadTimelineClosure,
+  TimelineClosureTooLargeError,
+} from "@/lib/load-timeline-closure";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
 export const runtime = "nodejs";
@@ -43,10 +46,12 @@ export async function GET(
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }
 
-    const { documents, missing, revisions } = await loadTimelineClosure(id, user.uid);
-    // The root just loaded through the entry read; serve that version.
-    documents[id] = entry.document;
-    revisions[id] = entry.revision;
+    // The root was just read above (that read IS this route's 404 check), so
+    // hand it straight to the walker rather than making it fetch the same
+    // document again and then overwriting the result.
+    const { documents, missing, revisions } = await loadTimelineClosure(id, user.uid, {
+      rootEntry: entry,
+    });
 
     // Stored collection summaries go stale by design: the graph view's
     // writes are patch-scoped, so editing a child never rewrites the
@@ -72,6 +77,11 @@ export async function GET(
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }
     if (error instanceof Error && error.message.startsWith("Collection cycle detected")) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    // Too many documents to compile. 409 like the cycle case: the request is
+    // fine, the stored structure is not, and retrying changes nothing.
+    if (error instanceof TimelineClosureTooLargeError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
 

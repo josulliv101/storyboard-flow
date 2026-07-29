@@ -2,16 +2,14 @@ import { NextResponse } from "next/server";
 
 import { completeFirebaseEmailSignInLink } from "@/lib/firebase-auth-rest";
 import { createSessionCookie, setSessionCookie } from "@/lib/firebase-auth-session";
+import { readJsonObject } from "@/lib/read-json-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json().catch(() => ({}))) as {
-      email?: unknown;
-      oobCode?: unknown;
-    };
+    const body = await readJsonObject(request);
     const email = typeof body.email === "string" ? body.email.trim() : "";
     const oobCode = typeof body.oobCode === "string" ? body.oobCode : "";
 

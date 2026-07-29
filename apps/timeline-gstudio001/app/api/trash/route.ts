@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+
+import { readJsonObject } from "@/lib/read-json-body";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import {
   getFirebaseTimelineDocument,
@@ -70,7 +72,7 @@ export async function POST(request: Request) {
     const { user, response } = await requireAuthUser();
     if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = (await request.json().catch(() => ({}))) as { clipIds?: unknown };
+    const body = await readJsonObject(request);
     const clipIds = Array.isArray(body.clipIds)
       ? body.clipIds.filter((id): id is string => typeof id === "string" && id.length > 0)
       : [];

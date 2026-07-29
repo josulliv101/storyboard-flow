@@ -24,6 +24,54 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * Hard ceiling on one uploaded part. The whole file is read into a Buffer, so
+ * without this a single request could size the function's memory. Platform
+ * body limits usually bite first; this makes the bound explicit and the
+ * failure a 413 the client can explain rather than an OOM.
+ */
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+/** Thumbnails are generated client-side from a single frame. */
+const MAX_THUMBNAIL_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The only content types this route will store, by EXTENSION.
+ *
+ * The stored object's `Content-Type` used to come from `file.type` — the
+ * client's declaration — which `/api/timeline-media` then replays on a
+ * same-origin response. With no `nosniff` that was a stored-XSS shape; with
+ * nosniff it is still a lie the app has no reason to repeat. The extension is
+ * what the storage path is built from and what the allowlist can be checked
+ * against, so it decides.
+ */
+const UPLOAD_CONTENT_TYPES: ReadonlyMap<string, string> = new Map([
+  ["jpg", "image/jpeg"],
+  ["jpeg", "image/jpeg"],
+  ["png", "image/png"],
+  ["webp", "image/webp"],
+  ["mp4", "video/mp4"],
+  ["webm", "video/webm"],
+  ["mov", "video/quicktime"],
+]);
+
+function allowedContentType(filename: string): string | null {
+  const extension = filename.split(".").pop()?.toLowerCase() ?? "";
+  return UPLOAD_CONTENT_TYPES.get(extension) ?? null;
+}
+
+/** `FormDataEntryValue` is `File | string`. Reading one as a Blob without
+ *  checking turned a client that sent a text field into a 500 from
+ *  `file.arrayBuffer()` rather than the 400 it is. */
+function readBlob(form: FormData, key: string): Blob | null {
+  const value = form.get(key);
+  return value instanceof Blob ? value : null;
+}
+
+function readText(form: FormData, key: string): string | null {
+  const value = form.get(key);
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
 function isImagePathname(pathname: string) {
   return /\.(jpe?g|png|webp)$/i.test(pathname);
 }
@@ -90,19 +138,36 @@ export async function POST(request: Request) {
     if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const formData = await request.formData();
-    const file = formData.get("file") as Blob | null;
-    const filename = formData.get("filename") as string | null;
-    const thumbnailFile = formData.get("thumbnail") as Blob | null;
-    const thumbnailFilename = formData.get("thumbnailFilename") as string | null;
+    const file = readBlob(formData, "file");
+    const filename = readText(formData, "filename");
+    const thumbnailFile = readBlob(formData, "thumbnail");
+    const thumbnailFilename = readText(formData, "thumbnailFilename");
     const projectId = await requireProjectAssetScope(formData.get("projectId"), user.uid);
 
     if (!file || !filename) {
       return NextResponse.json({ error: "Missing file or filename." }, { status: 400 });
     }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: `Files are limited to ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.` },
+        { status: 413 },
+      );
+    }
+    if (thumbnailFile && thumbnailFile.size > MAX_THUMBNAIL_BYTES) {
+      return NextResponse.json({ error: "Generated thumbnail is too large." }, { status: 413 });
+    }
 
-    const contentType = getMediaContentType(filename, file.type);
+    // Derived from the extension and checked against the allowlist, NOT taken
+    // from the client's `file.type`.
+    const contentType = allowedContentType(filename);
+    if (contentType === null) {
+      return NextResponse.json(
+        { error: `Unsupported file type: ${filename.split(".").pop() ?? filename}.` },
+        { status: 415 },
+      );
+    }
     const mediaBuffer = Buffer.from(await file.arrayBuffer());
-    const folderPath = formData.get("folderPath") as string | null;
+    const folderPath = readText(formData, "folderPath");
     if (hasCloudinaryConfig()) {
       const storedMedia = await uploadCloudinaryMedia(
         filename,
@@ -160,7 +225,10 @@ export async function POST(request: Request) {
       await uploadMedia(
         thumbnailPathname,
         Buffer.from(await thumbnailFile.arrayBuffer()),
-        thumbnailFile.type || "image/jpeg",
+        // Same rule as the media part: the extension decides, never the
+        // client's declaration. Thumbnails are always JPEG unless the
+        // filename says otherwise and the allowlist agrees.
+        (thumbnailFilename && allowedContentType(thumbnailFilename)) || "image/jpeg",
       );
       thumbnailUrl = toMediaUrl(thumbnailPathname);
     }

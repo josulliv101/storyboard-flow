@@ -552,8 +552,15 @@ export function GraphTimelineView({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* `role="alert"` because this banner only ever appears for a document
+          that failed to load or save — a state the user has to know about
+          before they close the tab, and one they were previously only told
+          about visually. */}
       {gatewayError !== null && (
-        <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+        <p
+          role="alert"
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+        >
           {gatewayError}
         </p>
       )}

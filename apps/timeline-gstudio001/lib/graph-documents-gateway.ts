@@ -442,7 +442,12 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
         return document;
       })
       .finally(() => {
-        inflight.delete(timelineId);
+        // Only evict OUR OWN entry. `reset()` (an auth rebind) clears the map
+        // wholesale, so a request that started under the previous user could
+        // otherwise settle later and delete the NEW session's entry for the
+        // same id — leaving that request undeduplicated, so a second fetch
+        // started and the two raced to install their responses.
+        if (inflight.get(timelineId) === request) inflight.delete(timelineId);
       });
     inflight.set(timelineId, request);
     return request;

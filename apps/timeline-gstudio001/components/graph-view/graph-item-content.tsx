@@ -302,13 +302,33 @@ function LiveDurationPill({ id, node }: { id: NodeId; node: MediaNode }) {
 }
 
 /**
- * Whether a COLLECTION above this card is disabled. Primitive return, per the
- * store's selector contract — the walk itself is
+ * Whether a COLLECTION above this card is disabled. The walk itself is
  * `isDisabledByAncestor` in graph-playhead-model, shared with the seek rail so
  * the card and the rail can never disagree about what is off.
+ *
+ * Memoized on the committed graph's IDENTITY, for the same reason as the two
+ * derivations above. As a bare `useCollectionsSelector` this ran the parent
+ * walk — allocating a `Set` each time — on EVERY store notification, and the
+ * store notifies for interaction updates too: drag begin/end, and each
+ * DISTINCT drop intent (`intentEqual` gates the raw pointer moves, so this was
+ * never per-tick, but it was still O(mounted cards × depth) per intent change
+ * on the drag hot path). Primitive equality stopped the re-RENDER; it never
+ * stopped the walk.
  */
 function useDisabledByAncestor(id: NodeId): boolean {
-  return useCollectionsSelector((snapshot) => isDisabledByAncestor(snapshot.graph, id as string));
+  const store = useCollectionsStore();
+  const [derive] = useState(() =>
+    createDerivedCache({
+      compute: (graph: CollectionsGraph, nodeId: NodeId) =>
+        isDisabledByAncestor(graph, nodeId as string),
+      contentKey: String,
+    }),
+  );
+  const getSnapshot = useCallback(
+    () => derive(store.getSnapshot().graph, id),
+    [store, derive, id],
+  );
+  return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
 }
 
 /**
