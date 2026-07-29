@@ -1,5 +1,57 @@
 # Punch List 11
 
+## PL11-012 — Collections get a details view too
+
+- Status: Complete
+- Area: `graph-collection-details.tsx` (new), `graph-item-details-modal.tsx`,
+  `graph-item-content.tsx`
+- Screenshot: Not captured
+
+The trigger and the view now serve both card kinds. What a collection's view
+is NOT: a second timeline view — drilling in already answers "what is in
+here". What it IS: the questions you would otherwise drill in and come back
+out to ask — how much is inside, how long it runs, whether it is even loaded
+— plus a rename, and a button to go in.
+
+The hero is its contents, because a timeline's identity is its footage: the
+card morphs into a larger version of the frames it was already showing. Live
+numbers once hydrated, the stored summary for a placeholder — the same rule
+the card follows, so the two can never disagree.
+
+Scoped undo widened with it: a collection's undoable acts are renames and
+disable toggles, not trims, so the gate now matches `update-media`,
+`rename-node` and a single-node `set-node-disabled` against this item.
+Structural commands name a parent and a set of moved nodes rather than "this
+item", so they stay out of reach — which is the point of scoping.
+
+REGRESSION CAUGHT BY THE SUITE, worth remembering: the trigger's
+`aria-label="Open item details"` collided with the collection card's own
+`Open <name>` drill button under the tests' `/^Open /` matcher — seven tests
+failed with strict-mode violations, not timeouts. Two buttons on one card
+whose names both began "Open" was a labelling problem before it was a test
+problem: the trigger now reads `Details for <name>`, which also stops a board
+full of them all announcing the same thing.
+
+## PL11-013 — The scrub readout moves above the playhead
+
+- Status: Complete
+- Area: `graph-preview.tsx`
+- Screenshot: Not captured
+
+The timestamp sat below the thumb, which is where the user's own hand is
+during a drag. It reads above now.
+
+PL9-007 had put it below for a real reason — the rails sit hard against the
+sticky header and the surfaces clip vertically, so an upward label inside the
+rail was simply cut off. The fix is therefore not a CSS flip: the readout is
+portaled to the body and positioned `fixed` in VIEWPORT coordinates, read off
+the thumb's rect each paint. Nothing clips it, and z-[70] lets it overlap the
+header it may reach into.
+
+Both rails (strip and grid) share the change. Proven fail-first: moving the
+same label back below the thumb fails the new geometric assertion (readout
+bottom must clear the thumb's top).
+
 ## PL11-009 — One duration vocabulary
 
 - Status: Complete

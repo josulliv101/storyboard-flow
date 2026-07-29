@@ -256,7 +256,7 @@ export function useCollectionPreviewFrames(
  * derivation used to re-walk the subtree per drag notification). The rounded
  * content key keeps sub-millisecond recompute jitter from churning the value.
  */
-function useHydratedCollectionSeconds(id: string, enabled: boolean): number | null {
+export function useHydratedCollectionSeconds(id: string, enabled: boolean): number | null {
   const store = useCollectionsStore();
   const detailsStore = useGraphDetailsStore();
   const [derive] = useState(() =>
@@ -969,6 +969,11 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         />
       )}
 
+      {/* Same control the media card carries (PL11-012): a timeline has
+          details worth reading — what is inside it, how long it runs, whether
+          it is loaded — without drilling in to find out. */}
+      <ItemDetailsTrigger id={id} rovingTabIndex={undefined} />
+
       <CollectionItem.DropIndicators />
     </>
   );
@@ -985,7 +990,7 @@ const GraphCollectionItem = memo(function GraphCollectionItem({
       id={id}
       rovingTabIndex={rovingTabIndex}
       className={[
-        "h-full w-full",
+        "group/collection-item h-full w-full",
         // PL10-003: the call-out's scale pushes the card ~7px past this
         // wrapper, and a transform that spills counts as SCROLLABLE overflow —
         // so calling out the last card in a strip or a grid row grew the
@@ -1006,9 +1011,9 @@ const GraphCollectionItem = memo(function GraphCollectionItem({
 });
 
 /**
- * The details trigger on a media card (PL11-002): top-right, revealed on
- * hover or keyboard focus, and a real tab stop when its card is the roving
- * one.
+ * The details trigger (PL11-002, both card kinds since PL11-012): top-right,
+ * revealed on hover or keyboard focus, and a real tab stop when its card is
+ * the roving one.
  *
  * It is a SIBLING of NodeCard, not a child. NodeCard's shell is a single
  * `<button>`, and a button inside a button is invalid HTML — the same
@@ -1027,13 +1032,19 @@ const ItemDetailsTrigger = memo(function ItemDetailsTrigger({
 }: Readonly<{ id: NodeId; rovingTabIndex: number | undefined }>) {
   const store = useCollectionsStore();
   const { setOpenId } = useItemDetails();
+  // NAME the item: a board shows dozens of these, and "Open item details"
+  // spoken twenty times says nothing about which one. It also kept the label
+  // out of the way of the collection card's own "Open <name>" drill button —
+  // one card carrying two buttons whose names both began "Open" made every
+  // by-role locator ambiguous, which is how this was found.
+  const name = useCollectionsSelector((s) => s.graph.nodesById.get(id)?.name ?? "item");
 
   return (
     <button
       type="button"
       data-item-details-trigger={id}
-      aria-label="Open item details"
-      title="Open item details"
+      aria-label={`Details for ${name}`}
+      title="Details"
       {...(rovingTabIndex !== undefined ? { tabIndex: rovingTabIndex } : {})}
       onPointerDown={(event) => {
         // Keep the press off the surface gestures underneath — the strip's
@@ -1063,6 +1074,7 @@ const ItemDetailsTrigger = memo(function ItemDetailsTrigger({
         // beats unreachable.
         "transition-opacity duration-150 [@media(hover:hover)]:opacity-0",
         "group-hover/media-item:opacity-100 group-focus-within/media-item:opacity-100",
+        "group-hover/collection-item:opacity-100 group-focus-within/collection-item:opacity-100",
         "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
       ].join(" ")}
     >
