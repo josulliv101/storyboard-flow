@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { useSyncExternalStore } from "react";
+import { useContext, useSyncExternalStore } from "react";
 import { useDroppable } from "@dnd-kit/core";
 
 import {
@@ -21,6 +21,40 @@ import {
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { cn } from "@/lib/utils";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
+import { GraphViewNavContext } from "./graph-navigation";
+
+/**
+ * Navigate a crumb the way every OTHER focus change in this app already does.
+ *
+ * The trail was the last navigation still relying on a bare `next/link`, and a
+ * Link cannot repaint the board until the App Router commits the new pathname
+ * — which waits on an RSC request the board needs nothing from, since the
+ * graph is already in memory. Measured in dev, where that round trip is local
+ * and therefore as cheap as it will ever be: drilling INTO a collection
+ * acknowledged the click in ~20ms, while a crumb sat silent for ~83ms and its
+ * content change landed on the same millisecond as the URL, every time. In
+ * production that round trip is a network hop, and a control that does
+ * nothing at all for that long reads as broken rather than slow.
+ *
+ * `openTimeline` publishes the destination BEFORE it pushes, so the board
+ * moves on the next frame and the URL catches up behind it.
+ *
+ * The `href` stays real, and this claims only the plain left click. Modified
+ * and middle clicks still open a tab or a window — the reason these are
+ * anchors and not buttons — and a false return (a crumb whose chain does not
+ * reach this project) hands the click back to the browser rather than eating
+ * it.
+ */
+function useCrumbNavigation(crumbId: string) {
+  const nav = useContext(GraphViewNavContext);
+  return (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (nav === null || event.defaultPrevented) return;
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+    if (nav.openTimeline(parseNodeId(crumbId))) event.preventDefault();
+  };
+}
 
 function useGraphPathTitles() {
   return useSyncExternalStore(
@@ -103,6 +137,7 @@ function AncestorCrumb({
   const { setNodeRef } = useDroppable({
     id: encodeDropTarget({ type: "panel", collectionId: parseNodeId(crumbId) }),
   });
+  const navigate = useCrumbNavigation(crumbId);
   const state = useCollectionsSelector((snapshot): CrumbDropState => {
     if (!snapshot.interaction.isDragging) return "idle";
     const intent = snapshot.interaction.dropIntent;
@@ -118,6 +153,7 @@ function AncestorCrumb({
     >
       <Link
         href={href}
+        onClick={navigate}
         className={cn(
           "block min-w-0 max-w-[180px] truncate rounded-md px-1.5 py-1 transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
@@ -152,6 +188,19 @@ type CrumbEntry = Readonly<{ id: string; href: string; label: string }>;
  * These crumbs stop being drop targets while folded — a target you cannot see
  * is not one you can aim a card at. The visible crumbs keep theirs.
  */
+/** One folded crumb. Its own component because the optimistic-navigation hook
+ *  cannot be called from inside the map that renders these. */
+function CollapsedCrumbLink({ crumb }: Readonly<{ crumb: CrumbEntry }>) {
+  const navigate = useCrumbNavigation(crumb.id);
+  return (
+    <DropdownMenuItem asChild>
+      <Link href={crumb.href} onClick={navigate}>
+        {crumb.label}
+      </Link>
+    </DropdownMenuItem>
+  );
+}
+
 function CollapsedCrumbs({ crumbs }: Readonly<{ crumbs: readonly CrumbEntry[] }>) {
   return (
     <DropdownMenu>
@@ -168,12 +217,37 @@ function CollapsedCrumbs({ crumbs }: Readonly<{ crumbs: readonly CrumbEntry[] }>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         {crumbs.map((crumb) => (
-          <DropdownMenuItem key={crumb.id} asChild>
-            <Link href={crumb.href}>{crumb.label}</Link>
-          </DropdownMenuItem>
+          <CollapsedCrumbLink key={crumb.id} crumb={crumb} />
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/**
+ * The up-one-level control. Inside the graph it is a crumb by another name and
+ * navigates the same optimistic way; at the ROOT it leaves for the projects
+ * page, which is a genuine document load with nothing to be optimistic about,
+ * so it stays an ordinary link.
+ */
+function ParentLink({
+  href,
+  parentId,
+  title,
+}: Readonly<{ href: string; parentId: string | null; title: string }>) {
+  // Called unconditionally, as a hook must be; the id it closes over is read
+  // only when the handler runs, and the handler is only attached when there is
+  // a parent timeline to go to.
+  const navigate = useCrumbNavigation(parentId ?? "");
+  return (
+    <Link
+      href={href}
+      onClick={parentId === null ? undefined : navigate}
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950/50 text-zinc-400 transition-all hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-100"
+      title={title}
+    >
+      <ArrowLeft className="h-3.5 w-3.5" />
+    </Link>
   );
 }
 
@@ -229,16 +303,23 @@ export function GraphBreadcrumb({
       : timelinePath.length === 1
         ? base
         : "/";
+  // The node the back arrow lands on, or null when it leaves the graph
+  // entirely (at the root, "up" is the projects page). Mirrors parentHref
+  // exactly — same three cases, so the two cannot point at different places.
+  const parentCrumbId =
+    timelinePath.length > 1
+      ? timelinePath[timelinePath.length - 2]
+      : timelinePath.length === 1
+        ? projectId
+        : null;
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
-      <Link
+      <ParentLink
         href={parentHref}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-zinc-800 bg-zinc-950/50 text-zinc-400 transition-all hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-100"
+        parentId={parentCrumbId}
         title={focusedId === projectId ? "Go to Projects" : "Go to parent timeline"}
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-      </Link>
+      />
       <nav
         aria-label="Timeline focus path"
         className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-xs text-zinc-400 select-none"

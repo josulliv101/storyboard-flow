@@ -356,3 +356,123 @@ Verified live: `getComputedStyle(svg).strokeWidth` is 1.5px on the rail's
 lucide glyphs (their `stroke-width` ATTRIBUTE is still 2 — the CSS wins),
 1.5px on the folders, 1.9px on the badges, and the logo computes to
 rgb(255, 255, 255).
+
+## PL11-014 — The breadcrumb stops waiting for the server
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-view-chrome.tsx`, `graph-navigation.tsx`
+- Screenshot: Not captured
+
+Reported as "a big delay before the new content shows" when clicking a crumb —
+about a second and a half.
+
+The trail was the last navigation in the app still relying on a bare
+`next/link`. A Link cannot repaint the board until the App Router commits the
+new pathname, and that commit waits on an RSC request the board needs nothing
+from: the graph is already in memory, and the page segment only PRIMES
+documents the client can fetch itself. Every other way to change focus — a
+folder card, "Open this timeline", the O key — goes through `openTimeline`,
+which publishes the destination before it pushes. The crumbs never got it.
+
+Measured in dev, where that round trip is local and so as cheap as it will
+ever be:
+
+| Cold navigation | First feedback | Fully settled |
+| --- | --- | --- |
+| Drill in | 20ms | 530ms |
+| Breadcrumb up (before) | 83ms | 878ms |
+| Breadcrumb up (after) | 20ms | — |
+
+The signature was that the crumb's content change and its URL change landed on
+the SAME millisecond, four times out of four (53.6, 67.2, 94.8, 105.1) — the
+view was not working, it was waiting. The hydration tail is shared by both
+directions and is not what this fixes; the dead window at the front is. In
+production that window is a network hop, and a control that does nothing at
+all for a few hundred milliseconds reads as broken rather than slow.
+
+All three link kinds route through `openTimeline` now: the ancestor crumbs,
+the folded ones in the overflow menu, and the back arrow — except at the root,
+where "up" leaves for the projects page, a genuine document load with nothing
+to be optimistic about.
+
+They stay real anchors. The handler claims ONLY the plain left click, so
+modified and middle clicks still open a tab or a window, and `openTimeline`
+now returns whether it took the navigation: a crumb whose parent chain does
+not reach this project hands the click back to the browser instead of eating
+it.
+
+Acceptance criteria:
+
+- A crumb click repaints the board without a server round trip.
+- Ctrl/Cmd/Shift click still opens a new tab or window.
+- Back/Forward still reconcile the board with the URL.
+
+Verified live: the cold crumb hop repaints at 20.5ms (was 82.8ms), with the
+URL committing behind it and the board agreeing once it lands. Dispatched
+clicks confirm `defaultPrevented` is true for a plain click and false for
+ctrl/meta/shift. Back returns to the previous focus with URL, crumb and card
+count in agreement.
+
+Covered by "a breadcrumb moves the board without waiting for the server",
+which stalls every `_rsc=` request and requires the board to move anyway —
+asserting the mechanism rather than a stopwatch, since a timing budget would
+be flaky and would not fail on a fast local server. Proven fail-first, but
+only on the SECOND attempt: removing `preventDefault` left the test passing,
+because `openTimeline` still ran and the optimism survived. The honest revert
+is removing the `onClick` altogether, and that fails.
+
+## PL11-015 — The e2e "load flake" was oversubscription
+
+- Status: Complete
+- Area: `playwright.config.ts`
+- Screenshot: Not captured
+
+The graph-view suite had a long-standing reputation: 1-4 tests time out per
+full run, always green in isolation, so the failures got waved through as
+"flakes under parallel load". They were not random. They were the predictable
+result of a budget that had quietly run out.
+
+Diagnosis, from the JSON reporter rather than the summary line: every failure
+was a TEST TIMEOUT at 30000ms — never an assertion — and they landed mid-run
+(+49s, +93s of a 136s run), not at the start, so this was steady-state
+contention and not first-hit compilation. The number that explained it: the
+MEDIAN test took 15.3s against that 30s budget. The suite was running at a
+2x margin on the median, so any test heavier than typical lost the race. Which
+tests drew the short straw varied per run; that is what made it look like luck.
+
+The cause is that Playwright defaults `workers` to half the core count — 14 on
+this machine — while every test in both projects loads pages from ONE dev
+server process. The bottleneck was never the CPU, so those extra workers
+bought queueing rather than parallelism.
+
+Measured over 101 tests:
+
+| workers | failures | p50 | p90 | slowest | wall |
+| --- | --- | --- | --- | --- | --- |
+| 14 (default) | 2 | 15.3s | 19.1s | 35.1s | 136.2s |
+| 6 | 0 | 5.8s | 8.4s | 13.0s | 101.8s |
+
+Fewer workers is faster in wall clock AND removes the failures — no tradeoff
+to weigh, the oversubscription was costing time as well as reliability. The
+cap is a fixed 6 rather than a fraction of the cores on purpose: the shared
+resource it is protecting does not scale with this machine.
+
+A second, quieter bug surfaced while reading the config. `navigationTimeout`
+was 60s against the default 30s per-test timeout, so a navigation was always
+killed by the test budget long before reaching its own limit — the "give cold
+navigations room" comment described an intent that had never been in effect.
+Now 60s per test with a 45s navigation allowance inside it. That is not a way
+to let slow tests pass: with the worker cap the slowest test is 13s, so the
+ceiling only ever catches a genuine hang.
+
+No retries were added. Retries would have hidden this rather than fixed it.
+
+Acceptance criteria:
+
+- A full graph-view run passes without per-test annotation or re-runs.
+- Wall clock does not regress.
+
+Verified: three consecutive full runs, zero failures (p50 5.8/6.1/7.0s, max
+13.0/13.6/22.7s, wall 101.8/110.4/122.5s) against the previous run's 2
+timeouts at 136.2s.

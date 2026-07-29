@@ -23,7 +23,14 @@ import type { GraphDetailsStore } from "@/lib/graph-details-store";
 import { useGraphDetailsStore } from "./graph-details-context";
 
 type GraphViewNav = Readonly<{
-  openTimeline: (nodeId: NodeId) => void;
+  /**
+   * Focus a timeline, optimistically. Returns whether it took the navigation:
+   * FALSE means the node's parent chain does not reach this project, so the
+   * caller still owns the click. Only the breadcrumb reads it — a crumb is a
+   * real <a href>, and one that resolves to nothing must fall back to letting
+   * the browser follow it rather than silently eating the click.
+   */
+  openTimeline: (nodeId: NodeId) => boolean;
   /** The timeline currently in focus. Cards read it to tell whether they are
    *  being shown OUTSIDE their own collection — which is exactly the flat
    *  strip, and what makes a provenance label worth drawing. */
@@ -69,13 +76,14 @@ export function GraphViewNavProvider({
       openTimeline: (nodeId) => {
         const id = nodeId as string;
         const timelineId = detailsStore.get(id)?.duplicateOfTimelineId ?? id;
-        if (timelineId === focusedId) return;
+        // Already here: handled, in the sense the caller must not also act.
+        if (timelineId === focusedId) return true;
 
         const base = `/timeline/${encodeURIComponent(projectId)}/graph`;
         if (timelineId === projectId) {
           onNavigateStart?.([]);
           router.push(base);
-          return;
+          return true;
         }
 
         const { graph } = store.getSnapshot();
@@ -89,12 +97,13 @@ export function GraphViewNavProvider({
           chain.unshift(parent);
           parent = graph.parentById.get(parent) ?? null;
         }
-        if (parent !== projectNodeId) return;
+        if (parent !== projectNodeId) return false;
         // The pending path is exactly what the URL will decode to (the push
         // below encodes these same segments), so the optimistic render and
         // the committed one can't disagree.
         onNavigateStart?.(chain);
         router.push(`${base}/${chain.map(encodeURIComponent).join("/")}`);
+        return true;
       },
     }),
     [detailsStore, focusedId, onNavigateStart, projectId, router, store],
