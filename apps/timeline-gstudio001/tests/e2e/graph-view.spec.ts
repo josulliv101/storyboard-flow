@@ -4107,6 +4107,182 @@ test.describe("graph view E2E", () => {
     await expect(page.getByRole("dialog")).toHaveCount(1);
   });
 
+  test("F2 renames a media card in place", async ({ page }) => {
+    // PL11-005. Naming a run of similar-looking clips should be arrow → F2 →
+    // type → Enter → arrow. The editor is a SIBLING of NodeCard, because that
+    // shell is a <button> and an <input> inside it is invalid content.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    // No label yet: nobody has named it.
+    await expect(strip(page, PROJECT_ID).locator('[data-node-id="alpha"] [data-clip-title]'))
+      .toHaveCount(0);
+
+    await alpha.focus();
+    await page.keyboard.press("F2");
+    const editor = page.getByRole("textbox", { name: "Clip name" });
+    await expect(editor).toBeFocused();
+    await editor.fill("Jake looks up");
+    await editor.press("Enter");
+
+    // The card carries it, and so does the stored document — as `title`.
+    await expect(
+      strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"] [data-clip-title]'),
+    ).toHaveText("Jake looks up");
+    await expect
+      .poll(
+        () => api.documents.get(PROJECT_ID)?.clips.find((clip) => clip.id === "alpha")?.title,
+        { timeout: 5000 },
+      )
+      .toBe("Jake looks up");
+
+    // Escape abandons an edit rather than committing it.
+    await alpha.focus();
+    await page.keyboard.press("F2");
+    const second = page.getByRole("textbox", { name: "Clip name" });
+    await second.fill("Discarded");
+    await second.press("Escape");
+    await expect(
+      strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"] [data-clip-title]'),
+    ).toHaveText("Jake looks up");
+  });
+
+  test("typed in/out points trim exactly", async ({ page }) => {
+    // PL11-006. A pixel is worth ~0.11s in the details view and more on the
+    // board, so an exact edge was unreachable by pointer. Typed fields
+    // dispatch the SAME update-media the grips do.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+
+    // alpha: 6s showing of an 8s source, so in 0.00 → out 6.00.
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await openItemDetails(page, "alpha");
+
+    const inField = page.locator('[data-trim-field="in"]');
+    const outField = page.locator('[data-trim-field="out"]');
+    await expect(inField).toHaveValue("0.00");
+    await expect(outField).toHaveValue("6.00");
+
+    await inField.fill("1.37");
+    await inField.press("Enter");
+    await expect.poll(
+      () => api.documents.get(PROJECT_ID)?.clips.find((c) => c.id === "alpha")?.trimIn,
+      { timeout: 5000 },
+    ).toBeCloseTo(1.37, 2);
+
+    await outField.fill("4.2");
+    await outField.press("Enter");
+    await expect.poll(
+      () => api.documents.get(PROJECT_ID)?.clips.find((c) => c.id === "alpha")?.trimOut,
+      { timeout: 5000 },
+    ).toBeCloseTo(3.8, 2);
+    // 4.2 − 1.37, exactly — the point of typing it.
+    await expect.poll(
+      () => api.documents.get(PROJECT_ID)?.clips.find((c) => c.id === "alpha")?.duration,
+      { timeout: 5000 },
+    ).toBeCloseTo(2.83, 2);
+
+    // Nonsense is CLAMPED, not refused: an out point before the in point is a
+    // typo, and snapping is faster to correct than an error message.
+    await outField.fill("0.1");
+    await outField.press("Enter");
+    await expect.poll(async () => Number(await outField.inputValue())).toBeGreaterThan(1.37);
+
+    // Escape abandons an edit rather than committing it.
+    const committed = await inField.inputValue();
+    await inField.fill("9.99");
+    await inField.press("Escape");
+    await expect(inField).toHaveValue(committed);
+  });
+
+  test("? opens the shortcuts sheet, and typing never does", async ({ page }) => {
+    // PL11-007. Hold-to-drag, O, F2 and the whole Alt layer are invisible
+    // without this.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const sheet = page.locator("[data-graph-shortcuts]");
+    await expect(sheet).toHaveCount(0);
+
+    await page.keyboard.press("?");
+    await expect(sheet).toHaveCount(1);
+    // A sample of rows, each of which corresponds to a real handler.
+    await expect(sheet).toContainText("Undo");
+    await expect(sheet).toContainText("Rename in place");
+    await expect(sheet).toContainText("Slide the source window, same duration");
+
+    await page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+
+    // Not while typing: a "?" in the rename field is a question mark.
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await alpha.focus();
+    await page.keyboard.press("F2");
+    const editor = page.getByRole("textbox", { name: "Clip name" });
+    await editor.fill("What?");
+    await expect(sheet).toHaveCount(0);
+    await expect(editor).toHaveValue("What?");
+    await editor.press("Escape");
+  });
+
+  test("undo survives a reload", async ({ page }) => {
+    // PL11-008. The app autosaves and history lived only in memory, so a
+    // refresh made every committed mistake permanent. The stack is written to
+    // sessionStorage and restored on boot; `undo` still verifies each entry
+    // against the live graph, so a stale one is refused rather than applied.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await openItemDetails(page, "alpha");
+
+    // A typed trim is the cleanest edit to assert on: exact, and one commit.
+    const inField = page.locator('[data-trim-field="in"]');
+    await inField.fill("2.00");
+    await inField.press("Enter");
+    await expect
+      .poll(() => page.locator('[data-trim-field="in"]').inputValue(), { timeout: 5000 })
+      .toBe("2.00");
+    await page.keyboard.press("Escape");
+
+    // Reload: in memory this stack would be gone.
+    await page.reload();
+    await strip(page, PROJECT_ID)
+      .locator('[data-node-id="alpha"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+
+    await page.keyboard.press("Control+z");
+
+    // Back to where it started, in the graph AND on the way to the server.
+    await expect(async () => {
+      await strip(page, PROJECT_ID).locator('[data-node-id="alpha"]').click();
+      await expect(strip(page, PROJECT_ID).locator('[data-node-id="alpha"]'))
+        .toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await openItemDetails(page, "alpha");
+    await expect.poll(() => page.locator('[data-trim-field="in"]').inputValue(), {
+      timeout: 5000,
+    }).toBe("0.00");
+  });
+
   test("the header says whether the work is saved", async ({ page }) => {
     // PL11-003. The app autosaves on a 900ms debounce and used to say nothing
     // about it — and undo history dies on reload, so "did that save?" is a

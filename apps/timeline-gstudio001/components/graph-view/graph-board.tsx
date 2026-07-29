@@ -21,6 +21,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -50,6 +51,7 @@ import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
 import { ItemDetailsProvider } from "./graph-item-details-context";
 import { GraphSaveStatus } from "./graph-save-status";
+import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
 import { GraphItemDetailsModal } from "./graph-item-details-modal";
 import { SubTimelines } from "./graph-sub-timelines";
 import {
@@ -97,6 +99,12 @@ function BoardMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        <DropdownMenuGroup>
+          <DropdownMenuItem onSelect={() => requestGraphShortcuts()}>
+            Keyboard shortcuts
+            <span className="ml-auto pl-6 font-mono text-[11px] text-zinc-500">?</span>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
         <DropdownMenuGroup>
           <DropdownMenuLabel>Thumbnail size</DropdownMenuLabel>
           <DropdownMenuRadioGroup
@@ -408,6 +416,9 @@ export function GraphBoard({
             portals to the body, so where it mounts only decides which
             providers it can see. */}
         <GraphItemDetailsModal />
+        {/* The "?" sheet. Every gesture in this view is invisible otherwise —
+            hold-to-drag, O, F2, the whole Alt layer (PL11-007). */}
+        <GraphShortcuts />
         <div className="flex flex-col gap-2">
           {/* Pinned so the controls stay reachable while scrolling the
               surfaces. It sticks just BELOW the sticky preview via the offset

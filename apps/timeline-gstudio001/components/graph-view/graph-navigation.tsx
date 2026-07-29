@@ -233,16 +233,18 @@ export function OpenKeyBoundary({
     nav?.openTimeline(parentId);
   };
 
-  // F2 opens the focused collection's inline rename editor — the keyboard twin
-  // of double-clicking its label, so rename isn't pointer-only. Only
-  // collections carry a rename editor (media has no name field), so the key is
-  // claimed only when it will actually act.
+  // F2 opens the focused card's inline rename editor — the keyboard twin of
+  // double-clicking its label, so rename isn't pointer-only. Collections AND
+  // media both carry one now (PL11-005): a media clip's name is its `title`,
+  // and naming a handful of similar-looking clips should not mean a modal
+  // round-trip each time.
   const renameFromKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (store.getSnapshot().interaction.isDragging) return;
     const target = event.target as HTMLElement;
     const id = target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
     if (!id) return;
-    if (store.getSnapshot().graph.nodesById.get(parseNodeId(id))?.kind !== "collection") return;
+    const node = store.getSnapshot().graph.nodesById.get(parseNodeId(id));
+    if (node?.kind !== "collection" && node?.kind !== "media") return;
     event.preventDefault();
     // F2 is pressed ON a card, so the card is what should open — the id was
     // resolved from the focused card's own element above.
