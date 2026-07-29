@@ -6,18 +6,16 @@ import {
   CircleCheck,
   ClipboardPaste,
   Copy,
+  ChevronsLeftRightEllipsis,
   CopyPlus,
   EllipsisVertical,
+  Film,
   Folder,
-  FolderTree,
-  GalleryHorizontalEnd,
   Image as ImageIcon,
   Layers,
-  LayoutGrid,
-  ListOrdered,
   LogOut,
-  Ruler,
   Scissors,
+  Table,
   Trash2,
   TvMinimal,
   X,
@@ -33,11 +31,9 @@ import {
   GRAPH_TRASH_HOVER_EVENT,
   GRAPH_VIEW_STATE_EVENT,
   isGraphViewRoute,
-  requestGraphChildrenToggle,
   requestGraphItemAction,
-  requestGraphPreviewToggle,
   requestGraphFlatToggle,
-  requestGraphRulerToggle,
+  requestGraphPreviewToggle,
   requestGraphSurface,
   type GraphItemAction,
   type GraphSelectionDetail,
@@ -103,20 +99,91 @@ function MediaFolderIcon({ className }: Readonly<{ className?: string }>) {
 // rail's width and `aspect-square` makes the height follow it. Sized this way
 // rather than with a fixed `size-*` so the two can never drift — change the
 // rail's width and every tile (and the logo) resizes with it.
-const SIDEBAR_ICON_BASE =
-  "group/sidebar-item relative flex w-full aspect-square items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-zinc-400";
+/**
+ * A tile's BOX, which is not the same thing as the shape you see.
+ *
+ * The box stays `w-full aspect-square` — that is what keeps the rail's rhythm
+ * even and the tiles on one grid. What you actually see is the `::before`
+ * layer, inset from that box, so every fill (idle, hover, pressed, disabled)
+ * paints as a rounded pill floating inside its square rather than a band
+ * running edge to edge. They used to be the same rectangle, so an active tile
+ * read as a full-width stripe across the rail.
+ *
+ * The fills therefore live on `before:*` in each state constant below, never
+ * on the button. The focus ring moved with them for the same reason: a
+ * square inset ring around a pill highlight would have described a shape that
+ * is no longer there.
+ */
+const SIDEBAR_ICON_BASE = [
+  "group/sidebar-item relative flex w-full aspect-square items-center justify-center",
+  "transition-all duration-200 focus-visible:outline-none",
+  "before:absolute before:inset-2 before:rounded-2xl before:transition-colors before:content-['']",
+  "focus-visible:before:ring-2 focus-visible:before:ring-zinc-400",
+].join(" ");
 /** The glyph inside a tile. Larger than the old h-4: legibility is the point
- *  of the bigger tiles, and a 16px icon in a 72px square reads as a dot. */
-const SIDEBAR_GLYPH = "h-7 w-7 [stroke-width:1.5] transition-colors";
+ *  of the bigger tiles, and a 16px icon in a 72px square reads as a dot.
+ *
+ *  `relative` is load-bearing: the pill above is an absolutely-positioned
+ *  pseudo-element, so a statically-positioned glyph would paint UNDER it. */
+const SIDEBAR_GLYPH = "relative h-7 w-7 [stroke-width:1.5] transition-colors";
 const SIDEBAR_ICON_IDLE =
-  "bg-zinc-900/40 text-zinc-400 hover:bg-zinc-800/80 hover:text-zinc-100";
-// No `translate-y-px` any more: with the tiles flush against each other, a
-// pressed tile nudging down by a pixel opened a hairline seam above it and
-// read as misalignment rather than as a press. The lifted background and the
-// inset shadow carry the state on their own.
-const SIDEBAR_ICON_PRESSED =
-  "bg-zinc-800 text-zinc-100 shadow-inner shadow-black/50";
-const SIDEBAR_SEPARATOR_CLASS = "mx-auto my-2 h-px w-7 shrink-0";
+  "text-zinc-400 before:bg-zinc-900/40 hover:text-zinc-100 hover:before:bg-zinc-800/80";
+/**
+ * The active tile: an INDICATOR BAR at the rail's edge, over a quietly lifted
+ * pill.
+ *
+ * This is the nav treatment. The rail answers "where am I", and a bar riding
+ * the edge reads as a POSITION in a list — the same signal a browser tab or an
+ * IDE gutter uses — where a filled tile only reads as a button someone pressed.
+ *
+ * It replaces a full inversion (near-white pill, near-black glyph). That was
+ * legible, but it made the active tile the brightest object on the screen,
+ * competing with the board it was only labelling; with several toggles lit at
+ * once the rail became the loudest thing in the app. The bar is louder in the
+ * only way that matters — position — while the tile itself stays quiet.
+ *
+ * The bar is anchored to the TILE edge, not the pill: it belongs to the rail's
+ * left boundary, so it stays put while the pill floats inset from it.
+ *
+ * No `translate-y-px`: a pressed tile nudging down by a pixel opened a hairline
+ * seam above it and read as misalignment rather than as a press.
+ */
+const SIDEBAR_ICON_PRESSED = [
+  "text-zinc-50 before:bg-zinc-800",
+  "after:absolute after:left-0 after:top-1/2 after:h-7 after:w-[3px]",
+  "after:-translate-y-1/2 after:rounded-r-full after:bg-sky-300 after:content-['']",
+].join(" ");
+
+/**
+ * The active state for a rail tile that is a TOGGLE rather than a place.
+ *
+ * Identical to `HEADER_TOGGLE_ACTIVE` in graph-board.tsx — an accent tint,
+ * carried on the pill instead of the button because that is where this rail
+ * paints its fills. Keep the two in step.
+ *
+ * The distinction the rail draws is location vs. state, not sidebar vs.
+ * toolbar. Grid and Strip say WHERE you are, so they get the indicator bar
+ * above. Flat mode, preview, and the two drawers change what is ON without
+ * moving you — the same kind of fact as the ruler toggle in the breadcrumb
+ * row, and they should read like it rather than like more destinations.
+ *
+ * `sky-300` is the seek rail's PLAYED-time colour (`bg-sky-300/80`), which is
+ * where this app already says "this is live". Both treatments share it — bar
+ * and tint differ in SHAPE, not hue, so the rail reads as one system.
+ */
+const SIDEBAR_ICON_TOGGLE_ON =
+  "text-sky-300 before:bg-sky-400/15 hover:text-sky-200 hover:before:bg-sky-400/25";
+/**
+ * The rule between tile groups: longer than the glyphs it separates, with air
+ * above and below.
+ *
+ * It has been both extremes. Flush against the tiles it disappeared into them;
+ * as a short 28px hairline with 8px of margin it read as a gap the tiles had
+ * fallen out of. What makes it work is the pill treatment above — the tiles no
+ * longer run edge to edge either, so a wider rule with matching breathing room
+ * sits in the same rhythm instead of interrupting one.
+ */
+const SIDEBAR_SEPARATOR_CLASS = "mx-auto my-2 h-px w-10 shrink-0";
 
 function SidebarSeparator({ selected = false }: Readonly<{ selected?: boolean }>) {
   return (
@@ -129,6 +196,22 @@ function SidebarSeparator({ selected = false }: Readonly<{ selected?: boolean }>
       )}
     />
   );
+}
+
+/**
+ * The strip layout's glyph: lucide's `Film`, turned on its side.
+ *
+ * The icon is drawn with its sprocket holes down the left and right edges — a
+ * reel standing upright. The surface it names runs HORIZONTALLY, so a quarter
+ * turn puts the perforations along the top and bottom and the frame divisions
+ * across it, which is what a strip of film actually looks like laid out flat.
+ *
+ * A wrapper rather than an `iconClassName` prop on the control: the rotation
+ * belongs to this glyph, not to the control that happens to render it, and
+ * `SurfaceIconControl` already takes any `ComponentType<{ className?: string }>`.
+ */
+function FilmStripGlyph({ className }: { className?: string }) {
+  return <Film className={cn(className, "rotate-90")} />;
 }
 
 type SurfaceIconControlProps = {
@@ -192,12 +275,12 @@ function SurfaceIconControl({
 // reads as available-but-not-now, and the flat border plus the missing hover
 // response carry "disabled" on their own.
 const SIDEBAR_ICON_DISABLED =
-  "cursor-not-allowed bg-zinc-900/20 text-zinc-500";
+  "cursor-not-allowed text-zinc-500 before:bg-zinc-900/20";
 
 // Item mode borrows a restrained trace of the selection colour. These actions
 // relate to the selected card, but should remain secondary to the content.
 const SIDEBAR_ICON_ITEM_IDLE =
-  "bg-amber-200/[0.035] text-amber-100/60 hover:bg-amber-200/[0.075] hover:text-amber-100/85";
+  "text-amber-100/60 before:bg-amber-200/[0.035] hover:text-amber-100/85 hover:before:bg-amber-200/[0.075]";
 
 /** One button in the item-actions cluster — dispatches its action across the
  *  window-event seam for the graph provider to perform on the selection. */
@@ -449,6 +532,7 @@ export function TimelineSidebar() {
     rulerOn: false,
     childrenShown: false,
     previewOn: false,
+    assetsOpen: false,
     flatOn: false,
     flatLoading: false,
   });
@@ -578,7 +662,7 @@ export function TimelineSidebar() {
             surface="grid"
             onGraphRoute={onGraphRoute}
             href={graphHref}
-            icon={LayoutGrid}
+            icon={Table}
             isActive={onGraphRoute && graphView.surface === "grid"}
             label="Grid layout"
             description="Graph timelines as grids"
@@ -587,7 +671,7 @@ export function TimelineSidebar() {
             surface="strip"
             onGraphRoute={onGraphRoute}
             href={`${graphHref}?surface=strip`}
-            icon={GalleryHorizontalEnd}
+            icon={FilmStripGlyph}
             isActive={onGraphRoute && graphView.surface === "strip"}
             label="Strip layout"
             description="Graph timelines as strips"
@@ -601,8 +685,18 @@ export function TimelineSidebar() {
           <SidebarSeparator />
 
           <div className="flex w-full flex-col items-stretch gap-0">
-            {/* The preview-pane toggle leads the cluster (was the breadcrumb
-                row's TV icon). */}
+            {/* PREVIEW leads this group, directly under the separator.
+
+                It is a toggle, not a destination, so it wears the tint rather
+                than the indicator bar — but it sits in the rail rather than
+                with the other toggles in the breadcrumb row because it is one
+                of the two controls worth calling out at rail scale. The rail
+                is where the eye goes first; giving up a slot there is how a
+                control gets promoted above the toolbar's noise.
+
+                Ungated by surface deliberately: the pane plays the focused
+                timeline in grid as well as strip, so hiding it in grid would
+                remove a working control. */}
             {onGraphRoute && (
               <button
                 type="button"
@@ -612,7 +706,7 @@ export function TimelineSidebar() {
                 onClick={requestGraphPreviewToggle}
                 className={cn(
                   SIDEBAR_ICON_BASE,
-                  graphView.previewOn ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+                  graphView.previewOn ? SIDEBAR_ICON_TOGGLE_ON : SIDEBAR_ICON_IDLE,
                 )}
               >
                 <TvMinimal className={SIDEBAR_GLYPH} />
@@ -624,33 +718,8 @@ export function TimelineSidebar() {
               </button>
             )}
 
-            {/* The children-timelines toggle. (The Collection tool moved to
-                the board's breadcrumb row, and its card-drag trash target
-                moved there too — the sidebar no longer hosts either.) */}
-            {onGraphRoute && (
-              <button
-                type="button"
-                aria-pressed={graphView.childrenShown}
-                aria-label={
-                  graphView.childrenShown
-                    ? "Hide children timelines"
-                    : "Show children timelines"
-                }
-                aria-describedby="sidebar-tooltip-children"
-                onClick={requestGraphChildrenToggle}
-                className={cn(
-                  SIDEBAR_ICON_BASE,
-                  graphView.childrenShown ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
-                )}
-              >
-                <FolderTree className={SIDEBAR_GLYPH} />
-                <SidebarTooltipLabel
-                  id="sidebar-tooltip-children"
-                  label="Children timelines"
-                  description="Show the nested timeline tree"
-                />
-              </button>
-            )}
+            {/* The children-timelines toggle is in the board's breadcrumb row
+                (see graph-board), alongside the ruler. */}
 
             {/* Flat mode — strip only. Grid keeps its nesting, so there is
                 nothing to flatten there. */}
@@ -664,10 +733,11 @@ export function TimelineSidebar() {
                 onClick={requestGraphFlatToggle}
                 className={cn(
                   SIDEBAR_ICON_BASE,
-                  graphView.flatOn ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+                  // TOGGLE, not a destination — see SIDEBAR_ICON_TOGGLE_ON.
+                  graphView.flatOn ? SIDEBAR_ICON_TOGGLE_ON : SIDEBAR_ICON_IDLE,
                 )}
               >
-                <ListOrdered
+                <ChevronsLeftRightEllipsis
                   className={cn(
                     SIDEBAR_GLYPH,
                     // Loading the closure can take a moment on a deep project,
@@ -688,34 +758,10 @@ export function TimelineSidebar() {
               </button>
             )}
 
-            {/* The strip's time-ruler toggle, BELOW flat mode and scoped to
-                it: a ruler is a single continuous time axis, which only the
-                flat run actually is. In the nested strip a collection card
-                holds an arbitrary duration in a fixed width, so the ticks
-                beside it measure nothing the user can act on. Grid has no
-                time axis at all. Flat turning off also turns the ruler off
-                (see graph-timeline-view) — otherwise this control vanishes
-                while its ruler stays painted. */}
-            {onGraphRoute && graphView.surface === "strip" && graphView.flatOn && (
-              <button
-                type="button"
-                aria-pressed={graphView.rulerOn}
-                aria-label={graphView.rulerOn ? "Hide time ruler" : "Show time ruler"}
-                aria-describedby="sidebar-tooltip-ruler"
-                onClick={requestGraphRulerToggle}
-                className={cn(
-                  SIDEBAR_ICON_BASE,
-                  graphView.rulerOn ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
-                )}
-              >
-                <Ruler className={SIDEBAR_GLYPH} />
-                <SidebarTooltipLabel
-                  id="sidebar-tooltip-ruler"
-                  label="Time ruler"
-                  description="Tick marks over every strip"
-                />
-              </button>
-            )}
+            {/* The time-ruler toggle moved to the board's breadcrumb row,
+                sitting left of the children toggle. It is still scoped to flat
+                mode and still appears and disappears with it — only its home
+                changed, joining the view controls it belongs with. */}
           </div>
         </>
       )}
@@ -732,7 +778,12 @@ export function TimelineSidebar() {
 
           const Icon = item.icon;
           const tooltipId = `sidebar-tooltip-utility-${item.id}`;
-          const isPressed = item.id === "trash" && isTrashOpen;
+          // Both drawers report their real state now. Assets used to be
+          // hard-coded false here — the graph view owns `assetsOpen` and did
+          // not publish it, so this button permanently claimed to be off while
+          // toggling a drawer.
+          const isPressed =
+            item.id === "trash" ? isTrashOpen : graphView.assetsOpen;
           const handleClick =
             item.id === "assets"
               ? () => {
@@ -753,7 +804,11 @@ export function TimelineSidebar() {
               onClick={handleClick}
               className={cn(
                 SIDEBAR_ICON_BASE,
-                isPressed ? SIDEBAR_ICON_PRESSED : SIDEBAR_ICON_IDLE,
+                // Assets and Trash open a DRAWER over the board; they do not
+                // take you anywhere, and the board behind them is still the
+                // page you are on. That makes them state, not location — the
+                // tint, like flat mode above (see SIDEBAR_ICON_TOGGLE_ON).
+                isPressed ? SIDEBAR_ICON_TOGGLE_ON : SIDEBAR_ICON_IDLE,
               )}
             >
               <Icon

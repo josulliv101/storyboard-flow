@@ -22,6 +22,7 @@ const INITIAL_VIEW_STATE: GraphViewStateDetail = {
   rulerOn: false,
   childrenShown: false,
   previewOn: false,
+  assetsOpen: false,
     flatOn: false,
     flatLoading: false,
 };

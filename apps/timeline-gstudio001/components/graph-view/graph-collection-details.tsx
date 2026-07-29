@@ -9,6 +9,7 @@ import {
   type CollectionItemNode,
 } from "@storyboard/ui/dnd-collections";
 
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { formatDuration } from "@/lib/format-duration";
 import { collectionPreviewFrameUrl } from "@/lib/video-frame-url";
 
@@ -20,6 +21,7 @@ import {
   useHydratedCollectionSeconds,
 } from "./graph-item-content";
 import { GraphViewNavContext } from "./graph-navigation";
+import { DETAILS_HERO_FILL_CLASS, DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
 
 // A COLLECTION's details (PL11-012).
 //
@@ -66,6 +68,8 @@ export function CollectionDetailsBody({
     (hydrated ? liveSeconds : (detail?.playableDuration ?? detail?.duration)) ?? 0;
   const previews = useCollectionPreviewFrames(node.id as string, hydrated, detail?.previewItems);
 
+  const { dialogProps } = useDialogFocus<HTMLDivElement>();
+
   const beginRename = rename.begin;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -99,8 +103,14 @@ export function CollectionDetailsBody({
         if (event.target === event.currentTarget) onClose();
       }}
     >
+      {/* This dialog was left out when the clip modal gained focus management,
+          so it still declared `aria-modal="true"` while doing none of what
+          that promises — focus stayed behind the scrim and Tab walked out into
+          a board the reader had been told was hidden. Same hook, same three
+          behaviours: move in, trap, restore. */}
       <div
-        className="flex w-full max-w-3xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60"
+        {...dialogProps}
+        className={`flex w-full max-w-3xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60 focus-visible:outline-none ${DETAILS_PANEL_HEIGHT_CLASS}`}
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
@@ -161,10 +171,14 @@ export function CollectionDetailsBody({
           </div>
         </div>
 
+        {/* Fills whatever the fixed panel leaves, exactly as the clip modal's
+            hero does — see DETAILS_HERO_FILL_CLASS. This body carries less
+            chrome than the clip's, so its hero simply ends up larger; the
+            dialog itself is the same box either way. */}
         <div
           data-item-details-frame
           style={{ viewTransitionName: hero }}
-          className="flex min-h-32 gap-1 overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.06] p-2"
+          className={`flex ${DETAILS_HERO_FILL_CLASS} gap-1 overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.06] p-2`}
         >
           {previews.length === 0 ? (
             <span className="flex w-full items-center justify-center font-mono text-[11px] text-zinc-500">
@@ -181,7 +195,12 @@ export function CollectionDetailsBody({
                 src={collectionPreviewFrameUrl(preview)}
                 alt=""
                 draggable={false}
-                className="h-32 min-w-0 flex-1 rounded-sm object-cover"
+                // `object-contain`, not `cover`, now that the frame is tall:
+                // cover would crop a 16:9 still to a near-square column and
+                // throw away most of the shot. Contain letterboxes instead —
+                // the same choice the clip modal's hero makes, and the reason
+                // a fixed height is safe for both.
+                className="h-full min-w-0 flex-1 rounded-sm object-contain"
               />
             ))
           )}

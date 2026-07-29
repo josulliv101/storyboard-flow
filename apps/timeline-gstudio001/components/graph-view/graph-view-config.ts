@@ -53,21 +53,37 @@ export function isItemSize(value: string): value is ItemSize {
  * pixels-per-second, so the horizontal time scale is the zoom slider's job,
  * not the size control's — a size change must never move the playhead there.
  *
- * GRID scales BOTH dimensions, proportionally: a grid cell's width is unrelated
- * to duration (it is a wrapped 2-D layout), so scaling only its height stretched
- * cells into wide-short rectangles. Width and height move together now, keeping
- * a ~16:10 thumbnail at every step. The column count is width-derived, so bigger
- * cells simply wrap into fewer columns.
+ * GRID scales BOTH dimensions. A grid cell's width is unrelated to duration (it
+ * is a wrapped 2-D layout), so scaling only its height stretched cells into
+ * wide-short rectangles. The column count is width-derived, so bigger cells
+ * simply wrap into fewer columns.
  *
- * `md` is the default; the ladder was rescaled up so the smallest step is a
- * usable "sm-like" size rather than a cramped one.
+ * WHY THE TWO NO LONGER SHARE A HEIGHT. `strip` and `gridHeight` used to be the
+ * SAME NUMBER at every step (132 and 132 at `lg`), and the grid card was the
+ * strip card at the same size — so switching surfaces produced a layout that
+ * looked identical, wrapped. The difference between them is real and large, and
+ * nothing on screen said so.
+ *
+ * They are now deliberately different shapes, not just different arrangements:
+ *
+ *   - The strip stays SHORT and wide, because width there is time and height is
+ *     only legibility. A tall strip wastes vertical space on every row.
+ *   - The grid goes TALL and boxy — roughly 5:4 rather than the old 16:10. A
+ *     cell that is not measuring anything can afford to be a card: a big
+ *     thumbnail with a label that is actually readable under it (the metadata
+ *     row grows to match — see `graph-item-content`).
+ *
+ * At `lg` that is a 220px grid cell against a 132px strip card, and roughly
+ * four columns across the board's max width instead of six. Fewer, bigger,
+ * squarer — a different way of looking at the same timeline, which is what the
+ * surface switch is for.
  */
 export const ITEM_SIZE_DIMENSIONS = {
-  xs: { strip: 56, gridWidth: 90, gridHeight: 56 },
-  sm: { strip: 76, gridWidth: 122, gridHeight: 76 },
-  md: { strip: 100, gridWidth: 160, gridHeight: 100 },
-  lg: { strip: 132, gridWidth: 211, gridHeight: 132 },
-  xl: { strip: 172, gridWidth: 275, gridHeight: 172 },
+  xs: { strip: 56, gridWidth: 132, gridHeight: 104 },
+  sm: { strip: 76, gridWidth: 168, gridHeight: 132 },
+  md: { strip: 100, gridWidth: 216, gridHeight: 170 },
+  lg: { strip: 132, gridWidth: 280, gridHeight: 220 },
+  xl: { strip: 172, gridWidth: 360, gridHeight: 284 },
 } as const satisfies Record<
   ItemSize,
   { strip: number; gridWidth: number; gridHeight: number }
@@ -134,3 +150,36 @@ export const FALLBACK_DETAIL: ClipDetail = {
  * derived from one source.
  */
 export const SUBTIMELINE_PANEL_RIGHT_INSET_PX = 13;
+
+/**
+ * The details dialog's PANEL box, shared by the clip modal and the collection
+ * modal so the two are one dialog that shows different things — not two
+ * dialogs of different size.
+ *
+ * They had drifted badly: same `max-w-3xl` width, but 588px tall against 253px
+ * (measured at an 871px viewport), so moving between a clip and a timeline
+ * resized the box by a third of the screen.
+ *
+ * The height is FIXED here rather than left to the content, because the two
+ * bodies carry different chrome — the clip's has trim numbers and a source
+ * strip the collection's has no equivalent for, worth ~81px. Matching only the
+ * heroes still left that gap. Fixing the panel and letting each hero absorb
+ * the remainder (see `DETAILS_HERO_FILL_CLASS`) is what makes them identical:
+ * the clip gets a slightly smaller hero because it spends more on controls,
+ * and the box never changes.
+ *
+ * `max-h-full` keeps it inside the scrim's padding on short viewports, where a
+ * flat 68vh would otherwise be the taller constraint.
+ */
+export const DETAILS_PANEL_HEIGHT_CLASS = "h-[68vh] max-h-full";
+
+/**
+ * How a details hero fills whatever the panel's fixed height leaves it.
+ *
+ * `min-h-0` is not optional: a flex child's default `min-height: auto` refuses
+ * to shrink below its content, so without it a tall video would push the panel
+ * past its fixed height and the two dialogs would disagree again — the exact
+ * failure this pair exists to prevent. Both heroes render with
+ * `object-contain`, so the space they are given letterboxes rather than crops.
+ */
+export const DETAILS_HERO_FILL_CLASS = "min-h-0 flex-1";

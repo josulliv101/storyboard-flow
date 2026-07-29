@@ -42,10 +42,8 @@ import {
 } from "@/lib/graph-documents-gateway";
 import {
   GRAPH_ASSETS_TOGGLE_EVENT,
-  GRAPH_CHILDREN_TOGGLE_EVENT,
   GRAPH_PREVIEW_TOGGLE_EVENT,
   GRAPH_FLAT_TOGGLE_EVENT,
-  GRAPH_RULER_TOGGLE_EVENT,
   GRAPH_SURFACE_EVENT,
   GRAPH_TRASH_EMPTIED_EVENT,
   broadcastGraphViewState,
@@ -188,29 +186,39 @@ export function GraphTimelineView({
       const detail = (event as CustomEvent<GraphSurface>).detail;
       if (detail === "strip" || detail === "grid") setSurface(detail);
     };
-    const onRulerToggle = () => setRulerOn((current) => !current);
     const onFlatToggle = () => setFlatOn((current) => !current);
-    const onChildrenToggle = () => setChildrenShown((current) => !current);
     const onPreviewToggle = () => setPreviewOn((current) => !current);
     window.addEventListener(GRAPH_SURFACE_EVENT, onSurface);
     window.addEventListener(GRAPH_FLAT_TOGGLE_EVENT, onFlatToggle);
-    window.addEventListener(GRAPH_RULER_TOGGLE_EVENT, onRulerToggle);
-    window.addEventListener(GRAPH_CHILDREN_TOGGLE_EVENT, onChildrenToggle);
     window.addEventListener(GRAPH_PREVIEW_TOGGLE_EVENT, onPreviewToggle);
     return () => {
       window.removeEventListener(GRAPH_SURFACE_EVENT, onSurface);
       window.removeEventListener(GRAPH_FLAT_TOGGLE_EVENT, onFlatToggle);
-      window.removeEventListener(GRAPH_RULER_TOGGLE_EVENT, onRulerToggle);
-      window.removeEventListener(GRAPH_CHILDREN_TOGGLE_EVENT, onChildrenToggle);
       window.removeEventListener(GRAPH_PREVIEW_TOGGLE_EVENT, onPreviewToggle);
     };
   }, []);
 
+  // Neither the children toggle NOR the ruler toggle is in that list any more:
+  // both controls moved into the board header, which is inside this
+  // component's own tree, so they call straight down through props. The
+  // window-event bridge exists only to reach the SIDEBAR across React trees —
+  // a control that no longer lives there has no reason to pay for it.
+  const toggleChildren = useCallback(() => setChildrenShown((current) => !current), []);
+  const toggleRuler = useCallback(() => setRulerOn((current) => !current), []);
+
   // …and this broadcast (on mount and every change) is what lets its
   // controls show the current surface, ruler, children, and preview state.
   useEffect(() => {
-    broadcastGraphViewState({ surface, rulerOn, childrenShown, previewOn, flatOn, flatLoading });
-  }, [surface, rulerOn, childrenShown, previewOn, flatOn, flatLoading]);
+    broadcastGraphViewState({
+      surface,
+      rulerOn,
+      childrenShown,
+      previewOn,
+      flatOn,
+      flatLoading,
+      assetsOpen,
+    });
+  }, [surface, rulerOn, childrenShown, previewOn, flatOn, flatLoading, assetsOpen]);
 
   // Flat mode is a STRIP reading. Leaving strip drops it rather than letting it
   // sit armed and re-apply invisibly on the way back — the grid never showed a
@@ -673,8 +681,10 @@ export function GraphTimelineView({
                 onPixelsPerSecondChange={setPixelsPerSecond}
                 previewOn={previewOn}
                 rulerOn={rulerOn}
+                onRulerToggle={toggleRuler}
                 flatOn={flatOn}
                 childrenShown={childrenShown}
+                onChildrenToggle={toggleChildren}
                 timeChannel={timeChannel}
                 trashRootId={boot.trashRootId}
                 syncEntries={syncLog}
