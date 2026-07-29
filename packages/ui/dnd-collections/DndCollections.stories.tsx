@@ -961,7 +961,20 @@ const wideGraph = () =>
       "Wide Panel",
       Array.from({ length: 40 }, (_, i) => media(`w${i}`, `W${i}`))
     ),
-    collection("panel-target", "Target Panel", [media("t1", "T1")]),
+    // THREE cards, not one, and that is load-bearing. With a single card the
+    // panel droppable and the card droppable have nearly the same centre, so
+    // dnd-kit's collision between them is a near-tie and a 3px jitter can flip
+    // which one is `over` — churning its context and re-rendering every
+    // droppable, the bystander included. That is what made
+    // RenderEfficiencyDuringDrag fail about one run in three (and twice on CI):
+    // the story said "jitter within the same intent" while the fixture made the
+    // pointer sit on a collision boundary. Extra cards move the panel's centre
+    // off the card's and the tie disappears.
+    collection("panel-target", "Target Panel", [
+      media("t1", "T1"),
+      media("t2", "T2"),
+      media("t3", "T3"),
+    ]),
   ]);
 
 export const RenderEfficiencyDuringDrag: Story = {
@@ -1003,7 +1016,7 @@ export const RenderEfficiencyDuringDrag: Story = {
 
     await releaseAt(holdPoint);
     await waitFor(() => {
-      expect(panelOrder(canvasElement, "panel-target")).toEqual(["w0", "t1"]);
+      expect(panelOrder(canvasElement, "panel-target")).toEqual(["w0", "t1", "t2", "t3"]);
     });
   },
 };
