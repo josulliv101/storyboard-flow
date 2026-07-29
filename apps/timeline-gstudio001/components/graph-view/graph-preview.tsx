@@ -214,6 +214,18 @@ const PreviewCardSpansContext = createContext<PreviewCardSpans | null>(null);
  */
 const FlatItemsContext = createContext<readonly FlatItem[] | null>(null);
 
+/**
+ * The flat run this subtree is inside, or `null` when nothing is flattened.
+ *
+ * Non-null is also the ANSWER to "is this the focused flat strip": the board
+ * publishes the run once, around the focused surface, and resets it to `null`
+ * around every sub-timeline row — so a consumer that sees items is by
+ * construction the one strip whose indices are flat-run boundaries.
+ */
+export function useFlatItems(): readonly FlatItem[] | null {
+  return useContext(FlatItemsContext);
+}
+
 export function FlatItemsProvider({
   items,
   children,

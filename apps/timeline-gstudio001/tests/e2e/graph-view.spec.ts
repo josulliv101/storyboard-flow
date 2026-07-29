@@ -6,15 +6,15 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 // mocked per-test with page.route(), so the suite exercises everything the
 // Storybook layers can't: AuthGate, App Router layout persistence (undo
 // across drill-in), the documents gateway's debounced ATOMIC batch writes
-// with expected revisions, the palette drawer, the trash root, and the
+// with expected revisions, the trash root, and the
 // preview playhead — without reading or writing any real storage.
 //
 // Selector contract (documented in packages/ui/dnd-collections/API.md):
 //   [data-node-id] card buttons · [data-virtual-strip="<collectionId>"]
-//   scroll containers · [data-palette-item] · [data-trash-target] ·
+//   scroll containers · [data-trash-target] ·
 //   [data-graph-playhead] / [data-graph-seek-rail] (app-side, graph view).
 //
-// Interaction contract: strip cards and palette thumbnails use press-and-hold
+// Interaction contract: strip cards use press-and-hold
 // drag activation (250ms) so fast swipes pan instead — every drag here holds
 // past the delay before moving, then dwells before release (dnd-kit measures
 // on a cadence; releasing early is the classic CI-only flake).
@@ -196,81 +196,9 @@ async function installGraphApi(
     }),
   );
 
-  // The provider-NEUTRAL /api/assets shape (lib/assets/types) — the palette
-  // reads `name`/`kind`/`src`/`durationSeconds`, never a vendor field. The
-  // mock SCOPES by the request's folder params exactly like the server's
-  // pageFromFlatListing, so the palette's browse UI is exercised against
-  // coherent pages: img-1 lives at the ROOT, vid-1 inside "fixtures".
-  const paletteAssets = [
-    {
-      id: "img-1",
-      providerId: "cloudinary",
-      name: "sunset.jpg",
-      kind: "image",
-      src: PIXEL,
-      thumbnailUrl: PIXEL,
-      folderPath: [] as string[],
-      tags: [] as string[],
-      width: 1600,
-      height: 900,
-    },
-    {
-      id: "vid-1",
-      providerId: "cloudinary",
-      name: "clip.mp4",
-      kind: "video",
-      src: PIXEL,
-      thumbnailUrl: PIXEL,
-      folderPath: ["fixtures"],
-      // A nested tag, deliberately DISJOINT from the folder tree: tag space
-      // must group this under b-roll/night even though it lives in the
-      // "fixtures" folder.
-      tags: ["b-roll/night"],
-      width: 1920,
-      height: 1080,
-      // Real duration from the provider listing — a dropped video must
-      // land at this length, not the 8s default.
-      durationSeconds: 12.4,
-    },
-  ];
-  await page.route("**/api/assets**", (route) => {
-    const url = new URL(route.request().url());
-    // In tags mode an asset's LOCATIONS are its tags split on "/" (or the
-    // root when untagged); in folders mode its one location is folderPath —
-    // the same shapes the server's path-folders module derives.
-    const tagsMode = url.searchParams.get("mode") === "tags";
-    const base = url.searchParams.getAll(tagsMode ? "tag" : "folder");
-    const locationsOf = (asset: (typeof paletteAssets)[number]): string[][] =>
-      tagsMode
-        ? asset.tags.length === 0
-          ? [[]]
-          : asset.tags.map((tag) => tag.split("/"))
-        : [asset.folderPath];
-    const atBase = (path: string[]) =>
-      path.length === base.length && base.every((seg, i) => path[i] === seg);
-    const groupNames = new Set(
-      paletteAssets.flatMap((asset) =>
-        locationsOf(asset)
-          .filter(
-            (path) => path.length > base.length && base.every((seg, i) => path[i] === seg),
-          )
-          .map((path) => path[base.length]),
-      ),
-    );
-    return route.fulfill({
-      json: {
-        providerId: "cloudinary",
-        capabilities: { folders: true, tags: true, search: false, upload: false, delete: false },
-        folders: [...groupNames].map((name) => ({ name, path: [...base, name] })),
-        assets: paletteAssets.filter((asset) => locationsOf(asset).some(atBase)),
-      },
-    });
-  });
-
-  // Registered AFTER the palette mock above, which matters: Playwright matches
-  // handlers in reverse registration order, and `**/api/assets**` would
-  // otherwise answer the trash drawer's recently-deleted request with a page of
-  // palette assets. Empty by default; the test that cares overrides it.
+  // The trash drawer's recently-deleted list. Empty by default; the test that
+  // cares overrides it — and must register AFTER this one, because Playwright
+  // matches handlers in reverse registration order.
   await page.route("**/api/assets/marked**", (route) =>
     route.fulfill({ json: { assets: [] } }),
   );
@@ -489,7 +417,7 @@ async function settleViewTransition(page: Page): Promise<void> {
 }
 
 /** Press-and-hold drag: hold past the 250ms activation delay, travel, dwell,
- *  release. Used for strip cards AND palette thumbnails (both hold-marked). */
+ *  release. Used for strip cards (hold-marked). */
 async function holdDrag(
   page: Page,
   source: Locator,
@@ -544,10 +472,28 @@ const surfaceButton = (page: Page, surface: "strip" | "grid"): Locator =>
 const previewToggle = (page: Page): Locator =>
   page.getByRole("button", { name: /(show|hide) preview/i });
 
-// The board's own "Assets" button is gone — the SIDEBAR button is the one
-// affordance, and on graph routes it hands off to the palette drawer.
-const assetsButton = (page: Page): Locator =>
-  page.getByRole("button", { name: "Assets", exact: true });
+/**
+ * One OS file drop onto a surface's native drop zone, at an exact clientX.
+ *
+ * A file drop is dispatched, not mouse-driven, so it settles deterministically
+ * — no dnd-kit measure cadence to race, which is why the flat-drop tests below
+ * need no retries where their palette-drag ancestors did.
+ */
+async function dropOneFile(page: Page, collectionId: string, clientX: number): Promise<void> {
+  const transfer = await page.evaluateHandle(() => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array([137, 80, 78, 71])], "dropped.png", { type: "image/png" }));
+    return dt;
+  });
+  const zone = page.locator(`[data-native-drop="${collectionId}"]`);
+  // dragover FIRST, at the same x. The drop handler resolves its anchor from
+  // geometry the drag SESSION measures, and a bare `drop` never opens one — the
+  // anchor then falls back to a stale index and the drop lands somewhere the
+  // pointer never was. (Dropping at clientX 0 hides this, which is why the
+  // upload tests above get away with it.)
+  await zone.dispatchEvent("dragover", { dataTransfer: transfer, clientX });
+  await zone.dispatchEvent("drop", { dataTransfer: transfer, clientX });
+}
 
 // Drilling in. The sub-timeline ROW no longer offers this — its folder toggle
 // opens the timeline in place, and the second control that navigated away was
@@ -1336,373 +1282,6 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds, { timeout: 5000 })
       .toEqual(["alpha", "bravo", "clip-scene", "charlie"]);
-  });
-
-  test("the asset palette leaves the page scrollable clear of itself", async ({ page }) => {
-    await installGraphApi(page);
-    await openGraph(page);
-    // Short viewport + the children tree = a page taller than the screen, so
-    // the bottom is only reachable by scrolling.
-    await page.setViewportSize({ width: 1280, height: 520 });
-    await expandSubGraph(page, "Scene A");
-
-    await assetsButton(page).click();
-    const drawer = page.getByRole("dialog", { name: "Asset palette" });
-    await expect(drawer).toBeVisible();
-
-    // The panel is fixed to the bottom of the viewport, so the page must gain
-    // exactly its height as scrollable room — otherwise the last content sits
-    // under it with no scroll left to reach it.
-    await expect
-      .poll(async () => {
-        const [pad, panelHeight] = await Promise.all([
-          page.evaluate(
-            () => parseFloat(getComputedStyle(document.querySelector("main")!).paddingBottom) || 0,
-          ),
-          drawer.evaluate((el) => el.getBoundingClientRect().height),
-        ]);
-        return panelHeight > 0 && Math.abs(pad - panelHeight) < 1;
-      })
-      .toBe(true);
-
-    // And it really is reachable: scrolled to the end, the last card clears
-    // the panel's top edge.
-    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-    await expect
-      .poll(async () =>
-        page.evaluate(() => {
-          const cards = document.querySelectorAll("[data-node-id]");
-          const last = cards[cards.length - 1]?.getBoundingClientRect();
-          const panelTop = document
-            .querySelector('aside[aria-label="Asset palette"]')!
-            .getBoundingClientRect().top;
-          return last !== undefined && last.bottom <= panelTop + 1;
-        }),
-      )
-      .toBe(true);
-
-    // Closing gives the room back.
-    await assetsButton(page).click();
-    await expect(drawer).toHaveCount(0);
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () => parseFloat(getComputedStyle(document.querySelector("main")!).paddingBottom) || 0,
-        ),
-      )
-      .toBe(0);
-  });
-
-  // Pagination is per-PLACE, and a slow page must never land somewhere else.
-  // The two folders here deliberately hand out the SAME cursor ("1") — real
-  // cursors are plain offsets (`String(end)`), so folders paging at the same
-  // size collide on every page, not rarely. A cursor-only guard passes here;
-  // only the page's full identity catches it.
-  test("a slow 'load more' from one folder never lands in another", async ({ page }) => {
-    await installGraphApi(page);
-    let releaseLatePage!: () => void;
-    const latePageHeld = new Promise<void>((resolve) => {
-      releaseLatePage = resolve;
-    });
-
-    const asset = (id: string) => ({
-      id,
-      providerId: "cloudinary",
-      name: id,
-      kind: "image" as const,
-      src: `https://cdn.test/${id}.jpg`,
-      thumbnailUrl: `https://cdn.test/${id}.jpg`,
-      width: 16,
-      height: 9,
-      tags: [] as string[],
-    });
-
-    // Registered AFTER installGraphApi, so it takes precedence.
-    await page.route("**/api/assets?*", async (route) => {
-      const url = new URL(route.request().url());
-      const folder = url.searchParams.getAll("folder");
-      const cursor = url.searchParams.get("cursor");
-      const body = (payload: Record<string, unknown>) =>
-        route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({ providerId: "cloudinary", capabilities: {}, ...payload }),
-        });
-
-      if (folder.length === 0) {
-        return body({
-          assets: [],
-          folders: [
-            { name: "alpha", path: ["alpha"] },
-            { name: "beta", path: ["beta"] },
-          ],
-        });
-      }
-      if (folder[0] === "alpha" && cursor === null) {
-        return body({ assets: [asset("alpha-1")], folders: [], nextCursor: "1" });
-      }
-      if (folder[0] === "alpha") {
-        await latePageHeld; // the slow page, released after we have navigated away
-        return body({ assets: [asset("alpha-late")], folders: [] });
-      }
-      // beta hands out the SAME cursor value alpha did.
-      return body({ assets: [asset("beta-1")], folders: [], nextCursor: "1" });
-    });
-
-    await openGraph(page);
-    await assetsButton(page).click();
-    const drawer = page.getByRole("dialog", { name: "Asset palette" });
-    await expect(drawer).toBeVisible();
-
-    // Into alpha, and ask for its second page…
-    await drawer.locator('[data-palette-folder="alpha"]').click();
-    await expect(drawer.locator('[data-palette-item="asset-alpha-1"]')).toBeVisible();
-    await drawer.getByRole("button", { name: "Load more" }).click();
-
-    // …then leave for beta while that request is still out.
-    await drawer.getByRole("button", { name: "ASSETS" }).click();
-    await drawer.locator('[data-palette-folder="beta"]').click();
-    await expect(drawer.locator('[data-palette-item="asset-beta-1"]')).toBeVisible();
-
-    // Wait for the late page to actually REACH the client before asserting —
-    // otherwise "alpha-late is absent" would pass simply by checking too early,
-    // and the test would prove nothing.
-    const latePageDelivered = page.waitForResponse(
-      (response) =>
-        response.url().includes("folder=alpha") && response.url().includes("cursor="),
-    );
-    releaseLatePage();
-    await latePageDelivered;
-
-    // Beta's rail keeps exactly beta's asset. Without the identity guard
-    // alpha-late appends here, and the user could then drag an asset out of a
-    // folder they are not looking at.
-    await expect(drawer.locator("[data-palette-item]")).toHaveCount(1);
-    await expect(drawer.locator('[data-palette-item="asset-alpha-late"]')).toHaveCount(0);
-    await expect(drawer.locator('[data-palette-item="asset-beta-1"]')).toBeVisible();
-  });
-
-  test("palette drag mints a fresh node from an asset and persists it", async ({ page }) => {
-    const api = await installGraphApi(page);
-    await openGraph(page);
-    await assetsButton(page).click();
-    const drawer = page.getByRole("dialog", { name: "Asset palette" });
-    await expect(drawer).toBeVisible();
-
-    // Drop on bravo's left half: the new node inserts before it.
-    const thumbnail = drawer.locator('[data-palette-item="asset-img-1"]');
-    await holdDrag(page, thumbnail, strip(page, PROJECT_ID).locator('[data-node-id="bravo"]'), 0.15);
-
-    await expect
-      .poll(() => stripOrder(page, PROJECT_ID))
-      .toEqual(["alpha", expect.stringMatching(/^asset-img-1/), "bravo", CHILD_ID, "charlie"]);
-
-    // The bridge claims the parked palette detail BEFORE the first write, so
-    // the persisted clip already carries the asset's src.
-    await expect
-      .poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds.length, { timeout: 5000 })
-      .toBe(5);
-    const stored = api.documents.get(PROJECT_ID);
-    const persisted = stored?.clips.find((clip) => clip.id.startsWith("asset-img-1"));
-    expect(persisted).toBeDefined();
-    expect(persisted?.kind).toBe("image");
-    expect(persisted?.src).toBe(PIXEL);
-    // …and the PROVENANCE: which provider file this clip is, not just the
-    // URL it renders by — the whole chain (palette detail → parked → add
-    // patch → persisted write) has to carry it for it to appear here.
-    expect((persisted as { sourceAsset?: unknown }).sourceAsset).toEqual({
-      providerId: "cloudinary",
-      assetId: "img-1",
-    });
-
-    // A VIDEO asset lands at its REAL listed duration, not the default. It
-    // lives inside a folder now — drill in through the real tile first.
-    await drawer.locator('[data-palette-folder="fixtures"]').click();
-    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toBeVisible();
-    await holdDrag(
-      page,
-      drawer.locator('[data-palette-item="asset-vid-1"]'),
-      strip(page, PROJECT_ID).locator('[data-node-id="charlie"]'),
-      0.85,
-    );
-    await expect
-      .poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds.length, { timeout: 5000 })
-      .toBe(6);
-    const video = api.documents
-      .get(PROJECT_ID)
-      ?.clips.find((clip) => clip.id.startsWith("asset-vid-1"));
-    expect(video).toBeDefined();
-    expect(video?.kind).toBe("video");
-    expect(video?.sourceDuration).toBe(12.4);
-    expect(video?.duration).toBe(12.4); // untrimmed: full source length
-  });
-
-  test("palette folders: root shows tiles, drill-in scopes, the breadcrumb climbs back", async ({
-    page,
-  }) => {
-    await installGraphApi(page);
-    await openGraph(page);
-    await assetsButton(page).click();
-    const drawer = page.getByRole("dialog", { name: "Asset palette" });
-
-    // ROOT: the root asset and the folder tile — never the folder's contents
-    // (an asset deeper than the browsed folder appears only through its
-    // folder row; that is what makes drill-in mean something).
-    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-folder="fixtures"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toHaveCount(0);
-
-    // DRILL IN: the folder's assets replace the root's, and the breadcrumb
-    // grows a crumb — the current folder as text, the root as a button.
-    await drawer.locator('[data-palette-folder="fixtures"]').click();
-    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toHaveCount(0);
-    const breadcrumb = drawer.getByRole("navigation", { name: "Asset folders" });
-    await expect(breadcrumb.getByText("fixtures")).toBeVisible();
-
-    // CLIMB BACK via the root crumb: the root page returns (from the cache —
-    // no spinner state to wait through, but the assertion is on content, so
-    // either path passes only if the page is RIGHT).
-    await breadcrumb.getByRole("button", { name: "Assets" }).click();
-    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toHaveCount(0);
-    // At the root the header is the plain heading again — no navigation.
-    await expect(drawer.getByRole("navigation", { name: "Asset folders" })).toHaveCount(0);
-  });
-
-  test("palette tags mode: toggle, pseudo-hierarchy drill-in, and back to folders", async ({
-    page,
-  }) => {
-    await installGraphApi(page);
-    await openGraph(page);
-    await assetsButton(page).click();
-    const drawer = page.getByRole("dialog", { name: "Asset palette" });
-    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
-
-    // The toggle exists because the MOCK declares the capability — a
-    // provider that can't do tags never grows this control.
-    const toggle = drawer.getByRole("group", { name: "Browse assets by" });
-    await toggle.getByRole("button", { name: "Tags" }).click();
-
-    // Tags root: the untagged asset beside the top-level tag group. vid-1
-    // lives in the "fixtures" FOLDER but tag space doesn't care — it is
-    // reachable only through b-roll/night.
-    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-folder="b-roll"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-folder="fixtures"]')).toHaveCount(0);
-    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toHaveCount(0);
-
-    // Drill the nested tag: b-roll -> night -> the tagged asset.
-    await drawer.locator('[data-palette-folder="b-roll"]').click();
-    await expect(drawer.locator('[data-palette-folder="night"]')).toBeVisible();
-    await drawer.locator('[data-palette-folder="night"]').click();
-    await expect(drawer.locator('[data-palette-item="asset-vid-1"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toHaveCount(0);
-    // The breadcrumb roots at "Tags" in this mode.
-    const breadcrumb = drawer.getByRole("navigation", { name: "Asset folders" });
-    await expect(breadcrumb.getByRole("button", { name: "Tags" })).toBeVisible();
-
-    // Back to Folders: the toggle resets to the FOLDER root (a tag path
-    // means nothing in folder space).
-    await toggle.getByRole("button", { name: "Folders" }).click();
-    await expect(drawer.locator('[data-palette-folder="fixtures"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-folder="b-roll"]')).toHaveCount(0);
-  });
-
-  test("provider picker: appears with two providers, switches the source, hidden with one", async ({
-    page,
-  }) => {
-    await installGraphApi(page);
-
-    // Register AFTER installGraphApi so these win: one handler for BOTH the
-    // providers list and the (provider-scoped) asset listing. Two providers
-    // installed — Cloudinary (default) and S3 — with disjoint contents so a
-    // switch is unmistakable.
-    await page.route("**/api/assets/providers**", (route) =>
-      route.fulfill({
-        json: {
-          providers: [
-            {
-              id: "cloudinary",
-              label: "Cloudinary",
-              capabilities: {
-                folders: true,
-                tags: false,
-                search: false,
-                upload: false,
-                delete: false,
-              },
-            },
-            {
-              id: "s3",
-              label: "S3 (media-bucket)",
-              capabilities: {
-                folders: true,
-                tags: false,
-                search: false,
-                upload: false,
-                delete: false,
-              },
-            },
-          ],
-        },
-      }),
-    );
-    await page.route("**/api/assets?**", (route) => {
-      const url = new URL(route.request().url());
-      const provider = url.searchParams.get("provider") ?? "cloudinary";
-      const asset = (id: string) => ({
-        id,
-        providerId: provider,
-        name: `${id}.png`,
-        kind: "image",
-        src: PIXEL,
-        thumbnailUrl: PIXEL,
-        folderPath: [],
-        tags: [],
-      });
-      return route.fulfill({
-        json: {
-          providerId: provider,
-          capabilities: { folders: true, tags: false, search: false, upload: false, delete: false },
-          folders: [],
-          assets: provider === "s3" ? [asset("s3-only")] : [asset("cloud-only")],
-        },
-      });
-    });
-
-    await openGraph(page);
-    await assetsButton(page).click();
-    const drawer = page.getByRole("dialog", { name: "Asset palette" });
-
-    // Cloudinary is the default source, so its content shows first…
-    await expect(drawer.locator('[data-palette-item="asset-cloud-only"]')).toBeVisible();
-    const picker = drawer.getByRole("combobox", { name: "Asset source" });
-    await expect(picker).toBeVisible();
-
-    // …switch to S3: its disjoint content replaces Cloudinary's.
-    await picker.selectOption("s3");
-    await expect(drawer.locator('[data-palette-item="asset-s3-only"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-item="asset-cloud-only"]')).toHaveCount(0);
-
-    // And back — proving the switch is real navigation, not a one-way trip.
-    await picker.selectOption("cloudinary");
-    await expect(drawer.locator('[data-palette-item="asset-cloud-only"]')).toBeVisible();
-    await expect(drawer.locator('[data-palette-item="asset-s3-only"]')).toHaveCount(0);
-  });
-
-  test("provider picker stays hidden when only one provider is installed", async ({ page }) => {
-    // The DEFAULT installGraphApi mock returns no providers list (its
-    // `**/api/assets**` handler answers the providers URL with an assets
-    // payload that carries no `providers` field), so the picker never
-    // appears — the single-provider deployment is visually unchanged.
-    await installGraphApi(page);
-    await openGraph(page);
-    await assetsButton(page).click();
-    const drawer = page.getByRole("dialog", { name: "Asset palette" });
-    await expect(drawer.locator('[data-palette-item="asset-img-1"]')).toBeVisible();
-    await expect(drawer.getByRole("combobox", { name: "Asset source" })).toHaveCount(0);
   });
 
   test("trash drop moves across roots, persists BOTH documents, and undoes", async ({
@@ -5465,53 +5044,41 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 
-  // RETRIED, deliberately. These are real-mouse drags, and dnd-kit recomputes
-  // `over` on a measure cadence — releasing before it catches up is the
-  // documented CI-only flake class (see the package CLAUDE.md), which the
-  // suite already carries two of. Retries buy the coverage without making the
-  // suite red; the RULE itself is pinned deterministically by
-  // resolveFlatDropTarget's unit tests.
+  // These two were PALETTE drags until the asset tray was retired (PL12-005).
+  // They are OS FILE DROPS now, which is not a like-for-like swap and is the
+  // point: a file drop dispatches its add through the store directly, so it
+  // never passed through `mapDropCommand` and never got the flat translation.
+  // With the palette gone that is the ONLY way to add media, so the path the
+  // translation guards has to be the path the tests drive.
   //
-  // HISTORY, so the flake note is not read as covering everything: these were
-  // failing DETERMINISTICALLY, not flaking, because the flat translator ran on
-  // every drop command — including the card-relative ones that were already
-  // correct — and re-read a parent-relative index as a flat-run boundary. The
-  // two tests below are the two halves that must stay apart: a drop resolved
-  // against a CARD passes through, a drop resolved against the STRIP is
-  // translated.
+  // HISTORY worth keeping: these were failing DETERMINISTICALLY once before,
+  // because the flat translator ran on every drop command — including the
+  // card-relative ones that were already correct — and re-read a
+  // parent-relative index as a flat-run boundary.
   test.describe(() => {
-    test.describe.configure({ retries: 2 });
-    test("in flat mode a palette drop joins the LEFT neighbour's collection", async ({
-        page,
-      }) => {
+    test("in flat mode a file drop joins the LEFT neighbour's collection", async ({
+      page,
+    }) => {
       const api = await installGraphApi(page);
+      await page.route("**/api/timeline-media/upload", (route) =>
+        route.fulfill({ json: { pathname: "dropped.png", url: PIXEL } }),
+      );
       await openGraph(page);
       await page.getByRole("button", { name: "Show all items in order" }).click();
       await expect
         .poll(() => stripOrder(page, PROJECT_ID), { timeout: 15000 })
         .toEqual(["alpha", "bravo", "c1", "c2", "charlie"]);
-
-      // Wait for the closure hydration to FINISH before dragging. It mutates
-      // the graph as each collection lands, and a graph replaced mid-drag
-      // orphans the drop by design — under parallel load that is a real race,
-      // not just slowness.
+      // Closure hydration mutates the graph as each collection lands, and the
+      // flat run is derived from it — measure after it settles.
       await expect(
         page.getByRole("button", { name: "Show collections" }),
       ).toHaveAttribute("aria-busy", "false");
 
-      await assetsButton(page).click();
-      const drawer = page.getByRole("dialog", { name: "Asset palette" });
-      await expect(drawer).toBeVisible();
-
-      // Drop onto c2's RIGHT half — the boundary just after it. c2 lives in
-      // Scene A, so the new clip belongs to Scene A, NOT to the focused project
-      // whose collection the drop intent actually names.
-      await holdDrag(
-        page,
-        drawer.locator('[data-palette-item="asset-img-1"]'),
-        strip(page, PROJECT_ID).locator('[data-node-id="c2"]'),
-        0.85,
-      );
+      // Drop on c2's RIGHT half — the boundary just after it. c2 lives in
+      // Scene A, so the new clip belongs to Scene A, NOT to the focused
+      // project whose collection the drop names.
+      const c2Box = (await strip(page, PROJECT_ID).locator('[data-node-id="c2"]').boundingBox())!;
+      await dropOneFile(page, PROJECT_ID, c2Box.x + c2Box.width * 0.85);
 
       // It landed in the CHILD document, after c2 — the flat index was
       // translated, not taken literally.
@@ -5521,8 +5088,8 @@ test.describe("graph view E2E", () => {
       const childIds = api.patchesFor(CHILD_ID).at(-1)!.clipIds!;
       expect(childIds.slice(0, 2)).toEqual(["c1", "c2"]);
 
-      // And the project document did NOT gain it — the untranslated command
-      // would have inserted here, at a flat index inside the wrong parent.
+      // And the project did NOT gain it — the untranslated command would have
+      // inserted here, at a flat index inside the wrong parent.
       const projectIds = api.patchesFor(PROJECT_ID).at(-1)?.clipIds;
       if (projectIds) expect(projectIds).toHaveLength(4);
     });
@@ -5530,12 +5097,13 @@ test.describe("graph view E2E", () => {
     test("in flat mode a drop in the GAP is still translated off the flat run", async ({
       page,
     }) => {
-      // The other half of the card-vs-strip split. With the pointer over no
-      // card, the flat STRIP wins the collision and publishes a boundary into
-      // the flat run — which does need translating. Guarding the translator
-      // too broadly (skipping it altogether) lands this in the project at a
-      // flat index instead of in Scene A.
+      // The other half: with the pointer over no card, the boundary falls
+      // between two cards of the same collection. Translated, its left
+      // neighbour is c1, so the clip joins Scene A after c1.
       const api = await installGraphApi(page);
+      await page.route("**/api/timeline-media/upload", (route) =>
+        route.fulfill({ json: { pathname: "dropped.png", url: PIXEL } }),
+      );
       await openGraph(page);
       await page.getByRole("button", { name: "Show all items in order" }).click();
       await expect
@@ -5545,27 +5113,12 @@ test.describe("graph view E2E", () => {
         page.getByRole("button", { name: "Show collections" }),
       ).toHaveAttribute("aria-busy", "false");
 
-      await assetsButton(page).click();
-      const drawer = page.getByRole("dialog", { name: "Asset palette" });
-      await expect(drawer).toBeVisible();
-
-      // The gutter between c1 and c2 — boundary 3 of the flat run. Translated,
-      // its left neighbour is c1, so the clip joins Scene A after c1.
       const c1Box = (await strip(page, PROJECT_ID).locator('[data-node-id="c1"]').boundingBox())!;
       const c2Box = (await strip(page, PROJECT_ID).locator('[data-node-id="c2"]').boundingBox())!;
       const gapX = (c1Box.x + c1Box.width + c2Box.x) / 2;
       expect(gapX).toBeGreaterThan(c1Box.x + c1Box.width);
       expect(gapX).toBeLessThan(c2Box.x);
-
-      const source = drawer.locator('[data-palette-item="asset-img-1"]');
-      const sourceBox = (await source.boundingBox())!;
-      await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
-      await page.mouse.down();
-      await page.waitForTimeout(400); // past the hold delay
-      await page.mouse.move(gapX, c1Box.y + c1Box.height / 2, { steps: 12 });
-      await page.waitForTimeout(150); // dwell: let collision/intent settle
-      await page.mouse.up();
-      await page.waitForTimeout(80); // dnd-kit's post-drop click suppressor
+      await dropOneFile(page, PROJECT_ID, gapX);
 
       // Scene A gained it, between c1 and c2.
       await expect

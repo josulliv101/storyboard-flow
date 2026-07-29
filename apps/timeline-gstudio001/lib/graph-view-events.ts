@@ -1,10 +1,7 @@
-// The sidebar's Assets launcher and the graph view live in different React
-// trees (the sidebar is app chrome; the graph provider is route-scoped), so
-// on graph routes the launcher hands off through a window event instead of
-// opening the legacy drawer — whose media-strip drags can't land on
-// dnd-collections timelines.
-
-export const GRAPH_ASSETS_TOGGLE_EVENT = "graph-view:toggle-assets";
+// The sidebar (app chrome) and the graph view (route-scoped) live in different
+// React trees, so the rail asks the board for things through window events
+// rather than props. The Assets launcher used to be one of them; media now
+// enters by being dropped on the board itself, so there is nothing to launch.
 
 /** True for /timeline/<projectId>/graph[/...] routes. */
 export function isGraphViewRoute(pathname: string): boolean {
@@ -66,12 +63,6 @@ export type GraphViewStateDetail = Readonly<{
   rulerOn: boolean;
   childrenShown: boolean;
   previewOn: boolean;
-  /** Whether the asset palette drawer is open. The SIDEBAR owns that button
-   *  but not the state, so without this published it could not show the
-   *  drawer as open — it reported `aria-pressed="false"` permanently while
-   *  actually toggling one, which is a lie to assistive tech as well as a
-   *  missing highlight. */
-  assetsOpen: boolean;
   /** Strip's flat mode. Strip-only, like the ruler — grid has no equivalent. */
   flatOn: boolean;
   /** True while flat mode is loading the closure it needs (every nested
