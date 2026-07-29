@@ -3765,18 +3765,17 @@ test.describe("graph view E2E", () => {
     const trigger = page.locator('[data-item-details-trigger="bravo"]');
     await expect(trigger).toHaveCount(1);
 
-    // Hidden until the card is hovered or focused. Asserted BEFORE anything is
-    // clicked: clicking a card focuses it, and focus legitimately reveals the
-    // trigger, so a click first would make the idle state untestable. (Real
-    // hover only — the reveal is a CSS `:hover` rule, which synthetic mouse
-    // events cannot produce.)
+    // ALWAYS VISIBLE (PL13-005). This used to be an idle → hover → away →
+    // focus opacity dance, because the trigger hid itself until the card was
+    // hovered. Card controls are permanent now — same rule on a collection's
+    // drill badge — which is what removed the `@media(hover:hover)` gate and
+    // with it the whole class of "invisible on touch" bugs. Nothing is hovered
+    // or focused here, and that is the point.
     const opacity = () => trigger.evaluate((el) => getComputedStyle(el).opacity);
-    await expect.poll(opacity).toBe("0");
+    await expect.poll(opacity).toBe("1");
     await bravo.hover();
     await expect.poll(opacity).toBe("1");
     await page.mouse.move(0, 0);
-    await expect.poll(opacity).toBe("0");
-    await trigger.focus();
     await expect.poll(opacity).toBe("1");
 
     // Pressing it selects the card as well, so the board's selection-scoped
@@ -4011,7 +4010,11 @@ test.describe("graph view E2E", () => {
 
       const trigger = page.locator('[data-item-details-trigger="alpha"]');
       await expect(trigger).toHaveCount(1);
-      // Nothing hovered, nothing focused: hover-capable would read "0".
+      // Visible, as it now is everywhere — the trigger stopped hiding itself in
+      // PL13-005, so this no longer distinguishes touch from pointer. Kept
+      // because what it really guards is that the ONE route into the details
+      // view is reachable on a device that cannot hover, and a future reveal
+      // rule would have to keep that true.
       await expect
         .poll(() => trigger.evaluate((el) => getComputedStyle(el).opacity))
         .toBe("1");
