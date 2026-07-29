@@ -51,29 +51,65 @@ export function GraphSaveStatus({ children }: Readonly<{ children?: ReactNode }>
 
   const justSaved = !busy && lastSavedAt !== null && now - lastSavedAt < SAVED_FLASH_MS;
 
+  // WHAT GETS ANNOUNCED, and what deliberately does not.
+  //
+  // All three states used to be plain text with a `title`, so a screen-reader
+  // user got no warning at all that edits were failing or conflicting — with
+  // undo history not surviving a reload, that is the one state with
+  // consequences. But wrapping the whole slot in a live region would announce
+  // "Saving… Saved… Saving… Saved…" on every debounce tick, which is worse
+  // than silence: it buries the failure it exists to surface.
+  //
+  // So: a persistent polite node carrying only SETTLED results (empty while
+  // busy, so the in-progress churn says nothing), and one assertive alert for
+  // failures. The visible chip is unchanged and stays aria-hidden — it is the
+  // same fact, and announcing it twice is its own noise.
+  const announcement = error !== null ? "" : justSaved ? "All changes saved." : "";
+
+  const liveRegion = (
+    <>
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </span>
+      {error !== null ? (
+        <span className="sr-only" role="alert">
+          Your changes are not being saved. {error}
+        </span>
+      ) : null}
+    </>
+  );
+
   if (error !== null) {
     return (
-      <span
-        data-save-status="error"
-        title={error}
-        className="flex shrink-0 items-center gap-1.5 px-3 font-mono text-[11px] text-amber-300"
-      >
-        <CircleAlert aria-hidden="true" className="h-3.5 w-3.5" />
-        Not saved
-      </span>
+      <>
+        {liveRegion}
+        <span
+          aria-hidden="true"
+          data-save-status="error"
+          title={error}
+          className="flex shrink-0 items-center gap-1.5 px-3 font-mono text-[11px] text-amber-300"
+        >
+          <CircleAlert aria-hidden="true" className="h-3.5 w-3.5" />
+          Not saved
+        </span>
+      </>
     );
   }
 
   if (busy) {
     return (
-      <span
-        data-save-status="saving"
-        title="Writing your changes"
-        className="flex shrink-0 items-center gap-1.5 px-3 font-mono text-[11px] text-zinc-400"
-      >
-        <CloudUpload aria-hidden="true" className="h-3.5 w-3.5" />
-        Saving…
-      </span>
+      <>
+        {liveRegion}
+        <span
+          aria-hidden="true"
+          data-save-status="saving"
+          title="Writing your changes"
+          className="flex shrink-0 items-center gap-1.5 px-3 font-mono text-[11px] text-zinc-400"
+        >
+          <CloudUpload aria-hidden="true" className="h-3.5 w-3.5" />
+          Saving…
+        </span>
+      </>
     );
   }
 
@@ -81,16 +117,25 @@ export function GraphSaveStatus({ children }: Readonly<{ children?: ReactNode }>
   // A permanent "Saved" would be chrome that never says anything new.
   if (justSaved) {
     return (
-      <span
-        data-save-status="saved"
-        title="Every change is on the server"
-        className="flex shrink-0 items-center gap-1.5 px-3 font-mono text-[11px] text-zinc-300"
-      >
-        <Cloud aria-hidden="true" className="h-3.5 w-3.5" />
-        Saved
-      </span>
+      <>
+        {liveRegion}
+        <span
+          aria-hidden="true"
+          data-save-status="saved"
+          title="Every change is on the server"
+          className="flex shrink-0 items-center gap-1.5 px-3 font-mono text-[11px] text-zinc-300"
+        >
+          <Cloud aria-hidden="true" className="h-3.5 w-3.5" />
+          Saved
+        </span>
+      </>
     );
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {liveRegion}
+      {children}
+    </>
+  );
 }

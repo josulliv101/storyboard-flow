@@ -33,6 +33,11 @@ const DEFAULT_VIDEO_SECONDS = 8;
  */
 const PALETTE_PAGE_SIZE = 12;
 
+/** How many browsed pages the drawer keeps. Enough that walking back up a
+ *  deep path is instant; small enough that a long session does not retain
+ *  every folder and search result it ever showed. */
+const PALETTE_PAGE_CACHE_LIMIT = 24;
+
 function createNodeFromAsset(asset: Asset): CollectionItemNode {
   clearPendingDetails();
   const id = parseNodeId(
@@ -267,7 +272,25 @@ export function AssetPaletteDrawer({
   // Visited folders answer instantly on the way back up; a provider fetch
   // per crumb-click would make the breadcrumb feel broken. Retry bypasses it
   // (the effect always network-fetches when loading), so a stale entry heals.
+  //
+  // BOUNDED: the drawer stays mounted for the whole session, so an unbounded
+  // map retained every folder, tag and search result the user ever visited —
+  // including every appended "load more" page merged into them. Oldest-first
+  // eviction matches how people browse: they come back UP a path, not back to
+  // a folder from an hour ago.
   const pageCacheRef = useRef(new Map<string, PalettePage>());
+  const cachePage = useCallback((key: string, page: PalettePage) => {
+    const cache = pageCacheRef.current;
+    // Re-inserting moves a key to the back, so a folder being paged through
+    // stays the most recent rather than aging out mid-scroll.
+    cache.delete(key);
+    cache.set(key, page);
+    while (cache.size > PALETTE_PAGE_CACHE_LIMIT) {
+      const oldest = cache.keys().next();
+      if (oldest.done) break;
+      cache.delete(oldest.value);
+    }
+  }, []);
   const panelRef = useRef<HTMLElement | null>(null);
   // Folders or tags — the SAME breadcrumb/tile machinery browses either;
   // only the wire params and the tile icon differ. The toggle renders only
@@ -408,7 +431,7 @@ export function AssetPaletteDrawer({
           ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
         };
         // Cached under the key the request was ISSUED for, never the live one.
-        pageCacheRef.current.set(requestKey, merged);
+        cachePage(requestKey, merged);
         return { status: "ready", ...merged };
       });
     } catch {
@@ -418,7 +441,7 @@ export function AssetPaletteDrawer({
     } finally {
       setLoadingMore(false);
     }
-  }, [state, loadingMore, requestParams, pageKey]);
+  }, [state, loadingMore, requestParams, pageKey, cachePage]);
 
   const navigateTo = useCallback(
     (next: readonly string[], nextMode?: BrowseMode) => {
@@ -519,7 +542,7 @@ export function AssetPaletteDrawer({
           folders: result.folders ?? [],
           ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }),
         };
-        pageCacheRef.current.set(cacheKey(providerId, mode, path, searchTerm), page);
+        cachePage(cacheKey(providerId, mode, path, searchTerm), page);
         setTagsAvailable(result.capabilities?.tags === true);
         setSearchAvailable(result.capabilities?.search === true);
         setState({ status: "ready", ...page });
@@ -535,7 +558,7 @@ export function AssetPaletteDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, state.status, path, mode, providerId, searchTerm, cacheKey, requestParams]);
+  }, [open, state.status, path, mode, providerId, searchTerm, cacheKey, requestParams, cachePage]);
 
   if (!open || typeof document === "undefined") return null;
 

@@ -5,7 +5,13 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
   eslint: {
-    ignoreDuringBuilds: true,
+    // NOT ignored. The graph code treats react-hooks rules as correctness
+    // constraints, not style — `react-hooks/set-state-in-effect` is why several
+    // components adjust state during render instead of in an effect, and
+    // auth-gate carries a deliberate disable with a written justification. CI
+    // runs `npm run lint`, but a local or alternate deploy path that calls
+    // `next build` directly would have skipped all of it.
+    ignoreDuringBuilds: false,
   },
   typescript: {
     ignoreBuildErrors: false,

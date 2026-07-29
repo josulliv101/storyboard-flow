@@ -27,9 +27,15 @@ const state = vi.hoisted(() => {
       get: (field: string) => (data ? data[field] : undefined),
     };
   };
+  /** Per-id storage read count — the loader must not re-read a document it
+   *  already pulled in to derive a parent's summaries. */
+  const reads = new Map<string, number>();
   const docRef = (id: string) => ({
     id,
-    get: async () => snapshot(id),
+    get: async () => {
+      reads.set(id, (reads.get(id) ?? 0) + 1);
+      return snapshot(id);
+    },
     set: async (data: Stored, opts?: { merge?: boolean }) => applySet(id, data, opts),
     delete: async () => {
       docs.delete(id);
@@ -58,7 +64,7 @@ const state = vi.hoisted(() => {
       };
     },
   };
-  return { docs, db };
+  return { docs, reads, db };
 });
 
 vi.mock("server-only", () => ({}));
@@ -122,6 +128,7 @@ function seed(id: string, ownerUid: string, clips: TimelineClip[], revision = 1)
 
 beforeEach(() => {
   state.docs.clear();
+  state.reads.clear();
 });
 
 describe("loadGraphBootstrapPayloads", () => {
@@ -182,5 +189,33 @@ describe("loadFocusPathPayloads", () => {
 
     const payloads = await loadFocusPathPayloads(["ghost", "scene", "scene"], "user-a");
     expect(payloads.map((payload) => payload.document.id)).toEqual(["scene"]);
+  });
+
+  // Serving a document already reads every child to derive its collection
+  // summaries. Serving those children as payloads then read each of them a
+  // second time, and their own children a third.
+  it("reads each document once across summary derivation and payload serving", async () => {
+    seed("grand", "user-a", [image("g", 0, 2)]);
+    seed("scene", "user-a", [collectionClip("gref", "grand", 0)]);
+    seed("mid", "user-a", [collectionClip("sref", "scene", 0)]);
+    state.reads.clear();
+
+    await loadFocusPathPayloads(["mid", "scene"], "user-a");
+
+    expect([...state.reads.values()].every((count) => count === 1)).toBe(true);
+  });
+
+  // MAX_PATH_PAYLOADS counts SUCCESSES, so it bounded nothing when nothing
+  // resolved: `activeTimelinePath` is a catch-all segment, so a URL with
+  // hundreds of unknown segments cost one storage read each while producing
+  // no payloads at all.
+  it("bounds storage reads for a path of unresolvable segments", async () => {
+    const segments = Array.from({ length: 300 }, (_, index) => `ghost-${index}`);
+    state.reads.clear();
+
+    const payloads = await loadFocusPathPayloads(segments, "user-a");
+
+    expect(payloads).toEqual([]);
+    expect(state.reads.size).toBeLessThanOrEqual(48);
   });
 });

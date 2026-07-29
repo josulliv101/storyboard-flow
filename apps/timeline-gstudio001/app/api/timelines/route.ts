@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { readJsonObject } from "@/lib/read-json-body";
+
 import {
   createFirebaseTimelineProject,
   listFirebaseTimelineProjects,
@@ -37,7 +39,7 @@ export async function POST(request: Request) {
     const { user, response } = await requireAuthUser();
     if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = (await request.json().catch(() => ({}))) as { title?: unknown };
+    const body = await readJsonObject(request);
     const title = typeof body.title === "string" ? body.title : undefined;
     const project = await createFirebaseTimelineProject(user.uid, title);
 

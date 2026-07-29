@@ -13,6 +13,9 @@ type Stored = Record<string, unknown>;
 
 const state = vi.hoisted(() => {
   const docs = new Map<string, Stored>();
+  /** Per-id read counter — the closure walk must not fetch a document the
+   *  caller already handed it. */
+  const reads = new Map<string, number>();
   const current = { user: { uid: "user-a", email: null as string | null, name: null, picture: null } };
 
   const applySet = (id: string, data: Stored, opts?: { merge?: boolean }) => {
@@ -30,7 +33,10 @@ const state = vi.hoisted(() => {
   };
   const docRef = (id: string) => ({
     id,
-    get: async () => snapshot(id),
+    get: async () => {
+      reads.set(id, (reads.get(id) ?? 0) + 1);
+      return snapshot(id);
+    },
     set: async (data: Stored, opts?: { merge?: boolean }) => applySet(id, data, opts),
     delete: async () => {
       docs.delete(id);
@@ -59,7 +65,7 @@ const state = vi.hoisted(() => {
       };
     },
   };
-  return { docs, current, db };
+  return { docs, reads, current, db };
 });
 
 vi.mock("server-only", () => ({}));
@@ -134,6 +140,7 @@ function seed(id: string, ownerUid: string, clips: TimelineClip[], revision = 1)
 
 beforeEach(() => {
   state.docs.clear();
+  state.reads.clear();
   state.current.user = { uid: "user-a", email: null, name: null, picture: null };
 });
 
@@ -161,6 +168,34 @@ describe("preview manifest route", () => {
     expect(body.manifest.leaves.map((leaf) => leaf.id)).toEqual(["intro", "a", "b"]);
     expect(body.manifest.leaves[1].collectionPath).toEqual(["root-1", "scene"]);
     expect(body.manifest.leaves[1].timelineStart).toBeCloseTo(4.12, 6);
+  });
+
+  it("reads the root exactly once", async () => {
+    seed("scene", "user-a", [image("a", 0, 2)]);
+    seed("root-1", "user-a", [collectionClip("scene-ref", "scene", 0, 2)]);
+    state.reads.clear();
+
+    await getPreviewManifest(new Request("http://test.local"), params("root-1"));
+
+    // The route's own read IS the 404 check; the closure walker used to fetch
+    // the same document again and have its result overwritten.
+    expect(state.reads.get("root-1")).toBe(1);
+  });
+
+  it("refuses a closure larger than the document ceiling", async () => {
+    // A chain longer than MAX_CLOSURE_DOCUMENTS. Unbounded, this walked every
+    // link serially until the platform killed the function.
+    const length = 520;
+    for (let index = 0; index < length; index += 1) {
+      const next = index + 1 < length ? [collectionClip(`c${index}`, `t${index + 1}`, 0, 2)] : [];
+      seed(`t${index}`, "user-a", next);
+    }
+
+    const response = await getPreviewManifest(new Request("http://test.local"), params("t0"));
+
+    expect(response.status).toBe(409);
+    const { error } = (await response.json()) as { error: string };
+    expect(error).toMatch(/more than 500 documents/);
   });
 
   it("degrades unloadable branches to silence and reports them", async () => {

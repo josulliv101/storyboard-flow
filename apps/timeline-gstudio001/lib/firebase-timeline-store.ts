@@ -74,6 +74,13 @@ export type TimelineProjectSummary = {
 const TIMELINE_COLLECTION = "gstudioTimelineDocuments";
 const FIREBASE_TIMEOUT_MS = 8_000;
 
+/**
+ * Ceiling on ONE user's project list. This is now a per-requester product
+ * limit rather than the global truncation it used to be — see
+ * `listFirebaseTimelineProjects`.
+ */
+const PROJECT_LIST_LIMIT = 200;
+
 async function withFirebaseTimeout<T>(operation: Promise<T>, label: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -194,26 +201,74 @@ function toProjectSummary(id: string, data: Partial<TimelineDocumentRecord>): Ti
   };
 }
 
-export async function listFirebaseTimelineProjects(requesterUid: string) {
-  const snapshot = await withFirebaseTimeout(
-    collection().where("isProject", "==", true).limit(100).get(),
-    "Loading timeline projects",
-  );
+/** A missing composite index — the one failure mode of the two-filter query
+ *  below that has a safe degradation rather than a bug. */
+function isMissingIndexError(error: unknown): boolean {
+  const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return code === "9" || code === "FAILED_PRECONDITION" || message.includes("requires an index");
+}
 
-  // Listing is now READ ONLY. It used to stamp `ownerUid` onto every ownerless
+/**
+ * The requester's own project rows.
+ *
+ * BOTH filters run in the QUERY. They used to be split — `isProject` in the
+ * query, ownership in JS after `.limit(100)` — which meant the limit selected
+ * from every user's rows before anyone's ownership was considered. With no
+ * `orderBy`, Firestore applies its implicit `__name__` ordering, and ids are
+ * `project-${Date.now()}-…`, so the window was the OLDEST hundred project
+ * documents in the collection. Past a hundred documents globally, a user's
+ * newly created project simply fell outside it: the library rendered empty
+ * while the project existed and its URL still resolved.
+ *
+ * Two equality filters need no composite index (Firestore merge-joins the
+ * single-field ones), so this needs no deploy to work. `firestore.indexes.json`
+ * declares the composite anyway — an ordered/paginated version of this query
+ * will want it — and a deployment that somehow does demand one degrades to the
+ * owner-only query rather than failing the page.
+ */
+async function ownedProjectDocs(requesterUid: string) {
+  const owned = collection().where("ownerUid", "==", requesterUid);
+  try {
+    const snapshot = await withFirebaseTimeout(
+      owned.where("isProject", "==", true).limit(PROJECT_LIST_LIMIT).get(),
+      "Loading timeline projects",
+    );
+    return snapshot.docs;
+  } catch (error) {
+    if (!isMissingIndexError(error)) throw error;
+    // Owner-only: always served by the automatic single-field index. Reads
+    // this user's child timelines too and filters `isProject` below — more
+    // rows than needed, but still only ever THIS user's, which is the property
+    // that matters. Loud, because it is a deployment fix, not a code path.
+    console.warn(
+      "[GSTUDIO_PROJECTS_INDEX_MISSING] Falling back to an owner-only project query. Deploy firestore.indexes.json.",
+    );
+    const snapshot = await withFirebaseTimeout(
+      owned.limit(PROJECT_LIST_LIMIT).get(),
+      "Loading timeline projects",
+    );
+    return snapshot.docs;
+  }
+}
+
+export async function listFirebaseTimelineProjects(requesterUid: string) {
+  const docs = await ownedProjectDocs(requesterUid);
+
+  // Listing is READ ONLY. It used to stamp `ownerUid` onto every ownerless
   // project in the result set — one batch write per list, granting ownership to
   // whoever happened to look first. The legacy records that justified it have
   // been migrated (see lib/timeline-ownership), so unowned projects are simply
   // not visible to anyone.
   //
-  // The `.limit(100)` still precedes the ownership filter, so this reads other
-  // users' rows and can miss a user's own projects once the collection exceeds
-  // 100 documents across all users. Fixing that needs a
-  // `.where("ownerUid", "==", requesterUid)` with a composite index deployed
-  // alongside it.
+  // The ownership check stays even though the query now filters on it: this is
+  // the module's one authorization invariant, and it should not depend on a
+  // query staying shaped the way it is today. The `isProject` check is what
+  // the index-missing fallback above relies on.
   const visible: { id: string; data: TimelineDocumentRecord }[] = [];
-  for (const doc of snapshot.docs) {
+  for (const doc of docs) {
     const data = doc.data() as TimelineDocumentRecord;
+    if (data.isProject !== true) continue;
     if (resolveOwnership(data.ownerUid, requesterUid) !== "owned") continue;
     visible.push({ id: doc.id, data });
   }
@@ -508,55 +563,102 @@ export class TimelineCascadeTooLargeError extends Error {
  * counting or explicit per-document parentage in the stored model, which is a
  * schema decision rather than a traversal fix.
  */
+/** Documents of one BFS level read at once. The walk used to await one read
+ *  at a time, so a 500-document tree was 500 sequential round trips before a
+ *  single delete had been issued. */
+const CASCADE_READ_CONCURRENCY = 12;
+/** Firestore's own ceiling on a WriteBatch, and the reason
+ *  MAX_CASCADE_DOCUMENTS is 500: the whole cascade fits in one atomic batch. */
+const FIRESTORE_BATCH_LIMIT = 500;
+
 export async function deleteFirebaseTimelineDocument(id: string, requesterUid: string) {
   const visited = new Set<string>([id]);
-  const queue: string[] = [id];
   // Root-first, so reversing it deletes the deepest documents first and the
-  // root last — a failure part-way leaves a visibly broken parent the user can
-  // retry from, rather than invisible orphans under a vanished root.
+  // root last — relevant only in the multi-batch path below, where a failure
+  // part-way leaves a visibly broken parent the user can retry from rather
+  // than invisible orphans under a vanished root.
   const toDelete: string[] = [];
+  let frontier: string[] = [id];
 
-  while (queue.length > 0) {
-    const currentId = queue.shift() as string;
-    const snapshot = await withFirebaseTimeout(
-      collection().doc(currentId).get(),
-      "Loading timeline document for deletion",
+  while (frontier.length > 0) {
+    // Bounded concurrency rather than one Promise.all over the whole level: a
+    // wide tree should overlap latency, not open an unbounded number of
+    // connections at once. Order is preserved so `toDelete` stays root-first.
+    const snapshots = await withFirebaseTimeout(
+      mapWithConcurrency(frontier, CASCADE_READ_CONCURRENCY, async (currentId) => ({
+        currentId,
+        snapshot: await collection().doc(currentId).get(),
+      })),
+      "Loading timeline documents for deletion",
     );
 
-    if (!snapshot.exists) {
-      // A dangling child reference is nothing to delete. The ROOT still gets a
-      // (no-op) delete so callers see the same success as before.
-      if (currentId === id) toDelete.push(currentId);
-      continue;
-    }
-
-    const data = snapshot.data() as TimelineDocumentRecord;
-    if (resolveOwnership(data.ownerUid, requesterUid) === "denied") {
-      // At the root this is the authorization answer. Deeper it means a stored
-      // clip pointed at someone else's document: skip it, and keep deleting
-      // the requester's own tree.
-      if (currentId === id) throw new TimelineAccessDeniedError(id);
-      continue;
-    }
-
-    toDelete.push(currentId);
-
-    for (const clip of data.document?.clips ?? []) {
-      if (clip.kind !== "collection" || !clip.childTimelineId) continue;
-      // Already queued or already deleted — a cycle or a diamond.
-      if (visited.has(clip.childTimelineId)) continue;
-      if (visited.size >= MAX_CASCADE_DOCUMENTS) {
-        throw new TimelineCascadeTooLargeError(id);
+    const next: string[] = [];
+    for (const { currentId, snapshot } of snapshots) {
+      if (!snapshot.exists) {
+        // A dangling child reference is nothing to delete. The ROOT still gets
+        // a (no-op) delete so callers see the same success as before.
+        if (currentId === id) toDelete.push(currentId);
+        continue;
       }
-      visited.add(clip.childTimelineId);
-      queue.push(clip.childTimelineId);
+
+      const data = snapshot.data() as TimelineDocumentRecord;
+      if (resolveOwnership(data.ownerUid, requesterUid) === "denied") {
+        // At the root this is the authorization answer. Deeper it means a
+        // stored clip pointed at someone else's document: skip it, and keep
+        // deleting the requester's own tree.
+        if (currentId === id) throw new TimelineAccessDeniedError(id);
+        continue;
+      }
+
+      toDelete.push(currentId);
+
+      for (const clip of data.document?.clips ?? []) {
+        if (clip.kind !== "collection" || !clip.childTimelineId) continue;
+        // Already queued or already deleted — a cycle or a diamond.
+        if (visited.has(clip.childTimelineId)) continue;
+        if (visited.size >= MAX_CASCADE_DOCUMENTS) {
+          throw new TimelineCascadeTooLargeError(id);
+        }
+        visited.add(clip.childTimelineId);
+        next.push(clip.childTimelineId);
+      }
     }
+    frontier = next;
   }
 
-  for (const documentId of toDelete.reverse()) {
-    await withFirebaseTimeout(
-      collection().doc(documentId).delete(),
-      "Deleting timeline document",
-    );
+  // ONE atomic batch for the whole cascade, where it fits — which, given
+  // MAX_CASCADE_DOCUMENTS, is every case that is allowed through. Individually
+  // awaited deletes meant a transient failure mid-loop left the project half
+  // removed; a batch either applies completely or not at all.
+  for (const group of chunk(toDelete.reverse(), FIRESTORE_BATCH_LIMIT)) {
+    const batch = getFirebaseDb().batch();
+    for (const documentId of group) batch.delete(collection().doc(documentId));
+    await withFirebaseTimeout(batch.commit(), "Deleting timeline documents");
   }
+}
+
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  const groups: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    groups.push(items.slice(index, index + size));
+  }
+  return groups;
+}
+
+/** Run `task` over `items` with at most `limit` in flight, results in input
+ *  order. */
+async function mapWithConcurrency<In, Out>(
+  items: readonly In[],
+  limit: number,
+  task: (item: In) => Promise<Out>,
+): Promise<Out[]> {
+  const results: Out[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (let index = cursor++; index < items.length; index = cursor++) {
+      results[index] = await task(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }

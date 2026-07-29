@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { isStoredTimelineDocument, isUnsavedProjectPlaceholder } from "@storyboard/timeline-model";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
+import { readJsonObject } from "@/lib/read-json-body";
 import {
   saveFirebaseTimelineDocumentsAtomic,
   TimelineRevisionConflictError,
@@ -36,13 +37,12 @@ export async function POST(request: Request) {
     const { user, response } = await requireAuthUser();
     if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const body = (await request.json().catch(() => ({}))) as {
-      writes?: { document?: unknown; expectedRevision?: unknown }[];
-    };
-    if (!Array.isArray(body.writes) || body.writes.length === 0) {
+    const body = await readJsonObject(request);
+    const requested = body.writes;
+    if (!Array.isArray(requested) || requested.length === 0) {
       return NextResponse.json({ error: "A batch requires at least one write." }, { status: 400 });
     }
-    if (body.writes.length > MAX_BATCH_WRITES) {
+    if (requested.length > MAX_BATCH_WRITES) {
       return NextResponse.json(
         { error: `A batch is limited to ${MAX_BATCH_WRITES} writes.` },
         { status: 400 },
@@ -50,7 +50,13 @@ export async function POST(request: Request) {
     }
 
     const writes: TimelineBatchWrite[] = [];
-    for (const write of body.writes) {
+    for (const entry of requested) {
+      // Each element is untrusted too — an array of nulls used to throw on the
+      // first property read, the same 500-for-a-400 as the body itself.
+      const write = (typeof entry === "object" && entry !== null ? entry : {}) as {
+        document?: unknown;
+        expectedRevision?: unknown;
+      };
       // Full runtime validation (every clip, discriminated by kind): a
       // malformed client payload must never persist under a TimelineClip
       // assertion — it would break hydration and packing at read time.

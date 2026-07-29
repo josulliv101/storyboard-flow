@@ -18,6 +18,8 @@ import {
   type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
 
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
+import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { formatSeconds } from "@/lib/format-duration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { CollectionDetailsBody } from "./graph-collection-details";
@@ -92,42 +94,6 @@ function previewTime(node: VideoMediaNode, trimIn: number, trimOut: number, side
     : Math.max(0, trimIn);
 }
 
-function useSeekedVideo(time: number) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const targetRef = useRef(time);
-
-  useEffect(() => {
-    targetRef.current = time;
-  }, [time]);
-
-  const attachVideo = useCallback((video: HTMLVideoElement | null) => {
-    videoRef.current = video;
-  }, []);
-
-  useEffect(() => {
-    let raf = 0;
-    const tick = () => {
-      const video = videoRef.current;
-      if (
-        video &&
-        video.readyState >= 1 &&
-        !video.seeking &&
-        Math.abs(video.currentTime - targetRef.current) > 0.03
-      ) {
-        try {
-          video.currentTime = targetRef.current;
-        } catch {
-          // metadata raced away; next frame retries
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  return attachVideo;
-}
 
 /**
  * Undo/redo SCOPED to this clip's trims (PL10-009).
@@ -326,13 +292,21 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
   const fullDuration = video ? video.fullDurationSeconds : mediaDurationSeconds(node);
   const showing = Math.max(0, fullDuration - trimIn - trimOut);
   const rawTime = video ? previewTime(video, trimIn, trimOut, live?.side ?? null) : 0;
-  const videoRef = useSeekedVideo(Math.round(rawTime * 25) / 25);
+  // Gated on `video`: an image has no source window and no element to seek, so
+  // the settle loop had nothing to do but spin for as long as the modal stayed
+  // open.
+  const videoRef = useSeekedVideo(Math.round(rawTime * 25) / 25, video !== null);
 
   const [stripWidth, setStripWidth] = useState(0);
   const stripSlot = useCallback((element: HTMLElement | null) => {
     if (!element) return;
     setStripWidth(element.getBoundingClientRect().width);
   }, []);
+
+  // `aria-modal="true"` above is a promise about the rest of the page; this is
+  // what keeps it. Focus moves in, Tab cycles here, the board goes inert, and
+  // the card this was opened from gets focus back on close.
+  const { dialogProps } = useDialogFocus<HTMLDivElement>();
 
   // Escape closes and F2 renames. Both listen in CAPTURE, which is what makes
   // the editable guard load-bearing rather than defensive: a capture listener
@@ -372,7 +346,8 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
       }}
     >
       <div
-        className="flex w-full max-w-3xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60"
+        {...dialogProps}
+        className="flex w-full max-w-3xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60 focus-visible:outline-none"
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">

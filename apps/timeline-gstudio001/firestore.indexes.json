@@ -1,0 +1,44 @@
+{
+  "//": [
+    "Composite indexes for gstudioTimelineDocuments.",
+    "",
+    "Deploy with:  npx firebase deploy --only firestore:indexes --project <id>",
+    "(firebase-tools is already a devDependency of this workspace.)",
+    "",
+    "listFirebaseTimelineProjects filters on ownerUid AND isProject. Two",
+    "equality filters alone are merge-joined from the automatic single-field",
+    "indexes, so that query works WITHOUT this file — it is declared here",
+    "because the store's fallback path exists for deployments where the",
+    "planner does demand one, and because adding an orderBy/cursor to that",
+    "query (the natural next step past PROJECT_LIST_LIMIT) requires it.",
+    "",
+    "The updatedAt ordering matches the JS sort listFirebaseTimelineProjects",
+    "already applies, so switching to a server-side sort is a one-line change",
+    "once this is deployed."
+  ],
+  "indexes": [
+    {
+      "collectionGroup": "gstudioTimelineDocuments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerUid", "order": "ASCENDING" },
+        { "fieldPath": "isProject", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "mcpOAuthCodes",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "mcpOAuthRefreshTokens",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    }
+  ]
+}

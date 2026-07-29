@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { X } from "lucide-react";
 
 import { isEditableKeyboardTarget } from "@storyboard/ui/dnd-collections";
@@ -82,33 +84,11 @@ const SECTIONS: readonly Section[] = [
   },
 ];
 
-export function GraphShortcuts() {
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const onRequest = () => setOpen(true);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      if (event.key === "Escape" && open) {
-        setOpen(false);
-        return;
-      }
-      // "?" is Shift+/ on most layouts, so match the CHARACTER rather than the
-      // physical key — and never while typing.
-      if (event.key !== "?" || event.ctrlKey || event.metaKey || event.altKey) return;
-      if (isEditableKeyboardTarget(event.target)) return;
-      event.preventDefault();
-      setOpen((previous) => !previous);
-    };
-    window.addEventListener(GRAPH_SHORTCUTS_EVENT, onRequest);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener(GRAPH_SHORTCUTS_EVENT, onRequest);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  if (!open) return null;
+/** Split out so the focus hook mounts and unmounts WITH the dialog — a hook
+ *  inside `GraphShortcuts` would run while it is closed and there is nothing
+ *  to trap. */
+function ShortcutsSheet({ onClose }: Readonly<{ onClose: () => void }>) {
+  const { dialogProps } = useDialogFocus<HTMLDivElement>();
 
   return createPortal(
     <div
@@ -117,16 +97,19 @@ export function GraphShortcuts() {
       aria-modal="true"
       aria-label="Keyboard shortcuts"
       onPointerDown={(event) => {
-        if (event.target === event.currentTarget) setOpen(false);
+        if (event.target === event.currentTarget) onClose();
       }}
       className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm"
     >
-      <div className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-950 p-5 shadow-2xl shadow-black/60">
+      <div
+        {...dialogProps}
+        className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-950 p-5 shadow-2xl shadow-black/60 focus-visible:outline-none"
+      >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-zinc-100">Keyboard shortcuts</h2>
           <button
             type="button"
-            onClick={() => setOpen(false)}
+            onClick={onClose}
             aria-label="Close the shortcuts sheet"
             className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
           >
@@ -158,4 +141,35 @@ export function GraphShortcuts() {
     </div>,
     document.body,
   );
+}
+
+export function GraphShortcuts() {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const onRequest = () => setOpen(true);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key === "Escape" && open) {
+        setOpen(false);
+        return;
+      }
+      // "?" is Shift+/ on most layouts, so match the CHARACTER rather than the
+      // physical key — and never while typing.
+      if (event.key !== "?" || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isEditableKeyboardTarget(event.target)) return;
+      event.preventDefault();
+      setOpen((previous) => !previous);
+    };
+    window.addEventListener(GRAPH_SHORTCUTS_EVENT, onRequest);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener(GRAPH_SHORTCUTS_EVENT, onRequest);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  return <ShortcutsSheet onClose={() => setOpen(false)} />;
 }

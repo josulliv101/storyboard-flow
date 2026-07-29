@@ -1,5 +1,5 @@
 import { packTimelineClips } from "@storyboard/timeline-model";
-import type { TimelineDocument } from "@storyboard/timeline-model/types";
+import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/types";
 
 import type { CloudinaryAsset } from "./cloudinary-media-store";
 
@@ -18,20 +18,81 @@ import type { CloudinaryAsset } from "./cloudinary-media-store";
 // A duration change shifts every following clip's startTime, so the document
 // is repacked (packTimelineClips — the same packing the app uses) whenever a
 // duration moved. Returns the SAME document reference when nothing changed so
-// the caller can skip the write.
+// the caller can skip the work.
+//
+// The result is SERVED, never persisted — see lib/serve-timeline.
 
 /** Durations within this many seconds are treated as already correct. */
 const DURATION_EPSILON = 0.05;
 
-/** Asset filename as stored (public_id leaf) — the key the src match uses. */
-function assetFilename(asset: CloudinaryAsset): string | undefined {
-  return asset.relativePath?.split("/").pop() || asset.pathname?.split("/").pop() || undefined;
+/**
+ * How a clip finds its asset.
+ *
+ * PROVENANCE FIRST. `sourceAsset` records the provider file a clip was placed
+ * from (`{ providerId, assetId }`, written by the asset palette), and
+ * `CloudinaryAsset.id` IS that `assetId` — so for anything placed through the
+ * palette this is an exact identity match with nothing to guess.
+ *
+ * The filename path below is the LEGACY fallback, for clips stored before
+ * provenance was recorded. It used to be the only path, and it keyed on the
+ * bare filename LEAF of both the asset and the clip URL — so two assets named
+ * `alley` in different folders or projects collapsed onto one key and the last
+ * one listed silently won. Because the caller then PERSISTED the result, a
+ * plain GET could rewrite a clip's src, poster and duration to point at a
+ * different project's file. Now: the full relative path is the key, and a leaf
+ * that resolves to more than one asset is refused rather than guessed.
+ */
+const CLOUDINARY_PROVIDER_ID = "cloudinary";
+
+function assetPath(asset: CloudinaryAsset): string | undefined {
+  return asset.relativePath || asset.pathname || undefined;
 }
 
-/** A clip's source URL reduced to the same filename key (extension stripped —
- *  Cloudinary public_ids carry none, but the delivery URL does). */
-function clipAssetKey(src: string): string | undefined {
-  return src.split("/").pop()?.split("?")[0]?.replace(/\.[^/.]+$/, "") || undefined;
+/** The leaf of a path, extension stripped — Cloudinary public_ids carry none,
+ *  but the delivery URL does. */
+function leafOf(value: string): string | undefined {
+  return value.split("/").pop()?.split("?")[0]?.replace(/\.[^/.]+$/, "") || undefined;
+}
+
+type AssetIndex = Readonly<{
+  byId: ReadonlyMap<string, CloudinaryAsset>;
+  byPath: ReadonlyMap<string, CloudinaryAsset>;
+  /** Leaf → asset, but only for leaves that name exactly ONE asset. An
+   *  ambiguous leaf maps to null and is refused. */
+  byUniqueLeaf: ReadonlyMap<string, CloudinaryAsset | null>;
+}>;
+
+function indexAssets(assets: readonly CloudinaryAsset[]): AssetIndex {
+  const byId = new Map<string, CloudinaryAsset>();
+  const byPath = new Map<string, CloudinaryAsset>();
+  const byUniqueLeaf = new Map<string, CloudinaryAsset | null>();
+
+  for (const asset of assets) {
+    if (asset.id) byId.set(asset.id, asset);
+    const path = assetPath(asset);
+    if (path) byPath.set(path.replace(/\.[^/.]+$/, ""), asset);
+    const leaf = path ? leafOf(path) : undefined;
+    if (!leaf) continue;
+    // Second sighting of a leaf poisons it: no legacy clip can be resolved by
+    // it any more, in either direction.
+    byUniqueLeaf.set(leaf, byUniqueLeaf.has(leaf) ? null : asset);
+  }
+
+  return { byId, byPath, byUniqueLeaf };
+}
+
+function resolveAsset(
+  clip: Extract<TimelineClip, { kind: "video" | "image" }>,
+  index: AssetIndex,
+): CloudinaryAsset | undefined {
+  if (clip.sourceAsset?.providerId === CLOUDINARY_PROVIDER_ID) {
+    // Provenance is authoritative: if it names an asset we can't see, the
+    // asset is gone, and guessing a same-named neighbour is not a repair.
+    return index.byId.get(clip.sourceAsset.assetId);
+  }
+  const leaf = leafOf(clip.src);
+  if (!leaf) return undefined;
+  return index.byUniqueLeaf.get(leaf) ?? undefined;
 }
 
 export function healTimelineDocument(
@@ -40,11 +101,7 @@ export function healTimelineDocument(
 ): { document: TimelineDocument; changed: boolean } {
   if (assets.length === 0) return { document, changed: false };
 
-  const assetMap = new Map<string, CloudinaryAsset>();
-  for (const asset of assets) {
-    const filename = assetFilename(asset);
-    if (filename) assetMap.set(filename, asset);
-  }
+  const index = indexAssets(assets);
 
   let changed = false;
   let durationsChanged = false;
@@ -52,9 +109,7 @@ export function healTimelineDocument(
   const healed = document.clips.map((clip) => {
     if (clip.kind !== "video" && clip.kind !== "image") return clip;
 
-    const key = clipAssetKey(clip.src);
-    if (!key) return clip;
-    const asset = assetMap.get(key);
+    const asset = resolveAsset(clip, index);
     if (!asset) return clip;
 
     let next = clip;

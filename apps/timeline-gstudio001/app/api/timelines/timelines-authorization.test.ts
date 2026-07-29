@@ -36,16 +36,28 @@ const state = vi.hoisted(() => {
       docs.delete(id);
     },
   });
+  // Query filters ACCUMULATE, and `limit` applies AFTER all of them — the
+  // real Firestore semantics, and the whole point of the regression below:
+  // a mock whose limit ran before the filters would pass either way.
+  type Filter = { field: string; value: unknown };
+  const query = (filters: readonly Filter[], cap: number | null) => {
+    const run = () =>
+      [...docs.keys()]
+        .filter((id) => filters.every((f) => docs.get(id)?.[f.field] === f.value))
+        .slice(0, cap ?? Infinity)
+        .map(snapshot);
+    return {
+      where: (field: string, _op: string, value: unknown) =>
+        query([...filters, { field, value }], cap),
+      limit: (next: number) => query(filters, next),
+      get: async () => ({ docs: run() }),
+    };
+  };
   const db = {
     collection: () => ({
       doc: docRef,
-      where: (field: string, _op: string, value: unknown) => ({
-        limit: () => ({
-          get: async () => ({
-            docs: [...docs.keys()].filter((id) => docs.get(id)?.[field] === value).map(snapshot),
-          }),
-        }),
-      }),
+      where: (field: string, _op: string, value: unknown) =>
+        query([{ field, value }], null),
     }),
     batch: () => {
       const ops: (() => void)[] = [];
@@ -219,6 +231,28 @@ describe("timeline authorization", () => {
     // Listing is read-only now — no ownership was stamped on the way past.
     expect(state.docs.get("project-legacy")?.ownerUid).toBeUndefined();
     expect(state.docs.get("project-b1")?.ownerUid).toBe("user-b");
+  });
+
+  it("finds the requester's project behind a page-full of other users' rows", async () => {
+    // The bug this pins: `.limit(...)` used to select from EVERY user's rows
+    // before ownership was considered, and with no orderBy Firestore returns
+    // them in `__name__` order — which, for `project-${Date.now()}-…` ids, is
+    // oldest first. So a user's newly created project fell outside the window
+    // the moment the collection held a page of older documents, and their
+    // library rendered empty while the project existed.
+    //
+    // Seeded FIRST so they occupy the whole window under the old query; the
+    // mock preserves insertion order, standing in for that id ordering.
+    for (let index = 0; index < 250; index += 1) {
+      seedProject(`project-old-${String(index).padStart(4, "0")}`, "user-b");
+    }
+    seedProject("project-newest", "user-a");
+
+    const response = await listProjects();
+    expect(response.status).toBe(200);
+    const { projects } = (await response.json()) as { projects: { id: string }[] };
+
+    expect(projects.map((project) => project.id)).toEqual(["project-newest"]);
   });
 
   it("refuses to overwrite or delete an unowned document", async () => {

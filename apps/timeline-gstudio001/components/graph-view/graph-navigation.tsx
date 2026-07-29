@@ -92,8 +92,17 @@ export function GraphViewNavProvider({
         // directly, rather than casting `parent` back to `string` at every
         // step of the walk.
         const projectNodeId = parseNodeId(projectId);
+        // The `seen` guard matches the other two parent walks in this app
+        // (`isDisabledByAncestor`, `useSelectionAggregate`). The graph's own
+        // invariants should make a parent cycle unreachable — `buildGraph`
+        // validates and the reducer refuses cycles — but this walk is the one
+        // where hitting one hangs the tab on an unbounded `chain`, and having
+        // two of the three guarded was the kind of split that turns into a bug
+        // the first time a new graph-construction path appears.
+        const seen = new Set<NodeId>();
         let parent = graph.parentById.get(parseNodeId(timelineId)) ?? null;
-        while (parent !== null && parent !== projectNodeId) {
+        while (parent !== null && parent !== projectNodeId && !seen.has(parent)) {
+          seen.add(parent);
           chain.unshift(parent);
           parent = graph.parentById.get(parent) ?? null;
         }

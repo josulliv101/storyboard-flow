@@ -40,6 +40,18 @@ function toPrivateCacheControl(stored: string | undefined) {
   return ["private", ...preserved].join(", ");
 }
 
+/**
+ * The owner and project a stored object belongs to, read out of its path.
+ *
+ * Every object this app writes is scoped (`scopeStoragePathname` in the upload
+ * route puts `projects/<uid>/<projectId>/` after the prefix), so a path that
+ * does NOT parse is one no upload path here produces — a legacy object, a
+ * manual upload, a migration. Those used to be served to any signed-in caller:
+ * both checks below were conditional on `scope`, so an unparseable path
+ * skipped authorization entirely and the only remaining gate was
+ * `isAllowedMediaPathname`, a prefix test. Guessing the name was the whole
+ * difficulty, which is obscurity, not authorization. Null now DENIES.
+ */
 function projectScopeFromMediaPathname(pathname: string) {
   const match =
     /^(?:timeline-videos|timeline-thumbnails)\/projects\/([^/]+)\/([^/]+)\//.exec(
@@ -60,11 +72,12 @@ async function handleMediaRequest(request: Request, includeBody: boolean) {
     if (response || !user) {
       return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // Deny by default: an unparseable path is not an authorized path.
     const scope = projectScopeFromMediaPathname(pathname);
-    if (scope && scope.uid !== user.uid) {
+    if (!scope || scope.uid !== user.uid) {
       return new NextResponse("Media not found.", { status: 404 });
     }
-    if (scope) await requireProjectAssetScope(scope.projectId, user.uid);
+    await requireProjectAssetScope(scope.projectId, user.uid);
 
     const media = await getMediaMetadata(pathname);
     if (!media) {
@@ -100,6 +113,10 @@ async function handleMediaRequest(request: Request, includeBody: boolean) {
               "Content-Length": String(chunkSize),
               "Content-Range": `bytes ${range.start}-${range.end}/${media.size}`,
               "Content-Type": media.contentType,
+              // The stored contentType came from the uploader. Even with the
+              // upload route's allowlist, this response must never be sniffed
+              // into something executable on our own origin.
+              "X-Content-Type-Options": "nosniff",
             },
           },
         );
@@ -113,6 +130,7 @@ async function handleMediaRequest(request: Request, includeBody: boolean) {
         "Cache-Control": cacheControl,
         "Content-Length": String(media.size),
         "Content-Type": media.contentType,
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (error) {

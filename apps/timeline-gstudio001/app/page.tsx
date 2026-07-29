@@ -16,6 +16,7 @@ import {
 
 import { Button } from "@/components/core/button";
 import { Skeleton } from "@/components/core/skeleton";
+import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
 
 type TimelineProjectSummary = {
@@ -148,12 +149,20 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        throw new Error(await response.text());
+        // The API answers JSON. Reading it as text put the raw envelope —
+        // `{"error":"…"}` — into the message the user was shown.
+        const result = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(result.error || "The server refused the delete.");
       }
 
       setProjects((prev) => prev.filter((p) => p.id !== id));
+      toast.success(`Deleted "${project.title}".`);
     } catch (error) {
-      alert("Failed to delete project: " + (error instanceof Error ? error.message : String(error)));
+      toast.error(
+        `Could not delete "${project.title}": ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
     }
   };
 
@@ -298,11 +307,18 @@ export default function Home() {
                 key={project.id}
                 className="relative group overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/55 shadow-xl shadow-black/20 transition-all duration-200 hover:border-amber-400/55 hover:bg-zinc-900"
               >
-                {/* Link overlay covering the whole card area */}
+                {/* Link overlay covering the whole card area. It NEEDS a name:
+                    as a childless anchor its accessible name was empty, so a
+                    screen reader announced the card's only action as an
+                    unnamed "link" with no way to tell which project it opened
+                    (WCAG 2.4.4). The visible <h3> below is a heading, not this
+                    control's label. */}
                 <Link
                   href={`/timeline/${encodeURIComponent(project.id)}/graph`}
-                  className="absolute inset-0 z-10"
-                />
+                  className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                >
+                  <span className="sr-only">Open project {project.title}</span>
+                </Link>
 
                 <div className="relative aspect-video overflow-hidden border-b border-zinc-800 bg-zinc-950">
                   {project.thumbnailUrl ? (
@@ -318,12 +334,19 @@ export default function Home() {
                     </div>
                   )}
                   {/* Delete button positioned absolute top-right, z-20 so it sits on top of Link overlay */}
+                  {/* Hover-revealed, but it must also reveal on FOCUS: with
+                      only `group-hover:opacity-100` a keyboard user tabbed onto
+                      an invisible control with no focus indicator, one Enter
+                      away from a cascade delete (WCAG 2.4.7). `title` is not a
+                      reliable accessible name either, hence aria-label. */}
                   <button
+                    type="button"
                     onClick={(e) => handleDeleteProject(e, project.id)}
-                    className="absolute top-2.5 right-2.5 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900/90 hover:bg-red-600/90 text-zinc-400 hover:text-white transition-all opacity-0 group-hover:opacity-100"
+                    aria-label={`Delete project ${project.title}`}
+                    className="absolute top-2.5 right-2.5 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-zinc-800 bg-zinc-900/90 hover:bg-red-600/90 text-zinc-400 hover:text-white transition-all opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                     title="Delete project"
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 aria-hidden="true" className="h-4 w-4" />
                   </button>
                 </div>
                 <div className="grid gap-3 p-4">
