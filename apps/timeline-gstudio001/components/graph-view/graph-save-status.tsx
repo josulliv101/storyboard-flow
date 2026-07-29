@@ -60,23 +60,20 @@ export function GraphSaveStatus({ children }: Readonly<{ children?: ReactNode }>
   // "Saving… Saved… Saving… Saved…" on every debounce tick, which is worse
   // than silence: it buries the failure it exists to surface.
   //
-  // So: a persistent polite node carrying only SETTLED results (empty while
-  // busy, so the in-progress churn says nothing), and one assertive alert for
-  // failures. The visible chip is unchanged and stays aria-hidden — it is the
-  // same fact, and announcing it twice is its own noise.
-  const announcement = error !== null ? "" : justSaved ? "All changes saved." : "";
-
+  // So this announces exactly one thing: that a save SETTLED. Empty while busy,
+  // so the in-progress churn says nothing.
+  //
+  // FAILURES ARE NOT ANNOUNCED HERE. They already are, by the gateway's error
+  // banner in graph-timeline-view — which reads the SAME `errorBanner` string
+  // this chip does, is visible, and carries `role="alert"`. A second alert with
+  // the same text meant a screen-reader user heard the failure twice from two
+  // live regions, which is the noise problem this design exists to avoid. (The
+  // e2e caught it as a strict-mode violation: two elements matching one
+  // message.) The chip stays as the visual half of that one fact.
   const liveRegion = (
-    <>
-      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {announcement}
-      </span>
-      {error !== null ? (
-        <span className="sr-only" role="alert">
-          Your changes are not being saved. {error}
-        </span>
-      ) : null}
-    </>
+    <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+      {error === null && justSaved ? "All changes saved." : ""}
+    </span>
   );
 
   if (error !== null) {
