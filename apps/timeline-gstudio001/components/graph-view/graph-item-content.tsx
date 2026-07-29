@@ -1073,18 +1073,40 @@ const ItemDetailsTrigger = memo(function ItemDetailsTrigger({
 });
 
 /**
- * The media card: the stock NodeCard, wrapped so a details trigger can sit
- * beside it. The wrapper carries the surface's sizing className and the hover
- * group; NodeCard fills it.
+ * The media card: the stock NodeCard, wrapped so a details trigger and a
+ * rename editor can sit BESIDE it. The wrapper carries the surface's sizing
+ * className and the hover group; NodeCard fills it.
+ *
+ * The editor is a sibling for the reason everything else here is: NodeCard's
+ * shell is a `<button>`, and an `<input>` inside it is invalid interactive
+ * content. Naming a run of similar clips is arrow → F2 → type → Enter →
+ * arrow, with no modal in the loop (PL11-005) — the same grammar the
+ * collection card, breadcrumb and sub-timeline row already share.
  */
 const GraphMediaItem = memo(function GraphMediaItem({
   className,
   ...props
 }: CollectionItemShellProps) {
+  const node = useCollectionsSelector((s) => s.graph.nodesById.get(props.id) ?? null);
+  const detail = useClipDetail(props.id as string);
+  // Seeded with the AUTHORED title when there is one, so re-naming edits what
+  // the user wrote rather than making them delete a filename first.
+  const rename = useInlineRename(props.id, detail?.title ?? "", "card");
+
   return (
     <div className={["group/media-item relative", className ?? ""].join(" ")}>
       <NodeCard {...props} className="h-full w-full" />
       <ItemDetailsTrigger id={props.id} rovingTabIndex={props.rovingTabIndex} />
+      {rename.editing && node?.kind === "media" && (
+        <InlineNameEditor
+          initialValue={detail?.title ?? ""}
+          onInput={rename.setDraft}
+          onCommit={rename.commit}
+          onCancel={rename.cancel}
+          ariaLabel="Clip name"
+          className="absolute inset-x-1 top-1 z-30 rounded-sm bg-zinc-950/95 px-1 py-0.5 text-[11px] font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
+        />
+      )}
     </div>
   );
 });

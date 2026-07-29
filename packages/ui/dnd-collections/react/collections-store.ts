@@ -152,6 +152,21 @@ export type CollectionsStore = Readonly<{
   undo: () => boolean;
   redo: () => boolean;
   /**
+   * Reinstate an undo stack recorded earlier — the seam a consumer needs to
+   * make undo survive a page reload (patches are serializable by design, and
+   * this log doubles as a persistence journal).
+   *
+   * Entries are pushed oldest-first, so the last one becomes the next undo.
+   * Nothing is verified here: `undo` already checks each entry against the
+   * live graph before applying it and drops the unreachable side, which is
+   * exactly the guard a restored stack needs — an entry that no longer fits
+   * the graph is refused when reached rather than corrupting it.
+   *
+   * The REDO branch is deliberately not restorable: redo means "put back what
+   * I just took away", and after a reload there is no "just".
+   */
+  restoreHistory: (entries: readonly HistoryEntry[]) => void;
+  /**
    * Swap in a new committed graph wholesale — the escape hatch for
    * async/server-loaded data that `initialGraph` (initial-only) can't handle.
    * Clears undo/redo history (patches were built against the old graph and
@@ -385,6 +400,13 @@ export function createCollectionsStore(
     return true;
   }
 
+  function restoreHistory(entries: readonly HistoryEntry[]): void {
+    if (entries.length === 0) return;
+    for (const entry of entries) history.push(entry);
+    refreshHistoryEntries();
+    notify();
+  }
+
   function redo(): boolean {
     const patch = history.peekRedo();
     if (!patch) return false;
@@ -482,6 +504,7 @@ export function createCollectionsStore(
     dispatch,
     undo,
     redo,
+    restoreHistory,
     replaceGraph,
     hydrate,
 

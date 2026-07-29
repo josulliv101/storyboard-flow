@@ -1,5 +1,90 @@
 # Punch List 11
 
+## PL11-005 — F2 renames a media card in place
+
+- Status: Complete
+- Area: `graph-item-content.tsx`, `graph-navigation.tsx`
+- Screenshot: Not captured
+
+Naming a run of similar clips should be arrow → F2 → type → Enter → arrow, not
+a modal round-trip each time. `OpenKeyBoundary`'s F2 now claims media as well
+as collections, and the media card renders the same `InlineNameEditor` the
+collection card, breadcrumb and sub-row share — as a SIBLING of NodeCard,
+because that shell is a `<button>` and an `<input>` inside it is invalid
+content. The wrapper added in PL11-002 is what makes the sibling possible.
+
+Seeded with the authored `title` (not the filename), so re-naming edits what
+the user wrote instead of making them clear a machine name first.
+
+Known gap: an empty value is a no-op, so a title cannot be UNSET once given.
+
+## PL11-006 — Typed in/out points
+
+- Status: Complete
+- Area: `graph-item-details-modal.tsx`
+- Screenshot: Not captured
+
+A pixel is worth ~0.11s in the details view and more on the board, so exact
+edges were unreachable by pointer — restoring a clip to a known duration took
+me a dozen attempts and never landed closer than 0.04s. The details view now
+takes numbers.
+
+Each field commits on blur or Enter as one `update-media` — the same command
+the grips dispatch, so undo, the live channel and the write path behave
+identically. Escape reverts the field. Out-of-range values are CLAMPED rather
+than refused: an out point before the in point is a typo, and snapping is
+faster to correct than an error message. A 0.05s floor stops a stray keystroke
+trimming a clip to nothing.
+
+## PL11-007 — The shortcuts sheet
+
+- Status: Complete
+- Area: `graph-shortcuts.tsx` (new), `graph-board.tsx`
+- Screenshot: Not captured
+
+Hold-to-drag, O, F2, the whole Alt layer, and (until PL11-003) no keyboard
+undo at all — none of it was written down anywhere a user could reach. `?`
+opens a sheet; the board menu has an entry for anyone who never tries the key.
+
+Every row was verified against the handler that implements it — the app keys
+in `graph-item-actions`, the board keys in `OpenKeyBoundary`, the card grammar
+in the package's `use-keyboard-controller` — rather than written from memory.
+A shortcuts sheet that lies is worse than none.
+
+`?` is matched as a CHARACTER (it is Shift+/ on most layouts) and never fires
+while typing.
+
+## PL11-008 — Undo survives a reload
+
+- Status: Complete
+- Area: `packages/ui/dnd-collections/react/collections-store.ts`,
+  `graph-history-persistence.tsx` (new), `graph-timeline-view.tsx`
+- Screenshot: Not captured
+
+The app autosaves and history lived only in memory, so a refresh made every
+committed mistake permanent — the trash covered deletes, nothing covered
+trims, renames or moves. I hit this myself repeatedly while restoring demo
+data, before the demo project turned out to be scratch.
+
+Patches are serializable by design ("this log doubles as a persistence
+journal"), so the stack is simply written down: the store gained
+`restoreHistory(entries)`, and an app-side bridge mirrors `historyEntries` to
+sessionStorage keyed by the boot session, restoring once on mount.
+
+Three decisions worth keeping:
+
+- **sessionStorage, not local**: a reload is the case this exists for. A stack
+  from days ago, built against a graph other sessions have since changed, is a
+  liability rather than a safety net.
+- **Undo only, never redo**: redo means "put back what I just took away", and
+  after a reload there is no "just".
+- **No validation on restore**: `undo` already verifies each entry against the
+  live graph and drops the unreachable side, so a stale entry is refused when
+  reached instead of corrupting anything. Bounded at 50 entries / 512KB.
+
+Proven fail-first: with the bridge unmounted, a trim survives the reload and
+Ctrl+Z does nothing — the field still reads 2.00 where it should read 0.00.
+
 ## PL11-003 — The header says whether the work is saved
 
 - Status: Complete

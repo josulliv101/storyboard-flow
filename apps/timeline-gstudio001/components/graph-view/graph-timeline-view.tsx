@@ -71,6 +71,7 @@ import {
   PersistenceBridge,
   type SyncEntry,
 } from "./graph-persistence";
+import { HistoryPersistenceBridge } from "./graph-history-persistence";
 import { unparkPendingDetail } from "./graph-pending-details";
 import { createPreviewTimeChannel } from "./graph-preview";
 import {
@@ -595,6 +596,10 @@ export function GraphTimelineView({
         itemInstructions="Press O to open the focused collection, or F2 to rename it."
       >
           <PersistenceBridge onSync={onSync} />
+          {/* Undo that survives a refresh (PL11-008). Keyed to the same boot
+              session as the graph itself, so a different project or user
+              never inherits a stack built against another graph. */}
+          <HistoryPersistenceBridge sessionKey={boot.sessionKey} />
           {/* The whole graph route is the collection's screen, so clicking
               away ANYWHERE that is not a control deselects — not just inside a
               strip or grid box, which was the only place that worked and made
