@@ -282,6 +282,89 @@ export async function listFirebaseTimelineProjects(requesterUid: string) {
     });
 }
 
+/** One page of the reference scan. Small enough that a user with a handful of
+ *  documents pays one round trip. */
+const REFERENCE_SCAN_PAGE = 200;
+/**
+ * Hard ceiling on a single reference scan, in DOCUMENTS.
+ *
+ * Reached, the scan THROWS rather than returning what it has. An asset is
+ * deleted on the strength of "nothing references this", so a scan that
+ * silently stopped early is indistinguishable from a clean bill of health and
+ * would take a file out from under a live clip. Incomplete must fail loudly;
+ * the one failure this design accepts is leaking storage, never losing media.
+ */
+const REFERENCE_SCAN_MAX_DOCUMENTS = 5_000;
+
+/** A reference scan could not be completed, so its result must not be treated
+ *  as "nothing points at this". */
+export class TimelineScanIncompleteError extends Error {
+  constructor(scanned: number) {
+    super(
+      `Reference scan exceeded ${scanned} documents. Refusing to report an incomplete result.`,
+    );
+    this.name = "TimelineScanIncompleteError";
+  }
+}
+
+/**
+ * Every clip stored under a user's documents — the input to "is this uploaded
+ * file still referenced".
+ *
+ * Deliberately a SUPERSET. It reads `document.clips`, the legacy top-level
+ * `clips`, and the `lastNonEmptyDocument` recovery snapshot, because
+ * `toTimelineDocument` will hand any of the three back as the live document
+ * depending on what is empty — a clip only reachable through the recovery
+ * snapshot is one ordinary read away from being on screen again, so it counts
+ * as a reference. Over-counting leaves a file nobody uses; under-counting
+ * deletes one somebody does.
+ *
+ * Paged to exhaustion, ordered by document id so the cursor is total. The
+ * ownership filter is in the QUERY (round 12's lesson: an authorization filter
+ * applied after a limit selects from everyone's rows) and re-checked here,
+ * which is this module's one invariant.
+ */
+export async function collectOwnedTimelineClips(
+  requesterUid: string,
+  options: Readonly<{ excludeIds?: readonly string[] }> = {},
+): Promise<TimelineClip[]> {
+  const excluded = new Set(options.excludeIds ?? []);
+  const clips: TimelineClip[] = [];
+  // The last DOCUMENT SNAPSHOT, not its id: with `orderBy("__name__")` a
+  // cursor has to resolve to a document path, and handing back the snapshot
+  // the SDK just produced is the form that cannot be got wrong.
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  let scanned = 0;
+
+  for (;;) {
+    let query = collection()
+      .where("ownerUid", "==", requesterUid)
+      .orderBy("__name__")
+      .limit(REFERENCE_SCAN_PAGE);
+    if (cursor !== null) query = query.startAfter(cursor);
+
+    const snapshot = await withFirebaseTimeout(query.get(), "Scanning timeline documents");
+    if (snapshot.docs.length === 0) return clips;
+
+    for (const doc of snapshot.docs) {
+      scanned += 1;
+      if (scanned > REFERENCE_SCAN_MAX_DOCUMENTS) {
+        throw new TimelineScanIncompleteError(REFERENCE_SCAN_MAX_DOCUMENTS);
+      }
+      cursor = doc;
+      if (excluded.has(doc.id)) continue;
+      const data = doc.data() as TimelineDocumentRecord;
+      if (resolveOwnership(data.ownerUid, requesterUid) !== "owned") continue;
+
+      for (const source of [data.document?.clips, data.clips, data.lastNonEmptyDocument?.clips]) {
+        if (Array.isArray(source)) clips.push(...source);
+      }
+    }
+
+    if (snapshot.docs.length < REFERENCE_SCAN_PAGE) return clips;
+  }
+}
+
 export async function getFirebaseTimelineEntry(
   id: string,
   requesterUid: string,

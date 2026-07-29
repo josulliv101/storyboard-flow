@@ -15,7 +15,6 @@ import {
   Layers,
   LogOut,
   Scissors,
-  Table,
   Trash2,
   TvMinimal,
   X,
@@ -147,10 +146,14 @@ const SIDEBAR_ICON_IDLE =
  *
  * No `translate-y-px`: a pressed tile nudging down by a pixel opened a hairline
  * seam above it and read as misalignment rather than as a press.
+ *
+ * `h-9` (36px) against the 56px pill: long enough to read as a bar rather than
+ * a tick, short enough that it still marks a position instead of drawing a
+ * second edge down the rail.
  */
 const SIDEBAR_ICON_PRESSED = [
   "text-zinc-50 before:bg-zinc-800",
-  "after:absolute after:left-0 after:top-1/2 after:h-7 after:w-[3px]",
+  "after:absolute after:left-0 after:top-1/2 after:h-9 after:w-[3px]",
   "after:-translate-y-1/2 after:rounded-r-full after:bg-sky-300 after:content-['']",
 ].join(" ");
 
@@ -212,6 +215,40 @@ function SidebarSeparator({ selected = false }: Readonly<{ selected?: boolean }>
  */
 function FilmStripGlyph({ className }: { className?: string }) {
   return <Film className={cn(className, "rotate-90")} />;
+}
+
+/** Where the grid glyph's cells start on each axis, in viewBox units: three
+ *  4-unit cells with a 2-unit gutter, inset 4 from the 24-unit box. */
+const GRID_GLYPH_TRACKS = [4, 10, 16];
+
+/**
+ * The grid layout's glyph: nine filled cells, replacing lucide's `Table`.
+ *
+ * `Table` drew a bordered frame divided by rules — a spreadsheet, which is the
+ * wrong noun for a wall of cards. Nine separate cells say the thing the surface
+ * actually is.
+ *
+ * Filled rather than stroked, so it is the one glyph in the rail that does not
+ * take `[stroke-width:1.5]` from `SIDEBAR_GLYPH`; `fill="currentColor"` is what
+ * keeps it in step with the rail's idle / hover / active colours instead, and
+ * Tailwind's `transition-colors` covers `fill` as well as `color`.
+ */
+function GridLayoutGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      className={className}
+    >
+      {GRID_GLYPH_TRACKS.map((y) =>
+        GRID_GLYPH_TRACKS.map((x) => (
+          <rect key={`${x}-${y}`} x={x} y={y} width="4" height="4" />
+        )),
+      )}
+    </svg>
+  );
 }
 
 type SurfaceIconControlProps = {
@@ -662,7 +699,7 @@ export function TimelineSidebar() {
             surface="grid"
             onGraphRoute={onGraphRoute}
             href={graphHref}
-            icon={Table}
+            icon={GridLayoutGlyph}
             isActive={onGraphRoute && graphView.surface === "grid"}
             label="Grid layout"
             description="Graph timelines as grids"

@@ -198,12 +198,15 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   };
 
   const handleEmptyTrash = async () => {
-    // Says what actually happens: the BIN entries go (with no restore path,
-    // so it really is permanent), while the uploads behind them stay in the
-    // Assets library and can be placed again. The old wording promised a
-    // blanket "permanently delete", which read as losing the files too.
+    // Says what actually happens, and it changed with PL12-003: an upload that
+    // nothing else points at is now MARKED, and deleted for real 30 days later
+    // (a file still used by a clip on a board is never marked, and a marked one
+    // is spared the moment it is used again). The previous wording — "your
+    // uploaded files stay in the Assets library" — became a promise this app no
+    // longer keeps, which is worse than the blanket "permanently delete" it had
+    // replaced.
     const confirmed = window.confirm(
-      `Empty the trash? The ${clips.length} item${clips.length === 1 ? "" : "s"} in the bin will be removed and cannot be restored. Your uploaded files stay in the Assets library.`
+      `Empty the trash? The ${clips.length} item${clips.length === 1 ? "" : "s"} in the bin will be removed and cannot be restored. Uploaded files that nothing else uses are deleted after 30 days.`
     );
     if (!confirmed) return;
 

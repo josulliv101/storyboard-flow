@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   vendorAssets: [] as CloudinaryAsset[],
   listedForUid: null as string | null,
   listedForProject: null as string | null,
+  deletes: [] as { publicId: string; resourceType: string }[],
 }));
 
 vi.mock("@/lib/cloudinary-media-store", () => ({
@@ -15,6 +16,10 @@ vi.mock("@/lib/cloudinary-media-store", () => ({
     state.listedForUid = uid;
     state.listedForProject = projectId;
     return state.vendorAssets;
+  },
+  cloudinaryUserPrefix: (uid: string) => `gstudio/${uid}/`,
+  deleteCloudinaryAsset: async (publicId: string, resourceType: string) => {
+    state.deletes.push({ publicId, resourceType });
   },
 }));
 
@@ -40,6 +45,35 @@ beforeEach(() => {
   state.vendorAssets = [];
   state.listedForUid = null;
   state.listedForProject = null;
+  state.deletes.length = 0;
+});
+
+describe("remove", () => {
+  it("destroys the public id, per resource type", async () => {
+    // The kind is not decoration: Cloudinary's destroy endpoint is per
+    // resource type, and the sweep calling this has no clip left to ask.
+    await cloudinaryAssetProvider.remove?.(
+      { uid: "user-1" },
+      { assetId: "gstudio/user-1/project-a/clip.mp4", kind: "video" },
+    );
+    expect(state.deletes).toEqual([
+      { publicId: "gstudio/user-1/project-a/clip.mp4", resourceType: "video" },
+    ]);
+  });
+
+  it("refuses a public id outside the owner's folder", async () => {
+    for (const assetId of [
+      "gstudio/user-2/project-a/clip.png",
+      // The prefix's trailing slash is what stops "user-1" matching "user-10".
+      "gstudio/user-10/project-a/clip.png",
+      "somewhere-else/clip.png",
+    ]) {
+      await expect(
+        cloudinaryAssetProvider.remove?.({ uid: "user-1" }, { assetId, kind: "image" }),
+      ).rejects.toThrow(/outside the owner's folder/);
+    }
+    expect(state.deletes).toEqual([]);
+  });
 });
 
 describe("cloudinaryAssetToAsset", () => {
@@ -123,16 +157,21 @@ describe("cloudinaryAssetProvider.list", () => {
     expect(scenes.folders).toEqual([{ name: "Heist", path: ["Scenes", "Heist"] }]);
   });
 
-  it("declares folders, tags and search on; the write capabilities off", () => {
+  it("declares folders, tags, search and delete on; upload off", () => {
     expect(cloudinaryAssetProvider.capabilities).toEqual({
       folders: true,
       tags: true,
       // Derived in memory from the same full listing folders and tags come
       // from — no vendor search API, so it is as complete as browsing is.
       search: true,
+      // Uploads still go through the vendor store directly (the drop-on-board
+      // route), so this stays off until that moves behind the seam.
       upload: false,
-      delete: false,
+      delete: true,
     });
+    // The capability and the method are one claim; a provider declaring the
+    // first without the second is a bug the registry cannot catch.
+    expect(cloudinaryAssetProvider.remove).toBeTypeOf("function");
   });
 
   it("carries vendor tags through and serves a tagPath query as a TAG page", async () => {

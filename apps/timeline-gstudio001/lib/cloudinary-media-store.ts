@@ -309,6 +309,19 @@ function invalidateAssetListCache(userId?: string) {
   }
 }
 
+/**
+ * The public-id prefix every one of a user's assets sits under.
+ *
+ * Exported so a DELETE can prove an id belongs to the user asking, without
+ * re-deriving the layout at the call site. A public id is a path and this app
+ * builds it as `<folder>/<uid>/<projectId>/…` (see `listCloudinaryAssetsUncached`
+ * and the upload path); the trailing slash is what stops `uid` matching
+ * `uid-2`.
+ */
+export function cloudinaryUserPrefix(userId: string) {
+  return `${getCloudinaryConfig().folder}/${userId}/`;
+}
+
 export async function listCloudinaryAssets(userId: string, projectId?: string) {
   const key = assetListCacheKey(userId, projectId);
   const cached = assetListCache.get(key);

@@ -11,9 +11,10 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/
 // `lastNonEmptyDocument` whenever the stored clips are empty, so the bin
 // would have come straight back. Both are pinned here.
 //
-// The Cloudinary double is here to prove a NEGATIVE: emptying the bin must
-// never delete an uploaded file. The files stay in the Assets library, where
-// they can be placed again; reclaiming storage is a separate, deliberate job.
+// Emptying the bin now MARKS the uploaded files nothing points at (PL12-003).
+// The Cloudinary double still proves a negative and it is the important one:
+// emptying deletes no file THEN — a mark is a tombstone, and only the reclaim
+// sweep, 30 days and one re-check later, may act on it.
 
 type Stored = Record<string, unknown>;
 
@@ -21,13 +22,14 @@ const DELETE_SENTINEL = "__delete__";
 
 const state = vi.hoisted(() => {
   const docs = new Map<string, Stored>();
+  const tombstones = new Map<string, Stored>();
   const current = {
     user: { uid: "user-a", email: null as string | null, name: null, picture: null },
   };
   const cloudinaryDeletes: { publicId: string; resourceType: string }[] = [];
 
-  const applySet = (id: string, data: Stored, opts?: { merge?: boolean }) => {
-    const existing = docs.get(id);
+  const applySet = (store: Map<string, Stored>, id: string, data: Stored, opts?: { merge?: boolean }) => {
+    const existing = store.get(id);
     const merged = opts?.merge && existing ? { ...existing, ...data } : { ...data };
     // Firestore's FieldValue.delete() removes the field on a merge write;
     // the in-memory double honours it so the read-back path is exercised
@@ -35,10 +37,10 @@ const state = vi.hoisted(() => {
     for (const [key, value] of Object.entries(merged)) {
       if (value === "__delete__") delete merged[key];
     }
-    docs.set(id, merged);
+    store.set(id, merged);
   };
-  const snapshot = (id: string) => {
-    const data = docs.get(id);
+  const snapshot = (store: Map<string, Stored>, id: string) => {
+    const data = store.get(id);
     return {
       id,
       exists: data !== undefined,
@@ -46,21 +48,65 @@ const state = vi.hoisted(() => {
       get: (field: string) => (data ? data[field] : undefined),
     };
   };
-  const docRef = (id: string) => ({
+  const docRef = (store: Map<string, Stored>) => (id: string) => ({
     id,
-    get: async () => snapshot(id),
-    set: async (data: Stored, opts?: { merge?: boolean }) => applySet(id, data, opts),
+    get: async () => snapshot(store, id),
+    set: async (data: Stored, opts?: { merge?: boolean }) => applySet(store, id, data, opts),
     delete: async () => {
-      docs.delete(id);
+      store.delete(id);
     },
+    __store: store,
   });
-  const db = {
-    collection: () => ({
-      doc: docRef,
-      where: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }),
-    }),
+
+  /**
+   * Enough of a query to serve the reference scan: one equality filter, an
+   * order by document id, an optional cursor and a limit. Nothing else in
+   * these tests queries, so the double stays exactly this literal.
+   */
+  const query = (store: Map<string, Stored>, filter: { field: string; value: unknown } | null) => {
+    const build = (after: string | null, limit: number | null) => ({
+      where: (field: string, _op: string, value: unknown) =>
+        query(store, { field, value }).__build(after, limit),
+      orderBy: () => build(after, limit),
+      // The real call hands back a QueryDocumentSnapshot (see
+      // collectOwnedTimelineClips); only its id matters here.
+      startAfter: (cursor: { id: string }) => build(cursor.id, limit),
+      limit: (next: number) => build(after, next),
+      get: async () => {
+        const rows = [...store.entries()]
+          .filter(([, data]) => filter === null || data[filter.field] === filter.value)
+          .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+          .filter(([id]) => after === null || id > after);
+        const page = limit === null ? rows : rows.slice(0, limit);
+        return { docs: page.map(([id]) => snapshot(store, id)) };
+      },
+      __build: build,
+    });
+    return build(null, null);
   };
-  return { docs, current, db, cloudinaryDeletes };
+
+  const collectionFor = (name: string) => {
+    const store = name === "gstudioAssetTombstones" ? tombstones : docs;
+    return { doc: docRef(store), ...query(store, null) };
+  };
+  const db = {
+    collection: collectionFor,
+    batch: () => {
+      const writes: (() => void)[] = [];
+      return {
+        set: (ref: { id: string; __store: Map<string, Stored> }, data: Stored) => {
+          writes.push(() => ref.__store.set(ref.id, { ...data }));
+        },
+        delete: (ref: { id: string; __store: Map<string, Stored> }) => {
+          writes.push(() => ref.__store.delete(ref.id));
+        },
+        commit: async () => {
+          for (const write of writes) write();
+        },
+      };
+    },
+  };
+  return { docs, tombstones, current, db, cloudinaryDeletes };
 });
 
 vi.mock("server-only", () => ({}));
@@ -81,6 +127,7 @@ vi.mock("@/lib/firebase-auth-session", () => ({
 }));
 vi.mock("@/lib/cloudinary-media-store", () => ({
   listCloudinaryAssets: async () => [],
+  cloudinaryUserPrefix: (uid: string) => `gstudio/${uid}/`,
   deleteCloudinaryAsset: async (publicId: string, resourceType: string) => {
     state.cloudinaryDeletes.push({ publicId, resourceType });
   },
@@ -91,7 +138,12 @@ import { GET as getTimeline } from "../timelines/[id]/route";
 
 const TRASH_ID = "trash-user-a";
 
-function clip(id: string, src: string, kind: "image" | "video" = "image"): TimelineClip {
+function clip(
+  id: string,
+  src: string,
+  kind: "image" | "video" = "image",
+  sourceAsset?: { providerId: string; assetId: string },
+): TimelineClip {
   return {
     id,
     index: 0,
@@ -105,8 +157,16 @@ function clip(id: string, src: string, kind: "image" | "video" = "image"): Timel
     sourceDuration: 4,
     trimIn: 0,
     trimOut: 0,
+    ...(sourceAsset === undefined ? {} : { sourceAsset }),
   } as TimelineClip;
 }
+
+/** The provenance a clip minted from the asset seam carries — the only thing
+ *  that makes an asset nameable, and so deletable. */
+const asset = (assetId: string) => ({ providerId: "cloudinary", assetId });
+
+const markedIds = () =>
+  [...state.tombstones.values()].map((row) => row.assetId as string).sort();
 
 function seedTrash(clips: TimelineClip[], revision = 3) {
   const document: TimelineDocument = { id: TRASH_ID, title: "Trash Bin", clips };
@@ -123,15 +183,17 @@ function seedTrash(clips: TimelineClip[], revision = 3) {
   });
 }
 
-/** A LIVE (non-trash) document that still points at `srcs`. */
-function seedLiveTimeline(id: string, srcs: string[]) {
-  const clips = srcs.map((src, index) => clip(`${id}-c${index}`, src));
+/** A LIVE (non-trash) document that still points at `assetIds`. */
+function seedLiveTimeline(id: string, assetIds: string[], ownerUid = "user-a") {
+  const clips = assetIds.map((assetId, index) =>
+    clip(`${id}-c${index}`, `https://example.test/${assetId}`, "image", asset(assetId)),
+  );
   state.docs.set(id, {
     id,
     title: id,
     document: { id, title: id, clips },
     clips,
-    ownerUid: "user-a",
+    ownerUid,
     revision: 1,
   });
 }
@@ -146,6 +208,7 @@ const readBack = async (): Promise<TimelineDocument> => {
 
 beforeEach(() => {
   state.docs.clear();
+  state.tombstones.clear();
   state.cloudinaryDeletes.length = 0;
   state.current.user = { uid: "user-a", email: null, name: null, picture: null };
 });
@@ -159,7 +222,7 @@ describe("DELETE /api/trash", () => {
 
     const response = await emptyTrash();
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ success: true, cleared: 2 });
+    expect(await response.json()).toEqual({ success: true, cleared: 2, marked: 0 });
 
     // Stored: no clips, no recovery snapshot, revision bumped.
     const stored = state.docs.get(TRASH_ID)!;
@@ -182,26 +245,82 @@ describe("DELETE /api/trash", () => {
     expect((await readBack()).clips).toEqual([]);
   });
 
-  it("NEVER deletes an uploaded file, whoever else does or doesn't use it", async () => {
-    // Every shape the old asset-deleting version treated differently: a
-    // Cloudinary image, a Cloudinary video, an asset placed in a live
-    // timeline, and one placed nowhere else at all. None of them is touched —
-    // the files stay in the Assets library.
-    const orphan = "https://res.cloudinary.com/demo/image/upload/v1/folder/orphan.png";
-    const shared = "https://res.cloudinary.com/demo/image/upload/v1/folder/shared.png";
+  it("marks only what nothing else points at, and deletes no file yet", async () => {
+    // The exact shape that made the old delete-on-empty version unsafe: one
+    // upload backing a clip in the bin AND a clip on a board. Deleting the
+    // file behind the trashed copy would have pulled it out from under the
+    // live one.
     seedTrash([
-      clip("c1", orphan),
-      clip("c2", shared),
-      clip("c3", "https://res.cloudinary.com/demo/video/upload/v1/folder/movie.mp4", "video"),
-      clip("c4", "https://example.test/not-cloudinary.png"),
+      clip("c1", "https://example.test/orphan.png", "image", asset("gstudio/user-a/orphan.png")),
+      clip("c2", "https://example.test/shared.png", "image", asset("gstudio/user-a/shared.png")),
+      clip("c3", "https://example.test/movie.mp4", "video", asset("gstudio/user-a/movie.mp4")),
+      // No provenance: unnameable, so never deletable. Leaks, never loses.
+      clip("c4", "https://example.test/legacy.png"),
     ]);
-    seedLiveTimeline("project-live", [shared]);
+    seedLiveTimeline("project-live", ["gstudio/user-a/shared.png"]);
 
     const response = await emptyTrash();
-    expect(await response.json()).toEqual({ success: true, cleared: 4 });
+    expect(await response.json()).toEqual({ success: true, cleared: 4, marked: 2 });
+    expect(markedIds()).toEqual(["gstudio/user-a/movie.mp4", "gstudio/user-a/orphan.png"]);
+    // Marking is not deleting: nothing reaches the vendor until the sweep has
+    // waited out the grace period and re-checked.
     expect(state.cloudinaryDeletes).toEqual([]);
     // The bin still emptied — that is the whole job.
     expect(state.docs.get(TRASH_ID)?.clips).toEqual([]);
+  });
+
+  it("records the kind, because the sweep will have no clip left to ask", async () => {
+    seedTrash([
+      clip("c1", "https://example.test/movie.mp4", "video", asset("gstudio/user-a/movie.mp4")),
+    ]);
+
+    await emptyTrash();
+    const [tombstone] = [...state.tombstones.values()];
+    expect(tombstone).toMatchObject({
+      providerId: "cloudinary",
+      assetId: "gstudio/user-a/movie.mp4",
+      kind: "video",
+      ownerUid: "user-a",
+    });
+    // 30 days out, not now.
+    const grace = (tombstone.deleteAfterMs as number) - (tombstone.markedAtMs as number);
+    expect(grace).toBe(30 * 24 * 60 * 60 * 1000);
+  });
+
+  it("counts a reference held only by the recovery snapshot", async () => {
+    // `lastNonEmptyDocument` is one ordinary read away from being the live
+    // document again (see toTimelineDocument), so a clip reachable only
+    // through it is still a reference. Over-count, never under-count.
+    const held = "gstudio/user-a/held.png";
+    seedTrash([clip("c1", "https://example.test/held.png", "image", asset(held))]);
+    state.docs.set("project-emptied", {
+      id: "project-emptied",
+      title: "Emptied",
+      document: { id: "project-emptied", title: "Emptied", clips: [] },
+      clips: [],
+      lastNonEmptyDocument: {
+        id: "project-emptied",
+        title: "Emptied",
+        clips: [clip("live", "https://example.test/held.png", "image", asset(held))],
+      },
+      ownerUid: "user-a",
+      revision: 2,
+    });
+
+    expect(await (await emptyTrash()).json()).toEqual({ success: true, cleared: 1, marked: 0 });
+    expect(markedIds()).toEqual([]);
+  });
+
+  it("ignores another user's reference to the same asset id", async () => {
+    // Assets are per-user in both providers, so this cannot happen today — but
+    // the scan is what enforces it, and a scan that read everyone's documents
+    // would be the round-12 bug again in a new place.
+    const orphan = "gstudio/user-a/orphan.png";
+    seedTrash([clip("c1", "https://example.test/orphan.png", "image", asset(orphan))]);
+    seedLiveTimeline("project-other", [orphan], "user-b");
+
+    expect(await (await emptyTrash()).json()).toEqual({ success: true, cleared: 1, marked: 1 });
+    expect(markedIds()).toEqual([orphan]);
   });
 
   it("is a no-op on an already-empty bin", async () => {

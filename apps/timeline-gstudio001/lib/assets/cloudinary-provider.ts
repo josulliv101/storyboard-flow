@@ -3,7 +3,12 @@
 // it directly; this adapter only translates its LISTING into the neutral
 // `Asset` shape for the panel/API surface.
 
-import { listCloudinaryAssets, type CloudinaryAsset } from "@/lib/cloudinary-media-store";
+import {
+  cloudinaryUserPrefix,
+  deleteCloudinaryAsset,
+  listCloudinaryAssets,
+  type CloudinaryAsset,
+} from "@/lib/cloudinary-media-store";
 
 import { pageFromFlatListing, pageFromSearch, pageFromTagListing } from "./path-folders";
 import type { AssetContext, AssetProvider } from "./provider";
@@ -64,7 +69,10 @@ export const cloudinaryAssetProvider: AssetProvider = {
     // this is as complete as browsing is.
     search: true,
     upload: false,
-    delete: false,
+    // The seam's `remove` is implemented below. Uploading still happens through
+    // the vendor store directly (the drop-on-board route), so that one stays
+    // honestly off until it moves behind the seam.
+    delete: true,
   },
   async list(ctx: AssetContext, query) {
     // The store's listing is already user/project-scoped and paginated at the vendor
@@ -81,5 +89,20 @@ export const cloudinaryAssetProvider: AssetProvider = {
     return query.tagPath !== undefined
       ? pageFromTagListing(assets, query)
       : pageFromFlatListing(assets, query);
+  },
+  async remove(ctx, target) {
+    // The id has to be one of THIS user's. Nothing upstream can currently send
+    // another user's id — tombstones are written from the owner's own clips —
+    // but a delete is the one operation where "currently" is not good enough,
+    // and the public id carries the owner, so the check is free.
+    const prefix = cloudinaryUserPrefix(ctx.uid);
+    if (!target.assetId.startsWith(prefix)) {
+      throw new Error("Refusing to delete a Cloudinary asset outside the owner's folder.");
+    }
+    // Cloudinary answers a destroy for a missing public id with 200 and
+    // `{ result: "not found" }`, so an already-deleted asset resolves rather
+    // than throwing — which is what the sweep needs (see `remove` on the
+    // provider type: the desired end state is "not there").
+    await deleteCloudinaryAsset(target.assetId, target.kind);
   },
 };
