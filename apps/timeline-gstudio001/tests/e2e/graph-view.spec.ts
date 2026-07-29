@@ -267,6 +267,14 @@ async function installGraphApi(
     });
   });
 
+  // Registered AFTER the palette mock above, which matters: Playwright matches
+  // handlers in reverse registration order, and `**/api/assets**` would
+  // otherwise answer the trash drawer's recently-deleted request with a page of
+  // palette assets. Empty by default; the test that cares overrides it.
+  await page.route("**/api/assets/marked**", (route) =>
+    route.fulfill({ json: { assets: [] } }),
+  );
+
   // Two-segment path, so the generic single-segment mock below never sees it.
   await page.route("**/api/timelines/*/preview-manifest", (route) => {
     const id = decodeURIComponent(
@@ -2880,6 +2888,74 @@ test.describe("graph view E2E", () => {
     await page.getByRole("button", { name: "Close trash" }).click();
     await undoButton(page).click();
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+  });
+
+  test("the trash lists files on their way out, and Keep withdraws the mark", async ({
+    page,
+  }) => {
+    const marked = [
+      {
+        providerId: "cloudinary",
+        assetId: "gstudio/user/folder/orphan.png",
+        kind: "image",
+        name: "Beach, take 3",
+        thumbnailUrl: "",
+        markedAtMs: Date.now(),
+        deleteAfterMs: Date.now() + 24 * 60 * 60 * 1000,
+      },
+      {
+        providerId: "cloudinary",
+        assetId: "gstudio/user/folder/spare.mp4",
+        kind: "video",
+        name: "Unused take",
+        thumbnailUrl: "",
+        markedAtMs: Date.now(),
+        deleteAfterMs: Date.now() + 26 * 24 * 60 * 60 * 1000,
+      },
+    ];
+    const kept: { providerId: string; assetId: string }[] = [];
+    await installGraphApi(page);
+    // AFTER installGraphApi, deliberately: handlers match in reverse
+    // registration order, so the empty default it installs would otherwise
+    // win over this one.
+    await page.route("**/api/assets/marked**", (route) => {
+      if (route.request().method() === "DELETE") {
+        const body = route.request().postDataJSON() as {
+          assets?: { providerId: string; assetId: string }[];
+        };
+        kept.push(...(body.assets ?? []));
+        return route.fulfill({ json: { success: true, kept: 1 } });
+      }
+      return route.fulfill({
+        json: {
+          assets: marked.filter(
+            (asset) => !kept.some((ref) => ref.assetId === asset.assetId),
+          ),
+        },
+      });
+    });
+
+    await page.goto(GRAPH_URL);
+    // The rail's drawer button only mounts once the board is up.
+    await expect(page.locator(`[data-virtual-grid="${PROJECT_ID}"]`)).toBeVisible();
+    await page.getByRole("button", { name: "Trash", exact: true }).click();
+
+    // The bin and this section answer different questions, so both are here:
+    // what did I delete, and what is about to stop existing.
+    await expect(page.getByRole("heading", { name: "Recently deleted files" })).toBeVisible();
+    await expect(page.getByText("Deletes in 1 day")).toBeVisible();
+    await expect(page.getByText("Deletes in 26 days")).toBeVisible();
+
+    // "Keep" withdraws the mark — the file never moved, so nothing is restored
+    // and nothing returns to a timeline.
+    const keep = page.getByRole("button", { name: "Keep Beach, take 3" });
+    await keep.click();
+    await expect(keep).toHaveCount(0);
+    expect(kept).toEqual([
+      { providerId: "cloudinary", assetId: "gstudio/user/folder/orphan.png" },
+    ]);
+    // The other one is untouched: Keep is per-row, not a blanket reprieve.
+    await expect(page.getByRole("button", { name: "Keep Unused take" })).toBeVisible();
   });
 
   test("crafted focus URLs are rejected; valid deep links still work", async ({ page }) => {

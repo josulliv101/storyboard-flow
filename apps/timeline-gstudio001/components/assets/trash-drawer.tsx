@@ -13,6 +13,7 @@ import { usePathname } from "next/navigation";
 
 import { Button } from "@/components/core/button";
 import { toast } from "@/components/core/sonner";
+import { deletionWindowLabel } from "@/lib/asset-deletion-window";
 import { trashRowCaption } from "@/lib/trash-provenance";
 import { groupTrashClips } from "@/lib/trash-groups";
 import { discardTrashClips } from "@/lib/graph-trash-discard";
@@ -31,6 +32,25 @@ type TrashDrawerProps = {
   isOpen: boolean;
   onClose: () => void;
 };
+
+/**
+ * An uploaded file marked for deletion, as `/api/assets/marked` serves it.
+ *
+ * Every field is a SNAPSHOT taken when the mark was written — there is no clip
+ * left pointing at this asset, which is precisely why it is marked, so nothing
+ * here can be re-derived and none of it is a lookup key.
+ */
+type MarkedAsset = {
+  providerId: string;
+  assetId: string;
+  kind: "image" | "video";
+  name: string;
+  thumbnailUrl: string;
+  markedAtMs: number;
+  deleteAfterMs: number;
+};
+
+const markedAssetKey = (asset: MarkedAsset) => `${asset.providerId}|${asset.assetId}`;
 
 // "Am I on the client?" as an external-store read: the server snapshot says
 // no, the client snapshot says yes, and nothing ever notifies — React swaps
@@ -97,6 +117,55 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
       cancelled = true;
     };
   }, [isOpen, user, requestTrashClips]);
+
+  // The marked assets are a SEPARATE request with a separate failure: the bin
+  // is the drawer's job and this section is an addition to it, so a marked-list
+  // that fails to load leaves the bin working and simply shows nothing. One
+  // combined error surface would let a broken side-panel hide the trash.
+  const [marked, setMarked] = useState<readonly MarkedAsset[]>([]);
+  const [keepingKeys, setKeepingKeys] = useState<readonly string[]>([]);
+
+  useEffect(() => {
+    if (!isOpen || !user) return;
+    let cancelled = false;
+    fetch("/api/assets/marked", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : { assets: [] }))
+      .then((result: { assets?: MarkedAsset[] }) => {
+        if (!cancelled) setMarked(result.assets ?? []);
+      })
+      .catch((err: unknown) => {
+        console.error(err);
+        if (!cancelled) setMarked([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, user]);
+
+  /** Withdraw the mark. The file never moved, so this is bookkeeping — no
+   *  re-upload, and nothing returns to a timeline. */
+  const handleKeep = async (asset: MarkedAsset) => {
+    const key = markedAssetKey(asset);
+    setKeepingKeys((current) => [...current, key]);
+    try {
+      const response = await fetch("/api/assets/marked", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assets: [{ providerId: asset.providerId, assetId: asset.assetId }],
+        }),
+      });
+      if (!response.ok) throw new Error("Failed to keep asset.");
+      setMarked((current) => current.filter((entry) => markedAssetKey(entry) !== key));
+      toast(`Keeping ${asset.name}.`, { id: `asset-kept-${key}` });
+    } catch (err) {
+      console.error(err);
+      // The row stays, which is the truthful outcome: the mark is still there.
+      toast("Unable to keep that file.", { id: `asset-keep-failed-${key}` });
+    } finally {
+      setKeepingKeys((current) => current.filter((entry) => entry !== key));
+    }
+  };
 
   // RESTORE puts an item back into the timeline the user is looking at — which
   // is also how they choose the destination: navigate there, then restore. The
@@ -292,12 +361,17 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
               <AlertCircle className="h-4 w-4" />
               {error}
             </div>
-          ) : clips.length === 0 ? (
+          ) : clips.length === 0 && marked.length === 0 ? (
+            // Only when BOTH are empty. A bin with nothing in it but files on
+            // their way out is not an empty drawer, and saying so would hide
+            // the one thing here anybody still has a decision to make about.
             <div className="flex flex-col items-center justify-center py-16 text-zinc-500">
               <Trash2 className="h-10 w-10 stroke-[1.2] mb-2 text-zinc-600" />
               <span className="text-sm font-medium">Trash is empty</span>
             </div>
           ) : (
+            <>
+            {clips.length > 0 && (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 p-5">
               {groupTrashClips(clips).map((group, index) => {
                 // The row stands for the IMAGE, not one clip: every field it
@@ -389,6 +463,87 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                 );
               })}
             </div>
+            )}
+
+            {marked.length > 0 && (
+              <section
+                aria-labelledby="trash-recently-deleted"
+                // Bordered off from the bin above it, because these two lists
+                // answer different questions: what did I delete (and can put
+                // back), versus what is about to stop existing.
+                className={clips.length > 0 ? "border-t border-zinc-900" : undefined}
+              >
+                <header className="px-5 pt-4">
+                  <h3
+                    id="trash-recently-deleted"
+                    className="text-xs font-semibold text-zinc-300"
+                  >
+                    Recently deleted files
+                  </h3>
+                  <p className="mt-0.5 text-[11px] text-zinc-500">
+                    {marked.length} uploaded file{marked.length === 1 ? "" : "s"} nothing
+                    uses any more. They stay in your library until they are deleted, and
+                    keeping one stops the clock.
+                  </p>
+                </header>
+                <ul className="grid grid-cols-2 gap-3 p-5 md:grid-cols-3 lg:grid-cols-4">
+                  {marked.map((asset) => {
+                    const key = markedAssetKey(asset);
+                    const busy = keepingKeys.includes(key);
+                    return (
+                      <li
+                        key={key}
+                        className="flex min-w-0 items-center gap-3 rounded-lg border border-zinc-900 bg-zinc-900/20 p-2"
+                      >
+                        <div className="relative size-12 shrink-0 overflow-hidden rounded border border-zinc-800/40 bg-black/60">
+                          {asset.thumbnailUrl ? (
+                            // The file is still there for the whole window, so
+                            // its own URL keeps resolving right up until it
+                            // doesn't — no provider round trip to render this.
+                            <img
+                              src={asset.thumbnailUrl}
+                              alt=""
+                              className="h-full w-full object-cover opacity-80"
+                            />
+                          ) : (
+                            <span className="flex h-full w-full items-center justify-center text-[8px] font-semibold uppercase tracking-wider text-zinc-500">
+                              {asset.kind}
+                            </span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-semibold text-zinc-200">
+                            {asset.name}
+                          </p>
+                          <p className="truncate text-[10px] text-zinc-500">
+                            {deletionWindowLabel(asset.deleteAfterMs)}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => handleKeep(asset)}
+                          // The visible word is "Keep"; the accessible name
+                          // says WHICH, because a column of identical buttons
+                          // announces nothing otherwise.
+                          aria-label={`Keep ${asset.name}`}
+                          className="h-6 shrink-0 border-zinc-800 px-2 text-[10px] text-zinc-300 hover:border-sky-500/50 hover:text-sky-300 cursor-pointer"
+                        >
+                          {busy ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            "Keep"
+                          )}
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )}
+            </>
           )}
         </main>
       </div>

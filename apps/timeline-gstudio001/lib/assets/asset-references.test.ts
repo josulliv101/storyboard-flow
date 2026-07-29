@@ -80,9 +80,44 @@ describe("assetCandidatesFromClips", () => {
     ]);
 
     expect(candidates).toEqual([
-      { ref: { providerId: "cloudinary", assetId: "a.png" }, kind: "image" },
-      { ref: { providerId: "cloudinary", assetId: "b.mp4" }, kind: "video" },
+      expect.objectContaining({
+        ref: { providerId: "cloudinary", assetId: "a.png" },
+        kind: "image",
+      }),
+      expect.objectContaining({
+        ref: { providerId: "cloudinary", assetId: "b.mp4" },
+        kind: "video",
+      }),
     ]);
+  });
+
+  it("snapshots a name and a thumbnail, because no clip will be left to ask", () => {
+    // Authored title first, then the derived description, then the id's leaf —
+    // the same precedence the card reads by (PL11-004). The thumbnail is a
+    // video's poster or an image itself.
+    const [authored] = assetCandidatesFromClips([
+      { ...mediaClip("c1", { providerId: "cloudinary", assetId: "a.png" }), title: "Beach, take 3" } as TimelineClip,
+    ]);
+    expect(authored).toMatchObject({ name: "Beach, take 3", thumbnailUrl: "https://example.test/c1" });
+
+    const [described] = assetCandidatesFromClips([
+      mediaClip("c2", { providerId: "cloudinary", assetId: "b.png" }),
+    ]);
+    // `alt` is the clip id in this fixture's builder.
+    expect(described).toMatchObject({ name: "c2" });
+
+    const [postered] = assetCandidatesFromClips([
+      {
+        ...mediaClip("c3", { providerId: "cloudinary", assetId: "folder/movie.mp4" }, "video"),
+        poster: "https://example.test/poster.jpg",
+        alt: "",
+      } as TimelineClip,
+    ]);
+    expect(postered).toMatchObject({
+      // No title, no alt: the id's LEAF, never the whole path.
+      name: "movie.mp4",
+      thumbnailUrl: "https://example.test/poster.jpg",
+    });
   });
 
   it("de-duplicates: two clips of one file are one asset", () => {
@@ -112,7 +147,7 @@ describe("unreferencedCandidates", () => {
     const referenced = new Set(assetKeysFromClips([mediaClip("live", shared)]));
 
     expect(unreferencedCandidates(candidates, referenced)).toEqual([
-      { ref: orphan, kind: "image" },
+      expect.objectContaining({ ref: orphan, kind: "image" }),
     ]);
   });
 

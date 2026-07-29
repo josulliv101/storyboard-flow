@@ -33,20 +33,44 @@ export function assetRefKey(ref: AssetSourceRef): string {
   return `${encodeURIComponent(ref.providerId)}|${encodeURIComponent(ref.assetId)}`;
 }
 
-/** An asset a caller is considering deleting: the ref, plus the `kind` its
- *  provider needs to address it (Cloudinary's destroy endpoint is per resource
- *  type). Recorded on the tombstone so the sweep, running 30 days later with
- *  no clip in hand, still knows how to ask. */
+/**
+ * An asset a caller is considering deleting: the ref, the `kind` its provider
+ * needs to address it (Cloudinary's destroy endpoint is per resource type),
+ * and a display SNAPSHOT.
+ *
+ * All three are recorded on the tombstone because the sweep — and the
+ * recently-deleted list the user sees — run with no clip in hand. The snapshot
+ * follows `TrashOrigin`'s rule: `name` and `thumbnailUrl` are what the row
+ * PRINTS, taken at mark time, not keys to look anything up with. There is no
+ * clip left to re-derive them from, and the file itself is still there for the
+ * whole window, so the thumbnail keeps resolving until the moment it doesn't.
+ */
 export type AssetDeletionCandidate = Readonly<{
   ref: AssetSourceRef;
   kind: AssetKind;
+  name: string;
+  thumbnailUrl: string;
 }>;
 
 /** Media clips carry provenance; collection clips have no file behind them. */
 function sourceAssetOf(clip: TimelineClip): AssetDeletionCandidate | null {
   if (clip.kind !== "image" && clip.kind !== "video") return null;
   if (clip.sourceAsset === undefined) return null;
-  return { ref: clip.sourceAsset, kind: clip.kind };
+  return {
+    ref: clip.sourceAsset,
+    kind: clip.kind,
+    // The authored name first, the derived description second — the same
+    // precedence the card and the details view read by (PL11-004). Falling
+    // back to the id's leaf keeps a row from printing nothing at all.
+    name: clip.title || clip.alt || leafOf(clip.sourceAsset.assetId),
+    // A video's poster is a still; an image IS its own thumbnail.
+    thumbnailUrl: clip.poster || clip.src,
+  };
+}
+
+function leafOf(assetId: string): string {
+  const segments = assetId.split("/").filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? assetId;
 }
 
 /**
