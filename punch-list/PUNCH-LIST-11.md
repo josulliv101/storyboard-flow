@@ -421,3 +421,58 @@ be flaky and would not fail on a fast local server. Proven fail-first, but
 only on the SECOND attempt: removing `preventDefault` left the test passing,
 because `openTimeline` still ran and the optimism survived. The honest revert
 is removing the `onClick` altogether, and that fails.
+
+## PL11-015 — The e2e "load flake" was oversubscription
+
+- Status: Complete
+- Area: `playwright.config.ts`
+- Screenshot: Not captured
+
+The graph-view suite had a long-standing reputation: 1-4 tests time out per
+full run, always green in isolation, so the failures got waved through as
+"flakes under parallel load". They were not random. They were the predictable
+result of a budget that had quietly run out.
+
+Diagnosis, from the JSON reporter rather than the summary line: every failure
+was a TEST TIMEOUT at 30000ms — never an assertion — and they landed mid-run
+(+49s, +93s of a 136s run), not at the start, so this was steady-state
+contention and not first-hit compilation. The number that explained it: the
+MEDIAN test took 15.3s against that 30s budget. The suite was running at a
+2x margin on the median, so any test heavier than typical lost the race. Which
+tests drew the short straw varied per run; that is what made it look like luck.
+
+The cause is that Playwright defaults `workers` to half the core count — 14 on
+this machine — while every test in both projects loads pages from ONE dev
+server process. The bottleneck was never the CPU, so those extra workers
+bought queueing rather than parallelism.
+
+Measured over 101 tests:
+
+| workers | failures | p50 | p90 | slowest | wall |
+| --- | --- | --- | --- | --- | --- |
+| 14 (default) | 2 | 15.3s | 19.1s | 35.1s | 136.2s |
+| 6 | 0 | 5.8s | 8.4s | 13.0s | 101.8s |
+
+Fewer workers is faster in wall clock AND removes the failures — no tradeoff
+to weigh, the oversubscription was costing time as well as reliability. The
+cap is a fixed 6 rather than a fraction of the cores on purpose: the shared
+resource it is protecting does not scale with this machine.
+
+A second, quieter bug surfaced while reading the config. `navigationTimeout`
+was 60s against the default 30s per-test timeout, so a navigation was always
+killed by the test budget long before reaching its own limit — the "give cold
+navigations room" comment described an intent that had never been in effect.
+Now 60s per test with a 45s navigation allowance inside it. That is not a way
+to let slow tests pass: with the worker cap the slowest test is 13s, so the
+ceiling only ever catches a genuine hang.
+
+No retries were added. Retries would have hidden this rather than fixed it.
+
+Acceptance criteria:
+
+- A full graph-view run passes without per-test annotation or re-runs.
+- Wall clock does not regress.
+
+Verified: three consecutive full runs, zero failures (p50 5.8/6.1/7.0s, max
+13.0/13.6/22.7s, wall 101.8/110.4/122.5s) against the previous run's 2
+timeouts at 136.2s.

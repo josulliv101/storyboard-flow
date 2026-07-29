@@ -3,6 +3,21 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
+  // CAPPED, and deliberately not scaled to the core count. Every test in both
+  // projects loads pages from ONE dev server process, so the bottleneck is
+  // that server, not this machine's CPUs — and Playwright's default (half the
+  // cores: 14 here) oversubscribes it badly enough to be self-defeating.
+  //
+  // Measured over the graph-view suite, 101 tests:
+  //   14 workers — median test 15.3s, slowest 35.1s, 2 timeouts, 136s wall
+  //    6 workers — median test  5.8s, slowest 13.0s, 0 timeouts, 102s wall
+  //
+  // Fewer workers is faster in wall clock AND stops the failures: past the
+  // server's capacity the extra workers only queue on it. That queueing is
+  // the whole story behind the suite's "1-4 tests time out per run, all green
+  // in isolation" reputation — tests were dying on the 30s budget with a
+  // median of 15s, so anything heavier than typical lost the race.
+  workers: 6,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: "http://127.0.0.1:6006",
@@ -43,12 +58,21 @@ export default defineConfig({
     {
       name: "graph-view",
       testMatch: /graph-view/,
+      // The per-test budget has to EXCEED navigationTimeout or that allowance
+      // is unreachable: it was 60s against the default 30s test timeout, so a
+      // navigation was always killed by the test long before its own limit,
+      // and the intent below never actually applied. 60/45 keeps the same
+      // shape with room left for the assertions that follow a cold load.
+      // Not a way to let slow tests pass — with the worker cap above, the
+      // slowest test in the suite is 13s, so this ceiling only ever catches a
+      // genuine hang.
+      timeout: 60000,
       use: {
         ...devices["Desktop Chrome"],
         baseURL: "http://127.0.0.1:3000",
         // Dev-mode Next compiles routes on first hit; give cold navigations
         // room before the suite's own (tight) assertions take over.
-        navigationTimeout: 60000,
+        navigationTimeout: 45000,
       },
     },
   ],
