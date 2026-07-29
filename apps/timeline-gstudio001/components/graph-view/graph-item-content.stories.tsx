@@ -133,36 +133,36 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Distinct first/last assets: the ordinary two-frame collection card. */
+/**
+ * The ordinary collection card: ONE frame, full width (PL13-003).
+ *
+ * It used to be a first/last PAIR, which at card size meant two ~80px slots —
+ * too narrow to recognize a face, and the crop turned a composition into a
+ * slice of one. What is worth pinning now is WHICH frame: the first child's,
+ * not the last, not an arbitrary one.
+ */
 export const DistinctFrames: Story = {
   args: baseArgs,
   decorators: [renderWithDetail([ASSET_A, ASSET_B])],
   play: async ({ canvasElement }) => {
     const images = previewImages(canvasElement);
-    await expect(images).toHaveLength(2);
+    await expect(images).toHaveLength(1);
+    await expect(images[0]).toHaveAttribute("src", ASSET_A.poster);
   },
 };
 
-/**
- * The regression: the same asset is BOTH the first and last preview item (the
- * same clip placed at the start and end of a child timeline — real data per
- * the adapter's demotion comment). First and last therefore share an id, which
- * used to collide on the React key and reconcile to a single stretched frame.
- * Both frames must render.
+/*
+ * REMOVED with the frame pair (PL13-003): `RepeatedFirstAndLastFrame`.
+ *
+ * It pinned a real regression — the same asset as BOTH the first and last
+ * preview item shares an id, which used to collide on the React key and
+ * reconcile to one stretched frame, fixed by keying on the SLOT. A card that
+ * renders a single frame cannot have two slots to collide, so the story could
+ * only have asserted "one image", which is what every other story here already
+ * says. Deleted rather than kept as a vacuous pin. If the pair ever returns,
+ * so should it — the fixture was [ASSET_A, ASSET_B, ASSET_A] and the rule is
+ * key by slot, never by content.
  */
-export const RepeatedFirstAndLastFrame: Story = {
-  args: baseArgs,
-  decorators: [renderWithDetail([ASSET_A, ASSET_B, ASSET_A])],
-  play: async ({ canvasElement }) => {
-    const images = previewImages(canvasElement);
-    // Both frames render despite first and last sharing an asset id — the
-    // regression rendered a single stretched frame after React collapsed the
-    // duplicate key.
-    await expect(images).toHaveLength(2);
-    await expect(images[0]).toHaveAttribute("src", ASSET_A.poster);
-    await expect(images[1]).toHaveAttribute("src", ASSET_A.poster);
-  },
-};
 
 /** A single-item collection shows one frame across the full width. */
 export const SingleFrame: Story = {
@@ -629,14 +629,17 @@ export const DisabledCollection: Story = {
     await expect(metadata.textContent).toContain("A timeline");
     await expect(metadata.textContent).toContain("8.0s");
     await expect(metadata.textContent).toContain("2 items");
-    const folderGlyph = canvasElement.querySelector<SVGElement>(
+    // The drill control's glyph is a CHEVRON now (PL13-004), at lucide's own
+    // stroke weight — it was CornerRightDown at 1.5 while it was a large
+    // circle on the artwork.
+    const drillGlyph = canvasElement.querySelector<SVGElement>(
       'button[aria-label="Open A timeline"] svg',
     )!;
-    await expect(folderGlyph.getAttribute("stroke-width")).toBe("1.5");
+    await expect(drillGlyph.getAttribute("stroke-width")).toBe("2");
     await userEvent.click(card as HTMLElement);
     await expect((card as HTMLElement).className).toContain("ring-amber-300/65");
     await expect((card as HTMLElement).className).toContain("ring-inset");
-    // The frames still render — a disabled card shows its content, muted.
-    await expect(previewImages(canvasElement)).toHaveLength(2);
+    // The frame still renders — a disabled card shows its content, muted.
+    await expect(previewImages(canvasElement)).toHaveLength(1);
   },
 };
