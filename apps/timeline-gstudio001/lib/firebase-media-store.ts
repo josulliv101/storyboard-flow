@@ -93,8 +93,16 @@ export async function uploadMedia(
         resumable: false,
         metadata: {
           contentType: normalizedContentType,
+          // Thumbnails are content-addressed by a unique upload name, so the
+          // long immutable lifetime is right — but `private`, not `public`:
+          // these objects are only ever reachable through the authenticated
+          // /api/timeline-media route, and `public` would authorize a shared
+          // cache to serve one user's thumbnail to another on URL match alone.
+          // The route re-asserts this on every response (see
+          // `toPrivateCacheControl`) so objects predating this change are
+          // covered too.
           cacheControl: pathname.startsWith("timeline-thumbnails/")
-            ? "public, max-age=31536000, immutable"
+            ? "private, max-age=31536000, immutable"
             : "private, no-cache",
         },
       });

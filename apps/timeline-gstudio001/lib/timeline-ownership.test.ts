@@ -11,10 +11,13 @@ describe("resolveOwnership", () => {
     expect(resolveOwnership("user-b", "user-a")).toBe("denied");
   });
 
-  it("claims legacy records with no owner", () => {
-    expect(resolveOwnership(undefined, "user-a")).toBe("claim");
-    expect(resolveOwnership(null, "user-a")).toBe("claim");
-    expect(resolveOwnership("", "user-a")).toBe("claim");
+  // This used to answer "claim" — the first authenticated toucher became the
+  // owner. The legacy records that justified it are migrated, and an ownerless
+  // record is now simply unreachable.
+  it("denies records with no owner instead of granting them", () => {
+    expect(resolveOwnership(undefined, "user-a")).toBe("denied");
+    expect(resolveOwnership(null, "user-a")).toBe("denied");
+    expect(resolveOwnership("", "user-a")).toBe("denied");
   });
 });
 

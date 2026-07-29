@@ -430,19 +430,6 @@ export function getTimelinePathFromState(
   return path;
 }
 
-export function syncParentCollections(
-  collectionTimelineId: string,
-  childClips: any[],
-  newTimelineId?: string,
-) {
-  return syncParentCollectionsInState(
-    defaultTimelineDocumentsState,
-    collectionTimelineId,
-    childClips,
-    newTimelineId,
-  );
-}
-
 export function syncParentCollectionsInState(
   state: TimelineDocumentsState,
   collectionTimelineId: string,
@@ -494,14 +481,6 @@ export function syncParentCollectionsInState(
     ...state,
     documents: nextDocuments,
   };
-}
-
-export function addClipToCollection(collectionTimelineId: string, clip: any) {
-  const newClip = {
-    ...clip,
-    id: `${collectionTimelineId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-  };
-  return newClip;
 }
 
 export function addClipToCollectionInState(
@@ -778,17 +757,20 @@ export function getCollectionFramePreviewFromState(
       };
     }
 
-    const sourceDuration = (c as any).sourceDuration || c.duration || 1;
+    // The collection branch above returns, so `c` is a MediaTimelineClip here
+    // and every field below is on the type — the casts these lines used to
+    // carry predated the discriminated union and were hiding that.
+    const sourceDuration = c.sourceDuration || c.duration || 1;
     const previewTime =
       c.kind === "video"
-        ? clamp((c as any).trimIn + relativeOffset, 0, Math.max(0, sourceDuration - 0.001))
+        ? clamp(c.trimIn + relativeOffset, 0, Math.max(0, sourceDuration - 0.001))
         : 0;
 
     return {
       id: c.id,
       kind: c.kind,
-      src: (c as any).src,
-      poster: (c as any).poster,
+      src: c.src,
+      poster: c.poster,
       alt: c.alt,
       previewTime,
       sourceDuration,

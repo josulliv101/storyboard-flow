@@ -441,7 +441,12 @@ export const FilmstripResampleSettles: Story = {
     const kind = canvasElement.querySelector<HTMLElement>('[data-media-kind="video"]')!;
     const card = kind.parentElement?.parentElement;
     expect(card).not.toBeNull();
-    expect(getComputedStyle(kind).fontSize).toBe("9px");
+    // A FLOOR, not an exact size. The badge was raised 9px -> 11px when the
+    // type floor landed, and this assertion kept demanding 9px — it went
+    // unnoticed because the browser story project was not in CI. Asserting the
+    // minimum keeps the accessibility guarantee without breaking on the next
+    // deliberate type change.
+    expect(Number.parseFloat(getComputedStyle(kind).fontSize)).toBeGreaterThanOrEqual(11);
     const kindRect = kind.getBoundingClientRect();
     const cardRect = card!.getBoundingClientRect();
     expect(kindRect.left - cardRect.left).toBeGreaterThanOrEqual(7);

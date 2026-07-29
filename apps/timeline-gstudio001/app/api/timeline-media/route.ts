@@ -6,6 +6,7 @@ import {
   isAllowedMediaPathname,
 } from "@/lib/firebase-media-store";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
+import { parseRangeHeader } from "@/lib/http-range";
 import {
   ProjectAssetScopeError,
   requireProjectAssetScope,
@@ -13,6 +14,31 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/**
+ * Every byte this route serves passed an auth check, so no response from it may
+ * be stored in a SHARED cache: a CDN or corporate proxy keys on URL alone and
+ * would hand one user's media to the next requester without re-running that
+ * check. Thumbnails are written to storage with
+ * `public, max-age=31536000, immutable` (fine for the object, wrong for this
+ * response), so the stored directive is overridden here rather than merely
+ * fixed at upload time — that way EXISTING objects are covered too, not just
+ * ones uploaded after this deploy.
+ */
+function toPrivateCacheControl(stored: string | undefined) {
+  if (!stored) return "private, no-cache";
+  // Drop any existing cacheability directive — `public` because it is wrong
+  // here, `private` so re-asserting it below cannot double it up — and keep
+  // every freshness directive (max-age, immutable, no-cache…) as stored.
+  const preserved = stored
+    .split(",")
+    .map((directive) => directive.trim())
+    .filter((directive) => {
+      const normalized = directive.toLowerCase();
+      return normalized !== "public" && normalized !== "private";
+    });
+  return ["private", ...preserved].join(", ");
+}
 
 function projectScopeFromMediaPathname(pathname: string) {
   const match =
@@ -45,13 +71,12 @@ async function handleMediaRequest(request: Request, includeBody: boolean) {
       return new NextResponse("Media not found.", { status: 404 });
     }
 
-    const range = request.headers.get("range");
-    if (range && media.contentType.startsWith("video/")) {
-      const match = range.match(/bytes=(\d*)-(\d*)/);
-      const start = match?.[1] ? Number(match[1]) : 0;
-      const end = match?.[2] ? Number(match[2]) : media.size - 1;
+    const cacheControl = toPrivateCacheControl(media.cacheControl);
 
-      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= media.size) {
+    if (media.contentType.startsWith("video/")) {
+      const range = parseRangeHeader(request.headers.get("range"), media.size);
+
+      if (range.type === "unsatisfiable") {
         return new NextResponse(null, {
           status: 416,
           headers: {
@@ -60,28 +85,32 @@ async function handleMediaRequest(request: Request, includeBody: boolean) {
         });
       }
 
-      const chunkEnd = Math.min(end, media.size - 1);
-      const chunkSize = chunkEnd - start + 1;
+      if (range.type === "satisfiable") {
+        const chunkSize = range.end - range.start + 1;
 
-      return new NextResponse(
-        includeBody ? createMediaReadStream(pathname, { start, end: chunkEnd }, media.bucketName) : null,
-        {
-          status: 206,
-          headers: {
-            "Accept-Ranges": "bytes",
-            "Cache-Control": media.cacheControl,
-            "Content-Length": String(chunkSize),
-            "Content-Range": `bytes ${start}-${chunkEnd}/${media.size}`,
-            "Content-Type": media.contentType,
+        return new NextResponse(
+          includeBody
+            ? createMediaReadStream(pathname, { start: range.start, end: range.end }, media.bucketName)
+            : null,
+          {
+            status: 206,
+            headers: {
+              "Accept-Ranges": "bytes",
+              "Cache-Control": cacheControl,
+              "Content-Length": String(chunkSize),
+              "Content-Range": `bytes ${range.start}-${range.end}/${media.size}`,
+              "Content-Type": media.contentType,
+            },
           },
-        },
-      );
+        );
+      }
+      // "ignore" falls through to the full 200 representation below.
     }
 
     return new NextResponse(includeBody ? createMediaReadStream(pathname, undefined, media.bucketName) : null, {
       headers: {
         "Accept-Ranges": media.contentType.startsWith("video/") ? "bytes" : "none",
-        "Cache-Control": media.cacheControl,
+        "Cache-Control": cacheControl,
         "Content-Length": String(media.size),
         "Content-Type": media.contentType,
       },

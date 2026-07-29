@@ -6,7 +6,7 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/
 // firebase-timeline-store enforcement — only the process boundaries are
 // faked: the Firestore SDK (in-memory), the session cookie (switchable
 // current user), and the Cloudinary listing (empty). Covers the review's
-// P0: list scoping, direct GET, PATCH, DELETE, legacy-document claiming,
+// P0: list scoping, direct GET, PATCH, DELETE, unowned-document refusal,
 // and user-scoped id (trash-<uid>) pre-checks.
 
 type Stored = Record<string, unknown>;
@@ -193,19 +193,19 @@ describe("timeline authorization", () => {
     expect(state.docs.get("project-a1")?.ownerUid).toBe("user-a");
   });
 
-  it("first authenticated GET claims a legacy unowned document; others are then denied", async () => {
+  // Both of these used to assert the opposite: a GET or a list CLAIMED an
+  // unowned record for whoever arrived first. The legacy records that justified
+  // that are migrated, so knowing an id is no longer a claim to it.
+  it("GET denies an unowned document and writes nothing", async () => {
     seedProject("project-legacy", undefined);
 
     const response = await getTimeline(new Request("http://test.local"), params("project-legacy"));
-    expect(response.status).toBe(200);
-    expect(state.docs.get("project-legacy")?.ownerUid).toBe("user-a");
 
-    asUser("user-b");
-    const denied = await getTimeline(new Request("http://test.local"), params("project-legacy"));
-    expect(denied.status).toBe(404);
+    expect(response.status).toBe(404);
+    expect(state.docs.get("project-legacy")?.ownerUid).toBeUndefined();
   });
 
-  it("list returns own and claims legacy projects, never another user's", async () => {
+  it("list returns only the requester's own projects and claims nothing", async () => {
     seedProject("project-a1", "user-a");
     seedProject("project-b1", "user-b");
     seedProject("project-legacy", undefined);
@@ -215,9 +215,24 @@ describe("timeline authorization", () => {
     const { projects } = (await response.json()) as { projects: { id: string }[] };
     const ids = projects.map((project) => project.id).sort();
 
-    expect(ids).toEqual(["project-a1", "project-legacy"]);
-    expect(state.docs.get("project-legacy")?.ownerUid).toBe("user-a");
+    expect(ids).toEqual(["project-a1"]);
+    // Listing is read-only now — no ownership was stamped on the way past.
+    expect(state.docs.get("project-legacy")?.ownerUid).toBeUndefined();
     expect(state.docs.get("project-b1")?.ownerUid).toBe("user-b");
+  });
+
+  it("refuses to overwrite or delete an unowned document", async () => {
+    seedProject("project-legacy", undefined);
+
+    const patch = await patchTimeline(
+      patchRequest({ id: "project-legacy", title: "Taken", clips: [clip("x")] }),
+      params("project-legacy"),
+    );
+    expect(patch.status).toBe(404);
+
+    const removed = await deleteTimeline(new Request("http://test.local"), params("project-legacy"));
+    expect(removed.status).toBe(404);
+    expect(state.docs.has("project-legacy")).toBe(true);
   });
 
   it("rejects another user's trash id before any storage access", async () => {
