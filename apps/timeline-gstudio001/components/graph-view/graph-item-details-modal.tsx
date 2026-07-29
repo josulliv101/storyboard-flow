@@ -13,12 +13,14 @@ import {
   useCollectionsSelector,
   useCollectionsStore,
   useLiveTrim,
+  type CollectionItemNode,
   type MediaNode,
   type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
 
 import { formatSeconds } from "@/lib/format-duration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
+import { CollectionDetailsBody } from "./graph-collection-details";
 import { useItemDetails } from "./graph-item-details-context";
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
@@ -148,7 +150,19 @@ function useScopedHistory(nodeId: string) {
   const undoableHere = useCollectionsSelector((s) => {
     if (!s.canUndo) return false;
     const last = s.historyEntries[s.historyEntries.length - 1];
-    return last?.command.type === "update-media" && last.command.nodeId === nodeId;
+    if (!last) return false;
+    // Whatever this ITEM can do to itself: trim (media), rename (either), or
+    // a disable toggle. Structural commands name a parent and a set of moved
+    // nodes rather than "this item", so they stay out of reach here — which
+    // is the point of scoping.
+    const command = last.command;
+    if (command.type === "update-media" || command.type === "rename-node") {
+      return command.nodeId === nodeId;
+    }
+    if (command.type === "set-node-disabled") {
+      return command.nodeIds.length === 1 && command.nodeIds[0] === nodeId;
+    }
+    return false;
   });
   const [undoneHere, setUndoneHere] = useState(0);
   const redoableHere = canRedo && undoneHere > 0;
@@ -281,6 +295,21 @@ function SecondsField({
       />
       <span className="text-zinc-600">s</span>
     </label>
+  );
+}
+
+/**
+ * The collection half of the view. Split into its own module because the
+ * two bodies share only their frame — the header, the hero and the facts
+ * below it answer different questions for a timeline than for a clip.
+ */
+function CollectionDetails({
+  node,
+  onClose,
+}: Readonly<{ node: CollectionItemNode; onClose: () => void }>) {
+  const history = useScopedHistory(node.id);
+  return (
+    <CollectionDetailsBody node={node} hero={HERO} history={history} onClose={onClose} />
   );
 }
 
@@ -508,8 +537,7 @@ export function GraphItemDetailsModal() {
   // the source strip, a still gets its image and its duration (PL10-012).
   const node = useCollectionsSelector((s) => {
     if (openId === null) return null;
-    const found = s.graph.nodesById.get(parseNodeId(openId));
-    return found?.kind === "media" ? found : null;
+    return s.graph.nodesById.get(parseNodeId(openId)) ?? null;
   });
   const [mounted, setMounted] = useState(false);
   const openIdRef = useRef<string | null>(null);
@@ -517,7 +545,9 @@ export function GraphItemDetailsModal() {
   // Opening and closing are driven by the context flag so the toolbar button,
   // Escape, the close button and the scrim all go through one path.
   useEffect(() => {
-    const wanted = openId !== null && node !== null && !!node.src;
+    // A collection has no `src` and needs none — its hero is its contents.
+    const wanted =
+      openId !== null && node !== null && (node.kind === "collection" || !!node.src);
     if (wanted === mounted) return;
 
     if (wanted && node) {
@@ -543,6 +573,10 @@ export function GraphItemDetailsModal() {
     });
   }, [openId, node, mounted]);
 
-  if (!mounted || node === null || !node.src) return null;
+  if (!mounted || node === null) return null;
+  if (node.kind === "collection") {
+    return <CollectionDetails node={node} onClose={() => setOpenId(null)} />;
+  }
+  if (!node.src) return null;
   return <ModalBody node={node} onClose={() => setOpenId(null)} />;
 }

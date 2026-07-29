@@ -10,6 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { createPortal } from "react-dom";
 
 import {
   MIN_ITEM_WIDTH,
@@ -870,10 +871,16 @@ function SeekRailRow({
       if (label) {
         label.textContent = formatSeconds(clamped);
         label.style.visibility = active ? "" : "hidden";
-        // Clamped into the rail so the readout stays legible at both ends.
+        // VIEWPORT coordinates, because the label is portaled to the body —
+        // read off the thumb it rides so it needs no knowledge of where the
+        // rail sits. Clamped to the viewport (not the rail) for the same
+        // reason it used to be clamped to the rail: it must stay legible at
+        // both ends rather than hanging off the edge.
+        const thumbRect = thumb.getBoundingClientRect();
         const half = label.offsetWidth / 2;
-        const x = fraction * rail.clientWidth;
-        label.style.left = `${Math.min(rail.clientWidth - half, Math.max(half, x))}px`;
+        const centre = thumbRect.left + thumbRect.width / 2;
+        label.style.left = `${Math.min(window.innerWidth - half - 4, Math.max(half + 4, centre))}px`;
+        label.style.top = `${thumbRect.top - 6}px`;
       }
       rail.setAttribute("aria-valuenow", (clamped - rowStart).toFixed(1));
       rail.setAttribute(
@@ -1031,18 +1038,24 @@ function SeekRailRow({
           clock is up in the preview chrome, too far to read mid-drag. Only
           during a drag: on hover it would follow a playhead nobody is moving.
           pointer-events-none so it can never take the drag's own pointer. */}
-      {scrubbing && (
-        <span
-          ref={timeRef}
-          data-rail-time
-          aria-hidden="true"
-          // BELOW the rail, not above: the surfaces sit hard against the
-          // sticky breadcrumb header, and there is nothing overhead to draw
-          // into — the readout was simply cut off (PL9-007). Downward it
-          // overlays the cards, which are its own surface and beneath it.
-          className="pointer-events-none absolute top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[11px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
-        />
-      )}
+      {scrubbing &&
+        createPortal(
+          <span
+            ref={timeRef}
+            data-rail-time
+            aria-hidden="true"
+            // ABOVE the thumb (PL11-013), which is where the eye already is:
+            // the pointer is on the rail, and a label under it sits behind
+            // the hand. It could not live above while it was a CHILD of the
+            // rail — the surfaces clip vertically and sit hard against the
+            // sticky header, which is what put it below in PL9-007. Portaled
+            // and FIXED, nothing clips it; the paint above positions it in
+            // viewport coordinates. z-[70] clears the header it may overlap,
+            // and pointer-events-none keeps it out of the drag's way.
+            className="pointer-events-none fixed z-[70] -translate-x-1/2 -translate-y-full whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[11px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
+          />,
+          document.body,
+        )}
     </div>
   );
 }
@@ -1371,12 +1384,19 @@ export function GraphStripSeekRail({
         windowX >= -overhang &&
         windowX <= outer.clientWidth + overhang;
       thumb.style.visibility = visible ? "" : "hidden";
-      // The scrub readout rides the thumb. Clamped into the rail so it stays
-      // legible at both ends instead of hanging off the timeline.
+      // The scrub readout rides the thumb, ABOVE it, in viewport coordinates
+      // (PL11-013) — it is portaled to the body, so rail-local pixels would
+      // mean nothing. Clamped to the viewport so it stays legible at both
+      // ends instead of hanging off the timeline, and hidden whenever the
+      // thumb is: a time label with no thumb under it points at nothing.
       const label = timeRef.current;
       if (label) {
+        label.style.visibility = visible ? "" : "hidden";
+        const thumbRect = thumb.getBoundingClientRect();
         const half = label.offsetWidth / 2;
-        label.style.left = `${Math.min(outer.clientWidth - half, Math.max(half, windowX))}px`;
+        const centre = thumbRect.left + thumbRect.width / 2;
+        label.style.left = `${Math.min(window.innerWidth - half - 4, Math.max(half + 4, centre))}px`;
+        label.style.top = `${thumbRect.top - 6}px`;
       }
     };
     const syncScroll = () => {
@@ -1625,18 +1645,24 @@ export function GraphStripSeekRail({
       />
       {/* The scrub readout, twin of the strip rail's — see there for why it
           exists and why it is drag-only. */}
-      {scrubbing && (
-        <span
-          ref={timeRef}
-          data-rail-time
-          aria-hidden="true"
-          // BELOW the rail, not above: the surfaces sit hard against the
-          // sticky breadcrumb header, and there is nothing overhead to draw
-          // into — the readout was simply cut off (PL9-007). Downward it
-          // overlays the cards, which are its own surface and beneath it.
-          className="pointer-events-none absolute top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[11px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
-        />
-      )}
+      {scrubbing &&
+        createPortal(
+          <span
+            ref={timeRef}
+            data-rail-time
+            aria-hidden="true"
+            // ABOVE the thumb (PL11-013), which is where the eye already is:
+            // the pointer is on the rail, and a label under it sits behind
+            // the hand. It could not live above while it was a CHILD of the
+            // rail — the surfaces clip vertically and sit hard against the
+            // sticky header, which is what put it below in PL9-007. Portaled
+            // and FIXED, nothing clips it; the paint above positions it in
+            // viewport coordinates. z-[70] clears the header it may overlap,
+            // and pointer-events-none keeps it out of the drag's way.
+            className="pointer-events-none fixed z-[70] -translate-x-1/2 -translate-y-full whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[11px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
+          />,
+          document.body,
+        )}
     </div>
   );
 }

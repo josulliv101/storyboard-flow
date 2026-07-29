@@ -3879,6 +3879,10 @@ test.describe("graph view E2E", () => {
     const readoutBox = (await readout.boundingBox())!;
     expect(Math.abs(readoutBox.x + readoutBox.width / 2 - (thumbBox.x + thumbBox.width / 2)))
       .toBeLessThan(40);
+    // ABOVE the thumb (PL11-013), not below it: the pointer is on the rail,
+    // so a label underneath sits behind the user's own hand. It clears the
+    // thumb entirely rather than merely being higher-centred.
+    expect(readoutBox.y + readoutBox.height).toBeLessThanOrEqual(thumbBox.y + 1);
 
     // Gone on release.
     await page.mouse.up();
@@ -4315,6 +4319,41 @@ test.describe("graph view E2E", () => {
     } finally {
       await context.close();
     }
+  });
+
+  test("a collection opens its own details view", async ({ page }) => {
+    // PL11-012. Drilling in already answers "what is in here", so this answers
+    // what you would otherwise drill in and back out to learn: how much is
+    // inside, how long it runs, whether it is loaded — plus a rename.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+
+    const details = page.locator("[data-item-details]");
+    await expect(details).toHaveCount(0);
+
+    await openItemDetails(page, CHILD_ID);
+    await expect(details).toHaveCount(1);
+    await expect(details).toHaveAttribute("data-item-details-kind", "collection");
+    await expect(details).toContainText("Scene A");
+    // Its facts, not a clip's: no trim fields anywhere in here.
+    await expect(page.locator("[data-trim-field]")).toHaveCount(0);
+    await expect(details).toContainText("items");
+
+    // Rename lands the same way it does from the card — through the child
+    // document's title, which is the source of truth for a collection's name.
+    await details.locator("text=Scene A").first().dblclick();
+    const editor = page.getByRole("textbox", { name: "Timeline name" });
+    await editor.fill("Opening beat");
+    await editor.press("Enter");
+    await expect(details).toContainText("Opening beat");
+    await expect
+      .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
+      .toBe("Opening beat");
+
+    // And it can hand off to the thing it describes.
+    await page.locator("[data-item-details-open]").click();
+    await expect(details).toHaveCount(0);
+    await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
   });
 
   test("the header says whether the work is saved", async ({ page }) => {
