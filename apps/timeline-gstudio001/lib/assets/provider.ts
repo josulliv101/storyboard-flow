@@ -4,16 +4,26 @@
 // adapters are.
 
 import type {
+  AssetKind,
   AssetPage,
   AssetProviderCapabilities,
   AssetProviderDescriptor,
   AssetQuery,
 } from "./types";
 
-/** Per-request context. Today just the signed-in user; per-user OAuth
- *  credentials (Drive/Dropbox) will arrive here when that track lands, which
- *  is why every provider method takes it rather than reading globals. */
-export type AssetContext = Readonly<{ uid: string; projectId: string }>;
+/** Who is asking. Per-user OAuth credentials (Drive/Dropbox) will arrive here
+ *  when that track lands, which is why every provider method takes it rather
+ *  than reading globals. */
+export type AssetOwnerContext = Readonly<{ uid: string }>;
+
+/** Per-request context for BROWSING, which is always scoped to one project. */
+export type AssetContext = AssetOwnerContext & Readonly<{ projectId: string }>;
+
+/** What `remove` needs to address a file. The `kind` is here because a
+ *  provider can need it (Cloudinary's destroy endpoint is per resource type)
+ *  and the caller is a sweep running 30 days after the clip was deleted, with
+ *  no clip left to ask. */
+export type AssetDeleteTarget = Readonly<{ assetId: string; kind: AssetKind }>;
 
 export type AssetProvider = AssetProviderDescriptor &
   Readonly<{
@@ -21,6 +31,19 @@ export type AssetProvider = AssetProviderDescriptor &
      *  outside its capabilities by ignoring them (never throwing): the
      *  capabilities gate the UI, not the wire. */
     list: (ctx: AssetContext, query: AssetQuery) => Promise<AssetPage>;
+    /**
+     * Permanently delete one asset. Present exactly when
+     * `capabilities.delete` is true — the registry has no way to enforce that
+     * pairing, so an adapter declaring the capability without the method is a
+     * bug its own tests should catch.
+     *
+     * Takes an OWNER context, not a project one: deletion addresses a durable
+     * asset id, and by the time this runs there is no project view of it. A
+     * missing asset is a SUCCESS — the desired end state is "this file is not
+     * there", and a sweep that throws on an already-deleted object would jam
+     * behind it forever.
+     */
+    remove?: (ctx: AssetOwnerContext, target: AssetDeleteTarget) => Promise<void>;
   }>;
 
 export type AssetProviderRegistry = Readonly<{

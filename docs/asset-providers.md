@@ -105,8 +105,9 @@ serves both; only the source differs:
    work). The SDK loads lazily and the deps (`listObjects` / `urlFor`) are
    injectable, so the adapter unit-tests without AWS. The provider registers
    only when the bucket is configured; the palette's picker `<select>`
-   appears only when more than one provider is installed. Upload/delete
-   through the seam is still ahead (both providers declare them off).
+   appears only when more than one provider is installed. Upload through the
+   seam is still ahead (both providers declare it off — media enters this app
+   by being dropped on the board, which uses the vendor store directly).
 5. ✅ Retire the legacy virtual-timeline pipeline onto the seam, then delete
    it. Phase 5 first moved the `/api/timelines/asset-library-*` GET branch
    onto the Cloudinary provider (no more bespoke listing or hand-rolled
@@ -118,11 +119,45 @@ serves both; only the source differs:
    route branch and their tests — since nothing else ever requested those
    ids. The palette browses `/api/assets` and needs no timeline document.
 
+6. ✅ **Deletion** (PL12-003). `AssetProvider.remove(ctx, { assetId, kind })`,
+   declared by `capabilities.delete`, implemented by both adapters, and taking
+   an OWNER context rather than a project one — a delete addresses a durable
+   asset id, and by the time it runs there is no project view of it. Each
+   adapter refuses an id outside its owner's prefix, and a missing asset is a
+   SUCCESS: the desired end state is "not there", and a sweep that threw on an
+   already-deleted object would jam behind it forever.
+
 The seam is now the only asset-BROWSING path in the app. `listCloudinaryAssets`
 survives in exactly two places: the Cloudinary provider adapter (its data
 source), and `serve-timeline`'s document HEALING (validating a stored clip's
 media still exists) — a different concern from browsing, left as-is. No route
 lists assets to browse them except through a provider.
+
+## Reclaiming storage
+
+Nothing deleted an uploaded file until PL12-003, so a Cloudinary/S3 object
+outlived every timeline that referenced it. The rule now is REFERENCES, and it
+runs in two halves:
+
+- **Marking** — `DELETE /api/trash` (emptying the bin) scans the owner's
+  documents and writes a tombstone for each trashed clip's `sourceAsset` that
+  no surviving clip points at. `lib/assets/asset-references.ts` holds the pure
+  rule; `lib/asset-tombstones.ts` the records.
+- **Sweeping** — `GET /api/assets/reclaim`, cron-driven (`vercel.json`,
+  `CRON_SECRET`), takes tombstones past their 30-day grace period,
+  **re-checks references**, and deletes only what is still unreferenced.
+  Anything back in use loses its tombstone instead.
+
+Three properties worth preserving if this is ever rewritten:
+
+- The re-check is what lets the marking scan be merely careful. A mark is an
+  intention, never an authority.
+- Every failure leaks storage rather than losing a file: an un-provenanced clip
+  names no asset and is never marked; an incomplete document scan throws
+  (`TimelineScanIncompleteError`) instead of reporting "unreferenced"; a failed
+  vendor delete leaves the tombstone due.
+- The tombstone collection must NOT get a Firestore TTL policy. TTL would expire
+  the record and strand the file — the exact inverse of the job.
 
 ## Enabling S3
 

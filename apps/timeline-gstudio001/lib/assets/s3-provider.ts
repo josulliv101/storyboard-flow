@@ -34,6 +34,10 @@ export type S3Deps = Readonly<{
   listObjects: () => Promise<readonly S3ObjectSummary[]>;
   /** A browser-usable URL for an object key (public base or presigned). */
   urlFor: (key: string) => Promise<string>;
+  /** Permanently remove one object. S3's DeleteObject is idempotent — deleting
+   *  a key that isn't there succeeds — which is exactly the contract the
+   *  provider's `remove` wants. */
+  deleteObject: (key: string) => Promise<void>;
 }>;
 
 export type S3Config = Readonly<{
@@ -145,14 +149,23 @@ function createSdkDeps(config: S3Config): S3Deps {
       nextToken?: string;
     }>;
     presign: (key: string) => Promise<string>;
+    remove: (key: string) => Promise<void>;
   };
   let handlesPromise: Promise<SdkHandles> | null = null;
   const handles = () =>
     (handlesPromise ??= (async () => {
-      const [{ S3Client, ListObjectsV2Command, GetObjectCommand }, { getSignedUrl }] =
-        await Promise.all([import("@aws-sdk/client-s3"), import("@aws-sdk/s3-request-presigner")]);
+      const [
+        { S3Client, ListObjectsV2Command, GetObjectCommand, DeleteObjectCommand },
+        { getSignedUrl },
+      ] = await Promise.all([
+        import("@aws-sdk/client-s3"),
+        import("@aws-sdk/s3-request-presigner"),
+      ]);
       const client = new S3Client({ region: config.region });
       return {
+        remove: async (key: string) => {
+          await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
+        },
         send: async ({ prefix, token }) => {
           const output = await client.send(
             new ListObjectsV2Command({
@@ -210,6 +223,7 @@ function createSdkDeps(config: S3Config): S3Deps {
       }
       return handles().then((sdk) => sdk.presign(key));
     },
+    deleteObject: (key) => handles().then((sdk) => sdk.remove(key)),
   };
 }
 
@@ -251,7 +265,9 @@ export function createS3AssetProvider(
       // needed, so this is exactly as complete as browsing is here.
       search: true,
       upload: false,
-      delete: false,
+      // `remove` below. Nothing uploads to S3 through this app yet, so that
+      // capability stays off.
+      delete: true,
     },
     async list(ctx, query) {
       const objects = await listing();
@@ -271,6 +287,20 @@ export function createS3AssetProvider(
       // never throw) — without tags every asset would sit at the tags root,
       // which is just the folder-flat view, so serve folders regardless.
       return pageFromFlatListing(assets, query);
+    },
+    async remove(ctx, target) {
+      // Keys are exposed only beneath `<prefix>/<uid>/<projectId>/`, which is
+      // the ownership boundary this adapter already browses by — so it is also
+      // what a delete must be held to. `kind` is unused: S3 addresses an
+      // object by key alone.
+      const ownerPrefix = `${config.prefix}${ctx.uid}/`;
+      if (!target.assetId.startsWith(ownerPrefix)) {
+        throw new Error("Refusing to delete an S3 object outside the owner's prefix.");
+      }
+      await deps.deleteObject(target.assetId);
+      // The listing cache would otherwise keep serving the deleted object for
+      // up to its TTL, and the palette would render a tile whose URL 404s.
+      cached = null;
     },
   };
 }

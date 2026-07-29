@@ -3,23 +3,37 @@ import { NextResponse } from "next/server";
 import { readJsonObject } from "@/lib/read-json-body";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import {
+  collectOwnedTimelineClips,
   getFirebaseTimelineDocument,
   saveFirebaseTimelineDocument,
 } from "@/lib/firebase-timeline-store";
+import {
+  assetCandidatesFromClips,
+  assetKeysFromClips,
+  unreferencedCandidates,
+} from "@/lib/assets/asset-references";
+import { markAssetsForDeletion } from "@/lib/asset-tombstones";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Empty the signed-in user's trash bin: clear the document, and nothing else.
+ * Empty the signed-in user's trash bin, and MARK the uploaded files nothing
+ * points at any more.
  *
- * The UPLOADED FILES ARE DELIBERATELY LEFT ALONE. This endpoint used to delete
- * the Cloudinary asset behind every trashed clip, which was unsafe (one upload
- * can be referenced from several timelines — this app mints stable per-asset
- * clip ids, so placing an asset twice makes two clips of one file) and, more
- * to the point, is not what emptying a bin should mean here: the files stay
- * browsable in the Assets library and can be placed again. Reclaiming unused
- * storage is a separate, deliberate job — see the note in the trash drawer.
+ * Marking, not deleting. An earlier version of this endpoint deleted the
+ * Cloudinary asset behind every trashed clip, which was unsafe for a reason
+ * that has not gone away: one upload can back several clips (this app mints
+ * stable per-asset clip ids, so placing an asset twice makes two clips of one
+ * file), and the bin is per-USER while an asset is per-project, so one bin
+ * spans everything its owner owns. The rule is therefore REFERENCES — an asset
+ * is marked only when no document of this user's still points at it — and even
+ * then the file survives a 30-day grace period the sweep re-checks before
+ * honouring (see lib/asset-tombstones).
+ *
+ * A failure to mark leaks storage. That is the failure direction this whole
+ * design is built to have, so marking runs AFTER the bin is safely emptied and
+ * never fails the request.
  */
 export async function DELETE() {
   try {
@@ -29,23 +43,55 @@ export async function DELETE() {
     const trashId = `trash-${user.uid}`;
     const trashDoc = await getFirebaseTimelineDocument(trashId, user.uid);
     const cleared = trashDoc?.clips.length ?? 0;
+    if (!trashDoc || cleared === 0) return NextResponse.json({ success: true, cleared });
 
-    if (trashDoc && cleared > 0) {
-      // `allowEmptying` is what makes this work at all. The save path refuses
-      // an empty write over a non-empty document (a stale client erasing real
-      // work) and, separately, reads `lastNonEmptyDocument` back whenever the
-      // stored clips are empty — so without the opt-in this endpoint threw
-      // 500, and had it not thrown the bin would have re-read full anyway.
-      // A copy, not a mutation of the loaded document.
-      await saveFirebaseTimelineDocument({ ...trashDoc, clips: [] }, user.uid, {
-        allowEmptying: true,
-      });
-    }
+    const candidates = assetCandidatesFromClips(trashDoc.clips);
 
-    return NextResponse.json({ success: true, cleared });
+    // `allowEmptying` is what makes this work at all. The save path refuses
+    // an empty write over a non-empty document (a stale client erasing real
+    // work) and, separately, reads `lastNonEmptyDocument` back whenever the
+    // stored clips are empty — so without the opt-in this endpoint threw
+    // 500, and had it not thrown the bin would have re-read full anyway.
+    // A copy, not a mutation of the loaded document.
+    await saveFirebaseTimelineDocument({ ...trashDoc, clips: [] }, user.uid, {
+      allowEmptying: true,
+    });
+
+    const marked = await markUnreferencedAssets(user.uid, trashId, candidates);
+    return NextResponse.json({ success: true, cleared, marked });
   } catch (error) {
     console.error("[TRASH_EMPTY_ERROR]", error);
     return NextResponse.json({ error: "Unable to empty the trash." }, { status: 500 });
+  }
+}
+
+/**
+ * Which of the emptied bin's assets nothing else points at, marked.
+ *
+ * The bin itself is EXCLUDED from the scan — its clips are the candidates, and
+ * a candidate is not a reference to itself. (It has already been written empty
+ * by the time this runs, but excluding it explicitly means the rule does not
+ * depend on that ordering.)
+ *
+ * Never throws. Emptying the bin is the user's request and it has already
+ * succeeded; a scan that failed, or that could not be completed, must leave the
+ * files alone rather than fail the response — and an incomplete scan
+ * (`TimelineScanIncompleteError`) must never be read as "nothing references
+ * this".
+ */
+async function markUnreferencedAssets(
+  uid: string,
+  trashId: string,
+  candidates: ReturnType<typeof assetCandidatesFromClips>,
+): Promise<number> {
+  if (candidates.length === 0) return 0;
+  try {
+    const liveClips = await collectOwnedTimelineClips(uid, { excludeIds: [trashId] });
+    const orphans = unreferencedCandidates(candidates, new Set(assetKeysFromClips(liveClips)));
+    return await markAssetsForDeletion(uid, orphans);
+  } catch (error) {
+    console.error("[TRASH_MARK_ERROR]", error);
+    return 0;
   }
 }
 
@@ -64,8 +110,12 @@ export async function DELETE() {
  * a mounted graph view holds these clips as nodes under its trash root and
  * would write them straight back on the next commit that touches the trash.
  *
- * Uploaded files are untouched, exactly as for emptying: one upload can back
- * several clips, and discarding a bin entry is not deleting a file.
+ * Uploaded files are untouched, and UNLIKE emptying this path marks nothing.
+ * The asymmetry is deliberate: discarding is what a RESTORE does to the
+ * leftover copies (see lib/graph-trash-discard — the drawer restores one clip
+ * and discards its duplicates), so a discard usually means an asset is coming
+ * back into use, not going out of it. Emptying the bin is the deliberate "I am
+ * finished with this" that earns a mark.
  */
 export async function POST(request: Request) {
   try {

@@ -15,13 +15,19 @@ const ENV = {
   S3_ASSETS_PUBLIC_URL: "https://cdn.test",
 } as const;
 
-function deps(objects: readonly S3ObjectSummary[]): S3Deps {
+function deps(
+  objects: readonly S3ObjectSummary[],
+  deletes: string[] = [],
+): S3Deps {
   return {
     listObjects: async () => objects,
     // Public-base style: encoded key appended. The presigned path is exercised
     // separately below.
     urlFor: async (key) =>
       `https://cdn.test/${key.split("/").map(encodeURIComponent).join("/")}`,
+    deleteObject: async (key) => {
+      deletes.push(key);
+    },
   };
 }
 
@@ -147,8 +153,10 @@ describe("createS3AssetProvider", () => {
       // S3 has no search API and needs none: the same in-memory derivation
       // over the same listing that already serves folders.
       search: true,
+      // Nothing uploads to S3 through this app yet; deleting is implemented
+      // (see the remove tests below).
       upload: false,
-      delete: false,
+      delete: true,
     });
     // A stray tagPath is ignored (contract: never throw), served as folders.
     const page = await s3.list(
@@ -173,10 +181,65 @@ describe("createS3AssetProvider", () => {
     const created = createS3AssetProvider(ENV, {
       listObjects,
       urlFor: async (key) => `https://cdn.test/${key}`,
+      deleteObject: async () => {},
     });
     if (created === null) throw new Error("expected provider");
     await created.list({ uid: "u", projectId: "project-a" }, {});
     await created.list({ uid: "u", projectId: "project-b" }, { folder: ["x"] });
     expect(listObjects).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("remove", () => {
+  it("deletes the object by key", async () => {
+    const deletes: string[] = [];
+    const created = createS3AssetProvider(ENV, deps([], deletes));
+    if (created === null) throw new Error("expected provider");
+
+    await created.remove?.({ uid: "u" }, { assetId: "media/u/project-a/a.png", kind: "image" });
+    expect(deletes).toEqual(["media/u/project-a/a.png"]);
+  });
+
+  it("refuses a key outside the owner's prefix", async () => {
+    // The listing only ever exposes `<prefix>/<uid>/<projectId>/…`, so that is
+    // the boundary a delete has to be held to as well.
+    const deletes: string[] = [];
+    const created = createS3AssetProvider(ENV, deps([], deletes));
+    if (created === null) throw new Error("expected provider");
+
+    for (const assetId of [
+      "media/other-user/project-a/a.png",
+      // The trailing slash in the prefix is what stops a uid prefix-matching a
+      // longer one.
+      "media/u2/project-a/a.png",
+      "somewhere/else.png",
+    ]) {
+      await expect(created.remove?.({ uid: "u" }, { assetId, kind: "image" })).rejects.toThrow(
+        /outside the owner's prefix/,
+      );
+    }
+    expect(deletes).toEqual([]);
+  });
+
+  it("declares the capability it implements", () => {
+    expect(provider([]).capabilities.delete).toBe(true);
+    expect(provider([]).remove).toBeTypeOf("function");
+  });
+
+  it("drops the listing cache, so a deleted object stops being served", async () => {
+    const listObjects = vi.fn(async () => [{ key: "media/u/p/a.png" }] as S3ObjectSummary[]);
+    const created = createS3AssetProvider(ENV, {
+      listObjects,
+      urlFor: async (key) => `https://cdn.test/${key}`,
+      deleteObject: async () => {},
+    });
+    if (created === null) throw new Error("expected provider");
+
+    await created.list({ uid: "u", projectId: "p" }, {});
+    await created.remove?.({ uid: "u" }, { assetId: "media/u/p/a.png", kind: "image" });
+    await created.list({ uid: "u", projectId: "p" }, {});
+    // Without the invalidation the second browse is served from the 30s cache
+    // and renders a tile whose URL now 404s.
+    expect(listObjects).toHaveBeenCalledTimes(2);
   });
 });
