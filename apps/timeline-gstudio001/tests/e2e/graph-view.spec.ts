@@ -1835,6 +1835,46 @@ test.describe("graph view E2E", () => {
       .toEqual(["alpha", "bravo", "clip-scene", "charlie", "g1"]);
   });
 
+  test("a breadcrumb moves the board without waiting for the server", async ({ page }) => {
+    const api = await installGraphApi(page);
+    api.documents
+      .get(CHILD_ID)!
+      .clips.push(collectionClip("clip-nested", GRANDCHILD_ID, 2, "Scene B", 1));
+    api.documents.set(GRANDCHILD_ID, {
+      id: GRANDCHILD_ID,
+      title: "Scene B",
+      clips: [mediaClip("g1", "image", 0, 4)],
+    });
+
+    await page.goto(
+      `${GRAPH_URL}/${encodeURIComponent(CHILD_ID)}/${encodeURIComponent(GRANDCHILD_ID)}?surface=strip`,
+    );
+    await strip(page, GRANDCHILD_ID)
+      .locator('[data-node-id="g1"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+
+    // STALL every RSC navigation request. A focus change needs NOTHING from
+    // the server — the graph is already in memory and the page segment only
+    // primes documents the client can fetch itself — so the board must move
+    // regardless. This is precisely what a plain <Link> crumb could not do:
+    // it cannot repaint until the App Router commits the new pathname, and
+    // that commit waits on this very request. Asserting the mechanism rather
+    // than a stopwatch, because a timing budget would be flaky and would not
+    // fail at all on a fast local server.
+    await page.route(/_rsc=/, async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await route.abort().catch(() => {});
+    });
+
+    await page.locator(`[data-graph-ancestor-drop="${CHILD_ID}"] a`).click();
+
+    // Scene A's own clips are on screen well inside the stall.
+    await expect(strip(page, CHILD_ID).locator('[data-node-id="c1"]')).toBeVisible({
+      timeout: 1500,
+    });
+    await page.unroute(/_rsc=/);
+  });
+
   test("hovering a drop zone highlights the parent crumb / animates the sidebar trash icon", async ({
     page,
   }) => {

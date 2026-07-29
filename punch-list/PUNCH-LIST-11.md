@@ -356,3 +356,68 @@ Verified live: `getComputedStyle(svg).strokeWidth` is 1.5px on the rail's
 lucide glyphs (their `stroke-width` ATTRIBUTE is still 2 — the CSS wins),
 1.5px on the folders, 1.9px on the badges, and the logo computes to
 rgb(255, 255, 255).
+
+## PL11-014 — The breadcrumb stops waiting for the server
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-view-chrome.tsx`, `graph-navigation.tsx`
+- Screenshot: Not captured
+
+Reported as "a big delay before the new content shows" when clicking a crumb —
+about a second and a half.
+
+The trail was the last navigation in the app still relying on a bare
+`next/link`. A Link cannot repaint the board until the App Router commits the
+new pathname, and that commit waits on an RSC request the board needs nothing
+from: the graph is already in memory, and the page segment only PRIMES
+documents the client can fetch itself. Every other way to change focus — a
+folder card, "Open this timeline", the O key — goes through `openTimeline`,
+which publishes the destination before it pushes. The crumbs never got it.
+
+Measured in dev, where that round trip is local and so as cheap as it will
+ever be:
+
+| Cold navigation | First feedback | Fully settled |
+| --- | --- | --- |
+| Drill in | 20ms | 530ms |
+| Breadcrumb up (before) | 83ms | 878ms |
+| Breadcrumb up (after) | 20ms | — |
+
+The signature was that the crumb's content change and its URL change landed on
+the SAME millisecond, four times out of four (53.6, 67.2, 94.8, 105.1) — the
+view was not working, it was waiting. The hydration tail is shared by both
+directions and is not what this fixes; the dead window at the front is. In
+production that window is a network hop, and a control that does nothing at
+all for a few hundred milliseconds reads as broken rather than slow.
+
+All three link kinds route through `openTimeline` now: the ancestor crumbs,
+the folded ones in the overflow menu, and the back arrow — except at the root,
+where "up" leaves for the projects page, a genuine document load with nothing
+to be optimistic about.
+
+They stay real anchors. The handler claims ONLY the plain left click, so
+modified and middle clicks still open a tab or a window, and `openTimeline`
+now returns whether it took the navigation: a crumb whose parent chain does
+not reach this project hands the click back to the browser instead of eating
+it.
+
+Acceptance criteria:
+
+- A crumb click repaints the board without a server round trip.
+- Ctrl/Cmd/Shift click still opens a new tab or window.
+- Back/Forward still reconcile the board with the URL.
+
+Verified live: the cold crumb hop repaints at 20.5ms (was 82.8ms), with the
+URL committing behind it and the board agreeing once it lands. Dispatched
+clicks confirm `defaultPrevented` is true for a plain click and false for
+ctrl/meta/shift. Back returns to the previous focus with URL, crumb and card
+count in agreement.
+
+Covered by "a breadcrumb moves the board without waiting for the server",
+which stalls every `_rsc=` request and requires the board to move anyway —
+asserting the mechanism rather than a stopwatch, since a timing budget would
+be flaky and would not fail on a fast local server. Proven fail-first, but
+only on the SECOND attempt: removing `preventDefault` left the test passing,
+because `openTimeline` still ran and the optimism survived. The honest revert
+is removing the `onClick` altogether, and that fails.
