@@ -1,5 +1,68 @@
 # Punch List 11
 
+## PL11-009 — One duration vocabulary
+
+- Status: Complete
+- Area: `lib/format-duration.ts` (new), board, cards, ruler, details view
+- Screenshot: Not captured
+
+The same timeline read "52.9s" on a card, "1m 24s" in the header and "6:32" on
+its parent, because four near-copies of one rule had drifted apart. Numbers
+that change shape between neighbouring pixels stop feeling like measurements.
+
+One module, two registers, and the split is deliberate rather than an
+oversight:
+
+- READING — `formatDuration`: "12.4s" under a minute, "1:23" / "1:02:03" past
+  it. Rounded, and never more precision than the eye can use.
+- EDITING — `formatSeconds`: "12.40s", always seconds, because an in-point of
+  "1:02" is not something you can type back into a field.
+
+Anything editable takes the editing form; everything else reads. The ruler
+keeps its own entry point (`formatTick`) because whole-second ticks drop the
+".0" — a column reading "1.0s 2.0s 3.0s" is noise.
+
+Live after the change: header `2 clips · 7:31`, cards `52.9s` and `6:38`,
+details view `29.47s of 52.77s`.
+
+## PL11-010 — A floor under the type
+
+- Status: Complete
+- Area: the graph view's labels (28 occurrences across 8 files)
+- Screenshot: Not captured
+
+The rail had just gone to 28px glyphs while the board still ran 9px and 10px
+labels on near-black — two extremes with no middle register. Everything below
+11px came up to it; the view now renders at 11px and 12px only, and nothing
+overflowed its pill (checked by measuring `scrollWidth` against `clientWidth`
+for every leaf label on the board).
+
+11px is a floor for GLANCEABLE metadata, not a target: the readouts that
+matter (names, aggregates) already sit at 12px and up.
+
+## PL11-011 — Hover-only affordances on touch
+
+- Status: Complete
+- Area: `graph-item-content.tsx`
+- Screenshot: Not captured
+
+The details trigger hid itself until its card was hovered — which on a touch
+device means it hides forever, and it is the only way into the details view.
+The HIDING is now gated on hover existing at all
+(`[@media(hover:hover)]:opacity-0`): visible by default, hidden only where a
+pointer can reveal it. Busy beats unreachable.
+
+Audited the rest rather than assuming: the breadcrumb drop zones are
+drag-state-driven, the sidebar's tooltip labels are supplementary to buttons
+that are always visible and tappable, and the collection call-out is a
+hover-triggered flourish that simply never fires without a pointer. The
+trigger was the only control a touch user could not reach.
+
+TEST NOTE: `Emulation.setEmulatedMedia` with a `hover: none` feature leaves
+`(hover: hover)` matching in this Chromium — it would have proved nothing.
+The test opens a real `hasTouch` context instead, asserts
+`matchMedia("(hover: none)")` first, and taps the trigger.
+
 ## PL11-005 — F2 renames a media card in place
 
 - Status: Complete

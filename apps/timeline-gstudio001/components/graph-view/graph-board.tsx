@@ -15,6 +15,7 @@ import {
 
 import { flattenMediaOrder } from "@storyboard/timeline-domain";
 
+import { formatDuration } from "@/lib/format-duration";
 import { requestGraphToolInsert } from "@/lib/graph-view-events";
 import { Button } from "@/components/core/button";
 import {
@@ -125,13 +126,6 @@ function BoardMenu({
   );
 }
 
-/** "8 clips · 3m 00s" — matches the collection cards' badge idiom. */
-function formatAggregateSeconds(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${String(Math.round(seconds % 60)).padStart(2, "0")}s`;
-}
-
 /**
  * The centre readout of the header row: normally the focused timeline's
  * aggregate, and — while anything is selected — what the SELECTION adds up
@@ -160,7 +154,7 @@ function FocusedAggregate({
         className="hidden shrink-0 px-3 text-center font-mono text-[11px] tabular-nums text-amber-300/90 sm:block"
         title="Selected items"
       >
-        {selection.count} selected · {formatAggregateSeconds(selection.seconds)}
+        {selection.count} selected · {formatDuration(selection.seconds)}
       </span>
     );
   }
@@ -171,7 +165,7 @@ function FocusedAggregate({
       className="hidden shrink-0 px-3 text-center font-mono text-[11px] tabular-nums text-zinc-400 sm:block"
       title="Focused timeline total"
     >
-      {count} {count === 1 ? "clip" : "clips"} · {formatAggregateSeconds(seconds)}
+      {count} {count === 1 ? "clip" : "clips"} · {formatDuration(seconds)}
     </span>
   );
 }

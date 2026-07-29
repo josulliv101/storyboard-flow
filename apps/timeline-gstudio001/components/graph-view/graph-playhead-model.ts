@@ -15,6 +15,7 @@ import {
   TIMELINE_LEADING_PADDING_SECONDS,
 } from "@storyboard/timeline-model/constants";
 import type { TimelineClip } from "@storyboard/timeline-model/types";
+import { formatTick } from "@/lib/format-duration";
 
 import { GRID_GAP } from "./graph-view-config";
 
@@ -492,10 +493,7 @@ export function rulerTickLevel(index: number, maxTier: number): number {
 }
 
 export function formatRulerTick(seconds: number): string {
-  if (seconds < 60) return Number.isInteger(seconds) ? `${seconds}s` : `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = Math.round(seconds % 60);
-  return `${minutes}:${String(rest).padStart(2, "0")}`;
+  return formatTick(seconds);
 }
 
 export type RulerTick = Readonly<{ x: number; level: number; label: string }>;

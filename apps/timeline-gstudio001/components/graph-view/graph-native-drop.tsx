@@ -734,7 +734,7 @@ function NativeDropStatus({ upload }: Readonly<{ upload: DropSummary | null }>) 
       role="status"
       aria-live="polite"
       className={[
-        "pointer-events-none absolute bottom-1 left-1 z-20 rounded px-2 py-1 text-[10px]",
+        "pointer-events-none absolute bottom-1 left-1 z-20 rounded px-2 py-1 text-[11px]",
         upload === null
           ? "sr-only"
           : upload.tone === "progress"

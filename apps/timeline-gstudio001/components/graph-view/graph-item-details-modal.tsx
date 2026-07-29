@@ -17,6 +17,7 @@ import {
   type VideoMediaNode,
 } from "@storyboard/ui/dnd-collections";
 
+import { formatSeconds } from "@/lib/format-duration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { useItemDetails } from "./graph-item-details-context";
 
@@ -231,7 +232,7 @@ function TrimNumbers({
         →
       </span>
       <SecondsField label="out" value={outPoint} disabled={disabled} onCommit={(raw) => commit("out", raw)} />
-      <span className="text-zinc-600">of {full.toFixed(2)}s</span>
+      <span className="text-zinc-600">of {formatSeconds(full)}</span>
     </div>
   );
 }
@@ -371,7 +372,7 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
           )}
           <div className="flex items-center gap-3">
             <span className="font-mono text-[11px] tabular-nums text-zinc-400">
-              {video ? `${showing.toFixed(2)}s of ${fullDuration.toFixed(2)}s` : `${showing.toFixed(2)}s`}
+              {video ? `${formatSeconds(showing)} of ${formatSeconds(fullDuration)}` : formatSeconds(showing)}
             </span>
             {/* Scoped to this clip's own trims — see useScopedHistory. Each
                 release is one commit, so these step through the adjustments
@@ -445,8 +446,8 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
             />
           )}
           {video && (
-            <span className="absolute right-2 bottom-2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-amber-200">
-              {rawTime.toFixed(2)}s
+            <span className="absolute right-2 bottom-2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-amber-200">
+              {formatSeconds(rawTime)}
             </span>
           )}
         </div>
@@ -477,13 +478,13 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
               trimOut={trimOut}
               disabled={live !== null}
             />
-            <div className="text-right font-mono text-[10px] text-zinc-500">
+            <div className="text-right font-mono text-[11px] text-zinc-500">
               drag the amber edges to trim, the film to move the window
             </div>
           </>
         ) : (
-          <div className="flex items-center justify-between font-mono text-[10px] text-zinc-500">
-            <span className="text-amber-200/90">still · {showing.toFixed(2)}s on screen</span>
+          <div className="flex items-center justify-between font-mono text-[11px] text-zinc-500">
+            <span className="text-amber-200/90">still · {formatSeconds(showing)} on screen</span>
             <span>drag the card&apos;s edge on the strip to change how long it holds</span>
           </div>
         )}
