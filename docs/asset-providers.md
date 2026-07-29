@@ -1,152 +1,63 @@
 # Asset providers
 
-The asset panel is provider-agnostic. Everything above the seam —
-`/api/assets`, the graph palette, the (future) panel UI — speaks the neutral
-shapes in `apps/timeline-gstudio001/lib/assets/types.ts`; a backend joins by
+A provider is a media backend behind a neutral seam. Everything above it speaks
+the shapes in `apps/timeline-gstudio001/lib/assets/types.ts`; a backend joins by
 implementing one interface and registering one line.
 
-## The seam
+The seam is much smaller than it was. It was built over five phases to serve
+BROWSING — folders, tags, search, pagination, a provider picker — for the asset
+tray. The tray was retired in PL12-005 (media enters this app by being dropped
+on the board, and assets are project-scoped, so there was no reuse for a browser
+to serve), and PL12-006 removed the browse half that had no consumer left:
+`/api/assets`, `/api/assets/providers`, `lib/assets/path-folders.ts`, both
+adapters' `list()`, and the `Asset` / `AssetFolder` / `AssetPage` / `AssetQuery`
+model. Git history has all of it if browsing ever returns.
 
-- **`Asset` / `AssetFolder` / `AssetPage` / `AssetQuery`** (`lib/assets/types.ts`)
-  — the neutral model. Isomorphic: client components render these.
-- **`AssetProvider`** (`lib/assets/provider.ts`) — `descriptor + list(ctx, query)`.
-  `ctx` carries the signed-in uid today; per-user OAuth credentials
-  (Drive/Dropbox) arrive there when that track lands.
-- **`assetProviders`** (`lib/assets/registry.ts`) — the server-only instance.
-  Registration order is preference order; the first entry answers requests
-  that name no provider. Adding a provider = one adapter file + one entry.
+## The seam today
 
-**Search is a THIRD derivation over the flat listing**, beside folders and
-tags — see `pageFromSearch` in `lib/assets/path-folders.ts`. No provider
-delegates to a vendor search API: every path-shaped backend already loads its
-listing to derive folders, so search costs one more filter and both installed
-providers get it for the same code. It matches name, folder path and tags
-(case-insensitive substring), returns a FLAT page with no folders — a query
-spans the library, so regrouping hits into folders answers a question the user
-just stopped asking — and OUTRANKS both browse modes, since scoping a query to
-the folder someone was standing in would hide what they asked for. A blank or
-whitespace-only `q` reads as "not searching", so clearing the box returns to
-the browse that was showing.
+- **`AssetSourceRef`** (`lib/assets/types.ts`) — `{ providerId, assetId }`, the
+  durable identity of a file. **Recorded on every clip minted from an upload**
+  (`sourceAsset` on the stored model, round-tripped through the graph's details
+  side-table like `poster`). `src` is how a clip renders; this is what it IS,
+  and it is what reference-counted deletion counts.
+- **`AssetProvider`** (`lib/assets/provider.ts`) — a descriptor plus one
+  optional method, `remove(ctx, { assetId, kind })`. `ctx` carries the signed-in
+  uid today; per-user OAuth credentials (Drive/Dropbox) arrive there when that
+  track lands.
+- **`assetProviders`** (`lib/assets/registry.ts`) — the server-only instance,
+  now a lookup by id and nothing more. Every caller arrives holding a
+  `providerId` off a tombstone, so resolution is exact and registration order
+  means nothing.
 
-**Capabilities are the degradation contract.** Each provider declares
-`{ folders, tags, search, upload, delete }` and the UI renders only what is
-true — a provider without folders gets a flat panel, one without upload gets
-no drop zone. Declare a capability only when `list()` (etc.) actually honours
-it. Providers must *ignore* query fields outside their capabilities, never
-throw: capabilities gate the UI, not the wire.
+**Capabilities are the degradation contract**, and there is one left:
+`{ delete }`. Declare it only when `remove` is actually implemented — the
+registry cannot enforce the pairing, so it is the adapter's own tests that
+must. A provider that cannot delete says so rather than accepting a reclaim
+request it will silently ignore.
 
-**Identity.** `Asset.id` is the provider's own durable id (Cloudinary public
-id, S3 object key). Anywhere two providers can meet, pair it with
-`providerId` — that pair is `AssetSourceRef`, and it is **recorded on every
-clip minted from an asset** (`sourceAsset` on the stored model, round-tripped
-through the graph's details side-table like `poster`). `src` is how a clip
-renders; `sourceAsset` is what it is — the hook for re-linking, usage
-queries, and safe deletion later.
-
-## Wire protocol
-
-`GET /api/assets?provider=<id>&folder=<seg>&folder=<seg>&browse=1&limit=<n>`
-`GET /api/assets?q=<term>` — a library-wide search; carries no folder/tag/browse.
-`&cursor=<opaque>` — the next page, from the previous response's `nextCursor`.
-
-**Paging is per-provider and OPAQUE above the seam.** The route forwards
-`cursor` without reading it. For the path-derived providers it is an offset
-into the in-memory listing (see `offsetFromCursor`), which is honest because
-the whole listing is already loaded and ordered; a provider that pushes paging
-down to a native query should emit that backend's own token instead and
-nothing above changes. Folders ride the FIRST page only — they are the place,
-not the contents, and repeating them under every page would redraw the folder
-row each time the user asked for more files. A missing `nextCursor` means
-that was the last page.
-
-- `folder` repeats one param per **path segment**, so a segment containing
-  `/` can never fake a boundary (NodeId lesson: assume ids contain your
-  delimiter).
-- No `folder`/`browse` → the **flat** listing (every asset — today's palette
-  view). `browse=1` alone → the **root** folder. Flat is a view; root is a
-  place.
-- Response: `{ providerId, capabilities, assets, folders, nextCursor? }`.
-
-`GET /api/assets/providers` → `{ providers: AssetProviderDescriptor[] }` for
-the picker.
-
-## Hierarchy and tags
-
-Both browse modes reduce to a path of segments, so one breadcrumb/list UI
-serves both; only the source differs:
-
-- **Folders** — real containment (`Asset.folderPath`). Path-based backends
-  (Cloudinary public ids, S3 keys) derive browsing from key prefixes via the
-  shared `pageFromFlatListing` (`lib/assets/path-folders.ts`); a provider
-  with a native prefix/delimiter query should translate `AssetQuery` into it
-  and skip the in-memory fallback.
-- **Tags** — flat labels on `Asset.tags`; a `/` inside a tag is the
-  pseudo-hierarchy separator the tags browse mode nests on (`scene/heist`).
-
-## Phasing
-
-1. ✅ Seam + Cloudinary adapter + neutral API + `sourceAsset` provenance
-   (this document's landing change).
-2. ✅ Folder browsing UI — the palette always browses (root on open; flat is
-   no longer a palette view), folder tiles lead the rail, the breadcrumb
-   climbs back, and visited pages answer from an in-drawer cache. A provider
-   without folders reports none and the same view IS its flat listing.
-3. ✅ Tags mode — the Cloudinary listing carries tags (Admin API `tags=true`,
-   Search API `with_field: "tags"`), `AssetQuery.tagPath` browses the
-   pseudo-hierarchy (`?mode=tags&tag=<seg>&tag=<seg>`; none = the tags root,
-   where UNTAGGED assets sit beside the top-level groups), and the palette
-   grows a capability-gated Folders/Tags toggle. An asset tagged twice lives
-   in both places; folder placement is invisible in tag space.
-4. ✅ **S3 adapter** + provider picker. `lib/assets/s3-provider.ts` maps
-   object keys to neutral assets (folders from the key path via the same
-   `pageFromFlatListing`), env-configured (`S3_ASSETS_BUCKET` /
-   `S3_ASSETS_REGION`, optional `S3_ASSETS_PREFIX` and `S3_ASSETS_PUBLIC_URL`;
-   URLs are presigned GETs when no public base is set, so private buckets
-   work). The SDK loads lazily and the deps (`listObjects` / `urlFor`) are
-   injectable, so the adapter unit-tests without AWS. The provider registers
-   only when the bucket is configured; the palette's picker `<select>`
-   appears only when more than one provider is installed. Upload through the
-   seam is still ahead (both providers declare it off — media enters this app
-   by being dropped on the board, which uses the vendor store directly).
-5. ✅ Retire the legacy virtual-timeline pipeline onto the seam, then delete
-   it. Phase 5 first moved the `/api/timelines/asset-library-*` GET branch
-   onto the Cloudinary provider (no more bespoke listing or hand-rolled
-   folder detection), leaving the legacy drawer browsing those synthetic
-   timelines through `SmoothScrollList`. That drawer is now GONE (2026-07-25):
-   its last route was the project list, where there is no open timeline to
-   drag an asset into, so it could browse and do nothing. The synthetic
-   pipeline went with it — `buildAssetLibraryClips`, the `asset-library-`
-   route branch and their tests — since nothing else ever requested those
-   ids. The palette browses `/api/assets` and needs no timeline document.
-
-6. ✅ **Deletion** (PL12-003). `AssetProvider.remove(ctx, { assetId, kind })`,
-   declared by `capabilities.delete`, implemented by both adapters, and taking
-   an OWNER context rather than a project one — a delete addresses a durable
-   asset id, and by the time it runs there is no project view of it. Each
-   adapter refuses an id outside its owner's prefix, and a missing asset is a
-   SUCCESS: the desired end state is "not there", and a sweep that threw on an
-   already-deleted object would jam behind it forever.
-
-The seam is now the only asset-BROWSING path in the app. `listCloudinaryAssets`
-survives in exactly two places: the Cloudinary provider adapter (its data
-source), and `serve-timeline`'s document HEALING (validating a stored clip's
-media still exists) — a different concern from browsing, left as-is. No route
-lists assets to browse them except through a provider.
+**Deletion rules both adapters follow.** An id outside the owner's prefix is
+REFUSED (`<folder>/<uid>/` for Cloudinary, `<prefix>/<uid>/` for S3 — the
+trailing slash is what stops `user-1` matching `user-10`). A missing asset is a
+SUCCESS: the desired end state is "this file is not there", and a sweep that
+threw on an already-deleted object would jam behind it forever.
 
 ## Reclaiming storage
 
 Nothing deleted an uploaded file until PL12-003, so a Cloudinary/S3 object
-outlived every timeline that referenced it. The rule now is REFERENCES, and it
-runs in two halves:
+outlived every timeline that referenced it. The rule is REFERENCES, and it runs
+in two halves:
 
 - **Marking** — `DELETE /api/trash` (emptying the bin) scans the owner's
-  documents and writes a tombstone for each trashed clip's `sourceAsset` that
-  no surviving clip points at. `lib/assets/asset-references.ts` holds the pure
+  documents and writes a tombstone for each trashed clip's `sourceAsset` that no
+  surviving clip points at. `lib/assets/asset-references.ts` holds the pure
   rule; `lib/asset-tombstones.ts` the records.
 - **Sweeping** — `GET /api/assets/reclaim`, cron-driven (`vercel.json`,
   `CRON_SECRET`), takes tombstones past their 30-day grace period,
   **re-checks references**, and deletes only what is still unreferenced.
   Anything back in use loses its tombstone instead.
+
+`GET /api/assets/marked` serves the trash drawer's recently-deleted list, and
+`DELETE` on the same route is "Keep" — it drops marks, never files.
 
 Three properties worth preserving if this is ever rewritten:
 
@@ -159,6 +70,15 @@ Three properties worth preserving if this is ever rewritten:
 - The tombstone collection must NOT get a Firestore TTL policy. TTL would expire
   the record and strand the file — the exact inverse of the job.
 
+## The vendor stores
+
+`listCloudinaryAssets` survives in exactly two places, both outside this seam:
+the upload route's neighbourhood and `serve-timeline`'s document HEALING
+(validating a stored clip's media still exists). Uploading is likewise still
+direct — `/api/timeline-media/upload` talks to the vendor store, and it is what
+stamps `sourceAsset` onto the clip it mints. Moving upload behind the seam is
+the obvious next phase if a second upload target ever appears.
+
 ## Enabling S3
 
 Set in the app's environment:
@@ -166,16 +86,18 @@ Set in the app's environment:
 ```
 S3_ASSETS_BUCKET=my-media-bucket
 S3_ASSETS_REGION=us-east-1
-S3_ASSETS_PREFIX=media/            # optional — the browse root inside the bucket
-S3_ASSETS_PUBLIC_URL=https://cdn…  # optional — omit for presigned private URLs
+S3_ASSETS_PREFIX=media/            # optional key prefix
 ```
 
 Credentials ride the AWS SDK default chain (`AWS_ACCESS_KEY_ID` /
-`AWS_SECRET_ACCESS_KEY`, or an instance role). With the bucket set, the
-provider registers and the palette shows an "Asset source" picker. The
-bucket is app-level (every signed-in user sees the same bucket); per-user
-buckets would be the OAuth track's concern.
+`AWS_SECRET_ACCESS_KEY`, or an instance role). With the bucket set, the provider
+registers and can delete objects the sweep asks it to. The bucket is app-level;
+per-user buckets would be the OAuth track's concern.
+
+`S3_ASSETS_PUBLIC_URL` is gone with the listing — nothing builds a browse URL
+any more, so no presigning either (`@aws-sdk/s3-request-presigner` was dropped
+from the app's dependencies).
 
 Out of scope until its own track: per-user OAuth providers (token storage,
-refresh, connect/disconnect UI). The `AssetContext` parameter is where those
+refresh, connect/disconnect UI). The context parameter is where those
 credentials will arrive; nothing above the seam changes.

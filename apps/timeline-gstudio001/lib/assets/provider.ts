@@ -5,19 +5,14 @@
 
 import type {
   AssetKind,
-  AssetPage,
   AssetProviderCapabilities,
   AssetProviderDescriptor,
-  AssetQuery,
 } from "./types";
 
 /** Who is asking. Per-user OAuth credentials (Drive/Dropbox) will arrive here
- *  when that track lands, which is why every provider method takes it rather
- *  than reading globals. */
+ *  when that track lands, which is why the methods take it rather than reading
+ *  globals. */
 export type AssetOwnerContext = Readonly<{ uid: string }>;
-
-/** Per-request context for BROWSING, which is always scoped to one project. */
-export type AssetContext = AssetOwnerContext & Readonly<{ projectId: string }>;
 
 /** What `remove` needs to address a file. The `kind` is here because a
  *  provider can need it (Cloudinary's destroy endpoint is per resource type)
@@ -27,10 +22,6 @@ export type AssetDeleteTarget = Readonly<{ assetId: string; kind: AssetKind }>;
 
 export type AssetProvider = AssetProviderDescriptor &
   Readonly<{
-    /** List assets/folders for a query. A provider MUST tolerate query fields
-     *  outside its capabilities by ignoring them (never throwing): the
-     *  capabilities gate the UI, not the wire. */
-    list: (ctx: AssetContext, query: AssetQuery) => Promise<AssetPage>;
     /**
      * Permanently delete one asset. Present exactly when
      * `capabilities.delete` is true — the registry has no way to enforce that
@@ -48,42 +39,35 @@ export type AssetProvider = AssetProviderDescriptor &
 
 export type AssetProviderRegistry = Readonly<{
   get: (id: string) => AssetProvider | undefined;
-  /** Descriptors only — what /api/assets/providers serves the picker. */
-  describeAll: () => readonly AssetProviderDescriptor[];
-  /** The provider used when a request names none. Always the first
-   *  registered — registration order is the app's preference order. */
-  defaultProvider: () => AssetProvider;
 }>;
 
+/**
+ * The registry is now a lookup and nothing more.
+ *
+ * It used to answer "which provider serves a request that names none"
+ * (`defaultProvider`) and "what can each one do" (`describeAll`) — both for the
+ * browse API and its picker, both gone with the tray. Every caller today
+ * arrives holding a `providerId` off a tombstone, so resolution is exact and
+ * ordering means nothing.
+ */
 export function createAssetProviderRegistry(
   providers: readonly AssetProvider[],
 ): AssetProviderRegistry {
-  if (providers.length === 0) {
-    throw new Error("An asset provider registry needs at least one provider.");
-  }
   const byId = new Map<string, AssetProvider>();
   for (const provider of providers) {
     if (byId.has(provider.id)) {
       // Fail at construction, not at request time: a duplicate id would make
-      // `?provider=` ambiguous and asset refs unresolvable.
+      // an asset ref unresolvable, and a ref that resolves to the wrong
+      // provider is a delete pointed at the wrong file.
       throw new Error(`Duplicate asset provider id "${provider.id}".`);
     }
     byId.set(provider.id, provider);
   }
-  return {
-    get: (id) => byId.get(id),
-    describeAll: () =>
-      providers.map(({ id, label, capabilities }) => ({ id, label, capabilities })),
-    defaultProvider: () => providers[0],
-  };
+  return { get: (id) => byId.get(id) };
 }
 
-/** Capability set for a provider that only lists — the common starting point
- *  for a new adapter; spread and override what the backend really supports. */
+/** Capability set for a provider that cannot do anything yet — the starting
+ *  point for a new adapter; spread and override what the backend supports. */
 export const LIST_ONLY_CAPABILITIES: AssetProviderCapabilities = {
-  folders: false,
-  tags: false,
-  search: false,
-  upload: false,
   delete: false,
 };

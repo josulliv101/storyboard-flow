@@ -1,5 +1,60 @@
 # Punch List 12
 
+## PL12-006 — Delete the browse seam the tray was the only user of
+
+- Status: Complete
+- Area: `app/api/assets/{route,providers}` (deleted), `lib/assets/path-folders`
+  (deleted), `lib/assets/{types,provider,registry,cloudinary-provider,s3-provider}`,
+  `docs/asset-providers.md`
+- Screenshot: n/a (server-side)
+
+PL12-005 left `/api/assets`, `/api/assets/providers`, `path-folders.ts` and both
+adapters' `list()` standing with no consumer. This removes them.
+
+What went: the two routes and their tests, the folder/tag/search derivations and
+theirs, `Asset` / `AssetFolder` / `AssetPage` / `AssetQuery`, four of the five
+capabilities, and the listing halves of both adapters — including S3's 30-second
+listing cache, sibling-poster lookup and presigned URLs (so
+`@aws-sdk/s3-request-presigner` left the app's dependencies with them). ~1,400
+lines net.
+
+What the seam says now, which is all the app actually asks of a provider:
+
+```
+AssetProvider = { id, label, capabilities: { delete }, remove?(ctx, target) }
+```
+
+Three consequences worth stating, because each was a deliberate call:
+
+- **The registry is a lookup and nothing more.** `defaultProvider()` answered
+  "who serves a request naming no provider" and `describeAll()` fed the picker;
+  both were browse concerns. Every caller now arrives holding a `providerId` off
+  a tombstone, so resolution is exact and registration order means nothing.
+- **An empty registry is legal now.** It used to throw, because
+  `defaultProvider()` had to have something to return. Empty simply means a
+  deployment where nothing can be reclaimed.
+- **`LIST_ONLY_CAPABILITIES` kept its name and lost its meaning** — it is now
+  `{ delete: false }`, the starting point for a new adapter that cannot do
+  anything yet. Renaming it is churn for a constant with one field; it is
+  documented rather than disguised.
+
+The one capability left still earns its keep: a provider that cannot delete must
+say so rather than accept a reclaim request it will silently ignore. The
+capability and the method are ONE claim, and since the registry cannot enforce
+the pairing, each adapter's tests assert both.
+
+Verified: app tsc clean, 485 app tests (was 534 — the 49 removed were browse
+tests), lint clean (5 pre-existing `<img>` warnings), graph-view e2e 95/95, and
+live: `/api/assets` and `/api/assets/providers` now 404 while
+`/api/assets/marked` still answers 200 and `/api/assets/reclaim` still refuses
+with 503.
+
+TRAP, seen twice this session: the Browser pane's console buffer PRESERVES a
+module-parse error from a mid-edit compile across reloads. It read as a live
+syntax error in a file that compiles, whose component renders, and whose suite
+passes through the same dev server. Prove it stale by exercising the component
+rather than by re-reading the console.
+
 ## PL12-005 — Retire the asset tray
 
 - Status: Complete (UI), with the server-side browse surface left standing —
