@@ -23,22 +23,62 @@ than smuggling it in here.
 
 ## PL12-004 — The trash becomes the recently-deleted surface
 
-- Status: Not started
-- Area: `trash-drawer.tsx`, `/api/trash`
-- Blocked by: PL12-003
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `trash-drawer.tsx`, `app/api/assets/marked/route.ts` (new),
+  `lib/asset-deletion-window.ts` (new), `lib/asset-tombstones.ts`
+- Screenshot: Not captured
 
 Two waiting rooms is one too many. PL12-003 marks an asset and deletes it 30
 days later, but a mark with no UI is a clock nobody can see or act on, while
 the trash is already a holding area with a restore control.
 
-So the trash grows a "Recently deleted" section: assets carrying a tombstone,
-with days remaining, and a restore that clears the tombstone. The file never
-went anywhere during the window — restoring is bookkeeping, not a re-upload.
+The drawer now carries both, bordered apart because they answer different
+questions: what did I delete (and can put back), versus what is about to stop
+existing. Each row shows the file, its name, `Deletes in N days`, and **Keep**.
 
-This is what the trash becomes once the tray is gone: the surface for
-everything that is not currently on a board. It is also where the copy debt
-is — the empty-trash confirm still promises that uploaded files stay in the
-Assets library, which PL12-003 makes false.
+The word is **Keep**, not Restore, and that is the honest one. Nothing moved
+when the asset was marked — the file has been in the library the whole window —
+so this withdraws an intention and puts nothing back on a timeline. Calling it
+"restore" would promise a clip that never arrives.
+
+**A tombstone has to carry its own display.** There is no clip left pointing at
+a marked asset — that is what being marked MEANS — so nothing can be re-derived
+from the graph and no provider call can be scoped to a project that no longer
+references it. The mark therefore records `name` and `thumbnailUrl` at write
+time, the same snapshot rule `TrashOrigin` follows. The file survives the whole
+window, so its own URL keeps resolving right up until it doesn't.
+
+Three smaller decisions:
+
+- **Rounded UP.** 19.5 days left reads "20 days": the deadline is when deletion
+  becomes ALLOWED, so rounding down would show "19" for something still safe.
+  Zero says "Deletes any time now" rather than "0 days" — the actual moment is a
+  cron schedule, and it is still recoverable, so the words must be neither a
+  countdown nor an obituary.
+- **A separate request with a separate failure.** The bin is the drawer's job;
+  this section is an addition to it. A marked-list that fails to load shows
+  nothing and leaves the bin working, where one combined error surface would let
+  a broken side-panel hide the trash.
+- **The big "Trash is empty" state now needs BOTH lists empty.** A bin with
+  nothing in it but files on their way out is not an empty drawer, and saying so
+  would hide the only thing there is still a decision to make about.
+
+E2E TRAP worth keeping: the suite's palette mock is `**/api/assets**`, which
+also matches `/api/assets/marked` — it would have answered the drawer with a
+page of palette assets. Playwright matches handlers in REVERSE registration
+order, so the fix is a narrower route registered after it (and a per-test
+override registered after `installGraphApi`, not before).
+
+Verified live against the running app with two seeded tombstones: the section
+rendered, the labels read "Deletes in 1 day" / "Deletes in 26 days", Keep
+cleared the mark on the server and dropped the row, and the other row was
+untouched. Proven fail-first: with Keep not calling the server, the e2e's
+payload assertion fails.
+
+Not built, and named here rather than assumed: once PL12-005 retires the tray,
+a kept asset has no way back onto a board. Whatever replaces the tray owes an
+insertion path — this section is a decision surface, not an inserter.
 
 ## PL12-003 — Reference-counted asset deletion
 

@@ -32,6 +32,10 @@ const BATCH_LIMIT = 500;
 export type AssetTombstone = Readonly<{
   ref: AssetSourceRef;
   kind: AssetKind;
+  /** Display snapshot, taken at mark time — see `AssetDeletionCandidate`.
+   *  Nothing looks anything up with these. */
+  name: string;
+  thumbnailUrl: string;
   ownerUid: string;
   markedAtMs: number;
   /** Epoch millis after which the sweep may delete. Stored as a NUMBER rather
@@ -44,6 +48,8 @@ type TombstoneRecord = {
   providerId?: string;
   assetId?: string;
   kind?: string;
+  name?: string;
+  thumbnailUrl?: string;
   ownerUid?: string;
   markedAtMs?: number;
   deleteAfterMs?: number;
@@ -66,12 +72,25 @@ function tombstoneId(ownerUid: string, ref: AssetSourceRef): string {
 }
 
 function toTombstone(data: TombstoneRecord): AssetTombstone | null {
-  const { providerId, assetId, kind, ownerUid, markedAtMs, deleteAfterMs } = data;
+  const { providerId, assetId, kind, name, thumbnailUrl, ownerUid, markedAtMs, deleteAfterMs } =
+    data;
   if (typeof providerId !== "string" || typeof assetId !== "string") return null;
   if (kind !== "image" && kind !== "video") return null;
   if (typeof ownerUid !== "string" || ownerUid.length === 0) return null;
   if (typeof deleteAfterMs !== "number" || typeof markedAtMs !== "number") return null;
-  return { ref: { providerId, assetId }, kind, ownerUid, markedAtMs, deleteAfterMs };
+  return {
+    ref: { providerId, assetId },
+    kind,
+    // The DISPLAY fields are the only ones allowed to be missing without
+    // voiding the record: a tombstone written before they existed still names
+    // a real file with a real deadline, and the sweep needs nothing else. A
+    // row with no snapshot prints its id's leaf instead of disappearing.
+    name: typeof name === "string" && name.length > 0 ? name : assetId,
+    thumbnailUrl: typeof thumbnailUrl === "string" ? thumbnailUrl : "",
+    ownerUid,
+    markedAtMs,
+    deleteAfterMs,
+  };
 }
 
 /**
@@ -97,6 +116,8 @@ export async function markAssetsForDeletion(
         providerId: candidate.ref.providerId,
         assetId: candidate.ref.assetId,
         kind: candidate.kind,
+        name: candidate.name,
+        thumbnailUrl: candidate.thumbnailUrl,
         ownerUid,
         markedAtMs: now,
         deleteAfterMs: now + GRACE_MS,

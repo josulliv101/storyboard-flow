@@ -160,7 +160,7 @@ async function mark(
 ) {
   await markAssetsForDeletion(
     ownerUid,
-    [{ ref: { providerId, assetId }, kind }],
+    [{ ref: { providerId, assetId }, kind, name: assetId, thumbnailUrl: "" }],
     Date.now() + daysFromNow * DAY_MS - 30 * DAY_MS,
   );
 }
