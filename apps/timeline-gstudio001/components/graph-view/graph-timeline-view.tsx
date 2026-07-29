@@ -41,7 +41,6 @@ import {
   type GraphServerPayload,
 } from "@/lib/graph-documents-gateway";
 import {
-  GRAPH_ASSETS_TOGGLE_EVENT,
   GRAPH_PREVIEW_TOGGLE_EVENT,
   GRAPH_FLAT_TOGGLE_EVENT,
   GRAPH_SURFACE_EVENT,
@@ -50,7 +49,6 @@ import {
   type GraphSurface,
 } from "@/lib/graph-view-events";
 
-import { AssetPaletteDrawer } from "./graph-asset-palette";
 import { toast } from "@/components/core/sonner";
 
 import { bootSessionKey } from "./boot-session-key";
@@ -70,7 +68,6 @@ import {
   type SyncEntry,
 } from "./graph-persistence";
 import { HistoryPersistenceBridge } from "./graph-history-persistence";
-import { unparkPendingDetail } from "./graph-pending-details";
 import { createPreviewTimeChannel } from "./graph-preview";
 import {
   DEFAULT_ITEM_SIZE,
@@ -171,14 +168,6 @@ export function GraphTimelineView({
   const [flatOn, setFlatOn] = useState(false);
   const [flatLoading, setFlatLoading] = useState(false);
   const [timeChannel] = useState(createPreviewTimeChannel);
-  const [assetsOpen, setAssetsOpen] = useState(false);
-
-  useEffect(() => {
-    const toggle = () => setAssetsOpen((current) => !current);
-    window.addEventListener(GRAPH_ASSETS_TOGGLE_EVENT, toggle);
-    return () => window.removeEventListener(GRAPH_ASSETS_TOGGLE_EVENT, toggle);
-  }, []);
-
   // The sidebar owns the layout switch and the ruler toggle (its top icons /
   // tool cluster); it drives this state through request events…
   useEffect(() => {
@@ -216,9 +205,8 @@ export function GraphTimelineView({
       previewOn,
       flatOn,
       flatLoading,
-      assetsOpen,
     });
-  }, [surface, rulerOn, childrenShown, previewOn, flatOn, flatLoading, assetsOpen]);
+  }, [surface, rulerOn, childrenShown, previewOn, flatOn, flatLoading]);
 
   // Flat mode is a STRIP reading. Leaving strip drops it rather than letting it
   // sit armed and re-apply invisibly on the way back — the grid never showed a
@@ -511,14 +499,6 @@ export function GraphTimelineView({
     [detailsStore, onSync],
   );
 
-  // A palette drag's factory parks a ClipDetail under each minted id (see
-  // graph-asset-palette.tsx). When the drag dies uncommitted — cancelled,
-  // vetoed, orphaned — those ids can never exist, so release the metadata now
-  // instead of leaving it until the NEXT palette drag happens to clear it.
-  const handlePaletteDiscard = useCallback((nodes: readonly CollectionItemNode[]) => {
-    for (const node of nodes) unparkPendingDetail(node.id as string);
-  }, []);
-
   // Click-to-open (the pointer twin of the O key): the provider's
   // onOpenNode fires on a plain click on an open-target card — after the
   // package's gesture arbitration, so a drag, a hold-grab, or a pan never
@@ -607,7 +587,6 @@ export function GraphTimelineView({
         openOnClick={openOnClick}
         commandPolicy={commandPolicy}
         mapDropCommand={handleMapDropCommand}
-        onPaletteDiscard={handlePaletteDiscard}
         itemInstructions="Press O to open the focused collection, or F2 to rename it."
       >
           <PersistenceBridge onSync={onSync} />
@@ -629,12 +608,6 @@ export function GraphTimelineView({
             timeChannel={timeChannel}
           />
           <GraphDetailsJanitor />
-          <AssetPaletteDrawer
-            key={projectId}
-            projectId={projectId}
-            open={assetsOpen}
-            onClose={() => setAssetsOpen(false)}
-          />
           <HydrationController
             projectId={projectId}
             segments={timelinePath}

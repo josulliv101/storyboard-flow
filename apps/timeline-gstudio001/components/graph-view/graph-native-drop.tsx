@@ -20,10 +20,12 @@ import {
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
-import type { ClipDetail } from "@storyboard/timeline-domain";
+import { resolveFlatDropTarget, type ClipDetail } from "@storyboard/timeline-domain";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { resolveInsertPlacement } from "@/lib/graph-insert-placement";
+
+import { useFlatItems } from "./graph-preview";
 import {
   GRAPH_INSERT_TOOL_EVENT,
   isGraphInsertTool,
@@ -461,6 +463,8 @@ function dropZoneClassName(armed: boolean, hovered: boolean): string {
  */
 function useNativeDrop(collectionId: string, projectId: string) {
   const store = useCollectionsStore();
+  // Non-null only inside the focused FLAT strip — see useFlatItems.
+  const flatItems = useFlatItems();
   const { addNodes, insertTool } = useToolInsertion(collectionId);
   // Keyed BY DROP, not one shared slot. Several drops can be live at once
   // (the abort set below exists precisely for that), and a single value made
@@ -513,29 +517,63 @@ function useNativeDrop(collectionId: string, projectId: string) {
   }, []);
 
   /**
-   * Where the anchor points NOW. A file drop commits after its uploads
-   * finish, and the user can reorder, delete, or nest clips in the meantime —
-   * a numeric index captured at drop time then names a different boundary
-   * than the one they dropped at.
+   * Where the anchor points NOW, as a parent and an index.
+   *
+   * A file drop commits after its uploads finish, and the user can reorder,
+   * delete, or nest clips in the meantime — a numeric index captured at drop
+   * time then names a different boundary than the one they dropped at. So the
+   * anchor is re-read against the CURRENT graph, by neighbour id.
+   *
+   * In a FLAT RUN it is re-read against the flat list instead, and translated.
+   * Both halves matter:
+   *
+   * - The neighbours are flat cards, which are mostly NOT this collection's
+   *   children, so looking them up among the children finds nothing — except
+   *   for the occasional card that happens to be a direct child too, which
+   *   yields a wrong number that looks right. That is what made a file
+   *   dropped after `c2` land between `c1` and `c2`.
+   * - A flat boundary is not a parent-relative index, so `resolveFlatDropTarget`
+   *   converts it — the same rule the dnd-kit path applies in `mapDropCommand`
+   *   (graph-timeline-view). A native drop never reaches that seam: it
+   *   dispatches straight to the store, which is why this path stayed unfixed
+   *   when the palette's was fixed.
+   *
+   * Returning the PARENT as well as the index is what keeps the translation
+   * here rather than deeper: `addNodes` receives a real parent and never has to
+   * guess whether the number it was handed is a flat boundary.
    */
-  const resolveAnchoredIndex = useCallback(
-    (anchor: DropAnchor): number => {
-      const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
+  const resolveAnchoredTarget = useCallback(
+    (anchor: DropAnchor): Readonly<{ parentId: NodeId; index: number }> => {
+      const own = parseNodeId(collectionId);
+      const graph = store.getSnapshot().graph;
+
+      if (flatItems !== null) {
+        const ids = flatItems.map((item) => item.nodeId);
+        const boundary =
+          anchor.afterId !== null && ids.indexOf(parseNodeId(anchor.afterId)) >= 0
+            ? ids.indexOf(parseNodeId(anchor.afterId))
+            : anchor.beforeId !== null && ids.indexOf(parseNodeId(anchor.beforeId)) >= 0
+              ? ids.indexOf(parseNodeId(anchor.beforeId)) + 1
+              : Math.max(0, Math.min(anchor.index, ids.length));
+        return resolveFlatDropTarget(graph, flatItems, own, boundary);
+      }
+
+      const children = getChildren(graph, own);
       // Prefer the successor: "before whatever followed the gap" survives the
       // predecessor being removed, which is the commoner edit.
       if (anchor.afterId !== null) {
         const at = indexOfChildId(children, anchor.afterId);
-        if (at >= 0) return at;
+        if (at >= 0) return { parentId: own, index: at };
       }
       if (anchor.beforeId !== null) {
         const at = indexOfChildId(children, anchor.beforeId);
-        if (at >= 0) return at + 1;
+        if (at >= 0) return { parentId: own, index: at + 1 };
       }
       // Both neighbors are gone (or there were none): fall back to the
       // original index, clamped to what the collection holds now.
-      return Math.max(0, Math.min(anchor.index, children.length));
+      return { parentId: own, index: Math.max(0, Math.min(anchor.index, children.length)) };
     },
-    [store, collectionId],
+    [store, collectionId, flatItems],
   );
 
   const dropFiles = useCallback(
@@ -676,9 +714,11 @@ function useNativeDrop(collectionId: string, projectId: string) {
           // single undoable step and a single persisted batch. The index is
           // resolved HERE, from the anchor, because the strip may have been
           // edited while the uploads ran.
+          const target = resolveAnchoredTarget(anchor);
           const added = addNodes(
             landed.map((result) => result.node),
-            resolveAnchoredIndex(anchor),
+            target.index,
+            target.parentId,
           );
           // The dispatch can be REFUSED (the un-hydrated-target veto). Ignoring
           // it left the user with successfully uploaded files, no cards, and
@@ -704,7 +744,7 @@ function useNativeDrop(collectionId: string, projectId: string) {
         dropAbortsRef.current.delete(controller);
       }
     },
-    [addNodes, resolveAnchoredIndex, setDropStatus, projectId],
+    [addNodes, resolveAnchoredTarget, setDropStatus, projectId],
   );
 
   /** Commit a drop whose insert boundary the surface already resolved. Tools
@@ -759,6 +799,10 @@ export function NativeDropStrip({
   children,
 }: Readonly<{ collectionId: string; projectId: string; children: ReactNode }>) {
   const store = useCollectionsStore();
+  // Non-null only inside the focused FLAT strip — see useFlatItems. The strip
+  // resolves its drop boundary in whatever order it is SHOWING, and in flat
+  // mode that is not this collection's children.
+  const flatItems = useFlatItems();
   const { commitDrop, upload } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicatorX, setIndicatorX] = useState<number | null>(null);
@@ -800,16 +844,31 @@ export function NativeDropStrip({
     return { wrapperLeft, cards };
   }, []);
 
-  /** Graph child index for a drop at clientX, via mounted-card midpoints. */
+  /**
+   * Boundary index for a drop at clientX, via mounted-card midpoints.
+   *
+   * Resolved in the order the STRIP IS SHOWING, which is this collection's
+   * children normally and the FLAT RUN in flat mode. It used to be children
+   * only, and in a flat run that quietly broke twice over: the flat cards are
+   * mostly not children, so `indexOfCard` returned -1 and the scan walked
+   * straight past the card the pointer was actually before, stopping at
+   * whichever later card happened to be a direct child — and the neighbour ids
+   * it recorded came from the wrong list too. The indicator, being pure
+   * geometry, kept pointing at the right gap the whole time, so the line the
+   * user saw and the index that committed disagreed.
+   */
   const resolveDropAnchor = useCallback(
     (clientX: number): DropAnchor => {
-      const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
+      const order =
+        flatItems !== null
+          ? flatItems.map((item) => item.nodeId)
+          : getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
       // Reuse the drag session's measurements; fall back to measuring for a
       // drop that arrived without a preceding dragover (programmatic drops).
       const geometry = dragGeometryRef.current ?? measureDragGeometry();
-      const indexOfCard = (card: CardGeometry) => indexOfChildId(children, card.nodeId);
+      const indexOfCard = (card: CardGeometry) => indexOfChildId(order, card.nodeId);
 
-      let index = children.length;
+      let index = order.length;
       if (geometry) {
         let resolved = -1;
         for (const card of geometry.cards) {
@@ -829,9 +888,9 @@ export function NativeDropStrip({
         if (resolved >= 0) index = resolved;
       }
 
-      return { index, ...neighborsAt(children, index) };
+      return { index, ...neighborsAt(order, index) };
     },
-    [store, collectionId, measureDragGeometry],
+    [store, collectionId, flatItems, measureDragGeometry],
   );
 
   const invalidateDragGeometry = useCallback(() => {

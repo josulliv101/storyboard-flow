@@ -2,9 +2,87 @@
 
 ## PL12-005 — Retire the asset tray
 
-- Status: Not started
-- Area: `graph-asset-palette.tsx`, `timeline-sidebar.tsx`
-- Blocked by: PL12-003, PL12-004
+- Status: Complete (UI), with the server-side browse surface left standing —
+  see the open question at the end
+- URL: http://localhost:3000/timeline/project-1785180655904-uc9isj/graph
+- Area: `graph-asset-palette.tsx` (deleted), `timeline-sidebar.tsx`,
+  `graph-timeline-view.tsx`, `graph-native-drop.tsx`, `graph-preview.tsx`
+- Screenshot: Not captured
+
+The user's call on the one capability the tray uniquely had: **re-upload is the
+answer.** An asset already in the library has no path back onto a board, and
+that is accepted rather than replaced.
+
+Checked before deleting anything, because it would have made this a bad idea:
+**the file-drop upload path records `sourceAsset` itself**, from the upload
+response — not from the palette. PL12-003 keeps its provenance.
+
+Gone: the palette component, its mount, the sidebar's Assets launcher, the
+`GRAPH_ASSETS_TOGGLE_EVENT` handoff, `assetsOpen` on the published view state,
+`use-bottom-drawer-inset` (its only consumer), the app's `onPaletteDiscard`
+wiring, and 7 palette-only e2e tests.
+
+### The bug this uncovered
+
+Two e2e tests pin the flat-mode drop translation — the deterministic bug from
+PR #216, where a drop meant for Scene A landed in the project. Their drag source
+was the palette, so they had to move to OS file drops. They failed, and not for
+harness reasons:
+
+**A file drop never reached `mapDropCommand`.** It dispatches its add straight
+to the store, so only dnd-kit palette drags were ever translated. In flat mode
+the strip is wrapped in `NativeDropStrip collectionId={focusedId}`, so a file
+dropped between two of Scene A's clips inserted into the PROJECT at a flat
+index. Pre-existing, and retiring the tray made it load-bearing: file drops are
+now the only way to add media, so the whole add path sat on the unfixed side.
+
+The first fix — translating inside `addNodes` — was wrong, and instructively:
+it passed one test by accident. The anchor was ALREADY resolved in the wrong
+space, so the number being translated was not a flat boundary at all.
+
+`resolveDropAnchor` walked the mounted cards (the flat run) but looked each one
+up among the collection's CHILDREN. In a flat run most cards are not children,
+so `indexOfChildId` returned -1 and the scan walked straight past the card the
+pointer was in front of, stopping at whichever later card happened to be a
+direct child too — and recorded ITS neighbours. A drop after `c2` resolved to
+`charlie`. The indicator, being pure geometry, kept pointing at the right gap
+the whole time, so the line the user saw and the index that committed
+disagreed — while `handleDrop`'s own comment promised they could not.
+
+The fix is one idea in two places: **resolve the drop in whatever order the
+strip is SHOWING.** `resolveDropAnchor` takes its index and neighbours from the
+flat run when there is one, and `resolveAnchoredTarget` (was
+`resolveAnchoredIndex`) re-reads them in that same space and runs
+`resolveFlatDropTarget` — the same helper the dnd-kit path uses — returning a
+PARENT as well as an index. Returning the parent is what keeps `addNodes` dumb:
+an explicitly named parent is never re-interpreted, which is the mistake #216
+was.
+
+`useFlatItems` is the seam: the board publishes the flat run around the focused
+surface and `null` around every sub-row, so "non-null" IS "this is the focused
+flat strip" — no second flag to keep in step.
+
+The e2e helper `dropOneFile` dispatches **dragover before drop**. A bare `drop`
+never opens a drag session, so the anchor falls back to a stale index; the older
+upload tests only get away with it because they drop at clientX 0.
+
+Verified: app tsc clean, 534 app tests, lint clean (5 warnings, all
+pre-existing `<img>`), graph-view e2e **95/95** (102 minus the 7 palette tests),
+and live — the rail has no Assets tile, the trash drawer still opens, no console
+errors.
+
+### Open, and deliberately not decided here
+
+`/api/assets`, `/api/assets/providers`, `lib/assets/path-folders.ts`, and both
+adapters' `list()` now have NO consumer — the palette was the only one. That is
+~700 lines of route and derivation plus ~350 of tests, and deleting it would
+leave the provider seam as `{ id, label, capabilities.delete, remove }`, which
+is honestly all the app still asks of a provider. It would also collapse the S3
+adapter to a delete-only client.
+
+Not done in this pass: it is a much larger architectural deletion than
+"retire the tray", and the seam took five phases to build. Worth a decision of
+its own.
 
 The tray browses a BYPRODUCT. Media enters this app by being dropped on the
 board (`/api/timeline-media/upload`), and every asset is minted

@@ -24,7 +24,6 @@ import { usePathname } from "next/navigation";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
-  GRAPH_ASSETS_TOGGLE_EVENT,
   GRAPH_SELECTION_EVENT,
   GRAPH_TRASH_ARRIVAL_EVENT,
   GRAPH_TRASH_HOVER_EVENT,
@@ -508,12 +507,6 @@ function ItemActionsCluster({
 
 const UTILITY_ITEMS: UtilityItem[] = [
   {
-    id: "assets",
-    label: "Assets",
-    description: "Media and project assets",
-    icon: MediaFolderIcon,
-  },
-  {
     id: "trash",
     label: "Trash",
     description: "Deleted timeline items",
@@ -569,8 +562,7 @@ export function TimelineSidebar() {
     rulerOn: false,
     childrenShown: false,
     previewOn: false,
-    assetsOpen: false,
-    flatOn: false,
+      flatOn: false,
     flatLoading: false,
   });
   useEffect(() => {
@@ -805,31 +797,12 @@ export function TimelineSidebar() {
 
       <div className="relative mt-auto flex w-full flex-col items-stretch gap-0">
         {UTILITY_ITEMS.map((item) => {
-          // Assets is a GRAPH-ROUTE affordance now. The legacy drawer that
-          // used to answer it elsewhere is gone: its one remaining route was
-          // the project list, where there is no open timeline to drag an
-          // asset into — it could browse and do nothing. Rather than leave a
-          // button that opens nothing, it is hidden off the graph.
-          if (item.id === "assets" && !onGraphRoute) return null;
           if (item.id === "trash" && pathname === "/") return null;
 
           const Icon = item.icon;
           const tooltipId = `sidebar-tooltip-utility-${item.id}`;
-          // Both drawers report their real state now. Assets used to be
-          // hard-coded false here — the graph view owns `assetsOpen` and did
-          // not publish it, so this button permanently claimed to be off while
-          // toggling a drawer.
-          const isPressed =
-            item.id === "trash" ? isTrashOpen : graphView.assetsOpen;
-          const handleClick =
-            item.id === "assets"
-              ? () => {
-                  // The asset surface is the graph view's own palette drawer
-                  // (its drags work with dnd-collections) — hand off to it.
-                  window.dispatchEvent(new CustomEvent(GRAPH_ASSETS_TOGGLE_EVENT));
-                  setIsTrashOpen(false);
-                }
-              : () => setIsTrashOpen(!isTrashOpen);
+          const isPressed = isTrashOpen;
+          const handleClick = () => setIsTrashOpen(!isTrashOpen);
 
           return (
             <button
@@ -841,10 +814,10 @@ export function TimelineSidebar() {
               onClick={handleClick}
               className={cn(
                 SIDEBAR_ICON_BASE,
-                // Assets and Trash open a DRAWER over the board; they do not
-                // take you anywhere, and the board behind them is still the
-                // page you are on. That makes them state, not location — the
-                // tint, like flat mode above (see SIDEBAR_ICON_TOGGLE_ON).
+                // Trash opens a DRAWER over the board; it does not take you
+                // anywhere, and the board behind it is still the page you are
+                // on. That makes it state, not location — the tint, like flat
+                // mode above (see SIDEBAR_ICON_TOGGLE_ON).
                 isPressed ? SIDEBAR_ICON_TOGGLE_ON : SIDEBAR_ICON_IDLE,
               )}
             >
