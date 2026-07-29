@@ -12,7 +12,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { CornerRightDown, Maximize2 } from "lucide-react";
+import { Check, ChevronRight, CornerRightDown, Maximize2 } from "lucide-react";
 
 import {
   CollectionItem,
@@ -238,7 +238,18 @@ export function useCollectionPreviewFrames(
 ): readonly CollectionPreviewFrame[] {
   const live = useHydratedCollectionPreviews(id, hydrated);
   const all = hydrated ? live : (stored ?? NO_PREVIEWS);
-  return useMemo(() => (all.length > 1 ? [all[0], all[all.length - 1]] : all), [all]);
+  // ONE frame, full width (PL13-003). It used to be a first/last PAIR, which
+  // at card size meant two ~80px slots: too narrow to recognize a face, and the
+  // crop turned a composition into a slice of one. The item count beside the
+  // duration already says how many, so the pair was not carrying that either.
+  //
+  // KNOWN LIMITATION, deliberate and worth revisiting: this is the FIRST
+  // child's frame, and in a video project a first frame is very often a slate,
+  // a logo or a fade from black — this repo's own demo renders "A Universal
+  // Picture" for one collection. A representative frame (the midpoint of the
+  // collection's own duration) is the better answer and needs the preview
+  // machinery to resolve a time, which is its own change.
+  return useMemo(() => (all.length > 1 ? [all[0]] : all), [all]);
 }
 
 /**
@@ -400,7 +411,120 @@ function DisabledChip({ inherited }: { inherited: boolean }) {
  * ghost. A single-stroke turn-and-descend mark reads at small sizes where the
  * old compound folder/arrow went muddy, and it says the verb the control
  * actually performs: go DOWN into this timeline. */
-function CollectionFolderGlyph({ className }: Readonly<{ className?: string }>) {
+/**
+ * What an EMPTY collection shows: an academy-leader countdown frame.
+ *
+ * The slot used to be blank — a dark rectangle that read as a broken thumbnail
+ * rather than as "nothing in here yet". A leader frame is the film industry's
+ * own mark for "before the picture starts", which is exactly the state, and it
+ * gives the card a recognizable silhouette at strip size where any label would
+ * be too small to read.
+ *
+ * Drawn rather than loaded. At card size the geometry is the whole message —
+ * the ring, the crosshair, the sweep — and the reference photograph's grain and
+ * scratches are invisible; a vector costs no request, stays crisp in the grid's
+ * much larger cells, and takes the board's own palette instead of fighting it
+ * with a bright sepia field. (If the scanned frame itself is wanted, this is the
+ * one place to swap it.)
+ *
+ * `preserveAspectRatio="none"` on the CROSSHAIR only would stretch the ring, so
+ * the whole thing scales as one and the card's own overflow crops the excess —
+ * the leader is centred, which is where a projectionist would expect it.
+ */
+function CollectionLeaderPlaceholder() {
+  return (
+    <svg
+      viewBox="0 0 160 90"
+      aria-hidden="true"
+      className="h-full w-full text-zinc-500/70"
+      preserveAspectRatio="xMidYMid slice"
+    >
+      {/* Paper, not black: an empty card reads as a FRAME rather than a hole. */}
+      <rect width="160" height="90" className="fill-zinc-800/40" />
+      {/* The sweep — the sector a leader's rotating hand has already passed. */}
+      <path d="M80 45 L80 6 A39 39 0 0 1 114 26 Z" className="fill-zinc-700/45" />
+      <g stroke="currentColor" fill="none" strokeWidth="1.5">
+        {/* Crosshair, edge to edge. */}
+        <path d="M80 0 V90 M0 45 H160" strokeWidth="1" />
+        {/* The ring: two concentric strokes, the leader's signature. */}
+        <circle cx="80" cy="45" r="39" />
+        <circle cx="80" cy="45" r="33" />
+      </g>
+    </svg>
+  );
+}
+
+/**
+ * SELECTED, as a badge — a tick in the card's top-left, present only while the
+ * card is selected.
+ *
+ * A BADGE, not a control, and the distinction is the whole design. A checkbox
+ * you click to select was built and rejected (PL13-001): with the card body
+ * already selecting, it was a second affordance for one act, and being
+ * invisible-but-clickable it swallowed clicks meant for the card. This appears
+ * BECAUSE the card is selected and does nothing when pressed —
+ * `pointer-events-none`, so it cannot repeat that mistake.
+ *
+ * It earns its place by making a MULTI-selection legible. The `ring-amber-300`
+ * on a selected card is a fine binary signal on one card and a weak one across
+ * a board of forty, where the eye has to compare border colours; a row of ticks
+ * reads at a glance. Same amber as the ring on purpose — one selection colour,
+ * two ways of saying it.
+ *
+ * `aria-hidden`: the card already exposes `aria-pressed` and `data-selected`.
+ * Announcing "selected" twice per card is noise, not access.
+ *
+ * Top-LEFT, mirroring the control cluster in the top-right, and 20px against
+ * their 24px — a marker should not read as a button you failed to press.
+ */
+function CardSelectedBadge() {
+  return (
+    <span
+      data-card-selected-badge
+      aria-hidden="true"
+      className="pointer-events-none absolute left-1.5 top-1.5 z-20 flex size-5 items-center justify-center rounded bg-amber-300 text-zinc-950 shadow-sm shadow-black/50"
+    >
+      <Check className="size-3.5" strokeWidth={3} />
+    </span>
+  );
+}
+
+/** The drill mark: CornerRightDown — turn and descend, the verb "go into this
+ *  timeline". NOT a folder, despite what this was called until PL13-004: the
+ *  old name read as a container mark, which is how it ended up paired with a
+ *  chevron in the drill badge — two direction arrows for one act. The
+ *  sidebar's FolderTree toggles whether the children tree is SHOWN, a
+ *  different verb that deliberately does not share this icon. */
+/**
+ * The look every CARD-LEVEL control shares: a 24px square on the card's right
+ * edge, dark enough to sit on artwork, always visible.
+ *
+ * Shared so a card reads as having ONE kind of control rather than a collection
+ * of one-offs. Before this the details trigger and the drill badge differed in
+ * corner, shape, colour and reveal rule — four differences, which is why they
+ * looked unrelated. Position and focus ring stay with the caller; everything
+ * else is here.
+ */
+const CARD_CONTROL_CLASS = [
+  "z-20 flex size-6 shrink-0 items-center justify-center rounded",
+  "bg-zinc-950/80 text-zinc-300 shadow-sm shadow-black/40 backdrop-blur-[1px]",
+  "transition-colors hover:bg-zinc-900 hover:text-zinc-50",
+].join(" ");
+
+/**
+ * Where those controls sit: one cluster in the card's top-right, same inset
+ * from both edges and the same gap between them.
+ *
+ * A cluster rather than two independently-positioned buttons, because that is
+ * what kept going wrong — details at `top-1 right-1` and the drill badge at
+ * `bottom-8 right-1.5` read as two unrelated marks, and every size change meant
+ * re-tuning an offset against the label row's height (which differs per
+ * surface). Grouped, they align by construction and a media card's single
+ * control lands in exactly the same place as a collection's pair.
+ */
+const CARD_CONTROL_CLUSTER_CLASS = "absolute right-1.5 top-1.5 z-20 flex items-center gap-1.5";
+
+function CollectionDrillGlyph({ className }: Readonly<{ className?: string }>) {
   return <CornerRightDown aria-hidden="true" className={className} strokeWidth={1.5} />;
 }
 
@@ -760,7 +884,7 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
           data-empty-collection-ghost
           className="flex h-full w-full items-center justify-center"
         >
-          <CollectionFolderGlyph className="h-7 w-7 text-sky-200" />
+          <CollectionDrillGlyph className="h-7 w-7 text-sky-200" />
         </span>
       ) : (
         <span className="flex h-full w-full flex-col items-center justify-center gap-1 p-2 text-center">
@@ -875,8 +999,10 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             <span
               data-empty-collection-preview
               aria-hidden="true"
-              className="flex flex-1 items-center justify-center"
-            />
+              className="flex flex-1 items-center justify-center overflow-hidden rounded-sm"
+            >
+              <CollectionLeaderPlaceholder />
+            </span>
           ) : (
             previews.map((preview, index) => (
               // eslint-disable-next-line @next/next/no-img-element
@@ -958,42 +1084,51 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           to be on the card, and an element's own `overflow-hidden` clips its
           children, never its own transform.) */}
 
-      {/* The drill affordance — a REAL button now that it composes as a
-          SIBLING of the selection surface. Centred over the preview area (the
-          card minus its label row), sized as a fraction of the card so it
-          stays prominent at every item size. Pointer-only by design:
-          tabIndex -1 keeps roving views at one tab stop per item, and
-          keyboard drill-in stays on the O key (OpenKeyBoundary). The
-          data-collections-keyboard-ignore marker also excludes it from the
-          strip's pan surface (see isPannableStripSurface), so a press here
-          drills without the strip scrolling under it — no pointerdown guard
-          needed. */}
-      <button
-        type="button"
-        tabIndex={-1}
-        aria-label={`Open ${displayName}`}
-        title="Open this timeline"
-        data-collections-keyboard-ignore
-        onClick={(event) => {
-          event.stopPropagation();
-          nav?.openTimeline(id);
-        }}
-        // Sized as a FRACTION of the card so it stays proportionate at every
-        // item size — but the fraction itself has to differ per surface. 34%
-        // of a short strip card is a ~45px target; 34% of the new tall grid
-        // cell is ~75px, which stopped reading as a control on the artwork and
-        // started reading as the artwork. The grid gets a smaller share of a
-        // much bigger card, which lands back at a similar physical size.
-        className="absolute left-1/2 top-[41%] flex aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300 [[data-virtual-grid]_&]:h-[24%]"
-      >
-        {/* CornerRightDown — turn and descend, the verb this control performs:
-            NAVIGATE into the timeline. The sidebar's FolderTree toggles whether
-            the children tree is shown, which is a different verb and does not
-            share this icon. */}
-        {/* 45%, not 55%: the mark crowded the ring it sits in. The circle's
-            own size is unchanged — only the glyph inside it shrank. */}
-        <CollectionFolderGlyph className="h-[45%] w-[45%]" />
-      </button>
+      {/* The card's controls, as ONE cluster in the top-right: drill, then
+          details. Both were placed independently before — details at the top
+          corner, the drill badge down at the artwork's bottom edge — which read
+          as two unrelated marks and made the drill's offset a per-surface
+          tuning problem against the label row's height. Grouped, they align by
+          construction, and a media card's single control lands in exactly the
+          same place.
+
+          The chevron sits nearest the corner deliberately: read left to right,
+          the mark closest to the edge is the one that takes you past it.
+
+          Still real buttons composed as SIBLINGS of the selection surface — a
+          button inside the surface's button would be invalid HTML, which is why
+          this is positioned rather than placed. Pointer-only: tabIndex -1 keeps
+          roving views at one tab stop per item, keyboard drill-in stays on the
+          O key (OpenKeyBoundary), and data-collections-keyboard-ignore excludes
+          them from the strip's pan surface (isPannableStripSurface), so a press
+          here never scrolls the strip out from under it. */}
+      {selected && <CardSelectedBadge />}
+      <span className={CARD_CONTROL_CLUSTER_CLASS}>
+        <ItemDetailsTrigger id={id} rovingTabIndex={undefined} inCluster />
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-label={`Open ${displayName}`}
+          title="Open this timeline"
+          data-collections-keyboard-ignore
+          onClick={(event) => {
+            event.stopPropagation();
+            nav?.openTimeline(id);
+          }}
+          className={[
+            CARD_CONTROL_CLASS,
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+          ].join(" ")}
+        >
+          {/* ONE glyph. It briefly carried CornerRightDown as well, on the
+              reasoning that the badge had to say "container" and "way in" at
+              once — but that name lies: `CollectionDrillGlyph` draws
+              CornerRightDown, so the pair was two direction arrows saying the
+              same thing twice. A chevron alone reads as "enter"; what says
+              CONTAINER is the card. */}
+          <ChevronRight className="size-4" aria-hidden="true" />
+        </button>
+      </span>
 
       {/* The rename editor — a REAL input, overlaying the label row while
           editing. A sibling of the surface, so it nests in no button. */}
@@ -1010,7 +1145,6 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
       {/* Same control the media card carries (PL11-012): a timeline has
           details worth reading — what is inside it, how long it runs, whether
           it is loaded — without drilling in to find out. */}
-      <ItemDetailsTrigger id={id} rovingTabIndex={undefined} />
 
       <CollectionItem.DropIndicators />
     </>
@@ -1067,7 +1201,16 @@ const GraphCollectionItem = memo(function GraphCollectionItem({
 const ItemDetailsTrigger = memo(function ItemDetailsTrigger({
   id,
   rovingTabIndex,
-}: Readonly<{ id: NodeId; rovingTabIndex: number | undefined }>) {
+  inCluster = false,
+}: Readonly<{
+  id: NodeId;
+  rovingTabIndex: number | undefined;
+  /** True when a card renders this INSIDE `CARD_CONTROL_CLUSTER_CLASS`, which
+   *  owns the position — a collection pairs it with the drill control. Alone
+   *  (a media card) it positions itself at the SAME inset, so both card kinds
+   *  put their controls in exactly the same place. */
+  inCluster?: boolean;
+}>) {
   const store = useCollectionsStore();
   const { setOpenId } = useItemDetails();
   // NAME the item: a board shows dozens of these, and "Open item details"
@@ -1097,23 +1240,22 @@ const ItemDetailsTrigger = memo(function ItemDetailsTrigger({
         store.setSelection([id]);
         setOpenId(id as string);
       }}
+      // ONE treatment, shared with the drill badge on a collection card: same
+      // 24px square, same right edge, same fill — details top-right, drill
+      // bottom-right, bracketing the same side. The two used to differ in
+      // corner, shape, colour AND reveal rule, which is why they never read as
+      // siblings.
       className={[
-        "absolute top-1 right-1 z-20 flex size-6 items-center justify-center rounded",
-        "bg-zinc-950/80 text-zinc-300 shadow-sm shadow-black/40 backdrop-blur-[1px]",
-        "hover:bg-zinc-900 hover:text-zinc-50",
-        // Hidden until the card is hovered or something inside it has focus —
-        // including this button, which is why `focus-within` is on the group
-        // rather than `focus-visible` here alone.
-        //
-        // The HIDING is gated on hover existing at all (PL11-011). A touch
-        // device never hovers, so an unconditional `opacity-0` made this the
-        // only way to open the details view AND made it unreachable there.
-        // Visible by default, hidden only where a pointer can reveal it: busy
-        // beats unreachable.
-        "transition-opacity duration-150 [@media(hover:hover)]:opacity-0",
-        "group-hover/media-item:opacity-100 group-focus-within/media-item:opacity-100",
-        "group-hover/collection-item:opacity-100 group-focus-within/collection-item:opacity-100",
-        "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+        CARD_CONTROL_CLASS,
+        inCluster ? "" : "absolute right-1.5 top-1.5",
+        // ALWAYS VISIBLE (PL13-005). It was hover-revealed, with the hiding
+        // gated on `hover:hover` so a touch device — which never hovers — could
+        // still reach it (PL11-011). Always-visible removes that whole class of
+        // problem: pointer and touch now behave identically and there is no
+        // media query to get wrong. The cost is two permanent marks on a card,
+        // paid deliberately, because on a collection the drill badge is the only
+        // pointer route into a timeline and a route nobody can see is not one.
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
       ].join(" ")}
     >
       <Maximize2 aria-hidden="true" className="h-3.5 w-3.5" />
@@ -1137,6 +1279,14 @@ const GraphMediaItem = memo(function GraphMediaItem({
   ...props
 }: CollectionItemShellProps) {
   const node = useCollectionsSelector((s) => s.graph.nodesById.get(props.id) ?? null);
+  // NodeCard knows whether it is selected, but keeps it inside its own shell —
+  // and the badge has to be a SIBLING of that shell, like everything else here,
+  // because a span inside the card's `<button>` would still be inside a button.
+  // A boolean selector, so this re-renders only when THIS card's selection
+  // actually flips, not on every selection change on the board.
+  const mediaSelected = useCollectionsSelector((s) =>
+    s.interaction.selectedIds.has(props.id),
+  );
   const detail = useClipDetail(props.id as string);
   // Seeded with the AUTHORED title when there is one, so re-naming edits what
   // the user wrote rather than making them delete a filename first.
@@ -1145,6 +1295,7 @@ const GraphMediaItem = memo(function GraphMediaItem({
   return (
     <div className={["group/media-item relative", className ?? ""].join(" ")}>
       <NodeCard {...props} className="h-full w-full" />
+      {mediaSelected && <CardSelectedBadge />}
       <ItemDetailsTrigger id={props.id} rovingTabIndex={props.rovingTabIndex} />
       {rename.editing && node?.kind === "media" && (
         <InlineNameEditor
