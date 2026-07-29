@@ -2,7 +2,15 @@
 
 import { useContext, useDeferredValue, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { FolderPlus, Redo2, Settings, Undo2 } from "lucide-react";
+import {
+  Command,
+  FolderPlus,
+  FolderTree,
+  Redo2,
+  Ruler,
+  Settings,
+  Undo2,
+} from "lucide-react";
 
 import {
   CollectionsContainerContext,
@@ -17,6 +25,7 @@ import { flattenMediaOrder } from "@storyboard/timeline-domain";
 
 import { formatDuration } from "@/lib/format-duration";
 import { requestGraphToolInsert } from "@/lib/graph-view-events";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/core/button";
 import {
   DropdownMenu,
@@ -24,8 +33,9 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioBadge,
   DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/core/dropdown-menu";
 import { Slider } from "@/components/core/slider";
@@ -79,11 +89,17 @@ export type { FocusSurface, ItemSize };
  * and the menu itself knows nothing about sizing.
  */
 function BoardMenu({
+  surface,
   itemSize,
   onItemSizeChange,
+  pixelsPerSecond,
+  onPixelsPerSecondChange,
 }: Readonly<{
+  surface: FocusSurface;
   itemSize: ItemSize;
   onItemSizeChange: (size: ItemSize) => void;
+  pixelsPerSecond: number;
+  onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
 }>) {
   return (
     <DropdownMenu>
@@ -99,27 +115,55 @@ function BoardMenu({
           <Settings aria-hidden="true" className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" className="w-60 p-2">
         <DropdownMenuGroup>
-          <DropdownMenuItem onSelect={() => requestGraphShortcuts()}>
-            Keyboard shortcuts
-            <span className="ml-auto pl-6 font-mono text-[11px] text-zinc-500">?</span>
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Thumbnail size</DropdownMenuLabel>
+          <DropdownMenuLabel className="px-0.5 pb-2 pt-0.5">Thumbnail size</DropdownMenuLabel>
+          {/* BADGES in a wrapping row, not a stack of rows: five sizes as
+              full-width items ate most of the menu's height for a choice that
+              is five short tokens. Still one radio group — exactly one
+              selected, and the menu's roving focus still reaches each badge —
+              only the shape changed. `flex-wrap` lets them take a second line
+              on a narrow menu rather than squeezing past legibility. */}
           <DropdownMenuRadioGroup
+            className="flex flex-wrap gap-1 pt-0.5"
             value={itemSize}
             onValueChange={(value) => {
               if (isItemSize(value)) onItemSizeChange(value);
             }}
           >
             {ITEM_SIZES.map((option) => (
-              <DropdownMenuRadioItem key={option} value={option}>
+              <DropdownMenuRadioBadge key={option} value={option}>
                 {option.toUpperCase()}
-              </DropdownMenuRadioItem>
+              </DropdownMenuRadioBadge>
             ))}
           </DropdownMenuRadioGroup>
+        </DropdownMenuGroup>
+        {/* Zoom is a strip-only axis: grid cells are sized by thumbnail size
+            and the grid playhead ignores clip width, so the control is a
+            no-op there. Omitted rather than shown disabled — same rule the
+            header used when it hosted the slider, and a settings row that
+            can never do anything is worse than one that isn't offered. */}
+        {surface === "strip" ? (
+          <>
+            <DropdownMenuSeparator className="-mx-2 my-2.5" />
+            <ZoomMenuItem
+              pixelsPerSecond={pixelsPerSecond}
+              onChange={onPixelsPerSecondChange}
+            />
+          </>
+        ) : null}
+        {/* LAST, and fenced off: everything above changes this board, while
+            this one leaves it alone and opens a reference sheet. Sections that
+            act and sections that explain do not belong in the same run. */}
+        <DropdownMenuSeparator className="-mx-2 my-2.5" />
+        <DropdownMenuGroup>
+          <DropdownMenuItem onSelect={() => requestGraphShortcuts()}>
+            Keyboard shortcuts
+            <Command
+              aria-hidden="true"
+              className="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-500"
+            />
+          </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -170,45 +214,187 @@ function FocusedAggregate({
   );
 }
 
+/** One arrow press. Coarse enough to cross the range in a sensible number of
+ *  presses, fine enough to land where you meant. */
+const ZOOM_KEY_STEP = 4;
+
 /**
- * Horizontal zoom. Lives in the header rather than the overflow menu because
- * it is an exploration tool, not a setting — you reach for it WHILE reading
- * the strip, to pull a sub-second clip open or squeeze a minute-long one into
- * view. Burying it behind a menu would cost a click per adjustment.
+ * Horizontal zoom, as a labelled row of the board menu.
+ *
+ * It used to sit bare in the header, and the comment here argued it had to: an
+ * exploration tool reached WHILE reading the strip, where a menu would cost a
+ * click per adjustment. That was the old call; the menu is where it lives now.
+ * The trade is real and worth naming rather than pretending away — a zoom
+ * sweep is open-menu-then-drag — but the header buys back the width, and the
+ * control gains a visible name, a readable value, and units.
+ *
+ * WHY THE ROW IS THE CONTROL, and not a `<Slider>` a keyboard user focuses.
+ *
+ * A `role="menu"` navigates between menu ITEMS. Radix implements exactly that:
+ * its roving focus walks `menuitem`/`menuitemradio` and nothing else. A slider
+ * dropped in as a child is therefore unreachable by arrow keys — measured, not
+ * assumed: focus went straight from the last size badge to "Keyboard
+ * shortcuts", skipping the thumb. It was also invalid composition, since a
+ * `slider` is not something a menu may contain.
+ *
+ * So the MENU ITEM owns the value: Left/Right adjust it, and its accessible
+ * name carries the current reading. The `<Slider>` beneath is the pointer
+ * affordance and the visual — `aria-hidden`, with its thumb out of the tab
+ * order so nothing focusable hides inside a hidden subtree.
+ *
+ * Up/Down are deliberately NOT claimed: they keep moving through the menu, so
+ * the horizontal keys drive the horizontal control and the vertical keys drive
+ * the vertical list. Nothing to learn.
  */
-function ScaleSlider({
+function ZoomMenuItem({
   pixelsPerSecond,
   onChange,
 }: Readonly<{
   pixelsPerSecond: number;
   onChange: (pixelsPerSecond: number) => void;
 }>) {
+  const value = Math.round(pixelsPerSecond);
+  const stepBy = (delta: number) =>
+    onChange(Math.min(MAX_TIMELINE_PPS, Math.max(MIN_TIMELINE_PPS, value + delta)));
+
   return (
-    // Compact, label-less: the tooltip carries what it does AND the live
-    // value (the slider's own aria-valuenow has it too) — the header row
-    // earns back the label's width.
-    <div
-      className="flex w-24 shrink-0 items-center"
-      title={`Timeline zoom — stretch or squeeze the strip's time scale (${Math.round(pixelsPerSecond)} px/s)`}
+    <DropdownMenuItem
+      data-board-menu-zoom
+      // Selecting must not close the menu: this row is a control you stay on,
+      // not a command you fire.
+      onSelect={(event) => event.preventDefault()}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowRight") stepBy(ZOOM_KEY_STEP);
+        else if (event.key === "ArrowLeft") stepBy(-ZOOM_KEY_STEP);
+        else if (event.key === "Home") onChange(MIN_TIMELINE_PPS);
+        else if (event.key === "End") onChange(MAX_TIMELINE_PPS);
+        else return;
+        // Claimed — the menu must not also act on it.
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      // The whole reading, in the name: what it is, where it stands, and how
+      // to move it. A menu item announcing only "Timeline zoom" would leave a
+      // screen-reader user with no idea the arrows do anything here.
+      aria-label={`Timeline zoom, ${value} pixels per second. Left and right arrow keys adjust.`}
+      aria-keyshortcuts="ArrowLeft ArrowRight"
+      className="flex-col items-stretch gap-1.5 py-2 focus:bg-zinc-900"
     >
-      <Slider
-        aria-label="Timeline scale"
-        min={MIN_TIMELINE_PPS}
-        max={MAX_TIMELINE_PPS}
-        step={1}
-        value={[pixelsPerSecond]}
-        onValueChange={([next]) => onChange(next)}
-      />
-    </div>
+      <span aria-hidden="true" className="flex items-baseline justify-between gap-3">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+          Timeline zoom
+        </span>
+        <span
+          data-board-menu-zoom-value
+          className="font-mono text-[11px] tabular-nums text-zinc-400"
+        >
+          {value} px/s
+        </span>
+      </span>
+      <span aria-hidden="true" className="block py-0.5">
+        <Slider
+          thumbTabIndex={-1}
+          min={MIN_TIMELINE_PPS}
+          max={MAX_TIMELINE_PPS}
+          step={1}
+          value={[value]}
+          onValueChange={([next]) => {
+            if (typeof next === "number") onChange(next);
+          }}
+        />
+      </span>
+      <span aria-hidden="true" className="text-[11px] leading-snug text-zinc-500">
+        Stretch or squeeze the strip&apos;s time scale.
+      </span>
+    </DropdownMenuItem>
+  );
+}
+
+/**
+ * The ACTIVE styling shared by every toggle in this row: an ACCENT TINT — a
+ * low-opacity sky wash under a sky glyph.
+ *
+ * The contrast comes from the GLYPH, not from a slab behind it. These are
+ * toolbar toggles sitting inches from the board's own content, so an active
+ * one has to be obvious without becoming the brightest object on the screen —
+ * which is exactly what the previous treatment (a near-white fill, near-black
+ * glyph) did: with three toggles lit, the toolbar out-shouted the timeline it
+ * was there to control.
+ *
+ * The tint is deliberately weak. It exists to bound the accent, not to be seen
+ * on its own; the colour is doing the work.
+ *
+ * SKY, and specifically `sky-300` on the glyph, because that is the colour of
+ * PLAYED time on the seek rail (`data-rail-fill` is `bg-sky-300/80`). The rail
+ * is where this app already says "this is live, this is what is on", so an
+ * active toggle borrowing it inherits a meaning the user has been reading all
+ * along instead of introducing a hue that means nothing yet.
+ *
+ * Not amber: amber means SELECTION here — selected cards, trim handles, the
+ * focus ring. A toggle being on is a different fact from a card being chosen,
+ * and the two are on screen together during a drag.
+ *
+ * The rail uses the same accent as an indicator BAR rather than a tint (see
+ * SIDEBAR_ICON_PRESSED / SIDEBAR_ICON_TOGGLE_ON) — nav reads as position, a
+ * toggle reads as on/off. One hue, two treatments; keep them in step.
+ *
+ * The idle half keeps the plain ghost treatment it shares with the undo, redo
+ * and menu buttons beside it, so an inactive toggle still reads as one of that
+ * cluster rather than a control in a scheme of its own.
+ */
+const HEADER_TOGGLE_ACTIVE =
+  "bg-sky-400/15 text-sky-300 hover:bg-sky-400/25 hover:text-sky-200";
+const HEADER_TOGGLE_IDLE = "text-zinc-400 hover:text-zinc-100";
+
+/**
+ * A view toggle in the breadcrumb row: time ruler, preview pane, children
+ * timelines — all moved here from the icon sidebar.
+ *
+ * ONE component because the three are the same control with a different glyph,
+ * and because their active styling has to stay identical. It was three
+ * near-copies before this, which is exactly how the styling drifts.
+ */
+function HeaderToggle({
+  active,
+  onToggle,
+  icon: Icon,
+  label,
+  title,
+}: Readonly<{
+  active: boolean;
+  onToggle: () => void;
+  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+  /**
+   * Reflects STATE, not just the control — "Hide …" once on, "Show …" once
+   * off. These are the exact names the sidebar buttons carried, so assistive
+   * tech (and the e2e that drives them) sees controls that MOVED rather than
+   * ones that vanished and were replaced by new ones.
+   */
+  label: string;
+  title: string;
+}>) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={label}
+      aria-pressed={active}
+      title={title}
+      onClick={onToggle}
+      className={cn("h-8 w-8", active ? HEADER_TOGGLE_ACTIVE : HEADER_TOGGLE_IDLE)}
+    >
+      <Icon aria-hidden className="h-4 w-4" />
+    </Button>
   );
 }
 
 /**
  * Undo/redo as ICON buttons, matching the toolbar's other ghost icon controls
- * (preview, children) rather than the package's generic text-label
- * `UndoRedoControls`. App-local on purpose: the icon styling is this toolbar's
- * design, so it stays out of the framework-agnostic package — but the store
- * wiring (and best-effort announce) is exactly the package control's.
+ * rather than the package's generic text-label `UndoRedoControls`. App-local
+ * on purpose: the icon styling is this toolbar's design, so it stays out of
+ * the framework-agnostic package — but the store wiring (and best-effort
+ * announce) is exactly the package control's.
  */
 function GraphUndoRedo() {
   const store = useCollectionsStore();
@@ -321,8 +507,10 @@ export function GraphBoard({
   onPixelsPerSecondChange,
   previewOn,
   rulerOn,
+  onRulerToggle,
   flatOn,
   childrenShown,
+  onChildrenToggle,
   timeChannel,
   trashRootId,
   syncEntries,
@@ -338,15 +526,25 @@ export function GraphBoard({
   onItemSizeChange: (size: ItemSize) => void;
   pixelsPerSecond: number;
   onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
-  /** Toggled from the SIDEBAR's preview icon; the board only renders it. */
+  /** The preview pane above the board. The board RENDERS it; the toggle
+   *  lives in the icon rail (timeline-sidebar) and reaches this state through
+   *  the window-event bus, which the pane's own close button and the WebMCP
+   *  `set_preview` tool already share. */
   previewOn: boolean;
-  /** Toggled from the SIDEBAR's ruler icon (strip mode only). */
+  /** The strip's time ruler. Its toggle lives in this header now (see
+   *  `GraphRulerToggle`) and only mounts in flat mode, so the board both
+   *  renders the state and asks for the change. */
   rulerOn: boolean;
+  onRulerToggle: () => void;
   /** Strip's flat mode: render the whole closure in order, not this
    *  collection's direct children. */
   flatOn: boolean;
-  /** Toggled from the SIDEBAR's children icon; the board only renders it. */
+  /** Whether the nested-timeline tree renders below the focused surface. The
+   *  toggle for it lives in this header now (see `GraphChildrenToggle`), so
+   *  unlike the sidebar-driven flags around it the board both renders the
+   *  state and asks for the change. */
   childrenShown: boolean;
+  onChildrenToggle: () => void;
   timeChannel: PreviewTimeChannel;
   trashRootId: string | null;
   syncEntries: readonly SyncEntry[];
@@ -472,23 +670,39 @@ export function GraphBoard({
                   off from the surface/history controls to its right. */}
               <GraphAddCollectionButton />
               <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
-              {/* px/s is a strip-only axis: grid cells are sized by thumbnail
-                  size, and the grid playhead ignores clip width, so the slider
-                  is a no-op in grid mode. Hidden there (state is preserved, so
-                  returning to strip restores the last zoom). */}
-              {surface === "strip" ? (
-                <>
-                  <ScaleSlider
-                    pixelsPerSecond={pixelsPerSecond}
-                    onChange={onPixelsPerSecondChange}
-                  />
-                  <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
-                </>
+              {/* The VIEW group: what the board shows. Fenced on both sides so
+                  the cluster reads as create | view | history | settings, and
+                  the fences stay put as its contents come and go — the ruler
+                  exists only in flat mode.
+
+                  PREVIEW is deliberately not here. It lives in the icon rail
+                  (see timeline-sidebar) because it is one of the two controls
+                  worth promoting to rail scale; this row keeps the ones that
+                  only qualify the board in front of you. */}
+              {flatOn ? (
+                <HeaderToggle
+                  active={rulerOn}
+                  onToggle={onRulerToggle}
+                  icon={Ruler}
+                  label={rulerOn ? "Hide time ruler" : "Show time ruler"}
+                  title="Time ruler — tick marks over every strip"
+                />
               ) : null}
+              <HeaderToggle
+                active={childrenShown}
+                onToggle={onChildrenToggle}
+                icon={FolderTree}
+                label={childrenShown ? "Hide children timelines" : "Show children timelines"}
+                title="Children timelines — show the nested timeline tree"
+              />
+              <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               <GraphUndoRedo />
               <BoardMenu
+                surface={surface}
                 itemSize={itemSize}
                 onItemSizeChange={onItemSizeChange}
+                pixelsPerSecond={pixelsPerSecond}
+                onPixelsPerSecondChange={onPixelsPerSecondChange}
               />
             </DragChromeFade>
 

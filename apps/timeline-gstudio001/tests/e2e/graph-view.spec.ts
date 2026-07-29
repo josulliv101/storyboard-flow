@@ -2726,9 +2726,17 @@ test.describe("graph view E2E", () => {
     await lastRail.hover({ position: { x: 10, y: 4 } });
     await page.mouse.down();
     await page.mouse.move(lastBox.x - cellW, lastBox.y + 4, { steps: 6 });
+    // Row pitch is MEASURED, not assumed. This used to hardcode 108 — the
+    // `md` cell height plus the gap — so it silently described a layout the
+    // app had moved on from, and failed the moment grid cells were rebuilt
+    // taller to distinguish the surface from the strip. Cell height is a
+    // per-size constant (ITEM_SIZE_DIMENSIONS); read it off the rendered card
+    // the same way `cellW` is read off the grid.
+    const rowPitch =
+      (await grid.locator("[data-node-id]").first().boundingBox())!.height + 8;
     await expect
       .poll(async () => (await translate()).y)
-      .toBeLessThan((rows - 1) * 108 - 20); // strictly above the last row
+      .toBeLessThan((rows - 1) * rowPitch - 20); // strictly above the last row
     await page.mouse.up();
 
     // …and overshooting row 0's tail runs forward into the next row.

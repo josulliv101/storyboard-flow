@@ -907,9 +907,21 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           // collection is legal at all — so the state needs to stay
           // observable to the drop-policy e2e that asserts on it.
           data-collection-hydrated={hydrated ? "true" : "false"}
+          // The grid-scoped variants are what make the two surfaces read as
+          // different objects rather than the same card wrapped. A grid cell is
+          // boxy and tall (see ITEM_SIZE_DIMENSIONS) precisely so this row can
+          // be a real caption; in the strip it stays a tight one-line footer,
+          // because height there is pure overhead on every clip.
+          //
+          // Scoped by the container's own `data-virtual-grid` marker rather
+          // than by a prop: the card renderer is shared by both surfaces and
+          // has no idea which one it is in, and threading that down just to
+          // change two font sizes would put a layout concern into the item
+          // contract.
           className={[
             "mt-1.5 flex items-center justify-between gap-1.5 pl-1 pb-0.5",
-            muted ? "pr-[4.75rem]" : "pr-1",
+            "[[data-virtual-grid]_&]:mt-2.5 [[data-virtual-grid]_&]:pl-1.5 [[data-virtual-grid]_&]:pb-1.5",
+            muted ? "pr-[4.75rem]" : "pr-1 [[data-virtual-grid]_&]:pr-1.5",
           ].join(" ")}
         >
           <span
@@ -919,11 +931,11 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
               // (keyboard: F2 on the focused card — see OpenKeyBoundary)
             }}
             title="Double-click or press F2 to rename"
-            className="min-w-0 flex-1 cursor-text truncate text-xs font-semibold text-zinc-100"
+            className="min-w-0 flex-1 cursor-text truncate text-xs font-semibold text-zinc-100 [[data-virtual-grid]_&]:text-sm"
           >
             {displayName}
           </span>
-          <span className="flex shrink-0 items-center gap-1 font-mono text-[11px] font-medium text-zinc-300">
+          <span className="flex shrink-0 items-center gap-1 font-mono text-[11px] font-medium text-zinc-300 [[data-virtual-grid]_&]:text-xs">
             {typeof totalSeconds === "number" && totalSeconds > 0 ? (
               <>
                 <span className="text-sky-300/90" title="Total duration of contents">
@@ -966,7 +978,13 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           event.stopPropagation();
           nav?.openTimeline(id);
         }}
-        className="absolute left-1/2 top-[41%] flex aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300"
+        // Sized as a FRACTION of the card so it stays proportionate at every
+        // item size — but the fraction itself has to differ per surface. 34%
+        // of a short strip card is a ~45px target; 34% of the new tall grid
+        // cell is ~75px, which stopped reading as a control on the artwork and
+        // started reading as the artwork. The grid gets a smaller share of a
+        // much bigger card, which lands back at a similar physical size.
+        className="absolute left-1/2 top-[41%] flex aspect-square h-[34%] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-zinc-950/70 text-sky-200 ring-1 ring-sky-400/50 backdrop-blur-[2px] transition-colors hover:bg-zinc-900/85 hover:text-sky-100 hover:ring-sky-300 [[data-virtual-grid]_&]:h-[24%]"
       >
         {/* CornerRightDown — turn and descend, the verb this control performs:
             NAVIGATE into the timeline. The sidebar's FolderTree toggles whether

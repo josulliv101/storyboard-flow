@@ -45,11 +45,16 @@ export function requestGraphToolInsert(tool: GraphInsertTool): void {
 // (on mount and on every change) so the sidebar controls can reflect it.
 
 export const GRAPH_SURFACE_EVENT = "graph-view:set-surface";
-export const GRAPH_RULER_TOGGLE_EVENT = "graph-view:toggle-ruler";
+// No ruler-toggle event either, for the same reason as the children one below:
+// that control moved into the board header and calls a prop.
 /** Strip only: show every item in the focused closure in playback order, with
  *  no collections and no nesting. */
 export const GRAPH_FLAT_TOGGLE_EVENT = "graph-view:toggle-flat";
-export const GRAPH_CHILDREN_TOGGLE_EVENT = "graph-view:toggle-children";
+// No children-toggle event: that control moved into the board header, which
+// renders inside the graph provider's own tree, so it calls a prop instead.
+// This bridge is for the SIDEBAR — app chrome in a different React tree — and
+// nothing else should pay for it. `childrenShown` below is still published:
+// the STATE is part of what the view reports, only the command is gone.
 export const GRAPH_PREVIEW_TOGGLE_EVENT = "graph-view:toggle-preview";
 export const GRAPH_VIEW_STATE_EVENT = "graph-view:view-state";
 
@@ -61,6 +66,12 @@ export type GraphViewStateDetail = Readonly<{
   rulerOn: boolean;
   childrenShown: boolean;
   previewOn: boolean;
+  /** Whether the asset palette drawer is open. The SIDEBAR owns that button
+   *  but not the state, so without this published it could not show the
+   *  drawer as open — it reported `aria-pressed="false"` permanently while
+   *  actually toggling one, which is a lie to assistive tech as well as a
+   *  missing highlight. */
+  assetsOpen: boolean;
   /** Strip's flat mode. Strip-only, like the ruler — grid has no equivalent. */
   flatOn: boolean;
   /** True while flat mode is loading the closure it needs (every nested
@@ -76,19 +87,9 @@ export function requestGraphSurface(surface: GraphSurface): void {
   );
 }
 
-/** Ask the graph view to toggle the strip's time ruler. */
-export function requestGraphRulerToggle(): void {
-  window.dispatchEvent(new Event(GRAPH_RULER_TOGGLE_EVENT));
-}
-
 /** Ask the strip to toggle flat mode (all items in order, no nesting). */
 export function requestGraphFlatToggle(): void {
   window.dispatchEvent(new Event(GRAPH_FLAT_TOGGLE_EVENT));
-}
-
-/** Ask the graph view to toggle the children-timelines tree. */
-export function requestGraphChildrenToggle(): void {
-  window.dispatchEvent(new Event(GRAPH_CHILDREN_TOGGLE_EVENT));
 }
 
 /** Ask the graph view to toggle the preview pane. */

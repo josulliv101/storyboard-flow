@@ -19,6 +19,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
+import { DETAILS_HERO_FILL_CLASS, DETAILS_PANEL_HEIGHT_CLASS } from "./graph-view-config";
 import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { formatSeconds } from "@/lib/format-duration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
@@ -347,7 +348,7 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
     >
       <div
         {...dialogProps}
-        className="flex w-full max-w-3xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60 focus-visible:outline-none"
+        className={`flex w-full max-w-3xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-950 p-4 shadow-2xl shadow-black/60 focus-visible:outline-none ${DETAILS_PANEL_HEIGHT_CLASS}`}
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
@@ -420,7 +421,7 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
         <div
           data-item-details-frame
           style={{ viewTransitionName: HERO }}
-          className="relative overflow-hidden rounded-md bg-black"
+          className={`relative overflow-hidden rounded-md bg-black ${DETAILS_HERO_FILL_CLASS}`}
         >
           {video ? (
             <video
@@ -430,14 +431,14 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
               muted
               playsInline
               preload="auto"
-              className="max-h-[46vh] w-full bg-black object-contain"
+              className="h-full w-full bg-black object-contain"
             />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={node.src}
               alt={node.name}
-              className="max-h-[46vh] w-full bg-black object-contain"
+              className="h-full w-full bg-black object-contain"
             />
           )}
           {live !== null && (
