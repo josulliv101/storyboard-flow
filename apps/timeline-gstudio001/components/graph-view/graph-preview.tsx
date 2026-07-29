@@ -594,7 +594,7 @@ export function GraphRuler({
             style={{ height: RULER_TIER_HEIGHT_PX[tick.level] ?? RULER_TIER_HEIGHT_PX[3] }}
           />
           {tick.label ? (
-            <span className="absolute left-[3px] top-[2px] whitespace-nowrap font-mono text-[9px] font-medium leading-none text-sky-100">
+            <span className="absolute left-[3px] top-[2px] whitespace-nowrap font-mono text-[11px] font-medium leading-none text-sky-100">
               {tick.label}
             </span>
           ) : null}
@@ -608,7 +608,7 @@ export function GraphRuler({
           <span
             key={`collection-${index}`}
             data-ruler-collection-duration
-            className="absolute top-[2px] -translate-x-1/2 whitespace-nowrap font-mono text-[9px] font-medium leading-none text-sky-200/90"
+            className="absolute top-[2px] -translate-x-1/2 whitespace-nowrap font-mono text-[11px] font-medium leading-none text-sky-200/90"
             style={{ left: span.x + span.width / 2 }}
           >
             {formatRulerTick(Math.round(span.seconds * 10) / 10)}
@@ -1040,7 +1040,7 @@ function SeekRailRow({
           // sticky breadcrumb header, and there is nothing overhead to draw
           // into — the readout was simply cut off (PL9-007). Downward it
           // overlays the cards, which are its own surface and beneath it.
-          className="pointer-events-none absolute top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
+          className="pointer-events-none absolute top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[11px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
         />
       )}
     </div>
@@ -1634,7 +1634,7 @@ export function GraphStripSeekRail({
           // sticky breadcrumb header, and there is nothing overhead to draw
           // into — the readout was simply cut off (PL9-007). Downward it
           // overlays the cards, which are its own surface and beneath it.
-          className="pointer-events-none absolute top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
+          className="pointer-events-none absolute top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[11px] text-zinc-100 shadow-sm ring-1 ring-zinc-700"
         />
       )}
     </div>

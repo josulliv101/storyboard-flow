@@ -4283,6 +4283,40 @@ test.describe("graph view E2E", () => {
     }).toBe("0.00");
   });
 
+  test("without hover, the details trigger stays visible", async ({ browser }) => {
+    // PL11-011. The trigger hides itself until the card is hovered — which on
+    // a touch device means it hides forever, and it is the only way into the
+    // details view. The HIDING is therefore gated on hover existing at all.
+    //
+    // A real touch CONTEXT, not `Emulation.setEmulatedMedia`: that API leaves
+    // `(hover: hover)` matching in this Chromium, so it would have proved
+    // nothing. `hasTouch` drives the same device emulation a phone gets, and
+    // the media query answers accordingly.
+    const context = await browser.newContext({ hasTouch: true, isMobile: true });
+    const page = await context.newPage();
+    try {
+      await installGraphApi(page);
+      await openGraph(page);
+
+      expect(
+        await page.evaluate(() => window.matchMedia("(hover: none)").matches),
+      ).toBe(true);
+
+      const trigger = page.locator('[data-item-details-trigger="alpha"]');
+      await expect(trigger).toHaveCount(1);
+      // Nothing hovered, nothing focused: hover-capable would read "0".
+      await expect
+        .poll(() => trigger.evaluate((el) => getComputedStyle(el).opacity))
+        .toBe("1");
+
+      // And it still opens from there.
+      await trigger.tap();
+      await expect(page.getByRole("dialog")).toHaveCount(1);
+    } finally {
+      await context.close();
+    }
+  });
+
   test("the header says whether the work is saved", async ({ page }) => {
     // PL11-003. The app autosaves on a 900ms debounce and used to say nothing
     // about it — and undo history dies on reload, so "did that save?" is a

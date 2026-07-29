@@ -49,6 +49,7 @@ import { useItemDetails } from "./graph-item-details-context";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TrimPanel } from "./graph-trim-panel";
 import { createDerivedCache } from "@/lib/derived-cache";
+import { formatDuration, formatSeconds } from "@/lib/format-duration";
 import {
   collectionPreviewFrameUrl,
   videoFrameUrls,
@@ -287,23 +288,15 @@ function useHydratedCollectionSeconds(id: string, enabled: boolean): number | nu
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-/** Compact clock-ish duration label for a collection card ("12.4s", "1:23"). */
-function formatCollectionSeconds(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = Math.round(seconds % 60);
-  return `${minutes}:${String(rest).padStart(2, "0")}`;
-}
-
 /** Leaf subscription: only the clip being trimmed re-renders per pointer move. */
 function LiveDurationPill({ id, node }: { id: NodeId; node: MediaNode }) {
   const live = useLiveTrim(id);
   const showing = live ? live.effectiveSeconds : mediaDurationSeconds(node);
   return (
-    <span className="pointer-events-none absolute right-1 bottom-1 z-10 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[9px] tabular-nums text-zinc-100">
+    <span className="pointer-events-none absolute right-1 bottom-1 z-10 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-zinc-100">
       {node.mediaKind === "video"
-        ? `${showing.toFixed(2)}s / ${node.fullDurationSeconds.toFixed(2)}s`
-        : `${showing.toFixed(2)}s`}
+        ? `${formatSeconds(showing)} / ${formatSeconds(node.fullDurationSeconds)}`
+        : formatSeconds(showing)}
     </span>
   );
 }
@@ -521,7 +514,7 @@ const GraphClipContent = memo(function GraphClipContent({
         ].join(" ")}
       >
       {frameSrcs.length === 0 ? (
-        <span className="flex h-full w-full items-center justify-center text-[10px] text-zinc-500">
+        <span className="flex h-full w-full items-center justify-center text-[11px] text-zinc-500">
           No preview
         </span>
       ) : (
@@ -554,7 +547,7 @@ const GraphClipContent = memo(function GraphClipContent({
       <span
         aria-hidden="true"
         data-media-kind={isVideo ? "video" : "image"}
-        className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[9px] leading-none font-semibold tracking-[0.08em] text-zinc-100"
+        className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] leading-none font-semibold tracking-[0.08em] text-zinc-100"
       >
         {isVideo ? "VIDEO" : "IMAGE"}
       </span>
@@ -629,7 +622,7 @@ const GraphTrimOverviewContent = memo(
     return (
       <div className="flex h-full w-full">
         {frameSrcs.length === 0 ? (
-          <span className="flex h-full w-full items-center justify-center bg-muted text-[10px] text-muted-foreground select-none">
+          <span className="flex h-full w-full items-center justify-center bg-muted text-[11px] text-muted-foreground select-none">
             No preview frames
           </span>
         ) : (
@@ -752,8 +745,8 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
       ) : (
         <span className="flex h-full w-full flex-col items-center justify-center gap-1 p-2 text-center">
           <span className="truncate text-[11px] font-semibold text-zinc-100">{node.name}</span>
-          <span className="font-mono text-[9px] text-zinc-400">
-            {mediaDurationSeconds(node).toFixed(2)}s
+          <span className="font-mono text-[11px] text-zinc-400">
+            {formatSeconds(mediaDurationSeconds(node))}
           </span>
         </span>
       )}
@@ -914,7 +907,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             {typeof totalSeconds === "number" && totalSeconds > 0 ? (
               <>
                 <span className="text-sky-300/90" title="Total duration of contents">
-                  {formatCollectionSeconds(totalSeconds)}
+                  {formatDuration(totalSeconds)}
                 </span>
                 <span aria-hidden="true" className="text-zinc-500">
                   /
@@ -1062,7 +1055,13 @@ const ItemDetailsTrigger = memo(function ItemDetailsTrigger({
         // Hidden until the card is hovered or something inside it has focus —
         // including this button, which is why `focus-within` is on the group
         // rather than `focus-visible` here alone.
-        "opacity-0 transition-opacity duration-150",
+        //
+        // The HIDING is gated on hover existing at all (PL11-011). A touch
+        // device never hovers, so an unconditional `opacity-0` made this the
+        // only way to open the details view AND made it unreachable there.
+        // Visible by default, hidden only where a pointer can reveal it: busy
+        // beats unreachable.
+        "transition-opacity duration-150 [@media(hover:hover)]:opacity-0",
         "group-hover/media-item:opacity-100 group-focus-within/media-item:opacity-100",
         "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
       ].join(" ")}

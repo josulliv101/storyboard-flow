@@ -230,15 +230,15 @@ function SubTimelineNode({
             {name}
           </h3>
         )}
-        <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
+        <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300">
           {hydrated ? liveCount : (detail?.itemCount ?? 0)} clips
         </span>
         {status !== "idle" && (
           <span
             className={
               status === "failed"
-                ? "shrink-0 rounded border border-red-700/60 px-1.5 py-0.5 text-[10px] text-red-400"
-                : "shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-500"
+                ? "shrink-0 rounded border border-red-700/60 px-1.5 py-0.5 text-[11px] text-red-400"
+                : "shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-500"
             }
           >
             {subTimelineRowStatusLabel(status)}

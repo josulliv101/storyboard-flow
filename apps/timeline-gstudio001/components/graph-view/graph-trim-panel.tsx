@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { formatSeconds } from "@/lib/format-duration";
+
 import {
   useLiveTrim,
   type LiveTrim,
@@ -170,8 +172,8 @@ function LiveEdgeFrame({
           activeEdge === "right" ? "right-0" : "left-0",
         ].join(" ")}
       />
-      <span className="absolute right-0 bottom-0 bg-zinc-950/85 px-1 font-mono text-[9px] leading-tight tabular-nums text-amber-200">
-        {time.toFixed(2)}s
+      <span className="absolute right-0 bottom-0 bg-zinc-950/85 px-1 font-mono text-[11px] leading-tight tabular-nums text-amber-200">
+        {formatSeconds(time)}
       </span>
     </div>,
     document.body,

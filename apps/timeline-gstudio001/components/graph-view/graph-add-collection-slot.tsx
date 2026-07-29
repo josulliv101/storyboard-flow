@@ -39,7 +39,7 @@ export function AddCollectionSlot({
       className="flex h-full w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-zinc-700 bg-zinc-900/30 text-zinc-500 transition-colors hover:border-sky-500/60 hover:bg-sky-500/[0.06] hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70"
     >
       <FolderPlus aria-hidden="true" className="h-4 w-4" />
-      <span className="text-[10px] font-medium">Add timeline</span>
+      <span className="text-[11px] font-medium">Add timeline</span>
     </button>
   );
 }

@@ -124,7 +124,7 @@ function FolderTile({
       className="flex h-24 w-36 shrink-0 flex-col items-center justify-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 text-zinc-400 transition-colors hover:border-sky-500/50 hover:bg-zinc-900 hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
     >
       <Icon aria-hidden="true" className="h-6 w-6" />
-      <span className="w-full truncate text-center text-[10px] font-semibold text-zinc-300">
+      <span className="w-full truncate text-center text-[11px] font-semibold text-zinc-300">
         {folder.name}
       </span>
     </button>
@@ -238,7 +238,7 @@ function PaletteRail({
             className="h-full w-full object-cover"
           />
           {asset.kind === "video" && (
-            <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1 py-0.5 text-[9px] font-bold tracking-wide text-zinc-100">
+            <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1 py-0.5 text-[11px] font-bold tracking-wide text-zinc-100">
               VIDEO
             </span>
           )}
@@ -562,13 +562,13 @@ export function AssetPaletteDrawer({
               visually unchanged. A native <select>: the option count is
               provider-driven, so a fixed toggle wouldn't scale. */}
           {providers.length > 1 && (
-            <label className="flex shrink-0 items-center gap-1 text-[10px] text-zinc-500">
+            <label className="flex shrink-0 items-center gap-1 text-[11px] text-zinc-500">
               <span className="sr-only">Asset source</span>
               <select
                 aria-label="Asset source"
                 value={providerId ?? providers[0].id}
                 onChange={(event) => selectProvider(event.target.value)}
-                className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                className="rounded-md border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
               >
                 {providers.map((option) => (
                   <option key={option.id} value={option.id}>
@@ -596,8 +596,8 @@ export function AssetPaletteDrawer({
                   }}
                   className={
                     mode === option
-                      ? "bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-zinc-100"
-                      : "px-2 py-0.5 text-[10px] font-semibold text-zinc-500 hover:text-zinc-200"
+                      ? "bg-zinc-800 px-2 py-0.5 text-[11px] font-semibold text-zinc-100"
+                      : "px-2 py-0.5 text-[11px] font-semibold text-zinc-500 hover:text-zinc-200"
                   }
                 >
                   {option === "folders" ? "Folders" : "Tags"}
@@ -606,7 +606,7 @@ export function AssetPaletteDrawer({
             </div>
           )}
           {searchAvailable && (
-            <label className="flex shrink-0 items-center gap-1.5 text-[10px] text-zinc-500">
+            <label className="flex shrink-0 items-center gap-1.5 text-[11px] text-zinc-500">
               <span className="sr-only">Search assets</span>
               <input
                 type="search"
@@ -626,7 +626,7 @@ export function AssetPaletteDrawer({
               />
             </label>
           )}
-          <span className="shrink-0 text-[10px] text-zinc-600">
+          <span className="shrink-0 text-[11px] text-zinc-600">
             {searchTerm
               ? "Results span the whole library · clear the box to browse"
               : "Drag a thumbnail into any timeline · Enter picks one up for keyboard placement"}
@@ -699,11 +699,11 @@ export function AssetPaletteDrawer({
                     size="sm"
                     disabled={loadingMore}
                     onClick={() => void loadMore()}
-                    className="h-6 px-2 text-[10px]"
+                    className="h-6 px-2 text-[11px]"
                   >
                     {loadingMore ? "Loading…" : "Load more"}
                   </Button>
-                  <span className="text-[10px] text-zinc-600">
+                  <span className="text-[11px] text-zinc-600">
                     {state.assets.length} shown
                     {searchTerm ? " · narrow the search to get there faster" : ""}
                   </span>
