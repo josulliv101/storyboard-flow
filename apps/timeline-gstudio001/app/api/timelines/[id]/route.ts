@@ -73,10 +73,10 @@ export async function GET(
 
     // `asset-library-<uid>` / `asset-library-col-<uid>-<folder>` ids used to
     // be served here as SYNTHETIC timelines — a Cloudinary folder shaped into
-    // clips so the legacy drawer could browse it through the media strip.
-    // That drawer is gone, and nothing else ever requested those ids: assets
-    // are browsed through /api/assets (the provider seam) by the graph
-    // palette, which needs no timeline document to do it.
+    // clips so the legacy drawer could browse it through the media strip. Both
+    // that drawer and the graph palette that replaced it are gone (PL12-005),
+    // and nothing else ever requested those ids: this app no longer browses a
+    // library at all. Media arrives by being dropped on the board.
 
     // Heal + read-time summary derivation live in lib/serve-timeline — the
     // ONE serve path this route shares with the RSC payload loaders.

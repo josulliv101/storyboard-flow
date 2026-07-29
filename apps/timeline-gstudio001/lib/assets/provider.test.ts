@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { LIST_ONLY_CAPABILITIES, createAssetProviderRegistry, type AssetProvider } from "./provider";
 
-function fakeProvider(id: string): AssetProvider {
+function fakeProvider(id: string, canDelete = false): AssetProvider {
   return {
     id,
     label: id.toUpperCase(),
-    capabilities: { ...LIST_ONLY_CAPABILITIES, folders: id === "with-folders" },
-    list: async () => ({ assets: [], folders: [] }),
+    capabilities: { ...LIST_ONLY_CAPABILITIES, delete: canDelete },
+    ...(canDelete ? { remove: async () => {} } : {}),
   };
 }
 
@@ -18,33 +18,19 @@ describe("createAssetProviderRegistry", () => {
     expect(registry.get("nope")).toBeUndefined();
   });
 
-  it("defaults to the FIRST registered provider (registration order is preference)", () => {
-    const registry = createAssetProviderRegistry([fakeProvider("first"), fakeProvider("second")]);
-    expect(registry.defaultProvider().id).toBe("first");
-  });
-
-  it("describeAll carries each provider's own capabilities", () => {
-    const registry = createAssetProviderRegistry([
-      fakeProvider("with-folders"),
-      fakeProvider("flat"),
-    ]);
-    expect(registry.describeAll()).toEqual([
-      {
-        id: "with-folders",
-        label: "WITH-FOLDERS",
-        capabilities: { ...LIST_ONLY_CAPABILITIES, folders: true },
-      },
-      { id: "flat", label: "FLAT", capabilities: LIST_ONLY_CAPABILITIES },
-    ]);
-  });
-
   it("rejects a duplicate provider id at construction, not at request time", () => {
+    // A ref that resolves to the WRONG provider is a delete pointed at the
+    // wrong file, so this is the one thing worth failing loudly at startup.
     expect(() =>
       createAssetProviderRegistry([fakeProvider("dup"), fakeProvider("dup")]),
     ).toThrow(/Duplicate asset provider id "dup"/);
   });
 
-  it("rejects an empty registry", () => {
-    expect(() => createAssetProviderRegistry([])).toThrow(/at least one provider/);
+  it("accepts an empty registry", () => {
+    // It used to refuse one, because `defaultProvider()` had to have something
+    // to return. Nothing asks for a default any more — every caller arrives
+    // holding a providerId off a tombstone — so empty is simply a deployment
+    // where nothing can be reclaimed.
+    expect(createAssetProviderRegistry([]).get("cloudinary")).toBeUndefined();
   });
 });
