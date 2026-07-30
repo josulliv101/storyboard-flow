@@ -993,6 +993,27 @@ export const RenderEfficiencyDuringDrag: Story = {
     const bystander = nodeCard(canvasElement, "w20");
     await waitForLayout(target);
 
+    // Centre the target BEFORE the drag, and this is the fix for a CI-only
+    // flake that survived three investigations. Left alone, t1 sits ~54px from
+    // the bottom of the viewport — inside dnd-kit's auto-scroll threshold — so
+    // holding the pointer there scrolls the page for as long as the drag runs.
+    // Locally that is invisible because the story is already scrolled to its
+    // limit (scrollY 252 === scrollHeight 1152 - innerHeight 900), so the
+    // scroll is clamped to nothing. CI has room, the page drifts under a
+    // stationary pointer, and once it drifts far enough the hold coordinate is
+    // no longer over t1 at all: `over` resolves elsewhere, dnd-kit's context
+    // churns, and every droppable re-renders — the bystander included.
+    //
+    // That is the whole flake. It was reported as an efficiency failure three
+    // times ("expected 10 to be 9") and the guarantee was never the thing
+    // breaking. Reproduced locally by giving the page 800px of runway and
+    // nudging the scroll 90px mid-jitter, which yields the CI trace exactly:
+    // `+3,+2:9/before -3,-2:10/none +2,+1:10/none back:10/none`.
+    //
+    // Centred, the pointer is nowhere near the threshold and nothing scrolls.
+    target.scrollIntoView({ block: "center" });
+    await waitForLayout(target);
+
     // Establish the drag, THEN re-aim at the target's LIVE left half:
     // starting a drag can shift layout (here the wide panel reflows and t1
     // rises), so a hold point computed from the pre-drag rect would strand
@@ -1033,13 +1054,27 @@ export const RenderEfficiencyDuringDrag: Story = {
       if (parent?.querySelector('[data-drop-indicator="after"]')) return "after";
       return "none";
     };
-    const jitter: Array<{ move: string; count: string | null; intent: string }> = [];
+    // Recorded beside the count and intent, because the intent alone could not
+    // say WHY the intent moved. `!OUT` means the hold coordinate is no longer
+    // inside t1 — the signature of the page having scrolled out from under a
+    // stationary pointer, which is exactly what the centring above prevents.
+    const geometry = () => {
+      const r = target.getBoundingClientRect();
+      const inside =
+        holdPoint.x >= r.left &&
+        holdPoint.x <= r.right &&
+        holdPoint.y >= r.top &&
+        holdPoint.y <= r.bottom;
+      return `t1@${Math.round(r.left)},${Math.round(r.top)}${inside ? "" : "!OUT"}`;
+    };
+    const jitter: Array<{ move: string; count: string | null; intent: string; geom: string }> = [];
     const jitterTo = async (label: string, x: number, y: number) => {
       await moveHeldPointer({ x, y });
       jitter.push({
         move: label,
         count: bystander.getAttribute("data-render-count"),
         intent: indicator(),
+        geom: geometry(),
       });
     };
     await jitterTo("+3,+2", holdPoint.x + 3, holdPoint.y + 2);
@@ -1048,8 +1083,19 @@ export const RenderEfficiencyDuringDrag: Story = {
     await jitterTo("back", holdPoint.x, holdPoint.y);
 
     const trace = jitter
-      .map((step) => `${step.move}:${step.count}/${step.intent}`)
+      .map((step) => `${step.move}:${step.count}/${step.intent}/${step.geom}`)
       .join(" ");
+
+    // FIRST precondition, ahead of the intent one it explains. If the page
+    // moved under the pointer, the hold coordinate no longer means what it
+    // meant when it was measured, and everything downstream is measuring a
+    // different scenario than the one the story describes. Checked as its own
+    // assertion so a recurrence says "the page scrolled" in one line instead
+    // of being re-diagnosed from a render count for a fourth time.
+    expect(
+      jitter.map((step) => step.geom.includes("!OUT")),
+      `the page scrolled out from under the pointer mid-jitter, so the assertions below never had their premise (${trace})`,
+    ).toEqual([false, false, false, false]);
 
     // PRECONDITION, checked before the guarantee it qualifies. The story's
     // premise is "jitter within the SAME intent"; if the intent moved, the
