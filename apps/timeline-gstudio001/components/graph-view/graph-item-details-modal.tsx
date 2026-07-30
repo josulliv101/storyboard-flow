@@ -353,10 +353,27 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
       >
         <div className="flex items-center justify-between gap-3">
           {/* The clip's name, editable here (PL10-010) — the same hook the
-              collection card, breadcrumb and sub-row rename through, so the
-              grammar is identical: double-click or F2 to open, Enter commits,
-              Escape cancels, blur commits. For MEDIA the name is the stored
-              `alt`, which the persistence bridge updates on this patch. */}
+              collection card, breadcrumb and sub-row rename through. Enter
+              commits, Escape cancels, blur commits. For MEDIA the name is the
+              stored `alt`, which the persistence bridge updates on this patch.
+
+              Opens on a SINGLE click (PL14-010), adopting the breadcrumb
+              crumb's treatment wholesale: a real button wearing `cursor-text`
+              and a hover tint, labelled `Rename …`. A double click with no
+              hover feedback is undiscoverable — nothing on screen said the
+              title was a field.
+
+              Why single click is available HERE and not on the cards: click
+              already means select on a card, so rename has to be the double
+              click there (and PL13-001 was rejected partly for adding a second
+              affordance around that conflict). Neither the current crumb nor
+              this title has a competing click meaning, so the cheaper gesture
+              is free. The card and sub-row keep their double click.
+
+              A <button> rather than the old <span> also puts rename in the tab
+              order, which is how it becomes reachable without the F2 shortcut
+              (still handled in capture above, and still the only route while
+              the dialog's focus sits elsewhere). */}
           {rename.editing ? (
             <InlineNameEditor
               initialValue={node.name}
@@ -367,13 +384,19 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
               className="min-w-0 flex-1 rounded-sm bg-zinc-900 px-1 py-0.5 text-sm font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
             />
           ) : (
-            <span
-              onDoubleClick={rename.begin}
-              title="Double-click or press F2 to rename"
-              className="min-w-0 flex-1 cursor-text truncate text-sm font-semibold text-zinc-100"
+            <button
+              type="button"
+              onClick={rename.begin}
+              aria-label={`Rename ${node.name}`}
+              title={`Rename ${node.name}`}
+              className={[
+                "min-w-0 flex-1 cursor-text truncate rounded-md px-1.5 py-1 text-left",
+                "text-sm font-semibold text-zinc-100 transition-colors hover:bg-zinc-800/70",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
+              ].join(" ")}
             >
               {node.name}
-            </span>
+            </button>
           )}
           <div className="flex items-center gap-3">
             <span className="font-mono text-[11px] tabular-nums text-zinc-400">

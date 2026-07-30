@@ -3856,7 +3856,8 @@ test.describe("graph view E2E", () => {
     await expect(details.locator("img")).toHaveCount(1);
 
     // The name is editable here as well — the point of the view generalizing.
-    await details.locator("text=bravo").first().dblclick();
+    // One click, like the breadcrumb crumb (PL14-010).
+    await details.getByRole("button", { name: "Rename bravo" }).click();
     const editor = page.getByRole("textbox", { name: "Clip name" });
     await editor.fill("Establishing shot");
     await editor.press("Enter");
@@ -4120,7 +4121,7 @@ test.describe("graph view E2E", () => {
 
     // Rename lands the same way it does from the card — through the child
     // document's title, which is the source of truth for a collection's name.
-    await details.locator("text=Scene A").first().dblclick();
+    await details.getByRole("button", { name: "Rename Scene A" }).click();
     const editor = page.getByRole("textbox", { name: "Timeline name" });
     await editor.fill("Opening beat");
     await editor.press("Enter");
@@ -4304,8 +4305,11 @@ test.describe("graph view E2E", () => {
     expect(storedTitle()).toBeUndefined();
     expect(storedClip()?.alt).toBe("alpha");
 
-    // Double-click the name, type, Enter.
-    await page.locator("[data-item-details] >> text=alpha").first().dblclick();
+    // Click the name once, type, Enter.
+    await page
+      .locator("[data-item-details]")
+      .getByRole("button", { name: "Rename alpha" })
+      .click();
     const editor = page.getByRole("textbox", { name: "Clip name" });
     await expect(editor).toBeVisible();
     await editor.fill("Belushi close-up");
@@ -4332,7 +4336,10 @@ test.describe("graph view E2E", () => {
 
     // Escape cancels an edit instead of closing the modal — the capture-phase
     // key handler has to yield to the editor.
-    await page.locator("[data-item-details] >> text=Belushi close-up").first().dblclick();
+    await page
+      .locator("[data-item-details]")
+      .getByRole("button", { name: "Rename Belushi close-up" })
+      .click();
     const reopened = page.getByRole("textbox", { name: "Clip name" });
     await reopened.fill("Discarded");
     await reopened.press("Escape");

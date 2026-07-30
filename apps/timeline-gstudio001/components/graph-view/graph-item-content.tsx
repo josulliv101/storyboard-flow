@@ -475,13 +475,17 @@ function CollectionLeaderPlaceholder() {
  *
  * Top-LEFT, mirroring the control cluster in the top-right, and 20px against
  * their 24px — a marker should not read as a button you failed to press.
+ *
+ * The 8px inset is shared with that cluster and the two must move TOGETHER
+ * (PL14-002/003 bumped both from 6px): they are top-aligned, so nudging one
+ * off the other's line is exactly what stops them reading as a pair.
  */
 function CardSelectedBadge() {
   return (
     <span
       data-card-selected-badge
       aria-hidden="true"
-      className="pointer-events-none absolute left-1.5 top-1.5 z-20 flex size-5 items-center justify-center rounded bg-amber-300 text-zinc-950 shadow-sm shadow-black/50"
+      className="pointer-events-none absolute left-2 top-2 z-20 flex size-5 items-center justify-center rounded bg-amber-300 text-zinc-950 shadow-sm shadow-black/50"
     >
       <Check className="size-3.5" strokeWidth={3} />
     </span>
@@ -503,11 +507,23 @@ function CardSelectedBadge() {
  * corner, shape, colour and reveal rule — four differences, which is why they
  * looked unrelated. Position and focus ring stay with the caller; everything
  * else is here.
+ *
+ * It must LOOK pressable, which took two things (PL14-002):
+ *
+ * - `cursor-pointer` is not redundant. Tailwind v4's preflight stopped setting
+ *   it on `<button>`, so every control wearing this class fell back to the UA
+ *   arrow — the one cue that says "this is a control and not a decal" was
+ *   simply absent.
+ * - The hover was `bg-zinc-950/80 → bg-zinc-900`: near-black onto near-black,
+ *   a step too small to register over artwork. `zinc-800` is a visible change
+ *   at the same neutral temperature. Deliberately NOT amber or sky — amber is
+ *   the selection colour (PL13-006) and colouring a hover with it would say
+ *   "selected" about a thing you are merely pointing at.
  */
 const CARD_CONTROL_CLASS = [
   "z-20 flex size-6 shrink-0 items-center justify-center rounded",
   "bg-zinc-950/80 text-zinc-300 shadow-sm shadow-black/40 backdrop-blur-[1px]",
-  "transition-colors hover:bg-zinc-900 hover:text-zinc-50",
+  "cursor-pointer transition-colors hover:bg-zinc-800 hover:text-zinc-50",
 ].join(" ");
 
 /**
@@ -520,8 +536,11 @@ const CARD_CONTROL_CLASS = [
  * re-tuning an offset against the label row's height (which differs per
  * surface). Grouped, they align by construction and a media card's single
  * control lands in exactly the same place as a collection's pair.
+ *
+ * The 8px inset is shared with `CardSelectedBadge` in the opposite corner —
+ * see the note there; the two are top-aligned and move together.
  */
-const CARD_CONTROL_CLUSTER_CLASS = "absolute right-1.5 top-1.5 z-20 flex items-center gap-1.5";
+const CARD_CONTROL_CLUSTER_CLASS = "absolute right-2 top-2 z-20 flex items-center gap-1.5";
 
 function CollectionDrillGlyph({ className }: Readonly<{ className?: string }>) {
   return <CornerRightDown aria-hidden="true" className={className} strokeWidth={1.5} />;
