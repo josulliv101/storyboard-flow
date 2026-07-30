@@ -40,8 +40,12 @@ import {
  * this is that prop, in flight.
  */
 export type TrimPreviewFrame = Readonly<{
-  /** The graph node id, which is the clip id in the pane's own list. */
-  clipId: string;
+  /** The media SOURCE. Not a clip id: the pane plays either the focused
+   *  level's projection (ids are node ids) or the compiled manifest (ids are
+   *  path-qualified), so an id matches in one model and misses in the other.
+   *  A src is the same string in both. */
+  src: string;
+  poster?: string;
   /** SOURCE seconds — the frame the moving edge is currently on. */
   sourceTime: number;
 }>;
