@@ -788,13 +788,31 @@ export function WorkbenchDisplaySurface({
     // treated a lookup miss as "nothing to draw" and silently did nothing,
     // which is precisely what a path-qualified manifest id produced.
     const media = resolveOverrideMedia(sortedClipsRef.current, frameOverride);
+    // Force a seek only when the SOURCE changes, exactly as the clock-driven
+    // path does. Forcing one on every update looked harmless and was not: it
+    // skips the drift check AND tears down the pending draw listener before
+    // installing a new one, so a drag issuing ~25 updates a second restarts
+    // the seek 25 times a second. Where seeks complete quickly the draws land
+    // and nothing looks wrong; where they do not, none of them ever finishes
+    // until the pointer slows down.
+    //
+    // That asymmetry is the bug's signature: dragging the OUT handle seeks
+    // near the end of the source, which is typically not buffered yet, while
+    // the IN handle seeks near t=0, which always is. Half a second of lag on
+    // the right handle only, and not once the region had been visited.
+    //
+    // Letting the drift check decide costs a little granularity — the trim is
+    // quantized to 1/25s and `maxDrift` is 0.05s, so an update lands roughly
+    // every other step — and that is far cheaper than a seek that never
+    // completes.
+    const mediaChanged = media.key !== lastRenderedMediaKeyRef.current;
 
     activeMediaRef.current = media;
     lastRenderedMediaKeyRef.current = media.key;
     activeClipDisabledRef.current = false;
     pauseInactiveVideos(null);
     ensureCachedMedia(media);
-    syncActiveVideo(media, false, true);
+    syncActiveVideo(media, false, mediaChanged);
   }, [
     ensureCachedMedia,
     frameOverride,
