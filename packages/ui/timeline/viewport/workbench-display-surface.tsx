@@ -72,6 +72,26 @@ type WorkbenchDisplaySurfaceProps = {
    *  corner. Omit and no button is drawn — a consumer that has no way to hide
    *  the preview must not show one. */
   onClose?: () => void;
+  /**
+   * Draw THIS frame instead of the one the clock is on, for as long as it is
+   * set. Null (the default) means the clock decides, which is every existing
+   * consumer.
+   *
+   * Exists for gestures that are about a frame rather than a moment — trimming
+   * being the one that asked for it: the user is choosing an in/out point, and
+   * the answer to "what does that point look like" belongs on the biggest
+   * picture available rather than in a thumbnail floated next to the handle.
+   *
+   * `sourceTime` is in SOURCE seconds, not timeline seconds, and that is the
+   * point: mid-drag the clip's own trim values are still the committed ones, so
+   * a timeline time would map through stale trims. The caller knows the source
+   * frame it wants; this draws it.
+   *
+   * The CLOCK IS NOT TOUCHED. `currentTime` keeps its value, `onCurrentTimeChange`
+   * is not called, and clearing this redraws whatever the clock was always on.
+   * A consumer cannot move the playhead through this prop, by construction.
+   */
+  frameOverride?: Readonly<{ clipId: string; sourceTime: number }> | null;
 };
 
 const BUFFER_WINDOW_SIZE = 4;
@@ -245,6 +265,33 @@ type GetCollectionClipFramePreview = (
   parentPlaybackRate?: number,
 ) => CollectionFramePreview | null;
 
+/**
+ * The media for an explicit SOURCE frame, bypassing the clock (`frameOverride`).
+ *
+ * Video only — an image has one frame and a collection has no source of its
+ * own, so neither has a frame to be asked for.
+ *
+ * The `key` is byte-identical to the one `resolveClipMedia` builds for the same
+ * clip, and that is deliberate rather than incidental: it lands on the SAME
+ * cache entry, so an override seeks the element the pane is already holding
+ * instead of loading a second copy of the file.
+ */
+function resolveOverrideMedia(clip: TimelineClip, sourceTime: number): DisplayMedia | null {
+  if (clip.kind !== "video") return null;
+  return {
+    key: `${clip.id}:video:${clip.src}`,
+    kind: "video",
+    src: clip.src,
+    poster: clip.poster,
+    alt: clip.alt,
+    sourceTime: clamp(sourceTime, 0, Math.max(0, clip.sourceDuration - 0.001)),
+    // Unused for drawing; the clock is not involved in an override.
+    timelineTime: 0,
+    clipTitle: clipLabel(clip),
+    playbackRate: 1,
+  };
+}
+
 function resolveClipMedia(
   clip: TimelineClip,
   timelineTime: number,
@@ -371,6 +418,7 @@ export function WorkbenchDisplaySurface({
   playing,
   onPlayingChange,
   onClose,
+  frameOverride = null,
 }: WorkbenchDisplaySurfaceProps) {
   const { getCollectionClipFramePreview } = useTimelineDocuments();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -567,6 +615,8 @@ export function WorkbenchDisplaySurface({
     }
   }, [drawDrawable, drawEmptyFrame]);
 
+  const frameOverrideRef = useRef(frameOverride);
+
   const pauseInactiveVideos = useCallback((activeKey: string | null) => {
     cacheRef.current.forEach((cached, key) => {
       if (cached.kind === "video" && key !== activeKey) {
@@ -627,6 +677,12 @@ export function WorkbenchDisplaySurface({
   }, [drawActiveFrame, ensureCachedMedia]);
 
   const renderFrameAtTime = useCallback((timelineTime: number, shouldPlay: boolean, forceSeek = false) => {
+    // An override owns the picture while it is set. Guarding HERE rather than
+    // at each caller is what makes that true of all of them at once — the
+    // `currentTime` effect, the clip-list effect, and the playback loop all
+    // arrive through this function, and any one of them repainting mid-gesture
+    // would flick the frame back to the clock's.
+    if (frameOverrideRef.current !== null) return;
     const active = getActiveClip(sortedClipsRef.current, timelineTime, preferredClipId);
     const media = active
       ? resolveClipMedia(active, timelineTime, getCollectionClipFramePreview)
@@ -681,6 +737,51 @@ export function WorkbenchDisplaySurface({
     observer.observe(canvas);
     return () => observer.disconnect();
   }, [drawActiveFrame]);
+
+  /**
+   * Apply (and release) `frameOverride` — the pane's own canvas drawing a frame
+   * the clock is not on.
+   *
+   * Every video is paused for the duration. The override is a still: leaving
+   * the previously active element running would have it advancing behind a
+   * picture that is not it, which is the mistake the first version of this
+   * feature made from the outside with an overlay.
+   *
+   * Releasing repaints from `currentTime` — unchanged throughout, because
+   * nothing here writes it — so the pane lands back exactly where it was, with
+   * whatever play state it actually has.
+   */
+  useEffect(() => {
+    frameOverrideRef.current = frameOverride;
+
+    if (frameOverride === null) {
+      renderFrameAtTime(currentTimeRef.current, isPlayingRef.current, true);
+      return;
+    }
+
+    const clip = sortedClipsRef.current.find((candidate) => candidate.id === frameOverride.clipId);
+    const media = clip ? resolveOverrideMedia(clip, frameOverride.sourceTime) : null;
+    if (!media) {
+      // Nothing to draw for this request (missing clip, or a kind with no
+      // source frame). Hand the picture back to the clock rather than freezing
+      // on a stale frame.
+      frameOverrideRef.current = null;
+      return;
+    }
+
+    activeMediaRef.current = media;
+    lastRenderedMediaKeyRef.current = media.key;
+    activeClipDisabledRef.current = false;
+    pauseInactiveVideos(null);
+    ensureCachedMedia(media);
+    syncActiveVideo(media, false, true);
+  }, [
+    ensureCachedMedia,
+    frameOverride,
+    pauseInactiveVideos,
+    renderFrameAtTime,
+    syncActiveVideo,
+  ]);
 
   useEffect(() => {
     bufferedMedia.forEach((media) => {
@@ -871,6 +972,12 @@ export function WorkbenchDisplaySurface({
       data-testid="workbench-display-surface"
       data-buffered-media-count={bufferedMedia.length}
       data-preview-playing={isPlaying}
+      // Which clip's frame the pane is drawing INSTEAD of the clock's, if any.
+      // A witness, because the alternative is unobservable: whether a canvas
+      // holds one decoded frame or another is not something a test can read
+      // back, and the e2e fixture's "video" is a 1x1 GIF that never decodes at
+      // all. This at least pins that the request reached the pane.
+      data-frame-override={frameOverride ? frameOverride.clipId : undefined}
     >
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-[inherit] bg-black">
         <canvas

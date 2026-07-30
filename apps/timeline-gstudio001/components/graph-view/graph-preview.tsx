@@ -70,7 +70,11 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
 
 import { useGraphDetailsStore } from "./graph-details-context";
-import { TrimPreviewOverlay, TrimPreviewProvider } from "./graph-trim-preview";
+import {
+  TrimPreviewProvider,
+  useTrimPreviewFrame,
+  useTrimPreviewStore,
+} from "./graph-trim-preview";
 import { GRID_GAP, TIMELINE_PPS } from "./graph-view-config";
 
 /**
@@ -2006,6 +2010,11 @@ export function PreviewShell({
   // owner of the state. Only reachable while open, so toggle IS close.
   const handleClose = useCallback(() => requestGraphPreviewToggle(), []);
 
+  // Owned HERE because both ends are here: the cards publish into it (through
+  // the provider below) and the pane reads it as a prop (PL14-006).
+  const trimStore = useTrimPreviewStore();
+  const trimFrame = useTrimPreviewFrame(trimStore);
+
   return (
     <TimelineDocumentsProvider initialState={initialDocumentsState}>
       {enabled ? <GatewayDocumentsBridge /> : null}
@@ -2026,6 +2035,11 @@ export function PreviewShell({
               playing={playing}
               onPlayingChange={channel.setPlaying}
               onClose={handleClose}
+              // A trim drag hands the pane a frame to draw (PL14-006). Not an
+              // overlay over the pane — the pane's own canvas, its own cached
+              // video, its own geometry. `currentTime` above is untouched
+              // throughout, which is what keeps the playhead where it was.
+              frameOverride={trimFrame}
               className="h-full rounded-b-none border-b-0"
             />
           ) : null
@@ -2034,14 +2048,10 @@ export function PreviewShell({
         {/* The playhead and scrub band live in `children`; they read these
             spans so their time↔x mapping is the pane's clock, not their own. */}
         <PreviewCardSpansContext.Provider value={cardSpans}>
-          {/* A trim drag borrows the pane's picture while the pane is OPEN
-              (PL14-006). The provider wraps `children` because that is where
-              the board — and therefore every trim handle — renders; the
-              overlay is a sibling because it draws over the pane above.
-              Neither touches the clock. */}
-          <TrimPreviewProvider previewOpen={enabled}>
+          {/* The board renders here, so every trim handle is inside this
+              provider and can publish the frame it wants shown. */}
+          <TrimPreviewProvider previewOpen={enabled} store={trimStore}>
             {children}
-            <TrimPreviewOverlay />
           </TrimPreviewProvider>
         </PreviewCardSpansContext.Provider>
       </WorkbenchSplitPane>

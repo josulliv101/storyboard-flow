@@ -4,16 +4,10 @@ import {
   createContext,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
-import { createPortal } from "react-dom";
-
-import { useSeekedVideo } from "@/hooks/use-seeked-video";
-import { formatSeconds } from "@/lib/format-duration";
 
 // Where a trim drag's live frame is SHOWN (PL14-006).
 //
@@ -36,15 +30,20 @@ import { formatSeconds } from "@/lib/format-duration";
 // of the gesture. Release the handle and the overlay unmounts onto a pane that
 // never moved.
 
+/**
+ * Exactly what the pane needs to draw the frame, and nothing else.
+ *
+ * It carried `src`, `poster` and `side` while this was an overlay, because an
+ * overlay had to build its own `<video>`. The pane already has the clip — it is
+ * rendering that timeline — so an id and a source time is the whole request.
+ * Matches `WorkbenchDisplaySurface.frameOverride` field for field on purpose:
+ * this is that prop, in flight.
+ */
 export type TrimPreviewFrame = Readonly<{
-  nodeId: string;
-  src: string;
-  poster?: string;
+  /** The graph node id, which is the clip id in the pane's own list. */
+  clipId: string;
   /** SOURCE seconds — the frame the moving edge is currently on. */
   sourceTime: number;
-  /** Which edge is moving, so the overlay can wear the handle's amber bar on
-   *  the same side the panel would have. */
-  side: "left" | "right";
 }>;
 
 type TrimPreviewStore = Readonly<{
@@ -87,13 +86,33 @@ const INERT: TrimPreviewValue = {
 
 const TrimPreviewContext = createContext<TrimPreviewValue>(INERT);
 
+/**
+ * Own the store from the component that renders BOTH ends.
+ *
+ * It cannot live inside the provider: the pane is passed to the split pane as a
+ * `surface` PROP and needs the frame as a prop too, so the owner has to read
+ * the store and provide it in the same render. A provider that created it
+ * internally would be reachable from the cards and invisible to the pane.
+ */
+export function useTrimPreviewStore(): TrimPreviewStore {
+  const [store] = useState(createStore);
+  return store;
+}
+
+/** Subscribe to the live frame. For the owner, to hand to the pane. */
+export function useTrimPreviewFrame(store: TrimPreviewStore): TrimPreviewFrame | null {
+  return useSyncExternalStore(store.subscribe, store.get, () => null);
+}
+
 export function TrimPreviewProvider({
   previewOpen,
+  store,
   children,
-}: Readonly<{ previewOpen: boolean; children: React.ReactNode }>) {
-  const [store] = useState(createStore);
-  // The store is stable; only the open flag changes identity, and it changes
-  // rarely (a pane toggle), so this is not a per-frame allocation.
+}: Readonly<{
+  previewOpen: boolean;
+  store: TrimPreviewStore;
+  children: React.ReactNode;
+}>) {
   const value = useMemo<TrimPreviewValue>(
     () => ({ previewOpen, store }),
     [previewOpen, store],
@@ -140,72 +159,19 @@ export function usePublishTrimPreview(frame: TrimPreviewFrame | null): boolean {
   return taken;
 }
 
-/** The pane's picture area, which is what the overlay covers. */
-const CANVAS_SELECTOR = '[data-testid="workbench-display-canvas"]';
-
 /**
- * The trim frame, drawn over the preview pane's picture for the length of the
- * gesture.
+ * WHY THIS IS A FRAME REQUEST AND NOT AN OVERLAY.
  *
- * Positioned `fixed` against the canvas's measured rect rather than mounted
- * inside the pane. The pane is a package component with its own layout
- * (WorkbenchSplitPane sizes it, a divider drags it); slipping an absolutely
- * positioned child into it would make this feature a `packages/ui` change and
- * put a graph concern inside a generic surface. Measuring is the same
- * technique the floating panel already uses, and it leaves the package alone.
+ * The first version portalled a second `<video>` over the pane's rect. It
+ * looked right and was not: it decoded the file a second time instead of
+ * reusing the pane's cache, it left the pane's transport readout describing a
+ * different moment than its own picture, its CSS `object-contain` only
+ * approximated the canvas's draw math, and a playing pane went on playing
+ * invisibly underneath it. It also shipped a full version behind the pane's
+ * `z-40` — invisible — because covering something is a stacking problem that
+ * driving it does not have.
+ *
+ * Covering a component is not the same as driving it. The frame now goes to
+ * `WorkbenchDisplaySurface.frameOverride`, so the pane's OWN canvas draws it,
+ * from the element it already had cached.
  */
-export function TrimPreviewOverlay() {
-  const { store } = useTrimPreview();
-  const frame = useSyncExternalStore(store.subscribe, store.get, () => null);
-  const videoRef = useSeekedVideo(frame?.sourceTime ?? 0, frame !== null);
-  const boxRef = useRef<HTMLDivElement | null>(null);
-
-  useLayoutEffect(() => {
-    const box = boxRef.current;
-    if (!box || !frame) return;
-    const canvas = document.querySelector(CANVAS_SELECTOR);
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    box.style.left = `${rect.left}px`;
-    box.style.top = `${rect.top}px`;
-    box.style.width = `${rect.width}px`;
-    box.style.height = `${rect.height}px`;
-  }, [frame]);
-
-  if (!frame) return null;
-
-  return createPortal(
-    <div
-      ref={boxRef}
-      data-trim-preview-overlay={frame.side}
-      aria-hidden="true"
-      // z-[60], the floating panel's level, and it has to be: the pane it
-      // covers is `sticky z-40`, so anything below that renders BEHIND the
-      // picture it is meant to replace — present, correctly sized, invisible.
-      className="pointer-events-none fixed z-[60] overflow-hidden bg-black"
-      style={{ left: -9999, top: -9999 }}
-    >
-      <video
-        ref={videoRef}
-        src={frame.src}
-        poster={frame.poster}
-        muted
-        playsInline
-        preload="auto"
-        className="h-full w-full bg-black object-contain"
-      />
-      {/* Same amber bar the floating panel wears, on the same edge — the two
-          presentations should read as one feature in two places. */}
-      <span
-        className={[
-          "absolute inset-y-0 w-1 bg-amber-400",
-          frame.side === "right" ? "right-0" : "left-0",
-        ].join(" ")}
-      />
-      <span className="absolute bottom-0 right-0 bg-zinc-950/85 px-1.5 py-0.5 font-mono text-xs leading-tight tabular-nums text-amber-200">
-        {formatSeconds(frame.sourceTime)}
-      </span>
-    </div>,
-    document.body,
-  );
-}

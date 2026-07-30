@@ -160,15 +160,7 @@ export function TrimPanel({ id, node }: Readonly<{ id: NodeId; node: MediaNode }
   // returns true when the pane TOOK the frame, which is exactly when the
   // floating panel must stand down (PL14-006): one picture, not two.
   const takenByPreview = usePublishTrimPreview(
-    live !== null && isVideo && node.src
-      ? {
-          nodeId: id as string,
-          src: node.src,
-          poster: node.posterSrcs?.[0],
-          sourceTime,
-          side: live.side === "right" ? "right" : "left",
-        }
-      : null,
+    live !== null && isVideo ? { clipId: id as string, sourceTime } : null,
   );
 
   if (!isVideo) return null;

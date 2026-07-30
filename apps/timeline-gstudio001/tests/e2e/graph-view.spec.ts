@@ -4561,41 +4561,26 @@ test.describe("graph view E2E", () => {
     await page.mouse.down();
     await page.mouse.move(box.x - 24, box.y + box.height / 2, { steps: 6 });
 
-    // The pane took it, and the floating panel stood down.
-    const overlay = page.locator('[data-trim-preview-overlay="right"]');
-    await expect(overlay).toHaveCount(1);
+    // The PANE was asked for the frame, and the floating panel stood down.
+    // There is no second element anywhere: the pane's own canvas draws this,
+    // from the video element it already had cached.
+    const surface = page.getByTestId("workbench-display-surface");
+    await expect(surface).toHaveAttribute("data-frame-override", "alpha");
     await expect(page.locator("[data-trim-edge-frame]")).toHaveCount(0);
+    await expect(page.locator("[data-trim-preview-overlay]")).toHaveCount(0);
 
-    // It covers the pane's picture — this is the preview showing the frame,
-    // not a panel that happens to be nearby.
-    const overlayBox = (await overlay.boundingBox())!;
-    const canvasBox = (await canvas.boundingBox())!;
-    expect(overlayBox.x).toBeCloseTo(canvasBox.x, 0);
-    expect(overlayBox.y).toBeCloseTo(canvasBox.y, 0);
-    expect(overlayBox.width).toBeCloseTo(canvasBox.width, 0);
-    expect(overlayBox.height).toBeCloseTo(canvasBox.height, 0);
-
-    // …and it is ON TOP of the pane, which the box assertions above cannot
-    // tell you. That is exactly how this shipped broken the first time: the
-    // overlay was z-30 against the pane's `sticky z-40`, so it sat at these
-    // coordinates, at this size, BEHIND the picture it was meant to replace —
-    // every assertion above passed and the feature did nothing.
+    // WHAT THIS DOES NOT PROVE, stated so nobody reads more into it: that the
+    // canvas is painting the right frame. Which pixels a canvas holds is not
+    // readable back, and this fixture's "video" is a 1x1 GIF data URL that
+    // never reaches HAVE_CURRENT_DATA — no frame decodes here at all. The
+    // attribute pins the REQUEST reaching the pane; the drawing is the pane's
+    // existing, already-covered path (`syncActiveVideo` → `drawActiveFrame`),
+    // and the picture itself needs a human with a real video.
     //
-    // Compared numerically rather than hit-tested, because the overlay is
-    // `pointer-events-none` and is therefore invisible to `elementFromPoint`.
-    // Both live in the body stacking context, so the raw values are
-    // comparable.
-    const stacking = await page.evaluate(() => {
-      const overlay = document.querySelector("[data-trim-preview-overlay]");
-      const region = document.querySelector('[data-testid="workbench-preview-region"]');
-      if (!overlay || !region) return null;
-      return {
-        overlay: Number(getComputedStyle(overlay).zIndex),
-        region: Number(getComputedStyle(region).zIndex),
-      };
-    });
-    expect(stacking).not.toBeNull();
-    expect(stacking!.overlay).toBeGreaterThan(stacking!.region);
+    // An earlier version of this test asserted an overlay's bounding box
+    // matched the canvas's, which passed while the overlay sat BEHIND the pane
+    // at z-30. Geometry is not visibility, and a witness that says "asked" is
+    // worth more than one that says "positioned".
 
     // THE constraint carried over from round 5: the clock does not move while
     // the pane is borrowed. Asserted DURING the gesture, which is the only
@@ -4605,8 +4590,9 @@ test.describe("graph view E2E", () => {
     expect(await page.getByTestId("workbench-preview-time").textContent()).toBe(timeBefore);
 
     await page.mouse.up();
-    // Released, the pane goes back to being the pane.
-    await expect(overlay).toHaveCount(0);
+    // Released, the pane goes back to being the pane — the override clears and
+    // the clock owns the picture again.
+    await expect(surface).not.toHaveAttribute("data-frame-override", /.*/);
     await expect(canvas).toBeVisible();
   });
 
