@@ -1020,21 +1020,53 @@ export const RenderEfficiencyDuringDrag: Story = {
     // needs to say WHICH move caused the render — three CI failures were
     // reported as a bare "expected 10 to be 9", which is undiagnosable after
     // the fact and is why this flake survived two rounds of investigation.
-    const jitter: Array<{ move: string; count: string | null }> = [];
+    //
+    // The INTENT is recorded beside the count, because the two failures
+    // together are ambiguous without it. CI has shown both (+2,+1,0,0) and
+    // (+1,+1,+1,0): renders landing per move rather than trickling in from
+    // drag-start. That is either the efficiency guarantee failing on slow
+    // hardware, or the jitter leaving the intent it claims to stay inside —
+    // and only the resolved intent tells them apart.
+    const indicator = () => {
+      const parent = target.parentElement;
+      if (parent?.querySelector('[data-drop-indicator="before"]')) return "before";
+      if (parent?.querySelector('[data-drop-indicator="after"]')) return "after";
+      return "none";
+    };
+    const jitter: Array<{ move: string; count: string | null; intent: string }> = [];
     const jitterTo = async (label: string, x: number, y: number) => {
       await moveHeldPointer({ x, y });
-      jitter.push({ move: label, count: bystander.getAttribute("data-render-count") });
+      jitter.push({
+        move: label,
+        count: bystander.getAttribute("data-render-count"),
+        intent: indicator(),
+      });
     };
     await jitterTo("+3,+2", holdPoint.x + 3, holdPoint.y + 2);
     await jitterTo("-3,-2", holdPoint.x - 3, holdPoint.y - 2);
     await jitterTo("+2,+1", holdPoint.x + 2, holdPoint.y + 1);
     await jitterTo("back", holdPoint.x, holdPoint.y);
 
+    const trace = jitter
+      .map((step) => `${step.move}:${step.count}/${step.intent}`)
+      .join(" ");
+
+    // PRECONDITION, checked before the guarantee it qualifies. The story's
+    // premise is "jitter within the SAME intent"; if the intent moved, the
+    // scenario never ran, and reporting that as an efficiency failure is how
+    // this test wasted two investigations. A drop-intent change legitimately
+    // re-renders every droppable — that is dnd-kit's context churning, not
+    // this package's selectors leaking.
+    const intentsSeen = [...new Set(jitter.map((step) => step.intent))];
+    expect(
+      intentsSeen,
+      `the jitter left its intent, so the render assertion below never had its premise (${trace})`,
+    ).toEqual(["before"]);
+
     // Zero re-renders for the uninvolved card across four pointer moves.
-    const trace = jitter.map((step) => `${step.move}:${step.count}`).join(" ");
     expect(
       bystander.getAttribute("data-render-count"),
-      `bystander re-rendered during jitter (baseline ${bystanderRendersBefore}; after each move ${trace})`,
+      `bystander re-rendered during jitter (baseline ${bystanderRendersBefore}; ${trace})`,
     ).toBe(bystanderRendersBefore);
 
     await releaseAt(holdPoint);
