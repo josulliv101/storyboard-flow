@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { TimelineClip } from "@storyboard/timeline-model/types";
 
-import { groupTrashClips } from "./trash-groups";
+import {
+  groupTrashClips,
+  isUntouchedEmptyCollection,
+  visibleTrashClips,
+} from "./trash-groups";
 
 function image(id: string, overrides: Partial<TimelineClip> = {}): TimelineClip {
   return {
@@ -87,5 +91,70 @@ describe("groupTrashClips", () => {
   it("leaves a single clip as a group of one, and an empty bin as nothing", () => {
     expect(groupTrashClips([image("solo")])[0].clips).toHaveLength(1);
     expect(groupTrashClips([])).toEqual([]);
+  });
+});
+
+function collection(
+  id: string,
+  overrides: Partial<TimelineClip> = {},
+): TimelineClip {
+  return {
+    id,
+    index: 0,
+    kind: "collection",
+    title: "New Timeline",
+    childTimelineId: `${id}-doc`,
+    itemCount: 0,
+    trackIndex: 0,
+    startTime: 0,
+    duration: 3,
+    sourceDuration: 3,
+    trimIn: 0,
+    trimOut: 0,
+    ...overrides,
+  } as TimelineClip;
+}
+
+describe("visibleTrashClips", () => {
+  // PL14-008. The bin exists to give WORK back, and an untouched empty
+  // collection is not work — it is what a mis-clicked Collection tool leaves
+  // behind. Hidden from the drawer only: the node is still trashed, undo still
+  // restores it, emptying still takes it.
+
+  it("hides a collection that is empty AND still has its minted name", () => {
+    expect(visibleTrashClips([collection("shell")])).toEqual([]);
+    expect(isUntouchedEmptyCollection(collection("shell"))).toBe(true);
+  });
+
+  it("SHOWS an empty collection that was renamed — the name is the work", () => {
+    const named = collection("named", { title: "Act One" });
+    expect(visibleTrashClips([named])).toHaveLength(1);
+    expect(isUntouchedEmptyCollection(named)).toBe(false);
+  });
+
+  it("SHOWS a collection that held content, which travels into the bin with it", () => {
+    const full = collection("full", { itemCount: 2 });
+    expect(visibleTrashClips([full])).toHaveLength(1);
+    expect(isUntouchedEmptyCollection(full)).toBe(false);
+  });
+
+  it("never hides media, however empty it looks", () => {
+    expect(isUntouchedEmptyCollection(image("pic"))).toBe(false);
+    expect(visibleTrashClips([image("pic")])).toHaveLength(1);
+  });
+
+  it("keeps the rest of the bin in order when it drops a shell from the middle", () => {
+    const visible = visibleTrashClips([
+      image("a"),
+      collection("shell"),
+      image("b"),
+    ]);
+    expect(visible.map((c) => c.id)).toEqual(["a", "b"]);
+  });
+
+  it("treats a whitespace-padded minted title as untouched", () => {
+    // The seeded title round-trips through a document; a stray space is not a
+    // rename.
+    expect(isUntouchedEmptyCollection(collection("s", { title: "  New Timeline " }))).toBe(true);
   });
 });

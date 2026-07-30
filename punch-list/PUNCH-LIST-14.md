@@ -241,37 +241,52 @@ click, and reachable by keyboard (context-menu key / Shift+F10).
 
 ## PL14-008 — An untouched, empty collection is discarded, not trashed
 
-- Status: Not started — BLOCKED on a decision, see "What building it found"
-- Area: `packages/collections-core/commands.ts` (a new command), the delete
-  path shared by the sidebar action, the trash drop target and the Delete key
+- Status: Complete — solved as a DISPLAY rule, not a delete rule
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+- Area: `lib/trash-groups.ts`, `components/assets/trash-drawer.tsx`,
+  `lib/trash-groups.test.ts`
 - Screenshot: Not captured
 
-> **What building it found (2026-07-30).** This is bigger than the entry below
-> implies, and it was picked up as a small item.
->
-> **The engine has no removal command.** `CollectionsCommand` is exactly five
-> cases — `move-nodes`, `add-nodes`, `update-media`, `rename-node`,
-> `set-node-disabled`. Deleting IS moving to the trash root; nothing anywhere
-> can take a node OUT of the graph. So "skip the trash, just remove it" cannot
-> be a branch in the delete path — the thing it would branch to does not exist.
->
-> The patch half is already there (`nodes-removed` applies, verifies, and
-> inverts to `nodes-added`, so undo would round-trip), which makes a
-> `remove-nodes` command tractable — but it is a change to `collections-core`,
-> the package every surface depends on, for one narrow case.
->
-> **And it raises a question the entry never asked: what happens to the
-> collection's DOCUMENT?** A collection is a node plus its own timeline
-> document. Trashing re-parents the node and keeps the document. Removing the
-> node outright either orphans that document in Firebase or deletes it — and
-> "undo still restores it", which you asked for, means the document has to
-> survive or be recreated. That is a data-deletion decision, not a UI one.
->
-> Worth deciding before any code: is the goal *"the trash drawer should not
-> fill with shells"*? If so there is a cheaper answer that needs no engine
-> change — trash them as normal and have the DRAWER not list untouched empty
-> collections, or sweep them. Same outcome for the user, no new primitive, no
-> orphaned documents.
+The drawer no longer lists untouched empty collections. **Nothing about
+deleting changed** — they are still ordinary trashed nodes, undo still restores
+them, and emptying the bin still takes them.
+
+**The original plan was abandoned, and the reason is worth keeping.** "Skip the
+trash, just remove it" cannot be a branch in the delete path, because the thing
+it would branch to does not exist: `CollectionsCommand` is exactly five cases
+(`move-nodes`, `add-nodes`, `update-media`, `rename-node`,
+`set-node-disabled`) and **none of them takes a node out of the graph**.
+Deleting IS moving to the trash root. Implementing it as specified meant a new
+`remove-nodes` command in `collections-core` — the package every surface
+depends on — for one narrow case.
+
+It also raised a question the item never asked: a collection is a node PLUS its
+own timeline document. Trashing re-parents the node and keeps the document;
+removing outright either orphans it in Firebase or deletes it, and "undo still
+restores it" means it has to survive. That is a data-deletion decision.
+
+So the goal was checked instead of the method — *the drawer should not fill
+with shells* — and that needs no engine change, no new primitive and no
+orphaned documents. The owner chose this route.
+
+**"Untouched" is deliberately conservative**, because the two mistakes do not
+cost the same: hiding something wanted back is unrecoverable from the drawer,
+while showing one extra shell is untidy. Both must hold —
+
+- `itemCount === 0`, and
+- the title is still the minted `"New Timeline"` (trimmed, since a stray space
+  is not a rename).
+
+A renamed empty collection is shown, because the name IS the work. A collection
+that once held content is shown, because its children travel into the bin with
+it and `itemCount > 0` still reads true there.
+
+Filtered ONCE, over the whole list, so the rows, the header count, the empty
+state and the Empty Trash button cannot disagree — filtering only the rendered
+rows would have left the header counting items nobody can see.
+
+Six unit tests. Removing the title condition makes the renamed-collection test
+fail, so the conservative half is load-bearing rather than decorative.
 
 Deleting a collection that has never been changed — title never edited, holds no
 items, an empty shell — removes it outright instead of moving it to the trash.
