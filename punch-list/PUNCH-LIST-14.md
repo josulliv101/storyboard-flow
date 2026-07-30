@@ -253,29 +253,49 @@ Done when: with the preview open, dragging a trim handle updates the preview
 surface and no overlay appears; with the preview closed, the overlay behaves
 exactly as today; the playhead does not move in either case.
 
-### It shipped invisible first — the fix, and the test that should have caught it
+### It shipped as a FACADE first, twice wrong
 
-The first version was **z-30 against the pane's `sticky z-40`**, so the overlay
-mounted at the right coordinates, at the right size, BEHIND the picture it was
-meant to replace. The suppression half worked, so the symptom was the worst
-kind: the floating panel correctly disappeared when the pane was open, and
-nothing took its place. Reported by the owner. Now `z-[60]`, the floating
-panel's own level.
+Two corrections, both reported by the owner, and the second is the one that
+matters.
 
-**The test passed against it**, and the reason generalizes: it asserted the
-overlay's bounding box matched the canvas's, and `boundingBox()` returns
-geometry regardless of occlusion. Geometry is not visibility. It now also
-compares the overlay's computed `z-index` against the preview region's and
-requires it to be higher — which fails with `Expected: > 40, Received: 30`
-against the broken version.
+**1. Invisible.** The first version was z-30 against the pane's `sticky z-40`,
+so it mounted at the right coordinates, at the right size, behind the picture
+it was meant to replace. The test asserted its bounding box matched the
+canvas's and passed — `boundingBox()` returns geometry regardless of occlusion.
+Geometry is not visibility.
 
-Hit-testing with `elementFromPoint` would have been the more direct check and
-does NOT work here: the overlay is `pointer-events-none`, so it is not
-hit-testable and the API never returns it.
+**2. It was an overlay at all.** Fixing the z-index made a facade visible
+rather than making the feature right. It was a SECOND `<video>` portalled over
+the pane; the pane's own canvas never learned a trim was happening. The owner
+asked directly whether that was what it was, and it was.
 
-That is twice in this punch list (see PL14-004) that a test was non-vacuous,
-passed, and still missed the defect — both times by measuring a mechanism that
-was working rather than the outcome the user looks at.
+What that actually cost, beyond the principle:
+
+- a second decode of the same file, bypassing the pane's media cache
+- the pane's transport readout describing a different moment than its own
+  picture
+- CSS `object-contain` only approximating the canvas's letterboxing math
+- a playing pane going on playing, invisibly, underneath the still
+
+**The real implementation is a prop.** `WorkbenchDisplaySurface` gained
+`frameOverride?: {clipId, sourceTime} | null`: the pane's own canvas draws that
+frame, from the element it already had cached, with its own geometry. Guarded
+in `renderFrameAtTime` — one place, so the `currentTime` effect, the clip-list
+effect and the playback loop all defer to it at once — and every video is
+paused for the duration, since an override is a still.
+
+`sourceTime` is in SOURCE seconds deliberately: mid-drag the clip's committed
+trims are stale, so a timeline time would map through the wrong values.
+
+The clock is untouched by construction — the prop cannot reach `currentTime`,
+so a consumer cannot move the playhead through it.
+
+**What the e2e does NOT prove**, recorded because it would be easy to assume
+otherwise: that the canvas paints the right frame. Canvas pixels are not
+readable back, and the fixture's "video" is a 1x1 GIF that never decodes. The
+test pins that the request reaches the pane (`data-frame-override`) and that
+the floating panel stands down; the picture itself needs a human with a real
+video.
 
 ## PL14-007 — Right-click context menu on an item
 
