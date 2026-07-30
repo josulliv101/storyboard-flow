@@ -1,8 +1,8 @@
 # Punch List 14
 
-Captured 2026-07-30 from a spoken walkthrough. Nothing started — every item is
-Not started until the owner says otherwise. Areas are best guesses from the file
-names, not from investigation.
+Captured 2026-07-30 from a spoken walkthrough. **All twelve items complete**,
+closed the same day; PL14-006 was confirmed by the owner on a real video after
+five passes.
 
 ## PL14-001 — Enable/disable an item from the details modal
 
@@ -332,6 +332,42 @@ playback model is live, verified only against the model the fixture uses).
 Every one passed its tests. Every one was caught by the owner using the app.
 The common thread is testing the mechanism against the harness's happy path
 instead of the outcome against reality.
+
+### Then it worked, and was slow — two seek fixes and a press
+
+Confirmed working by the owner, with one complaint: dragging the RIGHT handle
+could take the better part of a second to catch up, and only sometimes.
+
+**Rate was the obvious cause and the wrong one.** Every trim update called
+`syncActiveVideo(media, false, true)`, forcing a seek per pointer move; the
+first fix (#258) reduced how often that happened, and the lag persisted. The
+owner's next report is what identified it: drag LEFT, then go back to the
+right, and the stall returns. That is not a rate — a fresh seek was
+**cancelling the one in flight**, so the last seek to survive was whichever
+one the pointer happened to stop on.
+
+Underneath is the browser's buffer window following `currentTime`: visiting
+the in edge evicts the out edge, so the return trip is a cold seek. Fixed in
+#259 with a rAF settle loop that lets one seek finish before issuing the next
+and draws only on `HAVE_CURRENT_DATA`.
+
+**Then the frame was late by a whole gesture.** `publishLive` was called from
+`onMove` and nowhere else, so pressing a handle armed the listeners and
+published nothing — the cold seek started on the first pixel of travel, which
+is the worst moment to spend it. Press now resolves the edge at zero delta and
+publishes (#260), so the wait falls while the user is still deciding where to
+drag. `pending` stays null, so a press with no movement still leaves through
+`onUp`'s no-op branch: it shows a frame, it does not begin an edit.
+
+Its e2e is honest about its own weak half, in the test file rather than here:
+the positive assertion fails without the change (`Expected: 1, Received: 0`),
+but the no-commit assertion is vacuous — injecting `pending = initial.update`
+still passes, because `applyMediaUpdate` refuses an update whose trims equal
+the node's. It pins the outcome, not the mechanism.
+
+Five passes total on this item, and the last two are the good kind: a real
+defect, reported precisely enough to find, fixed at the cause rather than the
+symptom.
 
 ## PL14-007 — Right-click context menu on an item
 
