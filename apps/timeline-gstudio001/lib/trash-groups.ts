@@ -27,6 +27,54 @@ function assetIdentity(clip: TimelineClip): string {
   return `clip:${clip.id}`;
 }
 
+/** The title a collection is minted with (graph-native-drop seeds both the node
+ *  name and the child document with it). A collection still wearing it has
+ *  never been named by anyone. */
+const UNTOUCHED_COLLECTION_TITLE = "New Timeline";
+
+/**
+ * A collection nobody ever did anything to: no items, never renamed (PL14-008).
+ *
+ * The bin exists to give work back, and one of these is not work — it is what
+ * you get from mis-clicking the Collection tool. Filling the drawer with shells
+ * makes it worse at the one job it has, so they are not shown.
+ *
+ * Deliberately CONSERVATIVE, because the cost of the two mistakes is not
+ * symmetric: hiding something the user wanted back is unrecoverable from the
+ * drawer, while showing one extra shell is merely untidy. So both conditions
+ * must hold, and anything else is treated as real work —
+ *
+ * - a RENAMED empty collection is shown (the name is the work), and
+ * - a collection that once held content is shown, because its children travel
+ *   into the bin with it, so `itemCount > 0` still reads true in there.
+ *
+ * This hides them from the DRAWER only. They are still ordinary trashed nodes
+ * in the document, undo still restores them, and emptying the bin still takes
+ * them — nothing about the delete path changed, which is the whole reason this
+ * is a display rule and not a new engine command.
+ */
+export function isUntouchedEmptyCollection(clip: TimelineClip): boolean {
+  return (
+    clip.kind === "collection" &&
+    clip.itemCount === 0 &&
+    clip.title.trim() === UNTOUCHED_COLLECTION_TITLE
+  );
+}
+
+/**
+ * What the drawer should treat as its contents — everything trashed except the
+ * shells above.
+ *
+ * Applied once, to the whole list, so the row count, the empty state and the
+ * rows themselves cannot disagree. Filtering only the rendered list would have
+ * left the header counting items the user cannot see.
+ */
+export function visibleTrashClips(
+  clips: readonly TimelineClip[],
+): readonly TimelineClip[] {
+  return clips.filter((clip) => !isUntouchedEmptyCollection(clip));
+}
+
 /**
  * Collapse repeats of one asset into a single row.
  *

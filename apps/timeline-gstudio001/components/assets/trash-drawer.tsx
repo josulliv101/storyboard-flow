@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   Trash2,
@@ -15,7 +22,7 @@ import { Button } from "@/components/core/button";
 import { toast } from "@/components/core/sonner";
 import { deletionWindowLabel } from "@/lib/asset-deletion-window";
 import { trashRowCaption } from "@/lib/trash-provenance";
-import { groupTrashClips } from "@/lib/trash-groups";
+import { groupTrashClips, visibleTrashClips } from "@/lib/trash-groups";
 import { discardTrashClips } from "@/lib/graph-trash-discard";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -67,6 +74,15 @@ const useIsMounted = () =>
 export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
   const { user } = useAuth();
   const [clips, setClips] = useState<TimelineClip[]>([]);
+  // What the drawer SHOWS: everything trashed except untouched empty
+  // collections (PL14-008). Derived once and used for the rows, the count and
+  // the empty state alike — filtering only the list would leave the header
+  // counting items nobody can see.
+  //
+  // `clips` stays the raw truth. Nothing about deleting changed: these are
+  // ordinary trashed nodes, undo restores them, and emptying the bin still
+  // clears the whole document including them.
+  const visibleClips = useMemo(() => visibleTrashClips(clips), [clips]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isMounted = useIsMounted();
@@ -275,7 +291,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
     // longer keeps, which is worse than the blanket "permanently delete" it had
     // replaced.
     const confirmed = window.confirm(
-      `Empty the trash? The ${clips.length} item${clips.length === 1 ? "" : "s"} in the bin will be removed and cannot be restored. Uploaded files that nothing else uses are deleted after 30 days.`
+      `Empty the trash? The ${visibleClips.length} item${visibleClips.length === 1 ? "" : "s"} in the bin will be removed and cannot be restored. Uploaded files that nothing else uses are deleted after 30 days.`
     );
     if (!confirmed) return;
 
@@ -319,12 +335,12 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
               Trash Bin
             </h2>
             <p className="mt-0.5 text-xs text-zinc-500">
-              {clips.length} items in trash
+              {visibleClips.length} items in trash
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            {clips.length > 0 && (
+            {visibleClips.length > 0 && (
               <Button
                 type="button"
                 variant="outline"
@@ -361,7 +377,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
               <CircleAlert className="h-4 w-4" />
               {error}
             </div>
-          ) : clips.length === 0 && marked.length === 0 ? (
+          ) : visibleClips.length === 0 && marked.length === 0 ? (
             // Only when BOTH are empty. A bin with nothing in it but files on
             // their way out is not an empty drawer, and saying so would hide
             // the one thing here anybody still has a decision to make about.
@@ -371,9 +387,9 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
             </div>
           ) : (
             <>
-            {clips.length > 0 && (
+            {visibleClips.length > 0 && (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 p-5">
-              {groupTrashClips(clips).map((group, index) => {
+              {groupTrashClips(visibleClips).map((group, index) => {
                 // The row stands for the IMAGE, not one clip: every field it
                 // paints comes from the first copy, which is safe precisely
                 // because copies of one asset share them.
@@ -471,7 +487,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                 // Bordered off from the bin above it, because these two lists
                 // answer different questions: what did I delete (and can put
                 // back), versus what is about to stop existing.
-                className={clips.length > 0 ? "border-t border-zinc-900" : undefined}
+                className={visibleClips.length > 0 ? "border-t border-zinc-900" : undefined}
               >
                 <header className="px-5 pt-4">
                   <h3
