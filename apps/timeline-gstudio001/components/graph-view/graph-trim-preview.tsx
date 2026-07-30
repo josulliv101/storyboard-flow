@@ -179,7 +179,10 @@ export function TrimPreviewOverlay() {
       ref={boxRef}
       data-trim-preview-overlay={frame.side}
       aria-hidden="true"
-      className="pointer-events-none fixed z-30 overflow-hidden bg-black"
+      // z-[60], the floating panel's level, and it has to be: the pane it
+      // covers is `sticky z-40`, so anything below that renders BEHIND the
+      // picture it is meant to replace — present, correctly sized, invisible.
+      className="pointer-events-none fixed z-[60] overflow-hidden bg-black"
       style={{ left: -9999, top: -9999 }}
     >
       <video

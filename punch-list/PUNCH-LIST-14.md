@@ -253,6 +253,30 @@ Done when: with the preview open, dragging a trim handle updates the preview
 surface and no overlay appears; with the preview closed, the overlay behaves
 exactly as today; the playhead does not move in either case.
 
+### It shipped invisible first — the fix, and the test that should have caught it
+
+The first version was **z-30 against the pane's `sticky z-40`**, so the overlay
+mounted at the right coordinates, at the right size, BEHIND the picture it was
+meant to replace. The suppression half worked, so the symptom was the worst
+kind: the floating panel correctly disappeared when the pane was open, and
+nothing took its place. Reported by the owner. Now `z-[60]`, the floating
+panel's own level.
+
+**The test passed against it**, and the reason generalizes: it asserted the
+overlay's bounding box matched the canvas's, and `boundingBox()` returns
+geometry regardless of occlusion. Geometry is not visibility. It now also
+compares the overlay's computed `z-index` against the preview region's and
+requires it to be higher — which fails with `Expected: > 40, Received: 30`
+against the broken version.
+
+Hit-testing with `elementFromPoint` would have been the more direct check and
+does NOT work here: the overlay is `pointer-events-none`, so it is not
+hit-testable and the API never returns it.
+
+That is twice in this punch list (see PL14-004) that a test was non-vacuous,
+passed, and still missed the defect — both times by measuring a mechanism that
+was working rather than the outcome the user looks at.
+
 ## PL14-007 — Right-click context menu on an item
 
 - Status: Not started
