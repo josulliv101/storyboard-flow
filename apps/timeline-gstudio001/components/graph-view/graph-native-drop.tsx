@@ -169,6 +169,11 @@ function aggregateDropStatus(drops: ReadonlyMap<number, DropStatus>): DropSummar
 /**
  * `Promise.all` with a worker pool. Results stay in INPUT order — the drop
  * adds nodes in file order, so completion order must not leak through.
+ *
+ * `run` MUST resolve for every outcome the caller expects to report. A
+ * rejection takes down the `Promise.all` while the other workers keep going,
+ * unobserved, on a pool the caller has already given up on — so expected
+ * failures belong in the result type, not thrown.
  */
 async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -608,7 +613,23 @@ function useNativeDrop(collectionId: string, projectId: string) {
             const isVideo = kind === "video";
             // ONE decode per video: duration and poster frame together. The
             // probe is handed to the upload so it does not decode again.
-            const probe = isVideo ? await probeVideoFile(file, { signal }) : null;
+            //
+            // Guarded to satisfy the pool's contract, not to fix a live
+            // failure: `probeVideoFile` swallows its own decode errors and
+            // resolves a null thumbnail (which the upload route then refuses,
+            // so an unreadable video already fails per-file, below). The one
+            // rejection it still lets through is an ABORT — and an abort has
+            // by definition already cancelled the siblings, so nothing is
+            // stranded today. What this guard buys is that the invariant no
+            // longer depends on that: a worker that cannot reject is one that
+            // cannot take `Promise.all` down while its siblings upload on into
+            // a drop the caller has stopped awaiting.
+            let probe: Awaited<ReturnType<typeof probeVideoFile>> | null;
+            try {
+              probe = isVideo ? await probeVideoFile(file, { signal }) : null;
+            } catch {
+              return { node: null, detail: null, error: `"${file.name}" could not be read.` };
+            }
             const duration = probe?.durationSeconds ?? IMAGE_CLIP_SECONDS;
             let hosted: Awaited<ReturnType<typeof uploadTimelineMedia>>;
             try {
@@ -734,7 +755,17 @@ function useNativeDrop(collectionId: string, projectId: string) {
         const message = commitError ?? (uploadErrors.length > 0 ? uploadErrors.join(" · ") : null);
         setDropStatus(token, message ? { status: "error", message, at: Date.now() } : null);
       } catch {
-        if (signal.aborted) return;
+        // Reaching here means the POOL failed, not a file — every expected
+        // per-file failure comes back as an UploadResult. Sibling workers may
+        // then still be mid-upload with nothing awaiting them, so cancel
+        // before the controller leaves the ref set: after that delete nothing
+        // can reach them, and an upload completing unobserved would put an
+        // object in storage that no node points at. Read `aborted` FIRST — the
+        // abort below would otherwise look like the unmount case and swallow a
+        // genuine error.
+        const cancelled = signal.aborted;
+        controller.abort();
+        if (cancelled) return;
         setDropStatus(token, {
           status: "error",
           message: "The dropped files could not be added.",

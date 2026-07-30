@@ -2,7 +2,9 @@
 
 import { useEffect, useRef } from "react";
 
-import { useCollectionsStore, type HistoryEntry } from "@storyboard/ui/dnd-collections";
+import { useCollectionsStore } from "@storyboard/ui/dnd-collections";
+
+import { parseEntries, serializeEntries } from "./graph-history-format";
 
 // Undo that survives a reload (PL11-008).
 //
@@ -17,9 +19,9 @@ import { useCollectionsStore, type HistoryEntry } from "@storyboard/ui/dnd-colle
 // under other sessions — is a liability rather than a safety net. Same tab,
 // same sitting.
 //
-// Restoring is SAFE without validation here: `undo` verifies each entry
-// against the live graph before applying it and drops the unreachable side,
-// so a stale entry is refused when reached instead of corrupting anything.
+// What comes back OUT of storage is validated in `graph-history-format` before
+// it reaches the store — replay checks whether a patch still fits the graph,
+// not whether it is shaped like a patch at all.
 
 /** Bounded on purpose: sessionStorage is a few MB per origin, and a
  *  `nodes-added` patch carries whole node specs. Fifty steps back is far more
@@ -30,23 +32,6 @@ const MAX_ENTRIES = 50;
 const MAX_BYTES = 512_000;
 
 const storageKey = (sessionKey: string) => `graph-history:${sessionKey}`;
-
-/** Structural check at the trust boundary — this came from storage, which the
- *  user (or an older build) can have written anything into. */
-function parseEntries(raw: string): readonly HistoryEntry[] {
-  const parsed: unknown = JSON.parse(raw);
-  if (!Array.isArray(parsed)) return [];
-  const entries: HistoryEntry[] = [];
-  for (const candidate of parsed) {
-    if (typeof candidate !== "object" || candidate === null) continue;
-    const entry = candidate as Partial<HistoryEntry>;
-    if (typeof entry.command !== "object" || entry.command === null) continue;
-    if (typeof entry.patch !== "object" || entry.patch === null) continue;
-    if (typeof entry.at !== "number") continue;
-    entries.push(entry as HistoryEntry);
-  }
-  return entries;
-}
 
 /**
  * Mount inside the collections provider, keyed to the boot session. Restores
@@ -81,11 +66,11 @@ export function HistoryPersistenceBridge({
       const entries = store.getSnapshot().historyEntries;
       const recent = entries.slice(-MAX_ENTRIES);
       try {
-        const payload = JSON.stringify(recent);
+        const payload = serializeEntries(recent);
         if (payload.length > MAX_BYTES) {
           // Too fat to keep whole — keep the newest half rather than nothing.
           const half = recent.slice(Math.floor(recent.length / 2));
-          window.sessionStorage.setItem(storageKey(sessionKey), JSON.stringify(half));
+          window.sessionStorage.setItem(storageKey(sessionKey), serializeEntries(half));
           return;
         }
         window.sessionStorage.setItem(storageKey(sessionKey), payload);

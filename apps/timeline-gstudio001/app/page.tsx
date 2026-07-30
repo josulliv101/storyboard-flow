@@ -4,11 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
-  AlertCircle,
+  CircleAlert,
   Clapperboard,
   Clock3,
   FolderOpen,
-  Loader2,
+  LoaderCircle,
   Plus,
   RefreshCw,
   Trash2,
@@ -234,7 +234,7 @@ export default function Home() {
             disabled={isCreating}
             className="h-9 shrink-0 gap-2 bg-amber-400 px-3 text-xs font-bold uppercase tracking-widest text-zinc-950 hover:bg-amber-300"
           >
-            {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            {isCreating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             New Project
           </Button>
         </form>
@@ -274,7 +274,7 @@ export default function Home() {
 
         {loadError ? (
           <div className="flex items-center gap-3 rounded-lg border border-red-500/25 bg-red-500/10 p-4 text-sm text-red-100">
-            <AlertCircle className="h-4 w-4 shrink-0 text-red-300" />
+            <CircleAlert className="h-4 w-4 shrink-0 text-red-300" />
             <span>{loadError}</span>
           </div>
         ) : null}

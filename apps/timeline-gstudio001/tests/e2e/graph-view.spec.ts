@@ -3158,6 +3158,69 @@ test.describe("graph view E2E", () => {
       .toBe(5);
   });
 
+  test("an undecodable video fails ALONE — its siblings in the same drop still land", async ({
+    page,
+  }) => {
+    // A multi-file drop must degrade per FILE. The chain under test is a real
+    // one with no coverage before this: `probeVideoFile` swallows a decode
+    // failure and resolves a NULL poster, the client then omits the thumbnail
+    // part, and the upload route refuses a video that arrives without one
+    // (400, "Video uploads require a generated thumbnail"). That refusal has
+    // to land in the failing file's own result and nowhere else — the pool
+    // runs MAX_CONCURRENT_MEDIA workers, so a failure that escaped its worker
+    // would abandon whatever its siblings had already uploaded.
+    const api = await installGraphApi(page);
+    const attempts: string[] = [];
+    await page.route("**/api/timeline-media/upload", async (route) => {
+      const body = route.request().postData() ?? "";
+      const isVideo = /name="filename"[\s\S]*?\.mp4/.test(body);
+      const hasThumbnail = /name="thumbnail"/.test(body);
+      attempts.push(isVideo ? "video" : "image");
+      // Mirror the route: a video with no generated poster is rejected.
+      if (isVideo && !hasThumbnail) {
+        return route.fulfill({
+          status: 400,
+          json: { error: "Video uploads require a generated thumbnail." },
+        });
+      }
+      // Slow enough that the sibling is genuinely in flight when the video
+      // fails, so a failure escaping its worker would strand a live upload.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return route.fulfill({
+        json: { pathname: `upload-${attempts.length}.png`, url: PIXEL, thumbnailUrl: PIXEL },
+      });
+    });
+    await openGraph(page);
+    const dropZone = page.locator(`[data-native-drop="${PROJECT_ID}"]`);
+
+    const transfer = await page.evaluateHandle(() => {
+      const value = new DataTransfer();
+      // Four bytes claiming to be an mp4: the demuxer errors, so the probe
+      // comes back with no poster frame.
+      value.items.add(new File([new Uint8Array([0, 1, 2, 3])], "broken.mp4", { type: "video/mp4" }));
+      value.items.add(
+        new File([new Uint8Array([137, 80, 78, 71])], "photo.png", { type: "image/png" }),
+      );
+      return value;
+    });
+    await dropZone.dispatchEvent("drop", { dataTransfer: transfer, clientX: 0 });
+
+    // The good file lands anyway: 4 fixture clips + photo.png = 5.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length), { timeout: 15000 })
+      .toBe(5);
+
+    // The failure is reported as ITS OWN file, not as a dead drop.
+    await expect(page.locator("[data-native-drop-status]")).toContainText("broken.mp4");
+
+    // Both were attempted — the image was never cancelled on the video's way
+    // down — and the survivor is a committed clip, not just a card on screen.
+    expect(attempts).toHaveLength(2);
+    await expect
+      .poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds.length, { timeout: 5000 })
+      .toBe(5);
+  });
+
   test("sidebar tools insert from the KEYBOARD, with no pointer involved", async ({ page }) => {
     // The palette used to be pointer-only: its tiles were <div role="button">
     // whose Enter/Space did nothing but show a "drag this" toast, and actual

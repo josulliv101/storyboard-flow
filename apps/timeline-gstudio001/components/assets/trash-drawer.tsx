@@ -6,8 +6,8 @@ import {
   Trash2,
   Undo2,
   X,
-  Loader2,
-  AlertCircle,
+  LoaderCircle,
+  CircleAlert,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 
@@ -353,12 +353,12 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
         <main className="flex-1 overflow-y-auto min-h-0 bg-zinc-950">
           {isLoading ? (
             <div className="flex h-32 items-center justify-center gap-2 text-sm text-zinc-400">
-              <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+              <LoaderCircle className="h-4 w-4 animate-spin text-amber-500" />
               Loading trash...
             </div>
           ) : error ? (
             <div className="flex h-32 items-center justify-center gap-2 text-sm text-red-400">
-              <AlertCircle className="h-4 w-4" />
+              <CircleAlert className="h-4 w-4" />
               {error}
             </div>
           ) : clips.length === 0 && marked.length === 0 ? (
@@ -532,7 +532,7 @@ export function TrashDrawer({ isOpen, onClose }: TrashDrawerProps) {
                           className="h-6 shrink-0 border-zinc-800 px-2 text-[10px] text-zinc-300 hover:border-sky-500/50 hover:text-sky-300 cursor-pointer"
                         >
                           {busy ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
+                            <LoaderCircle className="h-3 w-3 animate-spin" />
                           ) : (
                             "Keep"
                           )}
