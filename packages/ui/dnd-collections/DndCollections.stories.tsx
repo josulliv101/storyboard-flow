@@ -17,6 +17,7 @@ import {
   rectCenter,
   rectPoint,
   releaseAt,
+  settledAttribute,
   waitForLayout,
 } from "./stories-helpers";
 
@@ -1004,15 +1005,36 @@ export const RenderEfficiencyDuringDrag: Story = {
       expect(target.parentElement?.querySelector('[data-drop-indicator="before"]')).toBeTruthy();
     });
 
-    const bystanderRendersBefore = bystander.getAttribute("data-render-count");
-    // Jitter the pointer within the same intent (still left half of t1).
-    await moveHeldPointer({ x: holdPoint.x + 3, y: holdPoint.y + 2 });
-    await moveHeldPointer({ x: holdPoint.x - 3, y: holdPoint.y - 2 });
-    await moveHeldPointer({ x: holdPoint.x + 2, y: holdPoint.y + 1 });
-    await moveHeldPointer(holdPoint);
+    // SETTLED, not sampled on the spot. The drop indicator appearing means the
+    // intent resolved, not that React has finished, so a straggler from
+    // drag-start could otherwise be charged to the jitter below. This does NOT
+    // make the number predictable and is not meant to: drag-start costs the
+    // bystander a genuinely variable count (9,9,9,9,7 measured across five
+    // local runs, 9,7,9 across three CI failures). What matters is only that
+    // nothing is still in flight when the window opens.
+    const bystanderRendersBefore = await settledAttribute(bystander, "data-render-count");
+
+    // Jitter the pointer within the same intent (still left half of t1),
+    // recording after EACH move. The assertion needs one number, but a failure
+    // needs to say WHICH move caused the render — three CI failures were
+    // reported as a bare "expected 10 to be 9", which is undiagnosable after
+    // the fact and is why this flake survived two rounds of investigation.
+    const jitter: Array<{ move: string; count: string | null }> = [];
+    const jitterTo = async (label: string, x: number, y: number) => {
+      await moveHeldPointer({ x, y });
+      jitter.push({ move: label, count: bystander.getAttribute("data-render-count") });
+    };
+    await jitterTo("+3,+2", holdPoint.x + 3, holdPoint.y + 2);
+    await jitterTo("-3,-2", holdPoint.x - 3, holdPoint.y - 2);
+    await jitterTo("+2,+1", holdPoint.x + 2, holdPoint.y + 1);
+    await jitterTo("back", holdPoint.x, holdPoint.y);
 
     // Zero re-renders for the uninvolved card across four pointer moves.
-    expect(bystander.getAttribute("data-render-count")).toBe(bystanderRendersBefore);
+    const trace = jitter.map((step) => `${step.move}:${step.count}`).join(" ");
+    expect(
+      bystander.getAttribute("data-render-count"),
+      `bystander re-rendered during jitter (baseline ${bystanderRendersBefore}; after each move ${trace})`,
+    ).toBe(bystanderRendersBefore);
 
     await releaseAt(holdPoint);
     await waitFor(() => {
