@@ -788,38 +788,83 @@ export function WorkbenchDisplaySurface({
     // treated a lookup miss as "nothing to draw" and silently did nothing,
     // which is precisely what a path-qualified manifest id produced.
     const media = resolveOverrideMedia(sortedClipsRef.current, frameOverride);
-    // Force a seek only when the SOURCE changes, exactly as the clock-driven
-    // path does. Forcing one on every update looked harmless and was not: it
-    // skips the drift check AND tears down the pending draw listener before
-    // installing a new one, so a drag issuing ~25 updates a second restarts
-    // the seek 25 times a second. Where seeks complete quickly the draws land
-    // and nothing looks wrong; where they do not, none of them ever finishes
-    // until the pointer slows down.
-    //
-    // That asymmetry is the bug's signature: dragging the OUT handle seeks
-    // near the end of the source, which is typically not buffered yet, while
-    // the IN handle seeks near t=0, which always is. Half a second of lag on
-    // the right handle only, and not once the region had been visited.
-    //
-    // Letting the drift check decide costs a little granularity — the trim is
-    // quantized to 1/25s and `maxDrift` is 0.05s, so an update lands roughly
-    // every other step — and that is far cheaper than a seek that never
-    // completes.
-    const mediaChanged = media.key !== lastRenderedMediaKeyRef.current;
 
     activeMediaRef.current = media;
     lastRenderedMediaKeyRef.current = media.key;
     activeClipDisabledRef.current = false;
     pauseInactiveVideos(null);
     ensureCachedMedia(media);
-    syncActiveVideo(media, false, mediaChanged);
+    // NOTE: no `syncActiveVideo` here. The override's seeking is driven by the
+    // settle loop below instead — see the comment there for why this path
+    // cannot use the clock path's issue-and-listen approach.
   }, [
     ensureCachedMedia,
     frameOverride,
     pauseInactiveVideos,
     renderFrameAtTime,
-    syncActiveVideo,
   ]);
+
+  /**
+   * The override's seek loop: ONE IN-FLIGHT SEEK AT A TIME.
+   *
+   * The clock path issues a seek and listens for `seeked` to draw, cancelling
+   * any pending listener when it issues the next one. That is fine when seeks
+   * complete in milliseconds. It is not fine here, and the reason is specific:
+   *
+   * A trim drag asks for ~25 frames a second, and the browser's buffer window
+   * FOLLOWS `currentTime` — so dragging the IN handle (near t=0) evicts the
+   * end of the source, and the OUT handle is then genuinely cold again on the
+   * very next gesture. A cold seek can take the better part of a second, and
+   * every request that arrives while it is in flight cancelled the draw and
+   * restarted it, so nothing landed until the pointer stopped. Symptom, as
+   * reported: the right handle sticks for the whole drag, corrects on release,
+   * behaves on a retry, and goes bad again after visiting the left handle.
+   * Lowering the request rate (the first attempt) only made it rarer.
+   *
+   * So: seek only when the element is IDLE, and let a slow one finish. The
+   * newest target is read from the ref each frame, so a drag that moves on
+   * during a long seek simply lands on where it ended up, never on a stale
+   * frame in between.
+   *
+   * A rAF loop rather than `seeked` bookkeeping, which is the same conclusion
+   * `use-seeked-video` reached for the floating panel — it is self-healing: a
+   * missed event, or a seek the browser coalesced, cannot strand a stale frame
+   * because the next frame catches up. Keyed on WHETHER an override is active,
+   * not on its value, so the loop is not torn down and rebuilt 25 times a
+   * second.
+   */
+  const overrideActive = frameOverride !== null;
+  useEffect(() => {
+    if (!overrideActive) return;
+    let raf = 0;
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const media = activeMediaRef.current;
+      if (!media) return;
+      const cached = cacheRef.current.get(media.key);
+      if (cached?.kind !== "video") return;
+      const video = cached.element;
+      if (video.readyState < HTMLMediaElement.HAVE_METADATA || video.seeking) return;
+
+      const maxTime = Number.isFinite(video.duration)
+        ? Math.max(0, video.duration - 0.001)
+        : media.sourceTime;
+      const target = clamp(media.sourceTime, 0, maxTime);
+      // `currentTime` reads back as the seek TARGET mid-seek, so this does not
+      // re-issue while the browser is still decoding.
+      if (Math.abs(video.currentTime - target) > 0.03) {
+        try {
+          video.currentTime = target;
+        } catch {
+          // Metadata raced away; the next frame retries.
+        }
+        return;
+      }
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) drawActiveFrame();
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [overrideActive, drawActiveFrame]);
 
   useEffect(() => {
     bufferedMedia.forEach((media) => {
