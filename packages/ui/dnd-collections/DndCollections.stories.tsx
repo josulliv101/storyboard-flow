@@ -17,7 +17,6 @@ import {
   rectCenter,
   rectPoint,
   releaseAt,
-  settledAttribute,
   waitForLayout,
 } from "./stories-helpers";
 
@@ -1005,14 +1004,16 @@ export const RenderEfficiencyDuringDrag: Story = {
       expect(target.parentElement?.querySelector('[data-drop-indicator="before"]')).toBeTruthy();
     });
 
-    // SETTLED, not sampled on the spot. The drop indicator appearing means the
-    // intent resolved, not that React has finished, so a straggler from
-    // drag-start could otherwise be charged to the jitter below. This does NOT
-    // make the number predictable and is not meant to: drag-start costs the
-    // bystander a genuinely variable count (9,9,9,9,7 measured across five
-    // local runs, 9,7,9 across three CI failures). What matters is only that
-    // nothing is still in flight when the window opens.
-    const bystanderRendersBefore = await settledAttribute(bystander, "data-render-count");
+    // Sampled immediately, NOT after waiting for the render count to settle.
+    // A settle was tried (PR #251) on the theory that a drag-start straggler
+    // was being charged to the jitter — and it inserted a pause mid-drag that
+    // had not been there. The very next CI run failed differently: the DROP
+    // stopped landing. dnd-kit recomputes `over` on a measure cadence, so
+    // holding the pointer still for extra frames gives the resolved intent
+    // more chances to move before release. Reverted rather than defended: it
+    // was a speculative fix for a failure that was never reproduced, and it
+    // plausibly bought a worse one.
+    const bystanderRendersBefore = bystander.getAttribute("data-render-count");
 
     // Jitter the pointer within the same intent (still left half of t1),
     // recording after EACH move. The assertion needs one number, but a failure
