@@ -3300,6 +3300,65 @@ test.describe("graph view E2E", () => {
       .toBe(5);
   });
 
+  test("the trailing slot browses for media — the only route that needs no pointer", async ({
+    page,
+  }) => {
+    // PL14-011. Until this, dragging from the OS file system was the ONLY way
+    // media entered a timeline — a gesture that starts outside the page and
+    // has no keyboard equivalent, so a keyboard or switch user could not add
+    // media to this app at all. The picker is that route.
+    //
+    // The point of the test is that it goes through the SAME pipeline as a
+    // drop, not a second upload path: same probe, same per-file failure
+    // handling, same single undoable commit.
+    const api = await installGraphApi(page);
+    let uploads = 0;
+    await page.route("**/api/timeline-media/upload", (route) => {
+      uploads += 1;
+      return route.fulfill({
+        json: { pathname: `picked-${uploads}.png`, url: PIXEL, thumbnailUrl: PIXEL },
+      });
+    });
+    await openGraph(page);
+
+    const before = (await stripOrder(page, PROJECT_ID)).length;
+    const input = page.locator(`[data-add-media-input="${PROJECT_ID}"]`);
+    const browse = page.locator(`[data-add-media-button="${PROJECT_ID}"]`);
+
+    // The affordance is a real button — reachable and pressable without a
+    // pointer, which is the whole reason this exists. The input behind it is
+    // deliberately out of the tab order: it is the picker, not the control.
+    await expect(browse).toBeVisible();
+    await expect(browse).toBeEnabled();
+    expect(await input.getAttribute("tabindex")).toBe("-1");
+    expect(await input.getAttribute("accept")).toBe("image/*,video/*");
+
+    await input.setInputFiles([
+      { name: "one.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71]) },
+      { name: "two.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71]) },
+    ]);
+
+    // Both land, APPENDED — a picker has no pointer and so no boundary.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length), { timeout: 15000 })
+      .toBe(before + 2);
+    expect(uploads).toBe(2);
+
+    // It persisted through the same batch path a drop uses. Polled, because
+    // the write is debounced ~900ms behind the commit — asserting it
+    // synchronously reads before the writer has run.
+    await expect
+      .poll(() => api.patchesFor(PROJECT_ID).length, { timeout: 5000 })
+      .toBeGreaterThan(0);
+
+    // ONE commit for the whole selection, like a drop: a single undo takes
+    // both back rather than peeling them off one at a time.
+    await undoButton(page).click();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID).then((order) => order.length))
+      .toBe(before);
+  });
+
   test("an undecodable video fails ALONE — its siblings in the same drop still land", async ({
     page,
   }) => {

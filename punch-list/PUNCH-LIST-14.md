@@ -556,64 +556,49 @@ Verified live in both dialogs: `<button>`, `aria-label="Rename …"`,
 `cursor: text`, hover class present, `tabIndex 0`; one click mounts the editor
 focused with the current value selected.
 
-## PL14-011 — The trailing slot should say how to add MEDIA, and offer a file picker
+## PL14-011 — The trailing slot says how to add MEDIA, and offers a file picker
 
-- Status: Not started
-- Area: `graph-add-collection-slot.tsx`, `graph-native-drop.tsx` (expose a
-  programmatic entry to `dropFiles`)
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+- Area: `graph-add-collection-slot.tsx`, `graph-native-drop.tsx`,
+  `tests/e2e/graph-view.spec.ts`
 - Screenshot: Not captured
 
-The pseudo item at the end of a timeline currently offers one thing: "Add
-timeline", which mints a nested collection. It should also tell the user that
-media can be added by dragging files from the file system onto any point in the
-timeline, and offer a link that opens a file picker for people who would rather
-browse than drag.
+The slot now offers both things you can add: **Add timeline** as before, a hint
+that media can be dropped anywhere on the timeline, and a **Browse** button
+that opens a file picker.
 
-**This adds the app's first file-browse path.** There is no `type="file"` input
-anywhere in the app today — not in the graph view, not in the assets drawer
-(that drawer lists assets already uploaded). Every media item that has ever
-entered a timeline arrived by an OS drag-and-drop. So this is not a shortcut to
-an existing route; it is the second route.
+**This is the app's first file input, and the case for it is access, not
+convenience.** There was no `type="file"` anywhere — every media item that had
+ever entered a timeline arrived by an OS drag-and-drop. That gesture starts
+outside the page and has no keyboard equivalent, so a keyboard or switch user
+could not add media to this app at all. The browser's own picker is accessible
+for free; the work was giving it a route in.
 
-Which makes the strongest argument for it an accessibility one, not
-discoverability: **today a keyboard or switch user cannot add media at all.**
-Dragging from the OS file system is not something the app can offer a keyboard
-equivalent for — the gesture starts outside the page. A file input is the only
-way in, and browsers already give it a fully accessible picker.
+**It feeds the EXISTING pipeline.** `dropFiles` owns the one-decode-per-video
+probe, bounded concurrency, per-file failure reporting, detail parking and a
+single undoable commit for the whole selection. A picker that reimplemented any
+of that would drift from the drag, so the surfaces publish `appendFiles`
+through a context and the slot calls it. Appends rather than inserts, because a
+picker has no pointer and therefore no boundary — the user chose files, not a
+position.
 
-It must feed the EXISTING pipeline. `dropFiles` in `graph-native-drop.tsx` does
-classification, the one-decode-per-video probe, concurrent upload with per-file
-failure reporting, detail parking and a single atomic commit for the whole
-selection. A picker that re-implements any of that will drift from the drop
-path. The work is exposing a programmatic entry point that takes `File[]` plus
-an anchor and calls `dropFiles` — the hook currently surfaces only
-`commitDrop(event, anchor)`, which needs a `DragEvent`.
+Two things the earlier survey called correctly:
 
-Two constraints that will shape the markup:
+- **The slot was a single `<button>`**, which is exactly what a second control
+  cannot live inside. It is a container of controls now.
+- **Room is tight.** The strip slot measures 132px; the three stacked pieces
+  fit with no overflow, with the hint at 9px and truncating rather than
+  wrapping. The full sentence lives in the Browse button's `title`.
 
-- **The slot is a `<button>` today.** A link or a second control cannot go
-  inside it — nested interactive elements are invalid and this codebase has
-  been bitten by exactly that before (round 6 had to use `contentEditable`
-  instead of an `<input>` because the card content renders inside a button).
-  The slot needs to become a container holding two controls, with "Add
-  timeline" staying a button of its own.
-- **Room is tight in the strip.** The slot is card height — 100px at MD — and
-  already carries an icon plus an 11px label. Grid cells are much larger. The
-  hint copy may need to be strip-abbreviated, or shown only at grid size, or
-  moved to a `title`/tooltip on the strip. Worth deciding from a screenshot at
-  both sizes rather than in the abstract.
+The input itself is `sr-only` and `tabIndex={-1}` — it is the picker, not the
+affordance, and the button in front of it is the real control. Its value is
+cleared BEFORE the files are handed off, so choosing the same file twice in a
+row fires `change` again instead of being silently inert.
 
-Proposed copy, offered as a starting point rather than settled — the owner
-asked me to word it:
-
-> **Add timeline**
-> or drop media files anywhere on the timeline — [browse…]
-
-Done when: the trailing slot names both ways to add content, the browse link
-opens a native file picker filtered to the supported image/video types,
-selected files land through `dropFiles` (same probe, upload, failure reporting
-and single undoable commit as a drop), the whole slot is reachable and operable
-by keyboard, and the strip and grid presentations were both reviewed on screen.
+E2E drives the real path with `setInputFiles`: two files land appended, both
+upload, the write reaches the batch path, and ONE undo takes both back.
+Disconnecting the handler fails it (`Expected: 6, Received: 4`).
 
 ## PL14-012 — Ctrl+Arrows trim by a tenth of a second
 
