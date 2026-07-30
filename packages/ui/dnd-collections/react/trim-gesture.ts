@@ -247,6 +247,25 @@ export function useTrimPointerDrag(
         if (!dispatched.ok) trimPreview.previewTrim(node.id, null);
       }
 
+      // Publish the edge's CURRENT split immediately, at zero delta, so
+      // anything showing the live frame has something to show from the press
+      // rather than from the first move.
+      //
+      // It matters most where it is least visible: the preview pane seeks to
+      // this frame, and a cold seek near the out point can take the better
+      // part of a second. Starting that on pointerdown spends the pause while
+      // the user is still deciding where to drag, instead of at the start of
+      // the drag itself.
+      //
+      // `pending` stays null deliberately. A press with no movement therefore
+      // still takes onUp's no-op branch — nothing dispatches, and the live
+      // preview clears on release exactly as an aborted gesture does. This
+      // shows a frame; it does not begin an edit.
+      const initial = resolve(0);
+      onLive?.(initial.live);
+      publishLive(node.id, initial.live);
+      trimPreview.previewTrim(node.id, initial.live);
+
       activeCleanupRef.current = abortGesture;
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);

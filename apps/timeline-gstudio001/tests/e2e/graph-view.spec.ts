@@ -4714,6 +4714,59 @@ test.describe("graph view E2E", () => {
     await expect(canvas).toBeVisible();
   });
 
+  test("pressing a trim handle shows the frame before any movement", async ({ page }) => {
+    // The live frame used to appear only on the first pointerMOVE, because
+    // `publishLive` was called nowhere else. Pressing now publishes the edge's
+    // current split at zero delta, which matters most where it is least
+    // visible: the preview pane starts its seek while the user is still
+    // deciding where to drag, rather than at the start of the drag.
+    const api = await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const wrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    await expect(page.locator("[data-trim-edge-frame]")).toHaveCount(0);
+
+    const widthBefore = (await alpha.boundingBox())!.width;
+    const patchesBefore = api.patchesFor(PROJECT_ID).length;
+
+    // PRESS ONLY — no move at all.
+    const handle = wrapper.locator("[data-trim-handle]").last();
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+
+    await expect(page.locator('[data-trim-edge-frame="right"]')).toHaveCount(1);
+    // At zero delta the clip is unchanged — this shows a frame, it does not
+    // preview an edit.
+    expect((await alpha.boundingBox())!.width).toBeCloseTo(widthBefore, 0);
+
+    await page.mouse.up();
+
+    // And nothing committed: the frame clears and no write goes out.
+    //
+    // Weaker than it looks, said plainly because it would be easy to read as
+    // a guard it is not. `pending` stays null on press, so the release takes
+    // onUp's no-op branch — but even setting it would not commit, because
+    // `applyMediaUpdate` refuses an update whose trims equal the node's
+    // (`same-position`), and a refused command produces no patch, no history
+    // entry and no write. Verified by injecting `pending = initial.update`:
+    // this test still passed.
+    //
+    // So it pins the OUTCOME (a press leaves no trace) rather than the
+    // mechanism, and would catch a future change that let no-op updates
+    // through — which is worth having, just not the assurance it first reads
+    // as.
+    await expect(page.locator("[data-trim-edge-frame]")).toHaveCount(0);
+    expect((await alpha.boundingBox())!.width).toBeCloseTo(widthBefore, 0);
+    await page.waitForTimeout(1200); // past the persistence debounce
+    expect(api.patchesFor(PROJECT_ID).length).toBe(patchesBefore);
+  });
+
   test("a trim drag floats the edge frame above the clip", async ({ page }) => {
     // PL10-005/007. The live frame is its own small surface: sized to the
     // breadcrumb row (a size reference, not a location — it follows the CLIP,
