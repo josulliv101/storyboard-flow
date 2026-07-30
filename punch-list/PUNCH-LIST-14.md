@@ -6,26 +6,40 @@ names, not from investigation.
 
 ## PL14-001 — Enable/disable an item from the details modal
 
-- Status: Not started
+- Status: Complete
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
-- Area: `graph-item-details-modal.tsx`, `graph-item-actions.tsx`
+- Area: `graph-item-disable-toggle.tsx` (new), `graph-item-details-modal.tsx`,
+  `graph-collection-details.tsx`, `tests/e2e/graph-view.spec.ts`
 - Screenshot: Not captured
 
-When a media item or a collection item is shown in the modal, the modal should
-let the user disable or enable it.
+Both dialogs now carry a disable/enable control in the header, beside the
+readout.
 
-The disable feature already exists as a play-time skip — a disabled item keeps
-its slot and its span, and the player jumps it (see the `set-node-disabled`
-command and `playback-skip.ts`). This item is only about surfacing that control
-in the modal; it is not a change to what disabling means.
+**An ACTION whose label flips, not a switch** — the open question, settled by
+precedent rather than taste: the rail's item actions already do exactly this
+(`Ban` + "Disable" / `CircleCheck` + "Enable", flipping on `allDisabled`). Two
+controls for one concept should look like one concept, and the rail got there
+first. Same icons, same words.
 
-Open: whether the control reads as a toggle (switch) or as an action that flips
-label between Disable and Enable. The item-actions cluster is the precedent to
-match.
+Nothing about what disabling MEANS changed: `set-node-disabled`, the item keeps
+its slot and its span, playback skips it (`playback-skip.ts`).
 
-Done when: the modal shows the current enabled/disabled state for both card
-kinds, flipping it dispatches through the same command path as the existing
-action (so undo covers it), and the card reflects the change on close.
+Two things fell out of dispatching it the same way the rail does:
+
+- **The modal's scoped undo already covered it.** `useScopedHistory` was
+  written to accept `set-node-disabled` when it names exactly one node — this
+  item's node — so the modal's own undo button steps through a disable with no
+  further wiring. That acceptance clause predates this item; it was waiting.
+- **No toast.** The rail toasts because its selection can be forty items and
+  the board may not show what moved. Here the button's own label flips and the
+  item is on screen, so a toast would narrate what the user is looking at.
+
+Shared by both dialogs, for the reason PL14-010 learned the hard way: the
+collection details view is a modal too, not a card surface.
+
+Verified live and by e2e: label and `aria-pressed` flip, the card behind the
+modal picks up `data-disabled` (it rides the content span, not the dnd button),
+and the modal's scoped undo reverts it.
 
 ## PL14-002 — Drill-down chevron needs a hover state and the right cursor
 
@@ -227,10 +241,37 @@ click, and reachable by keyboard (context-menu key / Shift+F10).
 
 ## PL14-008 — An untouched, empty collection is discarded, not trashed
 
-- Status: Not started
-- Area: the delete path shared by the sidebar action, the trash drop target and
-  the Delete key; `graph-collection-details.tsx` for the "untouched" test
+- Status: Not started — BLOCKED on a decision, see "What building it found"
+- Area: `packages/collections-core/commands.ts` (a new command), the delete
+  path shared by the sidebar action, the trash drop target and the Delete key
 - Screenshot: Not captured
+
+> **What building it found (2026-07-30).** This is bigger than the entry below
+> implies, and it was picked up as a small item.
+>
+> **The engine has no removal command.** `CollectionsCommand` is exactly five
+> cases — `move-nodes`, `add-nodes`, `update-media`, `rename-node`,
+> `set-node-disabled`. Deleting IS moving to the trash root; nothing anywhere
+> can take a node OUT of the graph. So "skip the trash, just remove it" cannot
+> be a branch in the delete path — the thing it would branch to does not exist.
+>
+> The patch half is already there (`nodes-removed` applies, verifies, and
+> inverts to `nodes-added`, so undo would round-trip), which makes a
+> `remove-nodes` command tractable — but it is a change to `collections-core`,
+> the package every surface depends on, for one narrow case.
+>
+> **And it raises a question the entry never asked: what happens to the
+> collection's DOCUMENT?** A collection is a node plus its own timeline
+> document. Trashing re-parents the node and keeps the document. Removing the
+> node outright either orphans that document in Firebase or deletes it — and
+> "undo still restores it", which you asked for, means the document has to
+> survive or be recreated. That is a data-deletion decision, not a UI one.
+>
+> Worth deciding before any code: is the goal *"the trash drawer should not
+> fill with shells"*? If so there is a cheaper answer that needs no engine
+> change — trash them as normal and have the DRAWER not list untouched empty
+> collections, or sweep them. Same outcome for the user, no new primitive, no
+> orphaned documents.
 
 Deleting a collection that has never been changed — title never edited, holds no
 items, an empty shell — removes it outright instead of moving it to the trash.
@@ -267,21 +308,33 @@ for honouring it rather than second-guessing the user.
 
 ## PL14-009 — Breadcrumbs tint while an item is dragged
 
-- Status: Not started
-- Area: `graph-breadcrumb-drop.tsx`, `graph-board.tsx`
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+- Area: `graph-view-chrome.tsx` (`AncestorCrumb`), `tests/e2e/graph-view.spec.ts`
 - Screenshot: Not captured
 
-While an item is being dragged, the breadcrumb entries should take an ever so
-slight background colour change — enough to suggest the breadcrumb area is now
-a drop target for the dragged element.
+Ancestor crumbs take a faint fill while a drag is live, stepping up to a sky
+tint when the pointer is actually over one.
 
-The breadcrumb is already droppable; this is the missing affordance, not new
-behaviour. Deliberately subtle: the owner asked for a hint that something is
-possible there, not a highlight competing with the drop indicator.
+The crumbs were already droppable and already signalled it — with a dotted
+underline, and a solid sky underline when hovered. The gap was that both are
+marks ON TEXT, so at a glance the trail still read as text rather than as
+somewhere a card could go. A background says "region", which is what a drop
+target is.
 
-Done when: the tint appears for the duration of a drag and clears on drop or
-cancel, and it is distinguishable from (and weaker than) the active
-drop-target treatment a crumb takes when the pointer is actually over it.
+Two states, kept ranked so the stronger one still wins: `bg-zinc-800/50` for
+droppable, `bg-sky-500/15` for hovered. Faint on purpose — the owner asked for
+a hint that something is possible, not a highlight competing with the drop
+indicator.
+
+The existing rationale survives intact and is why this is a FILL: decoration
+and background are both layout-neutral, so the crumb's width never changes as
+the states toggle. A border or a ring would have moved the trail.
+
+Pinned in the existing drop-zone e2e rather than a new test — that test already
+holds a live drag over each zone, which is the only state where any of this is
+visible. It asserts the droppable fill while the pointer is still on the card,
+and the sky fill once it is over the crumb.
 
 ## PL14-010 — The modal's name field opens on a single click
 

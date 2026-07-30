@@ -15,6 +15,7 @@ import { collectionPreviewFrameUrl } from "@/lib/video-frame-url";
 
 import { useClipDetail, useTimelineTitle } from "./graph-details-context";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
+import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import {
   useCollectionPreviewFrames,
   useEnabledChildCount,
@@ -146,6 +147,7 @@ export function CollectionDetailsBody({
             <span className="font-mono text-[11px] tabular-nums text-zinc-400">
               {count} {count === 1 ? "item" : "items"} · {formatDuration(seconds)}
             </span>
+            <ItemDisableToggle nodeId={node.id as string} />
             <div className="flex items-center gap-1">
               <button
                 type="button"

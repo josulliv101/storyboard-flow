@@ -865,6 +865,36 @@ test.describe("graph view E2E", () => {
     ).toBeVisible();
   });
 
+  test("the details modal can disable and re-enable its item", async ({ page }) => {
+    // PL14-001. An ACTION whose label flips, matching the rail's item-actions
+    // toggle — not a switch, because two controls for one concept should look
+    // like one concept.
+    await installGraphApi(page);
+    await openGraph(page);
+    await openItemDetails(page, "alpha");
+    await settleViewTransition(page);
+
+    const toggle = page.locator("[data-item-details-disable]");
+    await expect(toggle).toHaveText("Disable");
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    await toggle.click();
+    await expect(toggle).toHaveText("Enable");
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // The card behind the modal agrees — this is one graph, not a modal-local
+    // flag. `data-disabled` rides the CONTENT span inside the dnd button, not
+    // the button itself (same locator the disabled-clip test uses).
+    const alphaCard = page.locator('[data-node-id="alpha"]');
+    await expect(alphaCard.locator('[data-disabled="true"]')).toBeVisible();
+
+    // The modal's SCOPED undo covers it: `useScopedHistory` already accepted
+    // `set-node-disabled` naming a single node, so this needed no new wiring —
+    // which is the reason the command is dispatched that way.
+    await page.locator("[data-item-details-undo]").click();
+    await expect(toggle).toHaveText("Disable");
+    await expect(alphaCard.locator('[data-disabled="true"]')).toHaveCount(0);
+  });
+
   test("board options live in the icon rail, below the trash", async ({ page }) => {
     // PL14-005. The menu is rendered by the BOARD and portalled into a slot the
     // rail publishes, so it keeps its real props while its trigger sits with
@@ -1542,12 +1572,27 @@ test.describe("graph view E2E", () => {
       await expect(fade).toHaveAttribute("data-faded", "true");
     }
 
+    // PL14-009: while a drag is live, an ancestor crumb takes a faint FILL as
+    // well as its dotted underline — the pointer is still on the card here, so
+    // this is the "droppable, not hovered" state. A background is what makes
+    // the crumb read as a region you can drop into; an underline alone is a
+    // mark on text. Layout-neutral by design (see AncestorCrumb).
+    await expect
+      .poll(async () => (await parentCrumb.getAttribute("class")) ?? "")
+      .toContain("bg-zinc-800/50");
+    expect(
+      await parentCrumb.evaluate((el) => getComputedStyle(el).backgroundColor),
+    ).not.toBe("rgba(0, 0, 0, 0)");
+
     // Over MOVE-TO-PARENT → the parent crumb lights up; trash icon still calm.
     const pz = (await parentZone.boundingBox())!;
     await page.mouse.move(pz.x + pz.width / 2, pz.y + pz.height / 2, { steps: 12 });
     await expect
       .poll(async () => (await parentCrumb.getAttribute("class")) ?? "")
       .toContain("decoration-sky-400");
+    // …and the fill steps up to the sky tint, so hovered still outranks merely
+    // droppable (PL14-009).
+    await expect(parentCrumb).toHaveClass(/bg-sky-500\/15/);
     await expect(trashIcon).not.toHaveClass(/animate-trash-hover-attention/);
 
     // The ghost covers the crumb, so the trash slot borrows its pixels to name

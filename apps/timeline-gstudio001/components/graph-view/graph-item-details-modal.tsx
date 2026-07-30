@@ -24,6 +24,7 @@ import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { formatSeconds } from "@/lib/format-duration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { CollectionDetailsBody } from "./graph-collection-details";
+import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
 
 // The trim MODAL (PL10-008, an experiment replacing the docked map).
@@ -402,6 +403,7 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
             <span className="font-mono text-[11px] tabular-nums text-zinc-400">
               {video ? `${formatSeconds(showing)} of ${formatSeconds(fullDuration)}` : formatSeconds(showing)}
             </span>
+            <ItemDisableToggle nodeId={node.id as string} />
             {/* Scoped to this clip's own trims — see useScopedHistory. Each
                 release is one commit, so these step through the adjustments
                 one at a time. */}

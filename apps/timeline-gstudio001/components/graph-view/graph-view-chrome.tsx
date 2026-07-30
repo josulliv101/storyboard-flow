@@ -123,11 +123,20 @@ function EditableCrumbName({
  * The trail already IS the ancestor chain (root … parent), so dropping a card
  * on any ancestor crumb moves it to THAT collection — up one level, or several,
  * all the way to the root, in a single motion. Idle it is a plain nav link;
- * during a drag every ancestor crumb reads as droppable (a dotted underline),
- * and the crumb under the pointer shows where the item will land (a solid sky
- * underline). Text-decoration only, so the crumb's width never changes and
- * nothing shifts as the states toggle. The focused (current) crumb is NOT one
- * of these — the item already lives there.
+ * during a drag every ancestor crumb reads as droppable (a dotted underline
+ * over a faint fill), and the crumb under the pointer shows where the item will
+ * land (a solid sky underline over a sky tint). The focused (current) crumb is
+ * NOT one of these — the item already lives there.
+ *
+ * The fill was added in PL14-005's round (PL14-009): an underline alone is a
+ * mark ON the text, and at a glance the trail still read as text rather than as
+ * somewhere a card could go. A background says "region", which is what a drop
+ * target is. Kept deliberately faint — it is a hint that something is possible
+ * here, not a competitor to the hovered state or to the drop indicator.
+ *
+ * Still no geometry: decoration and background are both layout-neutral, so the
+ * crumb's width never changes and nothing shifts as the states toggle. That
+ * constraint is why this is a fill and not a border or a ring.
  */
 function AncestorCrumb({
   crumbId,
@@ -158,9 +167,9 @@ function AncestorCrumb({
           "block min-w-0 max-w-[180px] truncate rounded-md px-1.5 py-1 transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
           state === "hovered"
-            ? "text-sky-200 underline decoration-sky-400 decoration-2 underline-offset-4"
+            ? "bg-sky-500/15 text-sky-200 underline decoration-sky-400 decoration-2 underline-offset-4"
             : state === "droppable"
-              ? "text-zinc-300 underline decoration-dotted decoration-zinc-500 underline-offset-4"
+              ? "bg-zinc-800/50 text-zinc-300 underline decoration-dotted decoration-zinc-500 underline-offset-4"
               : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100",
         )}
       >
