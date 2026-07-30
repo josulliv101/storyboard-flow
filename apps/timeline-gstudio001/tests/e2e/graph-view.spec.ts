@@ -3886,7 +3886,8 @@ test.describe("graph view E2E", () => {
         calls: number;
         skipped: boolean | null;
         heroHolderAtReady: string | null;
-      } = { calls: 0, skipped: null, heroHolderAtReady: null };
+        modalPresentAtCapture: boolean | null;
+      } = { calls: 0, skipped: null, heroHolderAtReady: null, modalPresentAtCapture: null };
       (window as unknown as { __closeProbe: typeof probe }).__closeProbe = probe;
       const doc = document as Document & {
         startViewTransition: (cb: () => void) => { ready: Promise<void> };
@@ -3894,6 +3895,12 @@ test.describe("graph view E2E", () => {
       const original = doc.startViewTransition.bind(doc);
       doc.startViewTransition = (callback: () => void) => {
         probe.calls += 1;
+        // THE assertion. The browser captures the "before" frame when this is
+        // called, and the callback is what removes the modal — so the modal has
+        // to still be here right now. If it unmounted on an earlier render, a
+        // transition still runs and still resolves, but it has nothing to morph
+        // FROM and the close reads as a hard cut.
+        probe.modalPresentAtCapture = !!document.querySelector("[data-item-details]");
         const transition = original(callback);
         transition.ready.then(
           () => {
@@ -3921,6 +3928,7 @@ test.describe("graph view E2E", () => {
       calls: number;
       skipped: boolean | null;
       heroHolderAtReady: string | null;
+      modalPresentAtCapture: boolean | null;
     }>;
     const probe = await page
       .waitForFunction((): CloseProbe | null => {
@@ -3929,10 +3937,12 @@ test.describe("graph view E2E", () => {
       })
       .then((handle) => handle.jsonValue() as Promise<CloseProbe>);
 
-    // A transition ran, it PLAYED rather than being skipped, and the thing it
-    // played into was alpha's card — the spot the modal came from.
+    // A transition ran, it PLAYED rather than being skipped, the modal was
+    // still on screen to be captured, and the thing it played into was alpha's
+    // card — the spot the modal came from.
     expect(probe.calls).toBe(1);
     expect(probe.skipped).toBe(false);
+    expect(probe.modalPresentAtCapture).toBe(true);
     expect(probe.heroHolderAtReady).toBe("alpha");
 
     // And nothing is left holding it, so the next open still morphs.

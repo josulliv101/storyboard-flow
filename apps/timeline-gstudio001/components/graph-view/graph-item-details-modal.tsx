@@ -534,11 +534,30 @@ export function GraphItemDetailsModal() {
   // selected: the trigger lives on a card, and a card can be pressed without
   // being the selection. Any media item qualifies — a video gets the frame and
   // the source strip, a still gets its image and its duration (PL10-012).
+  // The id currently ON SCREEN, which is deliberately not the same thing as
+  // the id the context wants open — and that difference is the entire closing
+  // animation (PL14-004).
+  //
+  // This used to be a boolean `mounted`, with the node read from `openId`
+  // alone. Closing sets `openId` to null, so `node` went null on the very next
+  // render and the guard below unmounted the modal THERE — one render before
+  // the effect could start a transition. The transition then ran against a
+  // page the modal had already left: it started, it resolved, the card took
+  // the hero name, and every one of those was observable while the user saw a
+  // hard cut, because the "before" frame no longer had a modal in it.
+  //
+  // Keeping the id here means the modal survives the close render and is still
+  // on screen when the browser captures "before". The transition callback is
+  // what clears it, which is exactly when it should go.
+  const [mountedId, setMountedId] = useState<string | null>(null);
+  const mounted = mountedId !== null;
   const node = useCollectionsSelector((s) => {
-    if (openId === null) return null;
-    return s.graph.nodesById.get(parseNodeId(openId)) ?? null;
+    // `openId` while opening and open; `mountedId` while closing, when the
+    // context has already let go but the pixels are still here.
+    const id = openId ?? mountedId;
+    if (id === null) return null;
+    return s.graph.nodesById.get(parseNodeId(id)) ?? null;
   });
-  const [mounted, setMounted] = useState(false);
   const openIdRef = useRef<string | null>(null);
 
   // Opening and closing are driven by the context flag so the toolbar button,
@@ -557,14 +576,17 @@ export function GraphItemDetailsModal() {
         // Hand the name over: the card gives it up in the same frame the
         // modal takes it, so exactly one element ever carries it.
         card?.style.removeProperty("view-transition-name");
-        setMounted(true);
+        setMountedId(node.id as string);
       });
       return;
     }
 
     const card = openIdRef.current ? cardElement(openIdRef.current) : null;
     void withViewTransition(() => {
-      setMounted(false);
+      // Clearing this is what unmounts the modal, and it happens HERE — inside
+      // the callback, after the browser has captured the frame the modal is
+      // still in. That ordering is the animation.
+      setMountedId(null);
       card?.style.setProperty("view-transition-name", HERO);
     }).then(() => {
       card?.style.removeProperty("view-transition-name");
