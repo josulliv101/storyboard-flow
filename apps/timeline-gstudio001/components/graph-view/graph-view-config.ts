@@ -29,6 +29,35 @@ export const DEFAULT_TIMELINE_PPS = 50;
  */
 export const GRAPH_STRIP_OVERSCAN_ITEMS = 8;
 
+/**
+ * The strip's TRACK: the surface a row of clips sits on.
+ *
+ * A strip holding nothing — or two clips — used to read as cards floating on
+ * the page, because the surface itself was invisible and only a dashed outline
+ * suggested it. A filled track says "things go here, in a row" before anything
+ * does, which makes it the honest empty state for this surface (the board's
+ * other empty affordance, "Add timeline", is a slot INSIDE a row; this is the
+ * row).
+ *
+ * It goes on the SCROLL VIEWPORT, not the content, and that is what makes the
+ * hard half free. The track then spans the visible width whatever the content
+ * does: with two clips the rest of the row is visible track, and with a
+ * thousand the track stays put while the cards scroll over it. Painting it on
+ * the content instead would need a third width — beside `getTotalSize()` (the
+ * cards' extent, which drop indices read) and the content div's own width
+ * (that plus the trailing slot) — and a trailing inset on a SCROLLABLE run is
+ * not padding at all; it is a gap that appears mid-content the moment you
+ * scroll.
+ *
+ * Sits BETWEEN the board and the cards tonally, and the ORDER is the
+ * constraint: the board is near-black and a card is an opaque `bg-zinc-900`, so
+ * the track has to be lighter than the first and darker than the second or it
+ * competes with what it is holding. `zinc-900` at 60% lands around a third of
+ * the way from the board to a card — lifted enough to read as a surface at a
+ * glance, still clearly behind the clips.
+ */
+export const GRAPH_STRIP_TRACK_CLASS = "bg-zinc-900/60";
+
 /** Gap between grid cells — sized as the seek-rail BAND: the slim track
  *  centres inside it with clear space on both sides, so the rail (and its
  *  thumb) never touches the cards above or below. The strips reserve the

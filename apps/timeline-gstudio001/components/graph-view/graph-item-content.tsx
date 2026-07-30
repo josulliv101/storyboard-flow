@@ -12,7 +12,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Check, ChevronRight, CornerRightDown, Maximize2 } from "lucide-react";
+import { Check, ChevronRight, CornerRightDown } from "lucide-react";
 
 import {
   CollectionItem,
@@ -45,7 +45,6 @@ import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-d
 import { isDisabledByAncestor } from "./graph-playhead-model";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { useCollectionHoverTarget } from "./graph-collection-hover";
-import { useItemDetails } from "./graph-item-details-context";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TrimPanel } from "./graph-trim-panel";
 import { createDerivedCache } from "@/lib/derived-cache";
@@ -1103,8 +1102,11 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           them from the strip's pan surface (isPannableStripSurface), so a press
           here never scrolls the strip out from under it. */}
       {selected && <CardSelectedBadge />}
+      {/* One control, not a cluster: the details trigger moved to the rail's
+          item actions (PL13-009), so what is left on the card is the drill. It
+          keeps the cluster's position — same corner, same inset — because that
+          is where a card's control belongs whether there are two or one. */}
       <span className={CARD_CONTROL_CLUSTER_CLASS}>
-        <ItemDetailsTrigger id={id} rovingTabIndex={undefined} inCluster />
         <button
           type="button"
           tabIndex={-1}
@@ -1198,70 +1200,22 @@ const GraphCollectionItem = memo(function GraphCollectionItem({
  * would put dozens of them in the tab order. Roving keeps the surface at one
  * stop; this adds exactly one more, on the card the user is actually on.
  */
-const ItemDetailsTrigger = memo(function ItemDetailsTrigger({
-  id,
-  rovingTabIndex,
-  inCluster = false,
-}: Readonly<{
-  id: NodeId;
-  rovingTabIndex: number | undefined;
-  /** True when a card renders this INSIDE `CARD_CONTROL_CLUSTER_CLASS`, which
-   *  owns the position — a collection pairs it with the drill control. Alone
-   *  (a media card) it positions itself at the SAME inset, so both card kinds
-   *  put their controls in exactly the same place. */
-  inCluster?: boolean;
-}>) {
-  const store = useCollectionsStore();
-  const { setOpenId } = useItemDetails();
-  // NAME the item: a board shows dozens of these, and "Open item details"
-  // spoken twenty times says nothing about which one. It also kept the label
-  // out of the way of the collection card's own "Open <name>" drill button —
-  // one card carrying two buttons whose names both began "Open" made every
-  // by-role locator ambiguous, which is how this was found.
-  const name = useCollectionsSelector((s) => s.graph.nodesById.get(id)?.name ?? "item");
+/*
+ * REMOVED (PL13-009): `ItemDetailsTrigger`, the per-card button that opened the
+ * details view.
+ *
+ * It was a control on the artwork of every card — and PL13-005 had just made it
+ * permanent, so both card kinds carried a standing mark for a view most people
+ * open rarely. Details is an item ACTION now, first in the sidebar's contextual
+ * cluster, disabled unless exactly one item is selected. That also settles the
+ * consistency question that produced PL13-005 (where should the trigger sit on
+ * each card kind) by not having one.
+ *
+ * Its `openId`-and-also-select coupling went with it: from the rail the
+ * selection is the input, so the details listener reads it rather than setting
+ * it (see graph-item-details-context).
+ */
 
-  return (
-    <button
-      type="button"
-      data-item-details-trigger={id}
-      aria-label={`Details for ${name}`}
-      title="Details"
-      {...(rovingTabIndex !== undefined ? { tabIndex: rovingTabIndex } : {})}
-      onPointerDown={(event) => {
-        // Keep the press off the surface gestures underneath — the strip's
-        // pan and (in grid) the hold-drag both start on pointerdown.
-        event.stopPropagation();
-      }}
-      onClick={(event) => {
-        event.stopPropagation();
-        // Open it AND select it: the details view is about one item, and
-        // leaving the selection on some other card makes every selection-scoped
-        // readout in the board disagree with what the modal is showing.
-        store.setSelection([id]);
-        setOpenId(id as string);
-      }}
-      // ONE treatment, shared with the drill badge on a collection card: same
-      // 24px square, same right edge, same fill — details top-right, drill
-      // bottom-right, bracketing the same side. The two used to differ in
-      // corner, shape, colour AND reveal rule, which is why they never read as
-      // siblings.
-      className={[
-        CARD_CONTROL_CLASS,
-        inCluster ? "" : "absolute right-1.5 top-1.5",
-        // ALWAYS VISIBLE (PL13-005). It was hover-revealed, with the hiding
-        // gated on `hover:hover` so a touch device — which never hovers — could
-        // still reach it (PL11-011). Always-visible removes that whole class of
-        // problem: pointer and touch now behave identically and there is no
-        // media query to get wrong. The cost is two permanent marks on a card,
-        // paid deliberately, because on a collection the drill badge is the only
-        // pointer route into a timeline and a route nobody can see is not one.
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
-      ].join(" ")}
-    >
-      <Maximize2 aria-hidden="true" className="h-3.5 w-3.5" />
-    </button>
-  );
-});
 
 /**
  * The media card: the stock NodeCard, wrapped so a details trigger and a
@@ -1296,7 +1250,6 @@ const GraphMediaItem = memo(function GraphMediaItem({
     <div className={["group/media-item relative", className ?? ""].join(" ")}>
       <NodeCard {...props} className="h-full w-full" />
       {mediaSelected && <CardSelectedBadge />}
-      <ItemDetailsTrigger id={props.id} rovingTabIndex={props.rovingTabIndex} />
       {rename.editing && node?.kind === "media" && (
         <InlineNameEditor
           initialValue={detail?.title ?? ""}

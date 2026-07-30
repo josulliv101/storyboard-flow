@@ -126,7 +126,13 @@ export type GraphItemAction =
   | "delete"
   | "cancel"
   /** Skip (or un-skip) the selection in playback, counts and time totals. */
-  | "toggle-disabled";
+  | "toggle-disabled"
+  /** Open the details view for the selection. Meaningful for exactly ONE
+   *  selected item — the view is about a single clip's frames, in/out points
+   *  and name, and there is no honest way to render it for six. The sidebar
+   *  disables the control past one; the graph side refuses as well, because a
+   *  window event is not a promise about what sent it. */
+  | "details";
 
 /** Graph → sidebar: the live selection size, so the sidebar can enter/exit
  *  item-actions mode and enable/disable the selection-dependent buttons. */
