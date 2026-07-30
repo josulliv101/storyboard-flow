@@ -1386,6 +1386,71 @@ export const KeyboardTrim: Story = {
   },
 };
 
+export const FineKeyboardTrim: Story = {
+  // PL14-012. CTRL+Arrows are the same four trims at a TENTH the step — the
+  // fine control for landing an edge a second cannot reach.
+  //
+  // Its own chord rather than a modifier on Alt+Shift+Arrow, which would have
+  // made it a four-key combination nobody performs. Ctrl was available: the
+  // keyboard controller used to reject a held Ctrl on its first line.
+  render: () => (
+    <DndCollections initialGraph={trimGraph()} animateMoves={false}>
+      <div className="flex w-[640px] flex-col gap-2">
+        <UndoRedoControls />
+        <VirtualStrip
+          collectionId={parseNodeId("strip")}
+          itemWidthFor={(node) =>
+            node.kind === "media" ? mediaDurationSeconds(node) * TRIM_PPS : undefined
+          }
+          trimPixelsPerSecond={TRIM_PPS}
+        />
+      </div>
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const width = (id: string) =>
+      Math.round(nodeCard(canvasElement, id).getBoundingClientRect().width);
+
+    const img = nodeCard(canvasElement, "img");
+    await waitForLayout(img);
+    expect(width("img")).toBe(96); // 4s at 24px/s
+
+    // TEN presses = ONE Alt+Shift press. That equality is the assertion: at a
+    // 1s step these would add ten seconds and land at 336px, so reaching 120px
+    // is what proves the step is a tenth.
+    await user.click(img);
+    for (let step = 0; step < 10; step += 1) {
+      await user.keyboard("{Control>}{ArrowRight}{/Control}");
+    }
+    await waitFor(() => expect(width("img")).toBe(120));
+
+    // And back the other way.
+    for (let step = 0; step < 10; step += 1) {
+      await user.keyboard("{Control>}{ArrowLeft}{/Control}");
+    }
+    await waitFor(() => expect(width("img")).toBe(96));
+
+    // The video's START edge answers to the vertical pair, same grammar as
+    // Alt+Shift — one fine trim is one command, so ten are ten undo steps.
+    const vid = nodeCard(canvasElement, "vid");
+    await user.click(vid);
+    expect(width("vid")).toBe(240); // 10s
+    for (let step = 0; step < 5; step += 1) {
+      await user.keyboard("{Control>}{ArrowUp}{/Control}");
+    }
+    await waitFor(() => expect(width("vid")).toBe(228)); // 9.5s
+
+    // A held Shift is the COARSE chord, not this one — Ctrl+Shift+Arrow is
+    // neither, and must fall through untouched rather than trimming by either
+    // step.
+    await user.keyboard("{Control>}{Shift>}{ArrowUp}{/Shift}{/Control}");
+    expect(width("vid")).toBe(228);
+    expect(canvas.queryByText(/images can only be trimmed at the end/i)).toBeNull();
+  },
+};
+
 // Phase B fixture: a strip WIDE enough to scroll (needed for the right-edge
 // anchor — a left-handle drag grows the item and shifts scrollLeft to hold
 // the right edge, which only has room on a scrollable strip), with a video at
