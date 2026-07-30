@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { AlertCircle, Loader2, LogIn, Mail, Send } from "lucide-react";
+import { CircleAlert, LoaderCircle, LogIn, Mail, Send } from "lucide-react";
 
 import { Button } from "@/components/core/button";
 import { cn } from "@/lib/utils";
@@ -66,7 +66,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     return (
       <div className="grid min-h-screen flex-1 place-items-center bg-zinc-950 text-zinc-400">
         <div className="flex items-center gap-2 text-sm">
-          <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
+          <LoaderCircle className="h-4 w-4 animate-spin text-amber-300" />
           Loading session
         </div>
       </div>
@@ -153,7 +153,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
           {error ? (
             <div className="flex items-start gap-2 rounded-md border border-red-500/25 bg-red-500/10 p-3 text-xs text-red-100">
-              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-300" />
+              <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-300" />
               <span>{error}</span>
             </div>
           ) : null}
@@ -164,7 +164,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             className="h-10 gap-2 bg-amber-400 text-xs font-bold uppercase tracking-widest text-zinc-950 hover:bg-amber-300"
           >
             {isSubmitting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <LoaderCircle className="h-4 w-4 animate-spin" />
             ) : step === "complete" ? (
               <LogIn className="h-4 w-4" />
             ) : (
