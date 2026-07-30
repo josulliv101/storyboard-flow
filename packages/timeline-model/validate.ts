@@ -13,12 +13,57 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function isOptionalString(value: unknown): boolean {
-  return value == null || typeof value === "string";
+// Finiteness alone let a payload satisfy the guard and still violate the model
+// it claims to be: negative durations, a negative trim, a fractional array
+// index, a zero aspect. Each of those is accepted today and only fails LATER —
+// in packing math or graph hydration, where the cause is a long way from the
+// write that caused it.
+//
+// The rules below are deliberately the ones that cannot be argued with, and
+// stop short of two the app's own writer would trip over:
+//
+//   - `duration` may be ZERO. An empty hydrated collection genuinely has no
+//     span (`hydratedCollectionDuration` over no children), so "> 0" would
+//     refuse a legitimate save.
+//   - `trackIndex` is left as any finite number. It should be a non-negative
+//     integer, but a legacy stored detail carrying a float would then be
+//     unable to write itself back, and the value is inert until multi-track
+//     lands.
+
+/** Times, spans and counts: a negative one is not a value, it is corruption. */
+function isNonNegative(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0;
 }
 
-function isOptionalFiniteNumber(value: unknown): boolean {
-  return value == null || isFiniteNumber(value);
+function isOptionalNonNegative(value: unknown): boolean {
+  return value == null || isNonNegative(value);
+}
+
+/** Array positions and counts. Fractional ones index nothing. */
+function isNonNegativeInteger(value: unknown): value is number {
+  return isNonNegative(value) && Number.isInteger(value);
+}
+
+/**
+ * Trims must leave something behind.
+ *
+ * The tolerance is not slack, it is float arithmetic: trims are accumulated
+ * from pointer deltas and a legitimate full-length clip lands on
+ * `trimIn + trimOut` a few ulps past `sourceDuration`. Rejecting that would
+ * refuse a save the user can produce by dragging a handle to the end.
+ */
+const TRIM_EPSILON_SECONDS = 1e-6;
+
+function trimsFitInSource(clip: Record<string, unknown>): boolean {
+  const { trimIn, trimOut, sourceDuration } = clip;
+  if (!isFiniteNumber(trimIn) || !isFiniteNumber(trimOut) || !isFiniteNumber(sourceDuration)) {
+    return false;
+  }
+  return trimIn + trimOut <= sourceDuration + TRIM_EPSILON_SECONDS;
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value == null || typeof value === "string";
 }
 
 /** Same null leniency as every optional field; when present, BOTH halves of
@@ -55,17 +100,24 @@ function hasClipBase(clip: Record<string, unknown>): boolean {
   return (
     typeof clip.id === "string" &&
     clip.id.length > 0 &&
-    isFiniteNumber(clip.index) &&
+    // An array position, so an integer — and the writer derives it from
+    // `.map((child, index) =>`, which cannot produce anything else.
+    isNonNegativeInteger(clip.index) &&
     typeof clip.alt === "string" &&
+    // Strictly positive: the ratio is a DIVISOR in layout, so zero is an
+    // infinity waiting to happen and a negative one inverts the box.
     isFiniteNumber(clip.aspect) &&
+    clip.aspect > 0 &&
     isFiniteNumber(clip.trackIndex) &&
-    isFiniteNumber(clip.startTime) &&
-    isFiniteNumber(clip.duration) &&
-    isFiniteNumber(clip.sourceDuration) &&
-    isFiniteNumber(clip.trimIn) &&
-    isFiniteNumber(clip.trimOut) &&
-    isOptionalFiniteNumber(clip.playbackStartTime) &&
-    isOptionalFiniteNumber(clip.playbackDuration) &&
+    isNonNegative(clip.startTime) &&
+    // Zero is legal here — see the note above `isNonNegative`.
+    isNonNegative(clip.duration) &&
+    isNonNegative(clip.sourceDuration) &&
+    isNonNegative(clip.trimIn) &&
+    isNonNegative(clip.trimOut) &&
+    trimsFitInSource(clip) &&
+    isOptionalNonNegative(clip.playbackStartTime) &&
+    isOptionalNonNegative(clip.playbackDuration) &&
     // Strictly boolean-or-absent. This gate guards the WRITE path, and a
     // truthy non-boolean would be read as "skip this clip" by the playback
     // and summary passes — a stored string "false" would silently drop a
@@ -94,7 +146,18 @@ export function isTimelineClip(value: unknown): value is TimelineClip {
     if (typeof clip.childTimelineId !== "string" || clip.childTimelineId.length === 0) {
       return false;
     }
-    if (!isFiniteNumber(clip.itemCount)) return false;
+    // A count of children: integral and never negative.
+    if (!isNonNegativeInteger(clip.itemCount)) return false;
+    // The playable half of a collection's span. Optional, and never longer
+    // than the layout span it is derived from — it counts the ENABLED subset.
+    if (!isOptionalNonNegative(clip.playableDuration)) return false;
+    if (
+      isFiniteNumber(clip.playableDuration) &&
+      isFiniteNumber(clip.duration) &&
+      clip.playableDuration > clip.duration + TRIM_EPSILON_SECONDS
+    ) {
+      return false;
+    }
     if (clip.previewItems == null) return true;
     if (!Array.isArray(clip.previewItems)) return false;
     return clip.previewItems.every((item) => {
@@ -106,7 +169,8 @@ export function isTimelineClip(value: unknown): value is TimelineClip {
         typeof preview.src === "string" &&
         typeof preview.alt === "string" &&
         isOptionalString(preview.poster) &&
-        isOptionalFiniteNumber(preview.trimIn)
+        // A source offset, so the same rule its clip-level twin follows.
+        isOptionalNonNegative(preview.trimIn)
       );
     });
   }
