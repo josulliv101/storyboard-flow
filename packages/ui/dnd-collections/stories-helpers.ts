@@ -44,6 +44,49 @@ export async function dispatchPointerSequence(steps: readonly PointerStep[]): Pr
   }
 }
 
+/**
+ * An attribute's value once it has STOPPED changing.
+ *
+ * For render-count assertions, where the question is "did this window cause
+ * any renders" and the answer is only meaningful if the previous window has
+ * finished. Sampling the instant some other condition goes true is too early:
+ * `waitFor` returns as soon as its predicate passes, while React may still
+ * have queued work behind it, and a straggler that lands after the sample gets
+ * charged to whatever the test does next.
+ *
+ * That is exactly how `RenderEfficiencyDuringDrag` failed on CI three times
+ * (2026-07-30). The tell was that the BASELINE varied — 9, 7, 9 across three
+ * runs, reproduced locally at 9,9,9,9,7 — which a settled setup cannot do. The
+ * extra renders were drag-start work arriving late, not renders the jitter
+ * caused; a slower machine simply moved the straggler to the far side of the
+ * sample.
+ *
+ * THROWS rather than giving up if it never settles. A drag that genuinely
+ * re-renders forever is a real failure and must not be quietly averaged away —
+ * this makes the sample point well-defined, it does not soften the assertion
+ * that follows.
+ */
+export async function settledAttribute(
+  element: HTMLElement,
+  name: string,
+  { stableFrames = 4, maxFrames = 180 }: { stableFrames?: number; maxFrames?: number } = {},
+): Promise<string | null> {
+  let value = element.getAttribute(name);
+  let stable = 0;
+  for (let frame = 0; frame < maxFrames; frame += 1) {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
+    const next = element.getAttribute(name);
+    stable = next === value ? stable + 1 : 0;
+    value = next;
+    if (stable >= stableFrames) return value;
+  }
+  throw new Error(
+    `"${name}" never settled: still changing after ${maxFrames} frames (last "${value}")`,
+  );
+}
+
 export async function waitForLayout(element: HTMLElement): Promise<void> {
   await waitFor(() => {
     const rect = element.getBoundingClientRect();
