@@ -87,11 +87,19 @@ type WorkbenchDisplaySurfaceProps = {
    * a timeline time would map through stale trims. The caller knows the source
    * frame it wants; this draws it.
    *
+   * Addressed by `src` rather than by clip id, which is the correction that
+   * made this work at all. The pane plays one of TWO models — the focused
+   * level's projection, whose clip ids are graph node ids, or the compiled
+   * manifest, whose ids are path-qualified (`path/to:leafId`) precisely
+   * because leaf ids repeat across documents. A clip id is therefore not a
+   * stable handle across the boundary; the source URL is, and it is what the
+   * media cache is really about.
+   *
    * The CLOCK IS NOT TOUCHED. `currentTime` keeps its value, `onCurrentTimeChange`
    * is not called, and clearing this redraws whatever the clock was always on.
    * A consumer cannot move the playhead through this prop, by construction.
    */
-  frameOverride?: Readonly<{ clipId: string; sourceTime: number }> | null;
+  frameOverride?: Readonly<{ src: string; poster?: string; sourceTime: number }> | null;
 };
 
 const BUFFER_WINDOW_SIZE = 4;
@@ -268,26 +276,41 @@ type GetCollectionClipFramePreview = (
 /**
  * The media for an explicit SOURCE frame, bypassing the clock (`frameOverride`).
  *
- * Video only — an image has one frame and a collection has no source of its
- * own, so neither has a frame to be asked for.
+ * Matched on `src`, NOT on clip id, and that is the whole correctness of it.
+ * The pane plays one of two models: the focused level's projection, whose clip
+ * ids are graph node ids, or the compiled manifest, whose ids are
+ * `collectionPath:leafId` because leaf ids repeat across documents. An id from
+ * outside therefore matches in one model and silently misses in the other —
+ * which is exactly how this shipped: it worked against the projection the
+ * e2e fixture uses and did nothing in a real project, where the manifest wins.
  *
- * The `key` is byte-identical to the one `resolveClipMedia` builds for the same
- * clip, and that is deliberate rather than incidental: it lands on the SAME
- * cache entry, so an override seeks the element the pane is already holding
- * instead of loading a second copy of the file.
+ * Finding the clip is only for the CACHE KEY: matching one makes the key
+ * byte-identical to `resolveClipMedia`'s, so the override seeks the element
+ * the pane is already holding rather than loading a second copy. Nothing else
+ * is taken from it — notably not `sourceDuration`, which the manifest
+ * synthesizes per leaf and would clamp against the wrong range. The element's
+ * own duration is the real bound and `syncActiveVideo` already clamps to it.
  */
-function resolveOverrideMedia(clip: TimelineClip, sourceTime: number): DisplayMedia | null {
-  if (clip.kind !== "video") return null;
+export function resolveOverrideMedia(
+  clips: readonly TimelineClip[],
+  override: Readonly<{ src: string; poster?: string; sourceTime: number }>,
+): DisplayMedia {
+  const match = clips.find(
+    (clip): clip is Extract<TimelineClip, { kind: "video" }> =>
+      clip.kind === "video" && clip.src === override.src,
+  );
   return {
-    key: `${clip.id}:video:${clip.src}`,
+    // Same key as normal playback when the source is on screen; a stable
+    // private one when it is not, so an off-screen source still draws.
+    key: match ? `${match.id}:video:${match.src}` : `frame-override:video:${override.src}`,
     kind: "video",
-    src: clip.src,
-    poster: clip.poster,
-    alt: clip.alt,
-    sourceTime: clamp(sourceTime, 0, Math.max(0, clip.sourceDuration - 0.001)),
+    src: override.src,
+    poster: override.poster ?? match?.poster,
+    alt: match?.alt ?? "",
+    sourceTime: Math.max(0, override.sourceTime),
     // Unused for drawing; the clock is not involved in an override.
     timelineTime: 0,
-    clipTitle: clipLabel(clip),
+    clipTitle: match ? clipLabel(match) : "",
     playbackRate: 1,
   };
 }
@@ -759,15 +782,12 @@ export function WorkbenchDisplaySurface({
       return;
     }
 
-    const clip = sortedClipsRef.current.find((candidate) => candidate.id === frameOverride.clipId);
-    const media = clip ? resolveOverrideMedia(clip, frameOverride.sourceTime) : null;
-    if (!media) {
-      // Nothing to draw for this request (missing clip, or a kind with no
-      // source frame). Hand the picture back to the clock rather than freezing
-      // on a stale frame.
-      frameOverrideRef.current = null;
-      return;
-    }
+    // Always resolvable: the request carries its own `src`, so a source the
+    // pane is not currently showing still draws. Matching a clip is an
+    // optimisation (cache reuse), never a precondition — the earlier version
+    // treated a lookup miss as "nothing to draw" and silently did nothing,
+    // which is precisely what a path-qualified manifest id produced.
+    const media = resolveOverrideMedia(sortedClipsRef.current, frameOverride);
 
     activeMediaRef.current = media;
     lastRenderedMediaKeyRef.current = media.key;
@@ -977,7 +997,7 @@ export function WorkbenchDisplaySurface({
       // holds one decoded frame or another is not something a test can read
       // back, and the e2e fixture's "video" is a 1x1 GIF that never decodes at
       // all. This at least pins that the request reached the pane.
-      data-frame-override={frameOverride ? frameOverride.clipId : undefined}
+      data-frame-override={frameOverride ? frameOverride.src : undefined}
     >
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-[inherit] bg-black">
         <canvas

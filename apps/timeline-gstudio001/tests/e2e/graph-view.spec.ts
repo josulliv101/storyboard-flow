@@ -4565,7 +4565,7 @@ test.describe("graph view E2E", () => {
     // There is no second element anywhere: the pane's own canvas draws this,
     // from the video element it already had cached.
     const surface = page.getByTestId("workbench-display-surface");
-    await expect(surface).toHaveAttribute("data-frame-override", "alpha");
+    await expect(surface).toHaveAttribute("data-frame-override", PIXEL);
     await expect(page.locator("[data-trim-edge-frame]")).toHaveCount(0);
     await expect(page.locator("[data-trim-preview-overlay]")).toHaveCount(0);
 

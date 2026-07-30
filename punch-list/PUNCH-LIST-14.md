@@ -290,12 +290,48 @@ trims are stale, so a timeline time would map through the wrong values.
 The clock is untouched by construction — the prop cannot reach `currentTime`,
 so a consumer cannot move the playhead through it.
 
-**What the e2e does NOT prove**, recorded because it would be easy to assume
-otherwise: that the canvas paints the right frame. Canvas pixels are not
-readable back, and the fixture's "video" is a 1x1 GIF that never decodes. The
-test pins that the request reaches the pane (`data-frame-override`) and that
-the floating panel stands down; the picture itself needs a human with a real
-video.
+**Then it was dead in the app anyway — the third correction.** The prop
+addressed the frame by CLIP ID, and a clip id is not a stable handle here. The
+pane plays one of two models: the focused level's projection, whose ids are
+graph node ids, or the compiled manifest, whose ids are
+`collectionPath:leafId` (path-qualified because leaf ids repeat across
+documents). The lookup matched the projection and missed the manifest — and the
+manifest is what a settled real project plays. A miss was treated as "nothing
+to draw", so it failed silently.
+
+It is addressed by `src` now, which is the same string in both models and is
+what the media cache is really about. Finding a clip is an OPTIMISATION (it
+makes the cache key byte-identical to normal playback's, so the override seeks
+the element the pane already holds) and never a precondition — a source the
+pane is not currently showing still draws, under a private key.
+
+Nothing else is taken from the matched clip, notably not `sourceDuration`: the
+manifest synthesizes that per leaf, so clamping to it would cut real frames off
+a trim. The element's own duration is the true bound and `syncActiveVideo`
+already clamps there.
+
+**Why the e2e could not catch it, and what does.** The fixture never lands a
+manifest, so the e2e exercises the projection alone — it passed against a
+feature that did nothing in the app. `frame-override.test.ts` is the pair it
+could not be: six unit cases over `resolveOverrideMedia`, including a
+manifest-shaped id list. Reverting to id matching fails the manifest case.
+
+The e2e still cannot prove the canvas paints the right frame — canvas pixels
+are not readable back and the fixture's "video" is a 1x1 GIF that never
+decodes. It pins that the request reaches the pane and that the floating panel
+stands down. The picture needs a human with a real video.
+
+### Three corrections on one item
+
+Worth counting, because they rhyme: shipped invisible (z-30 behind the pane's
+z-40, and the test asserted a bounding box, which is returned regardless of
+occlusion); shipped as a facade (an overlay covering the pane rather than
+driving it); shipped inert (matching on an id whose shape depends on which
+playback model is live, verified only against the model the fixture uses).
+
+Every one passed its tests. Every one was caught by the owner using the app.
+The common thread is testing the mechanism against the harness's happy path
+instead of the outcome against reality.
 
 ## PL14-007 — Right-click context menu on an item
 
