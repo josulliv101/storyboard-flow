@@ -86,6 +86,24 @@ const TRIM_ACTION_BY_KEY: Readonly<Record<string, KeyboardTrimAction | undefined
 /** One keypress = one second, clamped by the reducer exactly like a drag. */
 const TRIM_STEP_SECONDS = 1;
 
+// CTRL+Arrows are the same four trims at a TENTH the step (PL14-012) — the
+// fine control you reach for when a second is too coarse to land an edge.
+//
+// Its own chord rather than a modifier on the existing one, because the
+// existing one is already Alt+Shift+Arrow and Alt+Shift+Ctrl+Arrow is not a
+// keystroke anyone performs. Ctrl was free here: this handler used to reject a
+// held Ctrl outright on its first line.
+//
+// Same actions, same directions, so there is one grammar to learn and the fine
+// version is not a different feature — horizontal is the end edge every media
+// has, vertical is the video start edge.
+const FINE_TRIM_ACTION_BY_KEY = TRIM_ACTION_BY_KEY;
+
+/** A tenth of the Alt+Shift step. Sub-frame at 24fps, which is the point: the
+ *  reducer clamps it exactly like a drag, so the floor is the media's, not
+ *  this constant's. */
+const FINE_TRIM_STEP_SECONDS = 0.1;
+
 // Alt+Shift+Home/End SLIDE a video's source window (trim-in/out shift
 // together, showing duration constant) — the keyboard equivalent of dragging
 // the overview filmstrip. Home = earlier footage, End = later.
@@ -209,10 +227,10 @@ export function useCollectionsKeyboard(args: {
   );
 
   const handleTrim = useCallback(
-    (nodeId: NodeId, action: KeyboardTrimAction) => {
+    (nodeId: NodeId, action: KeyboardTrimAction, stepSeconds = TRIM_STEP_SECONDS) => {
       const { graph } = store.getSnapshot();
       const name = graph.nodesById.get(nodeId)?.name ?? "item";
-      const resolved = resolveTrimCommand(graph, nodeId, action, TRIM_STEP_SECONDS);
+      const resolved = resolveTrimCommand(graph, nodeId, action, stepSeconds);
       if (!resolved.ok) {
         const message = TRIM_REJECTION_MESSAGES[resolved.error.reason];
         if (message) announce(message);
@@ -323,10 +341,22 @@ export function useCollectionsKeyboard(args: {
 
   const handleKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent) => {
-      if (!event.altKey || event.ctrlKey || event.metaKey) return;
+      // TWO grammars reach this handler. Alt(+Shift) is the established one;
+      // Ctrl+Arrow alone is the fine trim (PL14-012). Checked as an exact
+      // chord — a held Alt, Meta or Shift makes it something else, which the
+      // Alt grammar below or the browser should have.
+      const fineTrimAction =
+        event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey
+          ? FINE_TRIM_ACTION_BY_KEY[event.key]
+          : undefined;
+
+      if (fineTrimAction === undefined && (!event.altKey || event.ctrlKey || event.metaKey)) {
+        return;
+      }
       // A control inside the card owns its own keys — see
       // `isEditableKeyboardTarget`. Without this, Alt+Arrow in an <input>
-      // reordered the card instead of moving the caret by word.
+      // reordered the card instead of moving the caret by word — and Ctrl+Arrow
+      // in one is move-by-word, which this must never steal.
       if (isEditableKeyboardTarget(event.target)) return;
       // The focused element is either the card button (data-node-id) or its
       // grip bar — a sibling inside the data-node-wrapper host.
@@ -337,6 +367,17 @@ export function useCollectionsKeyboard(args: {
         card?.getAttribute("data-node-id") ?? card?.getAttribute("data-node-wrapper");
       if (!rawId) return;
       const nodeId = rawId as NodeId;
+
+      // Fine trim, before the Alt grammar: it is a different chord and shares
+      // none of the branching below. Same drag guard as everything else — a
+      // live dnd-kit drag owns movement until it commits.
+      if (fineTrimAction !== undefined) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (store.getSnapshot().interaction.isDragging) return;
+        handleTrim(nodeId, fineTrimAction, FINE_TRIM_STEP_SECONDS);
+        return;
+      }
 
       // Alt+Delete moves the focused card to the registered trash collection.
       // EXACTLY Alt+Delete: a held Shift makes it a different chord, left for

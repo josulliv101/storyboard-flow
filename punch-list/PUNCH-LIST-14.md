@@ -579,3 +579,41 @@ opens a native file picker filtered to the supported image/video types,
 selected files land through `dropFiles` (same probe, upload, failure reporting
 and single undoable commit as a drop), the whole slot is reachable and operable
 by keyboard, and the strip and grid presentations were both reviewed on screen.
+
+## PL14-012 — Ctrl+Arrows trim by a tenth of a second
+
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+- Area: `packages/ui/dnd-collections/react/use-keyboard-controller.ts`,
+  `packages/ui/dnd-collections/VirtualStrip.stories.tsx`
+- Screenshot: Not captured
+
+Fine trim from the keyboard: **Ctrl+Arrow** moves an edge 0.1s, against
+Alt+Shift+Arrow's 1s.
+
+**Not a new feature — a second step size on an existing one.** Keyboard trim
+already existed with all four directions bound (horizontal = the end edge every
+media has, vertical = the video start edge), resolving to the same
+`update-media` command the pointer handles dispatch. This adds a step, not a
+grammar: same actions, same directions, so there is one thing to learn and the
+fine version is not a separate feature to discover.
+
+**Its own chord rather than a modifier on the existing one.** The established
+chord is already Alt+Shift+Arrow; Alt+Shift+Ctrl+Arrow is not a keystroke
+anyone performs. Ctrl turned out to be free — the controller's first line was
+`if (!event.altKey || event.ctrlKey || event.metaKey) return`, so a held Ctrl
+was rejected outright.
+
+Guards it inherits by being in the same handler: the editable-target check (so
+Ctrl+Arrow in an `<input>` stays move-by-word and is never stolen), the live-drag
+veto, and the reducer's own clamping — the floor is the media's, not the
+constant's. `Ctrl+Shift+Arrow` is neither chord and falls through untouched.
+
+Pinned by a story rather than a unit test because the assertion is a WIDTH: at
+`TRIM_PPS` the card's width is its duration, so **ten Ctrl presses must equal
+one Alt+Shift press**. That equality is the proof — at a 1s step the same ten
+presses land at 336px instead of 120px, which is exactly how the story fails
+when the constant is wrong (verified).
+
+Open, and cheap if wanted: Mac. `Ctrl+Arrow` is Mission Control there, so a Mac
+user would want `Cmd` — the handler currently returns on `metaKey`.
