@@ -27,6 +27,7 @@ import { useAuth } from "@/components/auth/auth-provider";
 import {
   GRAPH_SELECTION_EVENT,
   GRAPH_TRASH_ARRIVAL_EVENT,
+  GRAPH_BOARD_MENU_SLOT_ID,
   GRAPH_TRASH_HOVER_EVENT,
   GRAPH_VIEW_STATE_EVENT,
   isGraphViewRoute,
@@ -39,6 +40,11 @@ import {
   type GraphSurface,
   type GraphViewStateDetail,
 } from "@/lib/graph-view-events";
+import {
+  SIDEBAR_GLYPH,
+  SIDEBAR_ICON_BASE,
+  SIDEBAR_ICON_IDLE,
+} from "./sidebar-icon-styles";
 import { graphClipboard } from "@/lib/graph-clipboard";
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
@@ -113,20 +119,9 @@ function MediaFolderIcon({ className }: Readonly<{ className?: string }>) {
  * square inset ring around a pill highlight would have described a shape that
  * is no longer there.
  */
-const SIDEBAR_ICON_BASE = [
-  "group/sidebar-item relative flex w-full aspect-square items-center justify-center",
-  "transition-all duration-200 focus-visible:outline-none",
-  "before:absolute before:inset-2 before:rounded-2xl before:transition-colors before:content-['']",
-  "focus-visible:before:ring-2 focus-visible:before:ring-zinc-400",
-].join(" ");
-/** The glyph inside a tile. Larger than the old h-4: legibility is the point
- *  of the bigger tiles, and a 16px icon in a 72px square reads as a dot.
- *
- *  `relative` is load-bearing: the pill above is an absolutely-positioned
- *  pseudo-element, so a statically-positioned glyph would paint UNDER it. */
-const SIDEBAR_GLYPH = "relative h-7 w-7 [stroke-width:1.5] transition-colors";
-const SIDEBAR_ICON_IDLE =
-  "text-zinc-400 before:bg-zinc-900/40 hover:text-zinc-100 hover:before:bg-zinc-800/80";
+// SIDEBAR_ICON_BASE / SIDEBAR_GLYPH / SIDEBAR_ICON_IDLE now live in
+// ./sidebar-icon-styles, so the graph's portalled board-options trigger can
+// wear the rail's treatment without importing this module (PL14-005).
 /**
  * The active tile: an INDICATOR BAR at the rail's edge, over a quietly lifted
  * pill.
@@ -860,6 +855,22 @@ export function TimelineSidebar() {
             </button>
           );
         })}
+
+        {/* Board options land HERE, below the trash (PL14-005), but the graph
+            renders them itself — this is only the address.
+
+            A slot rather than a control the sidebar owns, because the menu is
+            a radio group over thumbnail size plus a zoom slider: state that
+            lives in the graph's own tree. Publishing it through the window-event
+            bridge would mean mirroring two values and adding two commands, and
+            that bridge is explicitly for controls the SIDEBAR renders. A portal
+            keeps the menu inside the graph provider (real props, real Radix
+            context) while placing its trigger in the rail.
+
+            It also self-scopes: nothing portals in when the graph is not
+            mounted, so no route guard is needed and the empty div collapses to
+            nothing. */}
+        <div id={GRAPH_BOARD_MENU_SLOT_ID} className="contents" />
 
         <button
           ref={buttonRef}

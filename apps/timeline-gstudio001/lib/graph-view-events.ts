@@ -88,6 +88,22 @@ export function requestGraphPreviewToggle(): void {
   window.dispatchEvent(new Event(GRAPH_PREVIEW_TOGGLE_EVENT));
 }
 
+/**
+ * Where the sidebar lets the graph mount its board-options menu (PL14-005).
+ *
+ * The one seam here that is NOT an event, and deliberately so. Everything
+ * above is state the SIDEBAR renders — a toggle it can draw from a boolean.
+ * The board menu is a radio group plus a zoom slider whose values live in the
+ * graph's own tree, so mirroring them across would mean publishing two more
+ * fields and adding two commands to move them. Instead the sidebar publishes
+ * an ADDRESS and the graph portals the real component into it, keeping its
+ * props and its Radix context where they already work.
+ *
+ * The graph rendering it also scopes it for free: nothing portals in when the
+ * graph is not mounted, so the slot needs no route guard.
+ */
+export const GRAPH_BOARD_MENU_SLOT_ID = "graph-board-menu-slot";
+
 /** Graph → sidebar: the current view state, for control highlighting. */
 export function broadcastGraphViewState(detail: GraphViewStateDetail): void {
   window.dispatchEvent(

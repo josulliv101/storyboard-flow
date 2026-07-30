@@ -1,6 +1,7 @@
 "use client";
 
-import { useContext, useDeferredValue, useMemo } from "react";
+import { useContext, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import {
   Command,
@@ -24,7 +25,15 @@ import {
 import { flattenMediaOrder } from "@storyboard/timeline-domain";
 
 import { formatDuration } from "@/lib/format-duration";
-import { requestGraphToolInsert } from "@/lib/graph-view-events";
+import {
+  GRAPH_BOARD_MENU_SLOT_ID,
+  requestGraphToolInsert,
+} from "@/lib/graph-view-events";
+import {
+  SIDEBAR_GLYPH,
+  SIDEBAR_ICON_BASE,
+  SIDEBAR_ICON_IDLE,
+} from "@/components/timeline/sidebar-icon-styles";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/core/button";
 import {
@@ -105,18 +114,20 @@ function BoardMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
+        {/* Wears the icon RAIL's tile treatment, not the header's ghost
+            button: it sits with the trash and account tiles now (PL14-005) and
+            has to read as one of them. `side="right"` for the same reason —
+            a menu aligned to the end of a 72px rail would open off-screen. */}
+        <button
           type="button"
-          variant="ghost"
-          size="icon"
           aria-label="Board options"
           title="Board options"
-          className="h-8 w-8 text-zinc-500 hover:text-zinc-200"
+          className={[SIDEBAR_ICON_BASE, SIDEBAR_ICON_IDLE].join(" ")}
         >
-          <Settings aria-hidden="true" className="h-4 w-4" />
-        </Button>
+          <Settings aria-hidden="true" className={SIDEBAR_GLYPH} />
+        </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60 p-2">
+      <DropdownMenuContent side="right" align="end" className="w-60 p-2">
         <DropdownMenuGroup>
           <DropdownMenuLabel className="px-0.5 pb-2 pt-0.5">Thumbnail size</DropdownMenuLabel>
           {/* BADGES in a wrapping row, not a stack of rows: five sizes as
@@ -169,6 +180,42 @@ function BoardMenu({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+/**
+ * Mounts `BoardMenu` into the icon sidebar's slot (PL14-005).
+ *
+ * The node is looked up ONCE, in a lazy initializer, and that is safe here for
+ * a specific reason: the whole graph tree mounts `ssr: false` (see
+ * client-graph-view), so the app layout — rail included — is already committed
+ * to the DOM before this component first renders. There is no frame in which
+ * the slot is missing and we would need to retry.
+ *
+ * Which is why it is not an effect. Resolving it with `setState` inside one
+ * re-renders the board on every mount to change nothing, and the repo's lint
+ * rejects synchronous set-state in an effect for exactly that reason. If the
+ * graph ever mounts with SSR, this has to become a subscription — not an
+ * effect that sets state.
+ *
+ * Rendering it from HERE, inside the board, is the whole point: the menu keeps
+ * the real `itemSize`/`pixelsPerSecond` props and stays inside the graph's
+ * providers. Only its DOM address is in the sidebar. `graph-view.spec.ts`
+ * asserts it actually lands there, because a null slot would fail silently.
+ */
+function BoardMenuSlot(props: Readonly<{
+  surface: FocusSurface;
+  itemSize: ItemSize;
+  onItemSizeChange: (size: ItemSize) => void;
+  pixelsPerSecond: number;
+  onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
+}>) {
+  const [slot] = useState<HTMLElement | null>(() =>
+    typeof document === "undefined"
+      ? null
+      : document.getElementById(GRAPH_BOARD_MENU_SLOT_ID),
+  );
+  if (!slot) return null;
+  return createPortal(<BoardMenu {...props} />, slot);
 }
 
 /**
@@ -698,7 +745,11 @@ export function GraphBoard({
               />
               <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               <GraphUndoRedo />
-              <BoardMenu
+              {/* Board options are no longer here — they render in the icon
+                  sidebar below the trash (PL14-005). Still mounted from this
+                  component so they keep these props; only the DOM address
+                  changed. */}
+              <BoardMenuSlot
                 surface={surface}
                 itemSize={itemSize}
                 onItemSizeChange={onItemSizeChange}

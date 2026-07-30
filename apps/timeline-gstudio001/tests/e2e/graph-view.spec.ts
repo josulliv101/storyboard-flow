@@ -865,13 +865,51 @@ test.describe("graph view E2E", () => {
     ).toBeVisible();
   });
 
+  test("board options live in the icon rail, below the trash", async ({ page }) => {
+    // PL14-005. The menu is rendered by the BOARD and portalled into a slot the
+    // rail publishes, so it keeps its real props while its trigger sits with
+    // the rail's other tiles. A null slot would fail silently — no menu, no
+    // error — which is what these assertions exist to catch.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const trigger = page.getByRole("button", { name: "Board options" });
+    await expect(trigger).toHaveCount(1);
+
+    // In the rail's slot, and no longer in the board header.
+    expect(
+      await trigger.evaluate((el) => !!el.closest("#graph-board-menu-slot")),
+    ).toBe(true);
+    await expect(
+      page.locator("header").getByRole("button", { name: "Board options" }),
+    ).toHaveCount(0);
+
+    // Below the trash tile and above the account one — the position asked for.
+    const top = async (name: string) =>
+      (await page.getByRole("button", { name }).boundingBox())!.y;
+    expect(await top("Board options")).toBeGreaterThan(await top("Trash"));
+    expect(await top("Board options")).toBeLessThan(await top("Account"));
+
+    // And it still opens, with its contents intact. `side="right"` matters
+    // here: an end-aligned menu on a 72px rail would open off-screen.
+    await trigger.click();
+    const menu = page.getByRole("menu");
+    await expect(menu).toBeVisible();
+    await expect(menu).toContainText("Thumbnail size");
+    const box = (await menu.boundingBox())!;
+    expect(box.x).toBeGreaterThan(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  });
+
   test("focused strip and grid surfaces have no outer shell padding", async ({ page }) => {
     await installGraphApi(page);
     await openGraph(page);
 
+    // The gear now lives in the icon rail (PL14-005); it is still the settings
+    // glyph and still the only one.
     await expect(page.getByRole("button", { name: "Board options" }).locator("svg"))
       .toHaveClass(/lucide-settings/);
-    await expect(page.locator("aside").getByRole("button", { name: "Settings" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Settings" })).toHaveCount(0);
 
     const boxStyles = (selector: string) =>
       page.locator(selector).evaluate((element) => {
@@ -3821,6 +3859,93 @@ test.describe("graph view E2E", () => {
     await openItemDetails(page, "alpha");
     await expect(page.getByRole("dialog")).toHaveCount(1);
     expect(await heroCount()).toBe(1);
+  });
+
+  test("closing the modal morphs back to the card, it does not just vanish", async ({ page }) => {
+    // PL14-004. Opening grows the card into the modal; closing has to run the
+    // same morph in reverse or the modal just disappears, which reads as a
+    // different interaction from the one that opened it.
+    //
+    // Asserted THROUGH the API rather than by watching pixels: a transition
+    // that starts and is then skipped looks identical to one that never ran,
+    // and `getAnimations()` cannot tell them apart either — the animations only
+    // exist after the browser captures a frame. `ready` resolving is the signal
+    // that the morph is actually going to play.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // View transitions are SKIPPED outright in a hidden document, so a run
+    // where this is not "visible" proves nothing in either direction.
+    expect(await page.evaluate(() => document.visibilityState)).toBe("visible");
+
+    await openItemDetails(page, "alpha");
+    await settleViewTransition(page);
+
+    await page.evaluate(() => {
+      const probe: {
+        calls: number;
+        skipped: boolean | null;
+        heroHolderAtReady: string | null;
+      } = { calls: 0, skipped: null, heroHolderAtReady: null };
+      (window as unknown as { __closeProbe: typeof probe }).__closeProbe = probe;
+      const doc = document as Document & {
+        startViewTransition: (cb: () => void) => { ready: Promise<void> };
+      };
+      const original = doc.startViewTransition.bind(doc);
+      doc.startViewTransition = (callback: () => void) => {
+        probe.calls += 1;
+        const transition = original(callback);
+        transition.ready.then(
+          () => {
+            probe.skipped = false;
+            // By `ready` the callback has run, so whoever holds the name now
+            // is what the modal is morphing INTO.
+            const holder = [...document.querySelectorAll<HTMLElement>("*")].find(
+              (el) => el.style?.viewTransitionName === "trim-subject",
+            );
+            probe.heroHolderAtReady =
+              holder?.closest("[data-node-id]")?.getAttribute("data-node-id") ?? null;
+          },
+          () => {
+            probe.skipped = true;
+          },
+        );
+        return transition;
+      };
+    });
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-item-details]")).toHaveCount(0);
+
+    type CloseProbe = Readonly<{
+      calls: number;
+      skipped: boolean | null;
+      heroHolderAtReady: string | null;
+    }>;
+    const probe = await page
+      .waitForFunction((): CloseProbe | null => {
+        const p = (window as unknown as { __closeProbe: CloseProbe }).__closeProbe;
+        return p.calls > 0 && p.skipped !== null ? p : null;
+      })
+      .then((handle) => handle.jsonValue() as Promise<CloseProbe>);
+
+    // A transition ran, it PLAYED rather than being skipped, and the thing it
+    // played into was alpha's card — the spot the modal came from.
+    expect(probe.calls).toBe(1);
+    expect(probe.skipped).toBe(false);
+    expect(probe.heroHolderAtReady).toBe("alpha");
+
+    // And nothing is left holding it, so the next open still morphs.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            [...document.querySelectorAll<HTMLElement>("*")].filter(
+              (el) => el.style?.viewTransitionName === "trim-subject",
+            ).length,
+        ),
+      )
+      .toBe(0);
   });
 
   test("item details open from the GRID too, and for a still", async ({ page }) => {
