@@ -689,6 +689,31 @@ export function GraphItemActionsBridge({
         }
         return;
       }
+      // Select all — the OPEN collection's direct children, which is what
+      // "all" means when the board also shows sub-timeline rows and, in flat
+      // mode, a run drawn from several collections at once.
+      //
+      // Handled here rather than in the virtual views because focus is
+      // routinely on <body> (right after a drill-in, or after any action that
+      // unmounted the control it was on), and a view-scoped handler would do
+      // nothing exactly then. This bridge already owns the window-level
+      // clipboard keys for the same reason.
+      if (event.key.toLowerCase() === "a") {
+        if (isEditableKeyboardTarget(event.target)) return;
+        const snapshot = store.getSnapshot();
+        if (snapshot.interaction.isDragging) return;
+        const children = getChildren(snapshot.graph, parseNodeId(focusedId));
+        if (children.length === 0) return;
+        event.preventDefault();
+        // The pivot lands on the LAST child, so a following Shift+click
+        // shortens the run from the end rather than from wherever the previous
+        // click happened to be.
+        store.setSelection([...children]);
+        announce?.(
+          children.length === 1 ? "1 item selected." : `${children.length} items selected.`,
+        );
+        return;
+      }
       if (event.shiftKey) return;
       const action = KEY_TO_ACTION[event.key.toLowerCase()];
       if (action === undefined) return;

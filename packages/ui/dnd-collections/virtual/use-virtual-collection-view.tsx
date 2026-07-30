@@ -121,6 +121,12 @@ export function useFocusNode(
  * hook's own key handler — otherwise clicking or programmatically focusing a
  * card would leave the internal id stale, and the next arrow would navigate
  * from the wrong place. Views wire `onItemFocus(id)` to each card's focus.
+ *
+ * Arrows also MOVE THE SELECTION, via `onNavigate` — the file-manager
+ * convention, and what makes the keyboard route usable at all: without it
+ * every arrow had to be followed by Space to act on anything. Shift+arrow
+ * extends instead of replacing. Views that leave `onNavigate` off keep the
+ * old focus-only behaviour, which is what a picker or a read-only view wants.
  */
 export function useVirtualRovingFocus(args: {
   itemIds: readonly NodeId[];
@@ -130,13 +136,16 @@ export function useVirtualRovingFocus(args: {
   focusByIndex: (index: number) => void;
   /** Map a key + current index to the next index, or null to ignore the key. */
   resolveNextIndex: (key: string, current: number, count: number) => number | null;
+  /** Called with the id the arrow landed on. `extend` is Shift being held —
+   *  extend the selection to here rather than replacing it with this card. */
+  onNavigate?: (id: NodeId, extend: boolean) => void;
 }): Readonly<{
   focusedIndex: number;
   onKeyDown: (event: ReactKeyboardEvent) => void;
   /** Wire to each card's onFocus so click / programmatic focus updates the roving item. */
   onItemFocus: (id: NodeId) => void;
 }> {
-  const { itemIds, indexById, isDragging, focusByIndex, resolveNextIndex } = args;
+  const { itemIds, indexById, isDragging, focusByIndex, resolveNextIndex, onNavigate } = args;
   const [focusedId, setFocusedId] = useState<NodeId | null>(() => itemIds[0] ?? null);
   const focusedIdRef = useRef<NodeId | null>(itemIds[0] ?? null);
 
@@ -179,8 +188,9 @@ export function useVirtualRovingFocus(args: {
       if (!nextId) return;
       setFocused(nextId);
       focusByIndex(clamped);
+      onNavigate?.(nextId, event.shiftKey);
     },
-    [itemIds, indexById, isDragging, focusByIndex, resolveNextIndex, setFocused]
+    [itemIds, indexById, isDragging, focusByIndex, resolveNextIndex, setFocused, onNavigate]
   );
 
   return {

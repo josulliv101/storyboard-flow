@@ -92,7 +92,7 @@ export function useCollectionsInteractionPolicyValue(props: {
  *   otherwise       → select, per `clickSelection`.
  */
 export function handleSelectionSurfaceClick(args: {
-  event: Readonly<{ ctrlKey: boolean; metaKey: boolean; detail: number }>;
+  event: Readonly<{ ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; detail: number }>;
   id: NodeId;
   node: CollectionItemNode;
   store: CollectionsStore;
@@ -112,6 +112,19 @@ export function handleSelectionSurfaceClick(args: {
 
   if (event.ctrlKey || event.metaKey) {
     store.toggleSelected(id);
+    return;
+  }
+
+  // Shift = extend from the pivot, in the order the parent renders its
+  // children — which is the order on screen in both the grid and the strip.
+  //
+  // Checked AFTER Ctrl/Cmd so Ctrl+Shift+click stays a plain toggle rather
+  // than becoming a third gesture nobody asked for, and BEFORE the open
+  // branch: shift-clicking a collection must extend the selection, not drill
+  // into it. Losing a five-card range to an accidental navigation is a worse
+  // outcome than a shift+click that failed to open something.
+  if (event.shiftKey) {
+    store.selectRange(id);
     return;
   }
 

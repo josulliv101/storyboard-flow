@@ -671,6 +671,16 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
       isDragging: () => store.getSnapshot().interaction.isDragging,
       focusByIndex,
       resolveNextIndex: resolveStripIndex,
+      // Arrows carry the selection with them (the file-manager convention),
+      // so a keyboard user acts on what they navigated to instead of having to
+      // press Space at every stop. Shift extends from the pivot.
+      onNavigate: useCallback(
+        (id: NodeId, extend: boolean) => {
+          if (extend) store.selectRange(id);
+          else store.setSelection([id]);
+        },
+        [store],
+      ),
     });
     // Keep the roving tab stop on a MOUNTED card: if the focused index scrolled
     // out of view (mouse/pan), fall back to the first mounted item so the strip
