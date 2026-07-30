@@ -76,31 +76,91 @@ Verified live on a selected card: badge `top: 8px / left: 8px`, cluster
 
 ## PL14-004 — The modal needs a closing view transition
 
-- Status: Not started
-- Area: `graph-item-details-modal.tsx`
+- Status: Complete — ALREADY IMPLEMENTED; coverage was what was missing
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+- Area: `tests/e2e/graph-view.spec.ts` (no source change)
 - Screenshot: Not captured
 
-Opening the modal animates with a view transition. Closing does not — it just
-disappears. It should animate back to the card it came from.
+Reported as: opening animates, closing just disappears. **Closing already runs
+the same morph in reverse**, and has since PL10-008. Nothing needed fixing.
 
-Done when: closing runs a CSS view transition that returns the modal to its
-originating card's position, matching the open animation in reverse. Should
-respect `prefers-reduced-motion`.
+What is there: the close path calls `withViewTransition`, hands `trim-subject`
+back from the modal's frame to the card inside the callback, and the CSS is
+symmetric — `::view-transition-old(trim-subject)` and `-new(...)` both get
+260ms with the same easing. Proven by a new e2e that asserts a transition
+runs on close, `ready` RESOLVES (so it plays rather than being skipped), and
+the element it morphs into is the originating card. Reverting the close path
+to a plain state update makes that test time out, so it is not vacuous.
+
+**A measurement trap worth recording.** First attempt looked like proof of the
+bug: instrumenting `startViewTransition` in the Browser pane showed the
+transition aborting with `InvalidStateError` — on OPEN as well as close. It was
+the harness. That pane runs the page with `document.visibilityState ===
+"hidden"`, and view transitions are skipped outright in a hidden document. Any
+view-transition work here has to be verified under Playwright, where the page
+is really visible; the new test asserts `visibilityState === "visible"` first so
+a future run cannot quietly prove nothing.
+
+Still open, since the report came from somewhere: if the close ever DOES look
+like a plain disappearance, the likely cause is `cardElement()` returning null
+(nothing to morph into, so the whole page cross-fades instead). Worth a look if
+it recurs — with a note about which card and what had just happened.
 
 ## PL14-005 — Move the settings icon to the icon sidebar
 
-- Status: Not started
-- Area: `graph-board.tsx` (remove from breadcrumb row), the icon sidebar
-  component (add below the trash slot)
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+- Area: `graph-board.tsx`, `timeline-sidebar.tsx`,
+  `components/timeline/sidebar-icon-styles.ts` (new),
+  `lib/graph-view-events.ts`, `tests/e2e/graph-view.spec.ts`
 - Screenshot: Not captured
 
-The settings icon currently lives in the breadcrumb row. Move it to the icon
-sidebar, positioned below the trash folder icon at the bottom.
+The gear moved from the breadcrumb row to the icon rail, between the trash tile
+and the account one.
 
-Watch the trash drop slot: the sidebar's trash target is a portaled droppable
-that fills its slot, and a previous round lost sidebar tool drags to a slot div
-that covered them (`pointer-events-none` was the fix, PL round 6 / PR #128).
-Anything placed adjacent to it needs the same check.
+**Not a relocation — the menu could not simply move.** It is a radio group over
+thumbnail size plus a zoom slider, and both values live in the graph's tree
+(`graph-timeline-view` owns them). The rail is app chrome in a different React
+tree, which is why every other rail control talks to the board through window
+events.
+
+Two ways to bridge it, and the codebase already argues for one. The event
+bridge would mean publishing `itemSize` and `pixelsPerSecond` in the broadcast
+state and adding two commands to move them — and that file says explicitly what
+the bridge is for: *"This bridge is for the SIDEBAR — app chrome in a different
+React tree — and nothing else should pay for it"*, with a precedent of NOT
+adding an event when the control can render inside the graph's own tree.
+
+So: the rail publishes an ADDRESS (`GRAPH_BOARD_MENU_SLOT_ID`) and the board
+portals the real `BoardMenu` into it. The menu keeps its props and its Radix
+context; only its DOM address changed. It also self-scopes — nothing portals in
+when the graph is not mounted, so the slot needs no route guard and collapses
+to nothing (`display: contents`) elsewhere.
+
+(An events-based version was written first and backed out. The bridge file's own
+comments are what settled it.)
+
+Details worth keeping:
+
+- **The trigger wears the rail's tile treatment**, so `SIDEBAR_ICON_BASE` /
+  `SIDEBAR_GLYPH` / `SIDEBAR_ICON_IDLE` moved to
+  `components/timeline/sidebar-icon-styles.ts` — the graph needs the styles,
+  not the sidebar module.
+- **`side="right"` on the menu.** End-aligned against a 72px rail it would have
+  opened off-screen; the e2e asserts the menu's box stays inside the viewport.
+- **The slot node is resolved in a lazy `useState` initializer, not an effect.**
+  The graph tree mounts `ssr: false`, so the rail is already committed before
+  the board first renders — there is no frame to retry. Doing it in an effect
+  also trips the repo's set-state-in-an-effect lint, which is the same
+  objection: a re-render that changes nothing. If the graph ever gains SSR this
+  has to become a subscription, and the comment says so.
+- A null slot fails SILENTLY (no menu, no error), so the e2e asserts the trigger
+  is inside the slot, is gone from the header, and sits between Trash and
+  Account.
+
+A stale assertion in the padding test — "no button named Settings in the aside",
+written when the gear was in the header — was inverted by this and now reads as
+"no button named Settings anywhere", which is still true and still meaningful.
 
 ## PL14-006 — Trim drag drives the real preview when it is open
 
