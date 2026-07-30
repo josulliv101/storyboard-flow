@@ -76,35 +76,51 @@ Verified live on a selected card: badge `top: 8px / left: 8px`, cluster
 
 ## PL14-004 — The modal needs a closing view transition
 
-- Status: Complete — ALREADY IMPLEMENTED; coverage was what was missing
+- Status: Complete — FIXED (an earlier pass wrongly closed this as already done)
 - URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
-- Area: `tests/e2e/graph-view.spec.ts` (no source change)
+- Area: `graph-item-details-modal.tsx`, `tests/e2e/graph-view.spec.ts`
 - Screenshot: Not captured
 
-Reported as: opening animates, closing just disappears. **Closing already runs
-the same morph in reverse**, and has since PL10-008. Nothing needed fixing.
+Closing was a hard cut back to the card. It now morphs, the reverse of the open.
 
-What is there: the close path calls `withViewTransition`, hands `trim-subject`
-back from the modal's frame to the card inside the callback, and the CSS is
-symmetric — `::view-transition-old(trim-subject)` and `-new(...)` both get
-260ms with the same easing. Proven by a new e2e that asserts a transition
-runs on close, `ready` RESOLVES (so it plays rather than being skipped), and
-the element it morphs into is the originating card. Reverting the close path
-to a plain state update makes that test time out, so it is not vacuous.
+**The modal was unmounting one render too early.** The node was read from
+`openId` alone and the render guard was `if (!mounted || node === null) return
+null`. Closing sets `openId` to null, so `node` went null on the very next
+render and the guard removed the modal THERE — before the effect could start a
+transition. The transition then ran against a page the modal had already left.
 
-**A measurement trap worth recording.** First attempt looked like proof of the
-bug: instrumenting `startViewTransition` in the Browser pane showed the
-transition aborting with `InvalidStateError` — on OPEN as well as close. It was
-the harness. That pane runs the page with `document.visibilityState ===
-"hidden"`, and view transitions are skipped outright in a hidden document. Any
-view-transition work here has to be verified under Playwright, where the page
-is really visible; the new test asserts `visibilityState === "visible"` first so
-a future run cannot quietly prove nothing.
+Which is why it was so easy to get wrong: the close mechanism was entirely
+present and entirely observable. `withViewTransition` ran, `ready` resolved
+rather than skipping, and the card took the hero name in the callback — all
+true, all while the user saw a hard cut, because the "before" frame had no
+modal in it.
 
-Still open, since the report came from somewhere: if the close ever DOES look
-like a plain disappearance, the likely cause is `cardElement()` returning null
-(nothing to morph into, so the whole page cross-fades instead). Worth a look if
-it recurs — with a note about which card and what had just happened.
+The fix is a state change, not a new animation: the boolean `mounted` became
+`mountedId`, and the node resolves from `openId ?? mountedId`. The modal now
+survives the close render and is still on screen when the browser captures
+"before"; the transition callback is what clears it, which is exactly when it
+should go.
+
+### Two ways this was misdiagnosed first, both worth keeping
+
+1. **The harness lied.** Instrumenting `startViewTransition` in the automated
+   browser pane showed the transition aborting with `InvalidStateError` — on
+   OPEN as well as close. That pane runs the page with `visibilityState ===
+   "hidden"`, and view transitions are skipped outright in a hidden document.
+   View-transition work has to be verified under Playwright; the test asserts
+   `visibilityState === "visible"` first so a future run cannot prove nothing.
+
+2. **The first test passed against the bug.** It asserted a transition ran, was
+   not skipped, and morphed toward the card — three true things that are all
+   compatible with the modal having already vanished. The assertion that
+   actually bites is `modalPresentAtCapture`: the modal must still be in the
+   DOM at the moment `startViewTransition` is called, because the callback is
+   what removes it. A test can be non-vacuous (this one failed when the
+   transition was removed) and still miss the defect, if it measures the
+   mechanism instead of the outcome.
+
+Reported by the owner after the first pass shipped, which is the only reason it
+was caught — worth remembering when a fix's evidence is all mechanism.
 
 ## PL14-005 — Move the settings icon to the icon sidebar
 
