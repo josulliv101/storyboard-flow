@@ -45,6 +45,7 @@ import {
   GRID_GAP,
   GRID_UNCAPPED_HEIGHT,
   GRAPH_STRIP_OVERSCAN_ITEMS,
+  GRAPH_STRIP_TRACK_CLASS,
   ITEM_SIZE_DIMENSIONS,
   MAX_SUBTREE_DEPTH,
   SUBTIMELINE_INDENT_PX,
@@ -374,7 +375,12 @@ function SubTimelineNode({
                   ) : undefined
                 }
                 // pt-4: the 16px top band the seek rail centres in.
-                className="bg-black/20 pt-4"
+                //
+                // The same TRACK the focused strip uses (PL13-010), replacing a
+                // `bg-black/20` wash that went the wrong way — a sub-row read as
+                // a DARKER hole in the board rather than as a surface holding
+                // clips. A strip is a strip wherever it appears.
+                className={`${GRAPH_STRIP_TRACK_CLASS} pt-4`}
               />
               {showPlayhead && (
                 <GraphStripSeekRail

@@ -217,7 +217,7 @@ like is undecided.
 
 ## PL13-009 — Details moves off the card and into the item actions
 
-- Status: Not started
+- Status: Complete
 - Area: `graph-item-content.tsx` (remove the trigger), `timeline-sidebar.tsx`
   (item-actions cluster), `graph-item-details-context.tsx`
 - Supersedes: the details trigger placed by PL11-002 / PL11-012
@@ -268,7 +268,7 @@ Acceptance criteria:
 
 ## PL13-010 — The strip should look like a strip when it is empty
 
-- Status: Not started
+- Status: Complete
 - Area: `graph-board.tsx` (the strip's shell), `packages/ui/dnd-collections`
   (VirtualStrip's content box)
 
@@ -304,6 +304,42 @@ Acceptance criteria:
   trailing gap appears mid-scroll.
 - The ruler, seek rail and drop indicator keep their current alignment — the
   track is behind them, and it must not shift the geometry any of them measure.
+
+## PL13-009 / PL13-010 — what building them changed
+
+**009 landed as specified**, with the listener in a different place than the
+item guessed. It sits inside `ItemDetailsProvider`, not in the item-actions
+bridge: the bridge is mounted OUTSIDE that provider, so `useItemDetails()` there
+only ever sees the closed fallback. The rail sends a verb; the details feature
+decides what it means and reads the selection at press time. It refuses anything
+that is not exactly one item even though the button is disabled past one —
+a window event carries no proof of who sent it.
+
+`ItemDetailsTrigger` is DELETED rather than left unrendered, with a note where
+it stood.
+
+**010 turned out simpler than the item predicted**, and the reason is the whole
+trick: the track goes on the scroll VIEWPORT, not the content. It then spans the
+visible width whatever the content does — two clips leave the rest as visible
+track, a thousand scroll over a track that stays put. No third width beside
+`getTotalSize()` and the content div's own, and no trailing-gap problem, because
+a viewport background cannot scroll away. The strip was explicitly
+`bg-transparent` before, which is what made a short row read as cards floating
+on the page. Sub-rows were `bg-black/20` — DARKER than the board, so a sub-row
+read as a hole rather than a surface; they take the same track now.
+
+E2E LESSON, and the suite already had it written down elsewhere: **a plain
+`.click()` on a card can fail to select.** Press-and-hold is the drag
+activation, so under load the press outlasts the 250ms threshold, becomes a
+grab, and its click is correctly suppressed. `openItemDetails` retries with
+`expect(async () => …).toPass()` like the rest of the suite, and asserts the
+selection landed — so a failure names the half that broke instead of timing out
+on a rail control that only exists once something is selected.
+
+The two reveal tests were REWRITTEN rather than deleted: the grid one asserts
+the absence of any card trigger (the state that matters now), and the touch one
+asserts the select-then-Edit route works where hover does not exist — which is
+what it was really protecting.
 
 ## PL13-002 — Click selects everywhere, including duplicate references
 

@@ -7,6 +7,7 @@ import {
   ClipboardPaste,
   Copy,
   ChevronsLeftRightEllipsis,
+  Pencil,
   CopyPlus,
   EllipsisVertical,
   Film,
@@ -431,11 +432,16 @@ function ItemActionsOverflow({
  */
 function ItemActionsCluster({
   hasSelection,
+  isSingleSelection,
   canPaste,
   busy,
   allDisabled,
 }: Readonly<{
   hasSelection: boolean;
+  /** Exactly ONE item selected — the only shape the details view can render.
+   *  Distinct from `hasSelection`, which every other action here is happy
+   *  with. */
+  isSingleSelection: boolean;
   canPaste: boolean;
   busy: boolean;
   /** Every selected item is already skipped — flips the toggle to "Enable". */
@@ -452,6 +458,18 @@ function ItemActionsCluster({
         data-item-actions-cluster
         className="flex w-full flex-col items-stretch gap-0 bg-amber-200/[0.025]"
       >
+        {/* FIRST, because it is the action that tells you WHAT you have
+            selected before you act on it — and because the details view lost
+            its per-card trigger to get here (PL13-009). Disabled, not hidden,
+            past one selection: a control that vanishes teaches nothing, while a
+            disabled one says "wrong shape of selection for that". */}
+        <ItemActionButton
+          action="details"
+          icon={Pencil}
+          label="Edit"
+          description="Open the selected item's details"
+          disabled={busy || !isSingleSelection}
+        />
         {!canPaste ? (
           <>
             <ItemActionButton
@@ -677,6 +695,7 @@ export function TimelineSidebar() {
       {activeProjectId && itemMode && (
         <ItemActionsCluster
           hasSelection={selectionCount > 0}
+          isSingleSelection={selectionCount === 1}
           canPaste={canPaste}
           busy={actionBusy}
           allDisabled={selectionAllDisabled}

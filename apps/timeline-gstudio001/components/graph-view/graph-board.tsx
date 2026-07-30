@@ -69,6 +69,7 @@ import {
   GRID_GAP,
   GRID_UNCAPPED_HEIGHT,
   GRAPH_STRIP_OVERSCAN_ITEMS,
+  GRAPH_STRIP_TRACK_CLASS,
   ITEM_SIZE_DIMENSIONS,
   ITEM_SIZES,
   MAX_SUBTREE_DEPTH,
@@ -767,8 +768,14 @@ export function GraphBoard({
                 }
                 // pt-4: the 16px top band the seek rail centres in — same
                 // clearance system as the grid's GRID_GAP row bands.
+                //
+                // The background was `bg-transparent`, which is what made a
+                // short strip read as cards floating on the page. It is the
+                // TRACK now (PL13-010) — on the scroll viewport, so it spans
+                // the visible width whatever the content does.
                 className={[
-                  "rounded-none border-0 bg-transparent p-0",
+                  "rounded-none border-0 p-0",
+                  GRAPH_STRIP_TRACK_CLASS,
                   previewOn || rulerOn ? "pt-4" : "",
                 ].join(" ")}
               />

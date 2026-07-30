@@ -376,14 +376,23 @@ async function settleMoveAnimations(page: Page): Promise<void> {
 }
 
 /**
- * Opens an item's details the way a user does now (PL11-002): the trigger
- * lives on the card, hidden until hover or focus. Playwright's click hovers
- * first, so the reveal is implicit — but the click is FORCED past the
- * opacity-0 idle state, which is a visibility rule rather than a hit-testing
- * one.
+ * Opens an item's details the way a user does now (PL13-009): SELECT the card,
+ * then press Edit in the rail's contextual item actions. The per-card trigger
+ * is gone — details is an item action, and the selection is its input.
  */
 async function openItemDetails(page: Page, nodeId: string): Promise<void> {
-  await page.locator(`[data-item-details-trigger="${nodeId}"]`).click();
+  const card = page.locator(`[data-node-id="${nodeId}"]`).first();
+  // Retried, for the reason this suite already documents elsewhere: cards use
+  // press-and-hold to drag, so under load a plain click can outlast the 250ms
+  // threshold, become a grab, and have its click — correctly — suppressed.
+  // Asserting the selection here also means a failure says WHICH half broke,
+  // rather than timing out on a rail control that only exists once something
+  // is selected.
+  await expect(async () => {
+    await card.click();
+    await expect(card).toHaveAttribute("data-selected", "true", { timeout: 700 });
+  }).toPass({ timeout: 10000 });
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
   await settleViewTransition(page);
 }
 
@@ -3762,24 +3771,16 @@ test.describe("graph view E2E", () => {
     // bravo is an IMAGE, and we are in the grid — the two things the old
     // trim-only toggle refused.
     const bravo = page.locator('[data-node-id="bravo"]');
-    const trigger = page.locator('[data-item-details-trigger="bravo"]');
-    await expect(trigger).toHaveCount(1);
+    // No control on the card at all now (PL13-009): details is an item action
+    // in the rail, so the card carries nothing for it. This assertion used to
+    // be a reveal dance (idle → hover → away → focus), then a flat "visible at
+    // rest" when card controls became permanent — and it is now the absence
+    // that matters, because a standing mark on every card for a rarely-opened
+    // view was what sent this to the rail.
+    await expect(page.locator("[data-item-details-trigger]")).toHaveCount(0);
 
-    // ALWAYS VISIBLE (PL13-005). This used to be an idle → hover → away →
-    // focus opacity dance, because the trigger hid itself until the card was
-    // hovered. Card controls are permanent now — same rule on a collection's
-    // drill badge — which is what removed the `@media(hover:hover)` gate and
-    // with it the whole class of "invisible on touch" bugs. Nothing is hovered
-    // or focused here, and that is the point.
-    const opacity = () => trigger.evaluate((el) => getComputedStyle(el).opacity);
-    await expect.poll(opacity).toBe("1");
-    await bravo.hover();
-    await expect.poll(opacity).toBe("1");
-    await page.mouse.move(0, 0);
-    await expect.poll(opacity).toBe("1");
-
-    // Pressing it selects the card as well, so the board's selection-scoped
-    // readouts agree with what the view is showing.
+    // Opening still selects the card — from the rail it is the selection that
+    // names the item, so the board's readouts and the view cannot disagree.
     await openItemDetails(page, "bravo");
     await expect(bravo).toHaveAttribute("data-selected", "true");
 
@@ -3801,13 +3802,24 @@ test.describe("graph view E2E", () => {
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-item-details]")).toHaveCount(0);
 
-    // Keyboard reachable: the card is the surface's one roving tab stop, and
-    // its trigger is the next one — so Tab from the card lands on it and
-    // Enter opens the view. A flat tabIndex would have put every mounted
-    // card's trigger in the order instead.
-    await bravo.focus();
-    await page.keyboard.press("Tab");
-    await expect(page.locator('[data-item-details-trigger="bravo"]')).toBeFocused();
+    // Keyboard reachable — through the RAIL now (PL13-009). The card used to
+    // carry a trigger as the tab stop after itself; details moved off the card,
+    // so the route is the one every other item action already uses: select,
+    // then the contextual cluster.
+    //
+    // What is worth asserting is the half that CHANGED: the control is an
+    // ordinary focusable button that opens on Enter, with no pointer involved.
+    // Selecting is done by click here rather than by Space — Space-selects-a-
+    // card is the package's own grammar with its own coverage, and threading it
+    // through a modal close and a re-render made this test flaky about
+    // something it was not testing.
+    await expect(async () => {
+      await bravo.click();
+      await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    const edit = page.getByRole("button", { name: "Edit", exact: true });
+    await edit.focus();
+    await expect(edit).toBeFocused();
     await page.keyboard.press("Enter");
     await settleViewTransition(page);
     await expect(page.getByRole("dialog")).toHaveCount(1);
@@ -4008,19 +4020,17 @@ test.describe("graph view E2E", () => {
         await page.evaluate(() => window.matchMedia("(hover: none)").matches),
       ).toBe(true);
 
-      const trigger = page.locator('[data-item-details-trigger="alpha"]');
-      await expect(trigger).toHaveCount(1);
-      // Visible, as it now is everywhere — the trigger stopped hiding itself in
-      // PL13-005, so this no longer distinguishes touch from pointer. Kept
-      // because what it really guards is that the ONE route into the details
-      // view is reachable on a device that cannot hover, and a future reveal
-      // rule would have to keep that true.
-      await expect
-        .poll(() => trigger.evaluate((el) => getComputedStyle(el).opacity))
-        .toBe("1");
+      // The per-card trigger is gone (PL13-009), and with it the failure this
+      // test was written for: a control that hid until hover was unreachable
+      // where hover does not exist. What still needs guarding is the ROUTE —
+      // select, then Edit — working on a device that cannot hover, since the
+      // rail is now the only way in.
+      await expect(page.locator("[data-item-details-trigger]")).toHaveCount(0);
 
-      // And it still opens from there.
-      await trigger.tap();
+      await page.locator('[data-node-id="alpha"]').first().tap();
+      const edit = page.getByRole("button", { name: "Edit", exact: true });
+      await expect(edit).toBeEnabled();
+      await edit.tap();
       await expect(page.getByRole("dialog")).toHaveCount(1);
     } finally {
       await context.close();
