@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -793,7 +795,49 @@ function useNativeDrop(collectionId: string, projectId: string) {
     [insertTool, dropFiles],
   );
 
-  return { commitDrop, upload };
+  /**
+   * Add files WITHOUT a drag — the file picker's route in (PL14-011).
+   *
+   * Appends, because a picker has no pointer and therefore no boundary: the
+   * user chose files, not a position. `resolveAnchoredTarget` still resolves
+   * it at commit time, so a strip edited while the uploads run still lands
+   * them at its real end.
+   *
+   * Deliberately the SAME `dropFiles` the drop path calls, rather than a
+   * second upload route. Everything that makes a drop behave — one decode per
+   * video, bounded concurrency, per-file failure reporting, detail parking,
+   * and ONE undoable commit for the whole selection — lives in there, and a
+   * picker that reimplemented any of it would drift from the drag.
+   */
+  const appendFiles = useCallback(
+    (files: readonly File[]) => {
+      if (files.length === 0) return;
+      const children = getChildren(store.getSnapshot().graph, parseNodeId(collectionId));
+      void dropFiles(files, {
+        beforeId: children.length > 0 ? (children[children.length - 1] as string) : null,
+        afterId: null,
+        index: children.length,
+      });
+    },
+    [dropFiles, store, collectionId],
+  );
+
+  return { commitDrop, upload, appendFiles };
+}
+
+/**
+ * The surface's file-append entry, for anything rendered INSIDE it that has
+ * files but no drag — currently the trailing slot's picker.
+ *
+ * A context because the slot is passed to the virtual surface as
+ * `trailingSlot` and renders within this provider, while being constructed far
+ * away in the board. Null outside a native-drop surface, which is the honest
+ * answer: there is no timeline to append to.
+ */
+const AppendFilesContext = createContext<((files: readonly File[]) => void) | null>(null);
+
+export function useAppendFiles(): ((files: readonly File[]) => void) | null {
+  return useContext(AppendFilesContext);
 }
 
 /** The shared drop status line — a live region mounted at all times so its
@@ -834,7 +878,7 @@ export function NativeDropStrip({
   // resolves its drop boundary in whatever order it is SHOWING, and in flat
   // mode that is not this collection's children.
   const flatItems = useFlatItems();
-  const { commitDrop, upload } = useNativeDrop(collectionId, projectId);
+  const { commitDrop, upload, appendFiles } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicatorX, setIndicatorX] = useState<number | null>(null);
   const armed = useNativeDragArmed();
@@ -1020,7 +1064,7 @@ export function NativeDropStrip({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {children}
+      <AppendFilesContext.Provider value={appendFiles}>{children}</AppendFilesContext.Provider>
       {indicatorX !== null && (
         <div
           data-native-drop-indicator
@@ -1071,7 +1115,7 @@ export function NativeDropGrid({
   children,
 }: Readonly<{ collectionId: string; projectId: string; children: ReactNode }>) {
   const store = useCollectionsStore();
-  const { commitDrop, upload } = useNativeDrop(collectionId, projectId);
+  const { commitDrop, upload, appendFiles } = useNativeDrop(collectionId, projectId);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [indicator, setIndicator] = useState<GridIndicator | null>(null);
   const armed = useNativeDragArmed();
@@ -1249,7 +1293,7 @@ export function NativeDropGrid({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {children}
+      <AppendFilesContext.Provider value={appendFiles}>{children}</AppendFilesContext.Provider>
       {indicator !== null && (
         <div
           data-native-drop-indicator
