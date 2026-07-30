@@ -643,3 +643,86 @@ export const DisabledCollection: Story = {
     await expect(previewImages(canvasElement)).toHaveLength(1);
   },
 };
+
+/** Two sibling cards, so selecting one can be checked against the other. */
+const SIB_A = "sib-a" as NodeId;
+const SIB_B = "sib-b" as NodeId;
+/** Never clicked — the bystander the assertion is actually about. */
+const SIB_C = "sib-c" as NodeId;
+const siblingGraph = (() => {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "sib-root",
+      name: "Root",
+      children: [
+        { kind: "media", id: SIB_A, name: "A", src: poster("A", "#0ea5e9"), durationSeconds: 4 },
+        { kind: "media", id: SIB_B, name: "B", src: poster("B", "#f59e0b"), durationSeconds: 4 },
+        { kind: "media", id: SIB_C, name: "C", src: poster("C", "#22c55e"), durationSeconds: 4 },
+      ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+})();
+
+export const SelectingOneCardDoesNotRerenderTheOther: Story = {
+  // The package's bystander guarantee, asserted through the APP's own card
+  // registry rather than the package's defaults — this is the composition the
+  // graph actually ships, and nothing else covered it.
+  //
+  // Written while reviewing PL14-007, on a suspicion that turned out to be
+  // WRONG and is worth recording: the right-click menu wraps every card via
+  // the registered ItemShell and subscribed to `interaction.selectedIds` (the
+  // Set, which `setSelection` replaces on every change), which looked like it
+  // would re-render every card on any selection. It does not. `GraphMediaItem`
+  // and `GraphCollectionItem` are both `memo`, so the re-render stops at the
+  // thin wrapper and never reaches the card. This story PASSES against that
+  // version too — it is not a regression test for it.
+  //
+  // What it is worth: the memo boundary is the only thing holding that line,
+  // and nothing was asserting it. Remove a `memo`, or give the wrapper a prop
+  // that changes per selection, and this fails.
+  args: { id: SIB_A },
+  decorators: [
+    (Story) => (
+      <DndCollections initialGraph={siblingGraph}>
+        <GraphDetailsProvider store={createGraphDetailsStore({})}>
+          <div className="flex h-32 gap-2 bg-zinc-950 p-2">
+            <Story />
+          </div>
+        </GraphDetailsProvider>
+      </DndCollections>
+    ),
+  ],
+  render: () => (
+    <>
+      <ItemShell id={SIB_A} className="h-full w-24" />
+      <ItemShell id={SIB_B} className="h-full w-24" />
+      <ItemShell id={SIB_C} className="h-full w-24" />
+    </>
+  ),
+  play: async ({ canvasElement }) => {
+    // The count lives on the NodeCard button (`[data-node-id]`) for media
+    // cards, not on the CollectionItem wrapper.
+    const card = (id: string) =>
+      canvasElement.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!;
+    const renders = (id: string) => card(id).getAttribute("data-render-count");
+
+    await waitFor(() => expect(card(SIB_C)).toBeTruthy());
+    expect(renders(SIB_C)).not.toBeNull();
+
+    // C is never touched. Two selection changes happen around it, and its
+    // render count must not move for either — that is the whole guarantee.
+    const bystander = renders(SIB_C);
+
+    await userEvent.click(card(SIB_A));
+    await waitFor(() => expect(card(SIB_A).getAttribute("data-selected")).toBe("true"));
+    expect(renders(SIB_C)).toBe(bystander);
+
+    await userEvent.click(card(SIB_B));
+    await waitFor(() => expect(card(SIB_B).getAttribute("data-selected")).toBe("true"));
+    expect(card(SIB_A).getAttribute("data-selected")).toBeNull();
+    expect(renders(SIB_C)).toBe(bystander);
+  },
+};

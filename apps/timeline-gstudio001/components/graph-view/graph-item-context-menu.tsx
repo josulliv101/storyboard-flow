@@ -37,11 +37,41 @@ import { visibleItemActions, type ItemActionState } from "@/lib/graph-item-actio
 // user reached for "Delete" on all six.
 
 function useItemActionState(nodeId: NodeId): ItemActionState {
-  const selectedIds = useCollectionsSelector((s) => s.interaction.selectedIds);
+  // PRIMITIVES, not the Set. `setSelection` builds a new Set on every change,
+  // so subscribing to the reference re-renders this component whenever the
+  // selection changes ANYWHERE — and this component wraps every card on the
+  // board. That is the package's render-efficiency invariant
+  // (dnd-collections/CLAUDE.md: selectors must return primitives or references
+  // stable while the slice is unchanged), and reading the Set broke it.
+  //
+  // Two booleans and a number instead: each re-renders only when its own value
+  // changes, and a selection moving between two OTHER cards changes none of
+  // them.
+  // Each selector answers the question ALREADY NARROWED to this node, so an
+  // uninvolved card's values do not move when the selection changes elsewhere.
+  //
+  // Returning a primitive is not enough on its own: `selectedIds.size` is a
+  // number and still goes 0 → 1 when some other card is selected, which would
+  // re-render every card just as subscribing to the Set did. What makes these
+  // quiet is that an unselected node's answer does not depend on the selection
+  // at all.
+  const isSingleSelection = useCollectionsSelector((s) => {
+    const ids = s.interaction.selectedIds;
+    // Not in the selection: opening the menu will make this node the whole of
+    // it, so one item — whatever anyone else has selected.
+    return ids.has(nodeId) ? ids.size === 1 : true;
+  });
   const allDisabled = useCollectionsSelector((s) => {
-    const ids = [...s.interaction.selectedIds];
-    if (ids.length === 0) return false;
-    return ids.every((id) => s.graph.nodesById.get(id)?.disabled === true);
+    const ids = s.interaction.selectedIds;
+    // Same narrowing: outside the selection the honest answer is this node's
+    // own state, which is also what the menu is about to act on.
+    if (!ids.has(nodeId)) return s.graph.nodesById.get(nodeId)?.disabled === true;
+    // No spread — this runs per card per store notification, and the store
+    // notifies on every drop-intent change during a drag.
+    for (const id of ids) {
+      if (s.graph.nodesById.get(id)?.disabled !== true) return false;
+    }
+    return true;
   });
   // The clipboard is a module singleton, not store state — subscribe so the
   // menu's Copy/Cut↔Paste swap is right the moment it opens.
@@ -51,22 +81,18 @@ function useItemActionState(nodeId: NodeId): ItemActionState {
     () => false,
   );
 
-  // The count the menu should describe is the selection it will ACT on, which
-  // for an unselected node is the one about to be selected (see the note
-  // above) — otherwise the menu opens describing "no selection" and disables
-  // everything on a card the user just right-clicked.
-  const willActOnSelection = selectedIds.has(nodeId) ? selectedIds.size : 1;
-
   return {
-    hasSelection: willActOnSelection > 0,
-    isSingleSelection: willActOnSelection === 1,
+    // Right-clicking always gives the menu something to act on: this node, if
+    // nothing else. Never zero, so never a menu of dead rows.
+    hasSelection: true,
+    isSingleSelection,
     canPaste,
     // Not modelled. The receiving side already refuses an action while one is
     // in flight (`busyRef` in GraphItemActionsBridge), and a menu is open for
     // a moment rather than a session — mirroring the flag here would mean a
     // second subscription for a state this surface can barely observe.
     busy: false,
-    allDisabled: selectedIds.has(nodeId) ? allDisabled : false,
+    allDisabled,
   };
 }
 
