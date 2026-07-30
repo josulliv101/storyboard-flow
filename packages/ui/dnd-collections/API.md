@@ -596,7 +596,10 @@ views — on each commit (drop/undo/redo). It honors `prefers-reduced-motion`.
 The interaction-policy props apply to BOTH card shells (`NodeCard` and the
 `CollectionItem` primitives) through one shared click grammar: Ctrl/Cmd+click
 is always the additive selection toggle (also how open-target nodes join a
-multi-drag); a plain pointer click opens (when configured) or selects (per
+multi-drag); Shift+click extends the selection to that card via `selectRange`
+(checked BEFORE the open branch, so shift-clicking a collection extends rather
+than drilling in — losing a range to an accidental navigation is the worse
+outcome); a plain pointer click opens (when configured) or selects (per
 `clickSelection`); keyboard activation always selects. With
 `trimRequiresSelection`, an unselected card's edges are plain card body — a
 press there clicks or drags, never trims. Interaction-test coverage lives in
@@ -702,9 +705,10 @@ type CollectionsChange = {
 | `undo` / `redo` | `() => boolean` | False when the respective stack is empty. |
 | `replaceGraph` | `(graph: CollectionsGraph) => Result<void, GraphValidationError>` | Runtime-validates then swaps the committed graph wholesale — the escape hatch for async/server-loaded data (`initialGraph` is initial-only). Invalid input is rejected without changing or notifying the store. A successful swap clears undo/redo history (old patches can't replay on a new graph) and any in-progress drag/preview, prunes the selection to surviving ids, and — deliberately — does NOT fire `onChange` (the caller supplied this state; echoing it risks feedback loops). |
 | `hydrate` | `(collectionId: NodeId, children: readonly GraphNodeSpec[]) => Result<void, HydrateRejection>` | `replaceGraph`'s incremental sibling for hydrate-on-focus: fills an EMPTY collection via `hydrateCollection`. Undo/redo SURVIVES (only adds, under a childless collection — history almost always stays replayable; the exceptions, a hydrated-in id colliding with a dormant add or a filled collection whose add a dormant undo would remove, are caught by `verifyPatchApplies` at replay time, which refuses the entry and drops the unreachable side of history instead of corrupting the graph), interaction state is untouched, and — like `replaceGraph` — nothing is emitted on `onChange`/`subscribeToChanges` (IO landing, not user intent). Snapshot subscribers are notified; data-sized `VirtualStrip`s detect the feed-less graph change and re-measure on their own. Rejections return without notifying. |
-| `setSelection` | `(ids: readonly NodeId[]) => void` | No-op (no notify) when the set is unchanged. |
-| `toggleSelected` | `(id: NodeId) => void` | |
-| `clearSelection` | `() => void` | No-op when already empty. |
+| `setSelection` | `(ids: readonly NodeId[]) => void` | No-op (no notify) when the set AND the resulting pivot are unchanged — the pivot is the last id, so `[x,y]` and `[y,x]` are different states even though the set is not. Moves `selectionPivotId` to the last id. |
+| `toggleSelected` | `(id: NodeId) => void` | Moves `selectionPivotId` to `id`, including when the toggle DESELECTS it: the pivot is where the user last acted. |
+| `selectRange` | `(toId: NodeId) => void` | Replaces the selection with the inclusive run between `selectionPivotId` and `toId`, in their shared parent's child order (direction-agnostic). **The pivot does not move** — that is what lets a shift+click overshoot be corrected by shift+clicking back. Ids under different parents (or no pivot yet) fall back to selecting `toId` alone and re-pivoting there; there is no single order spanning two collections, and inventing one would select cards between them that the user cannot see. |
+| `clearSelection` | `() => void` | No-op when already empty AND unpivoted. Clears the pivot. |
 | `beginDrag` | `(pressedId: NodeId) => void` | Drag set = the selection if it contains `pressedId` (pressed id first — it's the overlay primary), else just `pressedId`. Sets `isDragging`. |
 | `beginPaletteDrag` | `() => void` | Marks a palette drag live (`isDragging` without `activeIds`). Ends via `endDrag`. |
 | `setDropIntent` | `(intent: DropIntent \| null) => void` | Deduplicates equal intents; computes `dropIntentInvalid` once per change. Non-null intents are IGNORED while no drag is live (`isDragging` false) — a dnd-kit gesture can outlive the store's drag state (`replaceGraph` mid-drag, failed palette factory) and must not repaint indicators. `null` always clears. |
@@ -744,6 +748,7 @@ type CollectionsInteraction = {
   dropIntent: DropIntent | null;       // live preview of a release right now
   dropIntentInvalid: boolean;          // would that preview be a cycle rejection
   selectedIds: ReadonlySet<NodeId>;
+  selectionPivotId: NodeId | null;     // where a RANGE extends from (see selectRange)
   rejectedIdSet: ReadonlySet<NodeId>;  // cards currently flashing a rejection
 };
 ```

@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useSyncExternalStore } from "react";
 import {
+  getChildren,
   type CollectionsGraph,
   type GraphNodeSpec,
   type GraphValidationError,
@@ -41,6 +42,21 @@ export type CollectionsInteraction = Readonly<{
   /** Whether the current dropIntent would be rejected (cycle) — drives the invalid overlay. */
   dropIntentInvalid: boolean;
   selectedIds: ReadonlySet<NodeId>;
+  /**
+   * Where a RANGE extends FROM — the last card picked by a non-range gesture.
+   *
+   * Not the same thing as the card a consumer's toolbar points at, which is
+   * simply the most recent pick and is derivable from `selectedIds` (a Set
+   * iterates insertion-first, and every mutator here appends). This one is
+   * not derivable: it must stay PUT across repeated shift+clicks, so that
+   * overshooting a range and shift+clicking back shrinks it instead of
+   * starting a new one from wherever the overshoot landed. That is the whole
+   * reason shift+click exists, and the only reason this is state.
+   *
+   * Null when nothing has been picked yet; a range with no pivot falls back
+   * to the clicked card, which selects just that card.
+   */
+  selectionPivotId: NodeId | null;
   /** Ids briefly flashing a rejected-drop cue, as a Set for membership checks. */
   rejectedIdSet: ReadonlySet<NodeId>;
 }>;
@@ -198,10 +214,28 @@ export type CollectionsStore = Readonly<{
     children: readonly GraphNodeSpec[]
   ) => Result<void, HydrateRejection>;
 
-  /** Replace selection with the supplied ids that exist in the current graph. */
+  /** Replace selection with the supplied ids that exist in the current graph.
+   *  Moves the range pivot to the LAST of them — "select all" therefore
+   *  extends from the end of the run, which is where it left the user. */
   setSelection: (ids: readonly NodeId[]) => void;
-  /** Toggle an existing graph node; missing ids are ignored. */
+  /** Toggle an existing graph node; missing ids are ignored. Moves the pivot,
+   *  including when it DESELECTS: the pivot is where the user last acted, not
+   *  where the selection happens to be. */
   toggleSelected: (id: NodeId) => void;
+  /**
+   * Replace the selection with the inclusive run between the pivot and `toId`,
+   * in the order their shared parent renders them — shift+click, and
+   * shift+arrow.
+   *
+   * The pivot does NOT move, which is what makes a range correctable.
+   *
+   * Ids under DIFFERENT parents have no run between them: there is no single
+   * order spanning two collections, and inventing one (walking the flattened
+   * tree, say) would select cards the user cannot see between the two they
+   * can. That case selects `toId` alone and re-pivots there, which is the
+   * same thing a plain click would have done.
+   */
+  selectRange: (toId: NodeId) => void;
   clearSelection: () => void;
 
   /** Computes the drag set: the selection if the pressed node is in it, else just the pressed node. */
@@ -242,6 +276,7 @@ export function createCollectionsStore(
     dropIntent: null,
     dropIntentInvalid: false,
     selectedIds: EMPTY_SELECTION,
+    selectionPivotId: null,
     rejectedIdSet: EMPTY_SELECTION,
   };
   const history = createHistory({ maxEntries: options?.maxHistoryEntries });
@@ -351,6 +386,13 @@ export function createCollectionsStore(
       }
     }
     if (next) interaction = { ...interaction, selectedIds: next };
+    // A pivot pointing at a deleted node would measure the next range from
+    // somewhere that no longer exists — `inclusiveSiblingRun` would find no
+    // parent for it and silently degrade every shift+click to a plain click.
+    const pivot = interaction.selectionPivotId;
+    if (pivot !== null && !graph.nodesById.has(pivot)) {
+      interaction = { ...interaction, selectionPivotId: null };
+    }
   }
 
   function dispatch(
@@ -456,6 +498,7 @@ export function createCollectionsStore(
       dropIntent: null,
       dropIntentInvalid: false,
       selectedIds: interaction.selectedIds,
+      selectionPivotId: interaction.selectionPivotId,
       rejectedIdSet: EMPTY_SELECTION,
     };
     pruneMissingSelection();
@@ -513,22 +556,47 @@ export function createCollectionsStore(
       for (const id of ids) {
         if (graph.nodesById.has(id)) next.add(id);
       }
+      let pivot: NodeId | null = null;
+      for (const id of next) pivot = id;
       // Re-selecting the exact same set (e.g. clicking an already-selected
       // node) must not notify — a no-op state "change" would force every
-      // subscriber to re-run its selector for nothing.
-      if (sameSet(interaction.selectedIds, next)) return;
-      setInteraction({ selectedIds: next });
+      // subscriber to re-run its selector for nothing. The pivot is checked
+      // too: re-clicking the last card of a multi-selection changes nothing
+      // about the set but DOES move where a range would extend from.
+      if (sameSet(interaction.selectedIds, next) && interaction.selectionPivotId === pivot) return;
+      setInteraction({ selectedIds: next, selectionPivotId: pivot });
     },
     toggleSelected: (id) => {
       if (!graph.nodesById.has(id)) return;
       const next = new Set(interaction.selectedIds);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      setInteraction({ selectedIds: next, selectionPivotId: id });
+    },
+    selectRange: (toId) => {
+      if (!graph.nodesById.has(toId)) return;
+      const fromId = interaction.selectionPivotId;
+      const run =
+        fromId === null || fromId === toId ? null : inclusiveSiblingRun(graph, fromId, toId);
+      if (run === null) {
+        // No shared parent (or no pivot yet): fall back to the plain-click
+        // answer rather than guessing at an order across collections.
+        const single = new Set<NodeId>([toId]);
+        if (sameSet(interaction.selectedIds, single) && interaction.selectionPivotId === toId) {
+          return;
+        }
+        setInteraction({ selectedIds: single, selectionPivotId: toId });
+        return;
+      }
+      const next = new Set(run);
+      // Pivot deliberately UNTOUCHED: the next shift+click must measure from
+      // the same origin, so overshooting and coming back shrinks the range.
+      if (sameSet(interaction.selectedIds, next)) return;
       setInteraction({ selectedIds: next });
     },
     clearSelection: () => {
-      if (interaction.selectedIds.size === 0) return;
-      setInteraction({ selectedIds: EMPTY_SELECTION });
+      if (interaction.selectedIds.size === 0 && interaction.selectionPivotId === null) return;
+      setInteraction({ selectedIds: EMPTY_SELECTION, selectionPivotId: null });
     },
 
     beginDrag: (pressedId) => {
@@ -597,6 +665,27 @@ export function createCollectionsStore(
       changeListeners.clear();
     },
   };
+}
+
+/**
+ * The inclusive run between two SIBLINGS, in their parent's child order.
+ *
+ * Null when they do not share a parent — including when either is a root,
+ * which has none. Callers treat that as "no range", not as an error.
+ */
+function inclusiveSiblingRun(
+  graph: CollectionsGraph,
+  fromId: NodeId,
+  toId: NodeId
+): readonly NodeId[] | null {
+  const parentId = graph.parentById.get(fromId) ?? null;
+  if (parentId === null || parentId !== (graph.parentById.get(toId) ?? null)) return null;
+  const siblings = getChildren(graph, parentId);
+  const from = siblings.indexOf(fromId);
+  const to = siblings.indexOf(toId);
+  if (from === -1 || to === -1) return null;
+  // Direction-agnostic: dragging a range backwards is the same range.
+  return from <= to ? siblings.slice(from, to + 1) : siblings.slice(to, from + 1);
 }
 
 function sameSet(a: ReadonlySet<NodeId>, b: ReadonlySet<NodeId>): boolean {

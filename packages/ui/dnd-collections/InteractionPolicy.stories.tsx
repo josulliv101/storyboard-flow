@@ -6,6 +6,7 @@ import { buildGraph, getChildren, parseNodeId, type NodeId } from "./core/graph"
 import { DndCollections } from "./react/DndCollections";
 import { useCollectionsSelector } from "./react/collections-store";
 import { NodeCard } from "./react/node-views";
+import { VirtualStrip } from "./virtual/VirtualStrip";
 import { nodeCard, waitForLayout } from "./stories-helpers";
 
 // The provider-level interaction policy (react/interaction-policy.ts):
@@ -26,6 +27,25 @@ function mediaGraph() {
         { kind: "media", id: "bravo", name: "Bravo", durationSeconds: 4 },
         { kind: "media", id: "charlie", name: "Charlie", durationSeconds: 4 },
       ],
+    },
+  ]);
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+  return result.value;
+}
+
+/** Five cards: a range needs an inside and two ends to be worth asserting. */
+function wideGraph() {
+  const result = buildGraph([
+    {
+      kind: "collection",
+      id: "board",
+      name: "Board",
+      children: ["alpha", "bravo", "charlie", "delta", "echo"].map((id) => ({
+        kind: "media" as const,
+        id,
+        name: id,
+        durationSeconds: 4,
+      })),
     },
   ]);
   if (!result.ok) throw new Error(JSON.stringify(result.error));
@@ -254,5 +274,98 @@ export const SelectionGatedTrimHandles: Story = {
     // Toggling the selection off removes them again.
     await user.click(nodeCard(canvasElement, "alpha"));
     await waitFor(() => expect(trimHandlesOf(canvasElement, "alpha")).toBe(0));
+  },
+};
+
+export const ShiftClickSelectsARange: Story = {
+  render: () => (
+    <DndCollections initialGraph={wideGraph()} animateMoves={false} clickSelection="toggle">
+      <BoardCards />
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "alpha"));
+    // ONE session: the static userEvent API resets keyboard state per call, so
+    // a held modifier across several clicks needs a single setup().
+    const user = userEvent.setup();
+    const selected = () =>
+      ["alpha", "bravo", "charlie", "delta", "echo"].filter((id) =>
+        isSelected(canvasElement, id),
+      );
+
+    // Plain click sets the pivot.
+    await user.click(nodeCard(canvasElement, "alpha"));
+    await waitFor(() => expect(selected()).toEqual(["alpha"]));
+
+    // Shift+click takes the inclusive run, in the order the parent renders
+    // its children — which is the order on screen.
+    await user.keyboard("{Shift>}");
+    await user.click(nodeCard(canvasElement, "delta"));
+    await user.keyboard("{/Shift}");
+    await waitFor(() => expect(selected()).toEqual(["alpha", "bravo", "charlie", "delta"]));
+
+    // THE reason the pivot is state: shift+click back and the range SHRINKS
+    // rather than starting again from the overshoot. Anchoring the range to
+    // "the last card clicked" would give ["charlie", "delta"] here, and there
+    // would be no way to correct an overshoot at all.
+    await user.keyboard("{Shift>}");
+    await user.click(nodeCard(canvasElement, "bravo"));
+    await user.keyboard("{/Shift}");
+    await waitFor(() => expect(selected()).toEqual(["alpha", "bravo"]));
+
+    // A range runs the same backwards.
+    await user.click(nodeCard(canvasElement, "echo"));
+    await user.keyboard("{Shift>}");
+    await user.click(nodeCard(canvasElement, "charlie"));
+    await user.keyboard("{/Shift}");
+    await waitFor(() => expect(selected()).toEqual(["charlie", "delta", "echo"]));
+
+    // A plain click re-pivots, so the next range measures from here.
+    await user.click(nodeCard(canvasElement, "bravo"));
+    await user.keyboard("{Shift>}");
+    await user.click(nodeCard(canvasElement, "charlie"));
+    await user.keyboard("{/Shift}");
+    await waitFor(() => expect(selected()).toEqual(["bravo", "charlie"]));
+  },
+};
+
+export const ArrowKeysCarryTheSelection: Story = {
+  render: () => (
+    <DndCollections initialGraph={wideGraph()} animateMoves={false} clickSelection="toggle">
+      <VirtualStrip collectionId={parseNodeId("board")} itemWidth={120} itemHeight={90} />
+    </DndCollections>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForLayout(nodeCard(canvasElement, "alpha"));
+    const user = userEvent.setup();
+    const selected = () =>
+      ["alpha", "bravo", "charlie", "delta", "echo"].filter((id) =>
+        isSelected(canvasElement, id),
+      );
+
+    await user.click(nodeCard(canvasElement, "alpha"));
+    await waitFor(() => expect(selected()).toEqual(["alpha"]));
+
+    // A bare arrow moves the selection with the focus. Without this the
+    // keyboard route needed an arrow AND a Space at every stop, which is why
+    // roving focus alone was never enough to act on anything.
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => expect(selected()).toEqual(["bravo"]));
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => expect(selected()).toEqual(["charlie"]));
+
+    // Shift+arrow EXTENDS rather than replacing, from wherever the last bare
+    // arrow left the pivot — charlie, not alpha. A bare arrow IS a plain
+    // selection, so it re-pivots exactly as a plain click does; only the
+    // shifted gestures leave the pivot alone.
+    await user.keyboard("{Shift>}{ArrowRight}{/Shift}");
+    await waitFor(() => expect(selected()).toEqual(["charlie", "delta"]));
+    await user.keyboard("{Shift>}{ArrowRight}{/Shift}");
+    await waitFor(() => expect(selected()).toEqual(["charlie", "delta", "echo"]));
+
+    // And shrinks on the way back, for the same reason a shift+click does:
+    // the pivot has not moved, so the run is re-measured rather than restarted.
+    await user.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    await waitFor(() => expect(selected()).toEqual(["charlie", "delta"]));
   },
 };

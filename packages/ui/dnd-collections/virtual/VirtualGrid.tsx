@@ -283,6 +283,16 @@ export const VirtualGrid = forwardRef<VirtualGridHandle, VirtualGridProps>(
       isDragging: () => store.getSnapshot().interaction.isDragging,
       focusByIndex,
       resolveNextIndex: resolveGridIndex,
+      // Arrows carry the selection with them (the file-manager convention),
+      // so a keyboard user acts on what they navigated to instead of having to
+      // press Space at every stop. Shift extends from the pivot.
+      onNavigate: useCallback(
+        (id: NodeId, extend: boolean) => {
+          if (extend) store.selectRange(id);
+          else store.setSelection([id]);
+        },
+        [store],
+      ),
     });
     // Keep the roving tab stop on a MOUNTED card: rows virtualize, so if the
     // focused card's row scrolled out, fall back to the first mounted row.

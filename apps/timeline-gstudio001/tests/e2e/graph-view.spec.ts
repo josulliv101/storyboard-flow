@@ -6015,4 +6015,116 @@ test.describe("graph view E2E", () => {
     await overflow.click();
     await expect(page.getByRole("menuitem", { name: "Duplicate" })).toBeVisible();
   });
+
+  // ── Range and select-all (phase 2) ────────────────────────────────────────
+
+  test("shift+click selects the run, and shift+clicking back shrinks it", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const selected = () =>
+      surface
+        .locator('[data-node-id][data-selected="true"]')
+        .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ""));
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["Shift"] });
+    await expect.poll(selected).toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+
+    // The correction case, and the reason the pivot is stored rather than
+    // derived from the selection: shift+click back and the run SHRINKS. If the
+    // range measured from the last card clicked, this would start a new range
+    // at charlie and there would be no way back to what was meant.
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["Shift"] });
+    await expect.poll(selected).toEqual(["alpha", "bravo"]);
+
+    // A plain click re-pivots.
+    await surface.locator('[data-node-id="charlie"]').click();
+    await surface.locator(`[data-node-id="${CHILD_ID}"]`).click({ modifiers: ["Shift"] });
+    await expect.poll(selected).toEqual([CHILD_ID, "charlie"]);
+  });
+
+  test("shift+clicking a collection extends the range instead of drilling in", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await surface.locator(`[data-node-id="${CHILD_ID}"]`).click({ modifiers: ["Shift"] });
+
+    // Still on the project. Losing a range to an accidental navigation is a
+    // worse outcome than a shift+click that failed to open something — and
+    // the collection is reachable by its own drill button either way.
+    await expect(surface.locator('[data-node-id="alpha"]')).toBeVisible();
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(3);
+  });
+
+  test("Ctrl+A selects every item in the open collection", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    await surface.locator('[data-node-id="alpha"]').click();
+
+    await page.keyboard.press("ControlOrMeta+a");
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(4);
+    await expect(page.locator("[data-selection-toolbar-count]")).toHaveText("4");
+
+    // Scoped to the OPEN collection, not the whole project tree: drill in and
+    // "all" means the two cards in front of you.
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await strip(page, CHILD_ID)
+      .locator('[data-node-id="c1"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+    await page.keyboard.press("ControlOrMeta+a");
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+  });
+
+  test("Ctrl+A leaves the pivot at the end, so shift+click trims from there", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const selected = () =>
+      surface
+        .locator('[data-node-id][data-selected="true"]')
+        .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ""));
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await page.keyboard.press("ControlOrMeta+a");
+    await expect.poll(selected).toHaveLength(4);
+
+    // Select-all pivots on the LAST card, so the natural follow-up — "all of
+    // them except the first few" — is one shift+click.
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["Shift"] });
+    await expect.poll(selected).toEqual(["bravo", CHILD_ID, "charlie"]);
+  });
+
+  test("arrow keys carry the selection, and shift+arrow extends it", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const selected = () =>
+      surface
+        .locator('[data-node-id][data-selected="true"]')
+        .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.nodeId ?? ""));
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await expect.poll(selected).toEqual(["alpha"]);
+
+    // Bare arrows used to move focus ONLY, so every stop needed a Space to act
+    // on anything. They carry the selection now, which is what makes the
+    // keyboard route usable without a mouse.
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(selected).toEqual(["bravo"]);
+
+    // Shift+arrow extends from where the last bare arrow left the pivot.
+    await page.keyboard.press("Shift+ArrowRight");
+    await expect.poll(selected).toEqual(["bravo", CHILD_ID]);
+    await page.keyboard.press("Shift+ArrowLeft");
+    await expect.poll(selected).toEqual(["bravo"]);
+  });
 });

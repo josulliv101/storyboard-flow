@@ -152,8 +152,17 @@ describe("createCollectionsStore", () => {
     const listener = vi.fn();
     store.subscribe(listener);
 
-    store.setSelection([id("y"), id("x")]); // same set, different order
+    store.setSelection([id("x"), id("y")]); // identical set AND order
     expect(listener).not.toHaveBeenCalled();
+
+    // Same MEMBERS, different order, and this one DOES notify: the last id is
+    // the range pivot, so [x,y] and [y,x] describe different states — a
+    // following shift+click would extend from a different card. Bailing here
+    // (as this used to) left the pivot stale.
+    store.setSelection([id("y"), id("x")]);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().interaction.selectionPivotId).toBe(id("x"));
+    listener.mockClear();
 
     store.setDropIntent({ type: "nest-inside", collectionId: id("root-b") });
     expect(listener).toHaveBeenCalledTimes(1);
@@ -788,5 +797,133 @@ describe("createCollectionsStore", () => {
       expect(store.getSnapshot()).toBe(before);
       expect(store.getSnapshot().graph).toBe(before.graph);
     });
+  });
+
+  // ── Range selection and the pivot ─────────────────────────────────────────
+  //
+  // The pivot is the one piece of selection state that is NOT derivable from
+  // `selectedIds`, and these pin why: it must survive a range so the range can
+  // be corrected, and it must move for every other gesture.
+
+  const selected = (store: ReturnType<typeof createCollectionsStore>) => [
+    ...store.getSnapshot().interaction.selectedIds,
+  ];
+  const pivot = (store: ReturnType<typeof createCollectionsStore>) =>
+    store.getSnapshot().interaction.selectionPivotId;
+
+  test("selectRange takes the inclusive run between the pivot and the target", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+    store.selectRange(id("z"));
+
+    expect(selected(store)).toEqual([id("x"), id("y"), id("z")]);
+  });
+
+  test("a range runs the same backwards", () => {
+    // Dragging a range up the list is the same range as dragging it down.
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("z")]);
+    store.selectRange(id("x"));
+
+    expect(new Set(selected(store))).toEqual(new Set([id("x"), id("y"), id("z")]));
+  });
+
+  test("the pivot stays put across ranges, so an overshoot can be corrected", () => {
+    // THE reason the pivot is state. Shift-click too far, shift-click back:
+    // the range shrinks. If the pivot followed the last range's end, the
+    // correction would start a NEW range from the overshoot and the user could
+    // never get back to what they meant.
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+    store.selectRange(id("z"));
+    expect(pivot(store)).toBe(id("x"));
+
+    store.selectRange(id("y"));
+    expect(selected(store)).toEqual([id("x"), id("y")]);
+    expect(pivot(store)).toBe(id("x"));
+  });
+
+  test("every non-range gesture moves the pivot", () => {
+    const store = createCollectionsStore(graphFixture());
+
+    store.setSelection([id("x"), id("y")]);
+    expect(pivot(store)).toBe(id("y")); // the LAST of a run
+
+    store.toggleSelected(id("z"));
+    expect(pivot(store)).toBe(id("z"));
+
+    // Including a toggle that DESELECTS: the pivot is where the user last
+    // acted, not where the selection happens to be.
+    store.toggleSelected(id("z"));
+    expect(selected(store)).not.toContain(id("z"));
+    expect(pivot(store)).toBe(id("z"));
+
+    store.clearSelection();
+    expect(pivot(store)).toBeNull();
+  });
+
+  test("a range with no pivot yet selects just the target", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.selectRange(id("y"));
+
+    expect(selected(store)).toEqual([id("y")]);
+    expect(pivot(store)).toBe(id("y"));
+  });
+
+  test("a range across DIFFERENT parents selects just the target", () => {
+    // There is no single order spanning two collections, and inventing one
+    // would select cards the user cannot see between the two they can. Falls
+    // back to what a plain click would have done, and re-pivots there.
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+    store.selectRange(id("root-b"));
+
+    expect(selected(store)).toEqual([id("root-b")]);
+    expect(pivot(store)).toBe(id("root-b"));
+  });
+
+  test("a range onto an unknown node changes nothing", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+    store.selectRange(id("ghost"));
+
+    expect(selected(store)).toEqual([id("x")]);
+    expect(pivot(store)).toBe(id("x"));
+  });
+
+  test("a pivot pointing at a deleted node is dropped, not left dangling", () => {
+    // Otherwise the next shift+click would measure from a node with no parent,
+    // and every range would silently degrade to a plain click.
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("y")]);
+    store.dispatch({
+      type: "move-nodes",
+      nodeIds: [id("y")],
+      toParentId: id("root-b"),
+      toIndex: 0,
+    });
+    expect(pivot(store)).toBe(id("y")); // still in the graph, just moved
+
+    store.replaceGraph(
+      (() => {
+        const built = buildGraph([
+          { kind: "collection", id: "root-a", name: "A", children: [media("x")] },
+        ]);
+        if (!built.ok) throw new Error(JSON.stringify(built.error));
+        return built.value;
+      })(),
+    );
+    expect(pivot(store)).toBeNull();
+  });
+
+  test("an unchanged range does not notify", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+    store.selectRange(id("z"));
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.selectRange(id("z"));
+    expect(listener).not.toHaveBeenCalled();
   });
 });
