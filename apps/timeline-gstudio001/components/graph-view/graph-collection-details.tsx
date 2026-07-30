@@ -124,13 +124,23 @@ export function CollectionDetailsBody({
               className="min-w-0 flex-1 rounded-sm bg-zinc-900 px-1 py-0.5 text-sm font-semibold text-zinc-100 outline-none ring-1 ring-amber-400/70"
             />
           ) : (
-            <span
-              onDoubleClick={rename.begin}
-              title="Double-click or press F2 to rename"
-              className="min-w-0 flex-1 cursor-text truncate text-sm font-semibold text-zinc-100"
+            /* Single click to rename (PL14-010) — see the note on the clip
+               modal's title. Both dialogs get it because neither has a
+               competing click meaning; the CARD surfaces keep their double
+               click, because there click already means select. */
+            <button
+              type="button"
+              onClick={rename.begin}
+              aria-label={`Rename ${displayName}`}
+              title={`Rename ${displayName}`}
+              className={[
+                "min-w-0 flex-1 cursor-text truncate rounded-md px-1.5 py-1 text-left",
+                "text-sm font-semibold text-zinc-100 transition-colors hover:bg-zinc-800/70",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
+              ].join(" ")}
             >
               {displayName}
-            </span>
+            </button>
           )}
           <div className="flex items-center gap-3">
             <span className="font-mono text-[11px] tabular-nums text-zinc-400">
