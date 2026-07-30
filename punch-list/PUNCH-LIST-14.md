@@ -194,10 +194,45 @@ written when the gear was in the header — was inverted by this and now reads a
 
 ## PL14-006 — Trim drag drives the real preview when it is open
 
-- Status: Not started
-- Area: `graph-trim-panel.tsx`, `graph-preview.tsx`,
-  `packages/ui/timeline/viewport/workbench-display-surface.tsx`
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+- Area: `graph-trim-preview.tsx` (new), `graph-trim-panel.tsx`,
+  `graph-preview.tsx`, `tests/e2e/graph-view.spec.ts`.
+  `packages/ui` deliberately UNTOUCHED — see below.
 - Screenshot: Not captured
+
+Preview open → the trim frame takes the pane. Preview closed → the floating
+panel, exactly as before. Exactly one of the two ever shows.
+
+**The playhead does not move.** That was round 5's condition for ever building
+this, and it is why nothing here goes near `PreviewTimeChannel.set`: the clock
+keeps its time, the pane's own canvas keeps rendering that time underneath, and
+the frame is drawn OVER it for the length of the gesture. Release, and the
+overlay unmounts onto a pane that never moved.
+
+Three decisions worth keeping:
+
+- **A React context, not a window event.** Both ends live inside the graph's
+  own tree — the board renders as the preview component's `children` — and the
+  event bridge is explicitly for the sidebar, which does not. Same rule that
+  settled PL14-005 in the opposite direction.
+- **`packages/ui` is untouched.** The frame is a `fixed` overlay measured
+  against the pane's canvas rect, not a child slipped inside
+  `WorkbenchDisplaySurface`. That surface is a generic package component with
+  its own layout (the split pane sizes it, a divider drags it); putting a graph
+  concern inside it would have made this a package change for a view-specific
+  feature. Measuring is the technique the floating panel already uses.
+- **Two effects, not one.** Publishing the frame and clearing it are keyed
+  differently — the frame changes on every pointer move, "a drag is running"
+  changes twice. One effect with a cleanup would set null between every pair of
+  frames, remounting the `<video>`: a black flash per pointer move instead of
+  a seek.
+
+E2E covers both branches, and the assertion that matters is that the clock is
+unchanged DURING the gesture — after release the trim commits and the
+timeline's total duration legitimately changes, which is what the first version
+of the test wrongly flagged as the playhead moving. Proven to fail with the
+feature forced off.
 
 When a video clip is selected and the user grabs a trim handle, a small overlay
 preview appears above the card showing the frame at the moving edge. Add the

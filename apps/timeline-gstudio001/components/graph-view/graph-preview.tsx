@@ -70,6 +70,7 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
 
 import { useGraphDetailsStore } from "./graph-details-context";
+import { TrimPreviewOverlay, TrimPreviewProvider } from "./graph-trim-preview";
 import { GRID_GAP, TIMELINE_PPS } from "./graph-view-config";
 
 /**
@@ -2033,7 +2034,15 @@ export function PreviewShell({
         {/* The playhead and scrub band live in `children`; they read these
             spans so their time↔x mapping is the pane's clock, not their own. */}
         <PreviewCardSpansContext.Provider value={cardSpans}>
-          {children}
+          {/* A trim drag borrows the pane's picture while the pane is OPEN
+              (PL14-006). The provider wraps `children` because that is where
+              the board — and therefore every trim handle — renders; the
+              overlay is a sibling because it draws over the pane above.
+              Neither touches the clock. */}
+          <TrimPreviewProvider previewOpen={enabled}>
+            {children}
+            <TrimPreviewOverlay />
+          </TrimPreviewProvider>
         </PreviewCardSpansContext.Provider>
       </WorkbenchSplitPane>
     </TimelineDocumentsProvider>

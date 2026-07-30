@@ -4528,6 +4528,66 @@ test.describe("graph view E2E", () => {
     expect(storedTitle()).toBe("Belushi close-up");
   });
 
+  test("with the preview OPEN, a trim drag takes the pane instead of floating a panel", async ({
+    page,
+  }) => {
+    // PL14-006, and the other half of round 5's item 3 — deferred then, asked
+    // for now. The floating panel exists because there was nowhere else to put
+    // the frame; an open preview IS somewhere else, and two copies of the same
+    // frame is one too many.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // Open the pane BEFORE selecting: the rail swaps to the item-actions
+    // cluster while anything is selected, so the preview toggle is not there
+    // to click afterwards.
+    const canvas = page.getByTestId("workbench-display-canvas");
+    await previewToggle(page).click();
+    await expect(canvas).toBeVisible();
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const wrapper = strip(page, PROJECT_ID).locator('[data-node-wrapper="alpha"]');
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+
+    // Where the clock stands before the drag — it must not move.
+    const timeBefore = await page.getByTestId("workbench-preview-time").textContent();
+
+    const handle = wrapper.locator("[data-trim-handle]").last();
+    const box = (await handle.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x - 24, box.y + box.height / 2, { steps: 6 });
+
+    // The pane took it, and the floating panel stood down.
+    const overlay = page.locator('[data-trim-preview-overlay="right"]');
+    await expect(overlay).toHaveCount(1);
+    await expect(page.locator("[data-trim-edge-frame]")).toHaveCount(0);
+
+    // It covers the pane's picture — this is the preview showing the frame,
+    // not a panel that happens to be nearby.
+    const overlayBox = (await overlay.boundingBox())!;
+    const canvasBox = (await canvas.boundingBox())!;
+    expect(overlayBox.x).toBeCloseTo(canvasBox.x, 0);
+    expect(overlayBox.y).toBeCloseTo(canvasBox.y, 0);
+    expect(overlayBox.width).toBeCloseTo(canvasBox.width, 0);
+    expect(overlayBox.height).toBeCloseTo(canvasBox.height, 0);
+
+    // THE constraint carried over from round 5: the clock does not move while
+    // the pane is borrowed. Asserted DURING the gesture, which is the only
+    // window where it means anything — releasing commits the trim, and a
+    // committed trim changes the timeline's total duration on purpose, so the
+    // readout is expected to differ afterwards.
+    expect(await page.getByTestId("workbench-preview-time").textContent()).toBe(timeBefore);
+
+    await page.mouse.up();
+    // Released, the pane goes back to being the pane.
+    await expect(overlay).toHaveCount(0);
+    await expect(canvas).toBeVisible();
+  });
+
   test("a trim drag floats the edge frame above the clip", async ({ page }) => {
     // PL10-005/007. The live frame is its own small surface: sized to the
     // breadcrumb row (a size reference, not a location — it follows the CLIP,

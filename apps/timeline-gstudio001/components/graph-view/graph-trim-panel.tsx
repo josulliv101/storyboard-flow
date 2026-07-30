@@ -6,6 +6,8 @@ import { createPortal } from "react-dom";
 import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { formatSeconds } from "@/lib/format-duration";
 
+import { usePublishTrimPreview } from "./graph-trim-preview";
+
 import {
   useLiveTrim,
   type LiveTrim,
@@ -148,10 +150,31 @@ export function TrimPanel({ id, node }: Readonly<{ id: NodeId; node: MediaNode }
   const live = useLiveTrim(id);
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
 
-  if (node.mediaKind !== "video" || !node.src) return null;
+  const isVideo = node.mediaKind === "video" && !!node.src;
+  // Quantized the same way LiveEdgeFrame quantizes, so the two presentations
+  // seek to the same frames and neither issues a decode per pointer event.
+  const sourceTime =
+    live !== null && isVideo ? Math.round(edgeSourceTime(node, live) * 25) / 25 : 0;
+  // Published unconditionally — the hook decides whether the pane wants it,
+  // because "is the preview open" is the pane's fact, not the card's. It
+  // returns true when the pane TOOK the frame, which is exactly when the
+  // floating panel must stand down (PL14-006): one picture, not two.
+  const takenByPreview = usePublishTrimPreview(
+    live !== null && isVideo && node.src
+      ? {
+          nodeId: id as string,
+          src: node.src,
+          poster: node.posterSrcs?.[0],
+          sourceTime,
+          side: live.side === "right" ? "right" : "left",
+        }
+      : null,
+  );
+
+  if (!isVideo) return null;
   return (
     <span ref={setAnchor} aria-hidden="true" className="pointer-events-none absolute inset-0">
-      {anchor !== null && live !== null ? (
+      {anchor !== null && live !== null && !takenByPreview ? (
         <LiveEdgeFrame node={node} live={live} anchor={anchor} />
       ) : null}
     </span>
