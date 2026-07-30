@@ -111,6 +111,14 @@ export { DndCollections, type DndCollectionsProps } from "./react/DndCollections
 export {
   KEYBOARD_IGNORE_ATTRIBUTE,
   isEditableKeyboardTarget,
+  // Finding a card by id, and focusing one that virtualization may not have
+  // mounted yet. Exported because an app rendering its own overlays against
+  // cards needs BOTH, and the alternatives are worse: a hand-rolled attribute
+  // selector skips the CSS.escape fallback (node ids are arbitrary strings),
+  // and a hand-rolled focus skips the mutation-observed retry that is the
+  // whole point when the target is inside a virtualized view.
+  findNodeElement,
+  focusNodeWhenMounted,
 } from "./react/node-dom";
 export {
   type CollectionsClickSelection,

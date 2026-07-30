@@ -55,12 +55,36 @@ function useItemActionState(nodeId: NodeId): ItemActionState {
   // re-render every card just as subscribing to the Set did. What makes these
   // quiet is that an unselected node's answer does not depend on the selection
   // at all.
-  const isSingleSelection = useCollectionsSelector((s) => {
+  const selectionCount = useCollectionsSelector((s) => {
     const ids = s.interaction.selectedIds;
     // Not in the selection: opening the menu will make this node the whole of
-    // it, so one item — whatever anyone else has selected.
-    return ids.has(nodeId) ? ids.size === 1 : true;
+    // it, so one item — whatever anyone else has selected. `ids.size` on its
+    // own would be a number that still moves 0 → 1 for every card on the board.
+    return ids.has(nodeId) ? ids.size : 1;
   });
+  const isSingleSelection = selectionCount === 1;
+  // Both false for a MIXED selection, which is what dims the type-specific
+  // actions. Narrowed like the rest: outside the selection the honest answer is
+  // this node's own kind, since that is what the menu is about to act on.
+  const allCollections = useCollectionsSelector((s) => {
+    const ids = s.interaction.selectedIds;
+    if (!ids.has(nodeId)) return s.graph.nodesById.get(nodeId)?.kind === "collection";
+    for (const id of ids) {
+      if (s.graph.nodesById.get(id)?.kind !== "collection") return false;
+    }
+    return true;
+  });
+  const allMedia = useCollectionsSelector((s) => {
+    const ids = s.interaction.selectedIds;
+    if (!ids.has(nodeId)) return s.graph.nodesById.get(nodeId)?.kind === "media";
+    for (const id of ids) {
+      if (s.graph.nodesById.get(id)?.kind !== "media") return false;
+    }
+    return true;
+  });
+  // Only ever this node's own name: a single selection containing this node IS
+  // this node, and outside the selection the menu is about to make it so.
+  const ownName = useCollectionsSelector((s) => s.graph.nodesById.get(nodeId)?.name ?? "");
   const allDisabled = useCollectionsSelector((s) => {
     const ids = s.interaction.selectedIds;
     // Same narrowing: outside the selection the honest answer is this node's
@@ -85,6 +109,7 @@ function useItemActionState(nodeId: NodeId): ItemActionState {
     // Right-clicking always gives the menu something to act on: this node, if
     // nothing else. Never zero, so never a menu of dead rows.
     hasSelection: true,
+    selectionCount,
     isSingleSelection,
     canPaste,
     // Not modelled. The receiving side already refuses an action while one is
@@ -93,6 +118,9 @@ function useItemActionState(nodeId: NodeId): ItemActionState {
     // second subscription for a state this surface can barely observe.
     busy: false,
     allDisabled,
+    allCollections,
+    allMedia,
+    singleName: isSingleSelection ? ownName : null,
   };
 }
 

@@ -1,42 +1,29 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useSyncExternalStore } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
-  Ban,
-  CircleCheck,
-  ClipboardPaste,
-  Copy,
   ChevronsLeftRightEllipsis,
-  Pencil,
-  CopyPlus,
-  EllipsisVertical,
   Film,
   Folder,
   Image as ImageIcon,
   Layers,
   LogOut,
-  Scissors,
   Trash2,
   TvMinimal,
-  X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { TrashDrawer } from "@/components/assets/trash-drawer";
 import { useAuth } from "@/components/auth/auth-provider";
 import {
-  GRAPH_SELECTION_EVENT,
   GRAPH_TRASH_ARRIVAL_EVENT,
   GRAPH_BOARD_MENU_SLOT_ID,
   GRAPH_TRASH_HOVER_EVENT,
   GRAPH_VIEW_STATE_EVENT,
   isGraphViewRoute,
-  requestGraphItemAction,
   requestGraphFlatToggle,
   requestGraphPreviewToggle,
   requestGraphSurface,
-  type GraphItemAction,
-  type GraphSelectionDetail,
   type GraphSurface,
   type GraphViewStateDetail,
 } from "@/lib/graph-view-events";
@@ -45,20 +32,8 @@ import {
   SIDEBAR_ICON_BASE,
   SIDEBAR_ICON_IDLE,
 } from "./sidebar-icon-styles";
-import {
-  visibleItemActions,
-  type ItemActionState,
-} from "@/lib/graph-item-action-specs";
-import { graphClipboard } from "@/lib/graph-clipboard";
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/core/dropdown-menu";
 
 import { SidebarTooltipLabel } from "./sidebar-tooltip-label";
 
@@ -187,14 +162,14 @@ const SIDEBAR_ICON_TOGGLE_ON =
  */
 const SIDEBAR_SEPARATOR_CLASS = "mx-auto my-2 h-px w-10 shrink-0";
 
-function SidebarSeparator({ selected = false }: Readonly<{ selected?: boolean }>) {
+function SidebarSeparator() {
   return (
     <div
       aria-hidden="true"
-      data-sidebar-separator={selected ? "selected" : "normal"}
+      data-sidebar-separator="normal"
       className={cn(
         SIDEBAR_SEPARATOR_CLASS,
-        selected ? "bg-amber-300/65" : "bg-zinc-500",
+        "bg-zinc-500",
       )}
     />
   );
@@ -307,167 +282,6 @@ function SurfaceIconControl({
   );
 }
 
-// Recessed, not invisible. One dimming step is enough: a solid zinc-500 glyph
-// reads as available-but-not-now, and the flat border plus the missing hover
-// response carry "disabled" on their own.
-const SIDEBAR_ICON_DISABLED =
-  "cursor-not-allowed text-zinc-500 before:bg-zinc-900/20";
-
-// Item mode borrows a restrained trace of the selection colour. These actions
-// relate to the selected card, but should remain secondary to the content.
-const SIDEBAR_ICON_ITEM_IDLE =
-  "text-amber-100/60 before:bg-amber-200/[0.035] hover:text-amber-100/85 hover:before:bg-amber-200/[0.075]";
-
-/** One button in the item-actions cluster — dispatches its action across the
- *  window-event seam for the graph provider to perform on the selection. */
-function ItemActionButton({
-  action,
-  icon: Icon,
-  label,
-  description,
-  disabled = false,
-  /** "item" acts on the selected card and carries its amber; "neutral" does
-   *  not — Done exits the mode rather than doing anything to the selection,
-   *  so it stays on the sidebar's ordinary zinc. */
-  tone = "item",
-}: Readonly<{
-  action: GraphItemAction;
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  description: string;
-  disabled?: boolean;
-  tone?: "item" | "neutral";
-}>) {
-  const tooltipId = `sidebar-tooltip-item-${action}`;
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-describedby={tooltipId}
-      disabled={disabled}
-      onClick={() => requestGraphItemAction(action)}
-      className={cn(
-        SIDEBAR_ICON_BASE,
-        disabled
-          ? SIDEBAR_ICON_DISABLED
-          : tone === "item"
-            ? SIDEBAR_ICON_ITEM_IDLE
-            : SIDEBAR_ICON_IDLE,
-      )}
-    >
-      <Icon className={SIDEBAR_GLYPH} />
-      <SidebarTooltipLabel id={tooltipId} label={label} description={description} />
-    </button>
-  );
-}
-
-function ItemActionsOverflow({ state }: Readonly<{ state: ItemActionState }>) {
-  const actions = visibleItemActions(state, "overflow");
-  const disabled = state.busy || !state.hasSelection;
-  const tooltipId = "sidebar-tooltip-item-more";
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label="More item actions"
-          aria-describedby={tooltipId}
-          disabled={disabled}
-          className={cn(
-            SIDEBAR_ICON_BASE,
-            disabled ? SIDEBAR_ICON_DISABLED : SIDEBAR_ICON_ITEM_IDLE,
-          )}
-        >
-          <EllipsisVertical className={SIDEBAR_GLYPH} />
-          <SidebarTooltipLabel
-            id={tooltipId}
-            label="More"
-            description="More actions for the selected item"
-          />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="right" align="start">
-        <DropdownMenuGroup>
-          {/* The rail's half of ITEM_ACTION_SPECS — the actions common enough
-              to keep but not common enough to spend a tile on. The card's
-              right-click menu inlines these instead, having no overflow to
-              fold into. */}
-          {actions.map((spec) => {
-            const Icon = spec.icon(state);
-            return (
-              <DropdownMenuItem
-                key={spec.action}
-                disabled={spec.disabled(state)}
-                onSelect={() => requestGraphItemAction(spec.action)}
-              >
-                <Icon className="mr-2 h-4 w-4" />
-                {spec.label(state)}
-              </DropdownMenuItem>
-            );
-          })}
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-/**
- * The contextual cluster shown while an item is selected (or something is on
- * the clipboard). Replaces the layout/toggle controls with actions on the
- * selected item. Copy/Cut are replaced by Paste while the clipboard is armed;
- * Duplicate/Delete need a live selection. Done exits back to the normal
- * controls (clearing the clipboard — with contents kept, item mode couldn't
- * close). While an async
- * action is in flight (`busy`) every button disables, so nothing double-fires.
- */
-function ItemActionsCluster({ state }: Readonly<{ state: ItemActionState }>) {
-  return (
-    <div className="flex w-full flex-col items-stretch gap-0">
-      {/* Only actions that operate on the selection or clipboard sit inside the amber
-          block — a wash, no border, so the group reads as one thing tied to
-          the selected card without drawing a box around itself. Done is
-          deliberately outside it: it exits the mode, it does nothing to the
-          card, and it keeps the sidebar's ordinary zinc. */}
-      <div
-        data-item-actions-cluster
-        className="flex w-full flex-col items-stretch gap-0 bg-amber-200/[0.025]"
-      >
-        {/* Rendered from ITEM_ACTION_SPECS (PL14-007), the same ordered list
-            the card's right-click menu walks — so the two surfaces cannot
-            drift apart about what an item can do, which is the whole reason
-            that list exists. The rail respects `group`, the flat menu ignores
-            it; neither had to bend its order to share.
-
-            Details still comes first, and still DISABLES rather than hides
-            past one selection: a control that vanishes teaches nothing, while
-            a disabled one says "wrong shape of selection for that". Copy/Cut
-            still swap for Paste — that is `visible` in the spec now. */}
-        {visibleItemActions(state, "primary").map((spec) => (
-          <ItemActionButton
-            key={spec.action}
-            action={spec.action}
-            icon={spec.icon(state)}
-            label={spec.label(state)}
-            description={spec.description(state)}
-            disabled={spec.disabled(state)}
-          />
-        ))}
-        <ItemActionsOverflow state={state} />
-      </div>
-      <SidebarSeparator selected />
-      <ItemActionButton
-        action="cancel"
-        icon={X}
-        label="Done"
-        description="Exit item actions and clear the clipboard"
-        disabled={state.busy}
-        tone="neutral"
-      />
-    </div>
-  );
-}
-
 const UTILITY_ITEMS: UtilityItem[] = [
   {
     id: "trash",
@@ -559,51 +373,19 @@ export function TimelineSidebar() {
     return () => window.removeEventListener(GRAPH_TRASH_HOVER_EVENT, handleHover);
   }, []);
 
-  // The graph broadcasts how many items are selected; while something is
-  // selected — OR the clipboard holds a copy/cut — the contextual controls
-  // switch to item actions (copy, cut, paste, duplicate, delete, cancel). The
-  // clipboard condition is what keeps Paste reachable after Copy clears the
-  // selection (copy here, drill into another timeline, paste there).
-  const [selectionCount, setSelectionCount] = useState(0);
-  const [actionBusy, setActionBusy] = useState(false);
-  const [selectionAllDisabled, setSelectionAllDisabled] = useState(false);
-  useEffect(() => {
-    const onSelection = (event: Event) => {
-      const detail = (event as CustomEvent<GraphSelectionDetail>).detail;
-      if (detail) {
-        setSelectionCount(detail.count);
-        setActionBusy(detail.busy);
-        setSelectionAllDisabled(detail.allDisabled);
-      }
-    };
-    window.addEventListener(GRAPH_SELECTION_EVENT, onSelection);
-    return () => window.removeEventListener(GRAPH_SELECTION_EVENT, onSelection);
-  }, []);
-  const canPaste = useSyncExternalStore(
-    graphClipboard.subscribe,
-    () => !graphClipboard.isEmpty(),
-    () => false,
-  );
-
+  // The rail is a VIEW rail, and stays one. It used to swap these controls for
+  // the selected item's actions the moment anything was selected, which cost
+  // three things: a full-width mouse trip to reach an action, a layout jump in
+  // peripheral vision on every selection change, and — the real one — access to
+  // view switching itself, so you could not select clips and then look at them
+  // in the strip. Item actions live in the floating selection toolbar now
+  // (`graph-selection-toolbar.tsx`), anchored to the card they act on.
+  //
+  // Nothing here reads the selection any more. The focus-restore effect that
+  // used to accompany the swap went with it: it existed only to catch focus
+  // orphaned by unmounting the control the user had just pressed.
   const onGraphRoute = isGraphViewRoute(pathname);
-  const itemMode = onGraphRoute && (selectionCount > 0 || canPaste);
-
-  // Swapping clusters unmounts the control that held keyboard focus (e.g. the
-  // Delete button the user just activated), dumping focus to <body>. Restore
-  // it to the rail's first enabled control — but ONLY on a real mode
-  // TRANSITION (not mount: focus starts on <body> on every page load, and
-  // grabbing it then would steal focus from the document), and ONLY when the
-  // swap actually orphaned focus: a mouse click on a card also flips
-  // itemMode, and focus is on the card then, which must not be stolen.
   const railRef = useRef<HTMLElement>(null);
-  const prevItemModeRef = useRef<boolean | null>(null);
-  useEffect(() => {
-    const previous = prevItemModeRef.current;
-    prevItemModeRef.current = itemMode;
-    if (previous === null || previous === itemMode) return;
-    if (document.activeElement !== document.body && document.activeElement !== null) return;
-    railRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus();
-  }, [itemMode]);
 
   const handleLogout = async () => {
     try {
@@ -637,19 +419,7 @@ export function TimelineSidebar() {
         SW
       </Link>
 
-      {activeProjectId && itemMode && (
-        <ItemActionsCluster
-          state={{
-            hasSelection: selectionCount > 0,
-            isSingleSelection: selectionCount === 1,
-            canPaste,
-            busy: actionBusy,
-            allDisabled: selectionAllDisabled,
-          }}
-        />
-      )}
-
-      {activeProjectId && !itemMode && (
+      {activeProjectId && (
         <div className="flex w-full flex-col items-stretch gap-0">
           {/* The graph's layout switch (was the breadcrumb row's strip/grid
               toggle). Grid first: it is the initial-load default. */}
@@ -674,7 +444,7 @@ export function TimelineSidebar() {
         </div>
       )}
 
-      {activeProjectId && !itemMode && (
+      {activeProjectId && (
         <>
           {/* zinc-500: the old zinc-800/80 vanished against the rail. */}
           <SidebarSeparator />

@@ -1,5 +1,5 @@
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
-import type { CollectionItemNode } from "@storyboard/ui/dnd-collections";
+import type { CollectionItemNode, NodeId } from "@storyboard/ui/dnd-collections";
 import type { ClipDetail } from "@storyboard/timeline-domain";
 
 // The graph view's copy/cut clipboard: a module singleton, like
@@ -27,6 +27,25 @@ export type ClipboardEntry = Readonly<{
 export type GraphClipboard = Readonly<{
   read: () => readonly ClipboardEntry[];
   /**
+   * The nodes a Cut is waiting to move, still live in the graph.
+   *
+   * Cut used to trash its originals immediately and let Paste re-create them
+   * from the snapshot above. It now leaves them in place, dimmed, until a paste
+   * says where they are going — which is what makes cut+paste a MOVE rather
+   * than a copy that happens to delete something.
+   *
+   * The snapshot is still captured, and is still what a paste falls back to
+   * when a source has since been deleted or undone out of the graph. So this is
+   * an optimisation of the common case, never a precondition.
+   */
+  pendingCutIds: () => ReadonlySet<NodeId>;
+  /** Per-node, so a card can subscribe to its OWN pending state without every
+   *  card re-rendering when the clipboard changes. */
+  isPendingCut: (id: NodeId) => boolean;
+  /** Arm the pending move. Call after a successful `set` — `set` clears it,
+   *  since a fresh copy replaces whatever the clipboard was doing. */
+  markPendingCut: (ids: Iterable<NodeId>) => void;
+  /**
    * Install new contents. Pass the `generation()` observed BEFORE any async
    * capture work: if the clipboard was rebound to a different user (or
    * otherwise reset) while the capture ran, the stale write is refused and
@@ -50,8 +69,11 @@ export type GraphClipboard = Readonly<{
   subscribe: (listener: () => void) => () => void;
 }>;
 
+const NO_PENDING_CUT: ReadonlySet<NodeId> = new Set();
+
 function createGraphClipboard(): GraphClipboard {
   let entries: readonly ClipboardEntry[] = [];
+  let pendingCut: ReadonlySet<NodeId> = NO_PENDING_CUT;
   let boundUid: string | null = null;
   let generation = 0;
   const listeners = new Set<() => void>();
@@ -60,26 +82,38 @@ function createGraphClipboard(): GraphClipboard {
   };
   return {
     read: () => entries,
+    pendingCutIds: () => pendingCut,
+    isPendingCut: (id) => pendingCut.has(id),
+    markPendingCut: (ids) => {
+      pendingCut = new Set(ids);
+      emit();
+    },
     set: (next, atGeneration) => {
       if (atGeneration !== undefined && atGeneration !== generation) return false;
       entries = next;
+      // A new copy (or a new cut, before it arms its own) replaces whatever the
+      // clipboard was doing, so nothing stays dimmed waiting for a paste that
+      // will never carry it.
+      pendingCut = NO_PENDING_CUT;
       emit();
       return true;
     },
     clear: () => {
-      if (entries.length === 0) return;
+      if (entries.length === 0 && pendingCut.size === 0) return;
       entries = [];
+      pendingCut = NO_PENDING_CUT;
       emit();
     },
     isEmpty: () => entries.length === 0,
     generation: () => generation,
     bindUser: (uid) => {
       if (boundUid === uid) return;
-      const hadEntries = entries.length > 0;
+      const hadState = entries.length > 0 || pendingCut.size > 0;
       boundUid = uid;
       generation += 1;
       entries = [];
-      if (hadEntries) emit();
+      pendingCut = NO_PENDING_CUT;
+      if (hadState) emit();
     },
     subscribe: (listener) => {
       listeners.add(listener);

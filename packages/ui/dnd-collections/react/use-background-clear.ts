@@ -45,6 +45,12 @@ const NON_BACKGROUND_SELECTOR = [
   "[role='radio']",
   "[role='switch']",
   "[role='separator']",
+  // A toolbar's BUTTONS are already covered above, but its padding and its
+  // separators are not — and a toolbar that floats over the surface (a
+  // consumer's contextual selection toolbar, say) is exactly where a stray
+  // click lands. Clearing there would dismiss the toolbar out from under the
+  // click that was aimed at it.
+  "[role='toolbar']",
 ].join(", ");
 
 /**
