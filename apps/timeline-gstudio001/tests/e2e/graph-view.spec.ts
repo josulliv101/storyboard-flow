@@ -4575,6 +4575,28 @@ test.describe("graph view E2E", () => {
     expect(overlayBox.width).toBeCloseTo(canvasBox.width, 0);
     expect(overlayBox.height).toBeCloseTo(canvasBox.height, 0);
 
+    // …and it is ON TOP of the pane, which the box assertions above cannot
+    // tell you. That is exactly how this shipped broken the first time: the
+    // overlay was z-30 against the pane's `sticky z-40`, so it sat at these
+    // coordinates, at this size, BEHIND the picture it was meant to replace —
+    // every assertion above passed and the feature did nothing.
+    //
+    // Compared numerically rather than hit-tested, because the overlay is
+    // `pointer-events-none` and is therefore invisible to `elementFromPoint`.
+    // Both live in the body stacking context, so the raw values are
+    // comparable.
+    const stacking = await page.evaluate(() => {
+      const overlay = document.querySelector("[data-trim-preview-overlay]");
+      const region = document.querySelector('[data-testid="workbench-preview-region"]');
+      if (!overlay || !region) return null;
+      return {
+        overlay: Number(getComputedStyle(overlay).zIndex),
+        region: Number(getComputedStyle(region).zIndex),
+      };
+    });
+    expect(stacking).not.toBeNull();
+    expect(stacking!.overlay).toBeGreaterThan(stacking!.region);
+
     // THE constraint carried over from round 5: the clock does not move while
     // the pane is borrowed. Asserted DURING the gesture, which is the only
     // window where it means anything — releasing commits the trim, and a
