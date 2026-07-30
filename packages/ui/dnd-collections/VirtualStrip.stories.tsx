@@ -1432,6 +1432,19 @@ export const FineKeyboardTrim: Story = {
     }
     await waitFor(() => expect(width("img")).toBe(96));
 
+    // META is the same chord. Ctrl-only shipped first and left macOS with no
+    // fine trim at all — Ctrl+Arrow is Mission Control there and never reaches
+    // the page. Either modifier now, matching what copy/paste and multi-select
+    // already accept.
+    for (let step = 0; step < 10; step += 1) {
+      await user.keyboard("{Meta>}{ArrowRight}{/Meta}");
+    }
+    await waitFor(() => expect(width("img")).toBe(120));
+    for (let step = 0; step < 10; step += 1) {
+      await user.keyboard("{Meta>}{ArrowLeft}{/Meta}");
+    }
+    await waitFor(() => expect(width("img")).toBe(96));
+
     // The video's START edge answers to the vertical pair, same grammar as
     // Alt+Shift — one fine trim is one command, so ten are ten undo steps.
     const vid = nodeCard(canvasElement, "vid");
