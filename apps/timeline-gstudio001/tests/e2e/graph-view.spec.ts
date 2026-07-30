@@ -508,6 +508,11 @@ async function dropOneFile(page: Page, collectionId: string, clientX: number): P
 // opens the timeline in place, and the second control that navigated away was
 // removed deliberately (see graph-sub-timelines). The collection CARD's own
 // open button is the affordance now, so navigation tests go through it.
+/** A button in the floating selection toolbar. Item actions live there now,
+ *  so tests that used to reach into the icon rail come here instead. */
+const toolbarButton = (page: Page, name: string): Locator =>
+  page.getByRole("toolbar", { name: "Selection actions" }).getByRole("button", { name });
+
 const drillButton = (page: Page, timelineName: string): Locator =>
   page.getByRole("button", { name: `Open ${timelineName}`, exact: true }).first();
 
@@ -895,9 +900,9 @@ test.describe("graph view E2E", () => {
     await expect(alphaCard.locator('[data-disabled="true"]')).toHaveCount(0);
   });
 
-  test("right-click offers the rail's actions, and respects the selection", async ({ page }) => {
-    // PL14-007. The menu renders ITEM_ACTION_SPECS — the same list the rail's
-    // contextual cluster renders — so the two cannot drift apart about what an
+  test("right-click offers the toolbar's actions, and respects the selection", async ({ page }) => {
+    // PL14-007. The menu renders ITEM_ACTION_SPECS — the same list the
+    // selection toolbar renders — so the two cannot drift apart about what an
     // item can do.
     //
     // The selection rules were the item's open question, settled to the
@@ -921,14 +926,16 @@ test.describe("graph view E2E", () => {
     await expect(alpha).toHaveAttribute("data-selected", "true");
     expect(await selectedCount()).toBe(1);
 
-    // The rail's actions, in the rail's order.
+    // The toolbar's actions, in the toolbar's order — this menu is flat, so
+    // the overflow half is inlined and Delete still ends the primary run.
     await expect(menu.getByRole("menuitem")).toHaveText([
       "Edit",
       "Copy",
       "Cut",
-      "Duplicate",
-      "Disable",
       "Delete",
+      "Duplicate",
+      "Rename",
+      "Disable",
     ]);
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
@@ -947,7 +954,7 @@ test.describe("graph view E2E", () => {
     await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeEnabled();
     await page.keyboard.press("Escape");
 
-    // 3. It acts on the selection, through the same path the rail uses.
+    // 3. It acts on the selection, through the same path the toolbar uses.
     await alpha.click({ button: "right" });
     await menu.getByRole("menuitem", { name: "Disable" }).click();
     await expect(alpha.locator('[data-disabled="true"]')).toBeVisible();
@@ -2770,7 +2777,7 @@ test.describe("graph view E2E", () => {
       await bravo.click();
       await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await page.getByRole("button", { name: "More item actions" }).click();
+    await toolbarButton(page, "More actions").click();
     await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
 
     // The card stays exactly where it was, muted and badged — never removed.
@@ -2857,36 +2864,29 @@ test.describe("graph view E2E", () => {
     await expect(badge).toBeHidden({ timeout: 2000 });
   });
 
-  test("selecting a clip switches the rail to item actions; Duplicate clones it after itself; Delete returns to normal", async ({
+  test("selecting a clip opens the toolbar; Duplicate clones it after itself; Delete clears", async ({
     page,
   }) => {
     const api = await installGraphApi(page);
     await openGraph(page);
     const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
 
-    // Normal rail: layout controls present, no item actions.
-    await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
+    // Nothing selected: no toolbar at all.
+    await expect(page.getByRole("toolbar", { name: "Selection actions" })).toHaveCount(0);
 
-    // Select alpha → the contextual cluster switches to item actions, the
-    // layout controls give way, and Paste is absent while the clipboard is empty.
+    // Select alpha → the toolbar appears ON the card. The rail is untouched:
+    // it stopped answering to the selection when these actions moved here.
     await expect(async () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await expect(page.getByRole("button", { name: "More item actions" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Grid layout" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Paste", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
-    await expect(page.locator("[data-item-actions-cluster] + div")).toHaveClass(
-      /bg-amber-300\/65/,
-    );
+    const toolbar = page.getByRole("toolbar", { name: "Selection actions" });
+    await expect(toolbar).toBeVisible();
+    await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
 
     // Duplicate → the clone lands right AFTER alpha (index 1), and the focused
     // document persists the add (one write, five clips).
-    await page.getByRole("button", { name: "More item actions" }).click();
+    await toolbar.getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: "Duplicate", exact: true }).click();
     await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(5);
     const order = await stripOrder(page, PROJECT_ID);
@@ -2895,16 +2895,18 @@ test.describe("graph view E2E", () => {
     expect(order[2]).toBe("bravo");
     await expect.poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds.length).toBe(5);
 
-    // Delete removes the (now-selected) clone and returns to the normal rail.
-    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    // Delete removes the (now-selected) clone. With nothing selected the
+    // toolbar has nothing to anchor to and goes away — the selection is what
+    // summons it, not a mode.
+    await toolbar.getByRole("button", { name: "Delete" }).click();
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+    await expect(page.getByRole("toolbar", { name: "Selection actions" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Duplicate", exact: true })).toHaveCount(0);
   });
 
-  test("Copy a clip, drill into a collection, and Paste it there — the rail stays available across the drill-in", async ({
+  test("Copy a clip, drill into a collection, and Paste it there — the clipboard survives the drill-in", async ({
     page,
   }) => {
     const api = await installGraphApi(page);
@@ -2916,26 +2918,32 @@ test.describe("graph view E2E", () => {
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
 
-    // Copy → Paste becomes enabled.
-    await page.getByRole("button", { name: "Copy", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Copy", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Cut", exact: true })).toHaveCount(0);
+    // Copy → the header's paste arms and starts naming its payload. Copy and
+    // Cut STAY where they are: they used to be replaced by Paste, which moved
+    // every action after them the instant anything was copied.
+    await page.getByRole("toolbar", { name: "Selection actions" })
+      .getByRole("button", { name: "Copy" })
+      .click();
+    await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
+    await expect(
+      page.getByRole("toolbar", { name: "Selection actions" })
+        .getByRole("button", { name: "Copy" }),
+    ).toBeVisible();
 
     // Drill into the child collection. The clipboard is a module singleton, so
-    // it survives the client-side navigation: the rail stays in item mode with
-    // Paste available even though the selection is now out of view. The
-    // SELECTION survives the navigation too — see the placement test below for
-    // why the paste must ignore it here and append into the focused child.
+    // it survives the client-side navigation: paste stays available even
+    // though the selection is now out of view. The SELECTION survives the
+    // navigation too — see the placement test below for why the paste must
+    // ignore it here and append into the focused child.
     await page.getByRole("button", { name: "Open Scene A" }).first().click();
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
-    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
 
-    // Paste → alpha's clone appends into the child (after c1/c2), the child
-    // document gets a write, and the rail returns to normal.
-    await page.getByRole("button", { name: "Paste", exact: true }).click();
+    // Paste → alpha's clone appends into the child (after c1/c2) and the child
+    // document gets a write.
+    await page.getByRole("button", { name: /^Paste 1 item/ }).click();
     await expect.poll(() => stripOrder(page, CHILD_ID)).toHaveLength(3);
     expect((await stripOrder(page, CHILD_ID)).slice(0, 2)).toEqual(["c1", "c2"]);
     await expect.poll(() => api.patchesFor(CHILD_ID).at(-1)?.clipIds.length).toBe(3);
@@ -2958,12 +2966,13 @@ test.describe("graph view E2E", () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await page.getByRole("button", { name: "Copy", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+    await toolbarButton(page, "Copy").click();
+    await expect(page.getByRole("button", { name: /^Paste 1 item after/ })).toBeVisible();
 
     // alpha is still selected and still on screen → its clone lands at index 1,
-    // not at the end of the strip.
-    await page.getByRole("button", { name: "Paste", exact: true }).click();
+    // not at the end of the strip. The header's label says so BEFORE the
+    // click, which is the whole reason it names its destination.
+    await page.getByRole("button", { name: /^Paste 1 item after/ }).click();
     await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(5);
     const order = await stripOrder(page, PROJECT_ID);
     expect(order[0]).toBe("alpha");
@@ -2980,7 +2989,7 @@ test.describe("graph view E2E", () => {
       await charlie.click();
       await expect(charlie).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await page.getByRole("button", { name: "Copy", exact: true }).click();
+    await toolbarButton(page, "Copy").click();
 
     await page.getByRole("button", { name: "Open Scene A" }).first().click();
     // The route change itself, not a CHILD card appearing — a sub-row strip
@@ -2989,7 +2998,7 @@ test.describe("graph view E2E", () => {
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
-    await page.getByRole("button", { name: "Paste", exact: true }).click();
+    await page.getByRole("button", { name: /^Paste 1 item/ }).click();
 
     // Appended into the FOCUSED child, after its own cards…
     await expect.poll(() => stripOrder(page, CHILD_ID)).toHaveLength(3);
@@ -3006,7 +3015,7 @@ test.describe("graph view E2E", () => {
     expect(api.patchesFor(PROJECT_ID).some((patch) => patch.clipIds.length > 5)).toBe(false);
   });
 
-  test("Cut removes the clip but keeps it on the clipboard; Paste relocates it", async ({
+  test("Cut then Paste in another collection MOVES the clip across", async ({
     page,
   }) => {
     await installGraphApi(page);
@@ -3018,28 +3027,25 @@ test.describe("graph view E2E", () => {
       await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
 
-    // Cut → bravo leaves the project strip (moved to trash), but the clipboard
-    // keeps an independent copy, so the rail stays in item mode with Paste on.
-    await page.getByRole("button", { name: "Cut", exact: true }).click();
+    // Cut leaves bravo in the strip, dimmed and waiting. It used to be trashed
+    // here, before the user had said where it was going.
+    await toolbarButton(page, "Cut").click();
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
-      .toEqual(["alpha", CHILD_ID, "charlie"]);
-    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
 
-    // Paste into the child collection → the cut clip lands there (a move).
+    // Paste into the child collection → bravo MOVES there, keeping its id.
     await page.getByRole("button", { name: "Open Scene A" }).first().click();
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
-    await page.getByRole("button", { name: "Paste", exact: true }).click();
+    await page.getByRole("button", { name: /^Paste 1 item/ }).click();
     await expect.poll(() => stripOrder(page, CHILD_ID)).toHaveLength(3);
-    // The pasted card IS bravo's clone (same name, fresh id) — not just "some
-    // third child": a paste inserting the wrong entry would still pass a bare
-    // length check.
-    const pasted = strip(page, CHILD_ID).getByRole("button", { name: "bravo", exact: true });
-    await expect(pasted).toBeVisible();
-    await expect(pasted).not.toHaveAttribute("data-node-id", "bravo");
-    await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
+    // The SAME node, not a clone of it. Under the old cut-then-clone model
+    // this card carried a fresh id and the original sat in the trash; a move
+    // brings the item itself, which is what "cut" has always promised.
+    await expect(strip(page, CHILD_ID).locator('[data-node-id="bravo"]')).toBeVisible();
   });
 
   test("keyboard: Ctrl+C copies and Ctrl+V pastes after a drill-in (focus on <body>)", async ({
@@ -3057,7 +3063,7 @@ test.describe("graph view E2E", () => {
     // Ctrl+C — the copy toast is the only visible change, plus Paste arming.
     await page.keyboard.press("Control+c");
     await expect(page.getByText("Copied 1 item.").first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
 
     // Drill in — focus drops to <body> here, which is exactly why the
     // shortcut listener is window-level and not a board-subtree boundary.
@@ -3093,12 +3099,12 @@ test.describe("graph view E2E", () => {
     expect(order[1]).toBe("bravo");
     expect(order[3]).toBe(CHILD_ID);
 
-    // Ctrl+X cuts the selected clone: gone from the strip, Paste armed.
+    // Ctrl+X arms the clone for a move: it stays on the strip, dimmed, and
+    // paste names it as its payload.
     await page.keyboard.press("Control+x");
-    await expect
-      .poll(() => stripOrder(page, PROJECT_ID))
-      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
-    await expect(page.getByRole("button", { name: "Paste", exact: true })).toBeEnabled();
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
+    await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(5);
+    await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
   });
 
   test("multi-select Duplicate in one parent is ONE undoable step", async ({ page }) => {
@@ -3119,8 +3125,10 @@ test.describe("graph view E2E", () => {
 
     // Both copies land as one contiguous block after the LAST source (bravo),
     // keeping the sources' relative order.
-    await page.getByRole("button", { name: "More item actions" }).click();
-    await page.getByRole("menuitem", { name: "Duplicate", exact: true }).click();
+    await toolbarButton(page, "More actions").click();
+    // The row says the COUNT once the selection is plural — "Duplicate" alone
+    // reads as "this card", which is the wrong promise with two selected.
+    await page.getByRole("menuitem", { name: "Duplicate 2 items" }).click();
     await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(6);
     const order = await stripOrder(page, PROJECT_ID);
     expect(order.slice(0, 2)).toEqual(["alpha", "bravo"]);
@@ -4874,11 +4882,12 @@ test.describe("graph view E2E", () => {
       await expect(alpha).toHaveAttribute("data-selected", "true");
     };
 
-    // A CONTROL is an action, not a click-away. The sidebar's Copy button
-    // only exists WHILE something is selected, which makes it the sharpest
-    // case available: if the click cleared, the button it was on would vanish.
+    // A CONTROL is an action, not a click-away. The selection toolbar's Copy
+    // button only exists WHILE something is selected, which makes it the
+    // sharpest case available: if the click cleared, the button it was on
+    // would vanish out from under it.
     await select();
-    await page.getByRole("button", { name: "Copy", exact: true }).click();
+    await toolbarButton(page, "Copy").click();
     await expect(alpha).toHaveAttribute("data-selected", "true");
 
     // A card click still replaces rather than clears.
@@ -5668,5 +5677,342 @@ test.describe("graph view E2E", () => {
       el.scrollLeft = 30_000;
     });
     await expect.poll(markCount).toBeLessThan(120);
+  });
+
+  // ── Contextual selection toolbar ──────────────────────────────────────────
+  //
+  // Item actions moved out of the icon rail and onto the card they act on.
+  // What these pin is the three things that move cost the rail: the rail is a
+  // VIEW rail again, the toolbar is where the pointer already is, and its
+  // action row does not reshuffle as the selection grows.
+
+  /** The floating toolbar. Portalled to the body, so it is never inside a
+   *  surface locator. */
+  function selectionToolbar(page: Page) {
+    return page.getByRole("toolbar", { name: "Selection actions" });
+  }
+
+  test("the rail keeps its view toggles while items are selected", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // The regression that motivated the whole change: selecting used to
+    // REPLACE these with item actions, so you could not select clips and then
+    // go look at them in the other layout.
+    await strip(page, PROJECT_ID).locator('[data-node-id="alpha"]').click();
+    await expect(selectionToolbar(page)).toBeVisible();
+
+    const rail = page.locator("aside");
+    await expect(rail.getByRole("button", { name: "Grid layout" })).toBeVisible();
+    await expect(rail.getByRole("button", { name: "Strip layout" })).toBeVisible();
+    await expect(rail.getByRole("button", { name: /preview/i })).toBeVisible();
+    // And the actions are NOT there — they live on the card now.
+    await expect(rail.getByRole("button", { name: "Delete" })).toHaveCount(0);
+    await expect(rail.getByRole("button", { name: "Copy" })).toHaveCount(0);
+  });
+
+  test("selection survives switching between strip and grid", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await strip(page, PROJECT_ID).locator('[data-node-id="bravo"]').click();
+    await expect(selectionToolbar(page)).toBeVisible();
+
+    await page.locator("aside").getByRole("button", { name: "Grid layout" }).click();
+    await expect
+      .poll(() => gridOrder(page, PROJECT_ID), { timeout: 15000 })
+      .toContain("bravo");
+
+    // Still selected, and the toolbar re-anchored to the card's new position
+    // rather than pointing at where it used to be.
+    await expect(
+      page.locator(
+        `[data-virtual-grid="${PROJECT_ID}"] [data-node-id="bravo"][data-selected="true"]`,
+      ),
+    ).toHaveCount(1);
+    await expect(selectionToolbar(page)).toBeVisible();
+    const card = (await page
+      .locator(`[data-virtual-grid="${PROJECT_ID}"] [data-node-id="bravo"]`)
+      .boundingBox())!;
+    const bar = (await selectionToolbar(page).boundingBox())!;
+    expect(Math.abs(bar.x + bar.width / 2 - (card.x + card.width / 2))).toBeLessThan(2);
+  });
+
+  test("the toolbar follows the last-clicked card, not the whole selection", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    const alpha = (await surface.locator('[data-node-id="alpha"]').boundingBox())!;
+    const onAlpha = (await selectionToolbar(page).boundingBox())!;
+    expect(Math.abs(onAlpha.x + onAlpha.width / 2 - (alpha.x + alpha.width / 2))).toBeLessThan(2);
+    // Adjacent to the card and never ON it. Which SIDE is not asserted: the
+    // strip sits directly under the sticky header, so there is no room above
+    // and the placement legitimately flips below — pinning "above" here would
+    // pin the fixture's scroll position rather than the behaviour.
+    const above = onAlpha.y + onAlpha.height <= alpha.y + 1;
+    const below = onAlpha.y >= alpha.y + alpha.height - 1;
+    expect(above || below).toBe(true);
+
+    // Ctrl+click a second card: the selection grows, and the toolbar moves to
+    // the card just touched. Anchoring to the selection's bounding box would
+    // have parked it between the two, over cards that are not selected.
+    await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["ControlOrMeta"] });
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+    const charlie = (await surface.locator('[data-node-id="charlie"]').boundingBox())!;
+    await expect
+      .poll(async () => {
+        const bar = (await selectionToolbar(page).boundingBox())!;
+        return Math.round(bar.x + bar.width / 2);
+      })
+      .toBe(Math.round(charlie.x + charlie.width / 2));
+  });
+
+  test("the action row does not reshuffle as the selection grows", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const labels = () =>
+      selectionToolbar(page)
+        .getByRole("button")
+        .evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") ?? ""));
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    expect(await labels()).toEqual(["Edit", "Copy", "Cut", "Delete", "More actions"]);
+
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
+    await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["ControlOrMeta"] });
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(3);
+
+    // Labels gain counts; POSITIONS do not move. Removing an unavailable
+    // action would slide every action after it, and the selection count
+    // changes constantly during a multi-select — so the row would shuffle
+    // under the pointer mid-gesture.
+    expect(await labels()).toEqual([
+      "Edit",
+      "Copy 3 items",
+      "Cut 3 items",
+      "Delete 3 items",
+      "More actions",
+    ]);
+    // The count leads the row so the verbs read as selection-scoped.
+    await expect(selectionToolbar(page).locator("[data-selection-toolbar-count]")).toHaveText("3");
+  });
+
+  test("Edit dims for a multi-selection but still says why", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    await surface.locator('[data-node-id="alpha"]').click();
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
+
+    const edit = selectionToolbar(page).getByRole("button", { name: "Edit" });
+    // `aria-disabled`, never the `disabled` attribute: a disabled button
+    // cannot be focused, cannot be hovered usefully on touch, and answers
+    // nothing when pressed — so it can never explain itself.
+    await expect(edit).toHaveAttribute("aria-disabled", "true");
+    await expect(edit).not.toHaveAttribute("disabled", "");
+    await edit.focus();
+    await expect(edit).toBeFocused();
+
+    // The reason reaches a screen reader as a description, not only as a
+    // hover tooltip.
+    const describedBy = await edit.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    await expect(page.locator(`#${describedBy}`)).toHaveText("Edit one item at a time");
+
+    // And pressing it explains rather than doing nothing. `force` because
+    // Playwright's actionability check treats aria-disabled as unclickable —
+    // a real browser does not, which is exactly why the control uses the ARIA
+    // attribute instead of the native one.
+    await edit.click({ force: true });
+    await expect(page.locator(`#${describedBy}`)).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
+  test("cut leaves the originals in place until a paste says where", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="charlie"]').click();
+    await selectionToolbar(page).getByRole("button", { name: "Cut" }).click();
+
+    // Cut used to trash the originals immediately and let paste re-create
+    // them. The item now WAITS, dimmed, for a destination.
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+    await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
+  });
+
+  test("cut then paste is a MOVE, and one undo puts it back", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const before = await stripOrder(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="charlie"]').click();
+    await selectionToolbar(page).getByRole("button", { name: "Cut" }).click();
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await page.getByRole("button", { name: /^Paste 1 item after/ }).click();
+
+    // It MOVED: same count, same id, now behind alpha. A clone-and-trash
+    // would have produced a new id and left the original in the bin.
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID), { timeout: 8000 })
+      .toEqual(["alpha", "charlie", "bravo", CHILD_ID]);
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(0);
+
+    // ONE undo, not two. This is the reason paste dispatches `move-nodes`
+    // rather than add-then-trash: two commands would be two history entries,
+    // and a single Ctrl+Z would restore the original while leaving the copy.
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect.poll(() => stripOrder(page, PROJECT_ID), { timeout: 8000 }).toEqual(before);
+  });
+
+  test("paste with nothing selected appends to the end", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="bravo"]').click();
+    await selectionToolbar(page).getByRole("button", { name: "Copy" }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
+
+    await page.getByRole("button", { name: /^Paste 1 item at end/ }).click();
+    await expect.poll(() => stripOrder(page, PROJECT_ID), { timeout: 8000 }).toHaveLength(5);
+    const order = await stripOrder(page, PROJECT_ID);
+    expect(order.slice(0, 4)).toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+  });
+
+  test("paste lands after the anchor even when the selection is scattered", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="charlie"]').click();
+    await selectionToolbar(page).getByRole("button", { name: "Copy" }).click();
+
+    // A NON-CONTIGUOUS selection: the collection and alpha, with bravo between
+    // them, anchored on alpha (clicked last). There is deliberately no
+    // contiguity special case — contiguity is invisible to the user, and a
+    // rule that silently moved the destination because of it would read as a
+    // bug. The anchor is the card the toolbar is attached to.
+    await surface.locator(`[data-node-id="${CHILD_ID}"]`).click();
+    await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+
+    await page.getByRole("button", { name: /^Paste 1 item after/ }).click();
+    await expect.poll(() => stripOrder(page, PROJECT_ID), { timeout: 8000 }).toHaveLength(5);
+    const order = await stripOrder(page, PROJECT_ID);
+    expect(order[0]).toBe("alpha");
+    expect(order[2]).toBe("bravo");
+  });
+
+  test("pasted items end up selected and briefly highlighted", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="bravo"]').click();
+    await selectionToolbar(page).getByRole("button", { name: "Copy" }).click();
+
+    // Watched rather than sampled: the highlight is transient by design, and
+    // a poll can straddle it.
+    await page.evaluate(() => {
+      const w = window as unknown as { __flash?: number };
+      w.__flash = 0;
+      const tick = () => {
+        const n = document.querySelectorAll('[data-card-just-pasted="true"]').length;
+        if (n > (w.__flash ?? 0)) w.__flash = n;
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+
+    await page.getByRole("button", { name: /^Paste 1 item after/ }).click();
+    await expect.poll(() => stripOrder(page, PROJECT_ID), { timeout: 8000 }).toHaveLength(5);
+
+    // Paste into a long board is otherwise silent — the user clicks and
+    // nothing visibly happens.
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __flash?: number }).__flash ?? 0))
+      .toBeGreaterThan(0);
+    // Selected, so the next action chains onto what was just pasted.
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
+  });
+
+  test("the whole toolbar is reachable from the keyboard alone", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    await surface.locator('[data-node-id="alpha"]').click();
+    await expect(selectionToolbar(page)).toBeVisible();
+
+    // F10 is the toolbar convention, and is free of the modifier collisions
+    // the Alt layer and the trim chords have already claimed here.
+    await page.keyboard.press("F10");
+    await expect(selectionToolbar(page).getByRole("button", { name: "Edit" })).toBeFocused();
+
+    // Arrows move WITHIN the toolbar — one tab stop, not five.
+    await page.keyboard.press("ArrowRight");
+    await expect(selectionToolbar(page).getByRole("button", { name: "Copy" })).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(selectionToolbar(page).getByRole("button", { name: "Edit" })).toBeFocused();
+
+    // Escape clears the selection and hands focus back to the card, so the
+    // keyboard route does not dead-end in a toolbar that just vanished.
+    await page.keyboard.press("Escape");
+    await expect(selectionToolbar(page)).toHaveCount(0);
+    await expect(surface.locator('[data-node-id="alpha"]')).toBeFocused();
+  });
+
+  test("the header offers the same actions when the anchor is off the board", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await expect(selectionToolbar(page)).toBeVisible();
+
+    // Drill into the collection. The selection survives the navigation (that
+    // is deliberate — it is what makes copy-here-paste-there work), but the
+    // anchor card is no longer rendered, so there is nothing to point at.
+    //
+    // Same code path as scrolling one out of view: the placement asks for the
+    // anchor's rect, gets nothing, and stands down rather than guessing. What
+    // must NOT go with it are the actions, which is the header overflow's
+    // entire job.
+    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await strip(page, CHILD_ID)
+      .locator('[data-node-id="c1"]')
+      .waitFor({ state: "visible", timeout: 30000 });
+
+    await expect
+      .poll(
+        async () => {
+          const bar = selectionToolbar(page);
+          if ((await bar.count()) === 0) return "gone";
+          return (await bar.isVisible()) ? "visible" : "hidden";
+        },
+        { timeout: 5000 },
+      )
+      .not.toBe("visible");
+
+    const overflow = page.locator("[data-header-selection-overflow]");
+    await expect(overflow).toBeVisible();
+    await overflow.click();
+    await expect(page.getByRole("menuitem", { name: "Duplicate" })).toBeVisible();
   });
 });

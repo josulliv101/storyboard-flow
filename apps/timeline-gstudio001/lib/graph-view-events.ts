@@ -133,14 +133,21 @@ export type GraphSelectionDetail = Readonly<{
   allDisabled: boolean;
 }>;
 
-/** The per-item actions the sidebar's item-mode cluster can request. */
+/** The per-item actions a selection surface can request. */
 export type GraphItemAction =
   | "copy"
   | "cut"
+  /** Paste into the collection on screen. Lives in the HEADER, not the
+   *  selection toolbar: every other verb here acts ON the selection, while
+   *  paste needs a destination, and a selection is not a destination. */
   | "paste"
+  /** Paste INSIDE the one selected collection, rather than beside it. */
+  | "paste-into"
   | "duplicate"
   | "delete"
   | "cancel"
+  /** Open the inline name editor on the selected item's card. */
+  | "rename"
   /** Skip (or un-skip) the selection in playback, counts and time totals. */
   | "toggle-disabled"
   /** Open the details view for the selection. Meaningful for exactly ONE

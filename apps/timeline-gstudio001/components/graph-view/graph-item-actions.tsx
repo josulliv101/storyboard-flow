@@ -5,6 +5,7 @@ import { useContext, useEffect, useRef, useState } from "react";
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
 import {
   CollectionsContainerContext,
+  focusNodeWhenMounted,
   getChildren,
   isEditableKeyboardTarget,
   parseNodeId,
@@ -20,11 +21,13 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import type { GraphDetailsStore } from "@/lib/graph-details-store";
 import { resolveInsertPlacement } from "@/lib/graph-insert-placement";
 import { cloneNodeForInsert, type CloneForInsert } from "@/lib/graph-node-clone";
+import { graphPasteFlash } from "@/lib/graph-paste-flash";
 import {
   GRAPH_ITEM_ACTION_EVENT,
   GRAPH_RESTORE_ITEM_EVENT,
   broadcastGraphRestoreResult,
   broadcastGraphSelection,
+  requestGraphRenameItem,
   type GraphItemAction,
 } from "@/lib/graph-view-events";
 
@@ -204,6 +207,37 @@ function pasteFromClipboard(store: CollectionsStore, focusedId: string): readonl
     snapshot.interaction.selectedIds,
     focusedId,
   );
+
+  // A pending CUT moves its originals rather than cloning them.
+  //
+  // This is what makes cut+paste a move in the way the word promises: the nodes
+  // keep their ids, their documents are never re-minted, and — the part that
+  // matters most — it is ONE `move-nodes` command, so one Ctrl+Z puts the whole
+  // gesture back. Cloning and then trashing the sources would be two commands
+  // and two history entries, and a single undo would restore the originals
+  // while leaving the copies behind.
+  //
+  // Sources that are no longer in the graph fall through to the clone path
+  // below. That is why Cut still captures a snapshot it usually does not need:
+  // the user can undo the cut away, or delete a source, between cut and paste.
+  const pendingCut = graphClipboard.pendingCutIds();
+  const movable =
+    pendingCut.size > 0
+      ? [...pendingCut].filter((id) => snapshot.graph.nodesById.has(id))
+      : [];
+  if (movable.length > 0 && movable.length === pendingCut.size) {
+    const moved = store.dispatch({
+      type: "move-nodes",
+      nodeIds: movable,
+      toParentId: parentId,
+      toIndex,
+    });
+    // A refused move (dropping a collection inside itself, say) must not fall
+    // back to cloning — that would answer a rejected move by silently making
+    // copies.
+    return moved.ok ? movable : [];
+  }
+
   const clones = entries.map((entry) =>
     cloneNodeForInsert(entry.node, entry.detail, {
       readDocument: (timelineId) => entry.documents[timelineId] ?? null,
@@ -211,6 +245,31 @@ function pasteFromClipboard(store: CollectionsStore, focusedId: string): readonl
     }),
   );
   return insertClones(store, clones, parentId, toIndex);
+}
+
+/**
+ * What happens AFTER a paste lands: select, reveal, highlight, announce.
+ *
+ * Selecting the arrivals (R9.6) is what makes chained work natural — paste,
+ * then immediately move or delete what you just pasted — and it puts the anchor
+ * on the last of them, since selection order is insertion order.
+ */
+function revealPasted(
+  store: CollectionsStore,
+  ids: readonly NodeId[],
+  announce: ((message: string) => void) | undefined,
+): void {
+  if (ids.length === 0) return;
+  store.setSelection(ids);
+  graphPasteFlash.flash(ids);
+  // Focusing scrolls it into view, and retries until virtualization has
+  // actually mounted the card — which is the case that matters, since a paste
+  // at the end of a long grid lands below the fold by definition.
+  const last = ids[ids.length - 1];
+  if (last !== undefined) focusNodeWhenMounted(document.body, last);
+  announce?.(
+    ids.length === 1 ? "1 item pasted." : `${ids.length} items pasted.`,
+  );
 }
 
 /**
@@ -447,26 +506,26 @@ export function GraphItemActionsBridge({
 
     const cutSelection = async () => {
       // Snapshot the ids BEFORE the async capture: the user can change the
-      // selection while documents load, and the trash move below must remove
-      // exactly what was captured — not whatever is selected by then.
+      // selection while documents load, and what is armed below must be exactly
+      // what was captured — not whatever is selected by then.
       const selected = [...store.getSnapshot().interaction.selectedIds];
       if (selected.length === 0) return;
       if (!(await captureSelection(store, details, selected))) return;
       // The capture awaited documents; the session can be torn down (project
-      // switch) meanwhile — the same guard Duplicate uses. Without it the move
-      // below dispatches into a dead store, leaving the clipboard populated
-      // while the originals were never actually removed in the live session.
+      // switch) meanwhile — the same guard Duplicate uses.
       if (!sessionAliveRef.current) return;
-      // Remove the originals (recoverable in trash); the clipboard holds an
-      // independent snapshot, so Paste still relocates them. Item mode stays
-      // alive because the clipboard is now non-empty (Paste remains available).
+      // The originals STAY, dimmed, until a paste says where they are going.
       //
-      // Clear the selection ONLY if the move actually landed: a drag starting
-      // mid-capture makes moveSelectionToTrash a no-op (returns 0, isDragging),
-      // and clearing anyway would leave Cut silently behaving like Copy —
-      // clipboard set, nothing trashed, selection gone.
-      const moved = moveSelectionToTrash(store, trashId, selected, details);
-      if (moved > 0) store.clearSelection();
+      // Cut used to trash them here and let Paste re-create them from the
+      // snapshot. That was recoverable but it was not a move: the item vanished
+      // at the moment of cutting (before the user had chosen a destination),
+      // the trash filled up with things nobody deleted, and pasting produced a
+      // new node with a new id rather than relocating the one you cut.
+      //
+      // The snapshot above is still taken, and is still the fallback when a
+      // source is gone by paste time — see `pasteFromClipboard`.
+      graphClipboard.markPendingCut(selected);
+      store.clearSelection();
     };
 
     const pasteSelection = () => {
@@ -474,9 +533,10 @@ export function GraphItemActionsBridge({
       // Nothing landed (refused dispatch): keep the clipboard so the user can
       // paste somewhere valid instead of silently losing what they copied.
       if (pasted.length === 0) return;
-      // Paste returns to the normal controls: drop the clipboard and selection.
+      // One paste per cut: clearing here is what disarms a pending cut, so the
+      // move cannot be replayed into a second destination.
       graphClipboard.clear();
-      store.clearSelection();
+      revealPasted(store, pasted, announce);
     };
 
     // The ONE funnel every trigger goes through — the sidebar's buttons (via
@@ -505,13 +565,50 @@ export function GraphItemActionsBridge({
         case "paste":
           pasteSelection();
           break;
+        case "paste-into": {
+          // The collection-scoped paste: INSIDE the selected collection rather
+          // than beside it. Same machinery, a different destination — passing
+          // the collection as the "focused" id is exactly what makes
+          // `resolveInsertPlacement` append into it, since the selection (that
+          // same collection) is not a child of itself and so cannot pull the
+          // insert alongside.
+          const selected = [...store.getSnapshot().interaction.selectedIds];
+          const target = selected.length === 1 ? selected[0] : undefined;
+          if (target === undefined) break;
+          if (store.getSnapshot().graph.nodesById.get(target)?.kind !== "collection") break;
+          const pasted = pasteFromClipboard(store, target as string);
+          if (pasted.length === 0) break;
+          graphClipboard.clear();
+          revealPasted(store, pasted, announce);
+          break;
+        }
+        case "rename": {
+          // Renaming is inline, at the card, and each rename site owns its own
+          // editor state — so this asks the SITE to open rather than doing it
+          // here. Same hand-off F2 uses.
+          const selected = [...store.getSnapshot().interaction.selectedIds];
+          const only = selected.length === 1 ? selected[0] : undefined;
+          if (only !== undefined) requestGraphRenameItem(only as string, "card");
+          break;
+        }
         case "duplicate":
           void runExclusive(duplicateSelection);
           break;
-        case "delete":
-          moveSelectionToTrash(store, trashId, undefined, details);
+        case "delete": {
+          const moved = moveSelectionToTrash(store, trashId, undefined, details);
           store.clearSelection();
+          // Says the COUNT, which is the job a confirmation dialog would have
+          // done — and this one does not stand between the user and the action.
+          // Delete here means "move to trash": recoverable from the drawer and
+          // undoable with Ctrl+Z, so a modal asking "are you sure" would guard
+          // a reversible step and train people to dismiss it.
+          if (moved > 0) {
+            toast(`Moved ${moved === 1 ? "1 item" : `${moved} items`} to trash.`, {
+              id: "graph-item-delete",
+            });
+          }
           break;
+        }
         case "toggle-disabled": {
           const selected = [...store.getSnapshot().interaction.selectedIds];
           if (selected.length === 0) break;

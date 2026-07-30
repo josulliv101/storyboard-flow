@@ -4,13 +4,16 @@ import { useContext, useDeferredValue, useEffect, useMemo, useState } from "reac
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import {
+  ClipboardPaste,
   Command,
+  EllipsisVertical,
   FolderPlus,
   FolderTree,
   Redo2,
   Ruler,
   Settings,
   Undo2,
+  X,
 } from "lucide-react";
 
 import {
@@ -27,6 +30,7 @@ import { flattenMediaOrder } from "@storyboard/timeline-domain";
 import { formatDuration } from "@/lib/format-duration";
 import {
   GRAPH_BOARD_MENU_SLOT_ID,
+  requestGraphItemAction,
   requestGraphToolInsert,
 } from "@/lib/graph-view-events";
 import {
@@ -49,6 +53,13 @@ import {
 } from "@/components/core/dropdown-menu";
 import { Slider } from "@/components/core/slider";
 
+import {
+  SelectionOverflowItems,
+  useClipboardCount,
+  useSelectionActionState,
+  useSelectionAnchorId,
+} from "./graph-selection-actions";
+import { GraphSelectionToolbar } from "./graph-selection-toolbar";
 import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
 import { VideoFrameLookAhead } from "./graph-item-content";
 import { BreadcrumbDropZones, DragChromeFade } from "./graph-breadcrumb-drop";
@@ -438,6 +449,102 @@ function HeaderToggle({
 }
 
 /**
+ * Paste, and the two selection controls beside it.
+ *
+ * PASTE IS PERMANENT here, in both the idle and the selection state, and that
+ * is the point of moving it out of the item actions. Every verb in the floating
+ * toolbar acts ON the selection; paste needs a DESTINATION, and a selection is
+ * not a destination. Grouped with the other container-scoped controls (new
+ * folder, view toggles, undo/redo) it says one unambiguous thing: into the
+ * collection you are looking at.
+ *
+ * Its label carries payload AND destination (R9.4), because "Paste" alone
+ * cannot distinguish appending three clips at the end from dropping them after
+ * the card you last touched — and the difference is invisible until it has
+ * already happened.
+ *
+ * The `✕` and `⋮` appear only with a selection. The `⋮` is the reason the
+ * floating toolbar is allowed to hide itself when its anchor scrolls away
+ * (R6.6/R8.3): the actions are still one click from here.
+ */
+function HeaderSelectionCluster({
+  anchorName,
+}: Readonly<{ anchorName: string | null }>) {
+  const store = useCollectionsStore();
+  const state = useSelectionActionState();
+  const clipboardCount = useClipboardCount();
+
+  const payload = clipboardCount === 1 ? "1 item" : `${clipboardCount} items`;
+  const pasteLabel =
+    clipboardCount === 0
+      ? "Paste"
+      : anchorName === null
+        ? `Paste ${payload} at end`
+        : `Paste ${payload} after “${anchorName}”`;
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label={pasteLabel}
+        title={pasteLabel}
+        // Dimmed in place with an empty clipboard (R9.5), never hidden — a
+        // control that comes and goes as you copy things moves the ones beside
+        // it, and this row is where the eye returns for undo.
+        aria-disabled={clipboardCount === 0 || state.busy || undefined}
+        onClick={() => {
+          if (clipboardCount === 0 || state.busy) return;
+          requestGraphItemAction("paste");
+        }}
+        className={cn(
+          "h-8 w-8",
+          clipboardCount === 0 || state.busy
+            ? "cursor-not-allowed text-zinc-600 hover:text-zinc-600"
+            : HEADER_TOGGLE_IDLE,
+        )}
+      >
+        <ClipboardPaste aria-hidden className="h-4 w-4" />
+      </Button>
+      {state.hasSelection ? (
+        <>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Clear selection"
+            title="Clear selection (Esc)"
+            data-clear-selection
+            onClick={() => store.clearSelection()}
+            className={cn("h-8 w-8", HEADER_TOGGLE_IDLE)}
+          >
+            <X aria-hidden className="h-4 w-4" />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="More selection actions"
+                data-header-selection-overflow
+                className={cn("h-8 w-8", HEADER_TOGGLE_IDLE)}
+              >
+                <EllipsisVertical aria-hidden className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="bottom" align="end">
+              <SelectionOverflowItems state={state} />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+/**
  * Undo/redo as ICON buttons, matching the toolbar's other ghost icon controls
  * rather than the package's generic text-label `UndoRedoControls`. App-local
  * on purpose: the icon styling is this toolbar's design, so it stays out of
@@ -633,6 +740,15 @@ export function GraphBoard({
     [flatItems],
   );
 
+  // Resolved ONCE, here, and handed to both consumers. The floating toolbar
+  // anchors to this card and the header's paste label names it, so two
+  // independent resolutions could disagree — the toolbar pointing at one card
+  // while the label promised another.
+  const anchorId = useSelectionAnchorId();
+  const anchorName = useCollectionsSelector((s) =>
+    anchorId === null ? null : (s.graph.nodesById.get(anchorId)?.name ?? null),
+  );
+
   return (
     <OpenKeyBoundary trashId={trashRootId}>
       {/* Spans the header AND the surfaces: the toolbar toggle sets the mode,
@@ -659,6 +775,11 @@ export function GraphBoard({
         {/* The "?" sheet. Every gesture in this view is invisible otherwise —
             hold-to-drag, O, F2, the whole Alt layer (PL11-007). */}
         <GraphShortcuts />
+        {/* Item actions, anchored to the card they act on rather than parked
+            in the icon rail 1600px away. Portals to the body, so mounting it
+            here only decides which providers it can see — it needs the store
+            and the details context, both of which are above this point. */}
+        <GraphSelectionToolbar anchorId={anchorId} />
         <div className="flex flex-col gap-2">
           {/* Pinned so the controls stay reachable while scrolling the
               surfaces. It sticks just BELOW the sticky preview via the offset
@@ -743,6 +864,11 @@ export function GraphBoard({
                 label={childrenShown ? "Hide children timelines" : "Show children timelines"}
                 title="Children timelines — show the nested timeline tree"
               />
+              <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
+              {/* Container-scoped, so it sits with history rather than with the
+                  view group: paste changes what is IN the collection, undo and
+                  redo change what is in it too. */}
+              <HeaderSelectionCluster anchorName={anchorName} />
               <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               <GraphUndoRedo />
               {/* Board options are no longer here — they render in the icon

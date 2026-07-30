@@ -49,6 +49,8 @@ import { GraphViewNavContext } from "./graph-navigation";
 import { TrimPanel } from "./graph-trim-panel";
 import { GraphItemContextMenu } from "./graph-item-context-menu";
 import { createDerivedCache } from "@/lib/derived-cache";
+import { graphClipboard } from "@/lib/graph-clipboard";
+import { graphPasteFlash } from "@/lib/graph-paste-flash";
 import { formatDuration, formatSeconds } from "@/lib/format-duration";
 import {
   collectionPreviewFrameUrl,
@@ -1292,16 +1294,76 @@ const GraphMediaItem = memo(function GraphMediaItem({
  * primitive, so the dispatcher re-renders only if a node changes kind — which
  * never happens after creation.
  */
+/**
+ * This card's two clipboard states, each subscribed PER NODE.
+ *
+ * Narrowed on purpose. Both stores publish a set of ids, and reading the set
+ * would re-render every card on the board whenever anything anywhere was cut or
+ * pasted — the package's render-efficiency invariant, and the mistake the
+ * context menu's state hook already exists to avoid. Asking "is it me?" returns
+ * a boolean that does not move for an uninvolved card.
+ */
+function useCardClipboardState(id: NodeId): Readonly<{
+  pendingCut: boolean;
+  flashing: boolean;
+}> {
+  const pendingCut = useSyncExternalStore(
+    graphClipboard.subscribe,
+    () => graphClipboard.isPendingCut(id),
+    () => false,
+  );
+  const flashing = useSyncExternalStore(
+    graphPasteFlash.subscribe,
+    () => graphPasteFlash.isFlashing(id),
+    () => false,
+  );
+  return { pendingCut, flashing };
+}
+
 const GraphItemShell = memo(function GraphItemShell(props: CollectionItemShellProps) {
   const isCollection = useCollectionsSelector(
     (s) => s.graph.nodesById.get(props.id)?.kind === "collection",
   );
+  const { pendingCut, flashing } = useCardClipboardState(props.id);
+  // Merged into the content root's own class rather than painted here: the
+  // shell is a transparent interaction layer and all pixels belong to the
+  // content, which is also the only element in this chain with a box — the
+  // wrapper below is `display: contents` so the strip's width measurements
+  // cannot see it.
+  const className = [
+    props.className ?? "",
+    // Cut, not yet pasted: still here, still yours, visibly waiting (R9.9).
+    pendingCut ? "opacity-50" : "",
+    // Just arrived from a paste. `transition-shadow` is what makes it FADE
+    // rather than blink out when the flash store clears — Tailwind's ring is a
+    // box-shadow, so the same transition covers both ends.
+    "transition-shadow duration-500 motion-reduce:transition-none",
+    flashing ? "ring-2 ring-amber-400 ring-offset-2 ring-offset-zinc-950" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   // The right-click menu wraps at the SHELL (PL14-007), which is the one place
   // both card kinds pass through — so collections and media get it from a
   // single wiring rather than each content component growing its own.
   return (
     <GraphItemContextMenu nodeId={props.id}>
-      {isCollection ? <GraphCollectionItem {...props} /> : <GraphMediaItem {...props} />}
+      {/* `display: contents`, for the same reason the context-menu trigger is:
+          this sits inside a virtualized strip that measures item widths, and an
+          extra layout box would change them. It exists to carry the state as an
+          ATTRIBUTE — the classes above say how it looks, this says what it is,
+          which is what a test can ask about. */}
+      <span
+        className="contents"
+        data-card-pending-cut={pendingCut ? "true" : undefined}
+        data-card-just-pasted={flashing ? "true" : undefined}
+      >
+        {isCollection ? (
+          <GraphCollectionItem {...props} className={className} />
+        ) : (
+          <GraphMediaItem {...props} className={className} />
+        )}
+      </span>
     </GraphItemContextMenu>
   );
 });
