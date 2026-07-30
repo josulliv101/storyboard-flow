@@ -643,5 +643,10 @@ one Alt+Shift press**. That equality is the proof — at a 1s step the same ten
 presses land at 336px instead of 120px, which is exactly how the story fails
 when the constant is wrong (verified).
 
-Open, and cheap if wanted: Mac. `Ctrl+Arrow` is Mission Control there, so a Mac
-user would want `Cmd` — the handler currently returns on `metaKey`.
+**Closed the Mac gap.** Ctrl-only shipped first and left macOS with no fine
+trim at all — `Ctrl+Arrow` is Mission Control there and never reaches the page.
+The chord accepts Ctrl OR Meta now, which is not a new decision so much as
+joining the convention already in the codebase: the copy/cut/paste shortcuts
+(`graph-item-actions.tsx`) and the multi-select policy (`interaction-policy.ts`)
+both accept either. Ctrl-only was the outlier. The story presses both; reverting
+to Ctrl-only fails the Meta half (`expected 96 to be 120`).

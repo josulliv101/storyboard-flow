@@ -342,11 +342,18 @@ export function useCollectionsKeyboard(args: {
   const handleKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent) => {
       // TWO grammars reach this handler. Alt(+Shift) is the established one;
-      // Ctrl+Arrow alone is the fine trim (PL14-012). Checked as an exact
-      // chord — a held Alt, Meta or Shift makes it something else, which the
-      // Alt grammar below or the browser should have.
+      // Ctrl/Cmd+Arrow alone is the fine trim (PL14-012).
+      //
+      // Ctrl OR META, because that is already this codebase's convention for
+      // "the platform's modifier" — the copy/cut/paste shortcuts and the
+      // multi-select policy both accept either. Ctrl-only shipped first and
+      // was the outlier: on macOS Ctrl+Arrow is Mission Control and never
+      // reaches the page at all, so a Mac user had no fine trim.
+      //
+      // Still an exact chord otherwise: a held Alt or Shift makes it something
+      // else, which the Alt grammar below or the browser should have.
       const fineTrimAction =
-        event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey
+        (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
           ? FINE_TRIM_ACTION_BY_KEY[event.key]
           : undefined;
 
