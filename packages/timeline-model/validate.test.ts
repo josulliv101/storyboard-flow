@@ -144,3 +144,95 @@ describe("isStoredTimelineDocument", () => {
     expect(isStoredTimelineDocument({ id: "", title: "Doc", clips: [] })).toBe(false);
   });
 });
+
+// Numeric invariants (external review, 2026-07-30). Finiteness alone let a
+// payload satisfy the guard and still violate the model it claims to be —
+// negative spans, a fractional index, a zero aspect, trims longer than the
+// source. Each was accepted, persisted, and only failed later in packing or
+// hydration, a long way from the write that caused it.
+//
+// The ACCEPT cases matter as much as the reject ones: this guards the write
+// path our own client goes through, so a rule that is merely stricter is a
+// rule that stops the app saving.
+
+describe("numeric invariants", () => {
+  const clip = (over: Record<string, unknown>) => ({ ...image, ...over });
+
+  it.each([
+    ["a negative duration", { duration: -1 }],
+    ["a negative start time", { startTime: -0.5 }],
+    ["a negative source duration", { sourceDuration: -4 }],
+    ["a negative trim in", { trimIn: -1 }],
+    ["a negative trim out", { trimOut: -1 }],
+    ["a negative playback duration", { playbackDuration: -2 }],
+    ["a fractional index", { index: 1.5 }],
+    ["a negative index", { index: -1 }],
+    ["a zero aspect", { aspect: 0 }],
+    ["a negative aspect", { aspect: -1.78 }],
+  ])("rejects %s", (_label, over) => {
+    expect(isTimelineClip(clip(over))).toBe(false);
+  });
+
+  it("rejects trims that leave nothing of the source", () => {
+    // 6 + 5 > 10: the clip would have negative effective duration, which the
+    // packer turns into overlapping geometry rather than an error.
+    expect(isTimelineClip(clip({ sourceDuration: 10, trimIn: 6, trimOut: 5 }))).toBe(false);
+  });
+
+  it("ACCEPTS trims that exactly consume the source", () => {
+    // Reachable by dragging a handle to the end. `<` would refuse a save the
+    // user can perform.
+    expect(isTimelineClip(clip({ sourceDuration: 10, trimIn: 4, trimOut: 6 }))).toBe(true);
+  });
+
+  it("ACCEPTS float dust past the source", () => {
+    // Trims accumulate from pointer deltas; 0.1 + 0.2 is famously not 0.3.
+    // The tolerance is arithmetic, not slack.
+    expect(isTimelineClip(clip({ sourceDuration: 0.3, trimIn: 0.1, trimOut: 0.2 }))).toBe(true);
+  });
+
+  it("ACCEPTS a zero duration — an empty hydrated collection has no span", () => {
+    expect(isTimelineClip(clip({ duration: 0, sourceDuration: 0, trimIn: 0, trimOut: 0 })))
+      .toBe(true);
+  });
+
+  it("ACCEPTS a fractional trackIndex, deliberately", () => {
+    // It should be an integer, but a legacy stored detail carrying a float
+    // would then be unable to write itself back, and the field is inert until
+    // multi-track lands. Pinned so the leniency is a decision, not a gap.
+    expect(isTimelineClip(clip({ trackIndex: 0.5 }))).toBe(true);
+  });
+
+  it("rejects a fractional or negative collection itemCount", () => {
+    expect(isTimelineClip({ ...collection, itemCount: 2.5 })).toBe(false);
+    expect(isTimelineClip({ ...collection, itemCount: -1 })).toBe(false);
+  });
+
+  it("rejects a playable duration longer than the span it is drawn from", () => {
+    // playableDuration counts the ENABLED subset, so it cannot exceed the
+    // layout span that includes the disabled ones too.
+    expect(isTimelineClip({ ...collection, duration: 4, playableDuration: 9 })).toBe(false);
+    expect(isTimelineClip({ ...collection, duration: 9, playableDuration: 4 })).toBe(true);
+  });
+
+  it("rejects a negative preview trimIn", () => {
+    expect(
+      isTimelineClip({
+        ...collection,
+        previewItems: [
+          { id: "p", kind: "image", src: "s", alt: "a", trimIn: -1 },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("still rejects the whole document when one clip breaks a rule", () => {
+    expect(
+      isStoredTimelineDocument({
+        id: "doc",
+        title: "Doc",
+        clips: [image, clip({ duration: -1 })],
+      }),
+    ).toBe(false);
+  });
+});
