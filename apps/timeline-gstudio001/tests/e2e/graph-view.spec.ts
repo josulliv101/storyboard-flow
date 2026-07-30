@@ -895,6 +895,65 @@ test.describe("graph view E2E", () => {
     await expect(alphaCard.locator('[data-disabled="true"]')).toHaveCount(0);
   });
 
+  test("right-click offers the rail's actions, and respects the selection", async ({ page }) => {
+    // PL14-007. The menu renders ITEM_ACTION_SPECS — the same list the rail's
+    // contextual cluster renders — so the two cannot drift apart about what an
+    // item can do.
+    //
+    // The selection rules were the item's open question, settled to the
+    // convention every file manager uses. Both halves are asserted here
+    // because the second one is destructive if wrong: collapsing a
+    // multi-selection at the moment the user reaches for Delete would delete
+    // one of six.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const bravo = strip(page, PROJECT_ID).locator('[data-node-id="bravo"]');
+    const menu = page.locator("[data-graph-item-context-menu]");
+    const selectedCount = () =>
+      strip(page, PROJECT_ID).locator('[data-node-id][aria-pressed="true"]').count();
+
+    // 1. Right-click an UNSELECTED card → it becomes the selection.
+    expect(await selectedCount()).toBe(0);
+    await alpha.click({ button: "right" });
+    await expect(menu).toHaveCount(1);
+    await expect(alpha).toHaveAttribute("data-selected", "true");
+    expect(await selectedCount()).toBe(1);
+
+    // The rail's actions, in the rail's order.
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      "Edit",
+      "Copy",
+      "Cut",
+      "Duplicate",
+      "Disable",
+      "Delete",
+    ]);
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+
+    // 2. Right-click INSIDE a multi-selection → the selection survives.
+    await bravo.click({ modifiers: ["Control"] });
+    expect(await selectedCount()).toBe(2);
+    await alpha.click({ button: "right" });
+    await expect(menu).toHaveCount(1);
+    expect(await selectedCount()).toBe(2);
+
+    // …and the menu describes THAT selection: Edit is single-selection only,
+    // so it disables rather than vanishing — a control that disappears
+    // teaches nothing.
+    await expect(menu.getByRole("menuitem", { name: "Edit" })).toBeDisabled();
+    await expect(menu.getByRole("menuitem", { name: "Delete" })).toBeEnabled();
+    await page.keyboard.press("Escape");
+
+    // 3. It acts on the selection, through the same path the rail uses.
+    await alpha.click({ button: "right" });
+    await menu.getByRole("menuitem", { name: "Disable" }).click();
+    await expect(alpha.locator('[data-disabled="true"]')).toBeVisible();
+    await expect(bravo.locator('[data-disabled="true"]')).toBeVisible();
+  });
+
   test("board options live in the icon rail, below the trash", async ({ page }) => {
     // PL14-005. The menu is rendered by the BOARD and portalled into a slot the
     // rail publishes, so it keeps its real props while its trigger sits with

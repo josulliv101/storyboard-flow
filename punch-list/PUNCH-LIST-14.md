@@ -335,24 +335,59 @@ instead of the outcome against reality.
 
 ## PL14-007 — Right-click context menu on an item
 
-- Status: Not started
-- Area: `graph-item-content.tsx`, `graph-item-actions.tsx`
+- Status: Complete
+- URL: http://localhost:3000/timeline/project-1784393947379-3a6k68/graph
+- Area: `lib/graph-item-action-specs.ts` (new), `components/core/context-menu.tsx`
+  (new), `graph-item-context-menu.tsx` (new), `graph-item-content.tsx`,
+  `tests/e2e/graph-view.spec.ts`
 - Screenshot: Not captured
 
-Right-clicking an item should open a context menu offering the same options the
-sidebar item-actions cluster offers when an item is selected.
+Right-clicking a card opens the rail's actions: Edit, Copy, Cut (or Paste),
+Duplicate, Disable/Enable, Delete.
 
-The actions already exist in one place (PL13-009 moved Details into that
-cluster); this should present the same set rather than growing a second
-definition of what an item's actions are — one source, two surfaces.
+**The selection rules were the open question**, settled to the convention every
+file manager and editor uses, because a context menu that behaves unusually is
+worse than one that behaves plainly:
 
-Open: whether right-clicking an UNSELECTED item selects it first (the common
-convention) or acts on it without changing selection, and what the menu does
-when the right-clicked item is part of a multi-selection.
+- right-click an UNSELECTED item → it becomes the selection, then the action
+  applies to it
+- right-click INSIDE a selection → the selection survives and the action
+  applies to all of it
 
-Done when: right-click opens a menu with the item-actions options, driven from
-the same definition as the sidebar cluster, dismissible by Escape and outside
-click, and reachable by keyboard (context-menu key / Shift+F10).
+The second is the one that matters. Naively selecting the clicked node would
+collapse a six-item selection to one at the exact moment the user reached for
+Delete — so the e2e asserts it, and reverting the guard fails it with
+`Expected: 2, Received: 1`.
+
+**Wired at the SHELL**, which is the one place both card kinds pass through, so
+collections and media get it from a single wiring. The trigger is
+`display: contents` — it sits inside a virtualized strip that measures item
+widths, and an extra layout box there would change them. Events still bubble to
+it, which is all a context menu needs: its position comes from the pointer, not
+the trigger's rect.
+
+Radix's context-menu primitive rather than a repositioned DropdownMenu, because
+everything that makes a context menu correct is already solved there — opening
+at the pointer, the keyboard route (Shift+F10 and the context-menu key),
+Escape, outside-press, focus return, long-press on touch. Styled to match
+`dropdown-menu.tsx` deliberately: the rail's overflow menu and this one offer
+the same actions and must not look like two features.
+
+**`busy` is not modelled** in the menu. The receiving side already refuses an
+action while one is in flight, and a menu is open for a moment rather than a
+session — mirroring the flag would mean a second subscription for a state this
+surface can barely observe.
+
+### Still two definitions, and that is the follow-up
+
+The item asked for "one source, two surfaces". `ITEM_ACTION_SPECS` is that
+source and the MENU renders it — but the rail still has its own JSX, so the
+pair is not yet unified. Folding the rail in means teaching the list about the
+rail's primary/overflow split (it hides Duplicate and Disable behind "More",
+which is why the two orders differ: a flat menu has no overflow and puts Delete
+last, where a destructive action is hardest to hit on the way to something
+else). That is its own change and was not worth destabilising a heavily-tuned
+surface at the end of a long batch.
 
 ## PL14-008 — An untouched, empty collection is discarded, not trashed
 

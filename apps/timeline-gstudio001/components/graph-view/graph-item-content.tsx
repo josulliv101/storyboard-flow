@@ -47,6 +47,7 @@ import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { useCollectionHoverTarget } from "./graph-collection-hover";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TrimPanel } from "./graph-trim-panel";
+import { GraphItemContextMenu } from "./graph-item-context-menu";
 import { createDerivedCache } from "@/lib/derived-cache";
 import { formatDuration, formatSeconds } from "@/lib/format-duration";
 import {
@@ -1295,7 +1296,14 @@ const GraphItemShell = memo(function GraphItemShell(props: CollectionItemShellPr
   const isCollection = useCollectionsSelector(
     (s) => s.graph.nodesById.get(props.id)?.kind === "collection",
   );
-  return isCollection ? <GraphCollectionItem {...props} /> : <GraphMediaItem {...props} />;
+  // The right-click menu wraps at the SHELL (PL14-007), which is the one place
+  // both card kinds pass through — so collections and media get it from a
+  // single wiring rather than each content component growing its own.
+  return (
+    <GraphItemContextMenu nodeId={props.id}>
+      {isCollection ? <GraphCollectionItem {...props} /> : <GraphMediaItem {...props} />}
+    </GraphItemContextMenu>
+  );
 });
 
 export const GRAPH_VIEW_COMPONENTS: CollectionsComponents = {
