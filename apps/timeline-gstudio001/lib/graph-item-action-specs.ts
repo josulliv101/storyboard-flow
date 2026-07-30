@@ -39,8 +39,20 @@ export type ItemActionState = Readonly<{
   allDisabled: boolean;
 }>;
 
+/**
+ * Where the RAIL puts an action. The rail is a narrow column, so it shows the
+ * common few and folds the rest behind a "More" overflow; a flat menu has
+ * nowhere to fold and shows everything.
+ *
+ * Modelled here rather than in the rail because it is the last thing the two
+ * surfaces disagreed about — with it, both render the same ordered list and
+ * differ only in whether they respect the grouping.
+ */
+export type ItemActionGroup = "primary" | "overflow";
+
 export type ItemActionSpec = Readonly<{
   action: GraphItemAction;
+  group: ItemActionGroup;
   /** Resolved against state, because two of them change wording: Disable
    *  becomes Enable, and the icon follows. */
   label: (state: ItemActionState) => string;
@@ -65,21 +77,17 @@ const always = () => true;
  * (PL13-009). Delete LAST, because a destructive action at the end of a menu
  * is harder to hit on the way to something else.
  *
- * Not identical to the rail's visual order, and it cannot be: the rail hides
- * Duplicate and Disable behind a "More" overflow, which is an affordance
- * rather than an action, so its Delete sits before that button. A flat menu
- * has no overflow to hide behind and inlines both. Same actions, same relative
- * grouping; the one difference is where Delete falls, and last is the safer
- * answer for the surface that has no overflow.
- *
- * NOTE: the rail does not render from this list yet — it still has its own
- * JSX. Folding it in means teaching this list about the primary/overflow split
- * and is its own change; until then "one definition" is true of the menu and
- * aspirational of the pair.
+ * ONE order serves both surfaces, which is what `group` buys. Walking it and
+ * respecting the grouping gives the rail exactly what it had — Edit, Copy,
+ * Cut (or Paste), Delete, then More(Duplicate, Disable). Walking it and
+ * ignoring the grouping gives the menu exactly what it had — the same run with
+ * both overflow actions inlined and Delete still last. Neither surface needed
+ * its order bent to share the list.
  */
 export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
   {
     action: "details",
+    group: "primary",
     label: () => "Edit",
     description: () => "Open the selected item's details",
     icon: () => Pencil,
@@ -88,6 +96,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
   },
   {
     action: "copy",
+    group: "primary",
     label: () => "Copy",
     description: () => "Copy the selected item",
     icon: () => Copy,
@@ -96,6 +105,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
   },
   {
     action: "cut",
+    group: "primary",
     label: () => "Cut",
     description: () => "Cut the selected item — paste to move it",
     icon: () => Scissors,
@@ -104,6 +114,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
   },
   {
     action: "paste",
+    group: "primary",
     label: () => "Paste",
     description: () => "Paste into this timeline",
     icon: () => ClipboardPaste,
@@ -112,6 +123,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
   },
   {
     action: "duplicate",
+    group: "overflow",
     label: () => "Duplicate",
     description: () => "Duplicate the selected item",
     icon: () => CopyPlus,
@@ -120,6 +132,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
   },
   {
     action: "toggle-disabled",
+    group: "overflow",
     label: (s) => (s.allDisabled ? "Enable" : "Disable"),
     description: (s) =>
       s.allDisabled
@@ -131,6 +144,7 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
   },
   {
     action: "delete",
+    group: "primary",
     label: () => "Delete",
     description: () => "Move the selected item to trash",
     icon: () => Trash2,
@@ -139,7 +153,17 @@ export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
   },
 ];
 
-/** What a surface should actually render, in order. */
-export function visibleItemActions(state: ItemActionState): readonly ItemActionSpec[] {
-  return ITEM_ACTION_SPECS.filter((spec) => spec.visible(state));
+/**
+ * What a surface should actually render, in order.
+ *
+ * `group` omitted = everything, which is the flat menu. Pass one and you get
+ * the rail's halves.
+ */
+export function visibleItemActions(
+  state: ItemActionState,
+  group?: ItemActionGroup,
+): readonly ItemActionSpec[] {
+  return ITEM_ACTION_SPECS.filter(
+    (spec) => spec.visible(state) && (group === undefined || spec.group === group),
+  );
 }

@@ -378,16 +378,24 @@ action while one is in flight, and a menu is open for a moment rather than a
 session — mirroring the flag would mean a second subscription for a state this
 surface can barely observe.
 
-### Still two definitions, and that is the follow-up
+### One definition now — the follow-up landed
 
-The item asked for "one source, two surfaces". `ITEM_ACTION_SPECS` is that
-source and the MENU renders it — but the rail still has its own JSX, so the
-pair is not yet unified. Folding the rail in means teaching the list about the
-rail's primary/overflow split (it hides Duplicate and Disable behind "More",
-which is why the two orders differ: a flat menu has no overflow and puts Delete
-last, where a destructive action is hardest to hit on the way to something
-else). That is its own change and was not worth destabilising a heavily-tuned
-surface at the end of a long batch.
+Shipped in two steps. The menu rendered `ITEM_ACTION_SPECS` first while the
+rail kept its own JSX, which was two definitions with a shared intention. The
+rail renders the list too now.
+
+What made it possible was `group: "primary" | "overflow"`. The rail is a narrow
+column that folds the uncommon actions behind "More"; a flat menu has nowhere
+to fold. With the grouping in the data, ONE ordered list serves both: walk it
+respecting `group` and the rail gets exactly what it had (Edit, Copy, Cut or
+Paste, Delete, then More→Duplicate, Disable); walk it ignoring `group` and the
+menu gets exactly what it had (the same run, overflow inlined, Delete still
+last). Neither surface had its order bent to share.
+
+Verified as invisible: the rail still renders Edit, Copy, Cut, Delete, More
+with Done outside the amber block, and the overflow still holds Duplicate and
+Disable. Eight unit tests pin the shapes, including that the two surfaces cover
+the SAME action set — the drift this list exists to prevent.
 
 ## PL14-008 — An untouched, empty collection is discarded, not trashed
 

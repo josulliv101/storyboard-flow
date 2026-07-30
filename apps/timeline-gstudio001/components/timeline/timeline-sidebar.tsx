@@ -45,6 +45,10 @@ import {
   SIDEBAR_ICON_BASE,
   SIDEBAR_ICON_IDLE,
 } from "./sidebar-icon-styles";
+import {
+  visibleItemActions,
+  type ItemActionState,
+} from "@/lib/graph-item-action-specs";
 import { graphClipboard } from "@/lib/graph-clipboard";
 import { toast } from "@/components/core/sonner";
 import { cn } from "@/lib/utils";
@@ -357,16 +361,9 @@ function ItemActionButton({
   );
 }
 
-function ItemActionsOverflow({
-  hasSelection,
-  busy,
-  allDisabled,
-}: Readonly<{
-  hasSelection: boolean;
-  busy: boolean;
-  allDisabled: boolean;
-}>) {
-  const disabled = busy || !hasSelection;
+function ItemActionsOverflow({ state }: Readonly<{ state: ItemActionState }>) {
+  const actions = visibleItemActions(state, "overflow");
+  const disabled = state.busy || !state.hasSelection;
   const tooltipId = "sidebar-tooltip-item-more";
 
   return (
@@ -392,24 +389,23 @@ function ItemActionsOverflow({
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="start">
         <DropdownMenuGroup>
-          <DropdownMenuItem
-            disabled={disabled}
-            onSelect={() => requestGraphItemAction("duplicate")}
-          >
-            <CopyPlus className="mr-2 h-4 w-4" />
-            Duplicate
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={disabled}
-            onSelect={() => requestGraphItemAction("toggle-disabled")}
-          >
-            {allDisabled ? (
-              <CircleCheck className="mr-2 h-4 w-4" />
-            ) : (
-              <Ban className="mr-2 h-4 w-4" />
-            )}
-            {allDisabled ? "Enable" : "Disable"}
-          </DropdownMenuItem>
+          {/* The rail's half of ITEM_ACTION_SPECS — the actions common enough
+              to keep but not common enough to spend a tile on. The card's
+              right-click menu inlines these instead, having no overflow to
+              fold into. */}
+          {actions.map((spec) => {
+            const Icon = spec.icon(state);
+            return (
+              <DropdownMenuItem
+                key={spec.action}
+                disabled={spec.disabled(state)}
+                onSelect={() => requestGraphItemAction(spec.action)}
+              >
+                <Icon className="mr-2 h-4 w-4" />
+                {spec.label(state)}
+              </DropdownMenuItem>
+            );
+          })}
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -425,23 +421,7 @@ function ItemActionsOverflow({
  * close). While an async
  * action is in flight (`busy`) every button disables, so nothing double-fires.
  */
-function ItemActionsCluster({
-  hasSelection,
-  isSingleSelection,
-  canPaste,
-  busy,
-  allDisabled,
-}: Readonly<{
-  hasSelection: boolean;
-  /** Exactly ONE item selected — the only shape the details view can render.
-   *  Distinct from `hasSelection`, which every other action here is happy
-   *  with. */
-  isSingleSelection: boolean;
-  canPaste: boolean;
-  busy: boolean;
-  /** Every selected item is already skipped — flips the toggle to "Enable". */
-  allDisabled: boolean;
-}>) {
+function ItemActionsCluster({ state }: Readonly<{ state: ItemActionState }>) {
   return (
     <div className="flex w-full flex-col items-stretch gap-0">
       {/* Only actions that operate on the selection or clipboard sit inside the amber
@@ -453,57 +433,27 @@ function ItemActionsCluster({
         data-item-actions-cluster
         className="flex w-full flex-col items-stretch gap-0 bg-amber-200/[0.025]"
       >
-        {/* FIRST, because it is the action that tells you WHAT you have
-            selected before you act on it — and because the details view lost
-            its per-card trigger to get here (PL13-009). Disabled, not hidden,
-            past one selection: a control that vanishes teaches nothing, while a
-            disabled one says "wrong shape of selection for that". */}
-        <ItemActionButton
-          action="details"
-          icon={Pencil}
-          label="Edit"
-          description="Open the selected item's details"
-          disabled={busy || !isSingleSelection}
-        />
-        {!canPaste ? (
-          <>
-            <ItemActionButton
-              action="copy"
-              icon={Copy}
-              label="Copy"
-              description="Copy the selected item"
-              disabled={busy || !hasSelection}
-            />
-            <ItemActionButton
-              action="cut"
-              icon={Scissors}
-              label="Cut"
-              description="Cut the selected item — paste to move it"
-              disabled={busy || !hasSelection}
-            />
-          </>
-        ) : null}
-        {canPaste ? (
+        {/* Rendered from ITEM_ACTION_SPECS (PL14-007), the same ordered list
+            the card's right-click menu walks — so the two surfaces cannot
+            drift apart about what an item can do, which is the whole reason
+            that list exists. The rail respects `group`, the flat menu ignores
+            it; neither had to bend its order to share.
+
+            Details still comes first, and still DISABLES rather than hides
+            past one selection: a control that vanishes teaches nothing, while
+            a disabled one says "wrong shape of selection for that". Copy/Cut
+            still swap for Paste — that is `visible` in the spec now. */}
+        {visibleItemActions(state, "primary").map((spec) => (
           <ItemActionButton
-            action="paste"
-            icon={ClipboardPaste}
-            label="Paste"
-            description="Paste into this timeline"
-            disabled={busy}
+            key={spec.action}
+            action={spec.action}
+            icon={spec.icon(state)}
+            label={spec.label(state)}
+            description={spec.description(state)}
+            disabled={spec.disabled(state)}
           />
-        ) : null}
-        <ItemActionButton
-          action="delete"
-          icon={Trash2}
-          label="Delete"
-          description="Move the selected item to trash"
-          disabled={busy || !hasSelection}
-        />
-        <ItemActionsOverflow
-          hasSelection={hasSelection}
-          busy={busy}
-          allDisabled={allDisabled}
-        />
+        ))}
+        <ItemActionsOverflow state={state} />
       </div>
       <SidebarSeparator selected />
       <ItemActionButton
@@ -511,7 +461,7 @@ function ItemActionsCluster({
         icon={X}
         label="Done"
         description="Exit item actions and clear the clipboard"
-        disabled={busy}
+        disabled={state.busy}
         tone="neutral"
       />
     </div>
@@ -689,11 +639,13 @@ export function TimelineSidebar() {
 
       {activeProjectId && itemMode && (
         <ItemActionsCluster
-          hasSelection={selectionCount > 0}
-          isSingleSelection={selectionCount === 1}
-          canPaste={canPaste}
-          busy={actionBusy}
-          allDisabled={selectionAllDisabled}
+          state={{
+            hasSelection: selectionCount > 0,
+            isSingleSelection: selectionCount === 1,
+            canPaste,
+            busy: actionBusy,
+            allDisabled: selectionAllDisabled,
+          }}
         />
       )}
 
