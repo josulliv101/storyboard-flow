@@ -51,6 +51,16 @@ const NON_BACKGROUND_SELECTOR = [
   // click lands. Clearing there would dismiss the toolbar out from under the
   // click that was aimed at it.
   "[role='toolbar']",
+  // The explicit opt-out, for a COMPOSITE control whose hit area is not the
+  // node carrying the role.
+  //
+  // A slider is the case that forced it: the role sits on the thumb, while the
+  // surface you click to jump the value is the TRACK — a sibling. `closest()`
+  // walks ancestors, so a click on the track matches nothing above and reads as
+  // background, and the selection is cleared by a press aimed squarely at a
+  // control. Marking the control's own wrapper is the general answer, and
+  // cheaper than teaching this list every composite widget's internals.
+  "[data-collections-control]",
 ].join(", ");
 
 /**

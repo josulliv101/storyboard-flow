@@ -4945,8 +4945,18 @@ test.describe("graph view E2E", () => {
     await expect(alpha).not.toHaveAttribute("data-selected", "true");
 
     // The breadcrumb row's own empty space — chrome, but not a control.
-    const headerBox = (await header.boundingBox())!;
-    await page.mouse.click(headerBox.x + headerBox.width - 4, headerBox.y + headerBox.height / 2);
+    //
+    // Measured from the WING rather than from the nav. The nav used to stretch
+    // across its whole column, so "just inside its right edge" was empty space;
+    // it is content-width now (so the save status can sit beside the last
+    // crumb), which put that same point on the crumb button itself — a control,
+    // and correctly not a click-away. The empty chrome is now the wing's
+    // trailing end, past both the trail and the status.
+    const wingBox = (await page
+      .locator('[data-graph-board-header] > div')
+      .filter({ has: header })
+      .boundingBox())!;
+    await page.mouse.click(wingBox.x + wingBox.width - 8, wingBox.y + wingBox.height / 2);
     await expect(bravo).not.toHaveAttribute("data-selected", "true");
 
     // And well outside any surface: the page margin below the board.
@@ -6858,14 +6868,29 @@ test.describe("graph view E2E", () => {
     await surface.locator('[data-node-id="alpha"]').click();
     await expect(anchorMenuButton(page)).toBeVisible();
 
-    // Board options → zoom to the minimum.
-    await page.evaluate(() => {
-      const input = document.querySelector<HTMLInputElement>("[data-graph-zoom-input]");
-      if (input) {
-        input.value = "6";
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-    });
+    // Zoom to the minimum with the header's slider — Home is the standard
+    // slider binding and Radix implements it.
+    //
+    // This used to poke a `[data-graph-zoom-input]` that has never existed in
+    // the source, behind an `if (input)` guard that swallowed the miss. The
+    // test passed without ever zooming, so its premise — a clip too narrow to
+    // host a control — was never actually set up. The assertion below is
+    // deliberately width-agnostic, which is why that went unnoticed.
+    const zoom = page.locator("[data-header-zoom] [role=\"slider\"]");
+    await expect(zoom).toBeVisible();
+    // Dragged to the left end with the POINTER, which is how this control is
+    // actually used and what the move out of the menu was for. Keyboard Home
+    // is Radix's to implement and is not what this test is about.
+    const track = (await page.locator("[data-header-zoom]").boundingBox())!;
+    await page.mouse.click(track.x + 1, track.y + track.height / 2);
+    // NEAR the floor, not exactly on it: the thumb has width, so a click at the
+    // track's left edge lands a step or two in. What the test needs is "zoomed
+    // right out", and the bound is expressed against the slider's OWN
+    // `aria-valuemin` so it cannot drift from the constant.
+    const zoomMin = Number(await zoom.getAttribute("aria-valuemin"));
+    await expect
+      .poll(async () => Number(await zoom.getAttribute("aria-valuenow")))
+      .toBeLessThanOrEqual(zoomMin + 4);
 
     // Whether the ⋮ survives depends on the clip's duration at that zoom;
     // what must hold either way is that the actions are reachable.

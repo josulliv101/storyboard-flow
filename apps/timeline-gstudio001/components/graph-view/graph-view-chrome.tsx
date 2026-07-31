@@ -322,8 +322,19 @@ export function GraphBreadcrumb({
         ? projectId
         : null;
 
+  // CONTENT-WIDTH, not stretched.
+  //
+  // This and the nav below used to carry `flex-1`, which made the trail claim
+  // its whole wing however short the path was — so the save status that trails
+  // it (see GraphSaveStatus) rendered hundreds of pixels away from the last
+  // crumb, hard against the centre readout, instead of beside the crumb. The
+  // WING still has `flex-1` in the board's header, which is what keeps the
+  // centre readout centred; the trail itself only needs to be as wide as it is.
+  //
+  // `min-w-0` and `overflow-hidden` stay: they are what let a long path shrink
+  // and truncate inside the wing rather than pushing it open.
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
+    <div className="flex min-w-0 items-center gap-3 overflow-hidden">
       <ParentLink
         href={parentHref}
         parentId={parentCrumbId}
@@ -331,7 +342,7 @@ export function GraphBreadcrumb({
       />
       <nav
         aria-label="Timeline focus path"
-        className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-xs text-zinc-400 select-none"
+        className="flex min-w-0 items-center gap-2 overflow-hidden text-xs text-zinc-400 select-none"
       >
         {/* The project is the ROOT crumb, not a child of a "Projects / Graph"
             chrome path: the trail reads as the timeline tree the user is
