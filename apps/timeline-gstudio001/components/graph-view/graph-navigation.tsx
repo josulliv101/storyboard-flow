@@ -14,7 +14,7 @@ import {
 } from "@storyboard/ui/dnd-collections";
 
 import { toast } from "@/components/core/sonner";
-import { requestGraphRenameItem } from "@/lib/graph-view-events";
+import { GRAPH_OPEN_ITEM_EVENT, requestGraphRenameItem } from "@/lib/graph-view-events";
 
 import type { ClipDetail } from "@storyboard/timeline-domain";
 
@@ -121,6 +121,20 @@ export function GraphViewNavProvider({
   useEffect(() => {
     if (openNodeRef) openNodeRef.current = value.openTimeline;
   }, [openNodeRef, value]);
+
+  // The pill's "Open" arrives here: it is dispatched by the item-actions
+  // bridge, which is a sibling of the board rather than a descendant of this
+  // provider and so cannot reach `openTimeline` through context.
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const nodeId = (event as CustomEvent<string>).detail;
+      if (typeof nodeId === "string" && nodeId.length > 0) {
+        value.openTimeline(parseNodeId(nodeId));
+      }
+    };
+    window.addEventListener(GRAPH_OPEN_ITEM_EVENT, onOpen);
+    return () => window.removeEventListener(GRAPH_OPEN_ITEM_EVENT, onOpen);
+  }, [value]);
 
   return <GraphViewNavContext.Provider value={value}>{children}</GraphViewNavContext.Provider>;
 }

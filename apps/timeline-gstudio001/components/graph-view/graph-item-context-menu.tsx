@@ -15,6 +15,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/core/context-menu";
 import { graphClipboard } from "@/lib/graph-clipboard";
+import { useClipDetail } from "./graph-details-context";
 import { requestGraphItemAction } from "@/lib/graph-view-events";
 import { visibleItemActions, type ItemActionState } from "@/lib/graph-item-action-specs";
 
@@ -85,6 +86,10 @@ function useItemActionState(nodeId: NodeId): ItemActionState {
   // Only ever this node's own name: a single selection containing this node IS
   // this node, and outside the selection the menu is about to make it so.
   const ownName = useCollectionsSelector((s) => s.graph.nodesById.get(nodeId)?.name ?? "");
+  const ownIsCollection = useCollectionsSelector(
+    (s) => s.graph.nodesById.get(nodeId)?.kind === "collection",
+  );
+  const ownDetail = useClipDetail(nodeId as string);
   const allDisabled = useCollectionsSelector((s) => {
     const ids = s.interaction.selectedIds;
     // Same narrowing: outside the selection the honest answer is this node's
@@ -121,6 +126,9 @@ function useItemActionState(nodeId: NodeId): ItemActionState {
     allCollections,
     allMedia,
     singleName: isSingleSelection ? ownName : null,
+    // Narrowed like the rest: whatever the menu is about to act on is this
+    // node, so its own kind is the honest answer.
+    openable: ownIsCollection || ownDetail?.duplicateOfTimelineId !== undefined,
   };
 }
 
@@ -133,9 +141,18 @@ export function GraphItemContextMenu({
   const actions = visibleItemActions(state);
 
   const claimSelection = useCallback(() => {
-    // Only when the node is OUTSIDE the current selection. Inside it, the
-    // selection is what the user meant and must survive the click.
-    if (store.getSnapshot().interaction.selectedIds.has(nodeId)) return;
+    // Outside the selection: this node becomes it. Inside it, the selection is
+    // what the user meant and must survive the click — but the ANCHOR moves to
+    // the clicked card (R4.11).
+    //
+    // That is the point of right-clicking a card that is already selected:
+    // "act on all of this, but aim at that one". The anchor decides where a
+    // paste lands and which card hosts the pill, and before `setAnchor` there
+    // was no way to steer it without deselecting everything else.
+    if (store.getSnapshot().interaction.selectedIds.has(nodeId)) {
+      store.setAnchor(nodeId);
+      return;
+    }
     store.setSelection([nodeId]);
   }, [store, nodeId]);
 

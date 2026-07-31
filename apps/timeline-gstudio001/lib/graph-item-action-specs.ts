@@ -1,5 +1,6 @@
 import {
   Ban,
+  ChevronRight,
   CircleCheck,
   ClipboardPaste,
   Copy,
@@ -50,6 +51,10 @@ export type ItemActionState = Readonly<{
   /** The single selected item's name, for "Paste into 'Scene A'". Null unless
    *  exactly one is selected. */
   singleName: string | null;
+  /** Whether the selection can be drilled into. Not the same as "is a
+   *  collection": a media card that REFERENCES a timeline (a duplicate) opens
+   *  too, which is the rule `openOnClick` already uses for the card body. */
+  openable: boolean;
 }>;
 
 /**
@@ -112,6 +117,23 @@ export function itemCountPhrase(count: number): string {
  * overflow actions inlined and Delete still last.
  */
 export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
+  {
+    // Leads the row because it took the drill chevron's place: the anchor card
+    // gives up its corner controls to host the pill, so the chevron's verb has
+    // to live here or stop existing on that card.
+    action: "open",
+    group: "primary",
+    label: () => "Open",
+    description: () => "Open the selected timeline",
+    icon: () => ChevronRight,
+    visible: always,
+    disabled: (s) => s.busy || !s.isSingleSelection || !s.openable,
+    unavailableReason: (s) => {
+      if (!s.hasSelection) return null;
+      if (!s.isSingleSelection) return "Open one item at a time";
+      return s.openable ? null : "Only timelines can be opened";
+    },
+  },
   {
     action: "details",
     group: "primary",

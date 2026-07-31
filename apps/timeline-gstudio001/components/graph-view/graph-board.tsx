@@ -28,6 +28,7 @@ import {
 import { flattenMediaOrder } from "@storyboard/timeline-domain";
 
 import { formatDuration } from "@/lib/format-duration";
+import { ITEM_ACTION_SPECS } from "@/lib/graph-item-action-specs";
 import {
   GRAPH_BOARD_MENU_SLOT_ID,
   requestGraphItemAction,
@@ -59,7 +60,6 @@ import {
   useSelectionActionState,
   useSelectionAnchorId,
 } from "./graph-selection-actions";
-import { GraphSelectionToolbar } from "./graph-selection-toolbar";
 import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
 import { VideoFrameLookAhead } from "./graph-item-content";
 import { BreadcrumbDropZones, DragChromeFade } from "./graph-breadcrumb-drop";
@@ -547,7 +547,15 @@ function HeaderSelectionCluster({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="bottom" align="end">
-              <SelectionOverflowItems state={state} />
+              {/* ALL of them. This is the fallback for a card too narrow to
+                  host a pill, or one scrolled out of view — so it cannot
+                  assume the pill is offering anything. */}
+              <SelectionOverflowItems
+                state={state}
+                includePrimary={ITEM_ACTION_SPECS.filter((spec) => spec.group === "primary").map(
+                  (spec) => spec.action,
+                )}
+              />
             </DropdownMenuContent>
           </DropdownMenu>
         </>
@@ -752,10 +760,9 @@ export function GraphBoard({
     [flatItems],
   );
 
-  // Resolved ONCE, here, and handed to both consumers. The floating toolbar
-  // anchors to this card and the header's paste label names it, so two
-  // independent resolutions could disagree — the toolbar pointing at one card
-  // while the label promised another.
+  // The pill renders itself, inside whichever card is the anchor. What the
+  // board still needs the anchor for is the header's paste label, which names
+  // the destination.
   const anchorId = useSelectionAnchorId();
   const anchorName = useCollectionsSelector((s) =>
     anchorId === null ? null : (s.graph.nodesById.get(anchorId)?.name ?? null),
@@ -787,11 +794,6 @@ export function GraphBoard({
         {/* The "?" sheet. Every gesture in this view is invisible otherwise —
             hold-to-drag, O, F2, the whole Alt layer (PL11-007). */}
         <GraphShortcuts />
-        {/* Item actions, anchored to the card they act on rather than parked
-            in the icon rail 1600px away. Portals to the body, so mounting it
-            here only decides which providers it can see — it needs the store
-            and the details context, both of which are above this point. */}
-        <GraphSelectionToolbar anchorId={anchorId} />
         <div className="flex flex-col gap-2">
           {/* Pinned so the controls stay reachable while scrolling the
               surfaces. It sticks just BELOW the sticky preview via the offset

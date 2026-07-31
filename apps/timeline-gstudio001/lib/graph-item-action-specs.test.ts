@@ -24,6 +24,7 @@ const state = (over: Partial<ItemActionState> = {}): ItemActionState => ({
   allCollections: false,
   allMedia: true,
   singleName: "Car Chase",
+  openable: false,
   ...over,
 });
 
@@ -37,13 +38,17 @@ const actions = (s: ItemActionState, group?: "primary" | "overflow") =>
   visibleItemActions(s, group).map((spec) => spec.action);
 
 describe("item action specs", () => {
-  it("gives the toolbar its row: Edit, Copy, Cut, Delete", () => {
-    expect(labels(state(), "primary")).toEqual(["Edit", "Copy", "Cut", "Delete"]);
+  it("gives the pill its row: Open, Edit, Copy, Cut, Delete", () => {
+    // Open LEADS, because it took the drill chevron's place — the anchor card
+    // gives up its corner controls to host the pill, so the chevron's verb
+    // lives here or stops existing on that card.
+    expect(labels(state(), "primary")).toEqual(["Open", "Edit", "Copy", "Cut", "Delete"]);
     expect(labels(state(), "overflow")).toEqual(["Duplicate", "Rename", "Disable"]);
   });
 
   it("gives the flat menu the same actions with the overflow inlined", () => {
     expect(labels(state())).toEqual([
+      "Open",
       "Edit",
       "Copy",
       "Cut",
@@ -80,6 +85,7 @@ describe("item action specs", () => {
 
   it("says the count out loud once a selection is plural", () => {
     expect(labels(multi(), "primary")).toEqual([
+      "Open",
       "Edit",
       "Copy 3 items",
       "Cut 3 items",
@@ -96,9 +102,24 @@ describe("item action specs", () => {
     expect(toggle.icon(state())).not.toBe(toggle.icon(off));
   });
 
-  it("Edit and Rename are the actions that need a SINGLE selection", () => {
-    const blocked = ITEM_ACTION_SPECS.filter((s) => s.disabled(multi()) && !s.disabled(state()));
-    expect(blocked.map((s) => s.action)).toEqual(["details", "rename"]);
+  it("Open, Edit and Rename are the actions that need a SINGLE selection", () => {
+    const openable = state({ openable: true });
+    const blocked = ITEM_ACTION_SPECS.filter(
+      (s) => s.disabled(multi({ openable: true })) && !s.disabled(openable),
+    );
+    expect(blocked.map((s) => s.action)).toEqual(["open", "details", "rename"]);
+  });
+
+  it("Open dims for a clip, and says why rather than pretending", () => {
+    // Open is not "is a collection" — a media card that REFERENCES a timeline
+    // opens too, which is the rule the card body already uses.
+    const clip = state({ openable: false });
+    const spec = ITEM_ACTION_SPECS.find((s) => s.action === "open")!;
+
+    expect(spec.disabled(clip)).toBe(true);
+    expect(spec.unavailableReason(clip)).toBe("Only timelines can be opened");
+    expect(spec.disabled(state({ openable: true }))).toBe(false);
+    expect(spec.unavailableReason(state({ openable: true }))).toBeNull();
   });
 
   it("states a reason for every action it dims on a multi-selection", () => {
