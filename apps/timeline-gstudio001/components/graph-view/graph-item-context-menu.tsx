@@ -11,13 +11,15 @@ import {
 import {
   ContextMenu,
   ContextMenuContent,
-  ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/core/context-menu";
 import { graphClipboard } from "@/lib/graph-clipboard";
-import { useClipDetail } from "./graph-details-context";
-import { requestGraphItemAction } from "@/lib/graph-view-events";
-import { visibleItemActions, type ItemActionState } from "@/lib/graph-item-action-specs";
+import { type ItemActionState } from "@/lib/graph-item-action-specs";
+import {
+  CONTEXT_MENU_PARTS,
+  SELECTION_MENU_CONTENT_CLASS,
+  SelectionMenuItems,
+} from "./graph-selection-menu";
 
 // Right-click a card, get the actions the rail offers (PL14-007).
 //
@@ -86,10 +88,6 @@ function useItemActionState(nodeId: NodeId): ItemActionState {
   // Only ever this node's own name: a single selection containing this node IS
   // this node, and outside the selection the menu is about to make it so.
   const ownName = useCollectionsSelector((s) => s.graph.nodesById.get(nodeId)?.name ?? "");
-  const ownIsCollection = useCollectionsSelector(
-    (s) => s.graph.nodesById.get(nodeId)?.kind === "collection",
-  );
-  const ownDetail = useClipDetail(nodeId as string);
   const allDisabled = useCollectionsSelector((s) => {
     const ids = s.interaction.selectedIds;
     // Same narrowing: outside the selection the honest answer is this node's
@@ -126,9 +124,6 @@ function useItemActionState(nodeId: NodeId): ItemActionState {
     allCollections,
     allMedia,
     singleName: isSingleSelection ? ownName : null,
-    // Narrowed like the rest: whatever the menu is about to act on is this
-    // node, so its own kind is the honest answer.
-    openable: ownIsCollection || ownDetail?.duplicateOfTimelineId !== undefined,
   };
 }
 
@@ -138,7 +133,6 @@ export function GraphItemContextMenu({
 }: Readonly<{ nodeId: NodeId; children: React.ReactNode }>) {
   const store = useCollectionsStore();
   const state = useItemActionState(nodeId);
-  const actions = visibleItemActions(state);
 
   const claimSelection = useCallback(() => {
     // Outside the selection: this node becomes it. Inside it, the selection is
@@ -166,20 +160,14 @@ export function GraphItemContextMenu({
       <ContextMenuTrigger className="contents" onContextMenu={claimSelection}>
         {children}
       </ContextMenuTrigger>
-      <ContextMenuContent data-graph-item-context-menu={nodeId as string}>
-        {actions.map((spec) => {
-          const Icon = spec.icon(state);
-          return (
-            <ContextMenuItem
-              key={spec.action}
-              disabled={spec.disabled(state)}
-              onSelect={() => requestGraphItemAction(spec.action)}
-            >
-              <Icon aria-hidden="true" className="mr-2 h-4 w-4" />
-              {spec.label(state)}
-            </ContextMenuItem>
-          );
-        })}
+      <ContextMenuContent
+        data-graph-item-context-menu={nodeId as string}
+        className={SELECTION_MENU_CONTENT_CLASS}
+      >
+        {/* The SAME menu the anchor's `⋮` and the header's `⋮` open (R7) —
+            same rows, same order, same counted labels, same dimmed reasons.
+            Only the trigger differs. */}
+        <SelectionMenuItems parts={CONTEXT_MENU_PARTS} state={state} />
       </ContextMenuContent>
     </ContextMenu>
   );

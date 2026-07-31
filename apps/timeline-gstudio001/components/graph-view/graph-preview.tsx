@@ -1874,20 +1874,15 @@ function useManifestClips(
  * collection and a clip inside it is one collection's worth of time, not
  * that time counted twice.
  */
-export function useSelectionAggregate(): Readonly<{ count: number; seconds: number }> {
+export function useSelectionCount(): number {
   const graph = useCollectionsSelector((snapshot) => snapshot.graph);
   const selectedIds = useCollectionsSelector((snapshot) => snapshot.interaction.selectedIds);
-  const detailsStore = useGraphDetailsStore();
-  const details = useSyncExternalStore(
-    detailsStore.subscribe,
-    detailsStore.read,
-    detailsStore.read,
-  );
 
   return useMemo(() => {
     const picked = [...selectedIds].filter((id) => graph.nodesById.has(id));
     // Drop anything already inside another selected node (the reducer prunes
-    // the same way on a multi-node move).
+    // the same way on a multi-node move), so the header counts what an action
+    // would actually operate on rather than what was clicked.
     const selectedSet = new Set(picked);
     const roots = picked.filter((id) => {
       const seen = new Set<NodeId>();
@@ -1899,31 +1894,8 @@ export function useSelectionAggregate(): Readonly<{ count: number; seconds: numb
       }
       return true;
     });
-    let total = 0;
-    for (const id of roots) {
-      const node = graph.nodesById.get(id);
-      if (!node) continue;
-      if (node.kind === "collection") {
-        const detail = details[id as string];
-        // Pick on HYDRATION, not on `duration > 0`. Zero is a legitimate live
-        // answer — every child deleted, or every child disabled — and treating
-        // it as "no live value yet" fell back to the stored summary, so the
-        // header kept quoting the old nonzero total for a collection that now
-        // plays nothing.
-        //
-        // And the PLAYABLE walk, not the layout one: this is a readout, so it
-        // has to agree with the number the collection's own card shows. The
-        // layout twin counts disabled children (it feeds the card's slot on
-        // the board) and would report more seconds here than the card claims.
-        total += detail?.hydrated
-          ? hydratedCollectionPlayableDuration(graph, details, id)
-          : (detail?.playableDuration ?? detail?.duration ?? 0);
-      } else {
-        total += mediaDurationSeconds(node);
-      }
-    }
-    return { count: roots.length, seconds: total };
-  }, [graph, selectedIds, details]);
+    return roots.length;
+  }, [graph, selectedIds]);
 }
 
 export function PreviewShell({

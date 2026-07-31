@@ -2,44 +2,20 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 
-import {
-  useCollectionsSelector,
-  useCollectionsStore,
-  type NodeId,
-} from "@storyboard/ui/dnd-collections";
+import { useCollectionsSelector, type NodeId } from "@storyboard/ui/dnd-collections";
 
-import { Check } from "lucide-react";
-
-import {
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from "@/components/core/dropdown-menu";
-import { cn } from "@/lib/utils";
 import { graphClipboard } from "@/lib/graph-clipboard";
-import { useClipDetail } from "./graph-details-context";
-import {
-  ITEM_ACTION_SPECS,
-  visibleItemActions,
-  type ItemActionState,
-} from "@/lib/graph-item-action-specs";
-import {
-  GRAPH_SELECTION_EVENT,
-  requestGraphItemAction,
-  type GraphItemAction,
-  type GraphSelectionDetail,
-} from "@/lib/graph-view-events";
+import { type ItemActionState } from "@/lib/graph-item-action-specs";
+import { GRAPH_SELECTION_EVENT, type GraphSelectionDetail } from "@/lib/graph-view-events";
 
-// What the SELECTION-scoped surfaces share: the floating toolbar, its overflow,
-// and the header's fallback overflow. All three answer to one selection, unlike
-// the card right-click menu, which answers to the card under the pointer and
-// builds its own narrowed state (`graph-item-context-menu.tsx`).
+// What the SELECTION-scoped surfaces share: the anchor card's `⋮` and the
+// header's `⋮`. Both answer to one selection, unlike the card right-click menu,
+// which answers to the card under the pointer and builds its own narrowed
+// state (`graph-item-context-menu.tsx`).
 //
-// These are plain hooks rather than a context: `GraphBoard` renders every
-// consumer, so it resolves the anchor ONCE and hands it down. Two independent
-// anchor hooks would each keep their own memo and could disagree about which
-// card a paste follows — the toolbar pointing at one card while the header's
-// label named another.
+// Hooks only. The MENU these feed lives in `graph-selection-menu.tsx` — one
+// definition rendered by every trigger — so there is no markup here to keep in
+// sync with anything.
 
 /**
  * Whether an async item action is in flight.
@@ -66,6 +42,27 @@ export function useClipboardCount(): number {
     graphClipboard.subscribe,
     () => graphClipboard.read().length,
     () => 0,
+  );
+}
+
+/**
+ * Whether a CUT is waiting for a destination.
+ *
+ * Distinct from "the clipboard has something in it", and the header depends on
+ * the difference. A copy leaves its sources untouched, so the board stays fully
+ * usable while one sits on the clipboard. A cut does not: its sources are still
+ * on the board, dimmed, and they only move when a paste says where — so until
+ * then the gesture is half-finished, and the only two moves that complete it
+ * are paste and cancel.
+ *
+ * A boolean, not the Set: this drives a header that only asks "is one pending",
+ * and subscribing to the Set would re-render it on every membership change.
+ */
+export function useHasPendingCut(): boolean {
+  return useSyncExternalStore(
+    graphClipboard.subscribe,
+    () => graphClipboard.pendingCutIds().size > 0,
+    () => false,
   );
 }
 
@@ -118,22 +115,6 @@ export function useSelectionActionState(): ItemActionState {
     for (const id of ids) return s.graph.nodesById.get(id)?.name ?? null;
     return null;
   });
-  const singleId = useCollectionsSelector((s) => {
-    const ids = s.interaction.selectedIds;
-    if (ids.size !== 1) return "";
-    for (const id of ids) return id as string;
-    return "";
-  });
-  const singleIsCollection = useCollectionsSelector((s) => {
-    const ids = s.interaction.selectedIds;
-    if (ids.size !== 1) return false;
-    for (const id of ids) return s.graph.nodesById.get(id)?.kind === "collection";
-    return false;
-  });
-  // A media card that REFERENCES a timeline opens too — the same rule the card
-  // body uses (`openOnClick`). Subscribed per id, so unrelated hydration does
-  // not re-render this.
-  const singleDetail = useClipDetail(singleId);
   const canPaste = useSyncExternalStore(
     graphClipboard.subscribe,
     () => !graphClipboard.isEmpty(),
@@ -150,99 +131,5 @@ export function useSelectionActionState(): ItemActionState {
     allCollections,
     allMedia,
     singleName,
-    openable: singleIsCollection || singleDetail?.duplicateOfTimelineId !== undefined,
   };
-}
-
-/**
- * The overflow menu's rows.
- *
- * ONE definition for both `⋮` triggers (R7.2) — the toolbar's, and the header's
- * fallback for when the anchor card has scrolled out of view. They differ only
- * in where the trigger sits, so only the trigger is duplicated.
- */
-export function SelectionOverflowItems({
-  state,
-  includePrimary = [],
-}: Readonly<{
-  state: ItemActionState;
-  /**
-   * Primary actions to inline ABOVE the overflow group.
-   *
-   * This is what makes folding lossless. The pill's width budget is its card's,
-   * so on a narrow card actions drop out of the row — and an action that is in
-   * neither the row nor the menu is simply gone. The pill passes whatever it
-   * could not fit; the header passes ALL of them, because it is the fallback
-   * for a card too narrow to show a pill at all.
-   */
-  includePrimary?: readonly GraphItemAction[];
-}>) {
-  const store = useCollectionsStore();
-  const multiSelectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
-
-  const folded = ITEM_ACTION_SPECS.filter(
-    (spec) => spec.group === "primary" && includePrimary.includes(spec.action) && spec.visible(state),
-  );
-
-  return (
-    <DropdownMenuGroup>
-      {folded.map((spec) => {
-        const Icon = spec.icon(state);
-        const reason = spec.unavailableReason(state);
-        return (
-          <DropdownMenuItem
-            key={spec.action}
-            disabled={spec.disabled(state)}
-            aria-description={reason ?? undefined}
-            onSelect={() => requestGraphItemAction(spec.action)}
-          >
-            <Icon aria-hidden="true" className="mr-2 h-4 w-4" />
-            {spec.label(state)}
-          </DropdownMenuItem>
-        );
-      })}
-      {folded.length > 0 ? <DropdownMenuSeparator /> : null}
-      {/* Additive-tap mode. It lives HERE rather than in the pill because it is
-          rarely reached — a mouse already has Ctrl+click, and the pill is
-          fighting for width in a 132px card. Touch has no modifier key at all,
-          which is the case it exists for.
-
-          Rendered as an ordinary item with its state in the label and a check,
-          rather than a checkbox row: the menu wrapper has no checkbox
-          primitive, and overriding Radix's `role="menuitem"` would take its
-          keyboard handling with it. */}
-      <DropdownMenuItem
-        data-multi-select-toggle
-        onSelect={() => store.setMultiSelectMode(!multiSelectMode)}
-      >
-        <Check
-          aria-hidden="true"
-          className={cn("mr-2 h-4 w-4", multiSelectMode ? "opacity-100" : "opacity-0")}
-        />
-        {multiSelectMode ? "Stop adding to selection" : "Add to selection by tapping"}
-      </DropdownMenuItem>
-      <DropdownMenuSeparator />
-      {visibleItemActions(state, "overflow").map((spec) => {
-        const Icon = spec.icon(state);
-        const reason = spec.unavailableReason(state);
-        return (
-          <DropdownMenuItem
-            key={spec.action}
-            disabled={spec.disabled(state)}
-            // The reason travels as the row's accessible description, not as a
-            // tooltip: a disabled menu row is not hoverable in any useful way,
-            // and a screen reader must still be told why.
-            aria-description={reason ?? undefined}
-            onSelect={() => requestGraphItemAction(spec.action)}
-          >
-            <Icon aria-hidden="true" className="mr-2 h-4 w-4" />
-            {spec.label(state)}
-            {reason === null ? null : (
-              <span className="ml-auto pl-3 text-[11px] text-zinc-500">{reason}</span>
-            )}
-          </DropdownMenuItem>
-        );
-      })}
-    </DropdownMenuGroup>
-  );
 }

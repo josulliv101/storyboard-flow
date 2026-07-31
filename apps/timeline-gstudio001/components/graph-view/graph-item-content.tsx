@@ -48,7 +48,7 @@ import { useCollectionHoverTarget } from "./graph-collection-hover";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TrimPanel } from "./graph-trim-panel";
 import { GraphItemContextMenu } from "./graph-item-context-menu";
-import { GraphSelectionPill } from "./graph-selection-pill";
+import { CardCornerSlot, ClipCornerSlot } from "./graph-anchor-menu";
 import { createDerivedCache } from "@/lib/derived-cache";
 import { graphClipboard } from "@/lib/graph-clipboard";
 import { graphPasteFlash } from "@/lib/graph-paste-flash";
@@ -487,12 +487,39 @@ function CollectionLeaderPlaceholder() {
  * (PL14-002/003 bumped both from 6px): they are top-aligned, so nudging one
  * off the other's line is exactly what stops them reading as a pair.
  */
-function CardSelectedBadge() {
+/**
+ * How far the corner controls sit in on a card that carries TRIM HANDLES.
+ *
+ * A handle's hit zone is 8px (`w-2`, pinned to `left-0`/`right-0` in the
+ * package's TrimHandles), and the ordinary corner inset is also 8px — so on a
+ * selected clip the checkmark and the `⋮` landed flush against the amber
+ * handles with no gap at all, reading as one crowded cluster.
+ *
+ * 16px clears the handle by its own width again. Applied on CLIPS only:
+ * collections have no handles, and shifting their controls to match would move
+ * them for a constraint they do not have.
+ *
+ * Both controls only exist on a SELECTED card, and a selected clip always shows
+ * its right handle — so there is no state where this inset is reserved against
+ * a handle that never arrives.
+ *
+ * Written as WHOLE literal class names. Tailwind's JIT scans source text, so an
+ * interpolated `left-${n}` is a class that never gets generated — the control
+ * would silently fall back to `left: auto` and sit in the wrong place.
+ */
+const TRIM_CLEARANCE_LEFT = "left-4";
+const TRIM_CLEARANCE_RIGHT = "right-4";
+
+function CardSelectedBadge({ clearsTrimHandles = false }: Readonly<{ clearsTrimHandles?: boolean }>) {
   return (
     <span
       data-card-selected-badge
       aria-hidden="true"
-      className="pointer-events-none absolute left-2 top-2 z-20 flex size-5 items-center justify-center rounded bg-amber-300 text-zinc-950 shadow-sm shadow-black/50"
+      className={[
+        "pointer-events-none absolute top-2 z-20 flex size-5 items-center justify-center",
+        "rounded bg-amber-300 text-zinc-950 shadow-sm shadow-black/50",
+        clearsTrimHandles ? TRIM_CLEARANCE_LEFT : "left-2",
+      ].join(" ")}
     >
       <Check className="size-3.5" strokeWidth={3} />
     </span>
@@ -533,21 +560,11 @@ const CARD_CONTROL_CLASS = [
   "cursor-pointer transition-colors hover:bg-zinc-800 hover:text-zinc-50",
 ].join(" ");
 
-/**
- * Where those controls sit: one cluster in the card's top-right, same inset
- * from both edges and the same gap between them.
- *
- * A cluster rather than two independently-positioned buttons, because that is
- * what kept going wrong — details at `top-1 right-1` and the drill badge at
- * `bottom-8 right-1.5` read as two unrelated marks, and every size change meant
- * re-tuning an offset against the label row's height (which differs per
- * surface). Grouped, they align by construction and a media card's single
- * control lands in exactly the same place as a collection's pair.
- *
- * The 8px inset is shared with `CardSelectedBadge` in the opposite corner —
- * see the note there; the two are top-aligned and move together.
- */
-const CARD_CONTROL_CLUSTER_CLASS = "absolute right-2 top-2 z-20 flex items-center gap-1.5";
+// (The corner cluster's own positioning moved into `CardCornerSlot` in
+// graph-anchor-menu.tsx, which is what now owns that corner on both card
+// kinds. Its 8px inset is still shared with `CardSelectedBadge` in the
+// opposite corner — see the note there; the two are top-aligned and move
+// together.)
 
 function CollectionDrillGlyph({ className }: Readonly<{ className?: string }>) {
   return <CornerRightDown aria-hidden="true" className={className} strokeWidth={1.5} />;
@@ -970,12 +987,9 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   const displayName = title ?? node.name;
   const inheritedDisabled = useDisabledByAncestor(id);
   const muted = node.disabled === true || inheritedDisabled;
-  // The ANCHOR gives up BOTH corner controls to host the pill (R5.3): the
-  // badge, because the pill and the accent already say "selected", and the
-  // chevron, because its verb becomes the pill's leading action. The absence
-  // of a checkmark is the only thing distinguishing the anchor from the rest
-  // of the selection, which is what makes the paste destination legible.
-  const isAnchor = useCollectionsSelector((s) => s.interaction.anchorId === id);
+  // Anchor state is not read here any more: `CardCornerSlot` subscribes to it
+  // itself, narrowed to this node, so an anchor moving between two OTHER cards
+  // no longer re-renders this whole card body.
 
   return (
     <>
@@ -1133,38 +1147,44 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           O key (OpenKeyBoundary), and data-collections-keyboard-ignore excludes
           them from the strip's pan surface (isPannableStripSurface), so a press
           here never scrolls the strip out from under it. */}
-      {selected && !isAnchor && <CardSelectedBadge />}
-      <GraphSelectionPill nodeId={id} />
-      {/* One control, not a cluster: the details trigger moved to the item
-          actions (PL13-009), so what is left on the card is the drill. It
-          keeps the cluster's position — same corner, same inset — because that
-          is where a card's control belongs whether there are two or one.
-          Absent on the anchor, whose pill leads with the same verb. */}
-      <span className={CARD_CONTROL_CLUSTER_CLASS} hidden={isAnchor}>
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-label={`Open ${displayName}`}
-          title="Open this timeline"
-          data-collections-keyboard-ignore
-          onClick={(event) => {
-            event.stopPropagation();
-            nav?.openTimeline(id);
-          }}
-          className={[
-            CARD_CONTROL_CLASS,
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
-          ].join(" ")}
-        >
-          {/* ONE glyph. It briefly carried CornerRightDown as well, on the
-              reasoning that the badge had to say "container" and "way in" at
-              once — but that name lies: `CollectionDrillGlyph` draws
-              CornerRightDown, so the pair was two direction arrows saying the
-              same thing twice. A chevron alone reads as "enter"; what says
-              CONTAINER is the card. */}
-          <ChevronRight className="size-4" aria-hidden="true" />
-        </button>
-      </span>
+      {/* Every selected card keeps its badge, the anchor included (R5.3). In
+          v2 the anchor gave it up to make room for a toolbar in the same band,
+          and the missing checkmark was doing double duty as "this is the
+          anchor" — which meant the anchor read as the one selected card that
+          was not quite selected. The `⋮` and its count say "anchor" now, so the
+          selection signal can be consistent across all of them. */}
+      {selected && <CardSelectedBadge />}
+      {/* One slot, two controls: the drill chevron, and — on the anchor — the
+          `⋮` it cross-fades into (R6.2). Same corner, same inset, same size,
+          so the swap costs no layout and leaves no gap. */}
+      <CardCornerSlot
+        nodeId={id}
+        chevron={
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label={`Open ${displayName}`}
+            title="Open this timeline"
+            data-collections-keyboard-ignore
+            onClick={(event) => {
+              event.stopPropagation();
+              nav?.openTimeline(id);
+            }}
+            className={[
+              CARD_CONTROL_CLASS,
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+            ].join(" ")}
+          >
+            {/* ONE glyph. It briefly carried CornerRightDown as well, on the
+                reasoning that the badge had to say "container" and "way in" at
+                once — but that name lies: `CollectionDrillGlyph` draws
+                CornerRightDown, so the pair was two direction arrows saying the
+                same thing twice. A chevron alone reads as "enter"; what says
+                CONTAINER is the card. */}
+            <ChevronRight className="size-4" aria-hidden="true" />
+          </button>
+        }
+      />
 
       {/* The rename editor — a REAL input, overlaying the label row while
           editing. A sibling of the surface, so it nests in no button. */}
@@ -1279,18 +1299,21 @@ const GraphMediaItem = memo(function GraphMediaItem({
   // Seeded with the AUTHORED title when there is one, so re-naming edits what
   // the user wrote rather than making them delete a filename first.
   const rename = useInlineRename(props.id, detail?.title ?? "", "card");
-  // The ANCHOR hosts the pill and gives up its badge for it (R5.3/R5.4). The
-  // missing checkmark is the feature: it is the only thing distinguishing the
-  // anchor from the rest of the selection, and the anchor is where a paste
-  // lands. A boolean about THIS node, so an unrelated anchor move is invisible
-  // here.
-  const isAnchor = useCollectionsSelector((s) => s.interaction.anchorId === props.id);
+  // A clip's width is its DURATION, so this card can be 12px across. The corner
+  // control is measured against that (see ClipCornerSlot) — the one place v3
+  // still cares how wide a card is, and it answers with "render it or don't"
+  // rather than with a fold ladder.
+  const [sizeRef, size] = useElementSize();
 
   return (
-    <div className={["group/media-item relative", className ?? ""].join(" ")}>
+    <div ref={sizeRef} className={["group/media-item relative", className ?? ""].join(" ")}>
       <NodeCard {...props} className="h-full w-full" />
-      {mediaSelected && !isAnchor && <CardSelectedBadge />}
-      <GraphSelectionPill nodeId={props.id} />
+      {/* The anchor keeps its badge too (R5.3) — see the collection card. It
+          clears the trim handles, which a selected clip always carries. */}
+      {mediaSelected && <CardSelectedBadge clearsTrimHandles />}
+      {/* A clip has no chevron to morph, so the `⋮` simply fades in (R5.6).
+          No chevron is added here for symmetry. */}
+      <ClipCornerSlot nodeId={props.id} width={size.width} />
       {rename.editing && node?.kind === "media" && (
         <InlineNameEditor
           initialValue={detail?.title ?? ""}

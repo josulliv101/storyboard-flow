@@ -53,6 +53,24 @@ const ContextMenuItem = React.forwardRef<
 ));
 ContextMenuItem.displayName = ContextMenuPrimitive.Item.displayName;
 
+/** Twin of `DropdownMenuLabel`. A `role="presentation"` heading, NOT a
+ *  menuitem — the selection menu opens with one reading "3 items selected"
+ *  (R7.1/R12.2), and arrow keys must skip it. */
+const ContextMenuLabel = React.forwardRef<
+  React.ElementRef<typeof ContextMenuPrimitive.Label>,
+  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Label>
+>(({ className, ...props }, ref) => (
+  <ContextMenuPrimitive.Label
+    ref={ref}
+    className={cn(
+      "px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500",
+      className,
+    )}
+    {...props}
+  />
+));
+ContextMenuLabel.displayName = ContextMenuPrimitive.Label.displayName;
+
 const ContextMenuSeparator = React.forwardRef<
   React.ElementRef<typeof ContextMenuPrimitive.Separator>,
   React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Separator>
@@ -70,6 +88,7 @@ export {
   ContextMenuContent,
   ContextMenuGroup,
   ContextMenuItem,
+  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuTrigger,
 };

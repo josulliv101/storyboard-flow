@@ -726,3 +726,78 @@ export const SelectingOneCardDoesNotRerenderTheOther: Story = {
     expect(renders(SIB_C)).toBe(bystander);
   },
 };
+
+/**
+ * The anchor's `⋮` and its count badge (spec v3, §5–§6).
+ *
+ * Covers the three states the corner slot has to hold apart: unselected (no
+ * control beyond the card's own), selected-but-not-anchor (badge, no `⋮`), and
+ * anchor (`⋮` + count). The v2 pill this replaces had a width-driven fold
+ * ladder and could not be covered by one story at all — which is most of why
+ * it is gone.
+ */
+export const AnchorControlAndCountBadge: Story = {
+  args: { id: SIB_A },
+  decorators: [
+    (Story) => (
+      <DndCollections initialGraph={siblingGraph}>
+        <GraphDetailsProvider store={createGraphDetailsStore({})}>
+          <div className="flex h-32 gap-2 bg-zinc-950 p-2">
+            <Story />
+          </div>
+        </GraphDetailsProvider>
+      </DndCollections>
+    ),
+  ],
+  render: () => (
+    <>
+      <ItemShell id={SIB_A} className="h-full w-24" />
+      <ItemShell id={SIB_B} className="h-full w-24" />
+      <ItemShell id={SIB_C} className="h-full w-24" />
+    </>
+  ),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument;
+    const card = (id: string) =>
+      canvasElement.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!;
+    const controls = () => doc.querySelectorAll("[data-anchor-menu]");
+    const badges = () => doc.querySelectorAll("[data-anchor-count-badge]");
+
+    // ONE session, because the modifier below has to be held ACROSS a click —
+    // the static `userEvent` API resets keyboard state per call, so a held
+    // Control never reaches the second click.
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(card(SIB_A)).toBeTruthy());
+    // Nothing selected: no anchor, so no control (R5.5).
+    expect(controls()).toHaveLength(0);
+
+    // One selected: the `⋮` appears on it, and NO badge — the glyph alone
+    // marks the anchor and there is no scope ambiguity at one item (R6.5).
+    await user.click(card(SIB_A));
+    await waitFor(() => expect(controls()).toHaveLength(1));
+    expect(controls()[0]?.getAttribute("data-anchor-menu")).toBe(SIB_A);
+    expect(badges()).toHaveLength(0);
+
+    // Two selected: the badge appears with the count, and the `⋮` moves to the
+    // card just clicked. EXACTLY ONE exists on screen (R5.4) — a second would
+    // imply a second paste destination.
+    await user.keyboard("{Control>}");
+    await user.click(card(SIB_B));
+    await user.keyboard("{/Control}");
+    await waitFor(() => expect(badges()).toHaveLength(1));
+    expect(badges()[0]?.textContent).toBe("2");
+    expect(controls()).toHaveLength(1);
+    expect(controls()[0]?.getAttribute("data-anchor-menu")).toBe(SIB_B);
+
+    // The count is in the accessible NAME (R6.12), because the badge is
+    // aria-hidden — this is the only place a screen reader hears it here.
+    expect(controls()[0]?.getAttribute("aria-label")).toBe("Actions, 2 items selected");
+    expect(badges()[0]?.getAttribute("aria-hidden")).toBe("true");
+
+    // Both selected cards keep their badge, the anchor included (R5.3). v2
+    // took the anchor's away, which left it reading as the one selected card
+    // that was not quite selected.
+    expect(doc.querySelectorAll("[data-card-selected-badge]")).toHaveLength(2);
+  },
+};

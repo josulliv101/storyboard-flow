@@ -67,6 +67,15 @@ export async function loadTimelineClosure(
      * so the root was fetched a second time on every compile.
      */
     rootEntry?: TimelineEntry | null;
+    /**
+     * How to read one document. Defaults to a direct Firebase read.
+     *
+     * Exists so `serveTimelineDocument` can hand in the SHARED reader it
+     * already uses — that reader de-duplicates reads across one request, and a
+     * closure walk that bypassed it would re-fetch documents the caller had
+     * just loaded. It is also the seam its tests inject through.
+     */
+    read?: (id: string) => Promise<TimelineEntry | null>;
   }>,
 ): Promise<{
   documents: Record<string, TimelineDocument>;
@@ -107,17 +116,19 @@ export async function loadTimelineClosure(
   // `rootEntry: null` is a caller that looked and found nothing — honour it
   // rather than re-reading to rediscover the same absence. `undefined` means
   // the caller has no opinion.
+  const read =
+    options?.read ?? ((childId: string) => getFirebaseTimelineEntry(childId, requesterUid));
   const rootEntry =
     options?.rootEntry !== undefined
       ? options.rootEntry
-      : await getFirebaseTimelineEntry(rootId, requesterUid).catch(() => null);
+      : await read(rootId).catch(() => null);
 
   let frontier: readonly string[] = record(rootId, rootEntry);
 
   while (frontier.length > 0) {
     const entries = await mapWithConcurrency(frontier, READ_CONCURRENCY, async (id) => ({
       id,
-      entry: await getFirebaseTimelineEntry(id, requesterUid).catch(() => null),
+      entry: await read(id).catch(() => null),
     }));
     // Recorded in frontier order, so `documents` and `missing` keep the
     // deterministic ordering the sequential walk produced.
