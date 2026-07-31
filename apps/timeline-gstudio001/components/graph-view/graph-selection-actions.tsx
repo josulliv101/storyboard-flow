@@ -2,18 +2,31 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 
-import { useCollectionsSelector, type NodeId } from "@storyboard/ui/dnd-collections";
-
-import { DropdownMenuGroup, DropdownMenuItem } from "@/components/core/dropdown-menu";
-import { graphClipboard } from "@/lib/graph-clipboard";
-import { resolveAnchorId, type SelectionAnchorMemo } from "@/lib/graph-selection-anchor";
 import {
+  useCollectionsSelector,
+  useCollectionsStore,
+  type NodeId,
+} from "@storyboard/ui/dnd-collections";
+
+import { Check } from "lucide-react";
+
+import {
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/core/dropdown-menu";
+import { cn } from "@/lib/utils";
+import { graphClipboard } from "@/lib/graph-clipboard";
+import { useClipDetail } from "./graph-details-context";
+import {
+  ITEM_ACTION_SPECS,
   visibleItemActions,
   type ItemActionState,
 } from "@/lib/graph-item-action-specs";
 import {
   GRAPH_SELECTION_EVENT,
   requestGraphItemAction,
+  type GraphItemAction,
   type GraphSelectionDetail,
 } from "@/lib/graph-view-events";
 
@@ -57,30 +70,16 @@ export function useClipboardCount(): number {
 }
 
 /**
- * The anchor: the card the toolbar attaches to and the card a paste follows.
+ * The anchor: the card hosting the pill, and the card a paste follows.
  *
- * Call this ONCE per board. The memo it threads is what keeps the answer stable
- * across renders that changed nothing (see `resolveAnchorId`).
+ * A plain store read now. It used to be derived here from `selectedIds` with a
+ * memo to keep it stable, which was right while ONE consumer asked — but every
+ * card now asks "am I the anchor?", a memo per card can disagree with its
+ * neighbours, and `setAnchor` (re-aiming without changing the selection) has no
+ * derived answer at all. The store owns it; see `interaction.anchorId`.
  */
 export function useSelectionAnchorId(): NodeId | null {
-  const selectedIds = useCollectionsSelector((s) => s.interaction.selectedIds);
-  const graph = useCollectionsSelector((s) => s.graph);
-  const [memo, setMemo] = useState<SelectionAnchorMemo>(() => ({
-    anchorId: null,
-    selectedIds,
-  }));
-
-  // React's "adjust state during render": setting state on the component
-  // currently rendering re-runs it immediately, before anything commits, so
-  // nothing downstream ever sees a stale anchor. A ref would have been the
-  // obvious way to carry the memo and is the wrong one — reading and writing
-  // one during render is what makes a component miss updates.
-  let current = memo;
-  if (memo.selectedIds !== selectedIds) {
-    current = { anchorId: resolveAnchorId(graph, selectedIds, memo), selectedIds };
-    setMemo(current);
-  }
-  return current.anchorId;
+  return useCollectionsSelector((s) => s.interaction.anchorId);
 }
 
 /** The live selection as the action specs want it. */
@@ -119,6 +118,22 @@ export function useSelectionActionState(): ItemActionState {
     for (const id of ids) return s.graph.nodesById.get(id)?.name ?? null;
     return null;
   });
+  const singleId = useCollectionsSelector((s) => {
+    const ids = s.interaction.selectedIds;
+    if (ids.size !== 1) return "";
+    for (const id of ids) return id as string;
+    return "";
+  });
+  const singleIsCollection = useCollectionsSelector((s) => {
+    const ids = s.interaction.selectedIds;
+    if (ids.size !== 1) return false;
+    for (const id of ids) return s.graph.nodesById.get(id)?.kind === "collection";
+    return false;
+  });
+  // A media card that REFERENCES a timeline opens too — the same rule the card
+  // body uses (`openOnClick`). Subscribed per id, so unrelated hydration does
+  // not re-render this.
+  const singleDetail = useClipDetail(singleId);
   const canPaste = useSyncExternalStore(
     graphClipboard.subscribe,
     () => !graphClipboard.isEmpty(),
@@ -135,6 +150,7 @@ export function useSelectionActionState(): ItemActionState {
     allCollections,
     allMedia,
     singleName,
+    openable: singleIsCollection || singleDetail?.duplicateOfTimelineId !== undefined,
   };
 }
 
@@ -145,9 +161,67 @@ export function useSelectionActionState(): ItemActionState {
  * fallback for when the anchor card has scrolled out of view. They differ only
  * in where the trigger sits, so only the trigger is duplicated.
  */
-export function SelectionOverflowItems({ state }: Readonly<{ state: ItemActionState }>) {
+export function SelectionOverflowItems({
+  state,
+  includePrimary = [],
+}: Readonly<{
+  state: ItemActionState;
+  /**
+   * Primary actions to inline ABOVE the overflow group.
+   *
+   * This is what makes folding lossless. The pill's width budget is its card's,
+   * so on a narrow card actions drop out of the row — and an action that is in
+   * neither the row nor the menu is simply gone. The pill passes whatever it
+   * could not fit; the header passes ALL of them, because it is the fallback
+   * for a card too narrow to show a pill at all.
+   */
+  includePrimary?: readonly GraphItemAction[];
+}>) {
+  const store = useCollectionsStore();
+  const multiSelectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
+
+  const folded = ITEM_ACTION_SPECS.filter(
+    (spec) => spec.group === "primary" && includePrimary.includes(spec.action) && spec.visible(state),
+  );
+
   return (
     <DropdownMenuGroup>
+      {folded.map((spec) => {
+        const Icon = spec.icon(state);
+        const reason = spec.unavailableReason(state);
+        return (
+          <DropdownMenuItem
+            key={spec.action}
+            disabled={spec.disabled(state)}
+            aria-description={reason ?? undefined}
+            onSelect={() => requestGraphItemAction(spec.action)}
+          >
+            <Icon aria-hidden="true" className="mr-2 h-4 w-4" />
+            {spec.label(state)}
+          </DropdownMenuItem>
+        );
+      })}
+      {folded.length > 0 ? <DropdownMenuSeparator /> : null}
+      {/* Additive-tap mode. It lives HERE rather than in the pill because it is
+          rarely reached — a mouse already has Ctrl+click, and the pill is
+          fighting for width in a 132px card. Touch has no modifier key at all,
+          which is the case it exists for.
+
+          Rendered as an ordinary item with its state in the label and a check,
+          rather than a checkbox row: the menu wrapper has no checkbox
+          primitive, and overriding Radix's `role="menuitem"` would take its
+          keyboard handling with it. */}
+      <DropdownMenuItem
+        data-multi-select-toggle
+        onSelect={() => store.setMultiSelectMode(!multiSelectMode)}
+      >
+        <Check
+          aria-hidden="true"
+          className={cn("mr-2 h-4 w-4", multiSelectMode ? "opacity-100" : "opacity-0")}
+        />
+        {multiSelectMode ? "Stop adding to selection" : "Add to selection by tapping"}
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
       {visibleItemActions(state, "overflow").map((spec) => {
         const Icon = spec.icon(state);
         const reason = spec.unavailableReason(state);

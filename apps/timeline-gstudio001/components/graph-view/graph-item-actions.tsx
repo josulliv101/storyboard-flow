@@ -27,6 +27,7 @@ import {
   GRAPH_RESTORE_ITEM_EVENT,
   broadcastGraphRestoreResult,
   broadcastGraphSelection,
+  requestGraphOpenItem,
   requestGraphRenameItem,
   type GraphItemAction,
 } from "@/lib/graph-view-events";
@@ -580,6 +581,16 @@ export function GraphItemActionsBridge({
           if (pasted.length === 0) break;
           graphClipboard.clear();
           revealPasted(store, pasted, announce);
+          break;
+        }
+        case "open": {
+          // The drill chevron's verb, reached from the pill because the anchor
+          // card gives its corner controls up to host one. Navigation lives in
+          // the view's own context, so this asks the same way the chevron does
+          // rather than reimplementing the route change.
+          const selected = [...store.getSnapshot().interaction.selectedIds];
+          const only = selected.length === 1 ? selected[0] : undefined;
+          if (only !== undefined) requestGraphOpenItem(only as string);
           break;
         }
         case "rename": {

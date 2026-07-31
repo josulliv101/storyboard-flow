@@ -43,6 +43,30 @@ export type CollectionsInteraction = Readonly<{
   dropIntentInvalid: boolean;
   selectedIds: ReadonlySet<NodeId>;
   /**
+   * The card the selection is "at" — the one most recently picked that is
+   * still selected. Consumers hang UI on it (a toolbar rendered INSIDE that
+   * card) and aim insert operations at it ("paste after the anchor").
+   *
+   * Stored rather than derived, and that is a deliberate reversal. It IS
+   * derivable from `selectedIds` alone — a Set iterates insertion-first and
+   * every mutator here appends — and it was derived while exactly one
+   * consumer asked. Two things ended that:
+   *
+   *   - EVERY CARD now asks "am I the anchor?". Deriving it per card needs the
+   *     memo that makes the answer stable across renders, and a memo per card
+   *     can disagree with its neighbours — the toolbar drawn on one card while
+   *     a paste lands after another.
+   *   - `setAnchor` has no derived answer at all. Re-anchoring WITHOUT
+   *     changing the selection (right-clicking a card that is already
+   *     selected, to aim a paste) cannot be expressed as a function of the
+   *     selection, because the selection does not change.
+   *
+   * Distinct from `selectionPivotId` below, which they are easy to conflate:
+   * the anchor is the most recent pick and moves on every gesture; the pivot
+   * is where a RANGE measures from and deliberately survives one.
+   */
+  anchorId: NodeId | null;
+  /**
    * Where a RANGE extends FROM — the last card picked by a non-range gesture.
    *
    * Not the same thing as the card a consumer's toolbar points at, which is
@@ -252,6 +276,15 @@ export type CollectionsStore = Readonly<{
    * same thing a plain click would have done.
    */
   selectRange: (toId: NodeId) => void;
+  /**
+   * Point the anchor at an already-selected node WITHOUT touching the
+   * selection — "act on all of this, but aim at that one".
+   *
+   * Ignored for a node that is not selected: an anchor outside the selection
+   * would put a selection toolbar on a card the actions do not apply to.
+   * Callers wanting both should `toggleSelected`/`setSelection` first.
+   */
+  setAnchor: (id: NodeId) => void;
   /** Turn additive-tap mode on or off. Turning it OFF keeps the selection —
    *  you stop adding in order to act on what you have. */
   setMultiSelectMode: (on: boolean) => void;
@@ -295,6 +328,7 @@ export function createCollectionsStore(
     dropIntent: null,
     dropIntentInvalid: false,
     selectedIds: EMPTY_SELECTION,
+    anchorId: null,
     selectionPivotId: null,
     multiSelectMode: false,
     rejectedIdSet: EMPTY_SELECTION,
@@ -422,6 +456,31 @@ export function createCollectionsStore(
     if (pivot !== null && !graph.nodesById.has(pivot)) {
       interaction = { ...interaction, selectionPivotId: null };
     }
+    // The anchor must stay INSIDE the selection, so deleting it hands the role
+    // on rather than leaving a toolbar pointed at a card that is gone. Grid
+    // order again, for the reason `toggleSelected` gives.
+    const anchor = interaction.anchorId;
+    if (anchor !== null && !interaction.selectedIds.has(anchor)) {
+      // The anchor must stay INSIDE the selection, so a departed one hands the
+      // role on rather than leaving a toolbar pointed at a card that is gone.
+      //
+      // Grid order again, but it needs something to measure against, and the
+      // departed node cannot supply it — when the node left the GRAPH (not
+      // just the selection) its parent went with it. So the survivor's own
+      // parent seeds the order instead, which is the same answer whenever the
+      // selection sits in one collection, and a defensible one when it does
+      // not. A selected ROOT has no parent at all, hence the last fallback.
+      let survivor: NodeId | null = null;
+      for (const id of interaction.selectedIds) survivor = id;
+      const seed = graph.nodesById.has(anchor) ? anchor : survivor;
+      interaction = {
+        ...interaction,
+        anchorId:
+          seed === null
+            ? null
+            : (lastSelectedSiblingInGridOrder(graph, seed, interaction.selectedIds) ?? survivor),
+      };
+    }
     // This path writes `interaction` directly rather than through
     // `setInteraction`, so it repeats that function's mode invariant. Deleting
     // the last selected card is the ordinary way to arrive here with an armed
@@ -534,6 +593,7 @@ export function createCollectionsStore(
       dropIntent: null,
       dropIntentInvalid: false,
       selectedIds: interaction.selectedIds,
+      anchorId: interaction.anchorId,
       selectionPivotId: interaction.selectionPivotId,
       multiSelectMode: interaction.multiSelectMode,
       rejectedIdSet: EMPTY_SELECTION,
@@ -600,15 +660,32 @@ export function createCollectionsStore(
       // subscriber to re-run its selector for nothing. The pivot is checked
       // too: re-clicking the last card of a multi-selection changes nothing
       // about the set but DOES move where a range would extend from.
-      if (sameSet(interaction.selectedIds, next) && interaction.selectionPivotId === pivot) return;
-      setInteraction({ selectedIds: next, selectionPivotId: pivot });
+      if (
+        sameSet(interaction.selectedIds, next) &&
+        interaction.selectionPivotId === pivot &&
+        interaction.anchorId === pivot
+      ) {
+        return;
+      }
+      setInteraction({ selectedIds: next, anchorId: pivot, selectionPivotId: pivot });
     },
     toggleSelected: (id) => {
       if (!graph.nodesById.has(id)) return;
       const next = new Set(interaction.selectedIds);
-      if (next.has(id)) next.delete(id);
+      const removing = next.has(id);
+      if (removing) next.delete(id);
       else next.add(id);
-      setInteraction({ selectedIds: next, selectionPivotId: id });
+      // Adding makes the new card the anchor. REMOVING the anchor hands it to
+      // the last remaining card in GRID order, not in click order: what is
+      // left last by insertion is whichever card happened to be picked before
+      // it, an order the user cannot see. Removing a card that is not the
+      // anchor leaves the anchor where it is.
+      const anchorId = !removing
+        ? id
+        : interaction.anchorId === id
+          ? lastSelectedSiblingInGridOrder(graph, id, next)
+          : interaction.anchorId;
+      setInteraction({ selectedIds: next, anchorId, selectionPivotId: id });
     },
     selectRange: (toId) => {
       if (!graph.nodesById.has(toId)) return;
@@ -622,14 +699,23 @@ export function createCollectionsStore(
         if (sameSet(interaction.selectedIds, single) && interaction.selectionPivotId === toId) {
           return;
         }
-        setInteraction({ selectedIds: single, selectionPivotId: toId });
+        setInteraction({ selectedIds: single, anchorId: toId, selectionPivotId: toId });
         return;
       }
       const next = new Set(run);
       // Pivot deliberately UNTOUCHED: the next shift+click must measure from
       // the same origin, so overshooting and coming back shrinks the range.
-      if (sameSet(interaction.selectedIds, next)) return;
-      setInteraction({ selectedIds: next });
+      // The ANCHOR does move — it is the most recent pick, and the card just
+      // shift-clicked is exactly that.
+      if (sameSet(interaction.selectedIds, next) && interaction.anchorId === toId) return;
+      setInteraction({ selectedIds: next, anchorId: toId });
+    },
+    setAnchor: (id) => {
+      // Only within the selection: an anchor outside it would host a toolbar
+      // whose actions do not apply to the card it sits on.
+      if (!interaction.selectedIds.has(id)) return;
+      if (interaction.anchorId === id) return;
+      setInteraction({ anchorId: id });
     },
     setMultiSelectMode: (on) => {
       if (interaction.multiSelectMode === on) return;
@@ -638,13 +724,14 @@ export function createCollectionsStore(
     clearSelection: () => {
       if (
         interaction.selectedIds.size === 0 &&
+        interaction.anchorId === null &&
         interaction.selectionPivotId === null &&
         !interaction.multiSelectMode
       ) {
         return;
       }
       // `setInteraction` drops the mode with it (see the invariant there).
-      setInteraction({ selectedIds: EMPTY_SELECTION, selectionPivotId: null });
+      setInteraction({ selectedIds: EMPTY_SELECTION, anchorId: null, selectionPivotId: null });
     },
 
     beginDrag: (pressedId) => {
@@ -713,6 +800,30 @@ export function createCollectionsStore(
       changeListeners.clear();
     },
   };
+}
+
+/**
+ * The last SELECTED sibling of `nodeId`, in the order its parent renders them.
+ *
+ * The anchor's fallback when it leaves the selection. GRID order, not click
+ * order: what remains last by insertion is whichever card happened to be
+ * picked before the departing one, which is an order the user cannot see. A
+ * selection can span parents; only the departing anchor's own parent is
+ * consulted, because "the next one along" means nothing across two timelines —
+ * and null there is the honest answer, not a bug.
+ */
+function lastSelectedSiblingInGridOrder(
+  graph: CollectionsGraph,
+  nodeId: NodeId,
+  selectedIds: ReadonlySet<NodeId>
+): NodeId | null {
+  const parentId = graph.parentById.get(nodeId) ?? null;
+  if (parentId === null) return null;
+  let last: NodeId | null = null;
+  for (const childId of getChildren(graph, parentId)) {
+    if (selectedIds.has(childId)) last = childId;
+  }
+  return last;
 }
 
 /**

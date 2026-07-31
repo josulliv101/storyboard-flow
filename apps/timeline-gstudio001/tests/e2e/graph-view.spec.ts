@@ -508,10 +508,33 @@ async function dropOneFile(page: Page, collectionId: string, clientX: number): P
 // opens the timeline in place, and the second control that navigated away was
 // removed deliberately (see graph-sub-timelines). The collection CARD's own
 // open button is the affordance now, so navigation tests go through it.
-/** A button in the floating selection toolbar. Item actions live there now,
- *  so tests that used to reach into the icon rail come here instead. */
+/** The selection pill — rendered INSIDE the anchor card, so it is found by
+ *  role rather than by any container. */
+const selectionPill = (page: Page): Locator =>
+  page.getByRole("toolbar", { name: "Selection actions" });
+
+/**
+ * Invoke a pill action, inline or folded.
+ *
+ * The pill lives in the card, so its width budget is the card's, and an action
+ * that fits on a 6s clip may have folded into the overflow on a 4s one. Tests
+ * that name an action care that it WORKS, not which of the two places it is —
+ * and a user hunting for Cut does exactly this: look in the row, then look in
+ * the menu.
+ */
+async function pillAction(page: Page, name: string | RegExp): Promise<void> {
+  const inline = selectionPill(page).getByRole("button", { name });
+  if ((await inline.count()) > 0) {
+    await inline.first().click();
+    return;
+  }
+  await selectionPill(page).getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name }).first().click();
+}
+
+/** Back-compat shim for the many tests that just want to press something. */
 const toolbarButton = (page: Page, name: string): Locator =>
-  page.getByRole("toolbar", { name: "Selection actions" }).getByRole("button", { name });
+  selectionPill(page).getByRole("button", { name });
 
 const drillButton = (page: Page, timelineName: string): Locator =>
   page.getByRole("button", { name: `Open ${timelineName}`, exact: true }).first();
@@ -929,6 +952,7 @@ test.describe("graph view E2E", () => {
     // The toolbar's actions, in the toolbar's order — this menu is flat, so
     // the overflow half is inlined and Delete still ends the primary run.
     await expect(menu.getByRole("menuitem")).toHaveText([
+      "Open",
       "Edit",
       "Copy",
       "Cut",
@@ -2777,7 +2801,7 @@ test.describe("graph view E2E", () => {
       await bravo.click();
       await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await toolbarButton(page, "More actions").click();
+    await selectionPill(page).getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
 
     // The card stays exactly where it was, muted and badged — never removed.
@@ -2898,7 +2922,7 @@ test.describe("graph view E2E", () => {
     // Delete removes the (now-selected) clone. With nothing selected the
     // toolbar has nothing to anchor to and goes away — the selection is what
     // summons it, not a mode.
-    await toolbar.getByRole("button", { name: "Delete" }).click();
+    await pillAction(page, "Delete");
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
@@ -2966,7 +2990,7 @@ test.describe("graph view E2E", () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await toolbarButton(page, "Copy").click();
+    await pillAction(page, "Copy");
     await expect(page.getByRole("button", { name: /^Paste 1 item after/ })).toBeVisible();
 
     // alpha is still selected and still on screen → its clone lands at index 1,
@@ -2989,7 +3013,7 @@ test.describe("graph view E2E", () => {
       await charlie.click();
       await expect(charlie).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await toolbarButton(page, "Copy").click();
+    await pillAction(page, "Copy");
 
     await page.getByRole("button", { name: "Open Scene A" }).first().click();
     // The route change itself, not a CHILD card appearing — a sub-row strip
@@ -3029,7 +3053,7 @@ test.describe("graph view E2E", () => {
 
     // Cut leaves bravo in the strip, dimmed and waiting. It used to be trashed
     // here, before the user had said where it was going.
-    await toolbarButton(page, "Cut").click();
+    await pillAction(page, "Cut");
     await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
@@ -3125,7 +3149,7 @@ test.describe("graph view E2E", () => {
 
     // Both copies land as one contiguous block after the LAST source (bravo),
     // keeping the sources' relative order.
-    await toolbarButton(page, "More actions").click();
+    await selectionPill(page).getByRole("button", { name: "More actions" }).click();
     // The row says the COUNT once the selection is plural — "Duplicate" alone
     // reads as "this card", which is the wrong promise with two selected.
     await page.getByRole("menuitem", { name: "Duplicate 2 items" }).click();
@@ -3195,14 +3219,17 @@ test.describe("graph view E2E", () => {
     // Query-tolerant: openGraph lands with ?surface=strip on the same path.
     await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
 
-    // The folder button is the pointer twin of O: it DRILLS IN. It is a real
-    // <button> SIBLING of the selection surface (nesting one in the card
-    // button would be invalid HTML), so find it via the item wrapper.
+    // Drilling in from a card that is now the ANCHOR goes through the pill.
+    // The corner chevron is deliberately absent there (R5.3): the anchor gives
+    // up its corner controls to host the pill, and the chevron's verb becomes
+    // the pill's leading action. On an unselected card the chevron is still
+    // the way in — that half is covered by the drill tests elsewhere.
     const collectionWrapper = strip(page, PROJECT_ID).locator(
       `[data-node-wrapper="${CHILD_ID}"]`,
     );
+    await expect(collectionWrapper.getByRole("button", { name: /^Open / })).toBeHidden();
     await expect(async () => {
-      await collectionWrapper.getByRole("button", { name: /^Open / }).click();
+      await pillAction(page, "Open");
       await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 3000 });
     }).toPass({ timeout: 15000 });
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
@@ -4887,7 +4914,7 @@ test.describe("graph view E2E", () => {
     // sharpest case available: if the click cleared, the button it was on
     // would vanish out from under it.
     await select();
-    await toolbarButton(page, "Copy").click();
+    await pillAction(page, "Copy");
     await expect(alpha).toHaveAttribute("data-selected", "true");
 
     // A card click still replaces rather than clears.
@@ -5688,9 +5715,7 @@ test.describe("graph view E2E", () => {
 
   /** The floating toolbar. Portalled to the body, so it is never inside a
    *  surface locator. */
-  function selectionToolbar(page: Page) {
-    return page.getByRole("toolbar", { name: "Selection actions" });
-  }
+  const selectionToolbar = selectionPill;
 
   test("the rail keeps its view toggles while items are selected", async ({ page }) => {
     await installGraphApi(page);
@@ -5747,14 +5772,12 @@ test.describe("graph view E2E", () => {
     await surface.locator('[data-node-id="alpha"]').click();
     const alpha = (await surface.locator('[data-node-id="alpha"]').boundingBox())!;
     const onAlpha = (await selectionToolbar(page).boundingBox())!;
+    // Centred on the card and INSIDE it — the pill is a child of the card now,
+    // so "where is it" is answered by the card's own box rather than by any
+    // positioning code.
     expect(Math.abs(onAlpha.x + onAlpha.width / 2 - (alpha.x + alpha.width / 2))).toBeLessThan(2);
-    // Adjacent to the card and never ON it. Which SIDE is not asserted: the
-    // strip sits directly under the sticky header, so there is no room above
-    // and the placement legitimately flips below — pinning "above" here would
-    // pin the fixture's scroll position rather than the behaviour.
-    const above = onAlpha.y + onAlpha.height <= alpha.y + 1;
-    const below = onAlpha.y >= alpha.y + alpha.height - 1;
-    expect(above || below).toBe(true);
+    expect(onAlpha.y).toBeGreaterThanOrEqual(alpha.y - 1);
+    expect(onAlpha.y + onAlpha.height).toBeLessThanOrEqual(alpha.y + alpha.height + 1);
 
     // Ctrl+click a second card: the selection grows, and the toolbar moves to
     // the card just touched. Anchoring to the selection's bounding box would
@@ -5780,35 +5803,34 @@ test.describe("graph view E2E", () => {
         .evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") ?? ""));
 
     await surface.locator('[data-node-id="alpha"]').click();
-    // The mode toggle LEADS the row, with the count — both describe the
-    // selection, while everything after the divider acts on it.
-    expect(await labels()).toEqual([
-      "Add to the selection",
-      "Edit",
-      "Copy",
-      "Cut",
-      "Delete",
-      "More actions",
-    ]);
+    const single = await labels();
+    expect(single).toContain("More actions");
 
+    // Grown to three, with the anchor deliberately left back on ALPHA — the
+    // last ctrl+click is alpha itself. Comparing across two different anchors
+    // would compare two different CARDS, and how many actions fit is the
+    // card's width to decide (a strip clip's width is its duration). The
+    // guarantee is that a given card's row does not reshuffle underneath you.
     await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
     await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["ControlOrMeta"] });
+    await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
+    await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
     await expect(page.locator('[data-selected="true"]')).toHaveCount(3);
+    await expect(page.locator("[data-graph-selection-pill='alpha']")).toBeVisible();
 
     // Labels gain counts; POSITIONS do not move. Removing an unavailable
     // action would slide every action after it, and the selection count
     // changes constantly during a multi-select — so the row would shuffle
     // under the pointer mid-gesture.
-    expect(await labels()).toEqual([
-      "Add to the selection",
-      "Edit",
-      "Copy 3 items",
-      "Cut 3 items",
-      "Delete 3 items",
-      "More actions",
-    ]);
-    // The count leads the row so the verbs read as selection-scoped.
-    await expect(selectionToolbar(page).locator("[data-selection-toolbar-count]")).toHaveText("3");
+    // The same CONTROLS in the same places; only their labels gain counts.
+    // Asserted as a shape rather than a literal list because which actions
+    // fit is the card's width to decide, and a strip card's width is its
+    // duration.
+    const many = await labels();
+    expect(many).toHaveLength(single.length);
+    expect(many.map((label) => label.replace(/ 3 items$/, ""))).toEqual(single);
+    // The header carries the authoritative count at all times (R9.2).
+    await expect(page.locator("[data-selection-summary]")).toContainText("3 selected");
   });
 
   test("Edit dims for a multi-selection but still says why", async ({ page }) => {
@@ -5848,7 +5870,7 @@ test.describe("graph view E2E", () => {
     const surface = strip(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="charlie"]').click();
-    await selectionToolbar(page).getByRole("button", { name: "Cut" }).click();
+    await pillAction(page, "Cut");
 
     // Cut used to trash the originals immediately and let paste re-create
     // them. The item now WAITS, dimmed, for a destination.
@@ -5866,7 +5888,7 @@ test.describe("graph view E2E", () => {
     const before = await stripOrder(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="charlie"]').click();
-    await selectionToolbar(page).getByRole("button", { name: "Cut" }).click();
+    await pillAction(page, "Cut");
     await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
 
     await surface.locator('[data-node-id="alpha"]').click();
@@ -5892,7 +5914,7 @@ test.describe("graph view E2E", () => {
     const surface = strip(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="bravo"]').click();
-    await selectionToolbar(page).getByRole("button", { name: "Copy" }).click();
+    await pillAction(page, "Copy");
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
 
@@ -5910,7 +5932,7 @@ test.describe("graph view E2E", () => {
     const surface = strip(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="charlie"]').click();
-    await selectionToolbar(page).getByRole("button", { name: "Copy" }).click();
+    await pillAction(page, "Copy");
 
     // A NON-CONTIGUOUS selection: the collection and alpha, with bravo between
     // them, anchored on alpha (clicked last). There is deliberately no
@@ -5934,7 +5956,7 @@ test.describe("graph view E2E", () => {
     const surface = strip(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="bravo"]').click();
-    await selectionToolbar(page).getByRole("button", { name: "Copy" }).click();
+    await pillAction(page, "Copy");
 
     // Watched rather than sampled: the highlight is transient by design, and
     // a poll can straddle it.
@@ -5970,21 +5992,20 @@ test.describe("graph view E2E", () => {
 
     // F10 is the toolbar convention, and is free of the modifier collisions
     // the Alt layer and the trim chords have already claimed here. It lands on
-    // the FIRST control, which is the mode toggle — the ARIA toolbar pattern,
-    // and skipping a control because it is less useful to this input would be
-    // a surprise of its own.
+    // the FIRST control in the pill.
+    const controls = () =>
+      selectionToolbar(page)
+        .getByRole("button")
+        .evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") ?? ""));
+    const [first, second] = await controls();
     await page.keyboard.press("F10");
-    await expect(
-      selectionToolbar(page).getByRole("button", { name: "Add to the selection" }),
-    ).toBeFocused();
+    await expect(selectionToolbar(page).getByRole("button", { name: first })).toBeFocused();
 
-    // Arrows move WITHIN the toolbar — one tab stop, not six.
+    // Arrows move WITHIN the pill — one tab stop, not six.
     await page.keyboard.press("ArrowRight");
-    await expect(selectionToolbar(page).getByRole("button", { name: "Edit" })).toBeFocused();
+    await expect(selectionToolbar(page).getByRole("button", { name: second })).toBeFocused();
     await page.keyboard.press("ArrowLeft");
-    await expect(
-      selectionToolbar(page).getByRole("button", { name: "Add to the selection" }),
-    ).toBeFocused();
+    await expect(selectionToolbar(page).getByRole("button", { name: first })).toBeFocused();
 
     // Escape clears the selection and hands focus back to the card, so the
     // keyboard route does not dead-end in a toolbar that just vanished.
@@ -6086,7 +6107,11 @@ test.describe("graph view E2E", () => {
 
     await page.keyboard.press("ControlOrMeta+a");
     await expect(page.locator('[data-selected="true"]')).toHaveCount(4);
-    await expect(page.locator("[data-selection-toolbar-count]")).toHaveText("4");
+    // The HEADER is the authoritative count (R9.2). The pill's badge is a
+    // glance indicator that yields its slot to an action on a narrow card —
+    // and a card's width is its duration in the strip, so most clips are
+    // narrow enough for that to happen.
+    await expect(page.locator("[data-selection-summary]")).toContainText("4 selected");
 
     // Scoped to the OPEN collection, not the whole project tree: drill in and
     // "all" means the two cards in front of you.
@@ -6153,17 +6178,20 @@ test.describe("graph view E2E", () => {
   // long-press, the obvious candidate, is already this app's DRAG activation
   // on strip cards (250ms), so it would mean two things on two surfaces.
 
+  /** The mode toggle lives in the pill's overflow menu now — it is rare
+   *  enough not to spend a slot on, and the pill is fighting for width. */
+  async function toggleMultiSelect(page: Page): Promise<void> {
+    await selectionPill(page).getByRole("button", { name: "More actions" }).click();
+    await page.locator("[data-multi-select-toggle]").click();
+  }
+
   test("multi-select mode makes plain clicks additive, no modifier held", async ({ page }) => {
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
-    const toggle = page.locator("[data-multi-select-toggle]");
 
     await surface.locator('[data-node-id="alpha"]').click();
-    await expect(toggle).toHaveAttribute("aria-pressed", "false");
-
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await toggleMultiSelect(page);
 
     // Plain clicks now ADD, exactly as Ctrl+click does — the same store branch,
     // so there is one behaviour to learn rather than two.
@@ -6183,14 +6211,13 @@ test.describe("graph view E2E", () => {
     const toggle = page.locator("[data-multi-select-toggle]");
 
     await surface.locator('[data-node-id="alpha"]').click();
-    await toggle.click();
+    await toggleMultiSelect(page);
     await surface.locator('[data-node-id="bravo"]').click();
     await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
 
     // You stop adding in order to ACT on the selection; dropping it here would
     // throw away the work the mode exists to make possible.
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await toggleMultiSelect(page);
     await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
 
     // Back to replace-on-click.
@@ -6202,23 +6229,17 @@ test.describe("graph view E2E", () => {
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
-    const toggle = page.locator("[data-multi-select-toggle]");
 
     await surface.locator('[data-node-id="alpha"]').click();
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await toggleMultiSelect(page);
 
-    // Clearing takes the toolbar with it — and the toggle is ON the toolbar.
-    // Left armed, the mode would be invisible and would silently make the next
-    // several taps additive.
+    // Clearing takes the pill with it — and the toggle is IN the pill's menu.
+    // Left armed, the mode would be unreachable and would silently make the
+    // next several taps additive.
     await page.keyboard.press("Escape");
-    await expect(toggle).toHaveCount(0);
+    await expect(selectionPill(page)).toHaveCount(0);
 
     await surface.locator('[data-node-id="bravo"]').click();
-    await expect(page.locator("[data-multi-select-toggle]")).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
     await surface.locator('[data-node-id="charlie"]').click();
     await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
   });
@@ -6235,7 +6256,7 @@ test.describe("graph view E2E", () => {
 
     await surface.locator('[data-node-id="alpha"]').click();
     const before = await deleteBox();
-    await page.locator("[data-multi-select-toggle]").click();
+    await toggleMultiSelect(page);
     const after = await deleteBox();
 
     expect(Math.round(after.x - before.x)).toBe(0);
@@ -6261,21 +6282,26 @@ test.describe("graph view E2E", () => {
       const toolbar = page.getByRole("toolbar", { name: "Selection actions" });
       await expect(toolbar).toBeVisible();
 
-      // Every control in the toolbar, plus the header's fallback cluster —
-      // which is where a touch user is steered when the anchor scrolls away,
-      // so it cannot be the one surface with 32px targets.
-      const boxes = await toolbar
+      // The pill is only 32px tall, so its controls cannot BE 44px — the
+      // target comes from a padded `::after` layer instead (R12.2). Measuring
+      // the button's own box would therefore report 28 and prove nothing;
+      // this measures the layer that actually receives the tap.
+      const hits = await toolbar
         .getByRole("button")
         .evaluateAll((els) =>
           els.map((el) => {
-            const r = el.getBoundingClientRect();
-            return { w: Math.round(r.width), h: Math.round(r.height) };
+            const after = getComputedStyle(el, "::after");
+            return {
+              label: el.getAttribute("aria-label") ?? "",
+              w: Math.round(parseFloat(after.width)),
+              h: Math.round(parseFloat(after.height)),
+            };
           }),
         );
-      expect(boxes.length).toBeGreaterThan(4);
-      for (const box of boxes) {
-        expect(box.w, JSON.stringify(box)).toBeGreaterThanOrEqual(44);
-        expect(box.h, JSON.stringify(box)).toBeGreaterThanOrEqual(44);
+      expect(hits.length).toBeGreaterThan(2);
+      for (const hit of hits) {
+        expect(hit.w, JSON.stringify(hit)).toBeGreaterThanOrEqual(44);
+        expect(hit.h, JSON.stringify(hit)).toBeGreaterThanOrEqual(44);
       }
 
       const clear = (await page.locator("[data-clear-selection]").boundingBox())!;
@@ -6306,5 +6332,177 @@ test.describe("graph view E2E", () => {
       await alpha.tap();
       await expect(page.getByRole("toolbar", { name: "Selection actions" })).toHaveCount(0);
     });
+  });
+
+  // ── The pill lives in the card (spec v2) ──────────────────────────────────
+  //
+  // The floating toolbar it replaces portalled to the body and re-positioned
+  // itself every frame against four rects. These pin the properties that make
+  // all of that unnecessary.
+
+  test("the pill rides its card, with no positioning code", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    await surface.locator('[data-node-id="alpha"]').click();
+    await expect(selectionPill(page)).toBeVisible();
+
+    const offsetInCard = async () =>
+      page.evaluate(() => {
+        const pill = document.querySelector("[data-graph-selection-pill]");
+        const id = pill?.getAttribute("data-graph-selection-pill") ?? "";
+        const card = document.querySelector(`[data-node-id="${CSS.escape(id)}"]`);
+        if (!pill || !card) return null;
+        const p = pill.getBoundingClientRect();
+        const c = card.getBoundingClientRect();
+        return { dx: Math.round(p.left - c.left), dy: Math.round(p.top - c.top), cardLeft: Math.round(c.left) };
+      });
+
+    const before = await offsetInCard();
+    await surface.evaluate((el) => {
+      el.scrollLeft += 160;
+    });
+    await expect
+      .poll(async () => (await offsetInCard())?.cardLeft)
+      .not.toBe(before?.cardLeft);
+
+    // THE property. The card moved; the pill's offset within it did not, and
+    // nothing measured anything to make that true.
+    const after = await offsetInCard();
+    expect(after?.dx).toBe(before?.dx);
+    expect(after?.dy).toBe(before?.dy);
+  });
+
+  test("exactly one pill exists, and it follows the anchor", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const pills = page.locator("[data-graph-selection-pill]");
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await expect(pills).toHaveCount(1);
+    await expect(page.locator("[data-graph-selection-pill='alpha']")).toBeVisible();
+
+    // A second selected card does NOT grow its own pill (R5.6) — one would
+    // imply that card is the paste destination, and it is not.
+    await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["ControlOrMeta"] });
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+    await expect(pills).toHaveCount(1);
+    await expect(page.locator("[data-graph-selection-pill='charlie']")).toBeVisible();
+  });
+
+  test("the anchor gives up its badge and chevron; other selected cards keep both", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const wrapper = (id: string) => surface.locator(`[data-node-wrapper="${id}"]`);
+
+    // Anchored on the COLLECTION, because it is the card kind that has both
+    // controls to give up — a clip has no chevron to begin with.
+    await surface.locator('[data-node-id="alpha"]').click();
+    await surface.locator(`[data-node-id="${CHILD_ID}"]`).click({ modifiers: ["ControlOrMeta"] });
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+    await expect(page.locator(`[data-graph-selection-pill='${CHILD_ID}']`)).toBeVisible();
+
+    // The anchor has neither badge nor chevron: the pill says "selected", and
+    // its leading action is the chevron's verb. The MISSING checkmark is what
+    // distinguishes the anchor from the rest of the selection, which matters
+    // because the anchor is where a paste lands.
+    await expect(wrapper(CHILD_ID).locator("[data-card-selected-badge]")).toHaveCount(0);
+    await expect(wrapper(CHILD_ID).getByRole("button", { name: /^Open / })).toBeHidden();
+
+    // Two cards are selected and exactly ONE badge is on screen — the other
+    // selected card's. Counted globally because a media card's badge sits
+    // outside its `data-node-wrapper`, so a per-wrapper query would pass for
+    // the wrong reason.
+    await expect(page.locator("[data-card-selected-badge]")).toHaveCount(1);
+
+    // Move the anchor away and the collection gets both controls straight back.
+    await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
+    await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
+    await expect(page.locator("[data-graph-selection-pill='alpha']")).toBeVisible();
+    await expect(wrapper(CHILD_ID).locator("[data-card-selected-badge]")).toHaveCount(1);
+    await expect(wrapper(CHILD_ID).getByRole("button", { name: /^Open / })).toBeVisible();
+  });
+
+  test("right-click on a selected card re-anchors without changing the selection", async ({
+    page,
+  }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["ControlOrMeta"] });
+    await expect(page.locator("[data-graph-selection-pill='charlie']")).toBeVisible();
+
+    // "Act on all of this, but aim at that one." The anchor decides where a
+    // paste lands, and before this there was no way to steer it without
+    // deselecting everything else. It is also the reason the anchor is stored
+    // rather than derived from the selection — the selection does not change.
+    await surface.locator('[data-node-id="alpha"]').click({ button: "right" });
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+    await expect(page.locator("[data-graph-selection-pill='alpha']")).toBeVisible();
+    await expect(page.locator("[data-graph-selection-pill='charlie']")).toHaveCount(0);
+
+    await page.keyboard.press("Escape");
+    // …and the paste destination followed it.
+    await expect(page.getByRole("button", { name: /^Paste .* after “alpha”/ })).toHaveCount(0);
+  });
+
+  test("a folded action is still reachable in the overflow", async ({ page }) => {
+    // The pill's width budget is its card's, so on a narrow card actions drop
+    // out of the row. An action in neither the row nor the menu is simply
+    // gone — this is what makes folding lossless rather than a quiet removal.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    await surface.locator('[data-node-id="bravo"]').click();
+
+    const inline = await selectionPill(page)
+      .getByRole("button")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") ?? ""));
+    await selectionPill(page).getByRole("button", { name: "More actions" }).click();
+    const menu = await page
+      .getByRole("menuitem")
+      .evaluateAll((els) => els.map((el) => el.textContent ?? ""));
+
+    // Every primary verb is in one place or the other.
+    for (const verb of ["Open", "Edit", "Copy", "Cut", "Delete"]) {
+      const present =
+        inline.some((label) => label.startsWith(verb)) ||
+        menu.some((label) => label.startsWith(verb));
+      expect(present, `${verb} unreachable (row: ${inline.join(",")} · menu: ${menu.join(",")})`).toBe(
+        true,
+      );
+    }
+  });
+
+  test("a card too narrow for a pill still has the header overflow", async ({ page }) => {
+    // A strip clip's width is its DURATION, and the floor is 12px — narrower
+    // than any control. Zooming out far enough proves the degrade path: no
+    // pill at all, and the header is the way in.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    await surface.locator('[data-node-id="alpha"]').click();
+    await expect(selectionPill(page)).toBeVisible();
+
+    // Board options → zoom to the minimum.
+    await page.evaluate(() => {
+      const input = document.querySelector<HTMLInputElement>("[data-graph-zoom-input]");
+      if (input) {
+        input.value = "6";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+
+    // Whether the pill survives depends on the clip's duration at that zoom;
+    // what must hold either way is that the actions are reachable.
+    await expect(page.locator("[data-header-selection-overflow]")).toBeVisible();
+    await page.locator("[data-header-selection-overflow]").click();
+    await expect(page.getByRole("menuitem", { name: /^Delete/ })).toBeVisible();
   });
 });

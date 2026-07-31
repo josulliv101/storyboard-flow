@@ -148,6 +148,9 @@ export type GraphItemAction =
   | "cancel"
   /** Open the inline name editor on the selected item's card. */
   | "rename"
+  /** Drill into the selected collection — the card chevron's verb, promoted
+   *  into the pill because the anchor card gives its corner controls up. */
+  | "open"
   /** Skip (or un-skip) the selection in playback, counts and time totals. */
   | "toggle-disabled"
   /** Open the details view for the selection. Meaningful for exactly ONE
@@ -185,6 +188,18 @@ export function requestGraphItemAction(action: GraphItemAction): void {
 // opened an editor in every one of them, and because each editor focuses itself
 // on mount and commits on blur, they knocked each other out and ALL of them
 // closed: F2 appeared to do nothing at all.
+
+// Drill-in hand-off. The pill's "Open" is performed by GraphItemActionsBridge,
+// which sits OUTSIDE GraphViewNavProvider (it is a sibling of the board, not a
+// descendant of the nav tree), so it cannot call `openTimeline` directly. Same
+// window seam the rename hand-off below uses, and for the same structural
+// reason.
+export const GRAPH_OPEN_ITEM_EVENT = "graph-view:open-item";
+
+/** Ask the graph's navigation to drill into a node. */
+export function requestGraphOpenItem(nodeId: string): void {
+  window.dispatchEvent(new CustomEvent<string>(GRAPH_OPEN_ITEM_EVENT, { detail: nodeId }));
+}
 
 export const GRAPH_RENAME_ITEM_EVENT = "graph-view:rename-item";
 

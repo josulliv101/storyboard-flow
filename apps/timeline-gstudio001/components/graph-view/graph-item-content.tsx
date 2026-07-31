@@ -48,6 +48,7 @@ import { useCollectionHoverTarget } from "./graph-collection-hover";
 import { GraphViewNavContext } from "./graph-navigation";
 import { TrimPanel } from "./graph-trim-panel";
 import { GraphItemContextMenu } from "./graph-item-context-menu";
+import { GraphSelectionPill } from "./graph-selection-pill";
 import { createDerivedCache } from "@/lib/derived-cache";
 import { graphClipboard } from "@/lib/graph-clipboard";
 import { graphPasteFlash } from "@/lib/graph-paste-flash";
@@ -81,7 +82,10 @@ export function VideoFrameLookAhead({
  *  video filmstrip shows, so it stays a sensible sequence at every zoom (R6
  *  #8) instead of tiling one still wider and wider. Zero until first measured;
  *  callers fall back to a duration-based count meanwhile. */
-function useElementSize(): [(element: HTMLElement | null) => void, { width: number; height: number }] {
+export function useElementSize(): [
+  (element: HTMLElement | null) => void,
+  { width: number; height: number },
+] {
   const [size, setSize] = useState({ width: 0, height: 0 });
   const observerRef = useRef<ResizeObserver | null>(null);
   const ref = useCallback((element: HTMLElement | null) => {
@@ -966,6 +970,12 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   const displayName = title ?? node.name;
   const inheritedDisabled = useDisabledByAncestor(id);
   const muted = node.disabled === true || inheritedDisabled;
+  // The ANCHOR gives up BOTH corner controls to host the pill (R5.3): the
+  // badge, because the pill and the accent already say "selected", and the
+  // chevron, because its verb becomes the pill's leading action. The absence
+  // of a checkmark is the only thing distinguishing the anchor from the rest
+  // of the selection, which is what makes the paste destination legible.
+  const isAnchor = useCollectionsSelector((s) => s.interaction.anchorId === id);
 
   return (
     <>
@@ -1123,12 +1133,14 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           O key (OpenKeyBoundary), and data-collections-keyboard-ignore excludes
           them from the strip's pan surface (isPannableStripSurface), so a press
           here never scrolls the strip out from under it. */}
-      {selected && <CardSelectedBadge />}
-      {/* One control, not a cluster: the details trigger moved to the rail's
-          item actions (PL13-009), so what is left on the card is the drill. It
+      {selected && !isAnchor && <CardSelectedBadge />}
+      <GraphSelectionPill nodeId={id} />
+      {/* One control, not a cluster: the details trigger moved to the item
+          actions (PL13-009), so what is left on the card is the drill. It
           keeps the cluster's position — same corner, same inset — because that
-          is where a card's control belongs whether there are two or one. */}
-      <span className={CARD_CONTROL_CLUSTER_CLASS}>
+          is where a card's control belongs whether there are two or one.
+          Absent on the anchor, whose pill leads with the same verb. */}
+      <span className={CARD_CONTROL_CLUSTER_CLASS} hidden={isAnchor}>
         <button
           type="button"
           tabIndex={-1}
@@ -1267,11 +1279,18 @@ const GraphMediaItem = memo(function GraphMediaItem({
   // Seeded with the AUTHORED title when there is one, so re-naming edits what
   // the user wrote rather than making them delete a filename first.
   const rename = useInlineRename(props.id, detail?.title ?? "", "card");
+  // The ANCHOR hosts the pill and gives up its badge for it (R5.3/R5.4). The
+  // missing checkmark is the feature: it is the only thing distinguishing the
+  // anchor from the rest of the selection, and the anchor is where a paste
+  // lands. A boolean about THIS node, so an unrelated anchor move is invisible
+  // here.
+  const isAnchor = useCollectionsSelector((s) => s.interaction.anchorId === props.id);
 
   return (
     <div className={["group/media-item relative", className ?? ""].join(" ")}>
       <NodeCard {...props} className="h-full w-full" />
-      {mediaSelected && <CardSelectedBadge />}
+      {mediaSelected && !isAnchor && <CardSelectedBadge />}
+      <GraphSelectionPill nodeId={props.id} />
       {rename.editing && node?.kind === "media" && (
         <InlineNameEditor
           initialValue={detail?.title ?? ""}

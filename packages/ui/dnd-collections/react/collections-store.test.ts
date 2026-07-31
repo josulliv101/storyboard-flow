@@ -1006,4 +1006,140 @@ describe("createCollectionsStore", () => {
     store.setMultiSelectMode(true);
     expect(listener).not.toHaveBeenCalled();
   });
+
+  // ── The anchor ────────────────────────────────────────────────────────────
+  //
+  // The most recent pick that is still selected. Consumers hang UI on it (a
+  // toolbar rendered INSIDE that card) and aim inserts at it. Easy to conflate
+  // with the pivot above and deliberately not the same thing: the anchor moves
+  // on every gesture, the pivot survives a range.
+
+  const anchor = (store: ReturnType<typeof createCollectionsStore>) =>
+    store.getSnapshot().interaction.anchorId;
+
+  test("the anchor is the most recent pick", () => {
+    const store = createCollectionsStore(graphFixture());
+
+    store.setSelection([id("x")]);
+    expect(anchor(store)).toBe(id("x"));
+
+    // Not grid order — the card just touched, even though z is later on screen.
+    store.setSelection([id("z"), id("y")]);
+    expect(anchor(store)).toBe(id("y"));
+
+    store.toggleSelected(id("x"));
+    expect(anchor(store)).toBe(id("x"));
+  });
+
+  test("a range anchors on the card that was shift-clicked", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+    store.selectRange(id("z"));
+
+    // The anchor moves to the range's far end while the PIVOT stays behind —
+    // the clearest case of the two being different things.
+    expect(anchor(store)).toBe(id("z"));
+    expect(store.getSnapshot().interaction.selectionPivotId).toBe(id("x"));
+  });
+
+  test("removing the anchor hands it on in GRID order", () => {
+    // Clicked z, then x, then y — so y is the anchor. Ctrl+clicking y off
+    // leaves {z, x}: click order would answer x, grid order answers z, and
+    // grid order is the one on screen.
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("z")]);
+    store.toggleSelected(id("x"));
+    store.toggleSelected(id("y"));
+    expect(anchor(store)).toBe(id("y"));
+
+    store.toggleSelected(id("y"));
+    expect(anchor(store)).toBe(id("z"));
+  });
+
+  test("removing a NON-anchor card leaves the anchor alone", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x"), id("y"), id("z")]);
+    expect(anchor(store)).toBe(id("z"));
+
+    store.toggleSelected(id("x"));
+    expect(anchor(store)).toBe(id("z"));
+  });
+
+  test("the anchor is null once nothing is selected", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+    store.toggleSelected(id("x"));
+    expect(anchor(store)).toBeNull();
+
+    store.setSelection([id("y")]);
+    store.clearSelection();
+    expect(anchor(store)).toBeNull();
+  });
+
+  test("setAnchor re-aims without touching the selection", () => {
+    // Right-clicking a card that is already selected: act on all of this, but
+    // aim at that one. There is no way to express this as a function of the
+    // selection, because the selection does not change — which is why the
+    // anchor is stored rather than derived.
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x"), id("y"), id("z")]);
+    expect(anchor(store)).toBe(id("z"));
+
+    store.setAnchor(id("x"));
+    expect(anchor(store)).toBe(id("x"));
+    expect(new Set(selected(store))).toEqual(new Set([id("x"), id("y"), id("z")]));
+  });
+
+  test("setAnchor refuses a node outside the selection", () => {
+    // An anchor outside the selection would host a toolbar whose actions do
+    // not apply to the card it sits on.
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+
+    store.setAnchor(id("y"));
+    expect(anchor(store)).toBe(id("x"));
+  });
+
+  test("setAnchor on the current anchor does not notify", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x"), id("y")]);
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.setAnchor(id("y"));
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  test("an anchor whose node is deleted hands on rather than dangling", () => {
+    // Otherwise a toolbar stays pointed at a card that no longer exists, and
+    // the paste destination resolves to nothing.
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x"), id("y"), id("z")]);
+    store.setAnchor(id("y"));
+
+    store.dispatch({
+      type: "move-nodes",
+      nodeIds: [id("y")],
+      toParentId: id("root-b"),
+      toIndex: 0,
+    });
+    // Still in the graph, still selected — a move is not a removal.
+    expect(anchor(store)).toBe(id("y"));
+
+    store.replaceGraph(
+      (() => {
+        const built = buildGraph([
+          {
+            kind: "collection",
+            id: "root-a",
+            name: "A",
+            children: [media("x"), media("z")],
+          },
+        ]);
+        if (!built.ok) throw new Error(JSON.stringify(built.error));
+        return built.value;
+      })(),
+    );
+    expect(anchor(store)).toBe(id("z"));
+  });
 });
