@@ -596,7 +596,8 @@ views — on each commit (drop/undo/redo). It honors `prefers-reduced-motion`.
 The interaction-policy props apply to BOTH card shells (`NodeCard` and the
 `CollectionItem` primitives) through one shared click grammar: Ctrl/Cmd+click
 is always the additive selection toggle (also how open-target nodes join a
-multi-drag); Shift+click extends the selection to that card via `selectRange`
+multi-drag) — as is a plain click while `multiSelectMode` is on, which is the
+only route to that gesture on a touchscreen; Shift+click extends the selection to that card via `selectRange`
 (checked BEFORE the open branch, so shift-clicking a collection extends rather
 than drilling in — losing a range to an accidental navigation is the worse
 outcome); a plain pointer click opens (when configured) or selects (per
@@ -708,7 +709,8 @@ type CollectionsChange = {
 | `setSelection` | `(ids: readonly NodeId[]) => void` | No-op (no notify) when the set AND the resulting pivot are unchanged — the pivot is the last id, so `[x,y]` and `[y,x]` are different states even though the set is not. Moves `selectionPivotId` to the last id. |
 | `toggleSelected` | `(id: NodeId) => void` | Moves `selectionPivotId` to `id`, including when the toggle DESELECTS it: the pivot is where the user last acted. |
 | `selectRange` | `(toId: NodeId) => void` | Replaces the selection with the inclusive run between `selectionPivotId` and `toId`, in their shared parent's child order (direction-agnostic). **The pivot does not move** — that is what lets a shift+click overshoot be corrected by shift+clicking back. Ids under different parents (or no pivot yet) fall back to selecting `toId` alone and re-pivoting there; there is no single order spanning two collections, and inventing one would select cards between them that the user cannot see. |
-| `clearSelection` | `() => void` | No-op when already empty AND unpivoted. Clears the pivot. |
+| `setMultiSelectMode` | `(on: boolean) => void` | Additive-tap mode: while on, a plain click takes the same branch as Ctrl/Cmd+click. Exists for TOUCH, which has no modifier keys — without it multi-select and ranges are unreachable there. Turning it OFF keeps the selection. It **cannot outlive the selection**: any transition to an empty selection clears it, because its only control lives on a surface that exists while something is selected, and an armed invisible mode silently makes the next taps additive. |
+| `clearSelection` | `() => void` | No-op when already empty, unpivoted AND unmoded. Clears the pivot and the mode. |
 | `beginDrag` | `(pressedId: NodeId) => void` | Drag set = the selection if it contains `pressedId` (pressed id first — it's the overlay primary), else just `pressedId`. Sets `isDragging`. |
 | `beginPaletteDrag` | `() => void` | Marks a palette drag live (`isDragging` without `activeIds`). Ends via `endDrag`. |
 | `setDropIntent` | `(intent: DropIntent \| null) => void` | Deduplicates equal intents; computes `dropIntentInvalid` once per change. Non-null intents are IGNORED while no drag is live (`isDragging` false) — a dnd-kit gesture can outlive the store's drag state (`replaceGraph` mid-drag, failed palette factory) and must not repaint indicators. `null` always clears. |
@@ -749,6 +751,7 @@ type CollectionsInteraction = {
   dropIntentInvalid: boolean;          // would that preview be a cycle rejection
   selectedIds: ReadonlySet<NodeId>;
   selectionPivotId: NodeId | null;     // where a RANGE extends from (see selectRange)
+  multiSelectMode: boolean;            // plain clicks are additive (touch has no Ctrl)
   rejectedIdSet: ReadonlySet<NodeId>;  // cards currently flashing a rejection
 };
 ```

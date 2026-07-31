@@ -926,4 +926,84 @@ describe("createCollectionsStore", () => {
     store.selectRange(id("z"));
     expect(listener).not.toHaveBeenCalled();
   });
+
+  // ── Additive-tap mode ─────────────────────────────────────────────────────
+  //
+  // Touch has no modifier keys, so this mode is the ONLY route to multi-select
+  // and ranges on a touchscreen. Its danger is being armed with nothing on
+  // screen to disarm it, which is what these pin.
+
+  test("the mode makes a plain selection additive, exactly as Ctrl would", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+    store.setMultiSelectMode(true);
+
+    // Same branch as the modifier: toggleSelected, not setSelection.
+    store.toggleSelected(id("y"));
+    expect(new Set(selected(store))).toEqual(new Set([id("x"), id("y")]));
+  });
+
+  test("turning the mode off keeps the selection", () => {
+    // You stop adding in order to ACT on what you have; dropping the selection
+    // here would throw away the work the mode exists to make possible.
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+    store.setMultiSelectMode(true);
+    store.toggleSelected(id("y"));
+    store.setMultiSelectMode(false);
+
+    expect(new Set(selected(store))).toEqual(new Set([id("x"), id("y")]));
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(false);
+  });
+
+  test("the mode cannot outlive the selection, however the selection ends", () => {
+    // Its only control lives on a surface that exists while something is
+    // selected. Armed with an empty selection it is unreachable — on, invisible
+    // and quietly making the next taps additive. All four exits are checked
+    // because they take different paths through the store.
+    const store = createCollectionsStore(graphFixture());
+    const armed = () => {
+      store.setSelection([id("x")]);
+      store.setMultiSelectMode(true);
+      expect(store.getSnapshot().interaction.multiSelectMode).toBe(true);
+    };
+
+    armed();
+    store.clearSelection();
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(false);
+
+    armed();
+    store.toggleSelected(id("x")); // toggled the last one off
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(false);
+
+    armed();
+    store.setSelection([]);
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(false);
+
+    // And the one that does not go through setInteraction at all: pruning,
+    // after the selected node leaves the graph.
+    armed();
+    store.replaceGraph(
+      (() => {
+        const built = buildGraph([
+          { kind: "collection", id: "root-a", name: "A", children: [media("y")] },
+        ]);
+        if (!built.ok) throw new Error(JSON.stringify(built.error));
+        return built.value;
+      })(),
+    );
+    expect(selected(store)).toEqual([]);
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(false);
+  });
+
+  test("setting the mode to its current value does not notify", () => {
+    const store = createCollectionsStore(graphFixture());
+    store.setSelection([id("x")]);
+    store.setMultiSelectMode(true);
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.setMultiSelectMode(true);
+    expect(listener).not.toHaveBeenCalled();
+  });
 });

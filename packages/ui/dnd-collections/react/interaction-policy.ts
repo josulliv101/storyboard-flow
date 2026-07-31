@@ -110,7 +110,11 @@ export function handleSelectionSurfaceClick(args: {
   // both fall through.
   if (event.detail > 1) return;
 
-  if (event.ctrlKey || event.metaKey) {
+  // Additive-tap MODE is the same branch as the modifier, deliberately: a
+  // touchscreen has no Ctrl to hold, so the mode is how that gesture is
+  // reached at all, and it must behave identically or it becomes a second
+  // thing to learn rather than a way in to the first.
+  if (event.ctrlKey || event.metaKey || store.getSnapshot().interaction.multiSelectMode) {
     store.toggleSelected(id);
     return;
   }

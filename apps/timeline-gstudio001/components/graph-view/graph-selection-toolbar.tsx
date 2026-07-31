@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { EllipsisVertical } from "lucide-react";
+import { CopyCheck, EllipsisVertical } from "lucide-react";
 
 import {
   findNodeElement,
@@ -53,6 +53,21 @@ import {
 /** Matches the rail's width, which the toolbar must never slide under. */
 const RAIL_WIDTH = 72;
 
+/**
+ * Control size: 36px for a pointer, 44px for a finger (R11.2).
+ *
+ * Keyed off `pointer: coarse` rather than a viewport width, because the
+ * question is what is DOING the pointing, not how big the screen is — a
+ * touchscreen laptop needs the bigger target at desktop width, and a phone
+ * driven by a stylus does not.
+ */
+const CONTROL_SIZE = "h-9 w-9 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11";
+
+/** A finger covers roughly this much more than a cursor does, so a toolbar
+ *  that had to flip BELOW its card clears the hand rather than hiding under
+ *  it (R11.3). */
+const COARSE_POINTER_GAP = 20;
+
 const TOOLBAR_ATTRIBUTE = "data-graph-selection-toolbar";
 
 function rectOf(el: Element | null): ToolbarRect | null {
@@ -101,7 +116,8 @@ function ActionButton({
         onFocus={() => setShowReason(true)}
         onBlur={() => setShowReason(false)}
         className={cn(
-          "inline-flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
+          "inline-flex items-center justify-center rounded-lg transition-colors",
+          CONTROL_SIZE,
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70",
           disabled
             ? "cursor-not-allowed text-zinc-600"
@@ -144,6 +160,7 @@ function ActionButton({
 function SelectionToolbarFrame({ anchorId }: Readonly<{ anchorId: NodeId }>) {
   const store = useCollectionsStore();
   const state = useSelectionActionState();
+  const multiSelectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const [visible, setVisible] = useState(false);
 
@@ -182,6 +199,12 @@ function SelectionToolbarFrame({ anchorId }: Readonly<{ anchorId: NodeId }>) {
         headerRect: rectOf(document.querySelector("[data-graph-board-header]")),
         railWidth: RAIL_WIDTH,
         viewport: { width: window.innerWidth, height: window.innerHeight },
+        // Asked per frame rather than cached: a hybrid machine can switch
+        // between a trackpad and its touchscreen without any event this
+        // component would see, and matchMedia is a cheap read.
+        gap: window.matchMedia?.("(pointer: coarse)").matches
+          ? COARSE_POINTER_GAP
+          : undefined,
       });
       if (!placement.visible) {
         // Setting the same value every frame is free — React bails out of an
@@ -294,6 +317,40 @@ function SelectionToolbarFrame({ anchorId }: Readonly<{ anchorId: NodeId }>) {
           {state.selectionCount}
         </span>
       ) : null}
+      {/* Additive-tap mode, and it sits with the COUNT rather than with the
+          verbs: both describe the selection, while everything to the right of
+          the divider acts on it. Keeping it out of that run is also what lets
+          R5.1 hold — the four actions stay at the same offsets whether or not
+          this is here.
+
+          Always rendered, not gated on `pointer: coarse`. Touch is why it
+          exists, but a device can have both a trackpad and a touchscreen, and
+          a control that appears and disappears depending on which one you
+          last used is worse than one extra button. It is a genuine
+          alternative to holding Ctrl for anyone who prefers it. */}
+      <button
+        type="button"
+        data-multi-select-toggle
+        aria-pressed={multiSelectMode}
+        aria-label={multiSelectMode ? "Stop adding to the selection" : "Add to the selection"}
+        title={
+          multiSelectMode
+            ? "Tapping stops adding — tap again to resume"
+            : "Tap items to add them to the selection (no Ctrl needed)"
+        }
+        onClick={() => store.setMultiSelectMode(!multiSelectMode)}
+        className={cn(
+          "inline-flex items-center justify-center rounded-lg transition-colors",
+          CONTROL_SIZE,
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70",
+          multiSelectMode
+            ? "bg-amber-400/15 text-amber-300 hover:bg-amber-400/25"
+            : "text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100",
+        )}
+      >
+        <CopyCheck aria-hidden="true" className="h-4 w-4" />
+      </button>
+      <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-zinc-700" />
       {primary.map((spec, index) => {
         const Icon = spec.icon(state);
         return (
@@ -321,7 +378,8 @@ function SelectionToolbarFrame({ anchorId }: Readonly<{ anchorId: NodeId }>) {
             type="button"
             aria-label="More actions"
             className={cn(
-              "inline-flex h-9 w-9 items-center justify-center rounded-lg text-zinc-300 transition-colors",
+              "inline-flex items-center justify-center rounded-lg text-zinc-300 transition-colors",
+              CONTROL_SIZE,
               "hover:bg-zinc-800 hover:text-zinc-100",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70",
             )}

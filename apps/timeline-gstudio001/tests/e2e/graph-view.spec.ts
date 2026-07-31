@@ -5780,7 +5780,16 @@ test.describe("graph view E2E", () => {
         .evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") ?? ""));
 
     await surface.locator('[data-node-id="alpha"]').click();
-    expect(await labels()).toEqual(["Edit", "Copy", "Cut", "Delete", "More actions"]);
+    // The mode toggle LEADS the row, with the count — both describe the
+    // selection, while everything after the divider acts on it.
+    expect(await labels()).toEqual([
+      "Add to the selection",
+      "Edit",
+      "Copy",
+      "Cut",
+      "Delete",
+      "More actions",
+    ]);
 
     await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
     await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["ControlOrMeta"] });
@@ -5791,6 +5800,7 @@ test.describe("graph view E2E", () => {
     // changes constantly during a multi-select — so the row would shuffle
     // under the pointer mid-gesture.
     expect(await labels()).toEqual([
+      "Add to the selection",
       "Edit",
       "Copy 3 items",
       "Cut 3 items",
@@ -5959,15 +5969,22 @@ test.describe("graph view E2E", () => {
     await expect(selectionToolbar(page)).toBeVisible();
 
     // F10 is the toolbar convention, and is free of the modifier collisions
-    // the Alt layer and the trim chords have already claimed here.
+    // the Alt layer and the trim chords have already claimed here. It lands on
+    // the FIRST control, which is the mode toggle — the ARIA toolbar pattern,
+    // and skipping a control because it is less useful to this input would be
+    // a surprise of its own.
     await page.keyboard.press("F10");
-    await expect(selectionToolbar(page).getByRole("button", { name: "Edit" })).toBeFocused();
+    await expect(
+      selectionToolbar(page).getByRole("button", { name: "Add to the selection" }),
+    ).toBeFocused();
 
-    // Arrows move WITHIN the toolbar — one tab stop, not five.
+    // Arrows move WITHIN the toolbar — one tab stop, not six.
     await page.keyboard.press("ArrowRight");
-    await expect(selectionToolbar(page).getByRole("button", { name: "Copy" })).toBeFocused();
-    await page.keyboard.press("ArrowLeft");
     await expect(selectionToolbar(page).getByRole("button", { name: "Edit" })).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(
+      selectionToolbar(page).getByRole("button", { name: "Add to the selection" }),
+    ).toBeFocused();
 
     // Escape clears the selection and hands focus back to the card, so the
     // keyboard route does not dead-end in a toolbar that just vanished.
@@ -6126,5 +6143,168 @@ test.describe("graph view E2E", () => {
     await expect.poll(selected).toEqual(["bravo", CHILD_ID]);
     await page.keyboard.press("Shift+ArrowLeft");
     await expect.poll(selected).toEqual(["bravo"]);
+  });
+
+  // ── Touch: additive-tap mode and hit targets (§11) ────────────────────────
+  //
+  // A touchscreen has no modifier keys, so Ctrl+tap and Shift+tap — the only
+  // routes to multi-select and ranges — cannot be performed on one at all. A
+  // mode is how that capability is reached without inventing a gesture:
+  // long-press, the obvious candidate, is already this app's DRAG activation
+  // on strip cards (250ms), so it would mean two things on two surfaces.
+
+  test("multi-select mode makes plain clicks additive, no modifier held", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const toggle = page.locator("[data-multi-select-toggle]");
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    // Plain clicks now ADD, exactly as Ctrl+click does — the same store branch,
+    // so there is one behaviour to learn rather than two.
+    await surface.locator('[data-node-id="bravo"]').click();
+    await surface.locator('[data-node-id="charlie"]').click();
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(3);
+
+    // And they still toggle OFF, which is how you correct a mis-tap.
+    await surface.locator('[data-node-id="bravo"]').click();
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+  });
+
+  test("turning the mode off keeps what it collected", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const toggle = page.locator("[data-multi-select-toggle]");
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await toggle.click();
+    await surface.locator('[data-node-id="bravo"]').click();
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+
+    // You stop adding in order to ACT on the selection; dropping it here would
+    // throw away the work the mode exists to make possible.
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+
+    // Back to replace-on-click.
+    await surface.locator('[data-node-id="charlie"]').click();
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
+  });
+
+  test("the mode cannot get stranded on with nothing to turn it off", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const toggle = page.locator("[data-multi-select-toggle]");
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    // Clearing takes the toolbar with it — and the toggle is ON the toolbar.
+    // Left armed, the mode would be invisible and would silently make the next
+    // several taps additive.
+    await page.keyboard.press("Escape");
+    await expect(toggle).toHaveCount(0);
+
+    await surface.locator('[data-node-id="bravo"]').click();
+    await expect(page.locator("[data-multi-select-toggle]")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await surface.locator('[data-node-id="charlie"]').click();
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
+  });
+
+  test("the action row keeps its offsets when the mode toggle is on", async ({ page }) => {
+    // R5.1 again: the toggle sits with the COUNT, left of the divider, so
+    // turning it on must not shift a single verb.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const toolbar = page.getByRole("toolbar", { name: "Selection actions" });
+    const deleteBox = async () =>
+      (await toolbar.getByRole("button", { name: "Delete" }).boundingBox())!;
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    const before = await deleteBox();
+    await page.locator("[data-multi-select-toggle]").click();
+    const after = await deleteBox();
+
+    expect(Math.round(after.x - before.x)).toBe(0);
+  });
+
+  // Its own context: `hasTouch` sets maxTouchPoints, which is what makes
+  // Chromium report `pointer: coarse` — the query the sizing keys off.
+  test.describe(() => {
+    test.use({ hasTouch: true });
+
+    test("touch gets 44px hit targets on every selection control", async ({ page }) => {
+      await installGraphApi(page);
+      await openGraph(page);
+      const surface = strip(page, PROJECT_ID);
+
+      // The premise, asserted first: without it the size checks below would
+      // pass or fail for reasons that have nothing to do with the CSS.
+      expect(await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)).toBe(
+        true,
+      );
+
+      await surface.locator('[data-node-id="alpha"]').click();
+      const toolbar = page.getByRole("toolbar", { name: "Selection actions" });
+      await expect(toolbar).toBeVisible();
+
+      // Every control in the toolbar, plus the header's fallback cluster —
+      // which is where a touch user is steered when the anchor scrolls away,
+      // so it cannot be the one surface with 32px targets.
+      const boxes = await toolbar
+        .getByRole("button")
+        .evaluateAll((els) =>
+          els.map((el) => {
+            const r = el.getBoundingClientRect();
+            return { w: Math.round(r.width), h: Math.round(r.height) };
+          }),
+        );
+      expect(boxes.length).toBeGreaterThan(4);
+      for (const box of boxes) {
+        expect(box.w, JSON.stringify(box)).toBeGreaterThanOrEqual(44);
+        expect(box.h, JSON.stringify(box)).toBeGreaterThanOrEqual(44);
+      }
+
+      const clear = (await page.locator("[data-clear-selection]").boundingBox())!;
+      expect(Math.round(clear.width)).toBeGreaterThanOrEqual(44);
+      expect(Math.round(clear.height)).toBeGreaterThanOrEqual(44);
+    });
+
+    test("a tap selects, and the toolbar comes with it", async ({ page }) => {
+      // R11.1 is deliberately NOT implemented: the spec wanted a ~500ms
+      // long-press to summon the toolbar, and long-press is already this
+      // app's drag activation on strip cards (250ms), so the gesture would
+      // mean two different things on two surfaces. A tap shows the toolbar
+      // and a second tap dismisses it, which is the same affordance without a
+      // hidden gesture — and `clickSelection: "toggle"` already gave us the
+      // dismissal for free.
+      await installGraphApi(page);
+      await openGraph(page);
+      const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+
+      await alpha.tap();
+      await expect(page.getByRole("toolbar", { name: "Selection actions" })).toBeVisible();
+
+      // Two SEPARATE taps, not a double-tap. Back to back they arrive as one
+      // gesture with `detail === 2`, which the click grammar deliberately
+      // ignores — that is the rename-in-place gesture, and letting its second
+      // click through used to collapse a selection and then clear it.
+      await page.waitForTimeout(500);
+      await alpha.tap();
+      await expect(page.getByRole("toolbar", { name: "Selection actions" })).toHaveCount(0);
+    });
   });
 });

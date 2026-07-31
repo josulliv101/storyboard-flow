@@ -467,6 +467,18 @@ function HeaderToggle({
  * floating toolbar is allowed to hide itself when its anchor scrolls away
  * (R6.6/R8.3): the actions are still one click from here.
  */
+/**
+ * Touch sizing for the header's selection controls (R11.2).
+ *
+ * These are the FALLBACK surface for the same actions the floating toolbar
+ * offers — the one that takes over when the anchor card scrolls away — so they
+ * need the same 44px minimum on a finger. The rest of the header row keeps its
+ * 32px: those are chrome you reach for deliberately, not the controls a touch
+ * user is steered to mid-gesture.
+ */
+const HEADER_SELECTION_SIZE =
+  "h-8 w-8 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11";
+
 function HeaderSelectionCluster({
   anchorName,
 }: Readonly<{ anchorName: string | null }>) {
@@ -499,7 +511,7 @@ function HeaderSelectionCluster({
           requestGraphItemAction("paste");
         }}
         className={cn(
-          "h-8 w-8",
+          HEADER_SELECTION_SIZE,
           clipboardCount === 0 || state.busy
             ? "cursor-not-allowed text-zinc-600 hover:text-zinc-600"
             : HEADER_TOGGLE_IDLE,
@@ -517,7 +529,7 @@ function HeaderSelectionCluster({
             title="Clear selection (Esc)"
             data-clear-selection
             onClick={() => store.clearSelection()}
-            className={cn("h-8 w-8", HEADER_TOGGLE_IDLE)}
+            className={cn(HEADER_SELECTION_SIZE, HEADER_TOGGLE_IDLE)}
           >
             <X aria-hidden className="h-4 w-4" />
           </Button>
@@ -529,7 +541,7 @@ function HeaderSelectionCluster({
                 size="icon"
                 aria-label="More selection actions"
                 data-header-selection-overflow
-                className={cn("h-8 w-8", HEADER_TOGGLE_IDLE)}
+                className={cn(HEADER_SELECTION_SIZE, HEADER_TOGGLE_IDLE)}
               >
                 <EllipsisVertical aria-hidden className="h-4 w-4" />
               </Button>
