@@ -57,6 +57,22 @@ export type CollectionsInteraction = Readonly<{
    * to the clicked card, which selects just that card.
    */
   selectionPivotId: NodeId | null;
+  /**
+   * While true, a PLAIN click is additive — exactly as if Ctrl/Cmd were held.
+   *
+   * This exists for TOUCH, which has no modifier keys at all: without it,
+   * multi-select and ranges are simply unreachable on a touchscreen. A mode is
+   * the compromise. Long-press would have been the obvious gesture and is
+   * already spent — a still press on a card marked `data-drag-activation="hold"`
+   * starts a DRAG at 250ms (see `pointer-sensors.ts`), so a long-press to
+   * multi-select would mean two different things on two surfaces.
+   *
+   * Not a policy prop: the policy is provider CONFIG, memoized on its fields,
+   * so toggling it there would invalidate the context and re-render every card
+   * that reads it. Here it rides the interaction slice the click handler
+   * already consults.
+   */
+  multiSelectMode: boolean;
   /** Ids briefly flashing a rejected-drop cue, as a Set for membership checks. */
   rejectedIdSet: ReadonlySet<NodeId>;
 }>;
@@ -236,6 +252,9 @@ export type CollectionsStore = Readonly<{
    * same thing a plain click would have done.
    */
   selectRange: (toId: NodeId) => void;
+  /** Turn additive-tap mode on or off. Turning it OFF keeps the selection —
+   *  you stop adding in order to act on what you have. */
+  setMultiSelectMode: (on: boolean) => void;
   clearSelection: () => void;
 
   /** Computes the drag set: the selection if the pressed node is in it, else just the pressed node. */
@@ -277,6 +296,7 @@ export function createCollectionsStore(
     dropIntentInvalid: false,
     selectedIds: EMPTY_SELECTION,
     selectionPivotId: null,
+    multiSelectMode: false,
     rejectedIdSet: EMPTY_SELECTION,
   };
   const history = createHistory({ maxEntries: options?.maxHistoryEntries });
@@ -368,6 +388,15 @@ export function createCollectionsStore(
 
   function setInteraction(next: Partial<CollectionsInteraction>) {
     interaction = { ...interaction, ...next };
+    // ONE invariant, enforced centrally rather than at each of the four places
+    // a selection can empty (clear, a toggle that removes the last item,
+    // setSelection([]), and pruning after a delete): additive-tap mode cannot
+    // outlive the selection. Its only control lives on a surface that exists
+    // while something is selected, so an armed mode with an empty selection is
+    // unreachable — on, invisible, and quietly making the next taps additive.
+    if (interaction.multiSelectMode && interaction.selectedIds.size === 0) {
+      interaction = { ...interaction, multiSelectMode: false };
+    }
     notify();
   }
 
@@ -392,6 +421,13 @@ export function createCollectionsStore(
     const pivot = interaction.selectionPivotId;
     if (pivot !== null && !graph.nodesById.has(pivot)) {
       interaction = { ...interaction, selectionPivotId: null };
+    }
+    // This path writes `interaction` directly rather than through
+    // `setInteraction`, so it repeats that function's mode invariant. Deleting
+    // the last selected card is the ordinary way to arrive here with an armed
+    // mode and nothing left to show its control.
+    if (interaction.multiSelectMode && interaction.selectedIds.size === 0) {
+      interaction = { ...interaction, multiSelectMode: false };
     }
   }
 
@@ -499,6 +535,7 @@ export function createCollectionsStore(
       dropIntentInvalid: false,
       selectedIds: interaction.selectedIds,
       selectionPivotId: interaction.selectionPivotId,
+      multiSelectMode: interaction.multiSelectMode,
       rejectedIdSet: EMPTY_SELECTION,
     };
     pruneMissingSelection();
@@ -594,8 +631,19 @@ export function createCollectionsStore(
       if (sameSet(interaction.selectedIds, next)) return;
       setInteraction({ selectedIds: next });
     },
+    setMultiSelectMode: (on) => {
+      if (interaction.multiSelectMode === on) return;
+      setInteraction({ multiSelectMode: on });
+    },
     clearSelection: () => {
-      if (interaction.selectedIds.size === 0 && interaction.selectionPivotId === null) return;
+      if (
+        interaction.selectedIds.size === 0 &&
+        interaction.selectionPivotId === null &&
+        !interaction.multiSelectMode
+      ) {
+        return;
+      }
+      // `setInteraction` drops the mode with it (see the invariant there).
       setInteraction({ selectedIds: EMPTY_SELECTION, selectionPivotId: null });
     },
 

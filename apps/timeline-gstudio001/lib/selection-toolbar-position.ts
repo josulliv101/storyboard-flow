@@ -23,6 +23,11 @@ export type ToolbarPlacementInput = Readonly<{
   /** Width of the icon rail, which is also opaque and pinned. */
   railWidth: number;
   viewport: Readonly<{ width: number; height: number }>;
+  /** Distance between the card and the toolbar. Defaults to `TOOLBAR_GAP`;
+   *  callers pass a larger one for a coarse pointer, where a toolbar that had
+   *  to flip BELOW its card would otherwise sit under the hand that just
+   *  tapped it (R11.3). */
+  gap?: number;
 }>;
 
 export type ToolbarPlacement = Readonly<{
@@ -95,17 +100,20 @@ export function anchorVisibleRatio(input: ToolbarPlacementInput): number {
  */
 export function resolveToolbarPlacement(input: ToolbarPlacementInput): ToolbarPlacement {
   const { anchorRect, toolbarSize, headerRect, railWidth, viewport } = input;
+  const gap = input.gap ?? TOOLBAR_GAP;
   if (anchorRect === null) return HIDDEN;
   if (anchorVisibleRatio(input) < ANCHOR_MIN_VISIBLE_RATIO) return HIDDEN;
 
-  const above = anchorRect.top - toolbarSize.height - TOOLBAR_GAP;
+  const above = anchorRect.top - toolbarSize.height - gap;
   const headerBottom = headerRect === null ? 0 : Math.max(0, headerRect.top + headerRect.height);
   // "Insufficient space above" is measured against the header, not the viewport
   // top: on the first grid row the header IS the ceiling, and a toolbar tucked
   // between them would be half-covered by an opaque bar.
-  const side: "above" | "below" = above >= headerBottom + TOOLBAR_GAP ? "above" : "below";
-  const top = side === "above" ? above : anchorRect.top + anchorRect.height + TOOLBAR_GAP;
+  const side: "above" | "below" = above >= headerBottom + gap ? "above" : "below";
+  const top = side === "above" ? above : anchorRect.top + anchorRect.height + gap;
 
+  // The EDGE clamps stay at the base gap: they are about not colliding with
+  // opaque chrome, which a bigger finger does not change.
   const centred = anchorRect.left + anchorRect.width / 2 - toolbarSize.width / 2;
   const left = clamp(
     centred,

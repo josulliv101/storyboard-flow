@@ -84,6 +84,25 @@ describe("resolveToolbarPlacement", () => {
     expect(placement.left).toBe(RAIL + TOOLBAR_GAP);
   });
 
+  it("uses a larger gap when one is supplied, on both sides of the flip", () => {
+    // A finger covers more than a cursor does, so a toolbar that had to flip
+    // BELOW its card must clear the hand that just tapped it.
+    const above = resolveToolbarPlacement(input({ gap: 20 }));
+    expect(above.side).toBe("above");
+    expect(above.top).toBe(400 - TOOLBAR.height - 20);
+
+    const below = resolveToolbarPlacement(input({ anchorRect: card({ top: 60 }), gap: 20 }));
+    expect(below.side).toBe("below");
+    expect(below.top).toBe(60 + 96 + 20);
+  });
+
+  it("keeps the EDGE clamps at the base gap regardless", () => {
+    // The horizontal clamps are about not colliding with opaque chrome — the
+    // rail and the viewport edge — which a bigger fingertip does not move.
+    const placement = resolveToolbarPlacement(input({ anchorRect: card({ left: 80 }), gap: 20 }));
+    expect(placement.left).toBe(RAIL + TOOLBAR_GAP);
+  });
+
   it("hides when the anchor element is not mounted", () => {
     // A virtualized strip unmounts its off-screen cards; the grid re-creates a
     // card's element when a move re-parents it across rows.
