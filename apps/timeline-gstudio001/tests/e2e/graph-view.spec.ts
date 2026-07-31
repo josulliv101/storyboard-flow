@@ -392,7 +392,9 @@ async function openItemDetails(page: Page, nodeId: string): Promise<void> {
     await card.click();
     await expect(card).toHaveAttribute("data-selected", "true", { timeout: 700 });
   }).toPass({ timeout: 10000 });
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  // Edit is a MENU ROW now, not an inline button — v3 replaced the pill's icon
+  // row with a single `⋮` on the anchor. Everything is one menu deep.
+  await selectionAction(page, /^Edit$/);
   await settleViewTransition(page);
 }
 
@@ -508,33 +510,30 @@ async function dropOneFile(page: Page, collectionId: string, clientX: number): P
 // opens the timeline in place, and the second control that navigated away was
 // removed deliberately (see graph-sub-timelines). The collection CARD's own
 // open button is the affordance now, so navigation tests go through it.
-/** The selection pill — rendered INSIDE the anchor card, so it is found by
- *  role rather than by any container. */
-const selectionPill = (page: Page): Locator =>
-  page.getByRole("toolbar", { name: "Selection actions" });
+/**
+ * The anchor's `⋮` — rendered in the anchor card's own top-right corner slot,
+ * so it is found by role rather than by any container.
+ *
+ * Its accessible name carries the count ("Actions, 3 items selected"), which is
+ * why this matches on a prefix: tests that care about the count assert on it
+ * directly.
+ */
+const anchorMenuButton = (page: Page): Locator =>
+  page.getByRole("button", { name: /^Actions, / });
 
 /**
- * Invoke a pill action, inline or folded.
+ * Invoke a selection action from the anchor's menu.
  *
- * The pill lives in the card, so its width budget is the card's, and an action
- * that fits on a 6s clip may have folded into the overflow on a 4s one. Tests
- * that name an action care that it WORKS, not which of the two places it is —
- * and a user hunting for Cut does exactly this: look in the row, then look in
- * the menu.
+ * There is exactly one place to look now. The v2 pill split its actions between
+ * an inline row and an overflow — which of the two depended on the card's width
+ * (a strip clip is as wide as its clip is long), so this helper had to try both
+ * and the "does the row reshuffle" tests had to pin an anchor to compare like
+ * with like. One menu, one lookup.
  */
-async function pillAction(page: Page, name: string | RegExp): Promise<void> {
-  const inline = selectionPill(page).getByRole("button", { name });
-  if ((await inline.count()) > 0) {
-    await inline.first().click();
-    return;
-  }
-  await selectionPill(page).getByRole("button", { name: "More actions" }).click();
+async function selectionAction(page: Page, name: string | RegExp): Promise<void> {
+  await anchorMenuButton(page).first().click();
   await page.getByRole("menuitem", { name }).first().click();
 }
-
-/** Back-compat shim for the many tests that just want to press something. */
-const toolbarButton = (page: Page, name: string): Locator =>
-  selectionPill(page).getByRole("button", { name });
 
 const drillButton = (page: Page, timelineName: string): Locator =>
   page.getByRole("button", { name: `Open ${timelineName}`, exact: true }).first();
@@ -923,9 +922,9 @@ test.describe("graph view E2E", () => {
     await expect(alphaCard.locator('[data-disabled="true"]')).toHaveCount(0);
   });
 
-  test("right-click offers the toolbar's actions, and respects the selection", async ({ page }) => {
-    // PL14-007. The menu renders ITEM_ACTION_SPECS — the same list the
-    // selection toolbar renders — so the two cannot drift apart about what an
+  test("right-click offers the same actions, and respects the selection", async ({ page }) => {
+    // The menu renders ITEM_ACTION_SPECS — the same list the anchor's `⋮` and
+    // the header's `⋮` render — so the three cannot drift apart about what an
     // item can do.
     //
     // The selection rules were the item's open question, settled to the
@@ -949,17 +948,23 @@ test.describe("graph view E2E", () => {
     await expect(alpha).toHaveAttribute("data-selected", "true");
     expect(await selectedCount()).toBe(1);
 
-    // The toolbar's actions, in the toolbar's order — this menu is flat, so
-    // the overflow half is inlined and Delete still ends the primary run.
-    await expect(menu.getByRole("menuitem")).toHaveText([
-      "Open",
-      "Edit",
-      "Copy",
-      "Cut",
-      "Delete",
-      "Duplicate",
-      "Rename",
-      "Disable",
+    // The actions, in the one order every surface uses: grouped by kind, with
+    // Delete last and alone below a separator. Asserted by ACTION rather than
+    // by text — the trailing slot carries a shortcut or a reason depending on
+    // state, and neither is what this is about. Open is absent (R7.11); the
+    // trailing row is the additive-tap toggle, which is not an item action.
+    await expect(
+      menu.getByRole("menuitem").evaluateAll((els) =>
+        els.map((el) => el.getAttribute("data-menu-action")).filter((a) => a !== null),
+      ),
+    ).resolves.toEqual([
+      "details",
+      "rename",
+      "copy",
+      "cut",
+      "duplicate",
+      "toggle-disabled",
+      "delete",
     ]);
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
@@ -2608,7 +2613,7 @@ test.describe("graph view E2E", () => {
       await bravo.click();
       await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await selectionAction(page, /^Delete$/);
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", CHILD_ID, "charlie"]);
@@ -2801,7 +2806,7 @@ test.describe("graph view E2E", () => {
       await bravo.click();
       await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await selectionPill(page).getByRole("button", { name: "More actions" }).click();
+    await anchorMenuButton(page).first().click();
     await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
 
     // The card stays exactly where it was, muted and badged — never removed.
@@ -2895,23 +2900,21 @@ test.describe("graph view E2E", () => {
     await openGraph(page);
     const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
 
-    // Nothing selected: no toolbar at all.
-    await expect(page.getByRole("toolbar", { name: "Selection actions" })).toHaveCount(0);
+    // Nothing selected: no control at all (R5.5).
+    await expect(anchorMenuButton(page)).toHaveCount(0);
 
-    // Select alpha → the toolbar appears ON the card. The rail is untouched:
+    // Select alpha → the control appears ON the card. The rail is untouched:
     // it stopped answering to the selection when these actions moved here.
     await expect(async () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    const toolbar = page.getByRole("toolbar", { name: "Selection actions" });
-    await expect(toolbar).toBeVisible();
+    await expect(anchorMenuButton(page)).toBeVisible();
     await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
 
     // Duplicate → the clone lands right AFTER alpha (index 1), and the focused
     // document persists the add (one write, five clips).
-    await toolbar.getByRole("button", { name: "More actions" }).click();
-    await page.getByRole("menuitem", { name: "Duplicate", exact: true }).click();
+    await selectionAction(page, /^Duplicate$/);
     await expect.poll(() => stripOrder(page, PROJECT_ID)).toHaveLength(5);
     const order = await stripOrder(page, PROJECT_ID);
     expect(order[0]).toBe("alpha");
@@ -2919,14 +2922,14 @@ test.describe("graph view E2E", () => {
     expect(order[2]).toBe("bravo");
     await expect.poll(() => api.patchesFor(PROJECT_ID).at(-1)?.clipIds.length).toBe(5);
 
-    // Delete removes the (now-selected) clone. With nothing selected the
-    // toolbar has nothing to anchor to and goes away — the selection is what
+    // Delete removes the (now-selected) clone. With nothing selected there is
+    // no anchor to host a control and it goes away — the selection is what
     // summons it, not a mode.
-    await pillAction(page, "Delete");
+    await selectionAction(page, "Delete");
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
-    await expect(page.getByRole("toolbar", { name: "Selection actions" })).toHaveCount(0);
+    await expect(anchorMenuButton(page)).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Grid layout" })).toBeVisible();
   });
 
@@ -2945,14 +2948,11 @@ test.describe("graph view E2E", () => {
     // Copy → the header's paste arms and starts naming its payload. Copy and
     // Cut STAY where they are: they used to be replaced by Paste, which moved
     // every action after them the instant anything was copied.
-    await page.getByRole("toolbar", { name: "Selection actions" })
-      .getByRole("button", { name: "Copy" })
-      .click();
+    await selectionAction(page, /^Copy$/);
     await expect(page.getByRole("button", { name: /^Paste 1 item/ })).toBeVisible();
-    await expect(
-      page.getByRole("toolbar", { name: "Selection actions" })
-        .getByRole("button", { name: "Copy" }),
-    ).toBeVisible();
+    await anchorMenuButton(page).first().click();
+    await expect(page.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
 
     // Drill into the child collection. The clipboard is a module singleton, so
     // it survives the client-side navigation: paste stays available even
@@ -2990,7 +2990,7 @@ test.describe("graph view E2E", () => {
       await alpha.click();
       await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await pillAction(page, "Copy");
+    await selectionAction(page, "Copy");
     await expect(page.getByRole("button", { name: /^Paste 1 item after/ })).toBeVisible();
 
     // alpha is still selected and still on screen → its clone lands at index 1,
@@ -3013,7 +3013,7 @@ test.describe("graph view E2E", () => {
       await charlie.click();
       await expect(charlie).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    await pillAction(page, "Copy");
+    await selectionAction(page, "Copy");
 
     await page.getByRole("button", { name: "Open Scene A" }).first().click();
     // The route change itself, not a CHILD card appearing — a sub-row strip
@@ -3053,7 +3053,7 @@ test.describe("graph view E2E", () => {
 
     // Cut leaves bravo in the strip, dimmed and waiting. It used to be trashed
     // here, before the user had said where it was going.
-    await pillAction(page, "Cut");
+    await selectionAction(page, "Cut");
     await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
     await expect
       .poll(() => stripOrder(page, PROJECT_ID))
@@ -3149,7 +3149,7 @@ test.describe("graph view E2E", () => {
 
     // Both copies land as one contiguous block after the LAST source (bravo),
     // keeping the sources' relative order.
-    await selectionPill(page).getByRole("button", { name: "More actions" }).click();
+    await anchorMenuButton(page).first().click();
     // The row says the COUNT once the selection is plural — "Duplicate" alone
     // reads as "this card", which is the wrong promise with two selected.
     await page.getByRole("menuitem", { name: "Duplicate 2 items" }).click();
@@ -3219,17 +3219,20 @@ test.describe("graph view E2E", () => {
     // Query-tolerant: openGraph lands with ?surface=strip on the same path.
     await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
 
-    // Drilling in from a card that is now the ANCHOR goes through the pill.
+    // Drilling in from a card that is now the ANCHOR goes through double-click.
     // The corner chevron is deliberately absent there (R5.3): the anchor gives
-    // up its corner controls to host the pill, and the chevron's verb becomes
-    // the pill's leading action. On an unselected card the chevron is still
+    // up its chevron to host the ⋮, so the pointer route in becomes a
+    // double-click (R10.5). On an unselected card the chevron is still
     // the way in — that half is covered by the drill tests elsewhere.
     const collectionWrapper = strip(page, PROJECT_ID).locator(
       `[data-node-wrapper="${CHILD_ID}"]`,
     );
     await expect(collectionWrapper.getByRole("button", { name: /^Open / })).toBeHidden();
     await expect(async () => {
-      await pillAction(page, "Open");
+      // Double-click, because Open is NOT in the menu (R7.11) — the chevron
+      // sits on the card before selection, so selecting instead is a positive
+      // signal you did not want to drill in.
+      await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).dblclick();
       await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 3000 });
     }).toPass({ timeout: 15000 });
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
@@ -4214,7 +4217,8 @@ test.describe("graph view E2E", () => {
       await bravo.click();
       await expect(bravo).toHaveAttribute("data-selected", "true", { timeout: 700 });
     }).toPass({ timeout: 10000 });
-    const edit = page.getByRole("button", { name: "Edit", exact: true });
+    await anchorMenuButton(page).first().click();
+    const edit = page.getByRole("menuitem", { name: "Edit", exact: true });
     await edit.focus();
     await expect(edit).toBeFocused();
     await page.keyboard.press("Enter");
@@ -4425,9 +4429,10 @@ test.describe("graph view E2E", () => {
       await expect(page.locator("[data-item-details-trigger]")).toHaveCount(0);
 
       await page.locator('[data-node-id="alpha"]').first().tap();
-      const edit = page.getByRole("button", { name: "Edit", exact: true });
-      await expect(edit).toBeEnabled();
-      await edit.tap();
+      await anchorMenuButton(page).first().tap();
+      const edit = page.getByRole("menuitem", { name: "Edit", exact: true });
+      await expect(edit).toBeVisible();
+      await edit.click();
       await expect(page.getByRole("dialog")).toHaveCount(1);
     } finally {
       await context.close();
@@ -4503,10 +4508,26 @@ test.describe("graph view E2E", () => {
       .toBe("saved");
     await expect(status).toContainText("Saved");
 
-    // It OWNS the centre slot while it speaks: the clip/duration readout is
-    // displaced, not pushed aside, and comes back when the flash ends.
-    await expect(page.locator("[data-focused-aggregate], [data-selection-summary]"))
-      .toHaveCount(0);
+    // It DISPLACES NOTHING. It used to take the centre slot over while it
+    // spoke, which blanked the selection count and the controls beside it for
+    // the length of every debounce — a status that hides live controls is the
+    // wrong shape. It trails the breadcrumb now, and the centre keeps its
+    // readout throughout.
+    await expect(page.locator("[data-selection-summary]")).toHaveCount(1);
+    await expect(
+      status.evaluate((el) => ({
+        // Asserted as CONTAINMENT, not as a child index: the header also holds
+        // two absolutely-positioned edge occluders, so "which wing" by position
+        // is a number that moves whenever presentation does.
+        withBreadcrumb:
+          el.parentElement?.querySelector('nav[aria-label="Timeline focus path"]') !== null,
+        // TEXT ONLY — the cloud glyphs went with the move.
+        hasIcon: el.querySelector("svg") !== null,
+      })),
+    ).resolves.toEqual({ withBreadcrumb: true, hasIcon: false });
+
+    // Then it goes quiet. A permanent "Saved" would be chrome that never says
+    // anything new — and now that it displaces nothing, quiet costs nothing.
     await expect(status).toHaveCount(0, { timeout: 6000 });
     await expect(page.locator("[data-selection-summary]")).toHaveCount(1);
   });
@@ -4914,7 +4935,7 @@ test.describe("graph view E2E", () => {
     // sharpest case available: if the click cleared, the button it was on
     // would vanish out from under it.
     await select();
-    await pillAction(page, "Copy");
+    await selectionAction(page, "Copy");
     await expect(alpha).toHaveAttribute("data-selected", "true");
 
     // A card click still replaces rather than clears.
@@ -5706,16 +5727,12 @@ test.describe("graph view E2E", () => {
     await expect.poll(markCount).toBeLessThan(120);
   });
 
-  // ── Contextual selection toolbar ──────────────────────────────────────────
+  // ── Selection actions on the card ─────────────────────────────────────────
   //
   // Item actions moved out of the icon rail and onto the card they act on.
-  // What these pin is the three things that move cost the rail: the rail is a
-  // VIEW rail again, the toolbar is where the pointer already is, and its
-  // action row does not reshuffle as the selection grows.
-
-  /** The floating toolbar. Portalled to the body, so it is never inside a
-   *  surface locator. */
-  const selectionToolbar = selectionPill;
+  // What these pin is what that move bought: the rail is a VIEW rail again,
+  // the actions are where the pointer already is, and the menu does not
+  // reshuffle as the selection grows.
 
   test("the rail keeps its view toggles while items are selected", async ({ page }) => {
     await installGraphApi(page);
@@ -5725,22 +5742,21 @@ test.describe("graph view E2E", () => {
     // REPLACE these with item actions, so you could not select clips and then
     // go look at them in the other layout.
     await strip(page, PROJECT_ID).locator('[data-node-id="alpha"]').click();
-    await expect(selectionToolbar(page)).toBeVisible();
+    await expect(anchorMenuButton(page)).toBeVisible();
 
     const rail = page.locator("aside");
     await expect(rail.getByRole("button", { name: "Grid layout" })).toBeVisible();
     await expect(rail.getByRole("button", { name: "Strip layout" })).toBeVisible();
     await expect(rail.getByRole("button", { name: /preview/i })).toBeVisible();
-    // And the actions are NOT there — they live on the card now.
-    await expect(rail.getByRole("button", { name: "Delete" })).toHaveCount(0);
-    await expect(rail.getByRole("button", { name: "Copy" })).toHaveCount(0);
+    // And the actions are NOT there — they live on the card now (R3.5).
+    await expect(rail.getByRole("button", { name: /Delete|Copy|Cut|Duplicate/ })).toHaveCount(0);
   });
 
   test("selection survives switching between strip and grid", async ({ page }) => {
     await installGraphApi(page);
     await openGraph(page);
     await strip(page, PROJECT_ID).locator('[data-node-id="bravo"]').click();
-    await expect(selectionToolbar(page)).toBeVisible();
+    await expect(anchorMenuButton(page)).toBeVisible();
 
     await page.locator("aside").getByRole("button", { name: "Grid layout" }).click();
     await expect
@@ -5754,15 +5770,19 @@ test.describe("graph view E2E", () => {
         `[data-virtual-grid="${PROJECT_ID}"] [data-node-id="bravo"][data-selected="true"]`,
       ),
     ).toHaveCount(1);
-    await expect(selectionToolbar(page)).toBeVisible();
+    await expect(anchorMenuButton(page)).toBeVisible();
     const card = (await page
       .locator(`[data-virtual-grid="${PROJECT_ID}"] [data-node-id="bravo"]`)
       .boundingBox())!;
-    const bar = (await selectionToolbar(page).boundingBox())!;
-    expect(Math.abs(bar.x + bar.width / 2 - (card.x + card.width / 2))).toBeLessThan(2);
+    const bar = (await anchorMenuButton(page).boundingBox())!;
+    // Contained by the card, in its top-right corner slot. Not a centre check:
+    // the control took the chevron's place, so its centre is deliberately not
+    // the card's.
+    expect(bar.x).toBeGreaterThanOrEqual(card.x - 1);
+    expect(bar.x + bar.width).toBeLessThanOrEqual(card.x + card.width + 1);
   });
 
-  test("the toolbar follows the last-clicked card, not the whole selection", async ({
+  test("the ⋮ follows the last-clicked card, not the whole selection", async ({
     page,
   }) => {
     await installGraphApi(page);
@@ -5771,65 +5791,76 @@ test.describe("graph view E2E", () => {
 
     await surface.locator('[data-node-id="alpha"]').click();
     const alpha = (await surface.locator('[data-node-id="alpha"]').boundingBox())!;
-    const onAlpha = (await selectionToolbar(page).boundingBox())!;
-    // Centred on the card and INSIDE it — the pill is a child of the card now,
-    // so "where is it" is answered by the card's own box rather than by any
-    // positioning code.
-    expect(Math.abs(onAlpha.x + onAlpha.width / 2 - (alpha.x + alpha.width / 2))).toBeLessThan(2);
+    const onAlpha = (await anchorMenuButton(page).boundingBox())!;
+    // In the card's top-right corner and INSIDE it — the control is a child of
+    // the card, so "where is it" is answered by the card's own box rather than
+    // by any positioning code.
+    expect(onAlpha.x + onAlpha.width).toBeLessThanOrEqual(alpha.x + alpha.width + 1);
     expect(onAlpha.y).toBeGreaterThanOrEqual(alpha.y - 1);
     expect(onAlpha.y + onAlpha.height).toBeLessThanOrEqual(alpha.y + alpha.height + 1);
 
-    // Ctrl+click a second card: the selection grows, and the toolbar moves to
+    // Ctrl+click a second card: the selection grows, and the control moves to
     // the card just touched. Anchoring to the selection's bounding box would
     // have parked it between the two, over cards that are not selected.
     await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["ControlOrMeta"] });
     await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+    await expect(page.locator("[data-anchor-menu='charlie']")).toBeVisible();
     const charlie = (await surface.locator('[data-node-id="charlie"]').boundingBox())!;
+    // Inside CHARLIE's box now, in its top-right corner. Asserted as
+    // containment rather than as a centre offset: the control sits in the
+    // corner slot, so its centre is deliberately NOT the card's.
     await expect
       .poll(async () => {
-        const bar = (await selectionToolbar(page).boundingBox())!;
-        return Math.round(bar.x + bar.width / 2);
+        const bar = (await anchorMenuButton(page).boundingBox())!;
+        return bar.x >= charlie.x - 1 && bar.x + bar.width <= charlie.x + charlie.width + 1;
       })
-      .toBe(Math.round(charlie.x + charlie.width / 2));
+      .toBe(true);
   });
 
-  test("the action row does not reshuffle as the selection grows", async ({ page }) => {
+  test("the menu does not reshuffle as the selection grows", async ({ page }) => {
+    // R7.5, the muscle-memory guarantee. Removing an unavailable row would
+    // slide every row after it, and the selection count changes constantly
+    // during a multi-select — so the menu would shuffle under the pointer
+    // mid-gesture. Dimmed in place instead.
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
-    const labels = () =>
-      selectionToolbar(page)
-        .getByRole("button")
-        .evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") ?? ""));
+    // By ACTION, not by rendered text. R7.5 promises the rows keep their
+    // identity and their order; the text legitimately changes, because a row
+    // that dims swaps its shortcut for its reason in the same trailing slot.
+    const rows = async () => {
+      await anchorMenuButton(page).first().click();
+      const actions = await page
+        .getByRole("menuitem")
+        .evaluateAll((els) => els.map((el) => el.getAttribute("data-menu-action") ?? ""));
+      await page.keyboard.press("Escape");
+      return actions;
+    };
 
     await surface.locator('[data-node-id="alpha"]').click();
-    const single = await labels();
-    expect(single).toContain("More actions");
+    const single = await rows();
 
     // Grown to three, with the anchor deliberately left back on ALPHA — the
-    // last ctrl+click is alpha itself. Comparing across two different anchors
-    // would compare two different CARDS, and how many actions fit is the
-    // card's width to decide (a strip clip's width is its duration). The
-    // guarantee is that a given card's row does not reshuffle underneath you.
+    // last ctrl+click is alpha itself. Comparing across two anchors would
+    // compare two different cards.
     await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
     await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["ControlOrMeta"] });
     await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
     await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
     await expect(page.locator('[data-selected="true"]')).toHaveCount(3);
-    await expect(page.locator("[data-graph-selection-pill='alpha']")).toBeVisible();
+    await expect(page.locator("[data-anchor-menu='alpha']")).toBeVisible();
 
-    // Labels gain counts; POSITIONS do not move. Removing an unavailable
-    // action would slide every action after it, and the selection count
-    // changes constantly during a multi-select — so the row would shuffle
-    // under the pointer mid-gesture.
-    // The same CONTROLS in the same places; only their labels gain counts.
-    // Asserted as a shape rather than a literal list because which actions
-    // fit is the card's width to decide, and a strip card's width is its
-    // duration.
-    const many = await labels();
-    expect(many).toHaveLength(single.length);
-    expect(many.map((label) => label.replace(/ 3 items$/, ""))).toEqual(single);
-    // The header carries the authoritative count at all times (R9.2).
+    // The same rows, in the same order.
+    const many = await rows();
+    expect(many).toEqual(single);
+
+    // ...and the labels DID gain their counts, which is the other half of the
+    // promise — positions fixed, scope spoken (R7.2).
+    await anchorMenuButton(page).first().click();
+    await expect(page.getByRole("menuitem", { name: /^Copy 3 items/ })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    // The header carries the authoritative count at all times (R8.2).
     await expect(page.locator("[data-selection-summary]")).toContainText("3 selected");
   });
 
@@ -5840,7 +5871,8 @@ test.describe("graph view E2E", () => {
     await surface.locator('[data-node-id="alpha"]').click();
     await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
 
-    const edit = selectionToolbar(page).getByRole("button", { name: "Edit" });
+    await anchorMenuButton(page).first().click();
+    const edit = page.getByRole("menuitem", { name: /^Edit/ });
     // `aria-disabled`, never the `disabled` attribute: a disabled button
     // cannot be focused, cannot be hovered usefully on touch, and answers
     // nothing when pressed — so it can never explain itself.
@@ -5849,18 +5881,20 @@ test.describe("graph view E2E", () => {
     await edit.focus();
     await expect(edit).toBeFocused();
 
-    // The reason reaches a screen reader as a description, not only as a
-    // hover tooltip.
-    const describedBy = await edit.getAttribute("aria-describedby");
-    expect(describedBy).toBeTruthy();
-    await expect(page.locator(`#${describedBy}`)).toHaveText("Edit one item at a time");
+    // The reason reaches a screen reader as part of the row's NAME, not as a
+    // separate description — a description is announced late or not at all
+    // depending on verbosity, and this is the half of the row that explains it.
+    await expect(edit).toHaveAttribute("aria-label", "Edit, one only");
+    // ...and it is on screen, in the row's trailing slot rather than a tooltip
+    // (R7.6), which is what makes it reachable by touch.
+    await expect(edit).toContainText("one only");
 
-    // And pressing it explains rather than doing nothing. `force` because
-    // Playwright's actionability check treats aria-disabled as unclickable —
-    // a real browser does not, which is exactly why the control uses the ARIA
-    // attribute instead of the native one.
+    // Pressing it does nothing AND leaves the menu open, so the reason stays
+    // readable. `force` because Playwright's actionability check treats
+    // aria-disabled as unclickable — a real browser does not, which is exactly
+    // why the row uses the ARIA attribute instead of the native one.
     await edit.click({ force: true });
-    await expect(page.locator(`#${describedBy}`)).toBeVisible();
+    await expect(edit).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 
@@ -5870,7 +5904,7 @@ test.describe("graph view E2E", () => {
     const surface = strip(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="charlie"]').click();
-    await pillAction(page, "Cut");
+    await selectionAction(page, "Cut");
 
     // Cut used to trash the originals immediately and let paste re-create
     // them. The item now WAITS, dimmed, for a destination.
@@ -5888,7 +5922,7 @@ test.describe("graph view E2E", () => {
     const before = await stripOrder(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="charlie"]').click();
-    await pillAction(page, "Cut");
+    await selectionAction(page, "Cut");
     await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(1);
 
     await surface.locator('[data-node-id="alpha"]').click();
@@ -5908,13 +5942,48 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, PROJECT_ID), { timeout: 8000 }).toEqual(before);
   });
 
+  test("cut items from BEFORE the destination still land after it", async ({ page }) => {
+    // The reported bug, and the case the test above cannot reach: it cuts the
+    // LAST card and pastes near the start, so nothing is removed ahead of the
+    // destination and the index needs no correction.
+    //
+    // `move-nodes` reads its toIndex AFTER the moved nodes leave the list, while
+    // `resolveInsertPlacement` answers in visible (pre-removal) terms. Cut the
+    // first two of four and aim at the third: the visible index is 3, but the
+    // post-removal list is only two long, so 3 clamps to the end and the items
+    // append instead of landing where the user pointed.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    expect(await stripOrder(page, PROJECT_ID)).toEqual([
+      "alpha",
+      "bravo",
+      CHILD_ID,
+      "charlie",
+    ]);
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
+    await selectionAction(page, /^Cut 2 items/);
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(2);
+
+    // The second-to-last card is the destination.
+    await surface.locator(`[data-node-id="${CHILD_ID}"]`).click();
+    await page.getByRole("button", { name: /^Paste 2 items after/ }).click();
+
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID), { timeout: 8000 })
+      .toEqual([CHILD_ID, "alpha", "bravo", "charlie"]);
+    await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(0);
+  });
+
   test("paste with nothing selected appends to the end", async ({ page }) => {
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="bravo"]').click();
-    await pillAction(page, "Copy");
+    await selectionAction(page, "Copy");
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
 
@@ -5932,7 +6001,7 @@ test.describe("graph view E2E", () => {
     const surface = strip(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="charlie"]').click();
-    await pillAction(page, "Copy");
+    await selectionAction(page, "Copy");
 
     // A NON-CONTIGUOUS selection: the collection and alpha, with bravo between
     // them, anchored on alpha (clicked last). There is deliberately no
@@ -5956,7 +6025,7 @@ test.describe("graph view E2E", () => {
     const surface = strip(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="bravo"]').click();
-    await pillAction(page, "Copy");
+    await selectionAction(page, "Copy");
 
     // Watched rather than sampled: the highlight is transient by design, and
     // a poll can straddle it.
@@ -5983,35 +6052,65 @@ test.describe("graph view E2E", () => {
     await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
   });
 
-  test("the whole toolbar is reachable from the keyboard alone", async ({ page }) => {
+  test("the menu is reachable and operable from the keyboard alone", async ({ page }) => {
+    // F10 is gone with the toolbar it opened: a `role="toolbar"` needed its own
+    // entry key and its own roving arrows, and a `role="menu"` brings both with
+    // it. What has to hold is that every action is still keyboard-reachable —
+    // the shortcuts carry the clipboard verbs, and the menu carries the rest.
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
-    await surface.locator('[data-node-id="alpha"]').click();
-    await expect(selectionToolbar(page)).toBeVisible();
+    const alpha = surface.locator('[data-node-id="alpha"]');
+    // Retried, as this suite documents elsewhere: cards drag on press-and-hold,
+    // so under load a plain click can outlast the 250ms threshold, become a
+    // grab, and have its click — correctly — suppressed.
+    await expect(async () => {
+      await alpha.click();
+      await expect(alpha).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
 
-    // F10 is the toolbar convention, and is free of the modifier collisions
-    // the Alt layer and the trim chords have already claimed here. It lands on
-    // the FIRST control in the pill.
-    const controls = () =>
-      selectionToolbar(page)
-        .getByRole("button")
-        .evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") ?? ""));
-    const [first, second] = await controls();
-    await page.keyboard.press("F10");
-    await expect(selectionToolbar(page).getByRole("button", { name: first })).toBeFocused();
+    // Shift+F10 is the platform's own "open the context menu here" key, which
+    // Radix's context-menu primitive implements for free.
+    await alpha.press("Shift+F10");
+    await expect(page.getByRole("menuitem").first()).toBeVisible();
 
-    // Arrows move WITHIN the pill — one tab stop, not six.
-    await page.keyboard.press("ArrowRight");
-    await expect(selectionToolbar(page).getByRole("button", { name: second })).toBeFocused();
-    await page.keyboard.press("ArrowLeft");
-    await expect(selectionToolbar(page).getByRole("button", { name: first })).toBeFocused();
+    // Arrows walk the rows in the menu's own order.
+    //
+    // Asserted as a RELATIONSHIP rather than as absolute positions, because
+    // the starting point is genuinely racy: Radix auto-focuses the first row of
+    // a keyboard-opened menu, and whether that has landed before the first
+    // ArrowDown decides whether one press lands on row 1 or moves past it to
+    // row 2. Pinning "one ArrowDown reaches Edit" made this a coin flip that
+    // came up tails roughly a quarter of the time under parallel load.
+    //
+    // What the test actually cares about survives either way: focus lands on a
+    // real row, and each further press moves it exactly one row down the list.
+    const focusedAction = async () =>
+      page.locator('[role="menuitem"]:focus').first().getAttribute("data-menu-action");
 
-    // Escape clears the selection and hands focus back to the card, so the
-    // keyboard route does not dead-end in a toolbar that just vanished.
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(focusedAction).not.toBeNull();
+    const from = await focusedAction();
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(focusedAction).not.toBe(from);
+    const to = await focusedAction();
+
+    const order = await page
+      .getByRole("menuitem")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("data-menu-action")));
+    expect(order.indexOf(to)).toBe(order.indexOf(from) + 1);
+
+    // Escape closes the menu and leaves the selection alone — R10.6 says the
+    // menu absorbs the first Escape.
     await page.keyboard.press("Escape");
-    await expect(selectionToolbar(page)).toHaveCount(0);
-    await expect(surface.locator('[data-node-id="alpha"]')).toBeFocused();
+    await expect(page.getByRole("menuitem")).toHaveCount(0);
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
+
+    // ...and Escape on the card clears it (R4.7). Pressed on the card rather
+    // than on whatever the menu handed focus back to: this menu's trigger is a
+    // `display: contents` wrapper, which is not itself focusable.
+    await alpha.press("Escape");
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
   });
 
   test("the header offers the same actions when the anchor is off the board", async ({
@@ -6022,7 +6121,7 @@ test.describe("graph view E2E", () => {
     const surface = strip(page, PROJECT_ID);
 
     await surface.locator('[data-node-id="alpha"]').click();
-    await expect(selectionToolbar(page)).toBeVisible();
+    await expect(anchorMenuButton(page)).toBeVisible();
 
     // Drill into the collection. The selection survives the navigation (that
     // is deliberate — it is what makes copy-here-paste-there work), but the
@@ -6040,7 +6139,7 @@ test.describe("graph view E2E", () => {
     await expect
       .poll(
         async () => {
-          const bar = selectionToolbar(page);
+          const bar = anchorMenuButton(page);
           if ((await bar.count()) === 0) return "gone";
           return (await bar.isVisible()) ? "visible" : "hidden";
         },
@@ -6107,7 +6206,7 @@ test.describe("graph view E2E", () => {
 
     await page.keyboard.press("ControlOrMeta+a");
     await expect(page.locator('[data-selected="true"]')).toHaveCount(4);
-    // The HEADER is the authoritative count (R9.2). The pill's badge is a
+    // The HEADER is the authoritative count (R8.2). The ⋮ badge is a
     // glance indicator that yields its slot to an action on a narrow card —
     // and a card's width is its duration in the strip, so most clips are
     // narrow enough for that to happen.
@@ -6178,10 +6277,11 @@ test.describe("graph view E2E", () => {
   // long-press, the obvious candidate, is already this app's DRAG activation
   // on strip cards (250ms), so it would mean two things on two surfaces.
 
-  /** The mode toggle lives in the pill's overflow menu now — it is rare
-   *  enough not to spend a slot on, and the pill is fighting for width. */
+  /** The mode toggle lives in the selection menu — it is not an item action
+   *  (it changes how the next tap is read), so it sits in its own run at the
+   *  foot of the list. */
   async function toggleMultiSelect(page: Page): Promise<void> {
-    await selectionPill(page).getByRole("button", { name: "More actions" }).click();
+    await anchorMenuButton(page).first().click();
     await page.locator("[data-multi-select-toggle]").click();
   }
 
@@ -6233,33 +6333,15 @@ test.describe("graph view E2E", () => {
     await surface.locator('[data-node-id="alpha"]').click();
     await toggleMultiSelect(page);
 
-    // Clearing takes the pill with it — and the toggle is IN the pill's menu.
-    // Left armed, the mode would be unreachable and would silently make the
-    // next several taps additive.
+    // Clearing takes the `⋮` with it — and the toggle is IN its menu. Left
+    // armed, the mode would be unreachable and would silently make the next
+    // several taps additive.
     await page.keyboard.press("Escape");
-    await expect(selectionPill(page)).toHaveCount(0);
+    await expect(anchorMenuButton(page)).toHaveCount(0);
 
     await surface.locator('[data-node-id="bravo"]').click();
     await surface.locator('[data-node-id="charlie"]').click();
     await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
-  });
-
-  test("the action row keeps its offsets when the mode toggle is on", async ({ page }) => {
-    // R5.1 again: the toggle sits with the COUNT, left of the divider, so
-    // turning it on must not shift a single verb.
-    await installGraphApi(page);
-    await openGraph(page);
-    const surface = strip(page, PROJECT_ID);
-    const toolbar = page.getByRole("toolbar", { name: "Selection actions" });
-    const deleteBox = async () =>
-      (await toolbar.getByRole("button", { name: "Delete" }).boundingBox())!;
-
-    await surface.locator('[data-node-id="alpha"]').click();
-    const before = await deleteBox();
-    await toggleMultiSelect(page);
-    const after = await deleteBox();
-
-    expect(Math.round(after.x - before.x)).toBe(0);
   });
 
   // Its own context: `hasTouch` sets maxTouchPoints, which is what makes
@@ -6279,30 +6361,22 @@ test.describe("graph view E2E", () => {
       );
 
       await surface.locator('[data-node-id="alpha"]').click();
-      const toolbar = page.getByRole("toolbar", { name: "Selection actions" });
-      await expect(toolbar).toBeVisible();
+      const anchor = anchorMenuButton(page).first();
+      await expect(anchor).toBeVisible();
 
-      // The pill is only 32px tall, so its controls cannot BE 44px — the
-      // target comes from a padded `::after` layer instead (R12.2). Measuring
-      // the button's own box would therefore report 28 and prove nothing;
-      // this measures the layer that actually receives the tap.
-      const hits = await toolbar
-        .getByRole("button")
-        .evaluateAll((els) =>
-          els.map((el) => {
-            const after = getComputedStyle(el, "::after");
-            return {
-              label: el.getAttribute("aria-label") ?? "",
-              w: Math.round(parseFloat(after.width)),
-              h: Math.round(parseFloat(after.height)),
-            };
-          }),
-        );
-      expect(hits.length).toBeGreaterThan(2);
-      for (const hit of hits) {
-        expect(hit.w, JSON.stringify(hit)).toBeGreaterThanOrEqual(44);
-        expect(hit.h, JSON.stringify(hit)).toBeGreaterThanOrEqual(44);
-      }
+      // The control is 24px so it matches the chevron it replaces, so it
+      // cannot BE 44px — the target comes from a padded `::after` layer
+      // instead (R6.3). Measuring the button's own box would report 24 and
+      // prove nothing; this measures the layer that actually receives the tap.
+      const hit = await anchor.evaluate((el) => {
+        const after = getComputedStyle(el, "::after");
+        return {
+          w: Math.round(parseFloat(after.width)),
+          h: Math.round(parseFloat(after.height)),
+        };
+      });
+      expect(hit.w, JSON.stringify(hit)).toBeGreaterThanOrEqual(44);
+      expect(hit.h, JSON.stringify(hit)).toBeGreaterThanOrEqual(44);
 
       const clear = (await page.locator("[data-clear-selection]").boundingBox())!;
       expect(Math.round(clear.width)).toBeGreaterThanOrEqual(44);
@@ -6322,7 +6396,7 @@ test.describe("graph view E2E", () => {
       const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
 
       await alpha.tap();
-      await expect(page.getByRole("toolbar", { name: "Selection actions" })).toBeVisible();
+      await expect(anchorMenuButton(page)).toBeVisible();
 
       // Two SEPARATE taps, not a double-tap. Back to back they arrive as one
       // gesture with `detail === 2`, which the click grammar deliberately
@@ -6330,30 +6404,32 @@ test.describe("graph view E2E", () => {
       // click through used to collapse a selection and then clear it.
       await page.waitForTimeout(500);
       await alpha.tap();
-      await expect(page.getByRole("toolbar", { name: "Selection actions" })).toHaveCount(0);
+      await expect(anchorMenuButton(page)).toHaveCount(0);
     });
   });
 
-  // ── The pill lives in the card (spec v2) ──────────────────────────────────
+  // ── The `⋮` lives in the card's corner slot (spec v3) ───────────────────
   //
-  // The floating toolbar it replaces portalled to the body and re-positioned
-  // itself every frame against four rects. These pin the properties that make
-  // all of that unnecessary.
+  // Two predecessors died here. v1 floated a toolbar that portalled to the body
+  // and re-positioned itself every frame against four rects; v2 put a pill in
+  // the card's top band and had to fold its buttons against the card's width.
+  // v3 is one control the size of the chevron it replaces, so there is neither
+  // positioning nor folding to get wrong. These pin that.
 
-  test("the pill rides its card, with no positioning code", async ({ page }) => {
+  test("the ⋮ rides its card, with no positioning code", async ({ page }) => {
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
     await surface.locator('[data-node-id="alpha"]').click();
-    await expect(selectionPill(page)).toBeVisible();
+    await expect(anchorMenuButton(page)).toBeVisible();
 
     const offsetInCard = async () =>
       page.evaluate(() => {
-        const pill = document.querySelector("[data-graph-selection-pill]");
-        const id = pill?.getAttribute("data-graph-selection-pill") ?? "";
+        const control = document.querySelector("[data-anchor-menu]");
+        const id = control?.getAttribute("data-anchor-menu") ?? "";
         const card = document.querySelector(`[data-node-id="${CSS.escape(id)}"]`);
-        if (!pill || !card) return null;
-        const p = pill.getBoundingClientRect();
+        if (!control || !card) return null;
+        const p = control.getBoundingClientRect();
         const c = card.getBoundingClientRect();
         return { dx: Math.round(p.left - c.left), dy: Math.round(p.top - c.top), cardLeft: Math.round(c.left) };
       });
@@ -6366,32 +6442,32 @@ test.describe("graph view E2E", () => {
       .poll(async () => (await offsetInCard())?.cardLeft)
       .not.toBe(before?.cardLeft);
 
-    // THE property. The card moved; the pill's offset within it did not, and
-    // nothing measured anything to make that true.
+    // THE property. The card moved; the control's offset within it did not,
+    // and nothing measured anything to make that true.
     const after = await offsetInCard();
     expect(after?.dx).toBe(before?.dx);
     expect(after?.dy).toBe(before?.dy);
   });
 
-  test("exactly one pill exists, and it follows the anchor", async ({ page }) => {
+  test("exactly one ⋮ exists, and it follows the anchor", async ({ page }) => {
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
-    const pills = page.locator("[data-graph-selection-pill]");
+    const controls = page.locator("[data-anchor-menu]");
 
     await surface.locator('[data-node-id="alpha"]').click();
-    await expect(pills).toHaveCount(1);
-    await expect(page.locator("[data-graph-selection-pill='alpha']")).toBeVisible();
+    await expect(controls).toHaveCount(1);
+    await expect(page.locator("[data-anchor-menu='alpha']")).toBeVisible();
 
-    // A second selected card does NOT grow its own pill (R5.6) — one would
+    // A second selected card does NOT grow its own `⋮` (R5.4) — one would
     // imply that card is the paste destination, and it is not.
     await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["ControlOrMeta"] });
     await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
-    await expect(pills).toHaveCount(1);
-    await expect(page.locator("[data-graph-selection-pill='charlie']")).toBeVisible();
+    await expect(controls).toHaveCount(1);
+    await expect(page.locator("[data-anchor-menu='charlie']")).toBeVisible();
   });
 
-  test("the anchor gives up its badge and chevron; other selected cards keep both", async ({
+  test("the anchor chevron becomes the ⋮, and EVERY selected card keeps its badge", async ({
     page,
   }) => {
     await installGraphApi(page);
@@ -6399,32 +6475,139 @@ test.describe("graph view E2E", () => {
     const surface = strip(page, PROJECT_ID);
     const wrapper = (id: string) => surface.locator(`[data-node-wrapper="${id}"]`);
 
-    // Anchored on the COLLECTION, because it is the card kind that has both
-    // controls to give up — a clip has no chevron to begin with.
+    // Anchored on the COLLECTION, because it is the card kind with a chevron to
+    // morph — a clip has none, and its ⋮ simply fades in (R5.6).
     await surface.locator('[data-node-id="alpha"]').click();
     await surface.locator(`[data-node-id="${CHILD_ID}"]`).click({ modifiers: ["ControlOrMeta"] });
     await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
-    await expect(page.locator(`[data-graph-selection-pill='${CHILD_ID}']`)).toBeVisible();
+    await expect(page.locator(`[data-anchor-menu='${CHILD_ID}']`)).toBeVisible();
 
-    // The anchor has neither badge nor chevron: the pill says "selected", and
-    // its leading action is the chevron's verb. The MISSING checkmark is what
-    // distinguishes the anchor from the rest of the selection, which matters
-    // because the anchor is where a paste lands.
-    await expect(wrapper(CHILD_ID).locator("[data-card-selected-badge]")).toHaveCount(0);
+    // R5.3, and the v2 behaviour this REVERSES. The anchor used to give up its
+    // badge to make room for a pill in the same band, which left the anchor
+    // reading as the one selected card that was not quite selected. Nothing
+    // competes for that corner now, so the selection signal is consistent
+    // across the whole selection and the ⋮ alone says "anchor".
+    await expect(wrapper(CHILD_ID).locator("[data-card-selected-badge]")).toHaveCount(1);
+    await expect(page.locator("[data-card-selected-badge]")).toHaveCount(2);
+
+    // The chevron is what yields, and it yields to the a11y tree as well as to
+    // the eye — a 0-opacity button is still focusable and still announced.
     await expect(wrapper(CHILD_ID).getByRole("button", { name: /^Open / })).toBeHidden();
 
-    // Two cards are selected and exactly ONE badge is on screen — the other
-    // selected card's. Counted globally because a media card's badge sits
-    // outside its `data-node-wrapper`, so a per-wrapper query would pass for
-    // the wrong reason.
-    await expect(page.locator("[data-card-selected-badge]")).toHaveCount(1);
-
-    // Move the anchor away and the collection gets both controls straight back.
+    // Move the anchor away and the collection gets its chevron straight back.
     await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
     await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
-    await expect(page.locator("[data-graph-selection-pill='alpha']")).toBeVisible();
-    await expect(wrapper(CHILD_ID).locator("[data-card-selected-badge]")).toHaveCount(1);
+    await expect(page.locator("[data-anchor-menu='alpha']")).toBeVisible();
     await expect(wrapper(CHILD_ID).getByRole("button", { name: /^Open / })).toBeVisible();
+  });
+
+  test("a second click on the ⋮ closes its menu and keeps the selection", async ({ page }) => {
+    // Both `⋮` menus are NON-MODAL, and this is what that buys. Radix's modal
+    // default puts `pointer-events: none` on the body while a menu is open, so
+    // the next click retargets to <html>: the trigger never receives it (no
+    // toggle), Radix reads it as an outside interaction racing its own toggle,
+    // and once the layer unmounts the package's background-clear no longer
+    // sees a menu open and is free to drop the selection.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    await surface.locator('[data-node-id="alpha"]').click();
+
+    // The premise, asserted first — without it the checks below could pass for
+    // reasons that have nothing to do with modality.
+    const bodyPointerEvents = () =>
+      page.evaluate(() => getComputedStyle(document.body).pointerEvents);
+
+    for (const trigger of [
+      anchorMenuButton(page).first(),
+      page.locator("[data-header-selection-overflow]"),
+    ]) {
+      await trigger.click();
+      await expect(page.getByRole("menu")).toHaveCount(1);
+      expect(await bodyPointerEvents()).not.toBe("none");
+
+      await trigger.click();
+      await expect(page.getByRole("menu")).toHaveCount(0);
+      // THE POINT: the item is still selected, so the row of controls — and
+      // the `⋮` itself — are still there to click again.
+      await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
+      await expect(trigger).toBeVisible();
+    }
+  });
+
+  test("the corner controls clear a selected clip's trim handles", async ({ page }) => {
+    // A trim handle's hit zone is 8px pinned to the card's edge, and the
+    // ordinary corner inset is also 8px — so the checkmark and the ⋮ sat flush
+    // against the amber handles, reading as one crowded cluster.
+    //
+    // Measured as a GAP rather than asserted on a class, because the failure is
+    // geometric: the inset, the handle width and the card's own box all feed
+    // it, and only one of those lives in this repo's CSS.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    await surface.locator('[data-node-id="alpha"]').click();
+
+    const gaps = await page.evaluate(() => {
+      const card = document.querySelector('[data-node-id][data-selected="true"]');
+      const wrap = card?.closest("[data-node-wrapper]");
+      const box = (sel: string, root: ParentNode | null | undefined) =>
+        root?.querySelector(sel)?.getBoundingClientRect() ?? null;
+      const right = box('[data-trim-handle="right"]', wrap);
+      const left = box('[data-trim-handle="left"]', wrap);
+      const badge = box("[data-card-selected-badge]", document);
+      const dots = box("[data-anchor-menu]", document);
+      return {
+        // Null when that handle does not exist (images have no left handle),
+        // which the assertions below treat as "nothing to clear".
+        beforeRightHandle: right && dots ? Math.round(right.left - dots.right) : null,
+        pastLeftHandle: left && badge ? Math.round(badge.left - left.right) : null,
+      };
+    });
+
+    // Flush was 0. Anything at or above the handle's own width reads as
+    // deliberate separation rather than a near-miss.
+    if (gaps.beforeRightHandle !== null) expect(gaps.beforeRightHandle).toBeGreaterThanOrEqual(6);
+    if (gaps.pastLeftHandle !== null) expect(gaps.pastLeftHandle).toBeGreaterThanOrEqual(6);
+    // At least one handle must have been found, or this asserted nothing.
+    expect(gaps.beforeRightHandle ?? gaps.pastLeftHandle).not.toBeNull();
+  });
+
+  test("the count badge appears at 2+, and is absent at exactly 1", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const badge = page.locator("[data-anchor-count-badge]");
+
+    // R6.5: at one item the ⋮ glyph alone marks the anchor, and there is no
+    // scope ambiguity for a count to resolve.
+    await surface.locator('[data-node-id="alpha"]').click();
+    await expect(anchorMenuButton(page)).toBeVisible();
+    await expect(badge).toHaveCount(0);
+    // The COUNT is still spoken at one, even with no badge to show it — the
+    // scope is the whole point of this button's name.
+    await expect(page.getByRole("button", { name: "Actions, 1 item selected" })).toBeVisible();
+
+    // R6.4, and R6.12 — the count is in the accessible NAME, because the badge
+    // itself is aria-hidden.
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
+    await expect(badge).toHaveText("2");
+    await expect(page.getByRole("button", { name: "Actions, 2 items selected" })).toBeVisible();
+
+    // R6.10: the badge overhangs the button, so nothing in the corner stack may
+    // clip it. Measured rather than asserted on CSS, because `overflow: hidden`
+    // on ANY ancestor produces the same invisible failure.
+    const clipped = await badge.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      for (let node = el.parentElement; node !== null; node = node.parentElement) {
+        if (getComputedStyle(node).overflow === "hidden") {
+          const parent = node.getBoundingClientRect();
+          if (box.right > parent.right + 0.5 || box.top < parent.top - 0.5) return true;
+        }
+      }
+      return false;
+    });
+    expect(clipped).toBe(false);
   });
 
   test("right-click on a selected card re-anchors without changing the selection", async ({
@@ -6436,7 +6619,7 @@ test.describe("graph view E2E", () => {
 
     await surface.locator('[data-node-id="alpha"]').click();
     await surface.locator('[data-node-id="charlie"]').click({ modifiers: ["ControlOrMeta"] });
-    await expect(page.locator("[data-graph-selection-pill='charlie']")).toBeVisible();
+    await expect(page.locator("[data-anchor-menu='charlie']")).toBeVisible();
 
     // "Act on all of this, but aim at that one." The anchor decides where a
     // paste lands, and before this there was no way to steer it without
@@ -6444,51 +6627,236 @@ test.describe("graph view E2E", () => {
     // rather than derived from the selection — the selection does not change.
     await surface.locator('[data-node-id="alpha"]').click({ button: "right" });
     await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
-    await expect(page.locator("[data-graph-selection-pill='alpha']")).toBeVisible();
-    await expect(page.locator("[data-graph-selection-pill='charlie']")).toHaveCount(0);
+    await expect(page.locator("[data-anchor-menu='alpha']")).toBeVisible();
+    await expect(page.locator("[data-anchor-menu='charlie']")).toHaveCount(0);
 
     await page.keyboard.press("Escape");
     // …and the paste destination followed it.
     await expect(page.getByRole("button", { name: /^Paste .* after “alpha”/ })).toHaveCount(0);
   });
 
-  test("a folded action is still reachable in the overflow", async ({ page }) => {
-    // The pill's width budget is its card's, so on a narrow card actions drop
-    // out of the row. An action in neither the row nor the menu is simply
-    // gone — this is what makes folding lossless rather than a quiet removal.
+  test("the ⋮ menu and the right-click menu offer the same actions", async ({ page }) => {
+    // The reason ITEM_ACTION_SPECS exists. v2 split these across an inline row
+    // and an overflow whose contents depended on the card's width, and an
+    // action in neither place was simply gone — a bug that shipped. One
+    // definition, rendered by every trigger, makes that unexpressible.
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
     await surface.locator('[data-node-id="bravo"]').click();
 
-    const inline = await selectionPill(page)
-      .getByRole("button")
-      .evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") ?? ""));
-    await selectionPill(page).getByRole("button", { name: "More actions" }).click();
-    const menu = await page
-      .getByRole("menuitem")
-      .evaluateAll((els) => els.map((el) => el.textContent ?? ""));
+    const rows = async () =>
+      page.getByRole("menuitem").evaluateAll((els) => els.map((el) => el.textContent ?? ""));
 
-    // Every primary verb is in one place or the other.
-    for (const verb of ["Open", "Edit", "Copy", "Cut", "Delete"]) {
-      const present =
-        inline.some((label) => label.startsWith(verb)) ||
-        menu.some((label) => label.startsWith(verb));
-      expect(present, `${verb} unreachable (row: ${inline.join(",")} · menu: ${menu.join(",")})`).toBe(
-        true,
-      );
+    await anchorMenuButton(page).first().click();
+    const fromControl = await rows();
+    await page.keyboard.press("Escape");
+
+    await surface.locator('[data-node-id="bravo"]').click({ button: "right" });
+    const fromRightClick = await rows();
+    await page.keyboard.press("Escape");
+
+    expect(fromControl).toEqual(fromRightClick);
+    for (const verb of ["Edit", "Rename", "Copy", "Cut", "Duplicate", "Disable", "Delete"]) {
+      expect(
+        fromControl.some((row) => row.startsWith(verb)),
+        `${verb} missing from ${fromControl.join(" | ")}`,
+      ).toBe(true);
     }
+    // R7.11 — Open is not offered. Selecting a card is a positive signal you
+    // did NOT want to drill into it.
+    expect(fromControl.some((row) => row.startsWith("Open"))).toBe(false);
   });
 
-  test("a card too narrow for a pill still has the header overflow", async ({ page }) => {
-    // A strip clip's width is its DURATION, and the floor is 12px — narrower
-    // than any control. Zooming out far enough proves the degrade path: no
-    // pill at all, and the header is the way in.
+  test("the menu says its scope at 2+, and stays bare at 1", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    // R7.3: bare labels and no header row at one — nothing to disambiguate.
+    await surface.locator('[data-node-id="alpha"]').click();
+    await anchorMenuButton(page).first().click();
+    await expect(page.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();
+    await expect(page.locator("[data-selection-scope-header]")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    // R7.1/R7.2: the header states the scope, and every counted label repeats
+    // it — a bare "Copy" reads as acting on the one card the menu came out of.
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
+    await anchorMenuButton(page).first().click();
+    await expect(page.locator("[data-selection-scope-header]")).toHaveText("2 items selected");
+    await expect(page.getByRole("menuitem", { name: /^Copy 2 items/ })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: /^Delete 2 items/ })).toBeVisible();
+  });
+
+  test("a dimmed row keeps its place, stays focusable, and says why", async ({ page }) => {
+    // R7.5/R7.6/R7.7. Radix's own `disabled` sets pointer-events:none and drops
+    // the row out of the roving focus, making it unreachable — and an
+    // unreachable row cannot deliver the one thing it exists to deliver, which
+    // is the reason it is unavailable.
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
     await surface.locator('[data-node-id="alpha"]').click();
-    await expect(selectionPill(page)).toBeVisible();
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
+    await anchorMenuButton(page).first().click();
+
+    const edit = page.getByRole("menuitem", { name: /^Edit/ });
+    await expect(edit).toHaveAttribute("aria-disabled", "true");
+    // The reason is INLINE, not a tooltip — a tooltip is unreachable by touch
+    // and by screen reader alike.
+    await expect(edit).toContainText("one only");
+    // ...and it is part of the accessible name (R12.5).
+    await expect(edit).toHaveAttribute("aria-label", /one only/);
+    // Focusable: arrow-key reachable, which `disabled` would have prevented.
+    await edit.focus();
+    await expect(edit).toBeFocused();
+  });
+
+  test("the header's selection cluster sits with the count, in order", async ({ page }) => {
+    // Selection-scoped controls belong beside the count they act on, not a
+    // header-width away mixed in with the container controls. Order is
+    // Edit · Delete · ⋮ | ✕ — the fence separates the things that ACT from the
+    // one that dismisses. Copy and Cut are deliberately NOT promoted: their
+    // shortcuts carry almost all of their traffic, and they are still one
+    // click away in the menu.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const cluster = page.locator("[data-selection-centre-controls]");
+
+    // Absent with nothing selected AND nothing to paste — the row would be
+    // empty, and an empty fence is just a stray line in the header.
+    await expect(cluster).toHaveCount(0);
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await expect(cluster).toHaveCount(1);
+    // No Paste yet: it appears only when there is something to paste.
+    await expect(
+      cluster.getByRole("button").evaluateAll((els) =>
+        els.map((el) => el.getAttribute("aria-label")),
+      ),
+    ).resolves.toEqual(["Edit", "Delete", "More selection actions", "Clear selection"]);
+
+    // The promoted buttons read from ITEM_ACTION_SPECS, so they gain their
+    // counts and dim on exactly the same rule as the menu rows they duplicate.
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
+    const edit = cluster.locator('[data-header-action="details"]');
+    await expect(edit).toHaveAttribute("aria-label", "Edit, one only");
+    await expect(edit).toHaveAttribute("aria-disabled", "true");
+    await expect(cluster.locator('[data-header-action="delete"]')).toHaveAttribute(
+      "aria-label",
+      "Delete 2 items",
+    );
+
+    // The count stays visible beside them — it is what they act on.
+    await expect(page.locator("[data-selection-summary]")).toContainText("2 selected");
+
+    // Arming the clipboard splices Paste in after Edit, and Delete stays last
+    // of the verbs.
+    await selectionAction(page, /^Copy 2 items/);
+    await expect(
+      cluster.getByRole("button").evaluateAll((els) =>
+        els.map((el) => el.getAttribute("aria-label")?.replace(/ after .*| at end/, "")),
+      ),
+    ).resolves.toEqual([
+      "Edit, one only",
+      "Paste 2 items",
+      "Delete 2 items",
+      "More selection actions",
+      "Clear selection",
+    ]);
+
+    // ...and Copy and Cut are still reachable, in the menu.
+    await anchorMenuButton(page).first().click();
+    await expect(page.getByRole("menuitem", { name: /^Copy 2 items/ })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: /^Cut 2 items/ })).toBeVisible();
+    await page.keyboard.press("Escape");
+  });
+
+  test("paste outlives the selection, and ✕ then clears the clipboard", async ({ page }) => {
+    // The reason the row is not simply gated on `hasSelection`. Copy → deselect
+    // → navigate → paste is the ordinary way to move something between
+    // collections, so paste has to survive an empty selection — and once it is
+    // the only thing left, `✕` needs something to mean.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const cluster = page.locator("[data-selection-centre-controls]");
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await selectionAction(page, /^Copy$/);
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
+
+    // Paste survived, and its label switched to the no-selection destination.
+    await expect(
+      cluster.getByRole("button").evaluateAll((els) =>
+        els.map((el) => el.getAttribute("aria-label")),
+      ),
+    ).resolves.toEqual(["Paste 1 item at end", "Clear clipboard"]);
+
+    // `✕` now targets the CLIPBOARD, and says so — clearing the selection must
+    // not have taken the payload with it, or the flow above would be broken.
+    await cluster.locator("[data-clear-clipboard]").click();
+    await expect(cluster).toHaveCount(0);
+  });
+
+  test("clearing the selection leaves the clipboard armed", async ({ page }) => {
+    // Stated on its own because it is the invariant that makes `✕` safe to
+    // overload: the two clears are sequential, never simultaneous.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await selectionAction(page, /^Copy$/);
+    await page.locator("[data-clear-selection]").click();
+
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
+    await expect(page.locator("[data-header-paste]")).toBeVisible();
+  });
+
+  test("the header's promoted Delete acts on the whole selection", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
+    await page.locator('[data-header-action="delete"]').click();
+
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual([CHILD_ID, "charlie"]);
+  });
+
+  test("the header's dimmed Edit refuses rather than opening one of many", async ({ page }) => {
+    // The failure this guards is destructive-adjacent: acting on ONE item when
+    // several are selected is the multi-select bug that matters.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+
+    await surface.locator('[data-node-id="alpha"]').click();
+    await surface.locator('[data-node-id="bravo"]').click({ modifiers: ["ControlOrMeta"] });
+    // `force` because Playwright treats aria-disabled as unclickable — a real
+    // browser does not, which is exactly why the button uses the ARIA
+    // attribute instead of the native one (R7.7).
+    await page.locator('[data-header-action="details"]').click({ force: true });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
+  });
+
+  test("a card too narrow for a ⋮ still has the header overflow", async ({ page }) => {
+    // A strip clip's width is its DURATION, and the floor is 12px — narrower
+    // than any control. Zooming out far enough proves the degrade path: no
+    // ⋮ at all (R5.5), and the header's own ⋮ is the way in (R8.4).
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    await surface.locator('[data-node-id="alpha"]').click();
+    await expect(anchorMenuButton(page)).toBeVisible();
 
     // Board options → zoom to the minimum.
     await page.evaluate(() => {
@@ -6499,7 +6867,7 @@ test.describe("graph view E2E", () => {
       }
     });
 
-    // Whether the pill survives depends on the clip's duration at that zoom;
+    // Whether the ⋮ survives depends on the clip's duration at that zoom;
     // what must hold either way is that the actions are reachable.
     await expect(page.locator("[data-header-selection-overflow]")).toBeVisible();
     await page.locator("[data-header-selection-overflow]").click();

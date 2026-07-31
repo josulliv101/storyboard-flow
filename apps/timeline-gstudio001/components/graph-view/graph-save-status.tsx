@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { CircleAlert, Cloud, CloudUpload } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
+import { cn } from "@/lib/utils";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
 // The save indicator (PL11-003).
@@ -16,10 +16,22 @@ import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 // Three states, and no more: something is on its way, everything landed, or
 // something failed. The failure case is the only one that shouts.
 //
-// It lives in the header's CENTRE slot and TAKES IT OVER while it has
-// something to say, handing it back to the clip/duration readout when it does
-// not. One slot, and whichever fact matters more at that moment: a total you
-// can re-read any time loses to "your last edit is not on the server yet".
+// IT TRAILS THE BREADCRUMB, and owns nothing but its own width.
+//
+// It used to sit in the header's CENTRE slot and take it over while it had
+// something to say, handing it back to the clip/duration readout afterwards.
+// That was a real trade — one slot, whichever fact matters more — but the
+// centre stopped being a place with one occupant: it carries the selection
+// count and the controls that act on it, and blanking those for the length of
+// every debounce hid live controls behind a transient status. A status that
+// interrupts the thing you are using is the wrong shape.
+//
+// So it appends to the breadcrumb, where "where am I / how is it doing" read as
+// one line, and it takes no space at all when there is nothing to report.
+//
+// TEXT ONLY. The icons went with the move: at this size a glyph adds nothing a
+// three-word label does not already say, and the trailing position means it now
+// sits beside a path rather than centred as a chip.
 
 /** How long "Saved" stays up after a batch lands, before it settles into the
  *  quiet resting state. Long enough to be noticed, short enough that it isn't
@@ -35,7 +47,10 @@ function useSaveState() {
   );
 }
 
-export function GraphSaveStatus({ children }: Readonly<{ children?: ReactNode }>) {
+/** One shape for all three states — only the words and the colour differ. */
+const STATUS_CLASS = "shrink-0 whitespace-nowrap font-mono text-[11px]";
+
+export function GraphSaveStatus() {
   const { pending, inFlight, lastSavedAt, error } = useSaveState();
   const busy = pending > 0 || inFlight > 0;
 
@@ -84,9 +99,8 @@ export function GraphSaveStatus({ children }: Readonly<{ children?: ReactNode }>
           aria-hidden="true"
           data-save-status="error"
           title={error}
-          className="flex shrink-0 items-center gap-1.5 px-3 font-mono text-[11px] text-amber-300"
+          className={cn(STATUS_CLASS, "text-amber-300")}
         >
-          <CircleAlert aria-hidden="true" className="h-3.5 w-3.5" />
           Not saved
         </span>
       </>
@@ -101,17 +115,17 @@ export function GraphSaveStatus({ children }: Readonly<{ children?: ReactNode }>
           aria-hidden="true"
           data-save-status="saving"
           title="Writing your changes"
-          className="flex shrink-0 items-center gap-1.5 px-3 font-mono text-[11px] text-zinc-400"
+          className={cn(STATUS_CLASS, "text-zinc-500")}
         >
-          <CloudUpload aria-hidden="true" className="h-3.5 w-3.5" />
           Saving…
         </span>
       </>
     );
   }
 
-  // The brief confirmation, then the slot goes back to its usual occupant.
-  // A permanent "Saved" would be chrome that never says anything new.
+  // The brief confirmation, then it goes quiet. A permanent "Saved" would be
+  // chrome that never says anything new — and now that it no longer displaces
+  // another readout, "quiet" costs nothing at all.
   if (justSaved) {
     return (
       <>
@@ -120,19 +134,13 @@ export function GraphSaveStatus({ children }: Readonly<{ children?: ReactNode }>
           aria-hidden="true"
           data-save-status="saved"
           title="Every change is on the server"
-          className="flex shrink-0 items-center gap-1.5 px-3 font-mono text-[11px] text-zinc-300"
+          className={cn(STATUS_CLASS, "text-zinc-500")}
         >
-          <Cloud aria-hidden="true" className="h-3.5 w-3.5" />
           Saved
         </span>
       </>
     );
   }
 
-  return (
-    <>
-      {liveRegion}
-      {children}
-    </>
-  );
+  return liveRegion;
 }

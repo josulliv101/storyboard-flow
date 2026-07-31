@@ -148,9 +148,6 @@ export type GraphItemAction =
   | "cancel"
   /** Open the inline name editor on the selected item's card. */
   | "rename"
-  /** Drill into the selected collection — the card chevron's verb, promoted
-   *  into the pill because the anchor card gives its corner controls up. */
-  | "open"
   /** Skip (or un-skip) the selection in playback, counts and time totals. */
   | "toggle-disabled"
   /** Open the details view for the selection. Meaningful for exactly ONE

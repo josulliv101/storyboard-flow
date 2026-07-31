@@ -19,7 +19,7 @@ import { toast } from "@/components/core/sonner";
 import { graphClipboard, type ClipboardEntry } from "@/lib/graph-clipboard";
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import type { GraphDetailsStore } from "@/lib/graph-details-store";
-import { resolveInsertPlacement } from "@/lib/graph-insert-placement";
+import { resolveInsertPlacement, toPostRemovalIndex } from "@/lib/graph-insert-placement";
 import { cloneNodeForInsert, type CloneForInsert } from "@/lib/graph-node-clone";
 import { graphPasteFlash } from "@/lib/graph-paste-flash";
 import {
@@ -199,14 +199,25 @@ async function captureSelection(
  * navigation, and a bare "after the selection" would fire the paste back into
  * the timeline the user just left.
  */
-function pasteFromClipboard(store: CollectionsStore, focusedId: string): readonly NodeId[] {
+/** What landed, where, and how many clipboard entries could not (E8). */
+type PasteOutcome = Readonly<{
+  ids: readonly NodeId[];
+  skipped: number;
+  /** The card the block landed after, or null when it appended (R12.8). */
+  afterId: NodeId | null;
+}>;
+
+function pasteFromClipboard(store: CollectionsStore, focusedId: string): PasteOutcome {
   const entries = graphClipboard.read();
-  if (entries.length === 0) return [];
+  if (entries.length === 0) return { ids: [], skipped: 0, afterId: null };
   const snapshot = store.getSnapshot();
-  const { parentId, toIndex } = resolveInsertPlacement(
+  const { parentId, toIndex, afterId } = resolveInsertPlacement(
     snapshot.graph,
     snapshot.interaction.selectedIds,
     focusedId,
+    // The visible destination (R9.2). A paste lands after the card wearing the
+    // `⋮`, which is also the card a right-click re-aimed at.
+    snapshot.interaction.anchorId,
   );
 
   // A pending CUT moves its originals rather than cloning them.
@@ -226,26 +237,42 @@ function pasteFromClipboard(store: CollectionsStore, focusedId: string): readonl
     pendingCut.size > 0
       ? [...pendingCut].filter((id) => snapshot.graph.nodesById.has(id))
       : [];
-  if (movable.length > 0 && movable.length === pendingCut.size) {
+  if (movable.length > 0) {
     const moved = store.dispatch({
       type: "move-nodes",
       nodeIds: movable,
       toParentId: parentId,
-      toIndex,
+      // POST-removal index — the convention `move-nodes` documents, and NOT
+      // what `resolveInsertPlacement` returns. The two differ exactly when the
+      // cut sources sit before the destination in the same collection, which
+      // made a cut from the top of a strip land at the end instead of where
+      // the user aimed.
+      toIndex: toPostRemovalIndex(snapshot.graph, parentId, movable, toIndex),
     });
     // A refused move (dropping a collection inside itself, say) must not fall
     // back to cloning — that would answer a rejected move by silently making
     // copies.
-    return moved.ok ? movable : [];
+    if (!moved.ok) return { ids: [], skipped: 0, afterId: null };
+    // E8: sources deleted between cut and paste are SKIPPED, and the count is
+    // reported rather than swallowed. This used to require every source to
+    // survive — one deleted item sent the whole gesture down the clone path,
+    // which left the survivors sitting in their original places with copies of
+    // themselves at the destination. A partial move is the honest answer to a
+    // partly-deleted cut.
+    return { ids: movable, skipped: pendingCut.size - movable.length, afterId };
   }
 
+  // Nothing survives to move (or this was a copy). The clipboard entries carry
+  // their own node and document snapshots, so a COPIED item still pastes fine
+  // after its source is deleted — which is why paste is not dimmed outright
+  // when the graph has moved on.
   const clones = entries.map((entry) =>
     cloneNodeForInsert(entry.node, entry.detail, {
       readDocument: (timelineId) => entry.documents[timelineId] ?? null,
       mintId,
     }),
   );
-  return insertClones(store, clones, parentId, toIndex);
+  return { ids: insertClones(store, clones, parentId, toIndex), skipped: 0, afterId };
 }
 
 /**
@@ -257,9 +284,10 @@ function pasteFromClipboard(store: CollectionsStore, focusedId: string): readonl
  */
 function revealPasted(
   store: CollectionsStore,
-  ids: readonly NodeId[],
+  outcome: PasteOutcome,
   announce: ((message: string) => void) | undefined,
 ): void {
+  const { ids, skipped, afterId } = outcome;
   if (ids.length === 0) return;
   store.setSelection(ids);
   graphPasteFlash.flash(ids);
@@ -268,9 +296,26 @@ function revealPasted(
   // at the end of a long grid lands below the fold by definition.
   const last = ids[ids.length - 1];
   if (last !== undefined) focusNodeWhenMounted(document.body, last);
-  announce?.(
-    ids.length === 1 ? "1 item pasted." : `${ids.length} items pasted.`,
-  );
+
+  // R12.8: WHERE it landed, not just how much. "3 items pasted" leaves a
+  // screen-reader user to go and find them; naming the card they follow is the
+  // spoken twin of the accent flash sighted users get.
+  const afterName =
+    afterId === null ? null : (store.getSnapshot().graph.nodesById.get(afterId)?.name ?? null);
+  const what = ids.length === 1 ? "1 item" : `${ids.length} items`;
+  const where = afterName === null ? "at the end" : `after ${afterName}`;
+  // E8, said out loud rather than swallowed: a cut whose source was deleted in
+  // between moves what is left, and the count that did not make it is the part
+  // the user cannot otherwise tell.
+  const missing =
+    skipped === 0 ? "" : ` ${skipped} ${skipped === 1 ? "item was" : "items were"} deleted.`;
+  announce?.(`${what} pasted ${where}.${missing}`);
+  if (skipped > 0) {
+    toast(
+      `Pasted ${what} — ${skipped} ${skipped === 1 ? "item was" : "items were"} deleted since you cut ${skipped === 1 ? "it" : "them"}.`,
+      { id: "graph-paste-skipped" },
+    );
+  }
 }
 
 /**
@@ -533,7 +578,7 @@ export function GraphItemActionsBridge({
       const pasted = pasteFromClipboard(store, focusedId);
       // Nothing landed (refused dispatch): keep the clipboard so the user can
       // paste somewhere valid instead of silently losing what they copied.
-      if (pasted.length === 0) return;
+      if (pasted.ids.length === 0) return;
       // One paste per cut: clearing here is what disarms a pending cut, so the
       // move cannot be replayed into a second destination.
       graphClipboard.clear();
@@ -578,21 +623,16 @@ export function GraphItemActionsBridge({
           if (target === undefined) break;
           if (store.getSnapshot().graph.nodesById.get(target)?.kind !== "collection") break;
           const pasted = pasteFromClipboard(store, target as string);
-          if (pasted.length === 0) break;
+          if (pasted.ids.length === 0) break;
           graphClipboard.clear();
           revealPasted(store, pasted, announce);
           break;
         }
-        case "open": {
-          // The drill chevron's verb, reached from the pill because the anchor
-          // card gives its corner controls up to host one. Navigation lives in
-          // the view's own context, so this asks the same way the chevron does
-          // rather than reimplementing the route change.
-          const selected = [...store.getSnapshot().interaction.selectedIds];
-          const only = selected.length === 1 ? selected[0] : undefined;
-          if (only !== undefined) requestGraphOpenItem(only as string);
-          break;
-        }
+        // No "open" case. It existed for the v2 pill, which took the anchor's
+        // chevron and had to offer its verb back; v3 keeps the chevron on every
+        // non-anchor card and drops Open from the menu entirely (R7.11) —
+        // selecting a card is a positive signal you did NOT want to drill into
+        // it. Double-click and the O key remain the ways in.
         case "rename": {
           // Renaming is inline, at the card, and each rename site owns its own
           // editor state — so this asks the SITE to open rather than doing it

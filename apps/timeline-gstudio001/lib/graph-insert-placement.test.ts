@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildGraph, parseNodeId, type CollectionsGraph, type NodeId } from "@storyboard/ui/dnd-collections";
 
-import { resolveInsertPlacement } from "./graph-insert-placement";
+import { resolveInsertPlacement, toPostRemovalIndex } from "./graph-insert-placement";
 
 /**
  * project ─ alpha, bravo, scene-a[ c1, c2, scene-b[ d1 ] ], charlie
@@ -153,5 +153,95 @@ describe("resolveInsertPlacement", () => {
       toIndex: 0,
       afterId: null,
     });
+  });
+
+  // R9.2 — the ANCHOR decides where a paste lands, not selection order.
+  //
+  // These pin the gap v3 exposed: right-clicking an already-selected card
+  // re-anchors WITHOUT changing the selection, so `selectedIds` cannot answer
+  // where the paste goes. Before the anchor argument existed, "aim at that one"
+  // moved the visible `⋮` and left the paste following whatever was clicked
+  // last, which is the one thing the badge promises it will not do.
+  it("lands after the ANCHOR, not the last-selected card", () => {
+    expect(
+      resolveInsertPlacement(graph, ids("alpha", "charlie"), "project", parseNodeId("alpha")),
+    ).toEqual({
+      parentId: parseNodeId("project"),
+      toIndex: 1,
+      afterId: parseNodeId("alpha"),
+    });
+  });
+
+  it("falls back to the last-selected card when there is no anchor", () => {
+    // Every non-paste caller (the Collection tool, native drops) still passes
+    // nothing here, so the old rule has to survive its absence.
+    expect(resolveInsertPlacement(graph, ids("alpha", "charlie"), "project", null)).toEqual(
+      resolveInsertPlacement(graph, ids("alpha", "charlie"), "project"),
+    );
+  });
+
+  it("ignores an anchor that has left the graph", () => {
+    // E4/E1: the anchor can be deleted between the click and the paste. A
+    // stale id must degrade to the selection rather than resolve to nothing
+    // and silently append.
+    expect(
+      resolveInsertPlacement(graph, ids("alpha"), "project", parseNodeId("deleted-since")),
+    ).toEqual({
+      parentId: parseNodeId("project"),
+      toIndex: 1,
+      afterId: parseNodeId("alpha"),
+    });
+  });
+
+  it("respects an anchor that is not in the selection at all", () => {
+    // Not a state the UI produces (the anchor is by definition selected), but
+    // the function must not depend on that invariant holding.
+    expect(resolveInsertPlacement(graph, [], "project", parseNodeId("bravo"))).toEqual({
+      parentId: parseNodeId("project"),
+      toIndex: 2,
+      afterId: parseNodeId("bravo"),
+    });
+  });
+});
+
+describe("toPostRemovalIndex", () => {
+  const graph = fixture();
+  const project = parseNodeId("project");
+  // project children: alpha, bravo, scene-a, charlie
+
+  it("shifts left by the moved siblings that sat before the destination", () => {
+    // THE REPORTED BUG. Cut the first two cards, then aim at the second-to-last
+    // one: the visible index is 3 (after scene-a), but removing alpha and bravo
+    // first leaves [scene-a, charlie], where 3 is past the end and clamps — so
+    // the items appended instead of landing where the user aimed.
+    expect(toPostRemovalIndex(graph, project, ids("alpha", "bravo"), 3)).toBe(1);
+  });
+
+  it("leaves the index alone when the moved nodes sit after it", () => {
+    // Nothing before the destination was removed, so the visible index is
+    // already the post-removal one.
+    expect(toPostRemovalIndex(graph, project, ids("charlie"), 1)).toBe(1);
+  });
+
+  it("ignores nodes moving in from another collection", () => {
+    // They were never in this list, so they cannot have shifted it. `c1` lives
+    // in scene-a; counting it here would pull the insert one slot left.
+    expect(toPostRemovalIndex(graph, project, ids("c1"), 3)).toBe(3);
+  });
+
+  it("counts only the moved siblings, not every moved node", () => {
+    // Mixed: alpha is a sibling before the destination, c1 is not a sibling at
+    // all. Exactly one shift.
+    expect(toPostRemovalIndex(graph, project, ids("alpha", "c1"), 3)).toBe(2);
+  });
+
+  it("never returns a negative index", () => {
+    // Pasting after a card you just cut asks for a position inside the moved
+    // run itself, which does not exist once the run is gone.
+    expect(toPostRemovalIndex(graph, project, ids("alpha", "bravo"), 0)).toBe(0);
+  });
+
+  it("appends unchanged when nothing is moving", () => {
+    expect(toPostRemovalIndex(graph, project, [], 4)).toBe(4);
   });
 });

@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, type MutableRefObject } 
 import { useRouter } from "next/navigation";
 
 import {
+  focusNodeWhenMounted,
   getChildren,
   isEditableKeyboardTarget,
   parseNodeId,
@@ -93,7 +94,7 @@ export function GraphViewNavProvider({
         // step of the walk.
         const projectNodeId = parseNodeId(projectId);
         // The `seen` guard matches the other two parent walks in this app
-        // (`isDisabledByAncestor`, `useSelectionAggregate`). The graph's own
+        // (`isDisabledByAncestor`, `useSelectionCount`). The graph's own
         // invariants should make a parent cycle unreachable — `buildGraph`
         // validates and the reducer refuses cycles — but this walk is the one
         // where hitting one hangs the tab on an unbounded `chain`, and having
@@ -295,6 +296,33 @@ export function OpenKeyBoundary({
     moveSelectionToTrash(store, trashId, undefined, detailsStore);
   };
 
+  /**
+   * Escape clears the selection (R4.7).
+   *
+   * It lives here, with the board's other card keys, because nothing else owns
+   * it. The v2 pill handled Escape itself — it rendered INSIDE the card, so a
+   * focused card's Escape reached it by bubbling — and deleting the pill took
+   * that with it. The package does not claim the key either: its keyboard
+   * controller passes a bare Escape through deliberately.
+   *
+   * Two things it must not do. It must not fight dnd-kit, which uses Escape to
+   * CANCEL a keyboard drag — hence the isDragging guard. And it must not fire
+   * while a menu is open (R10.6): Radix portals its menus outside this
+   * subtree, so their Escape never bubbles here, which is why that needs no
+   * guard of its own.
+   */
+  const clearFromKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const { interaction } = store.getSnapshot();
+    if (interaction.isDragging || interaction.selectedIds.size === 0) return;
+    event.preventDefault();
+    // Focus goes back to the card that was anchored, not to wherever the key
+    // was pressed — the anchor is the card the user was working on, and the
+    // control they may have been standing on is about to unmount.
+    const anchorId = interaction.anchorId;
+    store.clearSelection();
+    if (anchorId !== null) focusNodeWhenMounted(document.body, anchorId);
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     // A control inside a card owns its own keys (inputs, the rename field) —
@@ -304,10 +332,45 @@ export function OpenKeyBoundary({
     if (event.key === "o" || event.key === "O") openFromKey(event);
     else if (event.key === "F2") renameFromKey(event);
     else if (event.key === "Delete" || event.key === "Backspace") trashSelection(event);
+    else if (event.key === "Escape") clearFromKey(event);
+  };
+
+  /**
+   * Double-click opens (R10.5).
+   *
+   * Needed because the anchor card no longer has a chevron — it cross-fades
+   * into the `⋮` — so without this the one card the user is working on would be
+   * the one card with no pointer route in. The O key already covered the
+   * keyboard, and Enter could NOT be used here: the dnd-collections grammar
+   * binds it to picking a card up for a keyboard drag (Space selects, Enter
+   * grabs), and taking it would remove keyboard drag-and-drop to add a second
+   * way to do what O already does.
+   *
+   * BUBBLE phase, deliberately. The card's own label stops propagation on
+   * double-click to claim the gesture for inline rename, and that layering only
+   * works if this listener runs after the target's.
+   */
+  const openFromDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || store.getSnapshot().interaction.isDragging) return;
+    const target = event.target as HTMLElement;
+    // Controls inside the card own their own gestures — a double-click that
+    // lands on the `⋮` or the chevron is two clicks on that control, not an
+    // instruction to drill in.
+    if (target.closest("[data-collections-keyboard-ignore]") !== null) return;
+    const id = target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
+    if (!id) return;
+    const graph = store.getSnapshot().graph;
+    const nodeId = parseNodeId(id);
+    const node = graph.nodesById.get(nodeId);
+    const opensTimeline =
+      node?.kind === "collection" || detailsStore.get(id)?.duplicateOfTimelineId !== undefined;
+    if (!opensTimeline) return;
+    event.preventDefault();
+    nav?.openTimeline(nodeId);
   };
 
   return (
-    <div style={{ display: "contents" }} onKeyDown={handleKeyDown}>
+    <div style={{ display: "contents" }} onKeyDown={handleKeyDown} onDoubleClick={openFromDoubleClick}>
       {children}
     </div>
   );

@@ -1,6 +1,14 @@
 "use client";
 
-import { useContext, useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  createElement,
+  Fragment,
+  useContext,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import {
@@ -28,11 +36,13 @@ import {
 import { flattenMediaOrder } from "@storyboard/timeline-domain";
 
 import { formatDuration } from "@/lib/format-duration";
-import { ITEM_ACTION_SPECS } from "@/lib/graph-item-action-specs";
+import { graphClipboard } from "@/lib/graph-clipboard";
+import { itemActionSpec, type ItemActionState } from "@/lib/graph-item-action-specs";
 import {
   GRAPH_BOARD_MENU_SLOT_ID,
   requestGraphItemAction,
   requestGraphToolInsert,
+  type GraphItemAction,
 } from "@/lib/graph-view-events";
 import {
   SIDEBAR_GLYPH,
@@ -55,11 +65,16 @@ import {
 import { Slider } from "@/components/core/slider";
 
 import {
-  SelectionOverflowItems,
   useClipboardCount,
+  useHasPendingCut,
   useSelectionActionState,
   useSelectionAnchorId,
 } from "./graph-selection-actions";
+import {
+  DROPDOWN_MENU_PARTS,
+  SELECTION_MENU_CONTENT_CLASS,
+  SelectionMenuItems,
+} from "./graph-selection-menu";
 import { NativeDropGrid, NativeDropStrip, SidebarToolInsertBridge } from "./graph-native-drop";
 import { VideoFrameLookAhead } from "./graph-item-content";
 import { BreadcrumbDropZones, DragChromeFade } from "./graph-breadcrumb-drop";
@@ -75,7 +90,7 @@ import {
   PreviewShell,
   collectionCardWidth,
   useFocusedTimelineAggregate,
-  useSelectionAggregate,
+  useSelectionCount,
   type PreviewTimeChannel,
 } from "./graph-preview";
 import { AddCollectionSlot } from "./graph-add-collection-slot";
@@ -247,17 +262,25 @@ function FocusedAggregate({
   focusedId,
   pixelsPerSecond,
 }: Readonly<{ focusedId: string; pixelsPerSecond: number }>) {
-  const selection = useSelectionAggregate();
+  const selectedCount = useSelectionCount();
   const { count, seconds } = useFocusedTimelineAggregate(focusedId, pixelsPerSecond);
 
-  if (selection.count > 0) {
+  if (selectedCount > 0) {
     return (
       <span
         data-selection-summary
-        className="hidden shrink-0 px-3 text-center font-mono text-[11px] tabular-nums text-amber-300/90 sm:block"
+        // Visible at EVERY breakpoint, unlike the idle total below. This is the
+        // subject the controls beside it act on, and a group of controls whose
+        // count has been hidden away reads as chrome with no object.
+        className="block shrink-0 pl-3 text-center font-mono text-[11px] tabular-nums text-amber-300/90"
         title="Selected items"
       >
-        {selection.count} selected · {formatDuration(selection.seconds)}
+        {/* COUNT ONLY. The selection's total duration was here and is not a
+            fact anyone acts on — nothing in the row does anything with it, and
+            it competed for the eye with the number that actually scopes the
+            verbs beside it. The timeline's own total still shows when nothing
+            is selected, which is where a duration means something. */}
+        {selectedCount} selected
       </span>
     );
   }
@@ -449,118 +472,316 @@ function HeaderToggle({
 }
 
 /**
- * Paste, and the two selection controls beside it.
+ * Touch sizing for the header's selection controls (R11.4).
  *
- * PASTE IS PERMANENT here, in both the idle and the selection state, and that
- * is the point of moving it out of the item actions. Every verb in the floating
- * toolbar acts ON the selection; paste needs a DESTINATION, and a selection is
- * not a destination. Grouped with the other container-scoped controls (new
- * folder, view toggles, undo/redo) it says one unambiguous thing: into the
- * collection you are looking at.
- *
- * Its label carries payload AND destination (R9.4), because "Paste" alone
- * cannot distinguish appending three clips at the end from dropping them after
- * the card you last touched — and the difference is invisible until it has
- * already happened.
- *
- * The `✕` and `⋮` appear only with a selection. The `⋮` is the reason the
- * floating toolbar is allowed to hide itself when its anchor scrolls away
- * (R6.6/R8.3): the actions are still one click from here.
- */
-/**
- * Touch sizing for the header's selection controls (R11.2).
- *
- * These are the FALLBACK surface for the same actions the floating toolbar
- * offers — the one that takes over when the anchor card scrolls away — so they
- * need the same 44px minimum on a finger. The rest of the header row keeps its
- * 32px: those are chrome you reach for deliberately, not the controls a touch
- * user is steered to mid-gesture.
+ * These are the FALLBACK surface for the actions the anchor card's `⋮` offers —
+ * the one that takes over when the anchor scrolls away, or sits on a card too
+ * narrow to carry a control at all — so they need the same 44px minimum on a
+ * finger. The rest of the header row keeps its 32px: those are chrome you reach
+ * for deliberately, not the controls a touch user is steered to mid-gesture.
  */
 const HEADER_SELECTION_SIZE =
   "h-8 w-8 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11";
 
-function HeaderSelectionCluster({
+/**
+ * The `✕` and `⋮`, in the CENTRE beside the selection readout.
+ *
+ * They used to sit in the right-hand cluster, mixed in with the container
+ * controls, which put them a full header-width away from the count they act on
+ * and grouped them with things they have nothing to do with. Everything here is
+ * SELECTION-scoped: the readout says what is selected, the `✕` drops it, the
+ * `⋮` acts on it. One group, one subject, separated from the readout by a fence
+ * so the text stays readable as text.
+ *
+ * A SIBLING of `GraphSaveStatus` rather than a child. That component takes the
+ * centre slot over whenever it has something to say, and it replaces its
+ * children to do it — nesting these would make the fallback surface disappear
+ * for the length of every save, which is precisely when a user is most likely
+ * to be mid-gesture.
+ *
+ * Visible at every breakpoint, unlike the idle aggregate it sits beside. That
+ * readout is passive data and hides below `sm`; these are the only route to the
+ * selection's actions when the anchor is off-screen, and a phone is where an
+ * anchor is most often off-screen.
+ */
+/**
+ * A verb promoted OUT of the menu and onto the header as an icon button.
+ *
+ * Rendered from `ITEM_ACTION_SPECS`, so its icon, its label, when it dims and
+ * why are the same data the menu row uses — a promoted button that disagreed
+ * with its own menu entry about whether an action applies is the failure this
+ * prevents, and it is exactly the failure the v2 pill kept producing.
+ *
+ * `aria-disabled`, never `disabled`, for the same reason the menu rows use it
+ * (R7.7/R12.4): a disabled button is unfocusable and silent, so it can never
+ * deliver the reason it is unavailable. Here the reason rides the accessible
+ * name and the tooltip, since an icon button has no room for an inline slot.
+ */
+function HeaderActionButton({
+  action,
+  state,
+}: Readonly<{ action: GraphItemAction; state: ItemActionState }>) {
+  const spec = itemActionSpec(action);
+  const label = spec.label(state);
+  const reason = spec.unavailableReason(state);
+  const disabled = spec.disabled(state);
+  const icon = createElement(spec.icon(state), {
+    "aria-hidden": true,
+    className: "h-4 w-4",
+  });
+  const name = reason === null ? label : `${label}, ${reason}`;
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={name}
+      title={name}
+      aria-disabled={disabled || undefined}
+      data-header-action={action}
+      onClick={() => {
+        if (disabled) return;
+        requestGraphItemAction(action);
+      }}
+      className={cn(
+        HEADER_SELECTION_SIZE,
+        disabled ? "cursor-not-allowed text-zinc-600 hover:text-zinc-600" : HEADER_TOGGLE_IDLE,
+      )}
+    >
+      {icon}
+    </Button>
+  );
+}
+
+/**
+ * The verbs promoted out of the menu, in the order they sit in the header.
+ *
+ * §15's phase-two path (R15.2), and ADDITIVE — every one of these is still in
+ * the menu too, so nothing built on the menu breaks.
+ *
+ * Ordered identity → clipboard → destructive, the same grouping the menu uses,
+ * so the row and the menu do not teach two different mental models. Delete
+ * stays last of the verbs for the reason it is last in the menu: a destructive
+ * action at the end is harder to hit on the way to something else.
+ *
+ * PASTE IS NOT IN THIS LIST even though it renders among them — see
+ * `SelectionCentreControls`. It is the one control here that does not act on
+ * the selection, so it cannot be driven by the selection's action specs.
+ */
+const PROMOTED_HEADER_ACTIONS: readonly GraphItemAction[] = ["details", "delete"];
+
+/**
+ * Where in the promoted row paste is spliced in.
+ *
+ * After Edit, which is simply "second" now that Copy and Cut have gone back to
+ * the menu. It sat with those two while they were here, on the reasoning that
+ * copy/cut/paste is the grouping every application teaches — but the group no
+ * longer exists on this row, and Delete stays last for the usual reason.
+ *
+ * Copy and Cut came out because they have keyboard shortcuts that carry almost
+ * all of their real traffic, and a promoted icon earns its place by being
+ * reached with a pointer. Both are still in the menu, unchanged (R15.2 makes
+ * promotion additive, so demotion costs nothing but the icon).
+ */
+const PASTE_AFTER_ACTION: GraphItemAction = "details";
+
+function SelectionCentreControls({
   anchorName,
 }: Readonly<{ anchorName: string | null }>) {
   const store = useCollectionsStore();
   const state = useSelectionActionState();
-  const clipboardCount = useClipboardCount();
+  const hasPendingCut = useHasPendingCut();
 
-  const payload = clipboardCount === 1 ? "1 item" : `${clipboardCount} items`;
-  const pasteLabel =
-    clipboardCount === 0
-      ? "Paste"
-      : anchorName === null
-        ? `Paste ${payload} at end`
-        : `Paste ${payload} after “${anchorName}”`;
+  // NOT simply `if (!hasSelection) return null`. Paste has to outlive the
+  // selection — "Paste 3 clips at end" (R9.4) is BY DEFINITION the
+  // no-selection label, and copy → click empty space → paste is the ordinary
+  // way to append. So the row survives an empty selection whenever the
+  // clipboard is armed, and only disappears when it would be empty.
+  if (!state.hasSelection && !state.canPaste) return null;
+
+  // A PENDING CUT is a half-finished gesture, and the row narrows to its two
+  // endings: land it, or abandon it.
+  //
+  // The other verbs are hidden rather than dimmed — the one case in this
+  // feature where the "dim in place, never remove" rule (R7.5) is deliberately
+  // not followed. That rule protects positions from shifting *within a state*
+  // as the selection count changes. This is a different state entirely, entered
+  // and left by an explicit act, and its whole point is that there are only two
+  // moves; six dimmed icons would say "not now" six times instead of saying
+  // "finish this" once.
+  //
+  // Why hide them at all rather than let them work: a cut's sources are still
+  // on the board, dimmed, waiting to move. Copying one, cutting it again, or
+  // deleting it mid-flight all mean something ambiguous, and the ambiguity is
+  // invisible until it has already resolved the wrong way.
+  //
+  // Note this is CUT-only. A copy leaves its sources untouched, so the board
+  // stays fully usable while one is on the clipboard.
+  const selectionVerbs =
+    state.hasSelection && !hasPendingCut ? PROMOTED_HEADER_ACTIONS : [];
 
   return (
-    <>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        aria-label={pasteLabel}
-        title={pasteLabel}
-        // Dimmed in place with an empty clipboard (R9.5), never hidden — a
-        // control that comes and goes as you copy things moves the ones beside
-        // it, and this row is where the eye returns for undo.
-        aria-disabled={clipboardCount === 0 || state.busy || undefined}
-        onClick={() => {
-          if (clipboardCount === 0 || state.busy) return;
-          requestGraphItemAction("paste");
-        }}
-        className={cn(
-          HEADER_SELECTION_SIZE,
-          clipboardCount === 0 || state.busy
-            ? "cursor-not-allowed text-zinc-600 hover:text-zinc-600"
-            : HEADER_TOGGLE_IDLE,
-        )}
-      >
-        <ClipboardPaste aria-hidden className="h-4 w-4" />
-      </Button>
-      {state.hasSelection ? (
-        <>
+    <span data-selection-centre-controls className="flex shrink-0 items-center gap-1">
+      {/* Asymmetric on purpose: the readout needs room to breathe before the
+          fence, while the controls after it sit in their own tight group. */}
+      <span aria-hidden="true" className="ml-5 mr-2 h-5 w-px shrink-0 bg-zinc-700" />
+      {selectionVerbs.length === 0 ? (
+        <HeaderPasteButton anchorName={anchorName} />
+      ) : (
+        selectionVerbs.map((action) => (
+          <Fragment key={action}>
+            <HeaderActionButton action={action} state={state} />
+            {action === PASTE_AFTER_ACTION ? (
+              <HeaderPasteButton anchorName={anchorName} />
+            ) : null}
+          </Fragment>
+        ))
+      )}
+      {selectionVerbs.length === 0 ? null : (
+      // Non-modal for the same reason the anchor's `⋮` is — see the note
+      // there. Radix's modal default makes the body pointer-events:none, which
+      // stops this button from receiving the click that should toggle its own
+      // menu shut, and lets background-clear drop the selection once the layer
+      // unmounts.
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            aria-label="Clear selection"
-            title="Clear selection (Esc)"
-            data-clear-selection
-            onClick={() => store.clearSelection()}
+            aria-label="More selection actions"
+            data-header-selection-overflow
             className={cn(HEADER_SELECTION_SIZE, HEADER_TOGGLE_IDLE)}
           >
-            <X aria-hidden className="h-4 w-4" />
+            <EllipsisVertical aria-hidden className="h-4 w-4" />
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="More selection actions"
-                data-header-selection-overflow
-                className={cn(HEADER_SELECTION_SIZE, HEADER_TOGGLE_IDLE)}
-              >
-                <EllipsisVertical aria-hidden className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="bottom" align="end">
-              {/* ALL of them. This is the fallback for a card too narrow to
-                  host a pill, or one scrolled out of view — so it cannot
-                  assume the pill is offering anything. */}
-              <SelectionOverflowItems
-                state={state}
-                includePrimary={ITEM_ACTION_SPECS.filter((spec) => spec.group === "primary").map(
-                  (spec) => spec.action,
-                )}
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </>
-      ) : null}
-    </>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          side="bottom"
+          align="center"
+          className={SELECTION_MENU_CONTENT_CLASS}
+        >
+          {/* The SAME menu the anchor's `⋮` opens. This is the fallback for an
+              anchor scrolled out of view, or one on a card too narrow to carry
+              a control at all (R5.5/R8.4) — so it must offer everything, and it
+              does so by rendering the identical definition rather than a
+              superset assembled by hand. */}
+          <SelectionMenuItems parts={DROPDOWN_MENU_PARTS} state={state} />
+        </DropdownMenuContent>
+      </DropdownMenu>
+      )}
+      {/* Fenced off from the verbs. Everything left of this line ACTS on
+          something; `✕` dismisses it. Without the fence, "clear" reads as one
+          more verb in the same row and sits a slot from Delete — two adjacent
+          icons that both make things go away, only one of which is reversible
+          by doing it again.
+
+          WHAT it dismisses depends on what is there, and the cases are NOT
+          collapsed into one "cancel everything".
+
+          A PENDING CUT wins outright, even with a selection standing — during
+          a cut the selection is the user CHOOSING a destination, so clearing
+          it would undo the wrong half of what they are doing. Cancelling the
+          cut is what restores the full row (the sources un-dim and stay put),
+          which is the way out of the narrowed state.
+
+          Otherwise the selection goes first, and only once there is none does
+          `✕` turn on the clipboard. Clearing the selection must leave a COPY
+          alone: copy → deselect → navigate → paste is the ordinary way to move
+          something between collections, and a `✕` that took the payload with
+          it would break exactly that. */}
+      <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-zinc-700" />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        // The label names the actual target. One glyph doing three jobs is
+        // fine; one glyph SAYING it does one job while doing another is not.
+        aria-label={
+          hasPendingCut ? "Cancel cut" : state.hasSelection ? "Clear selection" : "Clear clipboard"
+        }
+        title={
+          hasPendingCut
+            ? "Cancel cut — leave the items where they are"
+            : state.hasSelection
+              ? "Clear selection (Esc)"
+              : "Clear clipboard"
+        }
+        data-cancel-cut={hasPendingCut ? "" : undefined}
+        data-clear-selection={!hasPendingCut && state.hasSelection ? "" : undefined}
+        data-clear-clipboard={!hasPendingCut && !state.hasSelection ? "" : undefined}
+        onClick={() => {
+          // Un-dims the sources of a pending cut and leaves them where they
+          // are, which is the visible half of what cancelling one means.
+          if (hasPendingCut || !state.hasSelection) {
+            graphClipboard.clear();
+            return;
+          }
+          store.clearSelection();
+        }}
+        className={cn(HEADER_SELECTION_SIZE, HEADER_TOGGLE_IDLE)}
+      >
+        <X aria-hidden className="h-4 w-4" />
+      </Button>
+    </span>
+  );
+}
+
+/**
+ * Paste — present only when there is something to paste.
+ *
+ * A deliberate departure from R9.4, which asked for it dimmed in place and
+ * never hidden. That rule exists so a control does not move the ones beside it
+ * as you copy things, and it was written for a paste sitting permanently among
+ * the container controls. Here it sits inside the selection cluster, which
+ * already comes and goes with the selection — so an always-present paste buys
+ * no stability, and an icon that can never do anything is just noise in a row
+ * that is otherwise entirely live.
+ *
+ * Its label carries payload AND destination (R9.4's other half, kept), because
+ * "Paste" alone cannot distinguish appending three clips at the end from
+ * dropping them after the card you last touched — and the difference is
+ * invisible until it has already happened.
+ */
+function HeaderPasteButton({
+  anchorName,
+}: Readonly<{ anchorName: string | null }>) {
+  const state = useSelectionActionState();
+  const clipboardCount = useClipboardCount();
+
+  if (clipboardCount === 0) return null;
+
+  const payload = clipboardCount === 1 ? "1 item" : `${clipboardCount} items`;
+  const pasteLabel =
+    anchorName === null
+      ? `Paste ${payload} at end`
+      : `Paste ${payload} after “${anchorName}”`;
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={pasteLabel}
+      title={pasteLabel}
+      data-header-paste
+      // Still dims while an action is in flight, so a paste cannot double-fire
+      // behind a slow one.
+      aria-disabled={state.busy || undefined}
+      onClick={() => {
+        if (state.busy) return;
+        requestGraphItemAction("paste");
+      }}
+      className={cn(
+        HEADER_SELECTION_SIZE,
+        state.busy
+          ? "cursor-not-allowed text-zinc-600 hover:text-zinc-600"
+          : HEADER_TOGGLE_IDLE,
+      )}
+    >
+      <ClipboardPaste aria-hidden className="h-4 w-4" />
+    </Button>
   );
 }
 
@@ -828,21 +1049,26 @@ export function GraphBoard({
             {/* Equal-flex wings keep the aggregate at the row's true centre
                 (under the transport's play cluster). min-w-0 lets a long
                 breadcrumb truncate inside its wing. */}
-            <div className="flex min-w-0 flex-1 items-center">{breadcrumb}</div>
+            {/* The save state TRAILS the trail: "where am I" and "how is it
+                doing" are one line, and it costs nothing when there is nothing
+                to report. It used to take over the centre slot, which meant
+                every debounce blanked the selection count and the controls
+                beside it — a status that hides live controls is the wrong
+                shape. It stays outside DragChromeFade with the breadcrumb,
+                because a save landing mid-drag is still worth seeing. */}
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              {breadcrumb}
+              <GraphSaveStatus />
+            </div>
             {/* Middle summary and the right-hand controls fade out under the
                 drag readout that overlays this row, and fade back on drop. The
                 breadcrumb stays — it IS the drop target. */}
             <DragChromeFade className="flex items-center">
-              {/* One centre slot, two possible occupants. The save state takes
-                  it while it has something to say and hands it back after —
-                  the clip/duration total is a fact you can re-read at any
-                  time, "not saved yet" is not. */}
-              <GraphSaveStatus>
-                <FocusedAggregate
-                  focusedId={focusedId}
-                  pixelsPerSecond={deferredPixelsPerSecond}
-                />
-              </GraphSaveStatus>
+              <FocusedAggregate
+                focusedId={focusedId}
+                pixelsPerSecond={deferredPixelsPerSecond}
+              />
+              <SelectionCentreControls anchorName={anchorName} />
             </DragChromeFade>
             {/* flex-wrap + wrap-capable controls so a narrow viewport folds the
                 toolbar onto a second line instead of pushing controls
@@ -879,11 +1105,11 @@ export function GraphBoard({
                 title="Children timelines — show the nested timeline tree"
               />
               <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
-              {/* Container-scoped, so it sits with history rather than with the
-                  view group: paste changes what is IN the collection, undo and
-                  redo change what is in it too. */}
-              <HeaderSelectionCluster anchorName={anchorName} />
-              <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
+              {/* Paste used to sit here, fenced between the view group and
+                  history. It is in the CENTRE now, with copy and cut — the
+                  three clipboard verbs read as one group, which is worth more
+                  than the container-scoped grouping it had here. This cluster
+                  keeps only what qualifies the board itself. */}
               <GraphUndoRedo />
               {/* Board options are no longer here — they render in the icon
                   sidebar below the trash (PL14-005). Still mounted from this

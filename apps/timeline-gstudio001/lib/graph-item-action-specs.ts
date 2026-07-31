@@ -1,6 +1,5 @@
 import {
   Ban,
-  ChevronRight,
   CircleCheck,
   ClipboardPaste,
   Copy,
@@ -14,31 +13,29 @@ import {
 
 import type { GraphItemAction } from "./graph-view-events";
 
-// What an item's actions ARE, in one place (PL14-007).
+// What an item's actions ARE, in one place.
 //
-// Three surfaces offer them now — the floating selection toolbar, its overflow
-// menu, and a card's right-click menu — and a second definition is how two
-// menus drift into disagreeing about what an item can do. This module is the
-// definition; every surface renders it.
+// Three surfaces render this list now — the anchor card's `⋮`, a card's
+// right-click menu, and the header's `⋮` — and all three render it the SAME
+// way, as one flat menu. That is new in v3: the surfaces used to disagree in
+// shape (a row of icon tiles vs. a list of rows), which is why this module
+// carried a `group` splitting the actions into a promoted few and an overflow.
+// There is no icon row any more, so there is no split.
 //
-// Deliberately NOT a component. The surfaces present the same actions very
-// differently (the toolbar is a row of icon tiles; the menu is a list of rows),
-// so what they share is the DATA — which actions exist, in what order, with
-// what labels and icons, and when each is available. Sharing markup would have
-// forced one of them to look wrong.
+// Deliberately NOT a component. What the surfaces share is the DATA — which
+// actions exist, in what order, with what labels and icons, and when each is
+// available; what differs is only where the menu is anchored.
 
 /** Everything an action needs to decide whether it applies right now. */
 export type ItemActionState = Readonly<{
   hasSelection: boolean;
-  /** How many items are selected. Labels say it out loud where scope would
-   *  otherwise be ambiguous — "Duplicate" reads as "this card". */
+  /** How many items are selected. Labels say it out loud (R7.2): a bare
+   *  "Duplicate" reads as acting on the one card the menu emerged from, which
+   *  is exactly wrong when six are selected. */
   selectionCount: number;
-  /** Exactly ONE item selected. The details view is the only action that
-   *  cares — there is no honest way to render one clip's frames for six. */
+  /** Exactly ONE item selected. */
   isSingleSelection: boolean;
-  /** The clipboard is armed. No longer swaps anything out: paste lives in the
-   *  header now (it needs a DESTINATION, and a selection is not one), and the
-   *  only entry here is the collection-scoped "Paste into". */
+  /** The clipboard is armed. */
   canPaste: boolean;
   /** An async action is in flight; everything disables so nothing double-fires. */
   busy: boolean;
@@ -51,51 +48,67 @@ export type ItemActionState = Readonly<{
   /** The single selected item's name, for "Paste into 'Scene A'". Null unless
    *  exactly one is selected. */
   singleName: string | null;
-  /** Whether the selection can be drilled into. Not the same as "is a
-   *  collection": a media card that REFERENCES a timeline (a duplicate) opens
-   *  too, which is the rule `openOnClick` already uses for the card body. */
-  openable: boolean;
 }>;
 
 /**
- * Where the TOOLBAR puts an action. The toolbar is a short row, so it shows the
- * common few and folds the rest behind `⋮`; the right-click menu is flat and
- * shows everything.
+ * Which run of the menu an action belongs to. Separators are drawn BETWEEN
+ * sections, so this is the only thing that decides where they fall.
  *
- * Modelled here rather than in the surfaces because it is the last thing they
- * disagreed about — with it, all of them render the same ordered list and
- * differ only in whether they respect the grouping.
+ * Grouped by KIND rather than by guessed frequency: the clipboard verbs sit
+ * together, and Rename joins Edit as the other action about an item's identity.
+ * The alternative order (the spec's provisional table) split Duplicate from
+ * Paste with Rename, which put two clipboard operations on opposite sides of an
+ * unrelated row.
+ *
+ * R7.5 makes this order PERMANENT — items are dimmed in place, never removed or
+ * reordered — so changing it later moves rows under established muscle memory.
  */
-export type ItemActionGroup = "primary" | "overflow";
+export type ItemActionSection = "identity" | "clipboard" | "state" | "destructive";
+
+/** Section order, and therefore menu order. */
+export const ITEM_ACTION_SECTIONS: readonly ItemActionSection[] = [
+  "identity",
+  "clipboard",
+  "state",
+  "destructive",
+];
 
 export type ItemActionSpec = Readonly<{
   action: GraphItemAction;
-  group: ItemActionGroup;
+  section: ItemActionSection;
   /** Resolved against state, because several change wording: Disable becomes
    *  Enable, and counts appear once a selection is plural. */
   label: (state: ItemActionState) => string;
   description: (state: ItemActionState) => string;
   icon: (state: ItemActionState) => LucideIcon;
+  /** Shown right-aligned in the row (R7.8). These carry the majority of real
+   *  clipboard traffic, so the menu is also where they are taught.
+   *
+   *  Spelled `Ctrl/⌘` rather than resolved per platform, matching the shortcuts
+   *  sheet. Detecting the platform would mean reading `navigator` during render
+   *  for a string two characters shorter. */
+  shortcut: string | null;
   /** Present at all. Reserved for actions that are not merely unavailable but
-   *  MEANINGLESS in this state — "Paste into" with no collection selected
-   *  names a destination that does not exist. Everything else stays and dims;
-   *  a control that comes and goes shifts the ones after it, and selection
-   *  count changes constantly during a multi-select. */
+   *  MEANINGLESS in this state — "Paste into" with no collection selected names
+   *  a destination that does not exist. Everything else stays and dims (R7.5). */
   visible: (state: ItemActionState) => boolean;
   /** Present but unavailable. Preferred over hiding wherever the action is
-   *  always CONCEPTUALLY available: a control that vanishes teaches nothing,
-   *  while a dimmed one says "wrong shape of selection for that". */
+   *  always CONCEPTUALLY available: a row that vanishes teaches nothing, while
+   *  a dimmed one says "wrong shape of selection for that". */
   disabled: (state: ItemActionState) => boolean;
-  /** WHY it is dimmed, in the user's terms. Rendered as a tooltip and as the
-   *  control's accessible description — never tooltip-only, because a tooltip
-   *  is unreachable by touch and by screen reader alike. Null when the action
-   *  is available, or when the reason is simply "nothing is selected" and the
-   *  empty board already says so. */
+  /** WHY it is dimmed, in the user's terms, rendered INLINE in the row's
+   *  trailing slot (R7.6) and folded into the row's accessible name (R12.5) —
+   *  never a tooltip, which is unreachable by touch and by screen reader alike.
+   *  Null when the action is available. */
   unavailableReason: (state: ItemActionState) => string | null;
 }>;
 
 const always = () => true;
 const noReason = () => null;
+
+/** The reason a row that acts on exactly one item gives when several are
+ *  selected. Terse because it renders in a trailing slot beside the label. */
+const ONE_ONLY = "one only";
 
 /** "item" / "3 items" — the phrase every count-bearing label ends with. */
 export function itemCountPhrase(count: number): string {
@@ -103,141 +116,161 @@ export function itemCountPhrase(count: number): string {
 }
 
 /**
+ * Counted at 2+, bare at 1 (R7.2/R7.3).
+ *
+ * Only for actions that can ACT on a set. Edit and Rename cannot, so they stay
+ * bare at every count and say "one only" instead — "Edit 3 items" beside a
+ * reason explaining that it cannot edit 3 items is a label arguing with itself.
+ */
+function counted(verb: string) {
+  return (state: ItemActionState) =>
+    state.selectionCount > 1 ? `${verb} ${itemCountPhrase(state.selectionCount)}` : verb;
+}
+
+/**
  * The ordered list.
  *
- * Details first because it is the action that tells you WHAT you have selected
- * before you act on it — and because it lost its per-card trigger to get here
- * (PL13-009). Delete LAST of the primaries, because a destructive action at the
- * end is harder to hit on the way to something else; the toolbar additionally
- * fences it off with a separator.
+ * OPEN IS NOT HERE (R7.11). The chevron sits on the card before selection, so a
+ * user who wanted to drill in would have clicked it; selecting instead is a
+ * positive signal of disinterest in opening. Double-click and the O key remain,
+ * and removing it also spares the menu a second dimmed row at its head.
  *
- * ONE order serves every surface, which is what `group` buys. Walking it and
- * respecting the grouping gives the toolbar its row and its overflow; walking
- * it and ignoring the grouping gives the right-click menu the same run with the
- * overflow actions inlined and Delete still last.
+ * PASTE (the container-scoped one) IS NOT HERE EITHER. Every verb in this list
+ * acts ON the selection; paste needs a destination, and a selection is not a
+ * destination. It lives in the header permanently (R8.5). The one entry here is
+ * "Paste into", which is a different operation with a different target (R7.12).
  */
 export const ITEM_ACTION_SPECS: readonly ItemActionSpec[] = [
   {
-    // Leads the row because it took the drill chevron's place: the anchor card
-    // gives up its corner controls to host the pill, so the chevron's verb has
-    // to live here or stop existing on that card.
-    action: "open",
-    group: "primary",
-    label: () => "Open",
-    description: () => "Open the selected timeline",
-    icon: () => ChevronRight,
-    visible: always,
-    disabled: (s) => s.busy || !s.isSingleSelection || !s.openable,
-    unavailableReason: (s) => {
-      if (!s.hasSelection) return null;
-      if (!s.isSingleSelection) return "Open one item at a time";
-      return s.openable ? null : "Only timelines can be opened";
-    },
-  },
-  {
     action: "details",
-    group: "primary",
+    section: "identity",
     label: () => "Edit",
     description: () => "Open the selected item's details",
     icon: () => Pencil,
+    shortcut: null,
     visible: always,
     disabled: (s) => s.busy || !s.isSingleSelection,
-    unavailableReason: (s) =>
-      s.hasSelection && !s.isSingleSelection ? "Edit one item at a time" : null,
+    unavailableReason: (s) => (s.hasSelection && !s.isSingleSelection ? ONE_ONLY : null),
+  },
+  {
+    action: "rename",
+    section: "identity",
+    label: () => "Rename",
+    description: () => "Rename the selected item",
+    icon: () => TextCursorInput,
+    shortcut: "F2",
+    visible: always,
+    disabled: (s) => s.busy || !s.isSingleSelection,
+    unavailableReason: (s) => (s.hasSelection && !s.isSingleSelection ? ONE_ONLY : null),
   },
   {
     action: "copy",
-    group: "primary",
-    label: (s) => (s.selectionCount > 1 ? `Copy ${itemCountPhrase(s.selectionCount)}` : "Copy"),
+    section: "clipboard",
+    label: counted("Copy"),
     description: () => "Copy the selection",
     icon: () => Copy,
+    shortcut: "Ctrl/⌘ C",
     visible: always,
     disabled: (s) => s.busy || !s.hasSelection,
     unavailableReason: noReason,
   },
   {
     action: "cut",
-    group: "primary",
-    label: (s) => (s.selectionCount > 1 ? `Cut ${itemCountPhrase(s.selectionCount)}` : "Cut"),
+    section: "clipboard",
+    label: counted("Cut"),
     description: () => "Cut the selection — paste to move it",
     icon: () => Scissors,
-    visible: always,
-    disabled: (s) => s.busy || !s.hasSelection,
-    unavailableReason: noReason,
-  },
-  {
-    action: "delete",
-    group: "primary",
-    label: (s) => (s.selectionCount > 1 ? `Delete ${itemCountPhrase(s.selectionCount)}` : "Delete"),
-    description: () => "Move the selection to trash",
-    icon: () => Trash2,
+    shortcut: "Ctrl/⌘ X",
     visible: always,
     disabled: (s) => s.busy || !s.hasSelection,
     unavailableReason: noReason,
   },
   {
     action: "duplicate",
-    group: "overflow",
-    label: (s) =>
-      s.selectionCount > 1 ? `Duplicate ${itemCountPhrase(s.selectionCount)}` : "Duplicate",
+    section: "clipboard",
+    label: counted("Duplicate"),
     description: () => "Duplicate the selection",
     icon: () => CopyPlus,
-    visible: always,
-    disabled: (s) => s.busy || !s.hasSelection,
-    unavailableReason: noReason,
-  },
-  {
-    action: "rename",
-    group: "overflow",
-    label: () => "Rename",
-    description: () => "Rename the selected item",
-    icon: () => TextCursorInput,
-    visible: always,
-    disabled: (s) => s.busy || !s.isSingleSelection,
-    unavailableReason: (s) =>
-      s.hasSelection && !s.isSingleSelection ? "Rename one item at a time" : null,
-  },
-  {
-    action: "toggle-disabled",
-    group: "overflow",
-    label: (s) => (s.allDisabled ? "Enable" : "Disable"),
-    description: (s) =>
-      s.allDisabled
-        ? "Play the selection again"
-        : "Keep the slot, skip it on playback",
-    icon: (s) => (s.allDisabled ? CircleCheck : Ban),
+    shortcut: "Ctrl/⌘ D",
     visible: always,
     disabled: (s) => s.busy || !s.hasSelection,
     unavailableReason: noReason,
   },
   {
     // The collection-scoped paste: INTO the selected collection rather than
-    // beside it. Hidden rather than dimmed when no single collection is
-    // selected — its label names a destination, and a row reading "Paste
-    // into ''" is worse than no row. The header's paste (which always targets
-    // the collection on screen) is the one that is always present.
+    // beside it (R7.12). Hidden rather than dimmed when no single collection is
+    // selected — its label NAMES a destination, and a row reading "Paste into
+    // ''" is worse than no row. The header's paste, which always targets the
+    // collection on screen, is the one that is always present.
     action: "paste-into",
-    group: "overflow",
+    section: "clipboard",
     label: (s) => `Paste into “${s.singleName ?? ""}”`,
     description: () => "Paste the clipboard inside the selected collection",
     icon: () => ClipboardPaste,
+    shortcut: null,
     visible: (s) => s.isSingleSelection && s.allCollections,
     disabled: (s) => s.busy || !s.canPaste,
-    unavailableReason: (s) => (!s.canPaste ? "Nothing on the clipboard" : null),
+    unavailableReason: (s) => (!s.canPaste ? "clipboard empty" : null),
+  },
+  {
+    action: "toggle-disabled",
+    section: "state",
+    label: (s) => counted(s.allDisabled ? "Enable" : "Disable")(s),
+    description: (s) =>
+      s.allDisabled ? "Play the selection again" : "Keep the slot, skip it on playback",
+    icon: (s) => (s.allDisabled ? CircleCheck : Ban),
+    shortcut: null,
+    visible: always,
+    disabled: (s) => s.busy || !s.hasSelection,
+    unavailableReason: noReason,
+  },
+  {
+    // Alone below a separator (R7.9), so it is harder to hit on the way to
+    // something else.
+    action: "delete",
+    section: "destructive",
+    label: counted("Delete"),
+    description: () => "Move the selection to trash",
+    icon: () => Trash2,
+    shortcut: "Delete",
+    visible: always,
+    disabled: (s) => s.busy || !s.hasSelection,
+    unavailableReason: noReason,
   },
 ];
 
+/** What a surface should actually render, in order. */
+export function visibleItemActions(state: ItemActionState): readonly ItemActionSpec[] {
+  return ITEM_ACTION_SPECS.filter((spec) => spec.visible(state));
+}
+
 /**
- * What a surface should actually render, in order.
+ * One spec by name, for the surfaces that PROMOTE a verb out of the menu — the
+ * header's inline Edit and Delete.
  *
- * `group` omitted = everything, which is the flat right-click menu. Pass one
- * and you get the toolbar's row or its overflow.
+ * Throws rather than returning undefined. Every call site names an action as a
+ * literal, so a miss means the action was renamed or removed and the promoted
+ * button is about to render nothing at all; failing at module scope is how that
+ * gets noticed, and the test below pins it.
  */
-export function visibleItemActions(
+export function itemActionSpec(action: GraphItemAction): ItemActionSpec {
+  const spec = ITEM_ACTION_SPECS.find((candidate) => candidate.action === action);
+  if (spec === undefined) throw new Error(`No item action spec for "${action}"`);
+  return spec;
+}
+
+/**
+ * The visible actions grouped into their sections, empty sections dropped.
+ *
+ * Returned as an array of runs rather than a flat list with separator markers
+ * so the renderer cannot emit a leading, trailing, or doubled separator — the
+ * three ways a hand-rolled separator loop goes wrong when a row is hidden.
+ */
+export function itemActionSections(
   state: ItemActionState,
-  group?: ItemActionGroup,
-): readonly ItemActionSpec[] {
-  return ITEM_ACTION_SPECS.filter(
-    (spec) => spec.visible(state) && (group === undefined || spec.group === group),
-  );
+): readonly (readonly ItemActionSpec[])[] {
+  const visible = visibleItemActions(state);
+  return ITEM_ACTION_SECTIONS.map((section) =>
+    visible.filter((spec) => spec.section === section),
+  ).filter((run) => run.length > 0);
 }

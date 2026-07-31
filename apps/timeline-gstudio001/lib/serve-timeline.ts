@@ -5,8 +5,13 @@ import type { TimelineDocument } from "@storyboard/timeline-model/types";
 import { listCloudinaryAssets } from "./cloudinary-media-store";
 import {
   collectionChildIds,
+  deriveClosureSummaries,
   deriveCollectionSummaries,
 } from "./derive-collection-summaries";
+import {
+  loadTimelineClosure,
+  TimelineClosureTooLargeError,
+} from "./load-timeline-closure";
 import {
   getFirebaseTimelineEntry,
   type TimelineEntry,
@@ -85,22 +90,54 @@ export async function serveTimelineDocument(
   // that must be durable belongs in a migration script, not a read.
   const revision = entry.revision;
 
-  // Collection summaries derive from the CHILD documents at read time
-  // (see deriveCollectionSummaries) — served fresh, never persisted. A
-  // child that fails to load (missing, or not this user's) keeps the
-  // stored summary.
-  const childIds = collectionChildIds(healedDocument);
-  const childDocuments = new Map(
-    await Promise.all(
-      childIds.map(async (childId) => {
-        const child = await read(childId).catch(() => null);
-        return [childId, child?.document ?? null] as const;
-      }),
-    ),
-  );
-  const derived = deriveCollectionSummaries(healedDocument, childDocuments);
+  // Collection summaries derive at read time — served fresh, never persisted.
+  //
+  // ACROSS THE WHOLE CLOSURE, not one level down, and that distinction is a
+  // bug fix rather than a refinement. `deriveCollectionSummaries` reads its
+  // children's STORED summaries; combined with "served, never persisted",
+  // that meant a nested summary was only ever fresh inside a response and
+  // never in storage. So a card two or more levels above real media showed
+  // whatever was last written there — for a collection whose children are all
+  // collections, often nothing at all, which silently dropped it out of its
+  // parent's preview frames and made the parent show the NEXT sibling's image.
+  //
+  // The board then corrected itself on hydration, because the live graph walk
+  // descends the real tree: the card visibly swapped one image for another a
+  // moment after it appeared. Deriving bottom-up removes the disagreement at
+  // the source — the served summary is now computed from freshly derived
+  // children at every depth, so it already matches what the live walk finds.
+  const closure = await loadTimelineClosure(id, requesterUid, {
+    rootEntry: entry,
+    read,
+  }).catch((error: unknown) => {
+    // A pathological tree must not make the document unopenable. Fall back to
+    // the one-level derivation: less fresh at depth, but the same answer this
+    // path gave before, and the board still self-corrects on hydration.
+    if (error instanceof TimelineClosureTooLargeError) return null;
+    throw error;
+  });
 
-  return { document: derived.document, revision };
+  if (closure === null) {
+    const childDocuments = new Map(
+      await Promise.all(
+        collectionChildIds(healedDocument).map(async (childId) => {
+          const child = await read(childId).catch(() => null);
+          return [childId, child?.document ?? null] as const;
+        }),
+      ),
+    );
+    return { document: deriveCollectionSummaries(healedDocument, childDocuments).document, revision };
+  }
+
+  // The HEAL applies to the root only (it always has), so the healed copy has
+  // to replace the walker's raw one before deriving — otherwise the repaired
+  // srcs and durations would be thrown away by this substitution.
+  const summarized = deriveClosureSummaries(
+    { ...closure.documents, [id]: healedDocument },
+    new Set(closure.missing),
+  );
+
+  return { document: summarized[id] ?? healedDocument, revision };
 }
 
 /** The user's trash document — an empty default (revision 0 = the first
