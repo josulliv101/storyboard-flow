@@ -125,17 +125,11 @@ export type { FocusSurface, ItemSize };
  * and the menu itself knows nothing about sizing.
  */
 function BoardMenu({
-  surface,
   itemSize,
   onItemSizeChange,
-  pixelsPerSecond,
-  onPixelsPerSecondChange,
 }: Readonly<{
-  surface: FocusSurface;
   itemSize: ItemSize;
   onItemSizeChange: (size: ItemSize) => void;
-  pixelsPerSecond: number;
-  onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
 }>) {
   return (
     <DropdownMenu>
@@ -176,20 +170,9 @@ function BoardMenu({
             ))}
           </DropdownMenuRadioGroup>
         </DropdownMenuGroup>
-        {/* Zoom is a strip-only axis: grid cells are sized by thumbnail size
-            and the grid playhead ignores clip width, so the control is a
-            no-op there. Omitted rather than shown disabled — same rule the
-            header used when it hosted the slider, and a settings row that
-            can never do anything is worse than one that isn't offered. */}
-        {surface === "strip" ? (
-          <>
-            <DropdownMenuSeparator className="-mx-2 my-2.5" />
-            <ZoomMenuItem
-              pixelsPerSecond={pixelsPerSecond}
-              onChange={onPixelsPerSecondChange}
-            />
-          </>
-        ) : null}
+        {/* Zoom used to be a row here. It is a real slider in the header's
+            view group now (see HeaderZoomControl) — this menu keeps the
+            settings you set once, not the axis you ride while reading. */}
         {/* LAST, and fenced off: everything above changes this board, while
             this one leaves it alone and opens a reference sheet. Sections that
             act and sections that explain do not belong in the same run. */}
@@ -229,11 +212,8 @@ function BoardMenu({
  * asserts it actually lands there, because a null slot would fail silently.
  */
 function BoardMenuSlot(props: Readonly<{
-  surface: FocusSurface;
   itemSize: ItemSize;
   onItemSizeChange: (size: ItemSize) => void;
-  pixelsPerSecond: number;
-  onPixelsPerSecondChange: (pixelsPerSecond: number) => void;
 }>) {
   const [slot] = useState<HTMLElement | null>(() =>
     typeof document === "undefined"
@@ -296,39 +276,27 @@ function FocusedAggregate({
   );
 }
 
-/** One arrow press. Coarse enough to cross the range in a sensible number of
- *  presses, fine enough to land where you meant. */
-const ZOOM_KEY_STEP = 4;
-
 /**
- * Horizontal zoom, as a labelled row of the board menu.
+ * Horizontal zoom, as a real slider in the header's view group.
  *
- * It used to sit bare in the header, and the comment here argued it had to: an
- * exploration tool reached WHILE reading the strip, where a menu would cost a
- * click per adjustment. That was the old call; the menu is where it lives now.
- * The trade is real and worth naming rather than pretending away — a zoom
- * sweep is open-menu-then-drag — but the header buys back the width, and the
- * control gains a visible name, a readable value, and units.
+ * It spent a while as a MENU ROW, and the comment there argued the shape was
+ * forced: a `role="menu"` moves its roving focus between `menuitem`s and
+ * nothing else, so a `<Slider>` dropped inside one is unreachable by keyboard —
+ * measured at the time, not assumed. That constraint belonged to the menu, and
+ * it leaves with it. Out here the slider is an ordinary focusable control: Tab
+ * reaches the thumb, arrows move it, and Radix supplies Home/End. None of the
+ * key handling this needed as a menu row survives, because none of it was about
+ * zoom.
  *
- * WHY THE ROW IS THE CONTROL, and not a `<Slider>` a keyboard user focuses.
+ * What the move buys back is the thing the menu cost: an exploration tool read
+ * WHILE watching the strip, where open-menu-then-drag charged a click per
+ * adjustment. It is a drag on a visible slider again.
  *
- * A `role="menu"` navigates between menu ITEMS. Radix implements exactly that:
- * its roving focus walks `menuitem`/`menuitemradio` and nothing else. A slider
- * dropped in as a child is therefore unreachable by arrow keys — measured, not
- * assumed: focus went straight from the last size badge to "Keyboard
- * shortcuts", skipping the thumb. It was also invalid composition, since a
- * `slider` is not something a menu may contain.
- *
- * So the MENU ITEM owns the value: Left/Right adjust it, and its accessible
- * name carries the current reading. The `<Slider>` beneath is the pointer
- * affordance and the visual — `aria-hidden`, with its thumb out of the tab
- * order so nothing focusable hides inside a hidden subtree.
- *
- * Up/Down are deliberately NOT claimed: they keep moving through the menu, so
- * the horizontal keys drive the horizontal control and the vertical keys drive
- * the vertical list. Nothing to learn.
+ * STRIP ONLY. Grid cells are sized by thumbnail size and the grid playhead
+ * ignores clip width, so the control is a no-op there — omitted rather than
+ * disabled, the same call the menu made.
  */
-function ZoomMenuItem({
+function HeaderZoomControl({
   pixelsPerSecond,
   onChange,
 }: Readonly<{
@@ -336,59 +304,41 @@ function ZoomMenuItem({
   onChange: (pixelsPerSecond: number) => void;
 }>) {
   const value = Math.round(pixelsPerSecond);
-  const stepBy = (delta: number) =>
-    onChange(Math.min(MAX_TIMELINE_PPS, Math.max(MIN_TIMELINE_PPS, value + delta)));
-
   return (
-    <DropdownMenuItem
-      data-board-menu-zoom
-      // Selecting must not close the menu: this row is a control you stay on,
-      // not a command you fire.
-      onSelect={(event) => event.preventDefault()}
-      onKeyDown={(event) => {
-        if (event.key === "ArrowRight") stepBy(ZOOM_KEY_STEP);
-        else if (event.key === "ArrowLeft") stepBy(-ZOOM_KEY_STEP);
-        else if (event.key === "Home") onChange(MIN_TIMELINE_PPS);
-        else if (event.key === "End") onChange(MAX_TIMELINE_PPS);
-        else return;
-        // Claimed — the menu must not also act on it.
-        event.preventDefault();
-        event.stopPropagation();
-      }}
-      // The whole reading, in the name: what it is, where it stands, and how
-      // to move it. A menu item announcing only "Timeline zoom" would leave a
-      // screen-reader user with no idea the arrows do anything here.
-      aria-label={`Timeline zoom, ${value} pixels per second. Left and right arrow keys adjust.`}
-      aria-keyshortcuts="ArrowLeft ArrowRight"
-      className="flex-col items-stretch gap-1.5 py-2 focus:bg-zinc-900"
+    <span
+      data-header-zoom
+      // Marks the whole control as non-background for the package's
+      // click-to-clear: the slider's role lives on its thumb, but the surface
+      // you click to jump the value is the track beside it, which would
+      // otherwise read as empty board and drop the selection.
+      data-collections-control
+      className="flex shrink-0 items-center gap-2"
     >
-      <span aria-hidden="true" className="flex items-baseline justify-between gap-3">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-          Timeline zoom
-        </span>
-        <span
-          data-board-menu-zoom-value
-          className="font-mono text-[11px] tabular-nums text-zinc-400"
-        >
-          {value} px/s
-        </span>
+      <Slider
+        // The name and the READING both go to the thumb, which is where Radix
+        // puts `role="slider"` (see components/core/slider). A bare number on
+        // an axis like pixels-per-second announces nothing on its own.
+        aria-label="Timeline zoom"
+        aria-valuetext={`${value} pixels per second`}
+        min={MIN_TIMELINE_PPS}
+        max={MAX_TIMELINE_PPS}
+        step={1}
+        value={[value]}
+        onValueChange={([next]) => {
+          if (typeof next === "number") onChange(next);
+        }}
+        className="w-24"
+      />
+      {/* Fixed width and tabular figures: the readout sits in a toolbar whose
+          controls must not shuffle as the number crosses 10 or 100. */}
+      <span
+        data-header-zoom-value
+        aria-hidden="true"
+        className="w-[52px] shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+      >
+        {value} px/s
       </span>
-      <span aria-hidden="true" className="block py-0.5">
-        <Slider
-          thumbTabIndex={-1}
-          min={MIN_TIMELINE_PPS}
-          max={MAX_TIMELINE_PPS}
-          step={1}
-          value={[value]}
-          onValueChange={([next]) => {
-            if (typeof next === "number") onChange(next);
-          }}
-        />
-      </span>
-      <span aria-hidden="true" className="text-[11px] leading-snug text-zinc-500">
-        Stretch or squeeze the strip&apos;s time scale.
-      </span>
-    </DropdownMenuItem>
+    </span>
   );
 }
 
@@ -1104,6 +1054,15 @@ export function GraphBoard({
                 label={childrenShown ? "Hide children timelines" : "Show children timelines"}
                 title="Children timelines — show the nested timeline tree"
               />
+              {/* Zoom belongs in the VIEW group: like the two toggles beside
+                  it, it qualifies what the board shows rather than changing
+                  what is in it. Strip only — see HeaderZoomControl. */}
+              {surface === "strip" ? (
+                <HeaderZoomControl
+                  pixelsPerSecond={pixelsPerSecond}
+                  onChange={onPixelsPerSecondChange}
+                />
+              ) : null}
               <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               {/* Paste used to sit here, fenced between the view group and
                   history. It is in the CENTRE now, with copy and cut — the
@@ -1115,13 +1074,7 @@ export function GraphBoard({
                   sidebar below the trash (PL14-005). Still mounted from this
                   component so they keep these props; only the DOM address
                   changed. */}
-              <BoardMenuSlot
-                surface={surface}
-                itemSize={itemSize}
-                onItemSizeChange={onItemSizeChange}
-                pixelsPerSecond={pixelsPerSecond}
-                onPixelsPerSecondChange={onPixelsPerSecondChange}
-              />
+              <BoardMenuSlot itemSize={itemSize} onItemSizeChange={onItemSizeChange} />
             </DragChromeFade>
 
             {/* The trash drop target (right side), shown only while a card is
