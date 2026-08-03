@@ -115,14 +115,58 @@ export type PreviewTimeChannel = Readonly<{
   isPlaying: () => boolean;
   setPlaying: (playing: boolean) => void;
   subscribePlaying: (listener: () => void) => () => void;
+  /** Audio level, held here for the same reason play state is: it must survive
+   *  the preview pane toggling off and back on. Volume is 0..1. */
+  getVolume: () => number;
+  setVolume: (volume: number) => void;
+  isMuted: () => boolean;
+  setMuted: (muted: boolean) => void;
+  subscribeAudio: (listener: () => void) => () => void;
 }>;
+
+const AUDIO_PREFERENCE_KEY = "storyboard:preview-audio";
+
+/** The preference is read once at channel construction and written on change.
+ *  Persistence lives in the app, NOT in `packages/ui` — the surface takes
+ *  volume/muted as props and stays framework-agnostic. */
+function readStoredAudio(): { volume: number; muted: boolean } {
+  if (typeof window === "undefined") return { volume: 1, muted: false };
+  try {
+    const raw = window.localStorage.getItem(AUDIO_PREFERENCE_KEY);
+    if (!raw) return { volume: 1, muted: false };
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return { volume: 1, muted: false };
+    const record = parsed as { volume?: unknown; muted?: unknown };
+    const volume =
+      typeof record.volume === "number" && Number.isFinite(record.volume)
+        ? Math.min(1, Math.max(0, record.volume))
+        : 1;
+    return { volume, muted: record.muted === true };
+  } catch {
+    // A malformed or blocked store is not worth failing a preview over.
+    return { volume: 1, muted: false };
+  }
+}
+
+function writeStoredAudio(volume: number, muted: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(AUDIO_PREFERENCE_KEY, JSON.stringify({ volume, muted }));
+  } catch {
+    // Private mode / quota. The session still works, it just will not persist.
+  }
+}
 
 export function createPreviewTimeChannel(): PreviewTimeChannel {
   let time = 0;
   let playing = false;
   let scrub: PreviewScrubPosition | null = null;
+  const stored = readStoredAudio();
+  let volume = stored.volume;
+  let muted = stored.muted;
   const listeners = new Set<() => void>();
   const playListeners = new Set<() => void>();
+  const audioListeners = new Set<() => void>();
   return {
     get: () => time,
     set: (next) => {
@@ -150,6 +194,27 @@ export function createPreviewTimeChannel(): PreviewTimeChannel {
       playListeners.add(listener);
       return () => {
         playListeners.delete(listener);
+      };
+    },
+    getVolume: () => volume,
+    setVolume: (next) => {
+      const clamped = Math.min(1, Math.max(0, Number.isFinite(next) ? next : 0));
+      if (volume === clamped) return;
+      volume = clamped;
+      writeStoredAudio(volume, muted);
+      for (const listener of audioListeners) listener();
+    },
+    isMuted: () => muted,
+    setMuted: (next) => {
+      if (muted === next) return;
+      muted = next;
+      writeStoredAudio(volume, muted);
+      for (const listener of audioListeners) listener();
+    },
+    subscribeAudio: (listener) => {
+      audioListeners.add(listener);
+      return () => {
+        audioListeners.delete(listener);
       };
     },
   };
@@ -1948,6 +2013,11 @@ export function PreviewShell({
     channel.isPlaying,
     channel.isPlaying,
   );
+  // Same pattern for audio. The server snapshot returns the DEFAULTS rather
+  // than the stored preference: localStorage is unreadable during SSR, and
+  // returning a different value there than on the client would hydrate-mismatch.
+  const volume = useSyncExternalStore(channel.subscribeAudio, channel.getVolume, () => 1);
+  const muted = useSyncExternalStore(channel.subscribeAudio, channel.isMuted, () => false);
   const handleTimeChange = useCallback(
     (next: number) => {
       setTime(next);
@@ -2006,6 +2076,10 @@ export function PreviewShell({
               onCurrentTimeChange={handleTimeChange}
               playing={playing}
               onPlayingChange={channel.setPlaying}
+              volume={volume}
+              onVolumeChange={channel.setVolume}
+              muted={muted}
+              onMutedChange={channel.setMuted}
               onClose={handleClose}
               // A trim drag hands the pane a frame to draw (PL14-006). Not an
               // overlay over the pane — the pane's own canvas, its own cached

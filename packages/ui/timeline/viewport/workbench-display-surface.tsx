@@ -1,6 +1,6 @@
 "use client";
 
-import { GripHorizontal, Pause, Play, SkipBack, SkipForward, X } from "lucide-react";
+import { GripHorizontal, Pause, Play, SkipBack, SkipForward, Volume2, VolumeX, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -15,6 +15,8 @@ import {
 import { cn } from "../../lib/utils";
 import type { CollectionFramePreview } from "../timeline-documents";
 import { useTimelineDocuments } from "../timeline-document-store";
+
+import { createAudioMixer, type AudioMixer } from "./audio-graph";
 
 import type { CollectionTimelineClip, TimelineClip } from "../types";
 import { formatSeconds } from "../utils";
@@ -68,6 +70,13 @@ type WorkbenchDisplaySurfaceProps = {
    *  Omit for the default uncontrolled behavior (internal play state). */
   playing?: boolean;
   onPlayingChange?: (playing: boolean) => void;
+  /** Controlled audio, same contract as `playing` above: supply both to own the
+   *  state, omit for internal defaults. Volume is 0..1 and is a MASTER level —
+   *  per-clip levels are the mixer's business, not a consumer's. */
+  volume?: number;
+  onVolumeChange?: (volume: number) => void;
+  muted?: boolean;
+  onMutedChange?: (muted: boolean) => void;
   /** When supplied, the surface renders a close affordance in its top-right
    *  corner. Omit and no button is drawn — a consumer that has no way to hide
    *  the preview must not show one. */
@@ -130,6 +139,74 @@ type WorkbenchDividerTransportProps = {
   onSeekPrevious: () => void;
   onSeekNext: () => void;
 };
+
+type WorkbenchAudioControlsProps = {
+  volume: number;
+  muted: boolean;
+  onToggleMuted: () => void;
+  onVolumeChange: (volume: number) => void;
+  /** True once an unmuted play() was refused for want of a user gesture. The
+   *  control says so rather than leaving the user to wonder why it is silent. */
+  audioBlocked: boolean;
+};
+
+/**
+ * Volume lives INSIDE the preview, not on the divider beside play/pause.
+ *
+ * The divider is a resize handle first: its whole band is the drag target, and
+ * parking a button at its left end quietly shrank that target — the e2e that
+ * hovers the divider at x=20 caught it immediately. Overlaying the picture is
+ * also simply where every video player puts this control.
+ */
+function WorkbenchAudioControls({
+  volume,
+  muted,
+  onToggleMuted,
+  onVolumeChange,
+  audioBlocked,
+}: WorkbenchAudioControlsProps) {
+  const silent = muted || volume <= 0;
+
+  return (
+    <div
+      className="absolute bottom-2 left-2 z-20 flex items-center gap-1.5 rounded-full bg-zinc-950/70 px-1.5 py-1 backdrop-blur-sm"
+      data-testid="workbench-preview-audio"
+      onPointerDown={(event) => {
+        // The canvas below toggles play on click. These controls are their own
+        // island — pressing one must not also start the preview.
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggleMuted}
+        className="grid size-6 shrink-0 place-items-center rounded-full text-zinc-300 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+        aria-label={silent ? "Unmute workbench preview" : "Mute workbench preview"}
+        aria-pressed={silent}
+        title={audioBlocked ? "Click to enable sound" : silent ? "Unmute" : "Mute"}
+        data-testid="workbench-preview-mute"
+        data-audio-blocked={audioBlocked || undefined}
+      >
+        {silent ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+      </button>
+
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={muted ? 0 : volume}
+        onChange={(event) => onVolumeChange(Number(event.target.value))}
+        className="h-1 w-16 cursor-pointer appearance-none rounded-full bg-zinc-700 accent-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+        aria-label="Workbench preview volume"
+        data-testid="workbench-preview-volume"
+      />
+    </div>
+  );
+}
 
 function WorkbenchDividerTransport({
   currentTime,
@@ -440,6 +517,10 @@ export function WorkbenchDisplaySurface({
   preferredClipId,
   playing,
   onPlayingChange,
+  volume,
+  onVolumeChange,
+  muted,
+  onMutedChange,
   onClose,
   frameOverride = null,
 }: WorkbenchDisplaySurfaceProps) {
@@ -472,6 +553,39 @@ export function WorkbenchDisplaySurface({
     },
     [isControlledPlayback, onPlayingChange],
   );
+
+  // Audio follows the same controlled-or-uncontrolled contract as playback.
+  const isControlledVolume = volume !== undefined;
+  const isControlledMuted = muted !== undefined;
+  const [uncontrolledVolume, setUncontrolledVolume] = useState(1);
+  const [uncontrolledMuted, setUncontrolledMuted] = useState(false);
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const activeVolume = volume ?? uncontrolledVolume;
+  const activeMuted = muted ?? uncontrolledMuted;
+  const setVolume = useCallback(
+    (next: number) => {
+      if (isControlledVolume) onVolumeChange?.(next);
+      else setUncontrolledVolume(next);
+    },
+    [isControlledVolume, onVolumeChange],
+  );
+  const setMuted = useCallback(
+    (next: boolean) => {
+      if (isControlledMuted) onMutedChange?.(next);
+      else setUncontrolledMuted(next);
+    },
+    [isControlledMuted, onMutedChange],
+  );
+  // One mixer for the surface's lifetime. Created lazily on first use so a
+  // never-played preview never constructs an AudioContext.
+  const mixerRef = useRef<AudioMixer | null>(null);
+  const getMixer = useCallback(() => {
+    mixerRef.current ??= createAudioMixer();
+    return mixerRef.current;
+  }, []);
+  // Read inside callbacks that must not re-create when the level changes.
+  const audioLevelRef = useRef({ volume: activeVolume, muted: activeMuted });
+  audioLevelRef.current = { volume: activeVolume, muted: activeMuted };
 
   const sortedClips = useMemo(
     () => [...clips].sort((a, b) => getClipPlaybackStart(a) - getClipPlaybackStart(b) || a.index - b.index),
@@ -535,10 +649,20 @@ export function WorkbenchDisplaySurface({
       const video = document.createElement("video");
       video.preload = "auto";
       video.playsInline = true;
-      video.muted = true;
+      // CORS-clean or Web Audio hands back SILENCE for cross-origin media —
+      // `createMediaElementSource` on a tainted element produces zeros rather
+      // than failing loudly. Must be set BEFORE `src`; setting it after would
+      // need a reload. Only for absolute http(s) sources: a host that does not
+      // send CORS headers would refuse the request outright, and blob:/data:
+      // sources are same-origin already. (Cloudinary, which serves every clip
+      // here, sends `Access-Control-Allow-Origin: *`.)
+      if (/^https?:\/\//i.test(media.src)) video.crossOrigin = "anonymous";
       if (media.poster) video.poster = media.poster;
       video.src = media.src;
       video.load();
+      // Attach BEFORE any play(): the mixer starts every source at zero gain,
+      // so a prefetched clip is inaudible until it becomes the active one.
+      getMixer().attach(video);
       const nextCached: CachedMedia = { kind: "video", element: video };
       cacheRef.current.set(media.key, nextCached);
       return nextCached;
@@ -550,7 +674,7 @@ export function WorkbenchDisplaySurface({
     const nextCached: CachedMedia = { kind: "image", element: image };
     cacheRef.current.set(media.key, nextCached);
     return nextCached;
-  }, []);
+  }, [getMixer]);
 
   const drawDrawable = useCallback((drawable: HTMLImageElement | HTMLVideoElement) => {
     const canvas = canvasRef.current;
@@ -641,12 +765,28 @@ export function WorkbenchDisplaySurface({
   const frameOverrideRef = useRef(frameOverride);
 
   const pauseInactiveVideos = useCallback((activeKey: string | null) => {
+    const mixer = getMixer();
     cacheRef.current.forEach((cached, key) => {
-      if (cached.kind === "video" && key !== activeKey) {
+      if (cached.kind !== "video") return;
+      if (key !== activeKey) {
         cached.element.pause();
+        // The prefetch window pulls in the next few clips REGARDLESS of whether
+        // they are disabled, so silence is decided here rather than there.
+        mixer.setSourceGain(cached.element, 0);
       }
     });
-  }, []);
+  }, [getMixer]);
+
+  /** The active clip is the only audible one, and a DISABLED clip is silent
+   *  even though scrubbing can rest on it and draw its grayed frame. */
+  const applyActiveGain = useCallback(
+    (element: HTMLVideoElement) => {
+      const { volume: level, muted: isMuted } = audioLevelRef.current;
+      const audible = !isMuted && !activeClipDisabledRef.current;
+      getMixer().setSourceGain(element, audible ? level : 0);
+    },
+    [getMixer],
+  );
 
   const syncActiveVideo = useCallback((media: DisplayMedia, shouldPlay: boolean, forceSeek = false) => {
     const cached = ensureCachedMedia(media);
@@ -663,7 +803,11 @@ export function WorkbenchDisplaySurface({
       const maxDrift = shouldPlay ? 0.18 : 0.05;
       if (Number.isFinite(media.playbackRate) && media.playbackRate > 0) {
         video.playbackRate = clamp(media.playbackRate, 0.0625, 16);
+        // A time-scaled clip would otherwise chipmunk: rate is a picture
+        // decision, and the voice should not move with it.
+        video.preservesPitch = true;
       }
+      applyActiveGain(video);
       if (forceSeek || drift > maxDrift) {
         pendingSeekDrawCleanupRef.current?.();
         pendingSeekDrawCleanupRef.current = null;
@@ -683,7 +827,14 @@ export function WorkbenchDisplaySurface({
         video.currentTime = targetTime;
       }
       if (shouldPlay && video.paused) {
-        void video.play().catch(() => undefined);
+        // Unmuted playback needs a user gesture. Swallowing the rejection here
+        // would leave a silent-and-frozen preview with nothing to explain it,
+        // so record it: the transport offers "click to enable sound", and the
+        // next gesture-driven play clears the flag.
+        void video
+          .play()
+          .then(() => setAudioBlocked(false))
+          .catch(() => setAudioBlocked(true));
       } else if (!shouldPlay) {
         video.pause();
       }
@@ -697,7 +848,7 @@ export function WorkbenchDisplaySurface({
 
     video.addEventListener("loadedmetadata", seek, { once: true });
     video.addEventListener("loadeddata", drawActiveFrame, { once: true });
-  }, [drawActiveFrame, ensureCachedMedia]);
+  }, [applyActiveGain, drawActiveFrame, ensureCachedMedia]);
 
   const renderFrameAtTime = useCallback((timelineTime: number, shouldPlay: boolean, forceSeek = false) => {
     // An override owns the picture while it is set. Guarding HERE rather than
@@ -1014,8 +1165,24 @@ export function WorkbenchDisplaySurface({
       pendingSeekDrawCleanupRef.current?.();
       pendingSeekDrawCleanupRef.current = null;
       mediaCache.clear();
+      mixerRef.current?.dispose();
+      mixerRef.current = null;
     };
   }, []);
+
+  // Master level lives on the mixer, but the ACTIVE source's own gain also
+  // carries the mute (so a muted preview is silent even mid-clip). Re-apply
+  // both whenever either changes.
+  useEffect(() => {
+    const mixer = getMixer();
+    mixer.setMasterVolume(activeVolume);
+    mixer.setMuted(activeMuted);
+
+    const activeKey = activeMediaRef.current?.key ?? null;
+    if (!activeKey) return;
+    const cached = cacheRef.current.get(activeKey);
+    if (cached?.kind === "video") applyActiveGain(cached.element);
+  }, [activeMuted, activeVolume, applyActiveGain, getMixer]);
 
   const canPlay = duration > 0 && sortedClips.length > 0;
   const canSeekPrevious = sortedClips.length > 0 && currentTime > 0;
@@ -1061,6 +1228,13 @@ export function WorkbenchDisplaySurface({
       // back, and the e2e fixture's "video" is a 1x1 GIF that never decodes at
       // all. This at least pins that the request reached the pane.
       data-frame-override={frameOverride ? frameOverride.src : undefined}
+      // Audio witnesses, for the same reason as the frame override above and
+      // more so: SOUND is not observable from a test at all, and the fixture's
+      // 1x1 GIF has no audio track to make. These pin the state the mixer was
+      // driven with, which is the part worth regressing on.
+      data-preview-muted={activeMuted}
+      data-preview-volume={activeVolume}
+      data-preview-audio-blocked={audioBlocked || undefined}
     >
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-[inherit] bg-black">
         <canvas
@@ -1085,6 +1259,25 @@ export function WorkbenchDisplaySurface({
           onPointerLeave={() => setPreviewHovered(false)}
           onClick={(event) => {
             if (isPointerOverPlaybackSurface(event)) setPlaying(!isPlaying);
+          }}
+        />
+        <WorkbenchAudioControls
+          volume={activeVolume}
+          muted={activeMuted}
+          audioBlocked={audioBlocked}
+          onToggleMuted={() => {
+            // This click IS a user gesture — resume the context on it.
+            void getMixer().resume();
+            // Unmuting from a zeroed slider must actually be audible, or the
+            // control appears to do nothing.
+            if (activeMuted && activeVolume <= 0) setVolume(1);
+            setMuted(!activeMuted);
+          }}
+          onVolumeChange={(next) => {
+            void getMixer().resume();
+            setVolume(next);
+            // Dragging the slider up is an unmute in every player people know.
+            if (next > 0 && activeMuted) setMuted(false);
           }}
         />
         {/* Names what the grayed frame means. Only ever visible while
@@ -1123,7 +1316,12 @@ export function WorkbenchDisplaySurface({
         canSeekPrevious={canSeekPrevious}
         canSeekNext={canSeekNext}
         previewHovered={canPlay && previewHovered}
-        onTogglePlaying={() => setPlaying(!isPlaying)}
+        onTogglePlaying={() => {
+          // This click IS the user gesture the AudioContext has been waiting
+          // for, so resume before play() rather than after it is refused.
+          void getMixer().resume();
+          setPlaying(!isPlaying);
+        }}
         onSeekPrevious={() => seekToClip(-1)}
         onSeekNext={() => seekToClip(1)}
       />
