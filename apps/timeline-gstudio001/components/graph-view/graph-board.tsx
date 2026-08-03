@@ -12,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import {
+  AudioLines,
   ClipboardPaste,
   Command,
   EllipsisVertical,
@@ -85,6 +86,7 @@ import {
   GraphPlayhead,
   GraphRuler,
   GraphSeekRails,
+  GraphWaveformBand,
   FlatItemsProvider,
   GraphStripSeekRail,
   PreviewShell,
@@ -854,6 +856,8 @@ export function GraphBoard({
   previewOn,
   rulerOn,
   onRulerToggle,
+  waveformOn,
+  onWaveformToggle,
   flatOn,
   childrenShown,
   onChildrenToggle,
@@ -882,6 +886,8 @@ export function GraphBoard({
    *  renders the state and asks for the change. */
   rulerOn: boolean;
   onRulerToggle: () => void;
+  waveformOn: boolean;
+  onWaveformToggle: () => void;
   /** Strip's flat mode: render the whole closure in order, not this
    *  collection's direct children. */
   flatOn: boolean;
@@ -1047,6 +1053,15 @@ export function GraphBoard({
                   title="Time ruler — tick marks over every strip"
                 />
               ) : null}
+              {flatOn ? (
+                <HeaderToggle
+                  active={waveformOn}
+                  onToggle={onWaveformToggle}
+                  icon={AudioLines}
+                  label={waveformOn ? "Hide audio waveform" : "Show audio waveform"}
+                  title="Audio waveform — peaks and pauses under the ruler"
+                />
+              ) : null}
               <HeaderToggle
                 active={childrenShown}
                 onToggle={onChildrenToggle}
@@ -1116,10 +1131,17 @@ export function GraphBoard({
                 // frame preview it used to only coincidentally line up with.
                 trimOverview="off"
                 overlay={
-                  previewOn || rulerOn ? (
+                  previewOn || rulerOn || waveformOn ? (
                     <>
                       {rulerOn ? (
                         <GraphRuler
+                          focusedId={focusedId}
+                          pixelsPerSecond={deferredPixelsPerSecond}
+                          cardHeight={dims.strip}
+                        />
+                      ) : null}
+                      {waveformOn ? (
+                        <GraphWaveformBand
                           focusedId={focusedId}
                           pixelsPerSecond={deferredPixelsPerSecond}
                           cardHeight={dims.strip}
@@ -1146,7 +1168,7 @@ export function GraphBoard({
                 className={[
                   "rounded-none border-0 p-0",
                   GRAPH_STRIP_TRACK_CLASS,
-                  previewOn || rulerOn ? "pt-4" : "",
+                  previewOn || rulerOn || waveformOn ? "pt-4" : "",
                 ].join(" ")}
               />
               {/* The strip's scrub control — the same rail treatment as the
@@ -1238,6 +1260,7 @@ export function GraphBoard({
                 pixelsPerSecond={deferredPixelsPerSecond}
                 previewOn={previewOn}
                 rulerOn={rulerOn}
+                waveformOn={waveformOn}
                 timeChannel={timeChannel}
               />
             </FlatItemsProvider>

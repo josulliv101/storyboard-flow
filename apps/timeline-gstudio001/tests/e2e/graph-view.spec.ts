@@ -5454,6 +5454,47 @@ test.describe("graph view E2E", () => {
     expect(onThisTool).toBe(true);
   });
 
+  test("the waveform lane toggles on in flat mode and spans every card", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+
+    // Off by default, and its control lives behind flat mode like the ruler's.
+    await expect(page.locator("[data-graph-waveform]")).toHaveCount(0);
+    await page.getByRole("button", { name: "Show all items in order" }).click();
+    await page.getByRole("button", { name: /show audio waveform/i }).click();
+
+    const band = page.locator("[data-graph-waveform]");
+    await expect(band).toHaveCount(1);
+
+    // The lane is laid out against the SAME cumulative extent the playhead map
+    // walks, so a wrong extent silently misaligns every card's audio.
+    const extent = await band.getAttribute("data-waveform-extent");
+    expect(Number(extent)).toBeGreaterThan(0);
+
+    // Sound itself is unobservable here — the fixture's media is a data URI
+    // with no audio track, so nothing ever decodes. The canvas existing at the
+    // right size is the honest assertion; the DRAWING is covered by
+    // waveform-peaks.test.ts and was verified against real clips by hand.
+    const canvas = page.getByTestId("graph-waveform-canvas");
+    await expect(canvas).toBeAttached();
+
+    await page.getByRole("button", { name: /hide audio waveform/i }).click();
+    await expect(page.locator("[data-graph-waveform]")).toHaveCount(0);
+  });
+
+  test("leaving flat mode takes the waveform lane with it", async ({ page }) => {
+    await installGraphApi(page);
+    await openGraph(page);
+    await page.getByRole("button", { name: "Show all items in order" }).click();
+    await page.getByRole("button", { name: /show audio waveform/i }).click();
+    await expect(page.locator("[data-graph-waveform]")).toHaveCount(1);
+
+    // Same rule the ruler follows: the control only exists in flat mode, so
+    // leaving flat must not strand a painted lane with no way to turn it off.
+    await page.getByRole("button", { name: "Show collections" }).click();
+    await expect(page.locator("[data-graph-waveform]")).toHaveCount(0);
+  });
+
   test("the ruler renders on EVERY displayed strip, not just the focused one", async ({
     page,
   }) => {

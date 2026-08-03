@@ -250,6 +250,9 @@ export function GraphTimelineView({
   const [childrenShown, setChildrenShown] = useState(false);
   const [previewOn, setPreviewOn] = useState(false);
   const [rulerOn, setRulerOn] = useState(false);
+  // Waveform lane. Strip-only and flat-only for the same reason the ruler is:
+  // it draws against a single continuous time axis.
+  const [waveformOn, setWaveformOn] = useState(false);
   // Flat mode: every item in the focused closure, in order, no nesting.
   // Strip-only — grid has no equivalent, and leaving grid turns it off below.
   const [flatOn, setFlatOn] = useState(false);
@@ -281,6 +284,7 @@ export function GraphTimelineView({
   // a control that no longer lives there has no reason to pay for it.
   const toggleChildren = useCallback(() => setChildrenShown((current) => !current), []);
   const toggleRuler = useCallback(() => setRulerOn((current) => !current), []);
+  const toggleWaveform = useCallback(() => setWaveformOn((current) => !current), []);
 
   // …and this broadcast (on mount and every change) is what lets its
   // controls show the current surface, ruler, children, and preview state.
@@ -315,6 +319,9 @@ export function GraphTimelineView({
   if (prevFlatOn !== flatOn) {
     setPrevFlatOn(flatOn);
     if (!flatOn && rulerOn) setRulerOn(false);
+    // Same rule for the waveform lane: its control lives behind flat mode, so
+    // leaving flat must not strand a painted lane with no way to turn it off.
+    if (!flatOn && waveformOn) setWaveformOn(false);
   }
 
   // The closure hydration flat mode needs runs in `FlatClosureHydrator`, which
@@ -751,6 +758,8 @@ export function GraphTimelineView({
                 previewOn={previewOn}
                 rulerOn={rulerOn}
                 onRulerToggle={toggleRuler}
+                waveformOn={waveformOn}
+                onWaveformToggle={toggleWaveform}
                 flatOn={flatOn}
                 childrenShown={childrenShown}
                 onChildrenToggle={toggleChildren}
