@@ -35,6 +35,7 @@ import {
   GraphGridPlayhead,
   GraphPlayhead,
   GraphRuler,
+  GraphWaveformBand,
   GraphSeekRails,
   GraphStripSeekRail,
   collectionCardWidth,
@@ -100,6 +101,7 @@ function SubTimelineNode({
   pixelsPerSecond,
   previewOn,
   rulerOn,
+  waveformOn,
   timeChannel,
 }: Readonly<{
   projectId: string;
@@ -110,6 +112,7 @@ function SubTimelineNode({
   pixelsPerSecond: number;
   previewOn: boolean;
   rulerOn: boolean;
+  waveformOn: boolean;
   timeChannel: PreviewTimeChannel;
 }>) {
   const store = useCollectionsStore();
@@ -353,10 +356,17 @@ function SubTimelineNode({
                 trailingSlot={<AddCollectionSlot collectionId={id} />}
                 itemDragActivation="hold"
                 overlay={
-                  showPlayhead || rulerOn ? (
+                  showPlayhead || rulerOn || waveformOn ? (
                     <>
                       {rulerOn ? (
                         <GraphRuler
+                          focusedId={id}
+                          pixelsPerSecond={pixelsPerSecond}
+                          cardHeight={dims.strip}
+                        />
+                      ) : null}
+                      {waveformOn ? (
+                        <GraphWaveformBand
                           focusedId={id}
                           pixelsPerSecond={pixelsPerSecond}
                           cardHeight={dims.strip}
@@ -407,6 +417,7 @@ function SubTimelineNode({
                 pixelsPerSecond={pixelsPerSecond}
                 previewOn={previewOn}
                 rulerOn={rulerOn}
+                waveformOn={waveformOn}
                 timeChannel={timeChannel}
               />
             ))}
@@ -424,6 +435,7 @@ export function SubTimelines({
   pixelsPerSecond,
   previewOn,
   rulerOn,
+  waveformOn,
   timeChannel,
 }: Readonly<{
   projectId: string;
@@ -433,6 +445,7 @@ export function SubTimelines({
   pixelsPerSecond: number;
   previewOn: boolean;
   rulerOn: boolean;
+  waveformOn: boolean;
   timeChannel: PreviewTimeChannel;
 }>) {
   const childIds = useCollectionChildIds(parseNodeId(focusedId));
@@ -468,6 +481,7 @@ export function SubTimelines({
           pixelsPerSecond={pixelsPerSecond}
           previewOn={previewOn}
           rulerOn={rulerOn}
+          waveformOn={waveformOn}
           timeChannel={timeChannel}
         />
       ))}

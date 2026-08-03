@@ -66,8 +66,20 @@ import { createTimelineDocumentsState } from "@storyboard/ui/timeline/timeline-d
 import { formatSeconds } from "@storyboard/ui/timeline/utils";
 import type { TimelineClip, TimelineDocument } from "@storyboard/ui/timeline/types";
 
+import {
+  peakMagnitude,
+  peaksForWindow,
+} from "@storyboard/ui/timeline/viewport/waveform-peaks";
+
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 import { requestGraphPreviewToggle } from "@/lib/graph-view-events";
+import { sharedWaveformCache, type WaveformCache } from "@/lib/waveform-cache";
+
+import {
+  distinctWaveformKeys,
+  waveformSourcesFor,
+  type WaveformSource,
+} from "./graph-waveform-model";
 
 import { useGraphDetailsStore } from "./graph-details-context";
 import {
@@ -698,6 +710,185 @@ export function GraphRuler({
           </span>
         ) : null,
       )}
+    </div>
+  );
+}
+
+/** Lane height. Tall enough that a pause reads as a gap rather than a wobble,
+ *  short enough to sit under the ruler without eating card space. */
+const WAVEFORM_BAND_HEIGHT_PX = 28;
+
+/**
+ * The scrubbing waveform: each card's audio drawn at the card's own width, so a
+ * pause in the dialogue lines up with the frame it happens on.
+ *
+ * Modeled on `GraphRuler` above — same overlay layer, same windowing, same
+ * content coordinates — with one difference that matters: it draws to a CANVAS.
+ * Everything else in the rails is div + CSS, which is right for tens of ticks
+ * and wrong for thousands of waveform columns.
+ *
+ * The canvas is sized to the VISIBLE WINDOW, not to the full extent: at high
+ * zoom a long timeline's extent runs past the browser's maximum canvas width,
+ * and allocating that much backing store to show 1200px of it is waste besides.
+ */
+export function GraphWaveformBand({
+  focusedId,
+  pixelsPerSecond,
+  cardHeight,
+  /** Injected so a story can supply synthetic peaks without decoding audio. */
+  cache = sharedWaveformCache(),
+}: Readonly<{
+  focusedId: string;
+  pixelsPerSecond: number;
+  cardHeight: number;
+  cache?: WaveformCache;
+}>) {
+  const store = useCollectionsStore();
+  const detailsStore = useGraphDetailsStore();
+  const spans = useContext(PreviewCardSpansContext);
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  const bandRef = useCallback(
+    (element: HTMLElement | null) => setScroller(element ? stripScrollerAbove(element) : null),
+    [],
+  );
+  const tickWindow = useScrollerTickWindow(scroller);
+  const flatItems = useContext(FlatItemsContext);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const graph = useSyncExternalStore(
+    store.subscribe,
+    () => store.getSnapshot().graph,
+    () => store.getSnapshot().graph,
+  );
+  const details = useSyncExternalStore(
+    detailsStore.subscribe,
+    () => detailsStore.read(),
+    () => detailsStore.read(),
+  );
+  // Bumped when a decode lands, purely to re-run the paint effect.
+  const [peaksVersion, setPeaksVersion] = useState(0);
+  useEffect(
+    () => cache.subscribe(() => setPeaksVersion((version) => version + 1)),
+    [cache],
+  );
+
+  const { cards, sources, extent } = useMemo(() => {
+    const nextCards = cardsFor(
+      graph,
+      details,
+      focusedId,
+      spans,
+      pixelsPerSecond,
+      cardHeight,
+      flatItems,
+    );
+    return {
+      cards: nextCards,
+      // Index-aligned with the cards by contract — see graph-waveform-model.
+      sources: waveformSourcesFor(graph, details, focusedId, flatItems),
+      extent: buildStripOverlay(nextCards).extent,
+    };
+  }, [graph, details, spans, focusedId, pixelsPerSecond, cardHeight, flatItems]);
+
+  // Ask for the audio the VISIBLE cards need. Requesting the whole timeline
+  // would fetch every file on mount; the cache coalesces and caps concurrency,
+  // but the cheapest fetch is the one never issued.
+  useEffect(() => {
+    let cursor = 0;
+    const wanted: WaveformSource[] = [];
+    cards.forEach((card, index) => {
+      const visible = cursor + card.width >= tickWindow.startX && cursor <= tickWindow.endX;
+      const source = sources[index];
+      if (visible && source) wanted.push(source);
+      cursor += card.width + STRIP_GAP_PX;
+    });
+    for (const source of distinctWaveformKeys(wanted)) {
+      void cache.request(source.key, source.src);
+    }
+  }, [cache, cards, sources, tickWindow]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const windowWidth = Math.max(1, Math.min(extent, tickWindow.endX - tickWindow.startX));
+    const ratio = Math.max(1, window.devicePixelRatio || 1);
+    const pixelWidth = Math.round(windowWidth * ratio);
+    const pixelHeight = Math.round(WAVEFORM_BAND_HEIGHT_PX * ratio);
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
+
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, windowWidth, WAVEFORM_BAND_HEIGHT_PX);
+
+    const midline = WAVEFORM_BAND_HEIGHT_PX / 2;
+    let cursor = 0;
+    let drawn = 0;
+
+    cards.forEach((card, index) => {
+      const cardStart = cursor;
+      cursor += card.width + STRIP_GAP_PX;
+
+      const source = sources[index];
+      if (!source) return;
+      if (cardStart + card.width < tickWindow.startX || cardStart > tickWindow.endX) return;
+
+      const peaks = cache.peek(source.key);
+      if (!peaks) return;
+
+      const columns = Math.max(1, Math.round(card.width));
+      const window_ = peaksForWindow(peaks, source.trimIn, source.trimOut, columns);
+      const magnitude = peakMagnitude(window_);
+      // Generated renders come out quiet and inconsistent, so normalise per
+      // clip — raw amplitude makes a whole lane look flat. Silence stays flat
+      // rather than being amplified into noise.
+      const scale = magnitude > 0.001 ? (WAVEFORM_BAND_HEIGHT_PX / 2 - 1) / magnitude : 0;
+
+      context.fillStyle = card.disabled === true ? "rgba(161,161,170,0.35)" : "rgba(125,211,252,0.85)";
+      for (let column = 0; column < columns; column += 1) {
+        const min = window_[column * 2] * scale;
+        const max = window_[column * 2 + 1] * scale;
+        const top = midline - Math.max(max, 0.5);
+        const height = Math.max(1, Math.max(max, 0.5) - Math.min(min, -0.5));
+        // Canvas x is window-relative: the element is translated to startX.
+        context.fillRect(cardStart + column - tickWindow.startX, top, 1, height);
+      }
+      drawn += 1;
+    });
+
+    canvas.dataset.waveformCards = String(drawn);
+  }, [cache, cards, sources, extent, tickWindow, peaksVersion]);
+
+  return (
+    <div
+      ref={bandRef}
+      aria-hidden="true"
+      data-graph-waveform
+      data-waveform-extent={Math.round(extent)}
+      // BOTTOM of the card, not the top. The overlay spans the full card
+      // height, so a lane at the top stacks under the ruler and eats a third of
+      // every thumbnail; along the bottom edge it reads the way audio does in
+      // any editor, over the least informative part of the frame.
+      className="pointer-events-none absolute inset-x-0 bottom-0 z-10"
+      style={{ height: WAVEFORM_BAND_HEIGHT_PX }}
+    >
+      <div
+        className="absolute inset-x-0 top-0 bg-gradient-to-t from-zinc-950/85 to-zinc-950/40"
+        style={{ height: WAVEFORM_BAND_HEIGHT_PX }}
+      />
+      <canvas
+        ref={canvasRef}
+        data-testid="graph-waveform-canvas"
+        className="absolute top-0"
+        style={{
+          transform: `translateX(${tickWindow.startX}px)`,
+          width: Math.max(1, Math.min(extent, tickWindow.endX - tickWindow.startX)),
+          height: WAVEFORM_BAND_HEIGHT_PX,
+        }}
+      />
     </div>
   );
 }
