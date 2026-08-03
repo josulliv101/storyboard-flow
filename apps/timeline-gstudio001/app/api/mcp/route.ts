@@ -220,13 +220,13 @@ const handler = createMcpHandler(
 
     server.tool(
       "trim_clip",
-      "Change how much of a clip plays. Videos take `trimInSeconds`/`trimOutSeconds` (offsets into the source); images take `durationSeconds`." +
+      "Change how much of a clip plays. Videos take `trimInSeconds`/`trimOutSeconds` (seconds REMOVED from each end — an untrimmed clip is 0/0); images take `durationSeconds`." +
         NO_LIVE_PUSH_NOTE,
       {
         timelineId: z.string().min(1).describe("The timeline document that contains the clip."),
         nodeId: z.string().min(1).describe("The clip to trim."),
-        trimInSeconds: z.number().min(0).optional().describe("Video only: seconds into the source where it starts."),
-        trimOutSeconds: z.number().min(0).optional().describe("Video only: seconds into the source where it ends."),
+        trimInSeconds: z.number().min(0).optional().describe("Video only: seconds removed from the START. 0 keeps the opening."),
+        trimOutSeconds: z.number().min(0).optional().describe("Video only: seconds removed from the END. 0 keeps the ending."),
         durationSeconds: z.number().positive().optional().describe("Image only: how long it stays on screen."),
       },
       async (args, extra) => {

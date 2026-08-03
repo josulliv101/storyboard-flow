@@ -163,6 +163,47 @@ describe("attachMedia", () => {
     expect(added.sourceDuration).toBe(12);
   });
 
+  // Trims are AMOUNTS REMOVED from each end (`mediaDurationSeconds` computes
+  // `full - trimIn - trimOut`), so an untrimmed clip is 0/0. Passing the play
+  // length through as `trimOutSeconds` trimmed the entire clip away: the clip
+  // packed at zero width and had to be dragged back out by hand. The test above
+  // only checked `sourceDuration`, which stayed correct throughout — `duration`
+  // is the field that collapsed, so assert it here.
+  it("attaches a video at its full length, not zero", async () => {
+    seed(PROJECT, []);
+
+    await attachMedia(
+      { timelineId: PROJECT, projectId: PROJECT, publicId: "media/user-a/project-alpha/render-123" },
+      OWNER,
+    );
+
+    const added = storedClips(PROJECT)[0];
+    if (added.kind !== "video") throw new Error("expected a video clip");
+    expect(added.trimIn).toBe(0);
+    expect(added.trimOut).toBe(0);
+    expect(added.duration).toBe(12);
+  });
+
+  it("honours durationSeconds by trimming the tail, leaving the rest playable", async () => {
+    seed(PROJECT, []);
+
+    await attachMedia(
+      {
+        timelineId: PROJECT,
+        projectId: PROJECT,
+        publicId: "media/user-a/project-alpha/render-123",
+        durationSeconds: 5,
+      },
+      OWNER,
+    );
+
+    const added = storedClips(PROJECT)[0];
+    if (added.kind !== "video") throw new Error("expected a video clip");
+    expect(added.duration).toBe(5);
+    expect(added.trimIn).toBe(0);
+    expect(added.trimOut).toBe(7);
+  });
+
   it("places it after a named sibling rather than always appending", async () => {
     seed(PROJECT, [clip("a"), clip("b")]);
 
