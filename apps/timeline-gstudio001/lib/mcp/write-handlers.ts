@@ -188,16 +188,19 @@ export async function handleTrimClip(
       }
       const trimIn = args.trimInSeconds ?? node.trimInSeconds;
       const trimOut = args.trimOutSeconds ?? node.trimOutSeconds;
+      // Trims are AMOUNTS REMOVED from each end, matching
+      // `mediaDurationSeconds` (`full - trimIn - trimOut`) and what the UI
+      // writes — an untrimmed clip is 0/0, NOT 0/fullDuration.
       // Report the bounds rather than clamping — a silent clamp hides a mistake
       // in the caller's own numbers.
-      if (trimIn < 0 || trimOut > node.fullDurationSeconds) {
+      if (trimIn < 0 || trimOut < 0) {
+        return { ok: false, message: "Trims cannot be negative — they are seconds removed from each end." } as const;
+      }
+      if (!(trimIn + trimOut < node.fullDurationSeconds)) {
         return {
           ok: false,
-          message: `Trim is outside the source: this clip is ${node.fullDurationSeconds}s long, so trims must fall in 0–${node.fullDurationSeconds}.`,
+          message: `Trims remove the whole clip: this source is ${node.fullDurationSeconds}s long, so \`trimInSeconds\` + \`trimOutSeconds\` must be less than ${node.fullDurationSeconds}.`,
         } as const;
-      }
-      if (!(trimIn < trimOut)) {
-        return { ok: false, message: `\`trimInSeconds\` (${trimIn}) must be less than \`trimOutSeconds\` (${trimOut}).` } as const;
       }
       return {
         ok: true,

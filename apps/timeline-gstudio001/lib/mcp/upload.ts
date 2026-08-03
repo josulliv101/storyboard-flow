@@ -146,7 +146,15 @@ export async function attachMedia(
                   src: asset.url,
                   fullDurationSeconds: sourceSeconds,
                   trimInSeconds: 0,
-                  trimOutSeconds: Math.min(args.durationSeconds ?? sourceSeconds, sourceSeconds),
+                  // Trims are AMOUNTS REMOVED from each end, not offsets into
+                  // the source — `mediaDurationSeconds` computes
+                  // `full - trimIn - trimOut`, so an untrimmed clip is 0/0.
+                  // Passing the play length straight through as `trimOutSeconds`
+                  // trimmed the whole clip away and packed it at zero width.
+                  trimOutSeconds: Math.max(
+                    0,
+                    sourceSeconds - Math.min(args.durationSeconds ?? sourceSeconds, sourceSeconds),
+                  ),
                 }
               : {
                   id: newNodeId,
