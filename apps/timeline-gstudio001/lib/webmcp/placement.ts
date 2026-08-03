@@ -1,4 +1,4 @@
-import { getChildren, type CollectionsGraph, type NodeId } from "@storyboard/ui/dnd-collections";
+import { getChildren, type CollectionsGraph, type NodeId } from "@storyboard/collections-core";
 
 // Pure placement math for move_clip: turn a SEMANTIC anchor (before/after a
 // sibling, or start/end of a collection) into the reducer's `toIndex`. The
