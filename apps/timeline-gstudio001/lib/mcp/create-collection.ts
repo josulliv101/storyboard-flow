@@ -1,4 +1,4 @@
-import { parseNodeId, type CollectionsGraph, type NodeId } from "@storyboard/ui/dnd-collections";
+import { parseNodeId, type CollectionsGraph, type NodeId } from "@storyboard/collections-core";
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
 import { resolveMovePlacement } from "@/lib/webmcp/placement";

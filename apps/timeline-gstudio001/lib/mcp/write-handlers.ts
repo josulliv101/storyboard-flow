@@ -4,7 +4,7 @@ import {
   parseNodeId,
   type CollectionsGraph,
   type NodeId,
-} from "@storyboard/ui/dnd-collections";
+} from "@storyboard/collections-core";
 
 import { describeDispatchRejection, toolError, toolOk } from "@/lib/webmcp/results";
 import { resolveMovePlacement, type PlacementError } from "@/lib/webmcp/placement";

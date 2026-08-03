@@ -1,4 +1,4 @@
-import { parseNodeId, type CollectionsGraph, type NodeId } from "@storyboard/ui/dnd-collections";
+import { parseNodeId, type CollectionsGraph, type NodeId } from "@storyboard/collections-core";
 
 import { CLOUDINARY_PROVIDER_ID } from "@/lib/assets/cloudinary-provider";
 import {

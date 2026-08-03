@@ -3,7 +3,7 @@ import {
   type CollectionsCommand,
   type CollectionsGraph,
   type CommandRejection,
-} from "@storyboard/ui/dnd-collections";
+} from "@storyboard/collections-core";
 import {
   buildFocusedGraph,
   collectAffectedCollectionIds,
