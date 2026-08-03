@@ -1,0 +1,161 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+
+import { buildFocusedGraph } from "@storyboard/timeline-domain";
+import {
+  applyCommand,
+  getChildren,
+  parseNodeId,
+  useCollectionsStore,
+  type CollectionItemNode,
+  type NodeId,
+} from "@storyboard/ui/dnd-collections";
+
+import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
+
+import { parkPendingDetail, unparkPendingDetail } from "./graph-pending-details";
+
+// Live updates for writes this tab cannot hear.
+//
+// A clip can now arrive from outside the session — an agent uploading a render
+// through the remote MCP endpoint, or another tab. There is no Firestore
+// listener on the client (the app has no client Firebase SDK; every read goes
+// through the server so ownership stays enforced there), and SSE would not help
+// on serverless anyway: the function that writes is not the one holding the
+// connection, so pushing would need a shared bus. So: poll a tiny revisions
+// endpoint, and pull only when it says something moved.
+//
+// ADDITIONS ONLY, on purpose. New clips are spliced into the live graph and
+// animate in like any other drop. Remote MOVES and TRIMS are deliberately not
+// applied — reconciling those against in-flight local edits is a different
+// problem, and silently rewriting a clip somebody is dragging would be worse
+// than not updating at all. Those still need a reload.
+//
+// Applied through `store.applyRemotePatch`, NOT `store.dispatch`: this is not
+// the local user's action, so it must not enter their undo stack. Undo should
+// only ever walk back your own edits.
+
+/** Slow enough to be free, fast enough that an upload feels immediate. */
+const POLL_MS = 5000;
+
+export function RemoteChangesBridge({
+  timelineIds,
+}: Readonly<{ timelineIds: readonly string[] }>) {
+  const store = useCollectionsStore();
+  // The poll reads these through a ref so a changing id list doesn't restart
+  // the timer mid-cycle. Written in an effect, not during render — a render
+  // can be thrown away, and a ref written then would outlive it.
+  const idsRef = useRef(timelineIds);
+  useEffect(() => {
+    idsRef.current = timelineIds;
+  }, [timelineIds]);
+  const busyRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function pull(timelineId: string) {
+      // `ensure` serves the session cache unless the id is stale — without
+      // this it would hand back the very copy we already know is out of date,
+      // and the diff below would find nothing.
+      graphDocumentsGateway.markStale(timelineId);
+      const document = await graphDocumentsGateway.ensure(timelineId);
+      if (!document || cancelled) return;
+
+      // Rebuild a graph from the FETCHED document rather than converting clips
+      // to nodes by hand — `buildFocusedGraph` is the canonical conversion, and
+      // duplicating it here is how the two would drift.
+      const built = buildFocusedGraph({ [timelineId]: document }, timelineId, 1);
+      if (!built.ok || cancelled) return;
+
+      const live = store.getSnapshot().graph;
+      const parentId = parseNodeId(timelineId);
+      if (!live.nodesById.has(parentId)) return;
+
+      const known = new Set(getChildren(live, parentId).map(String));
+      const incoming = getChildren(built.value.graph, parentId).filter(
+        (id) => !known.has(String(id)),
+      );
+      if (incoming.length === 0) return;
+
+      const nodes: CollectionItemNode[] = [];
+      const parked: string[] = [];
+      for (const id of incoming) {
+        const node = built.value.graph.nodesById.get(id);
+        if (!node) continue;
+        const detail = built.value.details[String(id)];
+        // Park the detail BEFORE dispatch: poster and `sourceAsset` live in the
+        // side-table, not on the node, and a clip that reaches the store
+        // without its provenance would be written back without it.
+        if (detail) {
+          parkPendingDetail(String(id), detail);
+          parked.push(String(id));
+        }
+        nodes.push(node);
+      }
+      if (nodes.length === 0) return;
+
+      // NOT `store.dispatch` — that records an undo entry, and this is not the
+      // local user's action. With it in the stack, Ctrl+Z would delete a clip
+      // an agent just uploaded, and the autosave would persist that deletion.
+      // Run the reducer purely to get the patch, then apply it without history.
+      const applied = applyCommand(live, {
+        type: "add-nodes",
+        nodes,
+        toParentId: parentId,
+        toIndex: getChildren(live, parentId).length,
+      });
+      const ok = applied.ok && store.applyRemotePatch(applied.value.patch);
+      // On refusal the details must not be left parked — they would attach
+      // themselves to whatever later minted a node with the same id.
+      if (!ok) for (const id of parked) unparkPendingDetail(id);
+    }
+
+    async function tick() {
+      if (cancelled || busyRef.current) return;
+      // Nothing to do for a hidden tab: the visibility listener pulls once on
+      // the way back, so a backgrounded board costs nothing.
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
+      const ids = idsRef.current.filter(Boolean);
+      if (ids.length === 0) return;
+
+      busyRef.current = true;
+      try {
+        const response = await fetch(
+          `/api/timelines/revisions?ids=${encodeURIComponent(ids.join(","))}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok || cancelled) return;
+        const body = (await response.json()) as { revisions?: Record<string, number> };
+        const remote = body.revisions ?? {};
+
+        for (const [id, revision] of Object.entries(remote)) {
+          const known = graphDocumentsGateway.revisionOf(id);
+          // `undefined` means this session never observed one, so there is
+          // nothing to compare and nothing to conclude.
+          if (known === undefined || revision <= known) continue;
+          await pull(id);
+          if (cancelled) return;
+        }
+      } catch {
+        // A failed poll is not worth surfacing — the next one is 5s away, and
+        // an error banner for a background timer would be noise.
+      } finally {
+        busyRef.current = false;
+      }
+    }
+
+    const timer = setInterval(() => void tick(), POLL_MS);
+    const onVisible = () => void tick();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [store]);
+
+  return null;
+}

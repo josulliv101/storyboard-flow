@@ -187,6 +187,17 @@ export type GraphDocumentsGateway = Readonly<{
    * content stays readable until the refetch lands.
    */
   refresh: () => void;
+  /**
+   * Mark ONE document stale so the next `ensure` refetches it.
+   *
+   * The narrow twin of `refresh`, for the live-update poller: when the
+   * revisions endpoint says a single document moved, invalidating the whole
+   * session cache would refetch every other document for nothing. Unlike
+   * `refresh` this does NOT flush pending writes or lift the conflict gate —
+   * it only says "this one is out of date". No-op for a document the session
+   * has never loaded, since there is nothing cached to distrust.
+   */
+  markStale: (timelineId: string) => void;
 }>;
 
 export function createGraphDocumentsGateway(): GraphDocumentsGateway {
@@ -792,6 +803,10 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
     lastError: () => errorBanner,
     reportIssue: (key, message) => setError(key, message),
     flushPendingWrites,
+    markStale: (timelineId) => {
+      if (documents[timelineId] === undefined) return;
+      staleIds.add(timelineId);
+    },
     refresh: () => {
       flushPendingWrites();
       staleIds = new Set(Object.keys(documents));

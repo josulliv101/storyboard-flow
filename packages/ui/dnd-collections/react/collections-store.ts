@@ -136,7 +136,12 @@ export type CollectionsChange = Readonly<{
   /** The originating command — present for direct dispatches, absent for undo/redo replays. */
   command?: CollectionsCommand;
   patch: CollectionsPatch;
-  origin: "command" | "undo" | "redo";
+  /**
+   * Where the change came from. `remote` is a change this session did not
+   * make — another tab, or an agent writing through the server — applied via
+   * `applyRemotePatch` and deliberately absent from local history.
+   */
+  origin: "command" | "undo" | "redo" | "remote";
 }>;
 
 /**
@@ -222,6 +227,17 @@ export type CollectionsStore = Readonly<{
    * I just took away", and after a reload there is no "just".
    */
   restoreHistory: (entries: readonly HistoryEntry[]) => void;
+  /**
+   * Apply a change this session did NOT make — another tab, or an agent
+   * writing through the server — WITHOUT recording it in local history.
+   *
+   * Undo must only walk back your own actions: a remote patch in the stack
+   * lets the local user silently revert somebody else's edit, and the app
+   * autosaves that reversion straight back. Verified before it is applied
+   * (same rule as undo/redo); returns false when the patch no longer fits,
+   * leaving the graph untouched so the caller can refetch instead.
+   */
+  applyRemotePatch: (patch: CollectionsPatch) => boolean;
   /**
    * Swap in a new committed graph wholesale — the escape hatch for
    * async/server-loaded data that `initialGraph` (initial-only) can't handle.
@@ -537,6 +553,30 @@ export function createCollectionsStore(
     return true;
   }
 
+  /**
+   * Apply a change this session did NOT make — another tab, or an agent
+   * writing through the server — without touching local history.
+   *
+   * History is deliberately skipped. A remote patch in the undo stack means
+   * the local user can press Ctrl+Z and silently revert somebody else's edit,
+   * and (because the app autosaves) persist that reversion. Undo should only
+   * ever walk back your OWN actions.
+   *
+   * Verifies first, like `undo`/`redo` do: a patch built against a graph this
+   * session has since changed may no longer fit, and the package's rule is
+   * that `applyPatch` is never called on a patch that has not been checked.
+   * Returns false when it does not apply, leaving the graph untouched — the
+   * caller's fallback is to refetch rather than to force it.
+   */
+  function applyRemotePatch(patch: CollectionsPatch): boolean {
+    if (!verifyPatchApplies(graph, patch).ok) return false;
+    graph = applyPatch(graph, patch);
+    bumpDataVersionsFor(patch);
+    pruneMissingSelection();
+    notify({ graph, patch, origin: "remote" });
+    return true;
+  }
+
   function restoreHistory(entries: readonly HistoryEntry[]): void {
     if (entries.length === 0) return;
     for (const entry of entries) history.push(entry);
@@ -645,6 +685,7 @@ export function createCollectionsStore(
     undo,
     redo,
     restoreHistory,
+    applyRemotePatch,
     replaceGraph,
     hydrate,
 
