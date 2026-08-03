@@ -354,6 +354,72 @@ async function listCloudinaryAssetsUncached(userId: string, projectId?: string) 
   });
 }
 
+export type CloudinaryUploadTicket = {
+  uploadUrl: string;
+  /** Every form field except `file`, which the uploader appends itself. */
+  fields: Record<string, string>;
+  /** Full stored public id (`folder/name`) — the durable `assetId`. */
+  publicId: string;
+  resourceType: "image" | "video";
+  expiresAt: string;
+};
+
+/** Cloudinary rejects a stale timestamp; this is what the caller is told so it
+ *  can fail early rather than at upload time. */
+const UPLOAD_TICKET_TTL_SECONDS = 15 * 60;
+
+/**
+ * A signed ticket for uploading ONE file straight to Cloudinary.
+ *
+ * The point is that the bytes never pass through this server: an agent tool
+ * cannot carry a 20 MB render as a JSON argument. The signature still comes
+ * from here, so the server keeps deciding WHERE the file lands.
+ *
+ * `folder` and `public_id` are derived, never taken from the caller. The
+ * deletion rules refuse any id outside `<folder>/<uid>/` (see
+ * docs/asset-providers.md), so a caller-chosen path would either break reclaim
+ * or let one account write into another's prefix. Layout matches
+ * `uploadCloudinaryMedia` exactly, and both use the same `sanitizePublicId`.
+ */
+export function createCloudinaryUploadTicket(
+  filename: string,
+  userId: string,
+  projectId: string,
+): CloudinaryUploadTicket {
+  const config = getCloudinaryConfig();
+  const contentType = getMediaContentType(filename);
+  const resourceType: "image" | "video" = isVideoContent(filename, contentType)
+    ? "video"
+    : "image";
+
+  const folder = `${config.folder}/${userId}/${projectId}`;
+  const name = `${sanitizePublicId(filename)}-${Date.now()}`;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const params = { folder, public_id: name, timestamp };
+
+  return {
+    uploadUrl: `https://api.cloudinary.com/v1_1/${config.cloudName}/${resourceType}/upload`,
+    fields: {
+      api_key: config.apiKey,
+      folder,
+      public_id: name,
+      timestamp: String(timestamp),
+      signature: signCloudinaryParams(params, config.apiSecret),
+    },
+    publicId: `${folder}/${name}`,
+    resourceType,
+    expiresAt: new Date((timestamp + UPLOAD_TICKET_TTL_SECONDS) * 1000).toISOString(),
+  };
+}
+
+/** Drop the cached asset listing so a just-uploaded file is visible at once —
+ *  the direct-upload path never touches `uploadCloudinaryMedia`, which is what
+ *  normally invalidates it. Without this, `attach_media` can look for a file
+ *  that is genuinely there and not find it. */
+export function forgetCloudinaryAssetList(userId: string) {
+  invalidateAssetListCache(userId);
+}
+
 export async function uploadCloudinaryMedia(
   filename: string,
   data: Buffer,

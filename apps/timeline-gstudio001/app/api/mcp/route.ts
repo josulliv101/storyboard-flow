@@ -10,6 +10,17 @@ import {
   listFirebaseTimelineProjects,
 } from "@/lib/firebase-timeline-store";
 import { describeTimelineForAgent } from "@/lib/mcp-timeline-summary";
+import type { ToolResult } from "@/lib/webmcp/types";
+import { attachMedia, createUploadTicket } from "@/lib/mcp/upload";
+import { createCollection } from "@/lib/mcp/create-collection";
+import { ProjectAssetScopeError } from "@/lib/project-asset-scope";
+import {
+  handleMoveClip,
+  handleRemoveClip,
+  handleRenameItem,
+  handleTrimClip,
+  NO_LIVE_PUSH_NOTE,
+} from "@/lib/mcp/write-handlers";
 import { MCP_SCOPE, getSigningSecret, verifyAccessToken } from "@/lib/oauth/core";
 import { mcpResourceUrl, originFromRequest } from "@/lib/oauth/metadata";
 import { TimelineAccessDeniedError } from "@/lib/timeline-ownership";
@@ -19,8 +30,14 @@ import { TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 // browser against the live CollectionsStore; these run server-side against
 // Firestore, so an agent can read the project with no browser open.
 //
-// READ-ONLY on purpose: a publicly reachable endpoint over real user data
-// proves transport + auth before any write path exists.
+// Started read-only on purpose — a publicly reachable endpoint over real user
+// data proved transport + auth first. Writes were added on top of that once the
+// auth path was settled; they go through `lib/mcp/apply-command.ts`, which runs
+// the same collections reducer the browser does and persists with revision CAS.
+//
+// One behavioural difference worth knowing: this transport has NO real-time
+// push, so a write here does not reach a tab that is already open until it
+// reloads. Every write tool says so in its description.
 //
 // TWO auth paths, both yielding the uid the tools act as:
 //   1. OAuth 2.1 access token (claude.ai custom connector) — uid from `sub`.
@@ -92,6 +109,30 @@ function errorResult(message: string) {
 }
 
 /**
+ * Adapt a shared handler's `ToolResult` to what the MCP SDK accepts.
+ *
+ * `lib/webmcp/types.ts` declares `content` readonly on purpose — those results
+ * are shared values and nothing should mutate one in place. The SDK's callback
+ * type wants a mutable array, so copy it here rather than loosening the shared
+ * type for every other caller.
+ */
+function fromToolResult(result: ToolResult) {
+  // The SDK types `structuredContent` as a plain object; the shared ToolResult
+  // types it `unknown` so in-page tools can return anything. Only forward it
+  // when it actually is an object — a primitive or null would not survive the
+  // JSON-RPC shape anyway.
+  const structured =
+    typeof result.structuredContent === "object" && result.structuredContent !== null
+      ? (result.structuredContent as Record<string, unknown>)
+      : undefined;
+  return {
+    content: result.content.map((block) => ({ type: block.type, text: block.text })),
+    ...(result.isError === undefined ? {} : { isError: result.isError }),
+    ...(structured === undefined ? {} : { structuredContent: structured }),
+  };
+}
+
+/**
  * The uid this call acts as, taken from the verified token — never from tool
  * arguments, so one authenticated caller can't read another account's data.
  */
@@ -143,6 +184,170 @@ const handler = createMcpHandler(
           if (error instanceof TimelineAccessDeniedError) {
             return errorResult(`Not authorized to read timeline "${timelineId}".`);
           }
+          throw error;
+        }
+      },
+    );
+
+    // --- Write tools --------------------------------------------------------
+    //
+    // Server-side edits against stored documents, via lib/mcp/apply-command.ts.
+    // Every one takes an explicit `timelineId` because there is no "focused"
+    // timeline without a browser — it is the root whose closure gets loaded, and
+    // it must contain every node the call touches.
+
+    server.tool(
+      "move_clip",
+      "Move a clip or collection: reorder it within its current collection, or put it inside another one. Give at most one of `after`, `before` or `position`." +
+        NO_LIVE_PUSH_NOTE,
+      {
+        timelineId: z.string().min(1).describe("The timeline document that contains the clip."),
+        nodeId: z.string().min(1).describe("The clip or collection to move."),
+        into: z
+          .string()
+          .optional()
+          .describe("Target collection id. Omit to reorder within the current parent."),
+        after: z.string().optional().describe("Place directly after this sibling."),
+        before: z.string().optional().describe("Place directly before this sibling."),
+        position: z.enum(["start", "end"]).optional().describe("Place at the start or end."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await handleMoveClip(args, { requesterUid: uid }));
+      },
+    );
+
+    server.tool(
+      "trim_clip",
+      "Change how much of a clip plays. Videos take `trimInSeconds`/`trimOutSeconds` (offsets into the source); images take `durationSeconds`." +
+        NO_LIVE_PUSH_NOTE,
+      {
+        timelineId: z.string().min(1).describe("The timeline document that contains the clip."),
+        nodeId: z.string().min(1).describe("The clip to trim."),
+        trimInSeconds: z.number().min(0).optional().describe("Video only: seconds into the source where it starts."),
+        trimOutSeconds: z.number().min(0).optional().describe("Video only: seconds into the source where it ends."),
+        durationSeconds: z.number().positive().optional().describe("Image only: how long it stays on screen."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await handleTrimClip(args, { requesterUid: uid }));
+      },
+    );
+
+    server.tool(
+      "rename_item",
+      "Rename a clip or a collection. Renaming a collection also retitles its own timeline document, so the board and the project list agree." +
+        NO_LIVE_PUSH_NOTE,
+      {
+        timelineId: z.string().min(1).describe("The timeline document that contains the item."),
+        nodeId: z.string().min(1).describe("The clip or collection to rename."),
+        name: z.string().min(1).describe("The new name."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await handleRenameItem(args, { requesterUid: uid }));
+      },
+    );
+
+    server.tool(
+      "remove_clip",
+      "Move a clip to the trash. This is recoverable — nothing is hard-deleted, so the clip can be restored from the bin." +
+        NO_LIVE_PUSH_NOTE,
+      {
+        timelineId: z.string().min(1).describe("The timeline document that contains the clip."),
+        nodeId: z.string().min(1).describe("The clip to remove."),
+        trashId: z.string().min(1).describe("The trash collection's id, from read_timeline."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await handleRemoveClip(args, { requesterUid: uid }));
+      },
+    );
+
+    server.tool(
+      "create_collection",
+      "Create a new, empty collection (a nested timeline) inside a project or another collection. Returns its id — pass that as `timelineId` to put clips inside it. Give at most one of `after`, `before` or `position`." +
+        NO_LIVE_PUSH_NOTE,
+      {
+        timelineId: z.string().min(1).describe("Timeline document to create it in."),
+        name: z.string().min(1).describe("Name for the new collection."),
+        into: z
+          .string()
+          .optional()
+          .describe("Nest it inside this collection. Omit for the timeline itself."),
+        after: z.string().optional().describe("Place directly after this sibling."),
+        before: z.string().optional().describe("Place directly before this sibling."),
+        position: z.enum(["start", "end"]).optional().describe("Place at the start or end."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await createCollection(args, uid));
+      },
+    );
+
+    // --- Bringing a new file in ---------------------------------------------
+    //
+    // Two calls, and the bytes are in neither. `create_upload` mints a signed,
+    // scoped ticket; the caller POSTs the file straight to Cloudinary; then
+    // `attach_media` verifies it landed and mints the clip. See lib/mcp/upload.ts.
+
+    server.tool(
+      "create_upload",
+      "Start uploading a local media file (mp4, webm, mov, jpg, png, webp). Returns a short-lived signed ticket: POST the file to `uploadUrl` as multipart/form-data with every field from `fields` plus the file itself as `file`. Then call attach_media with the returned publicId. The file's bytes never pass through this tool.",
+      {
+        projectId: z.string().min(1).describe("Project the asset belongs to."),
+        filename: z.string().min(1).describe("Original filename, used to name the stored asset."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        try {
+          const ticket = await createUploadTicket(args, uid);
+          return jsonResult(
+            `Upload ticket for "${args.filename}" (${ticket.resourceType}). POST the file to ${ticket.uploadUrl} with the given fields, then call attach_media with publicId "${ticket.publicId}". Expires ${ticket.expiresAt}.`,
+            ticket,
+          );
+        } catch (error) {
+          if (error instanceof ProjectAssetScopeError) return errorResult(error.message);
+          return errorResult(error instanceof Error ? error.message : "Could not create an upload.");
+        }
+      },
+    );
+
+    server.tool(
+      "attach_media",
+      "Add an already-uploaded file to a timeline as a clip. Verifies the upload landed, then places it — give at most one of `after`, `before` or `position`." +
+        NO_LIVE_PUSH_NOTE,
+      {
+        timelineId: z.string().min(1).describe("Timeline document to add the clip to."),
+        projectId: z.string().min(1).describe("Project the asset was uploaded under."),
+        publicId: z.string().min(1).describe("`publicId` returned by create_upload."),
+        into: z
+          .string()
+          .optional()
+          .describe("Collection to place it in. Omit for the timeline itself."),
+        name: z.string().optional().describe("Name for the clip. Defaults to the filename."),
+        after: z.string().optional().describe("Place directly after this sibling."),
+        before: z.string().optional().describe("Place directly before this sibling."),
+        position: z.enum(["start", "end"]).optional().describe("Place at the start or end."),
+        durationSeconds: z
+          .number()
+          .positive()
+          .optional()
+          .describe("How long it plays. Defaults to the video's full length, or 3s for a still."),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        try {
+          return fromToolResult(await attachMedia(args, uid));
+        } catch (error) {
+          if (error instanceof ProjectAssetScopeError) return errorResult(error.message);
           throw error;
         }
       },

@@ -60,6 +60,7 @@ import { GraphViewLoadingSkeleton } from "./graph-view-loading";
 import { GraphDetailsProvider } from "./graph-details-context";
 import { FlatClosureHydrator, HydrationController } from "./graph-hydration";
 import { GraphItemActionsBridge } from "./graph-item-actions";
+import { RemoteChangesBridge } from "./graph-remote-changes";
 import { McpToolsBridge } from "./graph-mcp-tools";
 import { GRAPH_VIEW_COMPONENTS } from "./graph-item-content";
 import { GraphViewNavProvider } from "./graph-navigation";
@@ -220,6 +221,14 @@ export function GraphTimelineView({
   }
   const timelinePath = pendingPath ?? urlPath;
   const focusedId = timelinePath[timelinePath.length - 1] ?? projectId;
+  // Documents the live-update poller watches: what is actually on screen, plus
+  // the project root when focus has drilled past it. Deliberately NOT the whole
+  // closure — a poll runs on a timer, and a clip arriving in a collection nobody
+  // is looking at can wait until they open it.
+  const remoteWatchIds = useMemo(
+    () => [...new Set([projectId, focusedId])],
+    [projectId, focusedId],
+  );
 
   const [boot, setBoot] = useState<BootState>({ status: "loading" });
   const [detailsStore] = useState(() => createGraphDetailsStore());
@@ -685,6 +694,10 @@ export function GraphTimelineView({
             onOpenNode={handleOpenNode}
             timeChannel={timeChannel}
           />
+          {/* Clips can arrive from outside this session — an agent uploading a
+              render through the remote MCP endpoint, or another tab. Polls for
+              a revision bump and splices in anything new. */}
+          <RemoteChangesBridge timelineIds={remoteWatchIds} />
           <GraphDetailsJanitor />
           <HydrationController
             projectId={projectId}

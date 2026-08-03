@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { buildGraph, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "../core/graph";
+import { buildGraph, getChildren, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "../core/graph";
+import { applyCommand } from "../core/commands";
 import {
   InvalidInitialGraphError,
   createCollectionsStore,
@@ -1141,5 +1142,78 @@ describe("createCollectionsStore", () => {
       })(),
     );
     expect(anchor(store)).toBe(id("z"));
+  });
+});
+
+describe("applyRemotePatch", () => {
+  // A change this session did not make — another tab, or an agent writing
+  // through the server. It must land on the graph WITHOUT joining local
+  // history: the app autosaves, so a remote patch in the undo stack means
+  // Ctrl+Z silently reverts somebody else's edit and persists the reversion.
+
+  function patchFor(graph: CollectionsGraph, command: typeof moveX) {
+    const result = applyCommand(graph, command);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    return result.value.patch;
+  }
+
+  test("applies the change to the graph", () => {
+    const store = createCollectionsStore(graphFixture());
+    const patch = patchFor(store.getSnapshot().graph, moveX);
+
+    expect(store.applyRemotePatch(patch)).toBe(true);
+    expect(getChildren(store.getSnapshot().graph, id("root-b")).map(String)).toEqual(["x"]);
+  });
+
+  test("does NOT become undoable — undo must only walk back your own edits", () => {
+    const store = createCollectionsStore(graphFixture());
+    const patch = patchFor(store.getSnapshot().graph, moveX);
+
+    store.applyRemotePatch(patch);
+
+    expect(store.getSnapshot().canUndo).toBe(false);
+    expect(store.getSnapshot().historyEntries).toHaveLength(0);
+    expect(store.undo()).toBe(false);
+    // Still where the remote change put it.
+    expect(getChildren(store.getSnapshot().graph, id("root-b")).map(String)).toEqual(["x"]);
+  });
+
+  test("leaves an existing undo stack intact and still pointing at local work", () => {
+    const store = createCollectionsStore(graphFixture());
+    // A LOCAL edit first, so there is history to protect.
+    store.dispatch({ type: "rename-node", nodeId: id("y"), name: "renamed" });
+    const before = store.getSnapshot().historyEntries.length;
+
+    const patch = patchFor(store.getSnapshot().graph, moveX);
+    store.applyRemotePatch(patch);
+
+    expect(store.getSnapshot().historyEntries).toHaveLength(before);
+    // Undo walks back the LOCAL rename, not the remote move.
+    expect(store.undo()).toBe(true);
+    expect(store.getSnapshot().graph.nodesById.get(id("y"))?.name).toBe("y");
+    expect(getChildren(store.getSnapshot().graph, id("root-b")).map(String)).toEqual(["x"]);
+  });
+
+  test("refuses a patch that no longer fits, leaving the graph untouched", () => {
+    const store = createCollectionsStore(graphFixture());
+    const patch = patchFor(store.getSnapshot().graph, moveX);
+    // The world moved on: x is already gone from root-a.
+    store.dispatch(moveX);
+    const graphBefore = store.getSnapshot().graph;
+
+    expect(store.applyRemotePatch(patch)).toBe(false);
+    expect(store.getSnapshot().graph).toBe(graphBefore);
+  });
+
+  test("notifies subscribers with origin 'remote'", () => {
+    const changes: CollectionsChange[] = [];
+    const store = createCollectionsStore(graphFixture(), { onChange: (c) => changes.push(c) });
+    const patch = patchFor(store.getSnapshot().graph, moveX);
+
+    store.applyRemotePatch(patch);
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0].origin).toBe("remote");
+    expect(changes[0].command).toBeUndefined();
   });
 });
