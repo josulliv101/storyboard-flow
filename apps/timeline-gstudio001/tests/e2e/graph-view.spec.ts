@@ -2295,6 +2295,39 @@ test.describe("graph view E2E", () => {
     await expect.poll(primaryColor).toBe(restingColor);
   });
 
+  test("preview audio: mute and volume survive a pane toggle", async ({ page }) => {
+    const api = await installGraphApi(page);
+    api.documents.get(PROJECT_ID)!.clips[0]!.kind = "image";
+    api.documents.get(PROJECT_ID)!.clips[0]!.startTime = 0;
+    await openGraph(page);
+    await previewToggle(page).click();
+
+    const surface = page.getByTestId("workbench-display-surface");
+    // Sound is not observable from a test — the fixture's "video" is a data-URI
+    // image with no audio track at all. These witnesses pin the state the mixer
+    // is driven with, which is the regression worth catching.
+    await expect(surface).toHaveAttribute("data-preview-muted", "false");
+    await expect(surface).toHaveAttribute("data-preview-volume", "1");
+
+    const volume = page.getByTestId("workbench-preview-volume");
+    await expect(volume).toHaveValue("1");
+
+    await page.getByRole("button", { name: "Mute workbench preview" }).click();
+    await expect(surface).toHaveAttribute("data-preview-muted", "true");
+    await expect(volume).toHaveValue("0");
+
+    // The whole reason audio state lives on the channel rather than in the
+    // surface: closing the pane unmounts the surface, and the setting must not
+    // die with it.
+    await previewToggle(page).click();
+    await expect(surface).toBeHidden();
+    await previewToggle(page).click();
+    await expect(surface).toHaveAttribute("data-preview-muted", "true");
+
+    await page.getByRole("button", { name: "Unmute workbench preview" }).click();
+    await expect(surface).toHaveAttribute("data-preview-muted", "false");
+  });
+
   test("preview divider transport keeps all controls visible for touch", async ({
     page,
   }) => {

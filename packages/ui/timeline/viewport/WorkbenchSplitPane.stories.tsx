@@ -290,9 +290,83 @@ export const ControlledPlayback: Story = {
       /0(?:\.\d+)?s \/ 30\.0s/,
     );
 
+    // Tab order follows the DOM: the audio controls overlay the picture, so
+    // they come BEFORE the divider transport. Walk past them and the transport
+    // is still reachable, which is what this ever asserted.
+    await user.tab();
+    expect(canvas.getByTestId("workbench-preview-mute")).toHaveFocus();
+    await user.tab();
+    expect(canvas.getByTestId("workbench-preview-volume")).toHaveFocus();
     await user.tab();
     expect(controls.contains(document.activeElement)).toBe(true);
     expect(controls).toHaveAttribute("data-transport-layout", "static");
+  },
+};
+
+function ControlledAudioFixture() {
+  const [currentTime, setCurrentTime] = useState(0);
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
+
+  return (
+    <main className="min-h-[900px] bg-zinc-950 p-4 text-zinc-100">
+      <p data-testid="audio-readout" className="mb-3 font-mono text-sm">
+        {`volume=${volume} muted=${muted}`}
+      </p>
+      <WorkbenchSplitPane
+        surface={
+          <WorkbenchDisplaySurface
+            clips={[PLAYABLE_CLIP]}
+            currentTime={currentTime}
+            onCurrentTimeChange={setCurrentTime}
+            volume={volume}
+            onVolumeChange={setVolume}
+            muted={muted}
+            onMutedChange={setMuted}
+            className="h-full rounded-b-none border-b-0"
+          />
+        }
+      >
+        <div className="min-h-24" />
+      </WorkbenchSplitPane>
+    </main>
+  );
+}
+
+/** Audio is controlled on the same contract as `playing`: supply `volume` and
+ *  `muted` and the transport REFLECTS them, reporting intent back out. The
+ *  surface also publishes both as `data-*`, because sound itself is not
+ *  observable from a test. */
+export const ControlledAudio: Story = {
+  render: () => <ControlledAudioFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const user = userEvent.setup();
+    const surface = canvas.getByTestId("workbench-display-surface");
+
+    // Audible by default — a preview that opens silent looks broken.
+    expect(surface).toHaveAttribute("data-preview-muted", "false");
+    expect(surface).toHaveAttribute("data-preview-volume", "1");
+    expect(canvas.getByTestId("audio-readout")).toHaveTextContent("volume=1 muted=false");
+
+    const mute = canvas.getByRole("button", { name: "Mute workbench preview" });
+    expect(mute).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(mute);
+
+    // The controlled prop round-trips through the fixture and comes back.
+    expect(await canvas.findByRole("button", { name: "Unmute workbench preview" })).toBeInTheDocument();
+    expect(surface).toHaveAttribute("data-preview-muted", "true");
+    expect(canvas.getByTestId("audio-readout")).toHaveTextContent("muted=true");
+
+    // A muted preview shows the slider at zero regardless of the held volume,
+    // so the control never claims to be audible while it is not.
+    const slider = canvas.getByRole("slider", { name: "Workbench preview volume" });
+    expect(slider).toHaveValue("0");
+
+    await user.click(canvas.getByRole("button", { name: "Unmute workbench preview" }));
+    expect(surface).toHaveAttribute("data-preview-muted", "false");
+    expect(slider).toHaveValue("1");
   },
 };
 
