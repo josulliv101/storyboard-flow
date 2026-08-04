@@ -366,6 +366,26 @@ export function OpenKeyBoundary({
       node?.kind === "collection" || detailsStore.get(id)?.duplicateOfTimelineId !== undefined;
     if (!opensTimeline) return;
     event.preventDefault();
+    // Take back the selection the FIRST click made.
+    //
+    // A double-click is three handlers deep and each one is behaving as
+    // designed: click 1 selects (interaction-policy's `clickSelection`), click
+    // 2 is skipped by that file's `detail > 1` guard — load-bearing, it is what
+    // stops a rename-in-place gesture starting with nothing selected — and then
+    // this fires. Nobody undid click 1, so the user landed INSIDE a collection
+    // with that collection still selected: the header read "1 selected", no
+    // card on screen was selected, and the header's promoted Delete was armed
+    // against the container they were looking at.
+    //
+    // The chevron route never had this: it lives inside
+    // `[data-collections-keyboard-ignore]`, so the selection surface does not
+    // select on it in the first place. This is double-click's equivalent, and
+    // it makes both ways in agree — you are inside it, nothing is selected.
+    //
+    // Clearing outright rather than restoring the prior selection is correct:
+    // an unmodified click 1 has ALREADY collapsed any multi-selection to this
+    // one card by the time dblclick runs, so there is nothing left to restore.
+    store.clearSelection();
     nav?.openTimeline(nodeId);
   };
 
