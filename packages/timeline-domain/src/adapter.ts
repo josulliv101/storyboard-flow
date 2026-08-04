@@ -209,14 +209,30 @@ function clipSpecs(
     if (ctx.used.has(childId)) {
       // Same child referenced twice inside the hydrated area: demote to a
       // non-navigable reference card keyed by the clip's own id.
-      ctx.used.add(clip.id);
-      ctx.details[clip.id] = {
+      //
+      // That key is not enough on its own. A collection clip's stored id
+      // normally EQUALS its childTimelineId (both the graph write-back and
+      // `create_collection` mint them that way), so `clip.id` is usually the
+      // very id that just collided — falling back to it reproduced the
+      // duplicate and `buildGraph` rejected the whole tree, which blocked
+      // every write to the project rather than surfacing one bad card. Fall
+      // through to the same synthetic form the media branch uses.
+      let nodeId = clip.id;
+      if (ctx.used.has(nodeId)) {
+        nodeId = `dup:${doc.id}:${clip.id}`;
+        while (ctx.used.has(nodeId)) nodeId = `${nodeId}~`;
+      }
+      ctx.used.add(nodeId);
+      // `sourceClipId` (from collectionDetail) and `duplicateOfTimelineId`
+      // are what let the write path round-trip a synthetic id back to the
+      // stored clip id and its real child pointer — see graphChildrenToClips.
+      ctx.details[nodeId] = {
         ...collectionDetail(clip, false),
         duplicateOfTimelineId: childId,
       };
       return {
         kind: "collection",
-        id: clip.id,
+        id: nodeId,
         name: clip.title,
         children: [],
         ...(clip.disabled ? { disabled: true } : {}),

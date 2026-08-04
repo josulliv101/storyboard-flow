@@ -1,11 +1,14 @@
 import {
   applyCommand,
+  buildGraph,
   type CollectionsCommand,
   type CollectionsGraph,
   type CommandRejection,
+  type GraphNodeSpec,
 } from "@storyboard/collections-core";
 import {
   buildFocusedGraph,
+  buildHydrationSpecs,
   collectAffectedCollectionIds,
   graphChildrenToClips,
   type DetailsById,
@@ -17,7 +20,8 @@ import {
   TimelineRevisionConflictError,
   type TimelineBatchWrite,
 } from "@/lib/firebase-timeline-store";
-import { loadTimelineClosure } from "@/lib/load-timeline-closure";
+import { loadTimelineClosure, TimelineClosureTooLargeError } from "@/lib/load-timeline-closure";
+import { serveTrashDocument } from "@/lib/serve-timeline";
 import { TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
 // The server-side twin of the in-page dispatch path. WebMCP tools mutate the
@@ -67,6 +71,74 @@ function syncRenameIntoDetails(
   return {
     ...details,
     [command.nodeId as string]: { ...existing, title: command.name } as DetailsById[string],
+  };
+}
+
+export type ApplyCommandOptions = Readonly<{
+  /**
+   * Also load the requester's trash as a SECOND graph root, so a command can
+   * move nodes into it. Off by default: the other tools never target the bin,
+   * and loading it costs a second closure read.
+   */
+  includeTrash?: boolean;
+}>;
+
+/**
+ * The requester's own bin. Derived from the VERIFIED uid, never from tool
+ * arguments — `checkUserScopedId` only ever accepts `trash-<requesterUid>`, so
+ * deriving it is both the correct id and the only reachable one.
+ */
+export function trashDocumentIdFor(requesterUid: string): string {
+  return `trash-${requesterUid}`;
+}
+
+/**
+ * A graph spanning the project AND the trash, mirroring the in-page boot's
+ * `buildGraph([projectRoot, trashRoot])`.
+ *
+ * `buildHydrationSpecs` takes the already-used ids so a node reachable from
+ * both roots demotes to a reference card instead of colliding — node ids must
+ * be unique across the WHOLE graph, not per root.
+ */
+function buildRootsGraph(
+  documents: Record<string, TimelineDocument>,
+  rootTimelineId: string,
+  trashId: string,
+): Readonly<{ ok: true; value: { graph: CollectionsGraph; details: DetailsById } }
+  | Readonly<{ ok: false; error: string }>> {
+  const rootSpecs = buildHydrationSpecs(documents, rootTimelineId, HYDRATE_ALL_LEVELS);
+  if (!rootSpecs.ok) return rootSpecs;
+  const trashSpecs = buildHydrationSpecs(documents, trashId, HYDRATE_ALL_LEVELS, [
+    rootTimelineId,
+    ...Object.keys(rootSpecs.value.details),
+  ]);
+  if (!trashSpecs.ok) return trashSpecs;
+
+  const roots: GraphNodeSpec[] = [
+    {
+      kind: "collection",
+      id: rootTimelineId,
+      name: documents[rootTimelineId].title,
+      children: rootSpecs.value.specs,
+    },
+    {
+      kind: "collection",
+      id: trashId,
+      name: documents[trashId].title || "Trash Bin",
+      children: trashSpecs.value.specs,
+    },
+  ];
+
+  const built = buildGraph(roots);
+  if (!built.ok) {
+    return { ok: false, error: `Could not build graph: ${JSON.stringify(built.error)}` };
+  }
+  return {
+    ok: true,
+    value: {
+      graph: built.value,
+      details: { ...rootSpecs.value.details, ...trashSpecs.value.details },
+    },
   };
 }
 
@@ -135,18 +207,57 @@ export async function applyCollectionsCommand(
   rootTimelineId: string,
   commandOrBuilder: CollectionsCommand | CommandBuilder,
   requesterUid: string,
+  options: ApplyCommandOptions = {},
 ): Promise<ApplyCommandOutcome> {
   // The closure loader reads through `getFirebaseTimelineEntry`, which enforces
   // ownership, but it swallows the refusal (`.catch(() => null)`) and reports
   // the document as missing. That is the behaviour we want here too: a denied
   // id and an absent id are indistinguishable to the caller, so knowing an id
   // is not a claim to it. The write below re-checks ownership and throws.
-  const { documents, revisions } = await loadTimelineClosure(rootTimelineId, requesterUid);
+  let loaded: Awaited<ReturnType<typeof loadTimelineClosure>>;
+  try {
+    loaded = await loadTimelineClosure(rootTimelineId, requesterUid);
+  } catch (error) {
+    // The loader THROWS past its own budget. Report it as a tool error rather
+    // than letting it escape the handler as a 500 — including the trash
+    // closure below makes the ceiling easier to reach.
+    if (error instanceof TimelineClosureTooLargeError) {
+      return { ok: false, kind: "error", message: error.message };
+    }
+    throw error;
+  }
+  const documents: Record<string, TimelineDocument> = { ...loaded.documents };
+  const revisions: Record<string, number> = { ...loaded.revisions };
   if (!documents[rootTimelineId]) {
     return { ok: false, kind: "error", message: `No timeline document with id "${rootTimelineId}".` };
   }
 
-  const built = buildFocusedGraph(documents, rootTimelineId, HYDRATE_ALL_LEVELS);
+  // The trash is a SIBLING ROOT, never a collection clip inside a project, so
+  // it is absent from the project's closure and a command targeting it would be
+  // rejected as `missing-node`. Load it as a second root, exactly as the
+  // in-page boot does (graph-timeline-view.tsx) — that is the only way a
+  // remove can reach the bin.
+  const trashId = options.includeTrash ? trashDocumentIdFor(requesterUid) : null;
+  if (trashId) {
+    const served = await serveTrashDocument(trashId, requesterUid);
+    const trashClosure = await loadTimelineClosure(trashId, requesterUid, {
+      rootEntry: { document: served.document, revision: served.revision },
+    });
+    for (const [id, document] of Object.entries(trashClosure.documents)) {
+      documents[id] ??= document;
+    }
+    for (const [id, revision] of Object.entries(trashClosure.revisions)) {
+      revisions[id] ??= revision;
+    }
+    // `serveTrashDocument` defaults a not-yet-created bin to revision 0, so the
+    // existing compare-and-set write CREATES it on first use.
+    documents[trashId] = served.document;
+    revisions[trashId] ??= served.revision;
+  }
+
+  const built = trashId
+    ? buildRootsGraph(documents, rootTimelineId, trashId)
+    : buildFocusedGraph(documents, rootTimelineId, HYDRATE_ALL_LEVELS);
   if (!built.ok) return { ok: false, kind: "error", message: built.error };
 
   let command: CollectionsCommand;

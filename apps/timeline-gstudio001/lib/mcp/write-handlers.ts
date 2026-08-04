@@ -10,7 +10,11 @@ import { describeDispatchRejection, toolError, toolOk } from "@/lib/webmcp/resul
 import { resolveMovePlacement, type PlacementError } from "@/lib/webmcp/placement";
 import type { ToolResult } from "@/lib/webmcp/types";
 
-import { applyCollectionsCommand, type ApplyCommandOutcome } from "./apply-command";
+import {
+  applyCollectionsCommand,
+  trashDocumentIdFor,
+  type ApplyCommandOutcome,
+} from "./apply-command";
 
 // Remote (server-side) write tools. Each one translates arguments into a single
 // CollectionsCommand and hands it to `applyCollectionsCommand`, which owns the
@@ -248,28 +252,50 @@ export async function handleRenameItem(
 
 // --- remove_clip -------------------------------------------------------------
 
-export type RemoveClipArgs = Readonly<{ timelineId: string; nodeId: string; trashId: string }>;
+export type RemoveClipArgs = Readonly<{
+  timelineId: string;
+  nodeId: string;
+  /** Optional and normally omitted — the caller's own bin is derived. */
+  trashId?: string;
+}>;
 
 /**
  * Delete is a MOVE into the trash root — there is no delete command, and that
  * is deliberate: everything the agent removes stays recoverable from the bin.
+ *
+ * The bin is DERIVED from the verified uid rather than supplied. It used to be
+ * a required argument sourced "from read_timeline", which no tool could
+ * actually provide: the trash is a sibling root, never a collection clip inside
+ * a project, so it never appeared in a project read and never landed in the
+ * loaded closure. Every call failed. `includeTrash` loads it as a second graph
+ * root so the move has somewhere to go.
  */
 export async function handleRemoveClip(
   args: RemoveClipArgs,
   ctx: WriteContext,
 ): Promise<ToolResult> {
   const nodeId = parseNodeId(args.nodeId);
-  const trashId = parseNodeId(args.trashId);
+  const trashId = parseNodeId(args.trashId ?? trashDocumentIdFor(ctx.requesterUid));
 
   const outcome = await applyCollectionsCommand(
     args.timelineId,
-    (graph: CollectionsGraph) => {
+    (graph: CollectionsGraph, details) => {
       if (!graph.nodesById.has(nodeId)) {
         return { ok: false, message: `No node with id "${args.nodeId}".` } as const;
       }
       if (!graph.nodesById.has(trashId)) {
-        return { ok: false, message: `No trash collection with id "${args.trashId}".` } as const;
+        return {
+          ok: false,
+          message: `Could not reach the trash ("${trashId as string}").`,
+        } as const;
       }
+      const existing = details[nodeId as string];
+      // Read the parent BEFORE the move — afterwards it IS the trash. `title`
+      // is the SOURCE TIMELINE's name, not the clip's, and both fields are
+      // required, so an unnamed parent means no stamp at all rather than half
+      // of one (identical to the in-page path in graph-navigation.tsx).
+      const parentId = graph.parentById.get(nodeId) ?? null;
+      const parentTitle = parentId === null ? undefined : graph.nodesById.get(parentId)?.name;
       return {
         ok: true,
         command: {
@@ -278,9 +304,28 @@ export async function handleRemoveClip(
           toParentId: trashId,
           toIndex: getChildren(graph, trashId).length,
         },
+        // Provenance for the bin's row caption ("trashed 5 minutes ago, from
+        // Scene one"), matching what the in-page path stamps before dispatch.
+        // It rides the details side-table, not the graph node — the engine
+        // never reads it. MERGED onto the existing entry: a detail is the whole
+        // clip's stored shape, and replacing it would drop src/poster/provenance.
+        ...(existing
+          ? {
+              details: {
+                [nodeId as string]: {
+                  ...existing,
+                  trashedAt: new Date().toISOString(),
+                  ...(parentId !== null && parentTitle
+                    ? { trashedFrom: { timelineId: parentId as string, title: parentTitle } }
+                    : {}),
+                },
+              },
+            }
+          : {}),
       } as const;
     },
     ctx.requesterUid,
+    { includeTrash: true },
   );
 
   if (!outcome.ok) return reportFailure(outcome);

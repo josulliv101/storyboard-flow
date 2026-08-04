@@ -173,12 +173,17 @@ describe("applyCollectionsCommand", () => {
       OWNER,
     );
 
+    // Asserted unconditionally. Guarding on `result.kind === "error"` made this
+    // vacuous: a denied read is swallowed into an EMPTY substitute document, so
+    // the root IS present and the failure arrives as a reducer `rejected`
+    // (missing node), never the `error` branch — the assertions never ran.
     expect(result.ok).toBe(false);
-    if (!result.ok && result.kind === "error") {
-      // Same wording as a genuinely absent id — knowing an id is not a claim to it.
-      expect(result.message).toContain("No timeline document");
-      expect(result.message).not.toMatch(/authoriz|permission|owner/i);
-    }
+    if (result.ok) throw new Error("expected a refusal");
+    // Whatever shape it takes, it must not say WHY — knowing an id is not a
+    // claim to it.
+    const message =
+      result.kind === "error" ? result.message : JSON.stringify(result.rejection);
+    expect(message).not.toMatch(/authoriz|permission|owner/i);
     expect(storedClipIds("root")).toEqual(["a"]);
   });
 
