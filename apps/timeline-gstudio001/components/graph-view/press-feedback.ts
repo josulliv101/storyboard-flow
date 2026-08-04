@@ -20,14 +20,34 @@
 // (`RenderEfficiencyDuringDrag`) fails when a bystander card re-renders.
 // Animating an element directly sidesteps all of it.
 
-/** Peak scale. Deliberately tiny — the brief is "barely even notice it", and
- *  anything past ~1.05 stops reading as acknowledgement and starts reading as
- *  a hover effect. */
-const PRESS_SCALE = 1.035;
+/**
+ * Peak scale. Deliberately tiny — the brief is "barely even notice it".
+ *
+ * Tuned DOWN twice by eye: 1.035 -> 1.02 -> 1.012. On a ~360px card frame
+ * that is roughly 12.7px -> 7.2px -> 4.3px of growth.
+ *
+ * The reason it kept needing to shrink is worth recording: duration and
+ * amplitude trade against each other. At the original 340ms a 3.5% swell was
+ * barely legible, but the motion was later slowed to 640ms, and once the eye
+ * has time to FOLLOW the movement the same number reads as a real zoom. If
+ * `PRESS_MS` is ever shortened again, this can afford to grow back.
+ */
+const PRESS_SCALE = 1.012;
 
-/** Out and back. Long enough to be a smooth swell rather than a twitch, short
- *  enough to be over before the 250ms selection hold resolves. */
-const PRESS_MS = 340;
+/**
+ * Out and back, in equal halves.
+ *
+ * Deliberately unhurried. 340ms was the first value and read as a twitch —
+ * the swell arrived and left before the eye settled on it. At 640 the motion
+ * is slow enough to follow, which is what makes something this small (3.5%)
+ * legible at all.
+ *
+ * It deliberately OUTLASTS the 250ms selection hold. The two are not sequential
+ * steps to be kept apart: the scale acknowledges the press, the selection
+ * answers what the press meant, and letting the first still be settling when
+ * the second lands reads as one continuous response rather than two events.
+ */
+const PRESS_MS = 640;
 
 /**
  * Acknowledge a press by letting the card's artwork swell very slightly.
@@ -57,13 +77,29 @@ export function spawnPressFeedback(host: HTMLElement): void {
     if (typeof image.animate !== "function") continue;
     image.animate(
       [
-        { transform: "scale(1)" },
-        { transform: `scale(${PRESS_SCALE})`, offset: 0.45 },
+        // PER-KEYFRAME easing, because the two halves want different curves
+        // and the timing option below could only apply one shape to both.
+        //
+        // GROW — starts almost imperceptibly and accelerates into full size.
+        // The acceleration is the point: a press should feel like it is being
+        // answered with increasing conviction, not like a value being
+        // interpolated.
+        { transform: "scale(1)", easing: "ease-in" },
+        // SHRINK — leaves the peak at the speed the grow arrived with, then
+        // decelerates to rest. Pairing ease-in up with ease-out down keeps the
+        // SPEED continuous through the apex; two ease-ins back to back would
+        // slam to a halt at full size and read as a bump.
+        //
+        // Exactly the MIDPOINT, so growing and shrinking still take the same
+        // wall time.
+        { transform: `scale(${PRESS_SCALE})`, offset: 0.5, easing: "ease-out" },
         { transform: "scale(1)" },
       ],
-      // ease-in-out both ways: the swell and the settle should feel like one
-      // motion. Easing only on the way out makes the return look like a snap.
-      { duration: PRESS_MS, easing: "ease-in-out" },
+      // LINEAR overall. The per-keyframe curves above do all the shaping; an
+      // easing here would warp PROGRESS as well, which moves the `offset: 0.5`
+      // keyframe off the midpoint in wall time and quietly breaks the equal
+      // halves.
+      { duration: PRESS_MS, easing: "linear" },
     );
   }
   // No cleanup: a Web Animations keyframe effect with no `fill` leaves the
