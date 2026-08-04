@@ -552,6 +552,62 @@ describe("collectAffectedCollectionIds", () => {
   });
 });
 
+describe("duplicate collection-reference demotion", () => {
+  // The shape that matters is the REAL one: a collection clip's stored id
+  // equals its childTimelineId (both `create_collection` and the graph
+  // write-back mint them that way). Demoting to `clip.id` therefore reproduced
+  // the very id that collided, buildGraph returned `duplicate-id`, and because
+  // every write builds the graph first, the whole project became unwritable.
+  const SAME = "timeline-run";
+  const DOUBLED: TimelineDocument = {
+    id: "scene",
+    title: "Scene",
+    clips: packTimelineClips([
+      collectionClip(SAME, SAME, "Result"),
+      collectionClip(SAME, SAME, "Result"),
+    ]),
+  };
+
+  it("builds a graph when one document references the same child twice", () => {
+    const built = buildFocusedGraph({ scene: DOUBLED }, "scene", 2);
+
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(getChildren(built.value.graph, parseNodeId("scene"))).toHaveLength(2);
+  });
+
+  it("gives the demoted reference an id that is not already taken", () => {
+    const payload = buildHydrationSpecs({ scene: DOUBLED }, "scene", 0);
+    if (!payload.ok) throw new Error(payload.error);
+
+    expect(payload.value.specs.map((spec) => spec.id)).toEqual([
+      SAME,
+      `dup:scene:${SAME}`,
+    ]);
+    expect(payload.value.details[`dup:scene:${SAME}`]).toMatchObject({
+      duplicateOfTimelineId: SAME,
+      sourceClipId: SAME,
+    });
+  });
+
+  it("round-trips both references back to their stored id and child pointer", () => {
+    const built = buildFocusedGraph({ scene: DOUBLED }, "scene", 2);
+    if (!built.ok) throw new Error(built.error);
+
+    const clips = graphChildrenToClips(
+      built.value.graph,
+      built.value.details,
+      parseNodeId("scene"),
+    );
+
+    // A demoted node must not leak its synthetic id into storage.
+    expect(clips.map((clip) => clip.id)).toEqual([SAME, SAME]);
+    expect(
+      clips.map((clip) => (clip.kind === "collection" ? clip.childTimelineId : null)),
+    ).toEqual([SAME, SAME]);
+  });
+});
+
 describe("duplicate media-id demotion", () => {
   it("demotes a media id already used in the live graph, preserving the stored id", () => {
     // "c-img" already exists elsewhere in the graph (legacy stable per-asset

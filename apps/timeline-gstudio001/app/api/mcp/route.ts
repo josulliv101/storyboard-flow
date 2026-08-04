@@ -254,12 +254,16 @@ const handler = createMcpHandler(
 
     server.tool(
       "remove_clip",
-      "Move a clip to the trash. This is recoverable — nothing is hard-deleted, so the clip can be restored from the bin." +
+      "Move a clip OR a collection to the trash. This is recoverable — nothing is hard-deleted, so it can be restored from the bin." +
         NO_LIVE_PUSH_NOTE,
       {
-        timelineId: z.string().min(1).describe("The timeline document that contains the clip."),
-        nodeId: z.string().min(1).describe("The clip to remove."),
-        trashId: z.string().min(1).describe("The trash collection's id, from read_timeline."),
+        timelineId: z.string().min(1).describe("The timeline document that contains the item."),
+        nodeId: z.string().min(1).describe("The clip or collection to remove."),
+        trashId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Rarely needed — defaults to your own bin, which is where removals go."),
       },
       async (args, extra) => {
         const uid = uidFrom(extra);
