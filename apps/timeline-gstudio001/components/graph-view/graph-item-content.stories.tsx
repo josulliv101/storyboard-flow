@@ -629,9 +629,13 @@ export const DisabledCollection: Story = {
     await expect(metadata.textContent).toContain("A timeline");
     await expect(metadata.textContent).toContain("8.0s");
     await expect(metadata.textContent).toContain("2 items");
-    // The drill control's glyph is a CHEVRON now (PL13-004), at lucide's own
-    // stroke weight — it was CornerRightDown at 1.5 while it was a large
-    // circle on the artwork.
+    // The drill control's glyph is LAYERS, at lucide's own stroke weight.
+    // It has been three things: CornerRightDown at 1.5 while it was a large
+    // circle on the artwork, then a chevron (PL13-004), now layers — a chevron
+    // said "enter" but nothing about WHAT it opens. The assertion is on stroke
+    // WEIGHT rather than the icon because that is the part that regressed: a
+    // hand-set 1.5, left over from the large-circle era, looked thin once the
+    // glyph shrank.
     const drillGlyph = canvasElement.querySelector<SVGElement>(
       'button[aria-label="Open A timeline"] svg',
     )!;

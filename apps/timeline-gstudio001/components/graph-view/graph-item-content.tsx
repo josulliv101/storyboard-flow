@@ -12,7 +12,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Check, ChevronRight, CornerRightDown } from "lucide-react";
+import { Check, CornerRightDown, Layers } from "lucide-react";
 
 import {
   CollectionItem,
@@ -512,9 +512,15 @@ function CollectionLeaderPlaceholder() {
  * selected clip the checkmark and the `⋮` landed flush against the amber
  * handles with no gap at all, reading as one crowded cluster.
  *
- * 16px clears the handle by its own width again. Applied on CLIPS only:
+ * 20px clears the handle by its own width again. Applied on CLIPS only:
  * collections have no handles, and shifting their controls to match would move
  * them for a constraint they do not have.
+ *
+ * THIS TRACKS THE CONTROL SIZE. It was 16px while the controls were 24px; they
+ * grew to 28px and the measured gap fell from 8px to 4px, which the e2e
+ * clearance test caught. Anything that changes `CARD_CONTROL_CLASS`'s size has
+ * to move this with it — the two numbers are not independent, and nothing but
+ * that test connects them.
  *
  * Both controls only exist on a SELECTED card, and a selected clip always shows
  * its right handle — so there is no state where this inset is reserved against
@@ -524,8 +530,8 @@ function CollectionLeaderPlaceholder() {
  * interpolated `left-${n}` is a class that never gets generated — the control
  * would silently fall back to `left: auto` and sit in the wrong place.
  */
-const TRIM_CLEARANCE_LEFT = "left-4";
-const TRIM_CLEARANCE_RIGHT = "right-4";
+const TRIM_CLEARANCE_LEFT = "left-5";
+const TRIM_CLEARANCE_RIGHT = "right-5";
 
 function CardSelectedBadge({ clearsTrimHandles = false }: Readonly<{ clearsTrimHandles?: boolean }>) {
   return (
@@ -533,12 +539,17 @@ function CardSelectedBadge({ clearsTrimHandles = false }: Readonly<{ clearsTrimH
       data-card-selected-badge
       aria-hidden="true"
       className={[
-        "pointer-events-none absolute top-2 z-20 flex size-5 items-center justify-center",
+        "pointer-events-none absolute top-2 z-20 flex size-7 items-center justify-center",
         "rounded bg-amber-300 text-zinc-950 shadow-sm shadow-black/50",
         clearsTrimHandles ? TRIM_CLEARANCE_LEFT : "left-2",
       ].join(" ")}
     >
-      <Check className="size-3.5" strokeWidth={3} />
+      {/* size-5, matching the drill and overflow glyphs. The three controls in
+          this cluster read as one family, so a glyph a size apart is the odd
+          one out even from the opposite corner. strokeWidth 3 stays: a check on
+          a filled amber chip needs more weight than an outline glyph on dark
+          artwork to carry the same. */}
+      <Check className="size-5" strokeWidth={3} />
     </span>
   );
 }
@@ -550,7 +561,7 @@ function CardSelectedBadge({ clearsTrimHandles = false }: Readonly<{ clearsTrimH
  *  sidebar's FolderTree toggles whether the children tree is SHOWN, a
  *  different verb that deliberately does not share this icon. */
 /**
- * The look every CARD-LEVEL control shares: a 24px square on the card's right
+ * The look every CARD-LEVEL control shares: a 28px square on the card's right
  * edge, dark enough to sit on artwork, always visible.
  *
  * Shared so a card reads as having ONE kind of control rather than a collection
@@ -572,7 +583,7 @@ function CardSelectedBadge({ clearsTrimHandles = false }: Readonly<{ clearsTrimH
  *   "selected" about a thing you are merely pointing at.
  */
 const CARD_CONTROL_CLASS = [
-  "z-20 flex size-6 shrink-0 items-center justify-center rounded",
+  "z-20 flex size-7 shrink-0 items-center justify-center rounded",
   "bg-zinc-950/80 text-zinc-300 shadow-sm shadow-black/40 backdrop-blur-[1px]",
   "cursor-pointer transition-colors hover:bg-zinc-800 hover:text-zinc-50",
 ].join(" ");
@@ -1192,13 +1203,21 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
             ].join(" ")}
           >
-            {/* ONE glyph. It briefly carried CornerRightDown as well, on the
-                reasoning that the badge had to say "container" and "way in" at
-                once — but that name lies: `CollectionDrillGlyph` draws
-                CornerRightDown, so the pair was two direction arrows saying the
-                same thing twice. A chevron alone reads as "enter"; what says
-                CONTAINER is the card. */}
-            <ChevronRight className="size-4" aria-hidden="true" />
+            {/* LAYERS, not a direction arrow.
+                This was a chevron, on the reasoning that the card itself says
+                "container" so the badge only had to say "enter". True as far as
+                it went, but it left the control saying nothing about WHAT it
+                opens — and a chevron is the most generic glyph in the set,
+                doing disclosure duty everywhere else in the UI. Layers names
+                the thing: a stack of timelines, which is what a collection is.
+                Still ONE glyph. An earlier version paired the arrow with
+                CornerRightDown and ended up with two direction marks saying the
+                same thing twice; pairing layers with an arrow would repeat that
+                in a new costume.
+                No `strokeWidth` — lucide's default of 2 is deliberate and a
+                story asserts it (the old CornerRightDown ran at 1.5 only
+                because it was drawn much larger). */}
+            <Layers className="size-5" aria-hidden="true" />
           </button>
         }
       />
