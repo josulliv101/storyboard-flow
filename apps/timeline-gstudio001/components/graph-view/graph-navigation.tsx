@@ -22,6 +22,7 @@ import type { ClipDetail } from "@storyboard/timeline-domain";
 import type { GraphDetailsStore } from "@/lib/graph-details-store";
 
 import { useGraphDetailsStore } from "./graph-details-context";
+import { pressFeedbackHostFor, spawnPressFeedback } from "./press-feedback";
 
 type GraphViewNav = Readonly<{
   /**
@@ -388,8 +389,39 @@ export function OpenKeyBoundary({
     nav?.openTimeline(nodeId);
   };
 
+  /**
+   * Acknowledge the press IMMEDIATELY, whatever the click turns out to mean.
+   *
+   * A collection's selection is deliberately held for the double-click window
+   * so a drill-in never paints a selection first — which leaves a stretch where
+   * the click has landed and nothing has changed, and that reads as a missed
+   * click. The ripple covers it: it starts on POINTERDOWN, before the gesture
+   * is resolved, so the feedback cannot be late by construction.
+   *
+   * ONE listener here rather than per card, and this is not just economy: the
+   * collection card's root is `CollectionItem.SelectionSurface`, a package
+   * primitive with an explicit prop list and no rest spread, so there is no
+   * per-card seam to hang a handler on for collections at all. Delegating from
+   * above covers every card shape identically.
+   *
+   * Never stops propagation — the press still has to reach the drag sensor
+   * underneath.
+   */
+  const acknowledgePress = (event: React.PointerEvent<HTMLDivElement>) => {
+    // Secondary buttons open menus rather than acting on the card.
+    if (event.button !== 0) return;
+    if (store.getSnapshot().interaction.isDragging) return;
+    const host = pressFeedbackHostFor(event.target);
+    if (host) spawnPressFeedback(host);
+  };
+
   return (
-    <div style={{ display: "contents" }} onKeyDown={handleKeyDown} onDoubleClick={openFromDoubleClick}>
+    <div
+      style={{ display: "contents" }}
+      onKeyDown={handleKeyDown}
+      onPointerDown={acknowledgePress}
+      onDoubleClick={openFromDoubleClick}
+    >
       {children}
     </div>
   );
