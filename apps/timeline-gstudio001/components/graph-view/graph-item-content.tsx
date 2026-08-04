@@ -505,16 +505,20 @@ function CollectionLeaderPlaceholder() {
  * off the other's line is exactly what stops them reading as a pair.
  */
 /**
- * How far the corner controls sit in on a card that carries TRIM HANDLES.
+ * How far a card's corner controls sit in from its edge. ONE value, every card
+ * kind.
  *
- * A handle's hit zone is 8px (`w-2`, pinned to `left-0`/`right-0` in the
- * package's TrimHandles), and the ordinary corner inset is also 8px — so on a
- * selected clip the checkmark and the `⋮` landed flush against the amber
- * handles with no gap at all, reading as one crowded cluster.
+ * It is 20px because of TRIM HANDLES: a handle's hit zone is 8px (`w-2`, pinned
+ * to `left-0`/`right-0` in the package's TrimHandles), and at the old 8px inset
+ * the checkmark and the `⋮` landed flush against the amber handles, reading as
+ * one crowded cluster. 20px clears a handle by its own width again.
  *
- * 20px clears the handle by its own width again. Applied on CLIPS only:
- * collections have no handles, and shifting their controls to match would move
- * them for a constraint they do not have.
+ * APPLIED EVERYWHERE, INCLUDING COLLECTIONS, which have no handles. That looks
+ * like padding a card for a constraint it does not have — and it was, until the
+ * two kinds were seen side by side. Collections sat at 8px and clips at 20px, so
+ * the check and the drill control visibly JUMPED as the eye moved between card
+ * kinds in the same grid. A shared inset with one card kind's reason behind it
+ * beats two correct-in-isolation values that disagree on screen.
  *
  * THIS TRACKS THE CONTROL SIZE. It was 16px while the controls were 24px; they
  * grew to 28px and the measured gap fell from 8px to 4px, which the e2e
@@ -522,24 +526,27 @@ function CollectionLeaderPlaceholder() {
  * to move this with it — the two numbers are not independent, and nothing but
  * that test connects them.
  *
- * Both controls only exist on a SELECTED card, and a selected clip always shows
- * its right handle — so there is no state where this inset is reserved against
- * a handle that never arrives.
- *
  * Written as WHOLE literal class names. Tailwind's JIT scans source text, so an
  * interpolated `left-${n}` is a class that never gets generated — the control
  * would silently fall back to `left: auto` and sit in the wrong place.
  */
-const TRIM_CLEARANCE_LEFT = "left-5";
-const TRIM_CLEARANCE_RIGHT = "right-5";
+/** Left/right inset, shared by every card kind. */
+export const CARD_CONTROL_INSET_LEFT = "left-5";
+export const CARD_CONTROL_INSET_RIGHT = "right-5";
+/** Top inset, `top-3` (12px) rather than the `top-2` these started at: at
+ *  8px the controls sat tight under the card's edge once they grew to 28px.
+ *  The badge and the corner slot are TOP-ALIGNED and must move together, so
+ *  `CardCornerSlot` in graph-anchor-menu carries the literal twin of this —
+ *  it cannot import from here without a cycle. */
+export const CARD_CONTROL_INSET_TOP = "top-3";
 
-function CardSelectedBadge({ clearsTrimHandles = false }: Readonly<{ clearsTrimHandles?: boolean }>) {
+function CardSelectedBadge() {
   return (
     <span
       data-card-selected-badge
       aria-hidden="true"
       className={[
-        "pointer-events-none absolute top-2 z-20 flex items-center justify-center",
+        "pointer-events-none absolute top-3 z-20 flex items-center justify-center",
         // NO CHIP, deliberately — this is a STATUS MARK, not a control.
         //
         // It has been three things, and the middle one is the instructive
@@ -571,7 +578,7 @@ function CardSelectedBadge({ clearsTrimHandles = false }: Readonly<{ clearsTrimH
         // enough against a lit sky. A single heavier blur is not the fix either
         // — it reads as a smudge under the mark rather than an edge around it.
         "[filter:drop-shadow(0_0_1.5px_rgb(9_9_11))_drop-shadow(0_0_1.5px_rgb(9_9_11))_drop-shadow(0_0_1.5px_rgb(9_9_11))_drop-shadow(0_0_3px_rgb(0_0_0/0.85))]",
-        clearsTrimHandles ? TRIM_CLEARANCE_LEFT : "left-2",
+        CARD_CONTROL_INSET_LEFT,
       ].join(" ")}
     >
       {/* size-6 and a heavy stroke, where the CONTROLS use size-5 at lucide's
@@ -1375,7 +1382,7 @@ const GraphMediaItem = memo(function GraphMediaItem({
       <NodeCard {...props} className="h-full w-full" />
       {/* The anchor keeps its badge too (R5.3) — see the collection card. It
           clears the trim handles, which a selected clip always carries. */}
-      {mediaSelected && <CardSelectedBadge clearsTrimHandles />}
+      {mediaSelected && <CardSelectedBadge />}
       {/* A clip has no chevron to morph, so the `⋮` simply fades in (R5.6).
           No chevron is added here for symmetry. */}
       <ClipCornerSlot nodeId={props.id} width={size.width} />

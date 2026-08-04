@@ -265,7 +265,14 @@ export function CardCornerSlot({
   return (
     <span
       // NOT `overflow-hidden` — the count badge overhangs this box (R6.10).
-      className={cn("absolute right-2 top-2 z-20 flex items-center gap-1.5", className)}
+      //
+      // `right-5` (20px) is the shared card-control inset — see
+      // CARD_CONTROL_INSET_RIGHT in graph-item-content, which puts the check
+      // badge at the matching distance on the opposite corner. It exists for
+      // trim handles, which only CLIPS have, but every card kind uses it: at
+      // 8px on collections and 20px on clips the controls visibly jumped
+      // between card kinds in the same grid.
+      className={cn("absolute right-5 top-3 z-20 flex items-center gap-1.5", className)}
     >
       <span className="relative grid size-6 place-items-center">
         {chevron === undefined ? null : (
@@ -306,14 +313,11 @@ export function ClipCornerSlot({
   // 0 is "not measured yet", not "too narrow" — rendering nothing until the
   // first ResizeObserver callback would flash the control in on every mount.
   if (width > 0 && width < MIN_ANCHOR_CONTROL_WIDTH) return null;
-  // `right-4` rather than the collection card's `right-2`: a selected clip
-  // carries an 8px trim-handle hit zone pinned to its right edge, and the
-  // default inset put the `⋮` flush against the amber handle. Collections have
-  // no handles and keep the tighter inset. See TRIM_CLEARANCE in
-  // graph-item-content.
-  // TRACKS THE CONTROL SIZE. This was `right-4` while the controls were 24px;
-  // at 28px the measured gap to the trim handle fell from 8px to 4px, which the
-  // e2e clearance test caught. Resizing CARD_CONTROL_CLASS means moving this and
-  // TRIM_CLEARANCE_LEFT with it — nothing but that test connects the three.
-  return <CardCornerSlot nodeId={nodeId} className="right-5" />;
+  // NO inset override any more. This used to widen the clip's inset past the
+  // collection card's, because only a clip carries the 8px trim-handle hit zone
+  // the control has to clear. That was correct per card kind and wrong on
+  // screen: the two sat side by side in one grid and the controls jumped
+  // between them. `CardCornerSlot` now carries the wider inset for everything,
+  // so this differs from a collection's slot only in the width guard above.
+  return <CardCornerSlot nodeId={nodeId} />;
 }
