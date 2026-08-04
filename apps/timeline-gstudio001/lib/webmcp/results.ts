@@ -35,6 +35,25 @@ export function describeDispatchRejection(error: DispatchRejection): string {
       return "That node id is empty or blank.";
     case "invalid-node":
       return "The node failed validation.";
+    case "not-media-node":
+      return `"${error.nodeId}" is a collection, not a clip — only clips can be trimmed.`;
+    case "invalid-node-name":
+      return `"${error.nodeId}" was given a blank name.`;
+    case "invalid-media-update":
+      return `The trim doesn't match "${error.nodeId}"'s media kind, or carries a non-finite value.`;
+    // The no-op family. These used to fall through to the default, which made an
+    // ordinary "nothing changed" indistinguishable from a real refusal — and
+    // cost real time chasing a reorder "bug" that was a duplicate-id problem
+    // elsewhere. A rejection the caller cannot act on is a bug in the message,
+    // not in the caller.
+    case "same-position":
+      return "Nothing changed — the item is already where you asked to put it.";
+    case "invalid-index":
+      return "That index is outside the target collection.";
+    case "nothing-to-move":
+      return "No movable items were given.";
+    case "nothing-to-add":
+      return "No items were given to add.";
     case "blocked-by-policy":
       return (
         error.message ??
