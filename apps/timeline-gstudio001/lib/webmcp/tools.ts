@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   getChildren,
   isVideoMedia,
@@ -11,6 +13,14 @@ import type { GraphViewStateDetail } from "@/lib/graph-view-events";
 
 import { resolveMovePlacement } from "./placement";
 import { describeDispatchRejection, toolError, toolOk } from "./results";
+import {
+  intoField,
+  jsonSchemaFor,
+  nameField,
+  nodeIdField,
+  placementFields,
+  trimFields,
+} from "./tool-fields";
 import { buildTimelineTree, type TimelineTree } from "./timeline-tree";
 import type { ToolDef } from "./types";
 
@@ -155,25 +165,17 @@ function moveClipTool(ctx: GraphToolContext): ToolDef {
     name: "move_clip",
     description:
       "Move or reorder a clip or collection. Give the node id and where it should land: into a collection (omit to reorder within its current parent) and one of before/after a sibling, or position start/end.",
-    inputSchema: {
-      type: "object",
-      required: ["nodeId"],
-      properties: {
-        nodeId: { type: "string" },
-        into: {
-          type: "string",
-          description: "Target collection id. Omit to reorder within the current parent.",
-        },
-        after: { type: "string", description: "Place immediately after this sibling id." },
-        before: { type: "string", description: "Place immediately before this sibling id." },
-        position: { type: "string", enum: ["start", "end"] },
-        select: {
-          type: "boolean",
-          description: "Select the moved node afterward so it's visible. Default true.",
-        },
-      },
-      additionalProperties: false,
-    },
+    // `select` is in-page only — the remote transport has no viewport to
+    // reveal anything in. Everything else comes from the shared fields.
+    inputSchema: jsonSchemaFor({
+      nodeId: nodeIdField,
+      into: intoField,
+      ...placementFields,
+      select: z
+        .boolean()
+        .optional()
+        .describe("Select the moved node afterward so it's visible. Default true."),
+    }),
     execute: (args) => {
       const nodeIdStr = readString(args, "nodeId");
       if (!nodeIdStr) return toolError("move_clip requires a nodeId.");
@@ -232,17 +234,7 @@ function trimClipTool(ctx: GraphToolContext): ToolDef {
     name: "trim_clip",
     description:
       "Set a media clip's trim or duration. Video: trimInSeconds / trimOutSeconds (omitted ones keep their current value). Image: durationSeconds.",
-    inputSchema: {
-      type: "object",
-      required: ["nodeId"],
-      properties: {
-        nodeId: { type: "string" },
-        trimInSeconds: { type: "number", minimum: 0, description: "Video only." },
-        trimOutSeconds: { type: "number", minimum: 0, description: "Video only." },
-        durationSeconds: { type: "number", exclusiveMinimum: 0, description: "Image only." },
-      },
-      additionalProperties: false,
-    },
+    inputSchema: jsonSchemaFor({ nodeId: nodeIdField, ...trimFields }),
     execute: (args) => {
       const nodeIdStr = readString(args, "nodeId");
       if (!nodeIdStr) return toolError("trim_clip requires a nodeId.");
@@ -315,15 +307,7 @@ function renameItemTool(ctx: GraphToolContext): ToolDef {
     name: "rename_item",
     description:
       "Rename a clip or collection. Renaming a collection also updates its child document's title.",
-    inputSchema: {
-      type: "object",
-      required: ["nodeId", "name"],
-      properties: {
-        nodeId: { type: "string" },
-        name: { type: "string", minLength: 1 },
-      },
-      additionalProperties: false,
-    },
+    inputSchema: jsonSchemaFor({ nodeId: nodeIdField, name: nameField }),
     execute: (args) => {
       const nodeIdStr = readString(args, "nodeId");
       if (!nodeIdStr) return toolError("rename_item requires a nodeId.");
@@ -346,12 +330,7 @@ function removeClipTool(ctx: GraphToolContext): ToolDef {
   return {
     name: "remove_clip",
     description: "Move a clip or collection to the trash. Recoverable — not a hard delete.",
-    inputSchema: {
-      type: "object",
-      required: ["nodeId"],
-      properties: { nodeId: { type: "string" } },
-      additionalProperties: false,
-    },
+    inputSchema: jsonSchemaFor({ nodeId: nodeIdField }),
     execute: (args) => {
       const nodeIdStr = readString(args, "nodeId");
       if (!nodeIdStr) return toolError("remove_clip requires a nodeId.");
