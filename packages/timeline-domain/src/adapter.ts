@@ -438,8 +438,10 @@ function hydratedCollectionPreviewItems(
   graph: CollectionsGraph,
   details: DetailsById,
   collectionId: NodeId,
+  stored: CollectionTimelineClip["previewItems"],
 ): CollectionTimelineClip["previewItems"] {
-  return [...hydratedCollectionPreviews(graph, collectionId as string, details)];
+  const live = hydratedCollectionPreviews(graph, collectionId as string, details);
+  return [...resolveCollectionPreviews(live, stored)];
 }
 
 /** A collection card's preview frame: exactly the fields the card paints. */
@@ -450,6 +452,17 @@ export type CollectionPreviewFrame = Readonly<{
   poster?: string;
   trimIn?: number;
   alt: string;
+}>;
+
+/** What the live walk found, plus whether it could see everywhere it looked. */
+export type CollectionPreviewsResult = Readonly<{
+  frames: readonly CollectionPreviewFrame[];
+  /**
+   * The walk descended into a collection with no children in the graph, so
+   * media under it could not be seen. Only meaningful when `frames` is empty —
+   * see `resolveCollectionPreviews`.
+   */
+  sawChildlessCollection: boolean;
 }>;
 
 /**
@@ -481,9 +494,10 @@ export function hydratedCollectionPreviews(
   graph: CollectionsGraph,
   collectionId: string,
   details?: DetailsById,
-): readonly CollectionPreviewFrame[] {
+): CollectionPreviewsResult {
   const media: CollectionPreviewFrame[] = [];
   const seen = new Set<string>([collectionId]);
+  let sawChildlessCollection = false;
   const collect = (id: NodeId): void => {
     for (const childId of getChildren(graph, id)) {
       const node = graph.nodesById.get(childId);
@@ -514,14 +528,59 @@ export function hydratedCollectionPreviews(
         const key = node.id as string;
         if (!seen.has(key)) {
           seen.add(key);
+          // No children in the graph means its document has not been loaded —
+          // or it is genuinely empty, and the two are indistinguishable from
+          // here. Either way this walk cannot see media under it. Recorded so
+          // an EMPTY result can be told apart from "looked and found nothing";
+          // `resolveCollectionPreviews` explains why conflating the two is safe.
+          if (getChildren(graph, childId).length === 0) sawChildlessCollection = true;
           collect(childId);
         }
       }
     }
   };
   collect(parseNodeId(collectionId));
-  if (media.length <= 3) return media;
-  return [media[0], media[Math.floor(media.length / 2)], media[media.length - 1]];
+  const frames =
+    media.length <= 3
+      ? media
+      : [media[0], media[Math.floor(media.length / 2)], media[media.length - 1]];
+  return { frames, sawChildlessCollection };
+}
+
+/**
+ * Live preview frames, or the stored summary when the live walk could not see
+ * far enough to produce them.
+ *
+ * The live walk is authoritative EXCEPT in one case: it returned nothing AND it
+ * ran into a collection with no children in the graph. `hydrated` means "my own
+ * children are loaded" — one level — but these frames come from leaf MEDIA,
+ * which for a collection of collections is two or more levels down. So a
+ * hydrated parent whose children are unhydrated collections walks, finds
+ * nothing, and knows strictly LESS than the summary the server already derived
+ * across the whole closure. Preferring the walk there blanked those cards.
+ *
+ * A childless collection might instead be genuinely empty, and the walk cannot
+ * tell. Conflating them is safe: a genuinely empty child contributes nothing to
+ * the server's summary either, so the stored frames agree with the live answer
+ * and the fallback returns the same thing.
+ *
+ * What must keep working — and does — is a collection whose own media were all
+ * deleted. No child collection is involved, so `sawChildlessCollection` stays
+ * false, the empty result stands, and the card goes blank as it should. That is
+ * the case a bare `frames.length === 0` check would have broken, resurrecting
+ * stale frames on a collection the user just emptied.
+ *
+ * A NON-EMPTY partial walk is deliberately left alone: it is preferred as it
+ * always has been, even though first/middle/last over a partially loaded tree
+ * can pick different frames than the complete set would. That predates this and
+ * is a separate concern from a card rendering blank.
+ */
+export function resolveCollectionPreviews(
+  live: CollectionPreviewsResult,
+  stored: readonly CollectionPreviewFrame[] | undefined,
+): readonly CollectionPreviewFrame[] {
+  if (live.frames.length > 0 || !live.sawChildlessCollection) return live.frames;
+  return stored ?? live.frames;
 }
 
 /**
@@ -608,7 +667,7 @@ export function graphChildrenToClips(
     // hydratedCollectionPreviewItems) — same stale-summary rule duration and
     // itemCount already follow; placeholders keep the stored summary.
     const previewItems = detail?.hydrated
-      ? hydratedCollectionPreviewItems(graph, details, node.id)
+      ? hydratedCollectionPreviewItems(graph, details, node.id, detail.previewItems)
       : detail?.previewItems;
     // The playable READOUT beside the layout duration above, derived live for
     // the same self-healing reason. Omitted when it equals the layout span, so

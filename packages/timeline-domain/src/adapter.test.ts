@@ -15,6 +15,7 @@ import {
   hydratedCollectionDuration,
   hydratedCollectionPlayableDuration,
   hydratedCollectionPreviews,
+  resolveCollectionPreviews,
 } from "./adapter";
 import {
   buildGraph,
@@ -880,7 +881,7 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     const focused = buildFocusedGraph(docs([image("k-a", 4), image("k-b", 5)]), "stale-root");
     if (!focused.ok) throw new Error(focused.error);
 
-    const previews = hydratedCollectionPreviews(focused.value.graph, "kid");
+    const previews = hydratedCollectionPreviews(focused.value.graph, "kid").frames;
     // The stored summary was a single "p1" frame; live children are k-a, k-b.
     expect(previews.map((p) => p.id)).toEqual(["k-a", "k-b"]);
     expect(previews[0]).toEqual({
@@ -899,7 +900,7 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     if (!focused.ok) throw new Error(focused.error);
 
     // first/middle/last of three children — the new front frame leads.
-    expect(hydratedCollectionPreviews(focused.value.graph, "kid").map((p) => p.id)).toEqual([
+    expect(hydratedCollectionPreviews(focused.value.graph, "kid").frames.map((p) => p.id)).toEqual([
       "k-new",
       "k-a",
       "k-b",
@@ -919,7 +920,7 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     );
     if (!focused.ok) throw new Error(focused.error);
 
-    const previews = hydratedCollectionPreviews(focused.value.graph, "kid");
+    const previews = hydratedCollectionPreviews(focused.value.graph, "kid").frames;
     // Five children → first, middle (the video), last.
     expect(previews.map((p) => p.id)).toEqual(["k-a", "k-vid", "k-e"]);
     // The video frame paints its poster, not the source url.
@@ -940,7 +941,7 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     if (!focused.ok) throw new Error(focused.error);
 
     // Empty: the card keeps its stored summary for a placeholder.
-    expect(hydratedCollectionPreviews(focused.value.graph, "kid")).toEqual([]);
+    expect(hydratedCollectionPreviews(focused.value.graph, "kid").frames).toEqual([]);
   });
 
   it("recurses into a hydrated sub-collection to surface its nested images", () => {
@@ -962,7 +963,7 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     // "kid" has NO direct media — only the "sub" collection. The walk descends
     // into sub and surfaces its images as kid's preview frames (the first
     // nested image, and beyond).
-    expect(hydratedCollectionPreviews(focused.value.graph, "kid").map((p) => p.id)).toEqual([
+    expect(hydratedCollectionPreviews(focused.value.graph, "kid").frames.map((p) => p.id)).toEqual([
       "s-a",
       "s-b",
     ]);
@@ -981,7 +982,7 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     const focused = buildFocusedGraph(documents, "kid");
     if (!focused.ok) throw new Error(focused.error);
 
-    expect(hydratedCollectionPreviews(focused.value.graph, "kid")).toEqual([]);
+    expect(hydratedCollectionPreviews(focused.value.graph, "kid").frames).toEqual([]);
   });
 
   it("skips unusable media and continues to the next nested preview", () => {
@@ -1017,13 +1018,152 @@ describe("hydratedCollectionPreviews (card frames)", () => {
     ]);
     if (!graphResult.ok) throw new Error(JSON.stringify(graphResult.error));
 
-    expect(hydratedCollectionPreviews(graphResult.value, "kid")).toEqual([
+    expect(hydratedCollectionPreviews(graphResult.value, "kid").frames).toEqual([
       {
         id: "usable",
         kind: "image",
         src: "https://example.com/usable.jpg",
         alt: "Usable",
       },
+    ]);
+  });
+});
+
+describe("previews when the walk cannot see the whole subtree (#290)", () => {
+  // The reported bug, in its exact shape. On the project board a top-level
+  // collection is HYDRATED — its own children are loaded — but those children
+  // are collections whose documents are NOT loaded. The live walk descends into
+  // them, finds no media, and returns nothing; preferring it over the stored
+  // summary blanked the card to a film-leader placeholder while the server had
+  // already derived the correct frames across the closure.
+  //
+  // `hydrated` means "MY children are loaded" — one level. Preview frames come
+  // from leaf media, which for a collection of collections is two or more.
+
+  /** A parent holding collection clips whose child documents are absent — the
+   *  board's boot state: focus + ONE level, grandchildren still placeholders. */
+  function unloadedGrandchildren(): Record<string, TimelineDocument> {
+    return {
+      scene: {
+        id: "scene",
+        title: "Scene one",
+        clips: packTimelineClips([
+          collectionClip("clip-run1", "run1", "Run 1"),
+          collectionClip("clip-run2", "run2", "Run 2"),
+        ]),
+      },
+      // run1 / run2 documents are deliberately ABSENT.
+    };
+  }
+
+  it("keeps the stored summary when a sub-collection is not loaded", () => {
+    const focused = buildFocusedGraph(unloadedGrandchildren(), "scene");
+    if (!focused.ok) throw new Error(focused.error);
+
+    const live = hydratedCollectionPreviews(focused.value.graph, "scene");
+    expect(live.frames).toEqual([]);
+    expect(live.sawChildlessCollection).toBe(true);
+
+    const stored = [
+      { id: "s1", kind: "image" as const, src: "https://example.com/s1.jpg", alt: "s1" },
+    ];
+    expect(resolveCollectionPreviews(live, stored)).toEqual(stored);
+  });
+
+  it("still goes blank when a collection's own media were all removed", () => {
+    // The case a bare `frames.length === 0` fallback would have broken:
+    // emptying a collection must clear its card, not resurrect stale frames.
+    const focused = buildFocusedGraph(
+      {
+        "stale-root": {
+          id: "stale-root",
+          title: "Stale root",
+          clips: [collectionClip("clip-kid", "kid", "Kid")],
+        },
+        kid: { id: "kid", title: "Kid", clips: [] },
+      },
+      "stale-root",
+    );
+    if (!focused.ok) throw new Error(focused.error);
+
+    const live = hydratedCollectionPreviews(focused.value.graph, "kid");
+    expect(live.frames).toEqual([]);
+    // No child COLLECTION was involved, so the empty result is authoritative.
+    expect(live.sawChildlessCollection).toBe(false);
+
+    const stored = [
+      { id: "old", kind: "image" as const, src: "https://example.com/old.jpg", alt: "old" },
+    ];
+    expect(resolveCollectionPreviews(live, stored)).toEqual([]);
+  });
+
+  it("prefers live frames once the sub-collections load", () => {
+    const focused = buildFocusedGraph(
+      {
+        scene: {
+          id: "scene",
+          title: "Scene one",
+          clips: packTimelineClips([collectionClip("clip-run1", "run1", "Run 1")]),
+        },
+        run1: { id: "run1", title: "Run 1", clips: packTimelineClips([image("r-a", 4)]) },
+      },
+      "scene",
+    );
+    if (!focused.ok) throw new Error(focused.error);
+
+    const live = hydratedCollectionPreviews(focused.value.graph, "scene");
+    expect(live.frames.map((p) => p.id)).toEqual(["r-a"]);
+    expect(live.sawChildlessCollection).toBe(false);
+
+    const stored = [
+      { id: "s1", kind: "image" as const, src: "https://example.com/s1.jpg", alt: "s1" },
+    ];
+    // Live wins — the whole point of deriving is that edits show up.
+    expect(resolveCollectionPreviews(live, stored)).toEqual(live.frames);
+  });
+
+  it("carries the stored frames through graphChildrenToClips, not a blank summary", () => {
+    // The write path matters as much as the card: projecting a blank summary
+    // would PERSIST the blank, turning a display bug into stored data loss.
+    //
+    // THREE levels, deliberately. The clip under test has to be a HYDRATED
+    // collection whose own children are unhydrated — that is the only shape
+    // that reaches the guard. A two-level fixture puts a PLACEHOLDER under the
+    // root, which takes the unhydrated branch and passes either way: it looked
+    // like a regression test and proved nothing.
+    const focused = buildFocusedGraph(
+      {
+        project: {
+          id: "project",
+          title: "Project",
+          clips: [collectionClip("clip-scene", "scene", "Scene one")],
+        },
+        scene: {
+          id: "scene",
+          title: "Scene one",
+          clips: packTimelineClips([
+            collectionClip("clip-run1", "run1", "Run 1"),
+            collectionClip("clip-run2", "run2", "Run 2"),
+          ]),
+        },
+        // run1 / run2 documents deliberately ABSENT.
+      },
+      "project",
+    );
+    if (!focused.ok) throw new Error(focused.error);
+    // Guard the fixture itself: if `scene` ever stops hydrating, this test
+    // silently stops testing anything.
+    expect(focused.value.details["scene"]?.hydrated).toBe(true);
+
+    const clips = graphChildrenToClips(
+      focused.value.graph,
+      focused.value.details,
+      parseNodeId("project"),
+    );
+    const scene = clips.find((clip) => clip.kind === "collection");
+    if (scene?.kind !== "collection") throw new Error("expected a collection clip");
+    expect(scene.previewItems).toEqual([
+      { id: "p1", kind: "image", src: "https://example.com/p1.jpg", alt: "p1" },
     ]);
   });
 });
