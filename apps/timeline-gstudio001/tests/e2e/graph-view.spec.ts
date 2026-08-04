@@ -6486,9 +6486,9 @@ test.describe("graph view E2E", () => {
       const anchor = anchorMenuButton(page).first();
       await expect(anchor).toBeVisible();
 
-      // The control is 24px so it matches the chevron it replaces, so it
+      // The control is 28px so it matches the drill control it replaces, so it
       // cannot BE 44px — the target comes from a padded `::after` layer
-      // instead (R6.3). Measuring the button's own box would report 24 and
+      // instead (R6.3). Measuring the button's own box would report 28 and
       // prove nothing; this measures the layer that actually receives the tap.
       const hit = await anchor.evaluate((el) => {
         const after = getComputedStyle(el, "::after");
