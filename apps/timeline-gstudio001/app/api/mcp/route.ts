@@ -5,14 +5,11 @@ import { z } from "zod";
 
 import { TIMELINE_APP_HTML } from "@storyboard/timeline-widget";
 
-import {
-  getFirebaseTimelineDocument,
-  listFirebaseTimelineProjects,
-} from "@/lib/firebase-timeline-store";
-import { describeTimelineForAgent } from "@/lib/mcp-timeline-summary";
+import { listFirebaseTimelineProjects } from "@/lib/firebase-timeline-store";
 import type { ToolResult } from "@/lib/webmcp/types";
 import { attachMedia, createUploadTicket } from "@/lib/mcp/upload";
 import { createCollection } from "@/lib/mcp/create-collection";
+import { handleReadTimeline } from "@/lib/mcp/read-timeline";
 import { ProjectAssetScopeError } from "@/lib/project-asset-scope";
 import {
   handleMoveClip,
@@ -23,7 +20,6 @@ import {
 } from "@/lib/mcp/write-handlers";
 import { MCP_SCOPE, getSigningSecret, verifyAccessToken } from "@/lib/oauth/core";
 import { mcpResourceUrl, originFromRequest } from "@/lib/oauth/metadata";
-import { TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
 // Remote MCP endpoint — the "give Claude a URL" surface, distinct from the
 // in-page WebMCP tools (see docs/webmcp-agent-tools.md). Those run in the
@@ -173,19 +169,7 @@ const handler = createMcpHandler(
         const uid = uidFrom(extra);
         if (!uid) return errorResult(NO_IDENTITY);
 
-        try {
-          const document = await getFirebaseTimelineDocument(timelineId, uid);
-          if (!document) return errorResult(`No timeline document with id "${timelineId}".`);
-
-          return jsonResult(describeTimelineForAgent(document), { timeline: document });
-        } catch (error) {
-          // Ownership is enforced in the store; surface a refusal rather than
-          // leaking whether the id exists under another account.
-          if (error instanceof TimelineAccessDeniedError) {
-            return errorResult(`Not authorized to read timeline "${timelineId}".`);
-          }
-          throw error;
-        }
+        return fromToolResult(await handleReadTimeline({ timelineId }, { requesterUid: uid }));
       },
     );
 
