@@ -539,17 +539,46 @@ function CardSelectedBadge({ clearsTrimHandles = false }: Readonly<{ clearsTrimH
       data-card-selected-badge
       aria-hidden="true"
       className={[
-        "pointer-events-none absolute top-2 z-20 flex size-7 items-center justify-center",
-        "rounded bg-amber-300 text-zinc-950 shadow-sm shadow-black/50",
+        "pointer-events-none absolute top-2 z-20 flex items-center justify-center",
+        // NO CHIP, deliberately — this is a STATUS MARK, not a control.
+        //
+        // It has been three things, and the middle one is the instructive
+        // failure. It began as a filled amber block, which at equal measured
+        // size read as larger than its two siblings (irradiation: a bright
+        // shape on a dark ground appears to expand past its own edges). The fix
+        // for that was to give it the same dark chip the drill and overflow
+        // controls wear — which cured the size illusion and immediately caused
+        // a worse problem: it then looked exactly like the two things beside it
+        // that ARE buttons, while being `pointer-events-none`. Matching the
+        // controls' surface is matching their AFFORDANCE, and the affordance is
+        // a lie here.
+        //
+        // A bare glyph carries no surface and so promises no press. The dark
+        // halo does the work the chip used to: it is what keeps amber legible
+        // over bright artwork, without drawing a pressable-looking box.
+        //
+        // Amber stays — it is the selection colour (PL13-006), and that meaning
+        // has to survive however the mark is drawn.
+        "text-amber-300",
+        // FOUR passes, and the mix is the point. Three tight ones stack into a
+        // dense hard edge — each pass darkens what the last left translucent,
+        // which is how a blur becomes an outline — and the fourth, wider and
+        // softer, drops the artwork immediately around the mark so amber still
+        // separates from a sunlit frame.
+        //
+        // Two tight passes was the first attempt and it vanished on bright
+        // thumbnails: enough to define the glyph against mid tones, nowhere near
+        // enough against a lit sky. A single heavier blur is not the fix either
+        // — it reads as a smudge under the mark rather than an edge around it.
+        "[filter:drop-shadow(0_0_1.5px_rgb(9_9_11))_drop-shadow(0_0_1.5px_rgb(9_9_11))_drop-shadow(0_0_1.5px_rgb(9_9_11))_drop-shadow(0_0_3px_rgb(0_0_0/0.85))]",
         clearsTrimHandles ? TRIM_CLEARANCE_LEFT : "left-2",
       ].join(" ")}
     >
-      {/* size-5, matching the drill and overflow glyphs. The three controls in
-          this cluster read as one family, so a glyph a size apart is the odd
-          one out even from the opposite corner. strokeWidth 3 stays: a check on
-          a filled amber chip needs more weight than an outline glyph on dark
-          artwork to carry the same. */}
-      <Check className="size-5" strokeWidth={3} />
+      {/* size-6 and a heavy stroke, where the CONTROLS use size-5 at lucide's
+          default. Deliberately not matched: those glyphs sit inside a 28px chip
+          that lends them presence, and this one has none, so an identical glyph
+          would read as the smaller, fainter mark of the three. */}
+      <Check className="size-6" strokeWidth={3} />
     </span>
   );
 }
