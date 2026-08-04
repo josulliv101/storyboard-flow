@@ -37,17 +37,15 @@ const PRESS_SCALE = 1.012;
 /**
  * Out and back, in equal halves.
  *
- * Deliberately unhurried. 340ms was the first value and read as a twitch —
- * the swell arrived and left before the eye settled on it. At 640 the motion
- * is slow enough to follow, which is what makes something this small (3.5%)
- * legible at all.
+ * Tuned by eye: 340ms read as a twitch (the swell arrived and left before the
+ * eye settled on it), 640 was slower than wanted, 400 is the settled value.
  *
  * It deliberately OUTLASTS the 250ms selection hold. The two are not sequential
  * steps to be kept apart: the scale acknowledges the press, the selection
  * answers what the press meant, and letting the first still be settling when
  * the second lands reads as one continuous response rather than two events.
  */
-const PRESS_MS = 640;
+const PRESS_MS = 400;
 
 /**
  * Acknowledge a press by letting the card's artwork swell very slightly.
