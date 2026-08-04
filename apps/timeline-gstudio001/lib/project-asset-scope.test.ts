@@ -10,7 +10,7 @@ vi.mock("./firebase-timeline-store", async () => {
   const { TimelineAccessDeniedError } =
     await vi.importActual<typeof import("./timeline-ownership")>("./timeline-ownership");
   return {
-    getFirebaseTimelineDocument: async (id: string) => {
+    readStoredTimelineDocument: async (id: string) => {
       if (state.denied) throw new TimelineAccessDeniedError(id);
       return state.result;
     },

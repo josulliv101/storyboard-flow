@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireAuthUser } from "@/lib/firebase-auth-session";
-import { getFirebaseTimelineEntry } from "@/lib/firebase-timeline-store";
+import { readStoredTimelineEntry } from "@/lib/firebase-timeline-store";
 import { TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
 export const runtime = "nodejs";
@@ -43,7 +43,7 @@ export async function GET(request: Request) {
   await Promise.all(
     ids.map(async (id) => {
       try {
-        const entry = await getFirebaseTimelineEntry(id, user.uid);
+        const entry = await readStoredTimelineEntry(id, user.uid);
         // A missing or refused document is simply OMITTED rather than reported
         // as absent — a poller has no business learning which ids exist under
         // another account, and the client only acts on numbers it recognises.

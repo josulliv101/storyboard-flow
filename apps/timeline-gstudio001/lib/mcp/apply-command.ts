@@ -221,7 +221,7 @@ export async function applyCollectionsCommand(
   requesterUid: string,
   options: ApplyCommandOptions = {},
 ): Promise<ApplyCommandOutcome> {
-  // The closure loader reads through `getFirebaseTimelineEntry`, which enforces
+  // The closure loader reads through `readStoredTimelineEntry`, which enforces
   // ownership, but it swallows the refusal (`.catch(() => null)`) and reports
   // the document as missing. That is the behaviour we want here too: a denied
   // id and an absent id are indistinguishable to the caller, so knowing an id

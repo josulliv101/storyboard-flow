@@ -13,7 +13,7 @@ import {
   TimelineClosureTooLargeError,
 } from "./load-timeline-closure";
 import {
-  getFirebaseTimelineEntry,
+  readStoredTimelineEntry,
   type TimelineEntry,
 } from "./firebase-timeline-store";
 import { healTimelineDocument } from "./heal-timeline-document";
@@ -50,7 +50,7 @@ export function createTimelineEntryReader(requesterUid: string): TimelineEntryRe
   return (id) => {
     const cached = inflight.get(id);
     if (cached) return cached;
-    const request = getFirebaseTimelineEntry(id, requesterUid);
+    const request = readStoredTimelineEntry(id, requesterUid);
     inflight.set(id, request);
     return request;
   };
@@ -63,7 +63,7 @@ export async function serveTimelineDocument(
   requesterUid: string,
   /** Share one across a request to avoid re-reading documents (see
    *  `createTimelineEntryReader`). Defaults to an un-shared direct read. */
-  read: TimelineEntryReader = (childId) => getFirebaseTimelineEntry(childId, requesterUid),
+  read: TimelineEntryReader = (childId) => readStoredTimelineEntry(childId, requesterUid),
 ): Promise<ServedTimeline | null> {
   const entry = await read(id);
   if (!entry) return null;
@@ -145,7 +145,7 @@ export async function serveTimelineDocument(
 export async function serveTrashDocument(
   id: string,
   requesterUid: string,
-  read: TimelineEntryReader = (trashId) => getFirebaseTimelineEntry(trashId, requesterUid),
+  read: TimelineEntryReader = (trashId) => readStoredTimelineEntry(trashId, requesterUid),
 ): Promise<ServedTimeline> {
   const entry = await read(id);
   return {
