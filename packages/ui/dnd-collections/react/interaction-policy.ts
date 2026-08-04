@@ -41,8 +41,66 @@ export type CollectionsInteractionPolicy = Readonly<{
   clickSelection: CollectionsClickSelection;
   onOpenNode?: (id: NodeId) => void;
   openOnClick?: (id: NodeId, node: CollectionItemNode) => boolean;
+  /**
+   * Nodes this returns true for do not select on click 1 — the selection is
+   * HELD for the double-click window and dropped if a second click arrives.
+   *
+   * For consumers where a double-click opens a node. The browser fires
+   * `click(detail 1)` → `click(detail 2)` → `dblclick`, so by the time a
+   * dblclick handler runs, click 1 has already selected AND PAINTED: the user
+   * sees the card select and then unselect on its way into the drill-in. No
+   * handler that runs at dblclick can fix that, because it is undoing
+   * something already on screen. Holding click 1 is the only point where the
+   * selection can be prevented rather than reversed.
+   *
+   * The cost is real and lands on the COMMON gesture: a plain click on one of
+   * these nodes selects `SELECTION_DEFER_MS` later. Return false for anything
+   * a double-click does not open — a media clip has no second meaning, so
+   * delaying it would buy nothing.
+   */
+  deferSelection?: (id: NodeId, node: CollectionItemNode) => boolean;
   trimRequiresSelection: boolean;
 }>;
+
+/**
+ * How long a deferred selection waits for a second click.
+ *
+ * A compromise, and worth knowing which way it errs. Windows' own double-click
+ * threshold defaults to 500ms; matching that would make every collection click
+ * feel broken. At 250ms a DELIBERATELY slow double-click can still let the
+ * selection land first — the card selects, then the drill-in clears it, which
+ * is the old flash. That path stays correct (the navigation handler clears the
+ * selection either way); it just is not invisible.
+ */
+export const SELECTION_DEFER_MS = 250;
+
+// Module-scoped because clicks are SERIAL: a pointer produces one click
+// sequence at a time, so there is never more than one selection in flight, and
+// keeping it here means both card shells share the same pending slot without
+// threading state through either of them.
+let pendingSelection: { timer: ReturnType<typeof setTimeout> } | null = null;
+
+/**
+ * Drop a held selection before it lands. Idempotent.
+ *
+ * Called on a second click (see `handleSelectionSurfaceClick`) and exported for
+ * the consumer's own drill-in paths — a keyboard open or a chevron click during
+ * the window should not be followed by a selection appearing behind it.
+ */
+export function cancelPendingSelection(): void {
+  if (pendingSelection === null) return;
+  clearTimeout(pendingSelection.timer);
+  pendingSelection = null;
+}
+
+function schedulePendingSelection(id: NodeId, apply: () => void): void {
+  cancelPendingSelection();
+  const timer = setTimeout(() => {
+    pendingSelection = null;
+    apply();
+  }, SELECTION_DEFER_MS);
+  pendingSelection = { timer };
+}
 
 const DEFAULT_POLICY: CollectionsInteractionPolicy = {
   clickSelection: "replace",
@@ -62,14 +120,16 @@ export function useCollectionsInteractionPolicyValue(props: {
   clickSelection?: CollectionsClickSelection;
   onOpenNode?: (id: NodeId) => void;
   openOnClick?: (id: NodeId, node: CollectionItemNode) => boolean;
+  deferSelection?: (id: NodeId, node: CollectionItemNode) => boolean;
   trimRequiresSelection?: boolean;
 }): CollectionsInteractionPolicy {
-  const { clickSelection, onOpenNode, openOnClick, trimRequiresSelection } = props;
+  const { clickSelection, onOpenNode, openOnClick, deferSelection, trimRequiresSelection } = props;
   return useMemo<CollectionsInteractionPolicy>(() => {
     if (
       clickSelection === undefined &&
       onOpenNode === undefined &&
       openOnClick === undefined &&
+      deferSelection === undefined &&
       trimRequiresSelection === undefined
     ) {
       return DEFAULT_POLICY;
@@ -78,9 +138,10 @@ export function useCollectionsInteractionPolicyValue(props: {
       clickSelection: clickSelection ?? "replace",
       onOpenNode,
       openOnClick,
+      deferSelection,
       trimRequiresSelection: trimRequiresSelection ?? false,
     };
-  }, [clickSelection, onOpenNode, openOnClick, trimRequiresSelection]);
+  }, [clickSelection, onOpenNode, openOnClick, deferSelection, trimRequiresSelection]);
 }
 
 /**
@@ -108,7 +169,14 @@ export function handleSelectionSurfaceClick(args: {
   // CLEARED it on click 2, so the user began renaming with nothing selected.
   // Keyboard activation (detail === 0) and a plain single click (detail === 1)
   // both fall through.
-  if (event.detail > 1) return;
+  //
+  // The cancel is what makes `deferSelection` work: this is the earliest point
+  // at which a second click is KNOWN, so it is where a pending selection from
+  // click 1 gets called off before it can paint.
+  if (event.detail > 1) {
+    cancelPendingSelection();
+    return;
+  }
 
   // Additive-tap MODE is the same branch as the modifier, deliberately: a
   // touchscreen has no Ctrl to hold, so the mode is how that gesture is
@@ -144,15 +212,26 @@ export function handleSelectionSurfaceClick(args: {
     return;
   }
 
-  if (policy.clickSelection === "toggle") {
-    const selected = store.getSnapshot().interaction.selectedIds;
-    if (selected.has(id) && selected.size === 1) {
-      store.clearSelection();
-    } else {
-      store.setSelection([id]);
+  // The plain-select branches, applied NOW or held for the double-click
+  // window — see `deferSelection`. Ctrl/Cmd and Shift above never defer: those
+  // are explicit multi-select gestures with no double-click meaning, and making
+  // the user wait for a modifier-click to land would be pure cost.
+  const apply = () => {
+    if (policy.clickSelection === "toggle") {
+      const selected = store.getSnapshot().interaction.selectedIds;
+      if (selected.has(id) && selected.size === 1) {
+        store.clearSelection();
+      } else {
+        store.setSelection([id]);
+      }
+      return;
     }
+    store.setSelection([id]);
+  };
+
+  if (policy.deferSelection?.(id, node) === true) {
+    schedulePendingSelection(id, apply);
     return;
   }
-
-  store.setSelection([id]);
+  apply();
 }

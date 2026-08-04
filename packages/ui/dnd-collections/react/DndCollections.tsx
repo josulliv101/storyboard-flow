@@ -127,6 +127,15 @@ export type DndCollectionsProps = Readonly<{
    *  set). Default: `node.kind === "collection"`. */
   openOnClick?: (id: NodeId, node: CollectionItemNode) => boolean;
   /**
+   * Hold these nodes' click-selection for the double-click window, for
+   * consumers where a DOUBLE-click opens a node. Without it the card visibly
+   * selects and then unselects on its way into the drill-in — click 1 paints
+   * before any dblclick handler can run. Costs a short delay on the single
+   * click, so return false for anything a double-click does not open.
+   * See `SELECTION_DEFER_MS`.
+   */
+  deferSelection?: (id: NodeId, node: CollectionItemNode) => boolean;
+  /**
    * Render media trim handles only on SELECTED cards, default `false`.
    * Unselected card edges become plain card body (press = drag/click), and
    * content's `trimEnabled` follows, so duration readouts gate with the
@@ -285,6 +294,7 @@ export function DndCollections({
   clickSelection,
   onOpenNode,
   openOnClick,
+  deferSelection,
   trimRequiresSelection,
   commandPolicy,
   mapDropCommand,
@@ -300,6 +310,7 @@ export function DndCollections({
     clickSelection,
     onOpenNode,
     openOnClick,
+    deferSelection,
     trimRequiresSelection,
   });
   // Live trim values ride a ref-backed emitter (never the store): only

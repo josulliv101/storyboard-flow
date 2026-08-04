@@ -612,6 +612,25 @@ export function GraphTimelineView({
       detailsStore.get(nodeId as string)?.duplicateOfTimelineId !== undefined,
     [detailsStore],
   );
+  // Hold a COLLECTION's click-selection for the double-click window, because
+  // double-click is how a collection drills in.
+  //
+  // Without this the user watches the card select and then unselect on its way
+  // into the drill-in: click 1 selects and paints, and the dblclick handler is
+  // only reached after that, so it can undo the selection but not un-show it.
+  // Deferring is the only point at which it can be prevented rather than
+  // reversed.
+  //
+  // Collections only. Media clips have no second meaning for a double-click,
+  // so delaying their selection would be cost with nothing bought. Duplicate
+  // references are excluded too — `openOnClick` already opens those on a
+  // SINGLE click, so there is no second click to wait for.
+  const deferSelection = useCallback(
+    (nodeId: NodeId, node: CollectionItemNode) =>
+      node.kind === "collection" &&
+      detailsStore.get(nodeId as string)?.duplicateOfTimelineId === undefined,
+    [detailsStore],
+  );
 
   if (boot.status === "loading") {
     return <GraphViewLoadingSkeleton />;
@@ -679,6 +698,7 @@ export function GraphTimelineView({
         dragGhostHeight={40}
         onOpenNode={handleOpenNode}
         openOnClick={openOnClick}
+        deferSelection={deferSelection}
         commandPolicy={commandPolicy}
         mapDropCommand={handleMapDropCommand}
         itemInstructions="Press O to open the focused collection, or F2 to rename it."

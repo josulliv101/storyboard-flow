@@ -366,21 +366,20 @@ export function OpenKeyBoundary({
       node?.kind === "collection" || detailsStore.get(id)?.duplicateOfTimelineId !== undefined;
     if (!opensTimeline) return;
     event.preventDefault();
-    // Take back the selection the FIRST click made.
+    // BACKSTOP, not the mechanism.
     //
-    // A double-click is three handlers deep and each one is behaving as
-    // designed: click 1 selects (interaction-policy's `clickSelection`), click
-    // 2 is skipped by that file's `detail > 1` guard — load-bearing, it is what
-    // stops a rename-in-place gesture starting with nothing selected — and then
-    // this fires. Nobody undid click 1, so the user landed INSIDE a collection
-    // with that collection still selected: the header read "1 selected", no
-    // card on screen was selected, and the header's promoted Delete was armed
-    // against the container they were looking at.
+    // Click 1 on a collection no longer selects immediately — the provider's
+    // `deferSelection` holds it for the double-click window and the second
+    // click drops it, so an ordinary double-click never paints a selection at
+    // all. That is what makes the drill-in look clean; doing it here could
+    // only ever undo a selection the user had already seen.
     //
-    // The chevron route never had this: it lives inside
-    // `[data-collections-keyboard-ignore]`, so the selection surface does not
-    // select on it in the first place. This is double-click's equivalent, and
-    // it makes both ways in agree — you are inside it, nothing is selected.
+    // This still runs because the hold has a deadline (`SELECTION_DEFER_MS`).
+    // A deliberately slow double-click outlasts it, the selection lands, and
+    // without this the user would end up INSIDE the collection with that
+    // collection still selected: header reading "1 selected", no selected card
+    // on screen, and the header's promoted Delete armed against the container
+    // they are looking at.
     //
     // Clearing outright rather than restoring the prior selection is correct:
     // an unmodified click 1 has ALREADY collapsed any multi-selection to this
