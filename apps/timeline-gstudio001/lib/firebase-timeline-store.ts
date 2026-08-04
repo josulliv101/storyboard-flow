@@ -40,6 +40,19 @@ export type TimelineBatchWrite = {
   /** Omit for last-write-wins (legacy semantics). When present, the write
    *  only applies if the stored revision still matches. */
   expectedRevision?: number;
+  /**
+   * This write MEANS to leave the document with no clips.
+   *
+   * Per-write rather than per-batch: a removal empties the collection the item
+   * came out of while the collection it went into gains one, and only the first
+   * is a deliberate empty. The blanket guard stays the default for everything
+   * else — an unexpected empty is still a stale client about to erase real work.
+   *
+   * Without this, removing the LAST item from a collection was impossible from
+   * the agent tools, which matters because a per-shot lane holds exactly one
+   * clip, so any correction to one hit the guard.
+   */
+  allowEmptying?: boolean;
 };
 
 export type TimelineRevisionConflict = {
@@ -564,6 +577,7 @@ export async function saveFirebaseTimelineDocumentsAtomic(
           ? toTimelineDocument(snapshot.id, existingData)
           : null;
         if (
+          !writes[index].allowEmptying &&
           existingDocument &&
           existingDocument.clips.length > 0 &&
           normalizedDocument.clips.length === 0
@@ -582,6 +596,12 @@ export async function saveFirebaseTimelineDocumentsAtomic(
             existingData,
             requesterUid,
             actualRevision + 1,
+            // Carries through to `lastNonEmptyDocument`, which MUST be dropped
+            // for a deliberate empty: `toTimelineDocument` reads that snapshot
+            // back whenever a stored document has no clips, so leaving it would
+            // re-hydrate the very clips this write removed and the empty would
+            // never stick.
+            { allowEmptying: writes[index].allowEmptying },
           ),
         });
       }

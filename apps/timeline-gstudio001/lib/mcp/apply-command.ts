@@ -82,6 +82,17 @@ export type ApplyCommandOptions = Readonly<{
    * and loading it costs a second closure read.
    */
   includeTrash?: boolean;
+  /**
+   * This command is allowed to leave a collection with no clips.
+   *
+   * Only removals set it. The store otherwise refuses an empty write, because
+   * an unexpected empty is a stale client about to erase real work — but that
+   * blanket guard made it impossible to remove the LAST item from a collection,
+   * and a per-shot lane holds exactly one clip, so every correction hit it.
+   *
+   * Applied per-document, to the ones this command actually emptied.
+   */
+  allowEmptying?: boolean;
 }>;
 
 /**
@@ -328,6 +339,13 @@ export async function applyCollectionsCommand(
       // another tab, or a second agent call) bumps the revision and aborts the
       // WHOLE batch rather than letting half a change land.
       expectedRevision: revisions[id],
+      // Only a command that MEANS to remove may leave a collection empty, and
+      // only the documents this command actually emptied. A move empties its
+      // source and fills its target; marking every write in the batch would
+      // hand a blanket exemption to writes that never intended one.
+      ...(options.allowEmptying && document.clips.length === 0
+        ? { allowEmptying: true }
+        : {}),
     };
   });
 
