@@ -198,18 +198,23 @@ export function AnchorMenuButton({
             focusNodeWhenMounted(document.body, nodeId);
           }}
           className={cn(
-            "relative z-20 flex size-6 shrink-0 items-center justify-center rounded",
+            "relative z-20 flex size-7 shrink-0 items-center justify-center rounded",
             "bg-zinc-950/80 text-zinc-100 shadow-sm shadow-black/40 backdrop-blur-[1px]",
             "cursor-pointer transition-colors hover:bg-zinc-800 hover:text-white",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
             // 44px effective target on a coarse pointer (R6.3), from padding —
-            // the visual control stays 24px so it matches the chevron.
+            // the visual control stays 28px so it matches the drill control it
+            // replaces. Those two CROSS-FADE on the anchor card, so any size
+            // difference between them shows up as a jump at the swap: they have
+            // to be resized together, and this file hard-codes the look rather
+            // than importing CARD_CONTROL_CLASS, so changing that alone is not
+            // enough.
             "after:absolute after:left-1/2 after:top-1/2 after:-translate-x-1/2 after:-translate-y-1/2",
             "after:content-[''] [@media(pointer:coarse)]:after:h-11 [@media(pointer:coarse)]:after:w-11",
             className,
           )}
         >
-          <EllipsisVertical aria-hidden="true" className="size-4" />
+          <EllipsisVertical aria-hidden="true" className="size-5" />
           <AnchorCountBadge count={state.selectionCount} />
         </button>
       </DropdownMenuTrigger>
@@ -306,5 +311,9 @@ export function ClipCornerSlot({
   // default inset put the `⋮` flush against the amber handle. Collections have
   // no handles and keep the tighter inset. See TRIM_CLEARANCE in
   // graph-item-content.
-  return <CardCornerSlot nodeId={nodeId} className="right-4" />;
+  // TRACKS THE CONTROL SIZE. This was `right-4` while the controls were 24px;
+  // at 28px the measured gap to the trim handle fell from 8px to 4px, which the
+  // e2e clearance test caught. Resizing CARD_CONTROL_CLASS means moving this and
+  // TRIM_CLEARANCE_LEFT with it — nothing but that test connects the three.
+  return <CardCornerSlot nodeId={nodeId} className="right-5" />;
 }
