@@ -3271,6 +3271,44 @@ test.describe("graph view E2E", () => {
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
   });
 
+  test("double-clicking a collection drills in WITHOUT leaving it selected", async ({ page }) => {
+    // #295. Three handlers, each correct on its own, adding up to a wrong end
+    // state: click 1 selects the card, click 2 is skipped by
+    // interaction-policy's `detail > 1` guard (which exists so rename-in-place
+    // does not start with nothing selected), then dblclick navigates. Nobody
+    // undid click 1 — so the user landed INSIDE the collection with that
+    // collection still selected, no selected card anywhere on screen, and the
+    // header's promoted Delete armed against the container they were viewing.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).dblclick();
+    await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 5000 });
+
+    // Nothing selected, and no summary claiming otherwise. The count is the
+    // assertion that actually fails without the fix: the drilled-in view has
+    // no card for the parent, so a `[data-selected="true"]` check alone passes
+    // for the wrong reason.
+    await expect(page.locator("[data-selection-summary]")).toHaveCount(0);
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
+  });
+
+  test("the chevron and double-click agree on the state you land in", async ({ page }) => {
+    // The chevron never had this bug — it sits inside
+    // `[data-collections-keyboard-ignore]`, so the selection surface does not
+    // select on it at all. Pinning the two routes together so they cannot
+    // drift apart again.
+    await installGraphApi(page);
+    await openGraph(page);
+
+    await strip(page, PROJECT_ID)
+      .locator(`[data-node-wrapper="${CHILD_ID}"]`)
+      .getByRole("button", { name: /^Open / })
+      .click();
+    await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 5000 });
+    await expect(page.locator("[data-selection-summary]")).toHaveCount(0);
+  });
+
   test("duplicate media ids across documents demote instead of blanking the collection", async ({
     page,
   }) => {
