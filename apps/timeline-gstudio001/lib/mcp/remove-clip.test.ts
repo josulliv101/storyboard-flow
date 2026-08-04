@@ -69,8 +69,19 @@ vi.mock("firebase-admin/firestore", () => {
       return new Date(0);
     }
   }
-  return { Timestamp, FieldValue: { serverTimestamp: () => new Timestamp() } };
+  return {
+    Timestamp,
+    FieldValue: {
+      serverTimestamp: () => new Timestamp(),
+      // Emptying a collection deletes the `lastNonEmptyDocument` recovery
+      // snapshot — without that the next read re-hydrates the removed clips and
+      // the empty never sticks.
+      delete: () => "__DELETED__",
+    },
+  };
 });
+
+import { saveFirebaseTimelineDocumentsAtomic } from "@/lib/firebase-timeline-store";
 
 import { handleRemoveClip } from "./write-handlers";
 
@@ -183,19 +194,48 @@ describe("handleRemoveClip", () => {
     expect(storedClipIds(TRASH)).toEqual(["sub"]);
   });
 
-  it("refuses to remove the LAST item in a collection (known gap)", async () => {
-    // `saveFirebaseTimelineDocumentsAtomic` throws rather than write a document
-    // empty over a non-empty one, and unlike the single-document save it has no
-    // `allowEmptying` escape. So emptying a collection is impossible from ANY
-    // remote write tool, not just this one. Pinned so the limitation is visible
-    // and the day it is lifted this test fails loudly.
+  it("removes the LAST item in a collection", async () => {
+    // A per-shot lane holds exactly one clip, so this is the common case, not
+    // an edge one. The store's blanket empty-guard used to make it impossible.
     seed("root", [clip("only")]);
 
+    const result = await handleRemoveClip(
+      { timelineId: "root", nodeId: "only" },
+      { requesterUid: OWNER },
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(storedClipIds("root")).toEqual([]);
+    expect(storedClipIds(TRASH)).toEqual(["only"]);
+  });
+
+  it("drops the recovery snapshot so the empty actually sticks", async () => {
+    // `toTimelineDocument` reads `lastNonEmptyDocument` back whenever a stored
+    // document has no clips. Leaving it behind would re-hydrate the very clip
+    // this removal took out, and the collection would look full again on the
+    // next read — an empty that silently undoes itself.
+    seed("root", [clip("only")]);
+
+    await handleRemoveClip({ timelineId: "root", nodeId: "only" }, { requesterUid: OWNER });
+
+    const stored = state.docs.get("root") as { lastNonEmptyDocument?: unknown };
+    expect(stored.lastNonEmptyDocument).toBe("__DELETED__");
+  });
+
+  it("still refuses an empty write that nothing asked for", async () => {
+    // The exemption is per-write and only set by a removal. Everything else
+    // keeps the guard, because an unexpected empty is a stale client about to
+    // erase real work.
+    seed("root", [clip("a"), clip("b")]);
+
     await expect(
-      handleRemoveClip({ timelineId: "root", nodeId: "only" }, { requesterUid: OWNER }),
+      saveFirebaseTimelineDocumentsAtomic(
+        [{ document: { id: "root", title: "root", clips: [] }, expectedRevision: 1 }],
+        OWNER,
+      ),
     ).rejects.toThrow(/Refusing to save an empty timeline/);
 
-    expect(storedClipIds("root")).toEqual(["only"]);
+    expect(storedClipIds("root")).toEqual(["a", "b"]);
   });
 
   it("reports an unknown node without touching anything", async () => {

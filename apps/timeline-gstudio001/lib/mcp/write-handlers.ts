@@ -325,7 +325,10 @@ export async function handleRemoveClip(
       } as const;
     },
     ctx.requesterUid,
-    { includeTrash: true },
+    // A removal is the one command that legitimately empties a collection —
+    // taking the last clip out of a lane is the whole point of the call, not a
+    // stale client about to erase work.
+    { includeTrash: true, allowEmptying: true },
   );
 
   if (!outcome.ok) return reportFailure(outcome);
