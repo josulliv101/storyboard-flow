@@ -2,7 +2,7 @@ import "server-only";
 
 import type { TimelineDocument } from "@storyboard/timeline-model/types";
 
-import { getFirebaseTimelineEntry, type TimelineEntry } from "./firebase-timeline-store";
+import { readStoredTimelineEntry, type TimelineEntry } from "./firebase-timeline-store";
 
 // The nested document closure for a timeline: the root plus every document
 // reachable through collection clips, breadth-first with a visited set (a
@@ -117,7 +117,7 @@ export async function loadTimelineClosure(
   // rather than re-reading to rediscover the same absence. `undefined` means
   // the caller has no opinion.
   const read =
-    options?.read ?? ((childId: string) => getFirebaseTimelineEntry(childId, requesterUid));
+    options?.read ?? ((childId: string) => readStoredTimelineEntry(childId, requesterUid));
   const rootEntry =
     options?.rootEntry !== undefined
       ? options.rootEntry

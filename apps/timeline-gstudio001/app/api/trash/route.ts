@@ -4,7 +4,7 @@ import { readJsonObject } from "@/lib/read-json-body";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
 import {
   collectOwnedTimelineClips,
-  getFirebaseTimelineDocument,
+  readStoredTimelineDocument,
   saveFirebaseTimelineDocument,
 } from "@/lib/firebase-timeline-store";
 import {
@@ -41,7 +41,7 @@ export async function DELETE() {
     if (response || !user) return response || NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const trashId = `trash-${user.uid}`;
-    const trashDoc = await getFirebaseTimelineDocument(trashId, user.uid);
+    const trashDoc = await readStoredTimelineDocument(trashId, user.uid);
     const cleared = trashDoc?.clips.length ?? 0;
     if (!trashDoc || cleared === 0) return NextResponse.json({ success: true, cleared });
 
@@ -131,7 +131,7 @@ export async function POST(request: Request) {
     }
 
     const trashId = `trash-${user.uid}`;
-    const trashDoc = await getFirebaseTimelineDocument(trashId, user.uid);
+    const trashDoc = await readStoredTimelineDocument(trashId, user.uid);
     if (!trashDoc) return NextResponse.json({ success: true, discarded: 0 });
 
     // Drop ONE entry per requested id, not every clip sharing it: the bin can

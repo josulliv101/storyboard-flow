@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { compilePlaybackManifest } from "@storyboard/timeline-domain";
 import { deriveClosureSummaries } from "@/lib/derive-collection-summaries";
 import { requireAuthUser } from "@/lib/firebase-auth-session";
-import { getFirebaseTimelineEntry } from "@/lib/firebase-timeline-store";
+import { readStoredTimelineEntry } from "@/lib/firebase-timeline-store";
 import {
   loadTimelineClosure,
   TimelineClosureTooLargeError,
@@ -41,7 +41,7 @@ export async function GET(
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }
 
-    const entry = await getFirebaseTimelineEntry(id, user.uid);
+    const entry = await readStoredTimelineEntry(id, user.uid);
     if (!entry) {
       return NextResponse.json({ error: "Timeline was not found." }, { status: 404 });
     }

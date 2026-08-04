@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getFirebaseTimelineDocument } from "./firebase-timeline-store";
+import { readStoredTimelineDocument } from "./firebase-timeline-store";
 import { TimelineAccessDeniedError } from "./timeline-ownership";
 
 const PROJECT_ID_PATTERN = /^project-[a-zA-Z0-9_-]{1,160}$/;
@@ -30,7 +30,7 @@ export async function requireProjectAssetScope(
   }
 
   try {
-    const project = await getFirebaseTimelineDocument(value, uid);
+    const project = await readStoredTimelineDocument(value, uid);
     if (project === null) {
       throw new ProjectAssetScopeError(`Project "${value}" was not found.`, 404);
     }

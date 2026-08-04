@@ -378,7 +378,32 @@ export async function collectOwnedTimelineClips(
   }
 }
 
-export async function getFirebaseTimelineEntry(
+/**
+ * ONE stored record, EXACTLY as written — collection summaries and all.
+ *
+ * "Stored" is the load-bearing word, and the counterpart to `serveTimelineDocument`.
+ * A collection clip's `itemCount`, `previewItems` and `duration` are denormalized
+ * onto the PARENT, and writes are patch-scoped: editing a child never rewrites
+ * the parent that summarizes it. So those fields here are routinely, expectedly
+ * WRONG — often empty for a collection whose own children are collections,
+ * because nothing writes preview frames that far up the tree.
+ *
+ * **Raw is correct when the document is not being shown to anyone:**
+ *   - a write round-trip (read, mutate, write back) — deriving here would
+ *     PERSIST the summaries, which `derive-collection-summaries.ts` forbids
+ *   - an existence or ownership check that never looks at the content
+ *   - reading `revision` alone
+ *
+ * **Raw is WRONG for anything served to a reader** — a route response, an RSC
+ * payload, an agent tool result. Use `serveTimelineDocument`, which recomputes
+ * summaries bottom-up across the whole closure.
+ *
+ * That distinction used to live only in a comment, and the remote MCP
+ * `read_timeline` broke it: it returned this straight to an agent, which saw
+ * `previewItems: []` and a stale `itemCount` (#279). An eslint rule now keeps
+ * the legitimate callers to an explicit allowlist — see `eslint.config.mjs`.
+ */
+export async function readStoredTimelineEntry(
   id: string,
   requesterUid: string,
 ): Promise<TimelineEntry | null> {
@@ -400,8 +425,9 @@ export async function getFirebaseTimelineEntry(
   };
 }
 
-export async function getFirebaseTimelineDocument(id: string, requesterUid: string) {
-  const entry = await getFirebaseTimelineEntry(id, requesterUid);
+/** `readStoredTimelineEntry` without the revision — same caveats, read them there. */
+export async function readStoredTimelineDocument(id: string, requesterUid: string) {
+  const entry = await readStoredTimelineEntry(id, requesterUid);
   return entry?.document ?? null;
 }
 
