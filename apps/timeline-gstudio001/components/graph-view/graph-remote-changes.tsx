@@ -8,12 +8,14 @@ import {
   getChildren,
   parseNodeId,
   useCollectionsStore,
+  verifyPatchApplies,
   type CollectionItemNode,
   type NodeId,
 } from "@storyboard/ui/dnd-collections";
 
 import { graphDocumentsGateway } from "@/lib/graph-documents-gateway";
 
+import { buildRemovalPatch, diffRemoteChildren } from "./graph-remote-diff";
 import { parkPendingDetail, unparkPendingDetail } from "./graph-pending-details";
 
 // Live updates for writes this tab cannot hear.
@@ -26,11 +28,17 @@ import { parkPendingDetail, unparkPendingDetail } from "./graph-pending-details"
 // connection, so pushing would need a shared bus. So: poll a tiny revisions
 // endpoint, and pull only when it says something moved.
 //
-// ADDITIONS ONLY, on purpose. New clips are spliced into the live graph and
-// animate in like any other drop. Remote MOVES and TRIMS are deliberately not
-// applied — reconciling those against in-flight local edits is a different
-// problem, and silently rewriting a clip somebody is dragging would be worse
-// than not updating at all. Those still need a reload.
+// ADDITIONS and REMOVALS. New clips are spliced into the live graph and animate
+// in like any other drop; children that have DEPARTED remotely are taken out.
+// Remote moves-within and trims are still not applied — reconciling those
+// against in-flight local edits is a different problem, and silently rewriting a
+// clip somebody is dragging would be worse than not updating at all.
+//
+// Removals were originally left out with the rest, and that turned out to be the
+// hole that let a project silently revert: an agent removed collections through
+// the MCP endpoint, this tab never learned, kept them in its live graph, and
+// re-asserted them on its next write — against a fresh revision, so the
+// compare-and-set passed. Additions-only convergence is not convergence.
 //
 // Applied through `store.applyRemotePatch`, NOT `store.dispatch`: this is not
 // the local user's action, so it must not enter their undo stack. Undo should
@@ -73,11 +81,18 @@ export function RemoteChangesBridge({
       const parentId = parseNodeId(timelineId);
       if (!live.nodesById.has(parentId)) return;
 
-      const known = new Set(getChildren(live, parentId).map(String));
-      const incoming = getChildren(built.value.graph, parentId).filter(
-        (id) => !known.has(String(id)),
+      const { added: incoming, departed } = diffRemoteChildren(
+        live,
+        built.value.graph,
+        parentId,
       );
-      if (incoming.length === 0) return;
+
+      // A pending local write means this session has unsaved intent for the
+      // document. Converging under it would delete work the user is part-way
+      // through, so leave the whole thing alone — the next poll will catch it
+      // once their write settles.
+      const settled = !graphDocumentsGateway.hasPendingWrite(timelineId);
+      if (incoming.length === 0 && (departed.length === 0 || !settled)) return;
 
       const nodes: CollectionItemNode[] = [];
       const parked: string[] = [];
@@ -94,22 +109,40 @@ export function RemoteChangesBridge({
         }
         nodes.push(node);
       }
-      if (nodes.length === 0) return;
 
-      // NOT `store.dispatch` — that records an undo entry, and this is not the
-      // local user's action. With it in the stack, Ctrl+Z would delete a clip
-      // an agent just uploaded, and the autosave would persist that deletion.
-      // Run the reducer purely to get the patch, then apply it without history.
-      const applied = applyCommand(live, {
-        type: "add-nodes",
-        nodes,
-        toParentId: parentId,
-        toIndex: getChildren(live, parentId).length,
-      });
-      const ok = applied.ok && store.applyRemotePatch(applied.value.patch);
-      // On refusal the details must not be left parked — they would attach
-      // themselves to whatever later minted a node with the same id.
-      if (!ok) for (const id of parked) unparkPendingDetail(id);
+      // ADDITIONS FIRST. A clip moved from one collection to another on the same
+      // board is seen by two polls — departed from A, arriving at B. Adding
+      // before removing means it is never briefly absent from both.
+      if (nodes.length > 0) {
+        // NOT `store.dispatch` — that records an undo entry, and this is not the
+        // local user's action. With it in the stack, Ctrl+Z would delete a clip
+        // an agent just uploaded, and the autosave would persist that deletion.
+        // Run the reducer purely to get the patch, then apply it without history.
+        const applied = applyCommand(live, {
+          type: "add-nodes",
+          nodes,
+          toParentId: parentId,
+          toIndex: getChildren(live, parentId).length,
+        });
+        const ok = applied.ok && store.applyRemotePatch(applied.value.patch);
+        // On refusal the details must not be left parked — they would attach
+        // themselves to whatever later minted a node with the same id.
+        if (!ok) for (const id of parked) unparkPendingDetail(id);
+      }
+
+      if (departed.length === 0 || !settled || cancelled) return;
+
+      // Built against the graph as it stands NOW — the additions above committed
+      // and shifted the indices.
+      const after = store.getSnapshot().graph;
+      const patch = buildRemovalPatch(after, parentId, departed);
+      if (!patch) return;
+
+      // Verify before applying, the same gate `store.undo` uses — `applyPatch`
+      // does not validate, and a patch built from a stale read would corrupt the
+      // indices rather than fail.
+      if (!verifyPatchApplies(after, patch).ok) return;
+      store.applyRemotePatch(patch);
     }
 
     async function tick() {

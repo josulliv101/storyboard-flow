@@ -8,6 +8,7 @@ import {
   TimelineRevisionConflictError,
   type TimelineBatchWrite,
 } from "@/lib/firebase-timeline-store";
+import { changeLogDocuments, recordChange } from "@/lib/change-log";
 import { checkUserScopedId, TimelineAccessDeniedError } from "@/lib/timeline-ownership";
 
 export const runtime = "nodejs";
@@ -101,6 +102,17 @@ export async function POST(request: Request) {
     }
 
     const results = await saveFirebaseTimelineDocumentsAtomic(writes, user.uid);
+    // After the commit, never inside it — the log must not be able to fail a
+    // save, and must not claim a change that did not land.
+    await recordChange({
+      uid: user.uid,
+      source: "app",
+      documents: changeLogDocuments(
+        results,
+        Object.fromEntries(writes.map((write) => [write.document.id, write.document])),
+        Object.fromEntries(writes.map((write) => [write.document.id, write.expectedRevision])),
+      ),
+    });
     return NextResponse.json({ results });
   } catch (error) {
     if (error instanceof TimelineRevisionConflictError) {

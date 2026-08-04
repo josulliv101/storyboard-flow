@@ -20,6 +20,7 @@ import {
   TimelineRevisionConflictError,
   type TimelineBatchWrite,
 } from "@/lib/firebase-timeline-store";
+import { changeLogDocuments, recordChange } from "@/lib/change-log";
 import { loadTimelineClosure, TimelineClosureTooLargeError } from "@/lib/load-timeline-closure";
 import { serveTrashDocument } from "@/lib/serve-timeline";
 import { TimelineAccessDeniedError } from "@/lib/timeline-ownership";
@@ -330,8 +331,20 @@ export async function applyCollectionsCommand(
     };
   });
 
+  const committed = [...seedWrites, ...writes];
   try {
-    await saveFirebaseTimelineDocumentsAtomic([...seedWrites, ...writes], requesterUid);
+    const results = await saveFirebaseTimelineDocumentsAtomic(committed, requesterUid);
+    // After the commit, never inside it. Agent writes are exactly the ones with
+    // no human watching, so they are the ones most worth having a record of.
+    await recordChange({
+      uid: requesterUid,
+      source: "mcp",
+      documents: changeLogDocuments(
+        results,
+        nextDocuments,
+        Object.fromEntries(committed.map((write) => [write.document.id, write.expectedRevision])),
+      ),
+    });
   } catch (error) {
     if (error instanceof TimelineRevisionConflictError) {
       const ids = error.conflicts.map((conflict) => conflict.id).join(", ");
