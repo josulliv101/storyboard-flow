@@ -37,7 +37,9 @@ import {
 import {
   hydratedCollectionPlayableDuration,
   hydratedCollectionPreviews,
+  resolveCollectionPreviews,
   type CollectionPreviewFrame,
+  type CollectionPreviewsResult,
   type DetailsById,
 } from "@storyboard/timeline-domain";
 
@@ -144,6 +146,12 @@ function useSettledFrameCount(measured: number): number {
 }
 
 const NO_PREVIEWS: readonly CollectionPreviewFrame[] = [];
+/** Stable identity for the disabled path — a fresh object each call would
+ *  make useSyncExternalStore loop. */
+const NO_PREVIEW_RESULT: CollectionPreviewsResult = {
+  frames: NO_PREVIEWS,
+  sawChildlessCollection: false,
+};
 
 /**
  * A hydrated collection card's preview frames, derived from its LIVE graph
@@ -167,20 +175,26 @@ const NO_PREVIEWS: readonly CollectionPreviewFrame[] = [];
 function useHydratedCollectionPreviews(
   id: string,
   enabled: boolean,
-): readonly CollectionPreviewFrame[] {
+): CollectionPreviewsResult {
   const store = useCollectionsStore();
   const [derive] = useState(() =>
     createDerivedCache({
       compute: (graph: CollectionsGraph, nodeId: string) =>
         hydratedCollectionPreviews(graph, nodeId),
-      contentKey: (previews) =>
-        previews
+      // The flag JOINS the key. A walk can go from "ran into an unloaded
+      // sub-collection" to "did not" while the frames it found stay identical
+      // (both empty) — and those two resolve to different rendered frames. Key
+      // on the frames alone and the cache hands back the stale reference, so
+      // the card never repaints when its children finish loading.
+      contentKey: (result) =>
+        `${result.sawChildlessCollection ? 1 : 0}\x02` +
+        result.frames
           .map((p) => `${p.id}\0${p.poster ?? p.src}\0${p.trimIn ?? 0}`)
           .join("\x01"),
     }),
   );
   const getSnapshot = useCallback(() => {
-    if (!enabled) return NO_PREVIEWS;
+    if (!enabled) return NO_PREVIEW_RESULT;
     return derive(store.getSnapshot().graph, id);
   }, [store, derive, id, enabled]);
   return useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
@@ -243,7 +257,10 @@ export function useCollectionPreviewFrames(
   stored: readonly CollectionPreviewFrame[] | undefined,
 ): readonly CollectionPreviewFrame[] {
   const live = useHydratedCollectionPreviews(id, hydrated);
-  const all = hydrated ? live : (stored ?? NO_PREVIEWS);
+  // Live frames win, EXCEPT when the walk came up empty because a
+  // sub-collection was not loaded — there the server's stored summary knows
+  // more. See resolveCollectionPreviews.
+  const all = hydrated ? resolveCollectionPreviews(live, stored) : (stored ?? NO_PREVIEWS);
   // ONE frame, full width (PL13-003). It used to be a first/last PAIR, which
   // at card size meant two ~80px slots: too narrow to recognize a face, and the
   // crop turned a composition into a slice of one. The item count beside the
@@ -879,7 +896,7 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
   const livePreviews = useHydratedCollectionPreviews(node.id as string, isCollection && hydrated);
   const all: readonly CollectionPreviewFrame[] = isCollection
     ? hydrated
-      ? livePreviews
+      ? resolveCollectionPreviews(livePreviews, detail?.previewItems)
       : (detail?.previewItems ?? [])
     : [];
   // FIRST and LAST only (or the single frame) — never three, exactly as the
