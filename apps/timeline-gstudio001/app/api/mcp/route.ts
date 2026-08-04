@@ -10,6 +10,13 @@ import type { ToolResult } from "@/lib/webmcp/types";
 import { attachMedia, createUploadTicket } from "@/lib/mcp/upload";
 import { createCollection } from "@/lib/mcp/create-collection";
 import { handleReadTimeline } from "@/lib/mcp/read-timeline";
+import {
+  intoField,
+  nameField,
+  nodeIdField,
+  placementFields,
+  trimFields,
+} from "@/lib/webmcp/tool-fields";
 import { ProjectAssetScopeError } from "@/lib/project-asset-scope";
 import {
   handleMoveClip,
@@ -139,6 +146,18 @@ function uidFrom(extra: { authInfo?: { extra?: Record<string, unknown> } }): str
 
 const NO_IDENTITY = "Could not determine the account for this token.";
 
+/**
+ * REMOTE-ONLY, and deliberately not in the shared field module.
+ *
+ * The in-page tools act on the focused timeline, which the browser already
+ * knows. Server-side there is no focus, so every call must name the root whose
+ * closure gets loaded — and that root must contain every node the call touches.
+ */
+const TIMELINE_ID_FIELD = z
+  .string()
+  .min(1)
+  .describe("The timeline document that contains the item.");
+
 const handler = createMcpHandler(
   (server) => {
     server.tool(
@@ -185,15 +204,10 @@ const handler = createMcpHandler(
       "Move a clip or collection: reorder it within its current collection, or put it inside another one. Give at most one of `after`, `before` or `position`." +
         NO_LIVE_PUSH_NOTE,
       {
-        timelineId: z.string().min(1).describe("The timeline document that contains the clip."),
-        nodeId: z.string().min(1).describe("The clip or collection to move."),
-        into: z
-          .string()
-          .optional()
-          .describe("Target collection id. Omit to reorder within the current parent."),
-        after: z.string().optional().describe("Place directly after this sibling."),
-        before: z.string().optional().describe("Place directly before this sibling."),
-        position: z.enum(["start", "end"]).optional().describe("Place at the start or end."),
+        timelineId: TIMELINE_ID_FIELD,
+        nodeId: nodeIdField,
+        into: intoField,
+        ...placementFields,
       },
       async (args, extra) => {
         const uid = uidFrom(extra);
@@ -207,11 +221,9 @@ const handler = createMcpHandler(
       "Change how much of a clip plays. Videos take `trimInSeconds`/`trimOutSeconds` (seconds REMOVED from each end — an untrimmed clip is 0/0); images take `durationSeconds`." +
         NO_LIVE_PUSH_NOTE,
       {
-        timelineId: z.string().min(1).describe("The timeline document that contains the clip."),
-        nodeId: z.string().min(1).describe("The clip to trim."),
-        trimInSeconds: z.number().min(0).optional().describe("Video only: seconds removed from the START. 0 keeps the opening."),
-        trimOutSeconds: z.number().min(0).optional().describe("Video only: seconds removed from the END. 0 keeps the ending."),
-        durationSeconds: z.number().positive().optional().describe("Image only: how long it stays on screen."),
+        timelineId: TIMELINE_ID_FIELD,
+        nodeId: nodeIdField,
+        ...trimFields,
       },
       async (args, extra) => {
         const uid = uidFrom(extra);
@@ -225,9 +237,9 @@ const handler = createMcpHandler(
       "Rename a clip or a collection. Renaming a collection also retitles its own timeline document, so the board and the project list agree." +
         NO_LIVE_PUSH_NOTE,
       {
-        timelineId: z.string().min(1).describe("The timeline document that contains the item."),
-        nodeId: z.string().min(1).describe("The clip or collection to rename."),
-        name: z.string().min(1).describe("The new name."),
+        timelineId: TIMELINE_ID_FIELD,
+        nodeId: nodeIdField,
+        name: nameField,
       },
       async (args, extra) => {
         const uid = uidFrom(extra);
@@ -241,8 +253,8 @@ const handler = createMcpHandler(
       "Move a clip OR a collection to the trash. This is recoverable — nothing is hard-deleted, so it can be restored from the bin." +
         NO_LIVE_PUSH_NOTE,
       {
-        timelineId: z.string().min(1).describe("The timeline document that contains the item."),
-        nodeId: z.string().min(1).describe("The clip or collection to remove."),
+        timelineId: TIMELINE_ID_FIELD,
+        nodeId: nodeIdField,
         trashId: z
           .string()
           .min(1)
