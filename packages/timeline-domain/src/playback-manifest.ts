@@ -23,8 +23,9 @@ import type { TimelineClip, TimelineDocument } from "@storyboard/timeline-model/
 export type PlaybackLeaf = Readonly<{
   id: string;
   collectionPath: readonly string[];
-  kind: "image" | "video";
+  kind: "image" | "video" | "audio";
   src: string;
+  /** Never present on an audio leaf — audio has no frames to poster. */
   poster?: string;
   timelineStart: number;
   timelineDuration: number;
@@ -244,6 +245,11 @@ export function manifestToClips(manifest: PlaybackManifest): TimelineClip[] {
         src: leaf.src,
         ...(leaf.poster === undefined ? {} : { poster: leaf.poster }),
       };
+    }
+    if (leaf.kind === "audio") {
+      // No poster, deliberately: a poster minted for an audio asset is a
+      // broken image URL, and the model forbids one.
+      return { ...base, kind: "audio", src: leaf.src };
     }
     return {
       ...base,

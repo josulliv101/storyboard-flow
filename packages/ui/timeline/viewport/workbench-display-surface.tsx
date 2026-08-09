@@ -31,8 +31,9 @@ import {
 
 type DisplayMedia = {
   key: string;
-  kind: "image" | "video";
+  kind: "image" | "video" | "audio";
   src: string;
+  /** Never set for audio — it has no frame to poster. */
   poster?: string;
   alt: string;
   sourceTime: number;
@@ -43,7 +44,8 @@ type DisplayMedia = {
 
 type CachedMedia =
   | { kind: "image"; element: HTMLImageElement }
-  | { kind: "video"; element: HTMLVideoElement };
+  | { kind: "video"; element: HTMLVideoElement }
+  | { kind: "audio"; element: HTMLAudioElement };
 
 type PlaybackSurfaceRect = {
   left: number;
@@ -435,6 +437,33 @@ function resolveClipMedia(
     };
   }
 
+  if (clip.kind === "audio") {
+    // Windowed like video, so the source position is computed the same way —
+    // the element seeks, there is simply no picture to draw from it. The
+    // surface renders a waveform for this kind instead of a frame.
+    const sourceRange = Math.max(0, clip.sourceDuration - clip.trimIn - clip.trimOut);
+    const sourceTime = clamp(
+      clip.trimIn + progress * sourceRange,
+      0,
+      Math.max(0, clip.sourceDuration - 0.001),
+    );
+
+    return {
+      key: `${clip.id}:audio:${clip.src}`,
+      kind: "audio",
+      src: clip.src,
+      alt: clip.alt,
+      sourceTime,
+      timelineTime,
+      clipTitle: clipLabel(clip),
+      playbackRate: getClipPlaybackRate(clip),
+    };
+  }
+
+  // Everything above returns, so `clip` is a collection here. Before audio
+  // existed this was an unguarded fallthrough: a new media kind landed in the
+  // collection branch and called getCollectionPreviewClip on a non-collection.
+  // The type below is what catches that — keep it exhaustive.
   const collectionPreview = getCollectionClipFramePreview(
     getCollectionPreviewClip(clip),
     playbackLocalTime,
@@ -668,6 +697,27 @@ export function WorkbenchDisplaySurface({
       return nextCached;
     }
 
+    if (media.kind === "audio") {
+      const audio = document.createElement("audio");
+      // `metadata`, NOT `auto` — unlike video, this buffers BUFFER_WINDOW_SIZE
+      // clips ahead, and a lossless voice take is large. `auto` would speculatively
+      // fetch several whole files to play one. Duration is all the clock needs
+      // up front; the rest streams on demand.
+      audio.preload = "metadata";
+      // Same CORS rule as video, and for the same reason: Web Audio returns
+      // silence rather than an error for a tainted element. Must precede `src`.
+      if (/^https?:\/\//i.test(media.src)) audio.crossOrigin = "anonymous";
+      audio.src = media.src;
+      audio.load();
+      // The mixer takes any HTMLMediaElement and starts it at zero gain, so a
+      // prefetched take is silent until it becomes active — no changes needed
+      // there for a second element kind.
+      getMixer().attach(audio);
+      const nextCached: CachedMedia = { kind: "audio", element: audio };
+      cacheRef.current.set(media.key, nextCached);
+      return nextCached;
+    }
+
     const image = new window.Image();
     image.decoding = "async";
     image.src = media.src;
@@ -741,6 +791,67 @@ export function WorkbenchDisplaySurface({
     context.fillRect(0, 0, cssWidth, cssHeight);
   }, []);
 
+  /**
+   * An audio clip's stand-in. It has no frame, but it is PLAYING, and a
+   * playing clip must never look like one that failed to load.
+   *
+   * Draws a centred baseline with a moving position marker plus the clip
+   * title. Deliberately synthetic rather than decoded peaks: real peaks need
+   * the whole file fetched and decoded, which belongs to the waveform lane
+   * (cached, concurrency-capped, visible cards only) — not to a per-frame
+   * paint on the playback clock.
+   *
+   * Sets `playbackSurfaceRectRef` and the ready flag exactly as `drawDrawable`
+   * does. Skipping that was a real trap: click-to-seek geometry keys off the
+   * rect, so an audio clip would silently swallow seeks.
+   */
+  const drawAudioFrame = useCallback((media: DisplayMedia) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const cssWidth = Math.max(1, canvas.clientWidth);
+    const cssHeight = Math.max(1, canvas.clientHeight);
+    const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+    const renderWidth = Math.round(cssWidth * pixelRatio);
+    const renderHeight = Math.round(cssHeight * pixelRatio);
+    if (canvas.width !== renderWidth || canvas.height !== renderHeight) {
+      canvas.width = renderWidth;
+      canvas.height = renderHeight;
+    }
+
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return;
+
+    playbackSurfaceRectRef.current = {
+      left: 0,
+      top: 0,
+      width: cssWidth,
+      height: cssHeight,
+    };
+    canvas.dataset.previewPlaybackSurfaceReady = "true";
+
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.fillStyle = "#050505";
+    context.fillRect(0, 0, cssWidth, cssHeight);
+
+    const midY = cssHeight / 2;
+    const inset = Math.min(48, cssWidth * 0.08);
+    const trackLeft = inset;
+    const trackRight = Math.max(trackLeft + 1, cssWidth - inset);
+
+    context.strokeStyle = "#3f3f46";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(trackLeft, midY);
+    context.lineTo(trackRight, midY);
+    context.stroke();
+
+    context.fillStyle = "#a1a1aa";
+    context.font = "500 12px ui-sans-serif, system-ui, sans-serif";
+    context.textAlign = "center";
+    context.fillText(media.clipTitle, cssWidth / 2, midY - 28);
+  }, []);
+
   const drawActiveFrame = useCallback(() => {
     const media = activeMediaRef.current;
     if (!media) {
@@ -757,10 +868,19 @@ export function WorkbenchDisplaySurface({
       return;
     }
 
+    if (cached.kind === "audio") {
+      // An <audio> element has no intrinsic dimensions, so `drawDrawable`
+      // would bail at its zero-size guard and leave the canvas blank. Audio
+      // gets its own drawn stand-in instead — a clip that is playing must
+      // never look like a clip that failed to load.
+      drawAudioFrame(media);
+      return;
+    }
+
     if (cached.element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
       drawDrawable(cached.element);
     }
-  }, [drawDrawable, drawEmptyFrame]);
+  }, [drawAudioFrame, drawDrawable, drawEmptyFrame]);
 
   const frameOverrideRef = useRef(frameOverride);
 

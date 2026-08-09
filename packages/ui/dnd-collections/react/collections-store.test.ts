@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { buildGraph, getChildren, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "../core/graph";
+import { buildGraph, getChildren, hasSourceWindow, parseNodeId, type CollectionsGraph, type GraphNodeSpec } from "../core/graph";
 import { applyCommand } from "../core/commands";
 import {
   InvalidInitialGraphError,
@@ -27,7 +27,9 @@ function graphFixture(): CollectionsGraph {
 function graphWithInvalidDuration(): CollectionsGraph {
   const graph = graphFixture();
   const node = graph.nodesById.get(parseNodeId("x"));
-  if (!node || node.kind !== "media" || node.mediaKind === "video") {
+  // "not video" is no longer "is image" — audio is windowed too and has no
+  // durationSeconds, so narrow on the positive property this fixture needs.
+  if (!node || node.kind !== "media" || hasSourceWindow(node)) {
     throw new Error("Expected image fixture node x.");
   }
   const nodesById = new Map(graph.nodesById);

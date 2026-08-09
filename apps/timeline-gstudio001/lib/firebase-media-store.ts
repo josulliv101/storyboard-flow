@@ -15,6 +15,7 @@ export type StoredMedia = {
 const ALLOWED_MEDIA_PREFIXES = [
   "timeline-videos/",
   "timeline-thumbnails/",
+  "timeline-audio/",
 ] as const;
 
 export function isAllowedMediaPathname(pathname: string | null): pathname is string {
@@ -33,11 +34,12 @@ export function sanitizeStoragePathname(filename: string, fallbackPrefix = "time
     .join("/");
 
   const safeName = normalized || `upload-${Date.now()}`;
-  const prefixedName =
-    safeName.startsWith("timeline-videos/") ||
-    safeName.startsWith("timeline-thumbnails/")
-      ? safeName
-      : `${fallbackPrefix}/${safeName}`;
+  // Reuses ALLOWED_MEDIA_PREFIXES rather than repeating it: the literal copy
+  // that used to live here silently missed any prefix added to the list, and
+  // the symptom is a DOUBLE-PREFIXED storage key, not an error.
+  const prefixedName = isAllowedMediaPathname(safeName)
+    ? safeName
+    : `${fallbackPrefix}/${safeName}`;
 
   return prefixedName.replace(/[^a-zA-Z0-9/_.,@-]/g, "-");
 }
@@ -51,6 +53,14 @@ export function getMediaContentType(pathname: string, explicitType?: string) {
   if (lower.endsWith(".webp")) return "image/webp";
   if (lower.endsWith(".webm")) return "video/webm";
   if (lower.endsWith(".mov")) return "video/quicktime";
+  // Audio (#309). `.m4a` is an MP4 container, hence audio/mp4.
+  if (lower.endsWith(".flac")) return "audio/flac";
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".m4a")) return "audio/mp4";
+  if (lower.endsWith(".aac")) return "audio/aac";
+  if (lower.endsWith(".oga") || lower.endsWith(".ogg")) return "audio/ogg";
+  if (lower.endsWith(".opus")) return "audio/opus";
   return lower.endsWith(".mp4") ? "video/mp4" : "application/octet-stream";
 }
 

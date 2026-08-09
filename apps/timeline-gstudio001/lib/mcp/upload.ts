@@ -4,6 +4,7 @@ import { parseNodeId, type CollectionsGraph, type NodeId } from "@storyboard/col
 
 import { CLOUDINARY_PROVIDER_ID } from "@/lib/assets/cloudinary-provider";
 import {
+  isAudioAsset,
   createCloudinaryUploadTicket,
   forgetCloudinaryAssetList,
   listCloudinaryAssets,
@@ -28,7 +29,7 @@ import { applyCollectionsCommand } from "./apply-command";
 // route's own size ceiling. Signing stays server-side, so the client never
 // picks its own folder — see createCloudinaryUploadTicket.
 
-const ALLOWED = /\.(mp4|webm|mov|jpe?g|png|webp)$/i;
+const ALLOWED = /\.(mp4|webm|mov|jpe?g|png|webp|flac|wav|mp3|m4a|aac|ogg|oga|opus)$/i;
 
 export type CreateUploadArgs = Readonly<{ projectId: string; filename: string }>;
 
@@ -39,7 +40,8 @@ export async function createUploadTicket(
   const projectId = await requireProjectAssetScope(args.projectId, requesterUid);
   if (!ALLOWED.test(args.filename)) {
     throw new Error(
-      `Unsupported file type "${args.filename}". Allowed: mp4, webm, mov, jpg, jpeg, png, webp.`,
+      `Unsupported file type "${args.filename}". Allowed: mp4, webm, mov, jpg, jpeg, ` +
+        `png, webp, flac, wav, mp3, m4a, aac, ogg, opus.`,
     );
   }
   return createCloudinaryUploadTicket(args.filename, requesterUid, projectId);
@@ -85,7 +87,17 @@ export async function attachMedia(
     );
   }
 
-  const isVideo = asset.resourceType === "video";
+  // Cloudinary serves AUDIO under resourceType "video" — there is no separate
+  // audio type — so the clip kind comes from the FORMAT, never from
+  // resourceType. Reading resourceType here would file every voice take as a
+  // video clip with a broken poster.
+  //
+  // NOT `pathname`: a Cloudinary public_id has no extension ("brian-take-6s",
+  // not "brian-take-6s.flac"), so testing it always says "not audio". `format`
+  // is the field that carries it; the secure_url is the fallback for a listing
+  // that omitted it.
+  const isAudio = isAudioAsset(asset.format ?? asset.url);
+  const isVideo = !isAudio && asset.resourceType === "video";
   const sourceSeconds = asset.duration ?? DEFAULT_VIDEO_SECONDS;
   const displayName =
     (args.name ?? asset.relativePath ?? asset.pathname).trim() || asset.pathname;
@@ -99,7 +111,8 @@ export async function attachMedia(
   // tree from being rejected). Asset identity lives in `sourceAsset` below,
   // which is what every reader actually uses to recover it; the id only has to
   // be unique. Same prefixes as the drag-drop path so both mint alike.
-  const newNodeId = parseNodeId(`${isVideo ? "video" : "image"}-${randomUUID().slice(0, 8)}`);
+  const kindPrefix = isAudio ? "audio" : isVideo ? "video" : "image";
+  const newNodeId = parseNodeId(`${kindPrefix}-${randomUUID().slice(0, 8)}`);
   let placedIndex = -1;
   let placedParent: NodeId | null = null;
 
@@ -142,11 +155,13 @@ export async function attachMedia(
           toParentId: placement.toParentId,
           toIndex: placement.toIndex,
           nodes: [
-            isVideo
+            isVideo || isAudio
               ? {
                   id: newNodeId,
                   kind: "media" as const,
-                  mediaKind: "video" as const,
+                  // Both WINDOWED kinds mint identically — same source length,
+                  // same trims. Audio simply has no posterSrcs.
+                  mediaKind: isAudio ? ("audio" as const) : ("video" as const),
                   name: displayName,
                   src: asset.url,
                   fullDurationSeconds: sourceSeconds,
@@ -181,7 +196,9 @@ export async function attachMedia(
             aspect: 16 / 9,
             trackIndex: 0,
             sourceAsset: { providerId: CLOUDINARY_PROVIDER_ID, assetId: asset.pathname },
-            ...(asset.thumbnailUrl ? { poster: asset.thumbnailUrl } : {}),
+            // No poster for audio: Cloudinary would mint a still-frame jpg
+            // URL for a resource that has no frames, and it renders broken.
+            ...(!isAudio && asset.thumbnailUrl ? { poster: asset.thumbnailUrl } : {}),
           },
         },
       } as const;

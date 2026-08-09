@@ -74,6 +74,9 @@ vi.mock("firebase-admin/firestore", () => {
 vi.mock("@/lib/cloudinary-media-store", () => ({
   listCloudinaryAssets: async () => state.assets,
   forgetCloudinaryAssetList: () => {},
+  // Pure extension test, so the mock mirrors the real rule rather than
+  // stubbing it — a stub here would let a wrong clip kind pass unnoticed.
+  isAudioAsset: (value: string) => /\.(flac|wav|mp3|m4a|aac|ogg|oga|opus)$/i.test(value),
   createCloudinaryUploadTicket: () => ({
     uploadUrl: "https://api.cloudinary.com/v1_1/demo/video/upload",
     fields: { api_key: "k", folder: "f", public_id: "p", timestamp: "1", signature: "s" },
@@ -264,6 +267,52 @@ describe("attachMedia", () => {
         assetId: "media/user-a/project-alpha/render-123",
       });
     }
+  });
+
+  // Cloudinary has no audio resource type — it serves audio as "video" — so a
+  // clip kind read off `resourceType` would file every voice take as a video
+  // with a poster URL that renders broken. The extension is the only honest
+  // signal, and this is what unblocks getting DramaBox/H3 takes into the app.
+  it("attaches a .flac as an AUDIO clip, not a video, despite Cloudinary's resourceType", async () => {
+    seed(PROJECT, []);
+    state.assets.length = 0;
+    state.assets.push({
+      id: "a2",
+      pathname: "media/user-a/project-alpha/brian-take-6s",
+      url: "https://res.cloudinary.com/demo/video/upload/brian-take-6s.flac",
+      thumbnailUrl: "https://res.cloudinary.com/demo/video/upload/brian-take-6s.jpg",
+      // Deliberately "video": that is genuinely what Cloudinary reports.
+      resourceType: "video",
+      duration: 5.875,
+      relativePath: "brian-take-6s",
+    });
+
+    const result = await attachMedia(
+      {
+        timelineId: PROJECT,
+        projectId: PROJECT,
+        publicId: "media/user-a/project-alpha/brian-take-6s",
+      },
+      OWNER,
+    );
+
+    expect(result.isError).toBeFalsy();
+    const added = storedClips(PROJECT)[0];
+    expect(added.kind).toBe("audio");
+    if (added.kind !== "audio") throw new Error("expected an audio clip");
+    // Windowed like video: the full source length with no trim taken.
+    expect(added.sourceDuration).toBe(5.875);
+    expect(added.trimIn).toBe(0);
+    expect(added.trimOut).toBe(0);
+    expect(added.duration).toBe(5.875);
+    // No poster, even though Cloudinary offered a thumbnail URL for it.
+    expect(added.poster).toBeUndefined();
+    expect(added.sourceAsset).toEqual({
+      providerId: "cloudinary",
+      assetId: "media/user-a/project-alpha/brian-take-6s",
+    });
+    // Minted id carries the kind, like the drag-drop path.
+    expect(attachedNodeId(result).startsWith("audio-")).toBe(true);
   });
 
   it("refuses when the upload never landed, instead of minting a dead clip", async () => {

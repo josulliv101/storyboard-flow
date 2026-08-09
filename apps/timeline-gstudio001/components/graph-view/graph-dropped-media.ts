@@ -11,7 +11,7 @@
 // extension fallback so the graph accepts exactly what the pipeline can store.
 
 /** The media kinds a dropped file can become in the graph. */
-export type DroppedMediaKind = "image" | "video";
+export type DroppedMediaKind = "image" | "video" | "audio";
 
 /**
  * Image/video extensions the upload pipeline already supports (see
@@ -27,6 +27,16 @@ const EXTENSION_KINDS: Readonly<Record<string, DroppedMediaKind>> = {
   mp4: "video",
   webm: "video",
   mov: "video",
+  // Audio (#309). `.ogg` is genuinely ambiguous (video/ogg exists), but the
+  // MIME test below runs first and only unresolved types reach this table —
+  // an .ogg with no MIME is far more often audio.
+  flac: "audio",
+  wav: "audio",
+  mp3: "audio",
+  m4a: "audio",
+  aac: "audio",
+  ogg: "audio",
+  opus: "audio",
 };
 
 /** MIME types the browser could not resolve, so the extension must decide. */
@@ -44,7 +54,7 @@ function extensionKind(filename: string): DroppedMediaKind | null {
 /**
  * The media kind a dropped file should upload as, or `null` to ignore it.
  *
- * Prefers the browser's MIME type (`image/*`, `video/*`). When the agent
+ * Prefers the browser's MIME type (`image/*`, `video/*`, `audio/*`). When the agent
  * supplied no usable type (empty or `application/octet-stream`), falls back to
  * the filename extension — but ONLY the extensions the upload pipeline already
  * supports, so the graph never accepts a drop the server would reject.
@@ -52,6 +62,7 @@ function extensionKind(filename: string): DroppedMediaKind | null {
 export function classifyDroppedMedia(file: File): DroppedMediaKind | null {
   if (file.type.startsWith("image/")) return "image";
   if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("audio/")) return "audio";
   if (isUnresolvedMime(file.type)) return extensionKind(file.name);
   return null;
 }

@@ -43,7 +43,13 @@ function sourceForNode(
 ): WaveformSource | null {
   const node = graph.nodesById.get(parseNodeId(nodeId)) as MediaLike | undefined;
   // Collections have no audio of their own, and an image has none at all.
-  if (!node || node.kind !== "media" || node.mediaKind !== "video") return null;
+  // Both WINDOWED kinds qualify, not just video: an audio clip is the most
+  // obvious thing in the app to draw a waveform for, and it carries the same
+  // trimIn/trimOut this source shape needs. (Structural check rather than the
+  // core's `hasSourceWindow` because `MediaLike` above is deliberately loose —
+  // this module never sees a real graph node type.)
+  if (!node || node.kind !== "media") return null;
+  if (node.mediaKind !== "video" && node.mediaKind !== "audio") return null;
   if (!node.src) return null;
 
   const asset = details[nodeId]?.sourceAsset;

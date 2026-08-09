@@ -237,6 +237,12 @@ export function resolveTrimCommand(
         update = { mediaKind: "video", trimInSeconds: node.trimInSeconds + stepSeconds };
         break;
     }
+  } else if (node.mediaKind === "audio") {
+    // Audio IS windowed and the command path supports trimming it, but the
+    // trim affordance is deliberately not shipped yet (#309 v1). Reject
+    // explicitly rather than falling through to the image branch, which would
+    // set a `durationSeconds` the node does not have.
+    return { ok: false, error: { reason: "no-start-edge", nodeId } };
   } else {
     // Image: only the end edge exists — it sets the duration directly.
     const delta = action === "trim-end-extend" ? stepSeconds : -stepSeconds;

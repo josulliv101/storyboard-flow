@@ -11,6 +11,7 @@
 // the bin is per-USER while an asset is per-project, so a bin spans everything
 // its owner owns.
 
+import { isMediaClip } from "@storyboard/timeline-model/types";
 import type { TimelineClip } from "@storyboard/timeline-model/types";
 
 import type { AssetKind, AssetSourceRef } from "./types";
@@ -52,19 +53,34 @@ export type AssetDeletionCandidate = Readonly<{
   thumbnailUrl: string;
 }>;
 
-/** Media clips carry provenance; collection clips have no file behind them. */
+/**
+ * Media clips carry provenance; collection clips have no file behind them.
+ *
+ * Written as "EXCLUDE collections" rather than "include image and video" on
+ * purpose. The allow-list form silently omitted every future media kind, and
+ * an omitted kind is never marked for reclaim — so its file leaks in storage
+ * forever. Over-including is the safe direction: `sourceAsset === undefined`
+ * below is already the conservative guard, and an asset nobody can name is
+ * never deleted (docs/asset-providers.md).
+ */
 function sourceAssetOf(clip: TimelineClip): AssetDeletionCandidate | null {
-  if (clip.kind !== "image" && clip.kind !== "video") return null;
+  if (!isMediaClip(clip)) return null;
   if (clip.sourceAsset === undefined) return null;
   return {
     ref: clip.sourceAsset,
-    kind: clip.kind,
+    // `AssetKind` is the PROVIDER's resource type, not the clip kind — and
+    // Cloudinary serves audio under `video` (its destroy endpoint is per
+    // resource type). Mapping here keeps that provider fact at one boundary
+    // instead of widening AssetKind through the tombstones and both adapters.
+    kind: clip.kind === "image" ? "image" : "video",
     // The authored name first, the derived description second — the same
     // precedence the card and the details view read by (PL11-004). Falling
     // back to the id's leaf keeps a row from printing nothing at all.
     name: clip.title || clip.alt || leafOf(clip.sourceAsset.assetId),
-    // A video's poster is a still; an image IS its own thumbnail.
-    thumbnailUrl: clip.poster || clip.src,
+    // A video's poster is a still; an image IS its own thumbnail. Audio has
+    // neither, and `clip.src` would put a .flac URL in the recently-deleted
+    // list as if it were an image — empty is the honest answer.
+    thumbnailUrl: clip.kind === "audio" ? "" : clip.poster || clip.src,
   };
 }
 

@@ -563,6 +563,11 @@ function getClipEndpointFramePreview(
     );
   }
 
+  // Audio has no frame to preview. Returning null (rather than widening
+  // CollectionFramePreview.kind) keeps `MediaKind` meaning "can be a PICTURE",
+  // which is what every consumer of this type assumes.
+  if (clip.kind === "audio") return null;
+
   return {
     id: clip.id,
     kind: clip.kind,
@@ -760,6 +765,11 @@ export function getCollectionFramePreviewFromState(
     // The collection branch above returns, so `c` is a MediaTimelineClip here
     // and every field below is on the type — the casts these lines used to
     // carry predated the discriminated union and were hiding that.
+    //
+    // Audio is the exception: it is media, but it is not a PICTURE, so it can
+    // never be the frame shown for a moment in time. Null lets the caller fall
+    // back to a neighbouring visual clip rather than rendering a .flac as one.
+    if (c.kind === "audio") return null;
     const sourceDuration = c.sourceDuration || c.duration || 1;
     const previewTime =
       c.kind === "video"

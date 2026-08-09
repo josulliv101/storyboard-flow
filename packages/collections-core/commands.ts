@@ -6,6 +6,7 @@ import {
   type Result,
   getChildren,
   getDocumentOrder,
+  hasSourceWindow,
   isSameOrAncestor,
   parseCollectionItemNode,
 } from "./graph";
@@ -24,7 +25,17 @@ import { type CollectionsPatch, type NodeAdd, type NodeMove, applyPatch } from "
  */
 export type MediaUpdate =
   | Readonly<{ mediaKind: "image"; durationSeconds: number }>
-  | Readonly<{ mediaKind: "video"; trimInSeconds?: number; trimOutSeconds?: number }>;
+  | Readonly<{
+      /**
+       * The WINDOWED kinds. Both carry a source length and trims, so both take
+       * the same update — see `hasSourceWindow`. Audio's trim UI is deferred,
+       * but the command path is correct now so enabling it later is a
+       * front-end change rather than a data migration.
+       */
+      mediaKind: "video" | "audio";
+      trimInSeconds?: number;
+      trimOutSeconds?: number;
+    }>;
 
 export type CollectionsCommand =
   | Readonly<{
@@ -434,9 +445,13 @@ function applyMediaUpdate(
   }
 
   let after: CollectionItemNode;
-  if (update.mediaKind === "video") {
-    // The update must match the node's kind — an image can't be trimmed as a video.
-    if (node.mediaKind !== "video") {
+  // Tested image-first so the else narrows to the WINDOWED member cleanly: its
+  // discriminant is itself a union ("video" | "audio"), and TS does not
+  // eliminate such a member from a compound `=== "video" || === "audio"` test.
+  if (update.mediaKind !== "image") {
+    // The update must match the node's kind — an image can't be trimmed as a
+    // windowed clip, and a video must not be trimmed by an audio update.
+    if (!hasSourceWindow(node) || node.mediaKind !== update.mediaKind) {
       return { ok: false, error: { reason: "invalid-media-update", nodeId } };
     }
     const nextIn = update.trimInSeconds ?? node.trimInSeconds;
@@ -453,8 +468,10 @@ function applyMediaUpdate(
     }
     after = { ...node, trimInSeconds, trimOutSeconds };
   } else {
-    // update.mediaKind === "image"
-    if (node.mediaKind === "video") {
+    // update.mediaKind === "image". Reject every WINDOWED node, not just video
+    // — an audio node has no `durationSeconds` to set, and treating it as an
+    // image here is exactly the silent coercion this feature had to remove.
+    if (hasSourceWindow(node)) {
       return { ok: false, error: { reason: "invalid-media-update", nodeId } };
     }
     if (!Number.isFinite(update.durationSeconds)) {

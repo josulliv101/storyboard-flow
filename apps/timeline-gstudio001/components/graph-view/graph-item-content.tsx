@@ -454,6 +454,56 @@ function DisabledChip({ inherited }: { inherited: boolean }) {
  * the whole thing scales as one and the card's own overflow crops the excess —
  * the leader is centred, which is where a projectionist would expect it.
  */
+/**
+ * An audio card's stand-in: a drawn waveform.
+ *
+ * DRAWN, not decoded. Real peaks require fetching and decoding the whole file,
+ * and a board can hold dozens of cards — decoding per card would pull every
+ * take on screen at mount. Actual peaks belong to the waveform LANE, which is
+ * already cached, capped at three concurrent decodes and limited to visible
+ * cards. This is the same call `CollectionLeaderPlaceholder` makes: draw the
+ * idea of the thing rather than load it.
+ *
+ * Bars are a fixed pseudo-random-looking set rather than `Math.random()` so a
+ * card does not reshuffle on every re-render.
+ */
+const AUDIO_PLACEHOLDER_BARS = [
+  0.25, 0.55, 0.38, 0.82, 0.62, 0.95, 0.7, 0.45, 0.78, 0.52, 0.88, 0.34,
+  0.66, 0.9, 0.48, 0.72, 0.3, 0.6, 0.85, 0.42, 0.75, 0.58, 0.28, 0.68,
+];
+
+function AudioWaveformPlaceholder() {
+  return (
+    <svg
+      viewBox="0 0 160 90"
+      aria-hidden="true"
+      className="h-full w-full text-zinc-500/70"
+      preserveAspectRatio="xMidYMid slice"
+    >
+      {/* Paper, not black — same reasoning as the leader: an audio card is a
+          FRAME with no picture, not a hole where one failed to load. */}
+      <rect width="160" height="90" className="fill-zinc-800/40" />
+      {/* Centre line, so the bars read as a waveform rather than a bar chart. */}
+      <path d="M6 45 H154" stroke="currentColor" strokeWidth="0.75" opacity="0.5" />
+      <g className="fill-zinc-400/70">
+        {AUDIO_PLACEHOLDER_BARS.map((amplitude, index) => {
+          const height = amplitude * 62;
+          return (
+            <rect
+              key={index}
+              x={7 + index * 6.2}
+              y={45 - height / 2}
+              width="3.2"
+              height={height}
+              rx="1.6"
+            />
+          );
+        })}
+      </g>
+    </svg>
+  );
+}
+
 function CollectionLeaderPlaceholder() {
   return (
     <svg
@@ -710,6 +760,7 @@ const GraphClipContent = memo(function GraphClipContent({
   if (node.kind === "collection") return null;
 
   const isVideo = node.mediaKind === "video";
+  const isAudio = node.mediaKind === "audio";
   const muted = node.disabled === true || inheritedDisabled;
   // A wider clip shows MORE distinct frames rather than the same still tiled
   // — falling back to a duration-based count until first measured.
@@ -727,9 +778,12 @@ const GraphClipContent = memo(function GraphClipContent({
           trimInSeconds: node.trimInSeconds,
           effectiveSeconds: mediaDurationSeconds(node),
         })
-      : node.src
-        ? [node.src]
-        : [];
+      : // Audio yields NO frame srcs. Its `src` is a media file, and the
+        // fallthrough below would hand it to an <img> — a broken-image icon on
+        // every audio card. It renders a drawn placeholder instead.
+        isAudio || !node.src
+        ? []
+        : [node.src];
   return (
     <span
       ref={cardSizeRef}
@@ -764,9 +818,13 @@ const GraphClipContent = memo(function GraphClipContent({
         ].join(" ")}
       >
       {frameSrcs.length === 0 ? (
-        <span className="flex h-full w-full items-center justify-center text-[11px] text-zinc-500">
-          No preview
-        </span>
+        isAudio ? (
+          <AudioWaveformPlaceholder />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center text-[11px] text-zinc-500">
+            No preview
+          </span>
+        )
       ) : (
         <span className="flex h-full w-full overflow-hidden rounded-sm">
           {frameSrcs.map((src, index) => (
@@ -796,10 +854,10 @@ const GraphClipContent = memo(function GraphClipContent({
           own label names the clip). */}
       <span
         aria-hidden="true"
-        data-media-kind={isVideo ? "video" : "image"}
+        data-media-kind={isVideo ? "video" : isAudio ? "audio" : "image"}
         className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] leading-none font-semibold tracking-[0.08em] text-zinc-100"
       >
-        {isVideo ? "VIDEO" : "IMAGE"}
+        {isVideo ? "VIDEO" : isAudio ? "AUDIO" : "IMAGE"}
       </span>
       {/* The clip's NAME, shown only when someone gave it one (PL11-004).
           Every clip has an `alt` — a filename, usually — so a card that
