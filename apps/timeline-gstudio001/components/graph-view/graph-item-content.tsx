@@ -977,6 +977,10 @@ const GraphTrimHandle = memo(function GraphTrimHandle({
  *  it has neither — the ghost then falls back to a labelled tile). */
 function mediaGhostSrc(node: CollectionGhostContentProps["node"]): string | null {
   if (node.kind !== "media") return null;
+  // Audio has no frame, and its `src` is a media file — returning it here put
+  // a .flac into an <img> and drew a broken-image ghost. Null makes the ghost
+  // fall back to its labelled name+duration tile, which is the right answer.
+  if (node.mediaKind === "audio") return null;
   return node.mediaKind === "video" ? (node.posterSrcs?.[0] ?? null) : (node.src ?? null);
 }
 

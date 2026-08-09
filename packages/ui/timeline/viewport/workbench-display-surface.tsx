@@ -42,6 +42,20 @@ type DisplayMedia = {
   playbackRate: number;
 };
 
+/**
+ * A cached entry that OWNS AN HTMLMediaElement — video or audio.
+ *
+ * Every playback site below used to test `kind !== "video"` and bail. That was
+ * correct when video was the only thing that could play; with audio it meant
+ * the element was created, cached and mixer-attached, and then never told to
+ * play. The clip looked loaded and stayed silent.
+ */
+type PlayableCachedMedia = Extract<CachedMedia, { kind: "video" | "audio" }>;
+
+function isPlayable(cached: CachedMedia | undefined): cached is PlayableCachedMedia {
+  return cached !== undefined && (cached.kind === "video" || cached.kind === "audio");
+}
+
 type CachedMedia =
   | { kind: "image"; element: HTMLImageElement }
   | { kind: "video"; element: HTMLVideoElement }
@@ -887,7 +901,7 @@ export function WorkbenchDisplaySurface({
   const pauseInactiveVideos = useCallback((activeKey: string | null) => {
     const mixer = getMixer();
     cacheRef.current.forEach((cached, key) => {
-      if (cached.kind !== "video") return;
+      if (!isPlayable(cached)) return;
       if (key !== activeKey) {
         cached.element.pause();
         // The prefetch window pulls in the next few clips REGARDLESS of whether
@@ -900,7 +914,10 @@ export function WorkbenchDisplaySurface({
   /** The active clip is the only audible one, and a DISABLED clip is silent
    *  even though scrubbing can rest on it and draw its grayed frame. */
   const applyActiveGain = useCallback(
-    (element: HTMLVideoElement) => {
+    // HTMLMediaElement, not HTMLVideoElement: the mixer takes either, and
+    // audio clips need their gain applied on the same path or a volume change
+    // reaches every clip except the one that is playing.
+    (element: HTMLMediaElement) => {
       const { volume: level, muted: isMuted } = audioLevelRef.current;
       const audible = !isMuted && !activeClipDisabledRef.current;
       getMixer().setSourceGain(element, audible ? level : 0);
@@ -910,8 +927,11 @@ export function WorkbenchDisplaySurface({
 
   const syncActiveVideo = useCallback((media: DisplayMedia, shouldPlay: boolean, forceSeek = false) => {
     const cached = ensureCachedMedia(media);
-    if (cached.kind !== "video") return;
+    if (!isPlayable(cached)) return;
 
+    // Named `video` throughout because every call below is HTMLMediaElement
+    // API that an <audio> satisfies identically — readyState, currentTime,
+    // playbackRate, play/pause. Widening the GATE was the whole fix.
     const video = cached.element;
     const seek = () => {
       if (video.readyState < HTMLMediaElement.HAVE_METADATA) return;
@@ -1113,7 +1133,7 @@ export function WorkbenchDisplaySurface({
       const media = activeMediaRef.current;
       if (!media) return;
       const cached = cacheRef.current.get(media.key);
-      if (cached?.kind !== "video") return;
+      if (!isPlayable(cached)) return;
       const video = cached.element;
       if (video.readyState < HTMLMediaElement.HAVE_METADATA || video.seeking) return;
 
@@ -1276,7 +1296,7 @@ export function WorkbenchDisplaySurface({
     const mediaCache = cacheRef.current;
     return () => {
       mediaCache.forEach((cached) => {
-        if (cached.kind === "video") {
+        if (isPlayable(cached)) {
           cached.element.pause();
           cached.element.removeAttribute("src");
           cached.element.load();
@@ -1301,7 +1321,7 @@ export function WorkbenchDisplaySurface({
     const activeKey = activeMediaRef.current?.key ?? null;
     if (!activeKey) return;
     const cached = cacheRef.current.get(activeKey);
-    if (cached?.kind === "video") applyActiveGain(cached.element);
+    if (isPlayable(cached)) applyActiveGain(cached.element);
   }, [activeMuted, activeVolume, applyActiveGain, getMixer]);
 
   const canPlay = duration > 0 && sortedClips.length > 0;
