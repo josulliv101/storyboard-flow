@@ -123,8 +123,30 @@ function signCloudinaryParams(params: Record<string, string | number>, apiSecret
     .digest("hex");
 }
 
+/**
+ * Cloudinary's `resource_type`, which is NOT the clip kind.
+ *
+ * Cloudinary serves AUDIO under `video` — there is no separate audio resource
+ * type, and its destroy endpoint is keyed on this value. So an .flac is
+ * "video" here and that is correct. Callers deriving a CLIP kind must look at
+ * the extension/format instead of this (see `audioExtension`).
+ */
 function isVideoContent(filename: string, contentType: string) {
-  return contentType.startsWith("video/") || /\.(mp4|webm|mov)$/i.test(filename);
+  return (
+    contentType.startsWith("video/") ||
+    contentType.startsWith("audio/") ||
+    /\.(mp4|webm|mov)$/i.test(filename) ||
+    AUDIO_EXTENSIONS.test(filename)
+  );
+}
+
+/** Extensions that make an asset AUDIO for clip purposes (#309). */
+export const AUDIO_EXTENSIONS = /\.(flac|wav|mp3|m4a|aac|ogg|oga|opus)$/i;
+
+/** True when this asset should become an audio CLIP, whatever Cloudinary calls it. */
+export function isAudioAsset(pathnameOrFormat: string) {
+  return AUDIO_EXTENSIONS.test(pathnameOrFormat) ||
+    AUDIO_EXTENSIONS.test(`.${pathnameOrFormat}`);
 }
 
 function sanitizePublicId(filename: string) {

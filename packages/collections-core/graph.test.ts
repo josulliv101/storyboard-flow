@@ -5,6 +5,7 @@ import {
   getChildren,
   getDocumentOrder,
   isSameOrAncestor,
+  hasSourceWindow,
   isVideoMedia,
   mediaDurationSeconds,
   parseCollectionItemNode,
@@ -224,7 +225,9 @@ describe("runtime graph validation", () => {
     expect(validateGraph(graph)).toEqual({ ok: true, value: undefined });
 
     const image = graph.nodesById.get(parseNodeId("image"));
-    if (!image || image.kind !== "media" || isVideoMedia(image)) {
+    // `hasSourceWindow`, not `isVideoMedia`: audio is also not an image, and
+    // narrowing by "not video" alone leaves a node with no `durationSeconds`.
+    if (!image || image.kind !== "media" || hasSourceWindow(image)) {
       throw new Error("expected image fixture");
     }
     const nodesById = new Map(graph.nodesById);
@@ -242,7 +245,28 @@ describe("runtime graph validation", () => {
       [{ id: 1, kind: "collection", name: "Collection" }, "$.id"],
       [{ id: " ", kind: "collection", name: "Collection" }, "$.id"],
       [{ id: "collection", kind: "collection", name: 1 }, "$.name"],
-      [{ id: "media", kind: "media", mediaKind: "audio", name: "Media" }, "$.mediaKind"],
+      // "audio" is a REAL kind now (#309) — the rejection case it used to hold
+      // moved to an unknown kind, so this path stays covered.
+      [{ id: "media", kind: "media", mediaKind: "caption", name: "Media" }, "$.mediaKind"],
+      // Audio is windowed like video, so it is its SOURCE fields that are
+      // required — a lone durationSeconds is not enough.
+      [
+        { id: "media", kind: "media", mediaKind: "audio", name: "Media", durationSeconds: 4 },
+        "$.fullDurationSeconds",
+      ],
+      [
+        {
+          id: "media",
+          kind: "media",
+          mediaKind: "audio",
+          name: "Media",
+          fullDurationSeconds: 4,
+          trimInSeconds: 0,
+          trimOutSeconds: 0,
+          posterSrcs: ["a.jpg"],
+        },
+        "$.posterSrcs",
+      ],
       [
         { id: "media", kind: "media", name: "Media", src: 42, durationSeconds: 4 },
         "$.src",

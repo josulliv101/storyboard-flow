@@ -133,10 +133,13 @@ export function isTimelineClip(value: unknown): value is TimelineClip {
   const clip = value as Record<string, unknown>;
   if (!hasClipBase(clip)) return false;
 
-  if (clip.kind === "image" || clip.kind === "video") {
+  if (clip.kind === "image" || clip.kind === "video" || clip.kind === "audio") {
     return (
       typeof clip.src === "string" &&
-      isOptionalString(clip.poster) &&
+      // Audio must not carry a poster: one minted for an audio asset is a
+      // broken image URL, and it would surface as a thumbnail in the
+      // recently-deleted list. Absent is the only legal value.
+      (clip.kind === "audio" ? clip.poster === undefined : isOptionalString(clip.poster)) &&
       isOptionalAssetSourceRef(clip.sourceAsset)
     );
   }

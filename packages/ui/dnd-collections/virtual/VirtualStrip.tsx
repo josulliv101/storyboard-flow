@@ -17,6 +17,7 @@ import { twMerge } from "tailwind-merge";
 
 import {
   getChildren,
+  hasSourceWindow,
   isVideoMedia,
   mediaDurationSeconds,
   type CollectionItemNode,
@@ -363,10 +364,12 @@ export const VirtualStrip = forwardRef<VirtualStripHandle, VirtualStripProps>(
     const previewSlotSize = (nodeId: NodeId, live: LiveTrim): number => {
       const node = nodesById.get(nodeId);
       if (node && node.kind === "media") {
-        const previewNode: CollectionItemNode =
-          node.mediaKind === "video"
-            ? { ...node, trimInSeconds: live.trimInSeconds, trimOutSeconds: live.trimOutSeconds }
-            : { ...node, durationSeconds: live.effectiveSeconds };
+        // Windowed kinds preview by their trims; an image previews by its
+        // duration. Keyed on hasSourceWindow so an audio node is not handed a
+        // `durationSeconds` field it does not have.
+        const previewNode: CollectionItemNode = hasSourceWindow(node)
+          ? { ...node, trimInSeconds: live.trimInSeconds, trimOutSeconds: live.trimOutSeconds }
+          : { ...node, durationSeconds: live.effectiveSeconds };
         return widthForNode(previewNode) + gap;
       }
       // Trims only exist on media; mirror the raw conversion as a safety net.

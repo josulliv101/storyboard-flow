@@ -7,7 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
-import { type MediaNode, type VideoMediaNode } from "../core/graph";
+import { mediaDurationSeconds, type MediaNode, type VideoMediaNode } from "../core/graph";
 import { type MediaUpdate } from "../core/commands";
 import { useCollectionsStore } from "./collections-store";
 import { useLiveTrimPublisher } from "./live-trim";
@@ -82,6 +82,26 @@ export function resolveTrim(
         trimInSeconds: node.trimInSeconds,
         trimOutSeconds,
         effectiveSeconds: node.fullDurationSeconds - node.trimInSeconds - trimOutSeconds,
+      },
+    };
+  }
+  if (node.mediaKind === "audio") {
+    // Audio IS windowed and the command path can trim it, but the trim
+    // affordance is deliberately unshipped (#309 v1). Resolve to the node's
+    // CURRENT window so the gesture is inert: `applyMediaUpdate` sees no change
+    // and rejects with `same-position`. Falling through to the image branch
+    // below would instead set a `durationSeconds` the node does not have.
+    return {
+      update: {
+        mediaKind: "audio",
+        trimInSeconds: node.trimInSeconds,
+        trimOutSeconds: node.trimOutSeconds,
+      },
+      live: {
+        side,
+        trimInSeconds: node.trimInSeconds,
+        trimOutSeconds: node.trimOutSeconds,
+        effectiveSeconds: mediaDurationSeconds(node),
       },
     };
   }

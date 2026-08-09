@@ -90,7 +90,41 @@ export type VideoMediaNode = Readonly<{
   disabled?: boolean;
 }>;
 
-export type MediaNode = ImageMediaNode | VideoMediaNode;
+/**
+ * A sound with no picture.
+ *
+ * Modelled as a WINDOWED node like video (`fullDurationSeconds` + trims), NOT
+ * as a duration node like image, and that choice is load-bearing in two ways.
+ *
+ * It keeps the model render-complete: `mediaDurationSeconds` computes the cut,
+ * so the packed duration stays correct the day a trim handle ships. Storing a
+ * single `durationSeconds` instead would mean a data migration later.
+ *
+ * And it is the TYPE-SAFETY LEVER for this whole feature. Roughly twenty sites
+ * in this repo branch `mediaKind === "video"` with an else that silently means
+ * "image"; only two of them failed to compile when audio was added. Narrowing
+ * `Image | Video | Audio` by `!== "video"` yields `Image | Audio`, and Audio has
+ * no `durationSeconds` — so every else-branch that reads one becomes a build
+ * error instead of a silent wrong answer.
+ *
+ * No `posterSrcs`: audio has no frames, and a card must not try to show any.
+ */
+export type AudioMediaNode = Readonly<{
+  id: NodeId;
+  kind: "media";
+  mediaKind: "audio";
+  name: string;
+  src?: string;
+  /** The source clip's full length. */
+  fullDurationSeconds: number;
+  /** Seconds trimmed off the START. 0 = untrimmed. */
+  trimInSeconds: number;
+  /** Seconds trimmed off the END. 0 = untrimmed. */
+  trimOutSeconds: number;
+  disabled?: boolean;
+}>;
+
+export type MediaNode = ImageMediaNode | VideoMediaNode | AudioMediaNode;
 
 export type CollectionNode = Readonly<{
   id: NodeId;
@@ -109,17 +143,40 @@ export type CollectionNode = Readonly<{
 
 export type CollectionItemNode = MediaNode | CollectionNode;
 
-/** True for video media (image is the default when `mediaKind` is absent). */
+/**
+ * True for video media (image is the default when `mediaKind` is absent).
+ *
+ * This means "SHOWS FILMSTRIP FRAMES", not "is trimmable" — audio is trimmable
+ * and has no frames. When a caller means the latter, it wants `hasSourceWindow`.
+ */
 export function isVideoMedia(node: CollectionItemNode): node is VideoMediaNode {
   return node.kind === "media" && node.mediaKind === "video";
 }
 
 /**
+ * True for media whose timeline duration is a WINDOW onto a longer source —
+ * video and audio. The complement is an image, whose `durationSeconds` is set
+ * directly because there is no source length to window into.
+ *
+ * Split out from `isVideoMedia` because the two questions stopped having the
+ * same answer once audio existed, and every site that conflated them was a
+ * silent bug rather than a type error.
+ */
+export function hasSourceWindow(
+  node: CollectionItemNode,
+): node is VideoMediaNode | AudioMediaNode {
+  return (
+    node.kind === "media" && (node.mediaKind === "video" || node.mediaKind === "audio")
+  );
+}
+
+/**
  * The item's effective timeline duration: an image's `durationSeconds`, or a
- * video's source length minus what's trimmed off each end (never below 0).
+ * windowed clip's source length minus what's trimmed off each end (never
+ * below 0).
  */
 export function mediaDurationSeconds(node: MediaNode): number {
-  return node.mediaKind === "video"
+  return hasSourceWindow(node)
     ? Math.max(0, node.fullDurationSeconds - node.trimInSeconds - node.trimOutSeconds)
     : node.durationSeconds;
 }
@@ -185,12 +242,86 @@ export type GraphNodeSpec =
       disabled?: boolean;
     }>
   | Readonly<{
+      kind: "media";
+      mediaKind: "audio";
+      id: string;
+      name: string;
+      src?: string;
+      fullDurationSeconds: number;
+      trimInSeconds?: number; // default 0
+      trimOutSeconds?: number; // default 0
+      disabled?: boolean;
+    }>
+  | Readonly<{
       kind: "collection";
       id: string;
       name: string;
       children?: readonly GraphNodeSpec[];
       disabled?: boolean;
     }>;
+
+/** A media spec, i.e. every member of GraphNodeSpec that is not a collection. */
+type MediaNodeSpec = Extract<GraphNodeSpec, { kind: "media" }>;
+
+/**
+ * The ONE place a media spec becomes a media node.
+ *
+ * `buildGraph` and `parseCollectionItemNode` each used to carry their own copy
+ * of this, both shaped `mediaKind === "video" ? {...} : {...image}`. That
+ * else-branch is a CONSTRUCTOR, so no shape change can ever break it — a new
+ * media kind was silently built as an image, in two places, with no type error.
+ * Unified here so the `never` default below is the single thing that has to
+ * hold, and adding a fourth kind is a compile error rather than a silent
+ * coercion.
+ */
+function mediaNodeFromSpec(id: NodeId, spec: MediaNodeSpec): MediaNode {
+  const disabled = spec.disabled ? { disabled: true as const } : {};
+  switch (spec.mediaKind) {
+    case "video":
+      return {
+        id,
+        kind: "media",
+        mediaKind: "video",
+        name: spec.name,
+        src: spec.src,
+        // Copied (like parseCollectionItemNode does): the graph is Readonly,
+        // so it must not alias an array the caller can mutate.
+        posterSrcs: spec.posterSrcs === undefined ? undefined : [...spec.posterSrcs],
+        fullDurationSeconds: spec.fullDurationSeconds,
+        trimInSeconds: spec.trimInSeconds ?? 0,
+        trimOutSeconds: spec.trimOutSeconds ?? 0,
+        ...disabled,
+      };
+    case "audio":
+      return {
+        id,
+        kind: "media",
+        mediaKind: "audio",
+        name: spec.name,
+        src: spec.src,
+        fullDurationSeconds: spec.fullDurationSeconds,
+        trimInSeconds: spec.trimInSeconds ?? 0,
+        trimOutSeconds: spec.trimOutSeconds ?? 0,
+        ...disabled,
+      };
+    case "image":
+    case undefined:
+      return {
+        id,
+        kind: "media",
+        mediaKind: "image",
+        name: spec.name,
+        src: spec.src,
+        durationSeconds: spec.durationSeconds ?? 4,
+        ...disabled,
+      };
+    default: {
+      // A new media kind reaches here as a build error, not as an image.
+      const unreachable: never = spec;
+      return unreachable;
+    }
+  }
+}
 
 export type BuildGraphError =
   | Readonly<{ reason: "duplicate-id"; id: string }>
@@ -245,33 +376,7 @@ export function buildGraph(
     }
 
     if (spec.kind === "media") {
-      nodesById.set(
-        id,
-        spec.mediaKind === "video"
-          ? {
-              id,
-              kind: "media",
-              mediaKind: "video",
-              name: spec.name,
-              src: spec.src,
-              // Copied (like parseCollectionItemNode does): the graph is
-              // Readonly, so it must not alias an array the caller can mutate.
-              posterSrcs: spec.posterSrcs === undefined ? undefined : [...spec.posterSrcs],
-              fullDurationSeconds: spec.fullDurationSeconds,
-              trimInSeconds: spec.trimInSeconds ?? 0,
-              trimOutSeconds: spec.trimOutSeconds ?? 0,
-              ...(spec.disabled ? { disabled: true } : {}),
-            }
-          : {
-              id,
-              kind: "media",
-              mediaKind: "image",
-              name: spec.name,
-              src: spec.src,
-              durationSeconds: spec.durationSeconds ?? 4,
-              ...(spec.disabled ? { disabled: true } : {}),
-            }
-      );
+      nodesById.set(id, mediaNodeFromSpec(id, spec));
     } else {
       nodesById.set(id, {
         id,
@@ -538,14 +643,18 @@ function validateMediaRecord(
   if (
     value.mediaKind !== undefined &&
     value.mediaKind !== "image" &&
-    value.mediaKind !== "video"
+    value.mediaKind !== "video" &&
+    value.mediaKind !== "audio"
   ) {
-    return invalidValue(`${path}.mediaKind`, 'Expected "image" or "video".');
+    return invalidValue(`${path}.mediaKind`, 'Expected "image", "video" or "audio".');
   }
   const srcError = validateOptionalString(value, "src", path);
   if (srcError) return srcError;
 
-  if (value.mediaKind !== "video") {
+  // Windowed kinds (video, audio) validate their source length and trims;
+  // an image validates a single duration instead.
+  const windowed = value.mediaKind === "video" || value.mediaKind === "audio";
+  if (!windowed) {
     return validateNonNegativeNumber(
       value,
       "durationSeconds",
@@ -572,6 +681,11 @@ function validateMediaRecord(
   if (trimOutError) return trimOutError;
 
   if (value.posterSrcs !== undefined) {
+    // Audio has no frames, so a poster array on one is a mistake upstream
+    // rather than harmless extra data — reject it here where it is cheap.
+    if (value.mediaKind === "audio") {
+      return invalidValue(`${path}.posterSrcs`, "Audio media cannot carry poster frames.");
+    }
     if (!Array.isArray(value.posterSrcs)) {
       return invalidType(`${path}.posterSrcs`, "Expected an array of strings.");
     }
@@ -585,7 +699,7 @@ function validateMediaRecord(
   const trimIn = (value.trimInSeconds as number | undefined) ?? 0;
   const trimOut = (value.trimOutSeconds as number | undefined) ?? 0;
   if (trimIn + trimOut > full) {
-    return invalidValue(path, "Video trim cannot exceed the full duration.");
+    return invalidValue(path, "Trim cannot exceed the full duration.");
   }
   return null;
 }
@@ -612,39 +726,46 @@ export function parseCollectionItemNode(
 
   const mediaError = validateMediaRecord(value, path, true);
   if (mediaError) return { ok: false, error: mediaError };
-  if (value.mediaKind === "video") {
-    return {
-      ok: true,
-      value: {
-        id,
-        kind: "media",
-        mediaKind: "video",
-        name,
-        src: value.src as string | undefined,
-        posterSrcs:
-          value.posterSrcs === undefined
-            ? undefined
-            : [...(value.posterSrcs as readonly string[])],
-        fullDurationSeconds: value.fullDurationSeconds as number,
-        trimInSeconds: value.trimInSeconds as number,
-        trimOutSeconds: value.trimOutSeconds as number,
-        ...(value.disabled ? { disabled: true } : {}),
-      },
-    };
-  }
 
-  return {
-    ok: true,
-    value: {
-      id,
-      kind: "media",
-      mediaKind: "image",
-      name,
-      src: value.src as string | undefined,
-      durationSeconds: value.durationSeconds as number,
-      ...(value.disabled ? { disabled: true } : {}),
-    },
-  };
+  // `validateMediaRecord` has already proved the fields for this mediaKind are
+  // present and well-typed, so the record is a resolved MediaNodeSpec. Build
+  // through the SHARED constructor rather than a second copy of the branch —
+  // see mediaNodeFromSpec for why a duplicate here was a silent-coercion trap.
+  const common = {
+    kind: "media",
+    id: id as string,
+    name,
+    src: value.src as string | undefined,
+    ...(value.disabled ? { disabled: true } : {}),
+  } as const;
+  const spec: MediaNodeSpec =
+    value.mediaKind === "video"
+      ? {
+          ...common,
+          mediaKind: "video",
+          posterSrcs:
+            value.posterSrcs === undefined
+              ? undefined
+              : [...(value.posterSrcs as readonly string[])],
+          fullDurationSeconds: value.fullDurationSeconds as number,
+          trimInSeconds: value.trimInSeconds as number,
+          trimOutSeconds: value.trimOutSeconds as number,
+        }
+      : value.mediaKind === "audio"
+        ? {
+            ...common,
+            mediaKind: "audio",
+            fullDurationSeconds: value.fullDurationSeconds as number,
+            trimInSeconds: value.trimInSeconds as number,
+            trimOutSeconds: value.trimOutSeconds as number,
+          }
+        : {
+            ...common,
+            mediaKind: "image",
+            durationSeconds: value.durationSeconds as number,
+          };
+
+  return { ok: true, value: mediaNodeFromSpec(id, spec) };
 }
 
 /** Validate an untrusted nested graph specification without recursive calls. */

@@ -126,7 +126,43 @@ export type VideoTimelineClip = TimelineItemBase & {
   sourceAsset?: AssetSourceRef;
 };
 
-export type MediaTimelineClip = ImageTimelineClip | VideoTimelineClip;
+/**
+ * A sound with no picture. Structurally identical to the other two media
+ * members — including `sourceDuration`/`trimIn`/`trimOut` from
+ * `TimelineItemBase` — so it is render-complete from the start even though the
+ * trim AFFORDANCE is deferred. The graph side models it as a WINDOWED node
+ * (like video, not like image); see AudioMediaNode in @storyboard/collections-core
+ * for why that choice is load-bearing.
+ *
+ * `poster` exists on the type only because the field is shared; audio must not
+ * carry one. A poster minted for an audio asset is a broken image URL, and it
+ * would leak into the recently-deleted list as a thumbnail.
+ */
+export type AudioTimelineClip = TimelineItemBase & {
+  kind: "audio";
+  src: string;
+  poster?: never;
+  sourceAsset?: AssetSourceRef;
+};
+
+export type MediaTimelineClip = ImageTimelineClip | VideoTimelineClip | AudioTimelineClip;
+
+/** Has a file behind it — i.e. anything that is not a collection. */
+export function isMediaClip(clip: TimelineClip): clip is MediaTimelineClip {
+  return clip.kind !== "collection";
+}
+
+/**
+ * Can stand in as a PICTURE — a collection preview frame, a card thumbnail, a
+ * project poster. Audio deliberately fails this: it has a `src`, so every
+ * "does it have a source?" test would otherwise wave a .flac through into
+ * places that render it as an <img>.
+ */
+export function isVisualClip(
+  clip: TimelineClip,
+): clip is ImageTimelineClip | VideoTimelineClip {
+  return clip.kind === "image" || clip.kind === "video";
+}
 
 export type CollectionTimelineClip = TimelineItemBase & {
   kind: "collection";

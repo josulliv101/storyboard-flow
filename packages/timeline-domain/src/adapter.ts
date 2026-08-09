@@ -129,6 +129,23 @@ function mediaSpec(clip: Exclude<TimelineClip, CollectionTimelineClip>): GraphNo
       ...(clip.disabled ? { disabled: true } : {}),
     };
   }
+  if (clip.kind === "audio") {
+    // WINDOWED like video, not duration-only like image: the trims live on the
+    // node so `mediaDurationSeconds` computes the cut. Storing a single
+    // duration here would make shipping a trim handle a data migration. No
+    // posterSrcs — audio has no frames.
+    return {
+      kind: "media",
+      mediaKind: "audio",
+      id: clip.id,
+      name: clip.title ?? clip.alt,
+      src: clip.src,
+      fullDurationSeconds: clip.sourceDuration,
+      trimInSeconds: clip.trimIn,
+      trimOutSeconds: clip.trimOut,
+      ...(clip.disabled ? { disabled: true } : {}),
+    };
+  }
   return {
     kind: "media",
     id: clip.id,
@@ -503,6 +520,12 @@ export function hydratedCollectionPreviews(
       const node = graph.nodesById.get(childId);
       if (!node) continue;
       if (node.kind === "media") {
+        // Audio can never be a preview FRAME. It has a `src`, so it would sail
+        // through the `src.length === 0` test below and be written into the
+        // collection's persisted `previewItems` as an image — and because this
+        // projection self-heals back into storage, that mistake would re-persist
+        // on every unrelated parent write rather than failing once.
+        if (node.mediaKind === "audio") continue;
         const detail = details?.[node.id as string];
         const src = node.src?.trim() ?? "";
         const poster =
@@ -639,6 +662,21 @@ export function graphChildrenToClips(
           kind: "video",
           src: node.src ?? "",
           ...(detail?.poster === undefined ? {} : { poster: detail.poster }),
+          sourceDuration: node.fullDurationSeconds,
+          trimIn: node.trimInSeconds,
+          trimOut: node.trimOutSeconds,
+        };
+      }
+      if (node.mediaKind === "audio") {
+        // THE WRITE-BACK. Without this branch an audio node falls through to
+        // the image return below and is PERSISTED as `kind: "image"` — the
+        // kind would be lost on every save, silently and permanently.
+        // Trims come off the node (it is windowed), never off `detail`, which
+        // is why mediaDetail correctly writes nothing for audio.
+        return {
+          ...base,
+          kind: "audio",
+          src: node.src ?? "",
           sourceDuration: node.fullDurationSeconds,
           trimIn: node.trimInSeconds,
           trimOut: node.trimOutSeconds,

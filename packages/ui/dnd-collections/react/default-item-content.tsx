@@ -2,7 +2,12 @@
 
 import { memo } from "react";
 
-import { mediaDurationSeconds, type MediaNode, type NodeId } from "../core/graph";
+import {
+  hasSourceWindow,
+  mediaDurationSeconds,
+  type MediaNode,
+  type NodeId,
+} from "../core/graph";
 import { type CollectionItemContentProps } from "./collections-components";
 import { roundSecondsForDisplay } from "./duration-format";
 import { useLiveTrim } from "./live-trim";
@@ -26,10 +31,12 @@ import { NodeThumbnail } from "./node-thumbnail";
  */
 function DefaultTrimReadout({ id, node }: { id: NodeId; node: MediaNode }) {
   const live = useLiveTrim(id);
-  const pill =
-    node.mediaKind === "video"
-      ? `${mediaDurationSeconds(node).toFixed(2)}s / ${node.fullDurationSeconds.toFixed(2)}s`
-      : `${node.durationSeconds.toFixed(2)}s`;
+  // Windowed kinds (video, audio) show showing/full; an image has only the one
+  // number. Keyed on hasSourceWindow rather than "is video" so audio reads its
+  // own `fullDurationSeconds` instead of a `durationSeconds` it does not have.
+  const pill = hasSourceWindow(node)
+    ? `${mediaDurationSeconds(node).toFixed(2)}s / ${node.fullDurationSeconds.toFixed(2)}s`
+    : `${node.durationSeconds.toFixed(2)}s`;
   return (
     <>
       {/* Showing/full readout pill (bottom-right), matching the app. */}

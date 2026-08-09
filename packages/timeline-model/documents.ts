@@ -7,6 +7,7 @@ import {
   CLIP_GAP_SECONDS,
   TIMELINE_LEADING_PADDING_SECONDS,
 } from "./constants";
+import { isVisualClip } from "./types";
 import type { TimelineClip, TimelineDocument } from "./types";
 
 /** First/middle/last media of a collection's clips, as stored preview
@@ -14,9 +15,10 @@ import type { TimelineClip, TimelineDocument } from "./types";
  *  byte-identical previews to the legacy store's own recompute — both call
  *  THIS. */
 export function previewItemsFrom(clips: TimelineClip[]) {
-  const mediaClips = clips.filter(
-    (clip) => clip.kind === "image" || clip.kind === "video",
-  );
+  // VISUAL, not merely media: an audio clip has a `src` and would otherwise
+  // qualify, then be rendered as an <img> pointing at a .flac. Preview items
+  // are persisted, so letting one through writes the mistake to storage.
+  const mediaClips = clips.filter(isVisualClip);
   const previewClips =
     mediaClips.length <= 3
       ? mediaClips
