@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { parseNodeId, type CollectionsGraph, type NodeId } from "@storyboard/collections-core";
 
 import { CLOUDINARY_PROVIDER_ID } from "@/lib/assets/cloudinary-provider";
@@ -88,9 +90,16 @@ export async function attachMedia(
   const displayName =
     (args.name ?? asset.relativePath ?? asset.pathname).trim() || asset.pathname;
 
-  // A fresh node id derived from the public id, which already carries an
-  // upload timestamp — so it cannot collide with an existing node.
-  const newNodeId = parseNodeId(`clip-${asset.pathname}`);
+  // A freshly MINTED id, not one derived from the public id. Deriving it made
+  // the id a function of the asset, so attaching one asset twice produced two
+  // nodes with the same id — which node ids, being the addressing scheme,
+  // cannot allow. That forced a "one asset, one place" rule nothing about the
+  // product wanted, and it collided across documents too (the read projection
+  // in timeline-domain has to demote such clips to `dup:` ids to keep the whole
+  // tree from being rejected). Asset identity lives in `sourceAsset` below,
+  // which is what every reader actually uses to recover it; the id only has to
+  // be unique. Same prefixes as the drag-drop path so both mint alike.
+  const newNodeId = parseNodeId(`${isVideo ? "video" : "image"}-${randomUUID().slice(0, 8)}`);
   let placedIndex = -1;
   let placedParent: NodeId | null = null;
 
@@ -106,10 +115,6 @@ export async function attachMedia(
           message: `Target "${targetId}" is a clip, not a collection — clips can only go inside a collection.`,
         } as const;
       }
-      if (graph.nodesById.has(newNodeId)) {
-        return { ok: false, message: `"${asset.pathname}" is already on this timeline.` } as const;
-      }
-
       const placement = resolveMovePlacement(graph, {
         nodeId: newNodeId,
         targetId,

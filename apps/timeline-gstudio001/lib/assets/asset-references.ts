@@ -6,10 +6,10 @@
 // unit-tests without a backend.
 //
 // The rule: an asset dies when nothing references it. Not when its clip is
-// deleted — one upload can back several clips (this app mints stable per-asset
-// clip ids, so placing an asset twice makes two clips of one file), and the bin
-// is per-USER while an asset is per-project, so a bin spans everything its
-// owner owns.
+// deleted — one upload can back several clips (clip ids are minted per
+// PLACEMENT, so the same file can sit in several spots, each its own clip), and
+// the bin is per-USER while an asset is per-project, so a bin spans everything
+// its owner owns.
 
 import type { TimelineClip } from "@storyboard/timeline-model/types";
 
