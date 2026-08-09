@@ -114,6 +114,18 @@ function storedClips(id: string): TimelineClip[] {
   return ((state.docs.get(id) as { clips?: TimelineClip[] } | undefined)?.clips ?? []);
 }
 
+/**
+ * The id of the clip an attach minted. Ids are MINTED, not derived from the
+ * asset, so a test cannot spell one out — read the one the tool reports. (These
+ * assertions used to match on the public id inside the clip id, which is
+ * exactly the coupling that stopped an asset being attached twice.)
+ */
+function attachedNodeId(result: Awaited<ReturnType<typeof attachMedia>>): string {
+  const { nodeId } = (result.structuredContent ?? {}) as { nodeId?: string };
+  if (nodeId === undefined) throw new Error("expected the attach to report a nodeId");
+  return nodeId;
+}
+
 beforeEach(() => {
   state.docs.clear();
   state.assets.length = 0;
@@ -138,7 +150,7 @@ describe("attachMedia", () => {
     );
 
     expect(result.isError).toBeFalsy();
-    const added = storedClips(PROJECT).find((c) => c.id.includes("render-123"));
+    const added = storedClips(PROJECT).find((c) => c.id === attachedNodeId(result));
     expect(added).toBeDefined();
     // TimelineClip is a union; provenance only exists on media clips.
     if (!added || added.kind === "collection") throw new Error("expected a media clip");
@@ -207,7 +219,7 @@ describe("attachMedia", () => {
   it("places it after a named sibling rather than always appending", async () => {
     seed(PROJECT, [clip("a"), clip("b")]);
 
-    await attachMedia(
+    const result = await attachMedia(
       {
         timelineId: PROJECT,
         projectId: PROJECT,
@@ -217,11 +229,41 @@ describe("attachMedia", () => {
       OWNER,
     );
 
+    expect(storedClips(PROJECT).map((c) => c.id)).toEqual(["a", attachedNodeId(result), "b"]);
+  });
+
+  // Node ids used to be `clip-<publicId>`, which made the id a function of the
+  // asset: the same file could exist at exactly one place, and the second
+  // attach was refused with "already on this timeline". Nothing about the
+  // product wanted that rule — a shot legitimately reuses a plate, and the
+  // read projection already has to demote cross-document collisions to `dup:`
+  // ids. Provenance is what identifies the asset; the id only has to be unique.
+  it("attaches the same asset twice, as two independent clips", async () => {
+    seed(PROJECT, []);
+    const args = {
+      timelineId: PROJECT,
+      projectId: PROJECT,
+      publicId: "media/user-a/project-alpha/render-123",
+    };
+
+    const first = await attachMedia(args, OWNER);
+    const second = await attachMedia(args, OWNER);
+
+    expect(first.isError).toBeFalsy();
+    expect(second.isError).toBeFalsy();
     expect(storedClips(PROJECT).map((c) => c.id)).toEqual([
-      "a",
-      "clip-media/user-a/project-alpha/render-123",
-      "b",
+      attachedNodeId(first),
+      attachedNodeId(second),
     ]);
+    // Both carry the same provenance — one file, two placements. That is what
+    // keeps reclaim correct: the asset stays referenced until BOTH are gone.
+    for (const added of storedClips(PROJECT)) {
+      if (added.kind === "collection") throw new Error("expected media clips");
+      expect(added.sourceAsset).toEqual({
+        providerId: "cloudinary",
+        assetId: "media/user-a/project-alpha/render-123",
+      });
+    }
   });
 
   it("refuses when the upload never landed, instead of minting a dead clip", async () => {
