@@ -315,6 +315,43 @@ describe("attachMedia", () => {
     expect(attachedNodeId(result).startsWith("audio-")).toBe(true);
   });
 
+  // Cards render `title` and never `alt`, so a caller-supplied name that only
+  // reached `alt` was stored and then displayed nowhere. Audio is where this
+  // bites hardest: no thumbnail, so the title is the only way to tell two takes
+  // apart on the board.
+  it("records an explicit name as an authored title, not just alt", async () => {
+    seed(PROJECT, []);
+
+    const result = await attachMedia(
+      {
+        timelineId: PROJECT,
+        projectId: PROJECT,
+        publicId: "media/user-a/project-alpha/render-123",
+        name: 'Brian VO — "You worry about the door"',
+      },
+      OWNER,
+    );
+
+    expect(result.isError).toBeFalsy();
+    const added = storedClips(PROJECT)[0];
+    expect(added.title).toBe('Brian VO — "You worry about the door"');
+    expect(added.alt).toBe('Brian VO — "You worry about the door"');
+  });
+
+  // The complement: an UNNAMED clip must stay untitled. "Only authored titles
+  // are shown" is what keeps a library of machine-named clips from reading as
+  // a rename backlog — defaulting a title from the filename would break it.
+  it("leaves title absent when no name was given", async () => {
+    seed(PROJECT, []);
+
+    await attachMedia(
+      { timelineId: PROJECT, projectId: PROJECT, publicId: "media/user-a/project-alpha/render-123" },
+      OWNER,
+    );
+
+    expect(storedClips(PROJECT)[0].title).toBeUndefined();
+  });
+
   it("refuses when the upload never landed, instead of minting a dead clip", async () => {
     seed(PROJECT, [clip("a")]);
     state.assets.length = 0;

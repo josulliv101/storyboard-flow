@@ -193,6 +193,17 @@ export async function attachMedia(
         details: {
           [newNodeId as string]: {
             alt: displayName,
+            // An explicit `name` argument is an AUTHORED title, so record it as
+            // one. Cards render `title` and never `alt` — deliberately, so a
+            // library of machine-named clips does not read as a rename backlog
+            // — which meant a caller-supplied name was accepted, stored as
+            // `alt`, and then shown nowhere.
+            //
+            // It matters most for AUDIO: an audio card has no thumbnail, so the
+            // title is the only thing distinguishing one take from another.
+            // Absent when the caller passed no name, which keeps the
+            // "unnamed looks neutral" rule intact.
+            ...(args.name?.trim() ? { title: args.name.trim() } : {}),
             aspect: 16 / 9,
             trackIndex: 0,
             sourceAsset: { providerId: CLOUDINARY_PROVIDER_ID, assetId: asset.pathname },
