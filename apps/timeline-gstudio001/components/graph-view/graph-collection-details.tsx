@@ -14,6 +14,7 @@ import { formatDuration } from "@/lib/format-duration";
 import { collectionPreviewFrameUrl } from "@/lib/video-frame-url";
 
 import { useClipDetail, useTimelineTitle } from "./graph-details-context";
+import { TagEditor } from "./graph-tag-editor";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import {
@@ -233,6 +234,17 @@ export function CollectionDetailsBody({
           >
             Open this timeline
           </button>
+        </div>
+
+        {/* Collections are taggable — `tags` lives on TimelineItemBase, and the
+            collection CARD already renders them. Without this the feature was
+            half-shipped in the other direction: visible on the card, editable
+            nowhere, because collections route here instead of to ModalBody. */}
+        <div className="flex flex-col gap-1.5 border-t border-white/10 pt-3">
+          <span className="font-mono text-[11px] tracking-[0.08em] text-zinc-500 uppercase">
+            Tags
+          </span>
+          <TagEditor nodeId={node.id} />
         </div>
       </div>
     </div>,
