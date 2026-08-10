@@ -7,6 +7,7 @@
 // round-trips and legacy writers produce nulls), while every REQUIRED
 // numeric must be a finite number (NaN/Infinity poison packing).
 
+import { areTagsValid } from "./tags";
 import type { TimelineClip, TimelineDocument } from "./types";
 
 function isFiniteNumber(value: unknown): value is number {
@@ -124,7 +125,12 @@ function hasClipBase(clip: Record<string, unknown>): boolean {
     // clip from the timeline.
     (clip.disabled === undefined || typeof clip.disabled === "boolean") &&
     isOptionalString(clip.trashedAt) &&
-    isOptionalTrashOrigin(clip.trashedFrom)
+    isOptionalTrashOrigin(clip.trashedFrom) &&
+    // Already-normalized form only. Writers clean input with `normalizeTags`
+    // before it gets here, so a blank, over-long or duplicate tag at this
+    // point means a writer skipped that step — which is exactly the thing
+    // that must not reach storage and spread.
+    (clip.tags === undefined || clip.tags === null || areTagsValid(clip.tags))
   );
 }
 

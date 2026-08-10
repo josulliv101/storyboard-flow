@@ -163,6 +163,41 @@ describe("attachMedia", () => {
     });
   });
 
+  // Tagging at mint time is the only chance to do it automatically: a clip
+  // that lands untagged stays untagged until someone opens it by hand. This
+  // goes through the real store transaction, so it proves the tags survive the
+  // detail side-table and the projection back to stored clips — not just that
+  // the argument was accepted.
+  it("files agent-uploaded media under the tags it was given", async () => {
+    seed(PROJECT, []);
+
+    await attachMedia(
+      {
+        timelineId: PROJECT,
+        projectId: PROJECT,
+        publicId: "media/user-a/project-alpha/render-123",
+        tags: ["  SCAIL-2 ", "scail-2", "", "S02", "keeper"],
+      },
+      OWNER,
+    );
+
+    const added = storedClips(PROJECT)[0];
+    // Cleaned on the way in: trimmed, de-duplicated case-insensitively with
+    // the first spelling kept, blanks dropped.
+    expect(added.tags).toEqual(["SCAIL-2", "S02", "keeper"]);
+  });
+
+  it("leaves an untagged upload with no tags field", async () => {
+    seed(PROJECT, []);
+
+    await attachMedia(
+      { timelineId: PROJECT, projectId: PROJECT, publicId: "media/user-a/project-alpha/render-123" },
+      OWNER,
+    );
+
+    expect("tags" in storedClips(PROJECT)[0]).toBe(false);
+  });
+
   it("carries the real source duration and url from the upload", async () => {
     seed(PROJECT, []);
 
