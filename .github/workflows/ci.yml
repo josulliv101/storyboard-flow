@@ -9,9 +9,17 @@ name: CI
 # assertion demanding 9px went unnoticed because nothing ran it. They need a
 # real Chromium but no dev server, which is what makes them affordable here.
 #
-# The Playwright e2e suite is still intentionally excluded — it needs a running
-# dev server and real trusted mouse input, too slow to gate every merge on. Run
-# it locally or in a separate manual workflow when a change warrants it.
+# The Playwright e2e suite runs too, as a SEPARATE job — see `e2e` below. It
+# was excluded for a long time on the reasoning that a dev server plus real
+# trusted mouse input is too slow to gate every merge on. That reasoning held
+# right up until it cost something: a change to the click grammar (collections
+# drill in on a single click now) broke eight e2e tests and merged green,
+# because the gate above cannot see them. The suite is the only thing in this
+# repo that exercises real pointer input, which is exactly the class of change
+# most likely to break silently.
+#
+# Its cost is contained by running it in PARALLEL with the gate above rather
+# than after it, so it adds its own wall time and not the sum.
 
 on:
   pull_request:
@@ -66,3 +74,62 @@ jobs:
       - name: Story interaction tests (headless Chromium)
         working-directory: apps/storybook
         run: npx vitest run --project=storybook
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    # Generous but bounded. The graph-view suite is ~2 min locally at 6
+    # workers; a runner is slower and pays for two server boots on top.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm install
+
+      # Both projects use the Desktop Chrome device; no other engine is needed.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # PLACEHOLDERS, not credentials. The suite mocks every API surface it
+      # touches at the network layer (`page.route`, including /api/auth/me), so
+      # the Next server never handles an authenticated request and
+      # `getFirebaseApp()` — which is lazy — is never reached. These exist only
+      # so nothing reads `undefined` while the dev server boots.
+      #
+      # FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY are deliberately ABSENT:
+      # supplying a malformed key pair would make `cert()` the thing that
+      # throws, where omitting them falls through to `applicationDefault()`,
+      # which also only fails if something actually uses it.
+      - name: Write a placeholder env for the dev server
+        working-directory: apps/timeline-gstudio001
+        run: |
+          cat > .env <<'ENVEOF'
+          FIREBASE_PROJECT_ID=ci-placeholder
+          FIREBASE_WEB_API_KEY=ci-placeholder
+          NEXT_PUBLIC_FIREBASE_API_KEY=ci-placeholder
+          APP_URL=http://127.0.0.1:3000
+          ENVEOF
+
+      # The whole suite, both projects. Narrowing to one would not save much:
+      # Playwright starts every entry in the `webServer` array regardless of
+      # `--project`, so both servers boot either way and the second project is
+      # nearly free once they are up.
+      - name: E2E tests
+        working-directory: apps/timeline-gstudio001
+        run: npx playwright test
+
+      # Without this a CI-only failure is undebuggable — the report carries the
+      # per-test trace, the failure screenshot, and the DOM snapshot.
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/timeline-gstudio001/playwright-report
+          retention-days: 7

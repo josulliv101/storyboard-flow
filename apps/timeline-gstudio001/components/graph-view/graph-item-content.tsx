@@ -1469,7 +1469,18 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             than GraphClipContent (which returns null for them at the guard
             above). Skipping it here would ship a half-feature where a tagged
             collection silently shows nothing. */}
-        {detail?.tags?.length ? <TagRow tags={detail.tags} showAtMost={TAGS_SHOWN_NARROW} /> : null}
+        {detail?.tags?.length ? (
+          <TagRow
+            tags={detail.tags}
+            showAtMost={TAGS_SHOWN_NARROW}
+            // Same split the media card makes: overlaid on the artwork in the
+            // strip, in the caption in the grid. Without this the two card
+            // kinds would file their tags in two different places within one
+            // grid, which is the sort of inconsistency nobody reports and
+            // everybody notices.
+            className="[[data-virtual-grid]_&]:hidden"
+          />
+        ) : null}
         <span
           data-disabled-visuals={muted ? "true" : undefined}
           data-filter-miss={filterMiss ? "true" : undefined}
@@ -1577,6 +1588,20 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             </span>
           </span>
         </span>
+        {/* The collection's tags, in the GRID, under its name row — the twin of
+            the media card's caption tag row, and for the same reason: the cell
+            is tall enough to say this in words instead of stamping it over the
+            preview frames. A row of its own rather than squeezed in beside the
+            item count, which is already a name plus two numbers. */}
+        {detail?.tags?.length ? (
+          <span
+            aria-hidden="true"
+            data-collection-caption-tags={detail.tags.length}
+            className="hidden min-w-0 items-center pr-1.5 pb-1 pl-1.5 [[data-virtual-grid]_&]:flex"
+          >
+            <CaptionTagRow tags={detail.tags} showAtMost={TAGS_SHOWN_NARROW} />
+          </span>
+        ) : null}
       </CollectionItem.SelectionSurface>
 
       {/* (PL10-001 moved the call-out itself onto the selection surface above.
