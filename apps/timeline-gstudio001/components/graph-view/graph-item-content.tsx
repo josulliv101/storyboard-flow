@@ -835,13 +835,14 @@ function CaptionTagRow({
  * there — the design's card does the same thing (`if (selecting) toggleSelect`),
  * so its checkbox is only ever a second way to hit the same target.
  *
- * OUTSIDE the mode it now appears on HOVER, which is the design's own
- * behaviour. It is still `pointer-events-none`: hovering ADVERTISES that this
- * card can be picked, and the click that picks it belongs to the card
- * underneath (or, for a collection, to select mode — a plain click there
- * drills). Making the circle itself clickable would nest a control inside the
- * selection surface `<button>`, which is invalid HTML and is pinned against by
- * the composed-card structure tests.
+ * OUTSIDE the mode it appears on HOVER, which is the design's own behaviour,
+ * and CLICKING IT TOGGLES. That matters most on a collection: the rest of that
+ * card drills in, so this circle is the only pointer route to picking one
+ * without entering select mode first.
+ *
+ * It is a span that handles its own click rather than a `<button>` — see the
+ * note on the element itself for why, and for the keyboard path that covers
+ * what a non-focusable control gives up.
  *
  * DESKTOP ONLY, via `@media (hover: hover)`. A touch device has no hover state
  * to reveal it with, and without the query a tap would leave the checkbox
@@ -861,20 +862,30 @@ function CaptionTagRow({
  * a flat chip, because it sits on arbitrary artwork — a light frame and a dark
  * one both have to keep it legible.
  */
-/** Hover-reveal for a MEDIA card. Whole literal class names — see the note on
- *  `revealOnHover` above. */
+// Hover-reveal, per card kind. Whole literal class names — see the note on
+// `revealOnHover` above.
+//
+// `pointer-events-none` travels WITH the opacity and is not decoration: the
+// checkbox is a click target now, and an invisible one would be a trap. On
+// touch the `@media (hover: hover)` gate never opens, so without this a tap in
+// the card's bottom-right corner would toggle a selection through a control the
+// user cannot see. Hidden means unclickable, in the same rule, so the two can
+// never drift apart.
 const SELECT_HOVER_REVEAL_MEDIA = [
-  "opacity-0 motion-safe:transition-opacity motion-safe:duration-150",
+  "pointer-events-none opacity-0 motion-safe:transition-opacity motion-safe:duration-150",
+  "[@media(hover:hover)]:group-hover/media-item:pointer-events-auto",
   "[@media(hover:hover)]:group-hover/media-item:opacity-100",
 ].join(" ");
 
 /** The same, for a COLLECTION card's group. */
 const SELECT_HOVER_REVEAL_COLLECTION = [
-  "opacity-0 motion-safe:transition-opacity motion-safe:duration-150",
+  "pointer-events-none opacity-0 motion-safe:transition-opacity motion-safe:duration-150",
+  "[@media(hover:hover)]:group-hover/collection-item:pointer-events-auto",
   "[@media(hover:hover)]:group-hover/collection-item:opacity-100",
 ].join(" ");
 
 function SelectionIndicator({
+  id,
   selected,
   armed,
   revealOnHover,
@@ -884,7 +895,10 @@ function SelectionIndicator({
   armed: boolean;
   /** Literal hover-reveal classes for THIS card kind's group. */
   revealOnHover: string;
+  /** The card this toggles. */
+  id: NodeId;
 }>) {
+  const store = useCollectionsStore();
   return (
     <span
       aria-hidden="true"
@@ -892,8 +906,29 @@ function SelectionIndicator({
       // Distinguishes "permanently shown because the mode is armed" from
       // "revealed by the pointer", which a geometry-only assertion cannot see.
       data-selection-indicator-reveal={armed ? "armed" : "hover"}
+      // THE CHECKBOX IS THE TOGGLE, and on a collection it is the only one: the
+      // rest of that card drills in, so without this there is no pointer route
+      // to picking a collection outside select mode at all.
+      //
+      // A SPAN with its own click, not a <button>. This renders inside the
+      // card's selection surface, which IS a button, and nesting interactive
+      // semantics is invalid HTML — the composed-card tests pin that. The
+      // precedent is a few lines down: the collection's NAME span swallows its
+      // own click the same way so the card body's drill-in does not fire under
+      // it. `stopPropagation` is what makes that work; React's synthetic
+      // bubbling never reaches the surface's handler.
+      //
+      // The cost is that this is not keyboard-reachable, which is why it stays
+      // `aria-hidden`. Keyboard users are not stranded: select mode plus Space
+      // on the focused card is the same toggle, and it is the path a screen
+      // reader is already told about through the card's own name and state.
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        store.toggleSelected(id);
+      }}
       className={[
-        "pointer-events-none absolute right-2 bottom-2 z-20 grid size-[26px] place-items-center",
+        "absolute right-2 bottom-2 z-20 grid size-[26px] cursor-pointer place-items-center",
         "rounded-full border-2 backdrop-blur-sm motion-safe:transition-colors",
         selected ? "border-blue-500 bg-blue-500" : "border-white/90 bg-black/35",
         armed ? "" : revealOnHover,
@@ -1080,6 +1115,7 @@ const GraphClipContent = memo(function GraphClipContent({
           a hover that re-rendered every card would land on the drag/INP hot
           path the playhead comment above is careful about. */}
       <SelectionIndicator
+        id={id}
         selected={selected}
         armed={selectMode}
         revealOnHover={SELECT_HOVER_REVEAL_MEDIA}
@@ -1506,6 +1542,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
               select mode is the only pointer route to picking one at all — and
               on hover this is the only thing that says so. */}
           <SelectionIndicator
+            id={id}
             selected={selected}
             armed={selectMode}
             revealOnHover={SELECT_HOVER_REVEAL_COLLECTION}
