@@ -70,7 +70,7 @@ export function TagFilterControl() {
           "flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] font-medium transition-colors",
           "[@media(pointer:coarse)]:h-11",
           active > 0
-            ? "bg-sky-500/20 text-sky-100 ring-1 ring-sky-400/40"
+            ? "bg-blue-500/20 text-blue-100 ring-1 ring-blue-500/40"
             : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100",
         ].join(" ")}
       >
@@ -79,7 +79,7 @@ export function TagFilterControl() {
         {active > 0 ? (
           <span
             data-tag-filter-count
-            className="grid h-4 min-w-4 place-items-center rounded-full bg-sky-500 px-1 font-mono text-[10px] text-white tabular-nums"
+            className="grid h-4 min-w-4 place-items-center rounded-full bg-blue-500 px-1 font-mono text-[10px] text-white tabular-nums"
           >
             {active}
           </span>
@@ -118,7 +118,7 @@ export function TagFilterControl() {
                 onClick={() => toggleTag(tag)}
                 className={[
                   "flex h-8 w-full items-center gap-2 rounded px-1.5 text-left text-[11px] transition-colors",
-                  on ? "bg-sky-500/20 text-sky-100" : "text-zinc-300 hover:bg-zinc-800",
+                  on ? "bg-blue-500/20 text-blue-100" : "text-zinc-300 hover:bg-zinc-800",
                 ].join(" ")}
               >
                 <TagAccentDot tag={tag} className="size-[7px]" />
@@ -131,7 +131,7 @@ export function TagFilterControl() {
                 <Check
                   aria-hidden="true"
                   strokeWidth={3}
-                  className={["size-3 shrink-0 text-sky-300", on ? "opacity-100" : "opacity-0"].join(
+                  className={["size-3 shrink-0 text-blue-300", on ? "opacity-100" : "opacity-0"].join(
                     " ",
                   )}
                 />
@@ -188,11 +188,11 @@ export function ActiveTagFilters() {
             onClick={() => toggleTag(label)}
             title={`Stop filtering by “${label}”`}
             aria-label={`Stop filtering by ${label}`}
-            className="group inline-flex h-6 max-w-[12rem] items-center gap-1.5 rounded-full bg-sky-500/10 py-0 pr-1 pl-2 text-[11px] text-sky-100 ring-1 ring-sky-400/40 transition-colors hover:bg-sky-500/20"
+            className="group inline-flex h-6 max-w-[12rem] items-center gap-1.5 rounded-full bg-blue-500/10 py-0 pr-1 pl-2 text-[11px] text-blue-100 ring-1 ring-blue-500/40 transition-colors hover:bg-blue-500/20"
           >
             <TagAccentDot tag={label} />
             <span className="min-w-0 truncate">{label}</span>
-            <span className="grid size-3.5 shrink-0 place-items-center rounded-full text-sky-300/70 group-hover:bg-white/10 group-hover:text-sky-100">
+            <span className="grid size-3.5 shrink-0 place-items-center rounded-full text-blue-300/70 group-hover:bg-white/10 group-hover:text-blue-100">
               <X aria-hidden="true" className="size-2.5" strokeWidth={2.5} />
             </span>
           </button>

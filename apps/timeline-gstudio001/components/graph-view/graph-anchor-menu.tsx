@@ -234,26 +234,25 @@ export function AnchorMenuButton({
 }
 
 /**
- * The card's top-right corner slot, holding the drill chevron and — when this
- * card is the anchor — the `⋮` that replaces it.
+ * The card's top-right corner slot, holding the `⋮` when this card is the
+ * anchor — and nothing at all otherwise.
  *
- * THE MORPH (R6.2). Both glyphs occupy the same grid cell, so the change is a
- * cross-fade in place rather than one control vanishing and another appearing
- * somewhere near it. The chevron stays mounted and fades to nothing; the `⋮`
- * mounts with a matching 120ms fade. Peripheral vision registers the change
- * without the eye being pulled to it.
+ * It used to be a two-tenant slot: a collection card carried a drill chevron
+ * here, and the `⋮` CROSS-FADED with it (R6.2) so the swap cost no layout. The
+ * chevron is gone — a plain click opens a collection now, so a 28px corner
+ * button was a second way to do the easy thing, parked over the artwork — and
+ * with one tenant left the morph has nothing to morph. What survives from it is
+ * the 120ms fade-in, which is what keeps the `⋮` from snapping into peripheral
+ * vision on every selection change.
  *
- * `chevron` is null on clip cards, which never had one — so there the `⋮`
- * simply fades in (R5.6). That asymmetry is intended: morph for collections,
- * appear for clips, and no chevron is added to clips for symmetry's sake.
+ * Both card kinds are now the same here. That was already true of clips, which
+ * never had a chevron (R5.6).
  */
 export function CardCornerSlot({
   nodeId,
-  chevron,
   className,
 }: Readonly<{
   nodeId: NodeId;
-  chevron?: React.ReactNode;
   /** Set when the host measured itself too narrow to carry the control. */
   className?: string;
 }>) {
@@ -275,20 +274,6 @@ export function CardCornerSlot({
       className={cn("absolute right-5 top-3 z-20 flex items-center gap-1.5", className)}
     >
       <span className="relative grid size-6 place-items-center">
-        {chevron === undefined ? null : (
-          <span
-            className={cn(
-              "col-start-1 row-start-1 transition-opacity duration-[120ms] motion-reduce:transition-none",
-              showMenu ? "pointer-events-none opacity-0" : "opacity-100",
-            )}
-            // Hidden from the a11y tree as well as the eye: a 0-opacity button
-            // is still focusable and still announced.
-            aria-hidden={showMenu || undefined}
-            inert={showMenu}
-          >
-            {chevron}
-          </span>
-        )}
         {showMenu ? (
           <span className="col-start-1 row-start-1 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-[120ms]">
             <AnchorMenuButton nodeId={nodeId} />

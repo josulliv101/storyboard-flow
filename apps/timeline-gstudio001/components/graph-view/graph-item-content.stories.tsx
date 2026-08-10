@@ -217,17 +217,24 @@ export const EmptyCardUsesCleanIconFallback: Story = {
     await expect(previewImages(canvasElement)).toHaveLength(0);
     await expect(canvasElement).not.toHaveTextContent(/open to load|empty|no media preview/i);
 
-    const folder = canvasElement.querySelector<HTMLElement>('button[aria-label^="Open "]');
-    await expect(folder).not.toBeNull();
+    // What the card shows INSTEAD: the leader glyph, drawn into the empty
+    // frame. This used to check for the corner drill button on the same
+    // reasoning — "an empty card still says collection" — but that button is
+    // gone (a plain click opens the card now), and the glyph was always the
+    // part of the answer that belongs to this story.
+    await expect(fallback!.querySelector("svg")).not.toBeNull();
   },
 };
 
 /**
  * The composed card's STRUCTURE (review finding 1): the selection surface is
- * a real <button> with zero interactive content inside it, the folder
- * drill-in is a real <button> sibling, and the rename editor is a real
- * <input> sibling — and renaming through it updates the graph node (the
- * surface's accessible name) in place.
+ * a real <button> with zero interactive content inside it, and the rename
+ * editor is a real <input> SIBLING — and renaming through it updates the
+ * graph node (the surface's accessible name) in place.
+ *
+ * The folder drill-in used to be the other sibling checked here. It is gone: a
+ * plain click opens the collection now, so a 28px corner button was a second
+ * way to do the easy thing, parked over the artwork of every collection card.
  */
 export const ComposedCardStructure: Story = {
   args: baseArgs,
@@ -240,11 +247,6 @@ export const ComposedCardStructure: Story = {
     await expect(
       surface!.querySelectorAll("button, [role='button'], input, textarea, select, a[href], [tabindex]"),
     ).toHaveLength(0);
-
-    // The folder control is a REAL button OUTSIDE the surface.
-    const folder = canvasElement.querySelector<HTMLElement>('button[aria-label^="Open "]');
-    await expect(folder).not.toBeNull();
-    await expect(surface!.contains(folder)).toBe(false);
 
     // Double-click the name label → a REAL input opens outside the surface...
     const label = Array.from(surface!.querySelectorAll("span")).find(
@@ -630,19 +632,13 @@ export const DisabledCollection: Story = {
     await expect(metadata.textContent).toContain("A timeline");
     await expect(metadata.textContent).toContain("8.0s");
     await expect(metadata.textContent).toContain("2 items");
-    // The drill control's glyph is LAYERS, at lucide's own stroke weight.
-    // It has been three things: CornerRightDown at 1.5 while it was a large
-    // circle on the artwork, then a chevron (PL13-004), now layers — a chevron
-    // said "enter" but nothing about WHAT it opens. The assertion is on stroke
-    // WEIGHT rather than the icon because that is the part that regressed: a
-    // hand-set 1.5, left over from the large-circle era, looked thin once the
-    // glyph shrank.
-    const drillGlyph = canvasElement.querySelector<SVGElement>(
-      'button[aria-label="Open A timeline"] svg',
-    )!;
-    await expect(drillGlyph.getAttribute("stroke-width")).toBe("2");
+    // The corner drill control used to be checked here too (its glyph's stroke
+    // weight). It is gone, and its Layers glyph survives as the caption's KIND
+    // icon — a label, not a control — which is grid-only and so belongs to
+    // CollectionGridCaptionLeadsWithItsKind below, not to a story about
+    // disabled visuals in a strip-sized box.
     await userEvent.click(card as HTMLElement);
-    await expect((card as HTMLElement).className).toContain("ring-amber-300/65");
+    await expect((card as HTMLElement).className).toContain("ring-blue-500");
     await expect((card as HTMLElement).className).toContain("ring-inset");
     // The frame still renders — a disabled card shows its content, muted.
     await expect(previewImages(canvasElement)).toHaveLength(1);
@@ -969,6 +965,42 @@ function renderMediaCard(
 const mediaArgs = { id: VIDEO_ID, className: "h-full w-full" };
 
 /**
+ * The collection twin of `renderMediaCard`, in the grid with select mode armed.
+ *
+ * `keepMultiSelectModeWhenEmpty` for the same reason that one needs it: nothing
+ * is selected in a story, and the mode otherwise stands itself down.
+ */
+function renderCollectionInSelectMode(): Decorator {
+  return function CollectionSelectModeDecorator(Story) {
+    const store = createGraphDetailsStore({
+      [COLLECTION_ID]: {
+        alt: "A timeline",
+        aspect: 16 / 9,
+        trackIndex: 0,
+        hydrated: false,
+        itemCount: 2,
+        duration: 51.8,
+        previewItems: [ASSET_A, ASSET_B],
+      },
+    });
+    return (
+      <DndCollections
+        initialGraph={providerGraph}
+        components={GRAPH_VIEW_COMPONENTS}
+        keepMultiSelectModeWhenEmpty
+      >
+        <GraphDetailsProvider store={store}>
+          <ArmSelectMode />
+          <div data-virtual-grid="story" className="h-52 w-64 bg-zinc-950 p-2">
+            <Story />
+          </div>
+        </GraphDetailsProvider>
+      </DndCollections>
+    );
+  };
+}
+
+/**
  * In the GRID the chrome sits UNDER the artwork, not stamped across it.
  *
  * The two overlays it replaces have to go, or the card says everything twice
@@ -1143,5 +1175,101 @@ export const CollectionGridTagsSitInTheCaption: Story = {
     await expect(caption.getBoundingClientRect().top).toBeGreaterThanOrEqual(
       frame.getBoundingClientRect().bottom - 1,
     );
+  },
+};
+
+/**
+ * A grid collection caption leads with its KIND icon, in the same [icon] name
+ * shape the media caption uses — so the two card kinds read as one family.
+ *
+ * The glyph is inherited from the deleted corner drill BUTTON, which is the
+ * reason the "not a control" half of this is asserted rather than assumed. The
+ * card opens on a plain click now; a clickable Layers in the caption would
+ * quietly restore the thing that was removed, in a new place, and look like a
+ * label while doing it.
+ */
+export const CollectionGridCaptionLeadsWithItsKind: Story = {
+  args: baseArgs,
+  decorators: [renderWithTags([], "grid")],
+  play: async ({ canvasElement }) => {
+    const kind = canvasElement.querySelector<SVGElement>("[data-collection-kind]")!;
+    await expect(kind).not.toBeNull();
+    await expect(kind.getBoundingClientRect().width).toBeGreaterThan(0);
+
+    // A LABEL: hidden from the a11y tree, and no control of its own.
+    //
+    // NOT `closest("button") === null` — the caption row renders INSIDE the
+    // card's selection surface, which is a real <button> (that is also why the
+    // select-mode checkbox had to be anchored off the frames rather than the
+    // card; see the story below). So the assertion is that the nearest button
+    // above the glyph is the CARD, with nothing of its own in between.
+    await expect(kind.getAttribute("aria-hidden")).toBe("true");
+    const surface = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
+    await expect(
+      kind.closest("button, [role='button'], a[href], [tabindex]"),
+    ).toBe(surface);
+
+    // LEADS the name — left of it, on the same line. Both halves matter: an
+    // icon that wrapped above the name would satisfy a left-of test on its own.
+    const name = canvasElement.querySelector<HTMLElement>(
+      '[title="Double-click or press F2 to rename"]',
+    )!;
+    const kindRect = kind.getBoundingClientRect();
+    const nameRect = name.getBoundingClientRect();
+    await expect(kindRect.right).toBeLessThanOrEqual(nameRect.left + 1);
+    await expect(Math.abs(kindRect.top - nameRect.top)).toBeLessThan(nameRect.height);
+
+    // And it is GRID-ONLY: the strip footer is a tight one-liner where this
+    // would cost more than it says. CSS-gated, not conditionally rendered, so
+    // the assertion is on layout rather than on presence.
+    await expect(
+      canvasElement.querySelector<HTMLElement>("[data-collection-metadata]"),
+    ).not.toBeNull();
+  },
+};
+
+/** The strip half of the pair above: present in the DOM, laid out at zero. */
+export const StripCollectionCaptionHasNoKindIcon: Story = {
+  args: baseArgs,
+  decorators: [renderWithTags([], "strip")],
+  play: async ({ canvasElement }) => {
+    const kind = canvasElement.querySelector<SVGElement>("[data-collection-kind]");
+    await expect(kind?.getBoundingClientRect().width ?? 0).toBe(0);
+  },
+};
+
+/**
+ * Select mode's checkbox rides the PREVIEW FRAMES, clear of the metadata row.
+ *
+ * Anchored to the whole card it landed on the name-and-count row underneath and
+ * truncated it — "51.8s / 5 it…" — because that row is inside the selection
+ * surface too, so a bottom-right box lands on the text rather than on the
+ * artwork. The fix was a positioning box around the frames alone; this is the
+ * measurement that would have caught it.
+ */
+export const CollectionSelectModeCheckboxClearsTheMetadata: Story = {
+  args: baseArgs,
+  decorators: [renderCollectionInSelectMode()],
+  play: async ({ canvasElement }) => {
+    const indicator = await waitFor(() => {
+      const found = canvasElement.querySelector<HTMLElement>("[data-selection-indicator]");
+      if (!found) throw new Error("no selection indicator");
+      return found;
+    });
+    await expect(indicator.dataset.selectionIndicator).toBe("off");
+
+    // Over the frames…
+    const frame = canvasElement.querySelector<HTMLElement>("img")!;
+    await expect(indicator.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      frame.getBoundingClientRect().bottom + 1,
+    );
+
+    // …and clear of the metadata row, which is THE regression: they overlap by
+    // a pixel or they do not.
+    const metadata = canvasElement.querySelector<HTMLElement>("[data-collection-metadata]")!;
+    await expect(indicator.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      metadata.getBoundingClientRect().top + 1,
+    );
+    await expect(metadata.textContent).toContain("2 items");
   },
 };

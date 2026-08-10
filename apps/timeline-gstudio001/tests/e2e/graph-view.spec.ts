@@ -113,7 +113,22 @@ function buildFixtureDocuments(): Map<string, FixtureDocument> {
 }
 
 /** Flatten the fixture closure the way the real preview-manifest route does
- *  (fixtures are untrimmed, so every leaf plays at rate 1). */
+ *  (fixtures are untrimmed, so every leaf plays at rate 1).
+ *
+ *  `disabled` is part of that contract and was MISSING here, which is worth
+ *  recording because of how it failed. The real compiler
+ *  (timeline-domain/playback-manifest) rides `disabled` DOWN the walk — a
+ *  disabled leaf keeps its span and is marked, and a disabled COLLECTION marks
+ *  every leaf beneath it — so the player can jump the span and a scrub can land
+ *  inside it. This mock dropped the flag entirely, so its manifest said nothing
+ *  was ever disabled.
+ *
+ *  That is invisible until the manifest is what the pane is playing. The
+ *  projection fallback derives `disabled` from the live graph and is correct,
+ *  so any test that finished before the manifest landed passed on the
+ *  projection — which is every local run. CI is slower per step, the manifest
+ *  won the race, and one test went red there and only there. A vacuous fixture,
+ *  not a flake. */
 function compileFixtureManifest(
   documents: Map<string, FixtureDocument>,
   rootId: string,
@@ -123,13 +138,22 @@ function compileFixtureManifest(
   if (!root) return null;
   type Leaf = Record<string, unknown>;
   const leaves: Leaf[] = [];
-  const walk = (documentId: string, path: string[], offset: number) => {
+  const walk = (
+    documentId: string,
+    path: string[],
+    offset: number,
+    /** True once any collection clip ABOVE this document was disabled. There is
+     *  no way back on the way down: an enabled child of a disabled parent
+     *  still does not play. */
+    inheritedDisabled: boolean,
+  ) => {
     const doc = documents.get(documentId);
     if (!doc) return;
     for (const clip of doc.clips) {
+      const clipDisabled = inheritedDisabled || clip.disabled === true;
       if (clip.kind === "collection") {
         const childId = clip.childTimelineId as string;
-        walk(childId, [...path, childId], offset + (clip.startTime as number));
+        walk(childId, [...path, childId], offset + (clip.startTime as number), clipDisabled);
         continue;
       }
       leaves.push({
@@ -142,10 +166,12 @@ function compileFixtureManifest(
         timelineDuration: clip.duration,
         sourceStart: clip.trimIn ?? 0,
         playbackRate: 1,
+        // Omitted when false, exactly as the real compiler emits it.
+        ...(clipDisabled ? { disabled: true } : {}),
       });
     }
   };
-  walk(rootId, [rootId], 0);
+  walk(rootId, [rootId], 0, false);
   const durationSeconds = root.clips.reduce(
     (duration, clip) =>
       Math.max(duration, (clip.startTime as number) + (clip.duration as number)),
@@ -541,8 +567,23 @@ async function selectionAction(page: Page, name: string | RegExp): Promise<void>
   await page.getByRole("menuitem", { name }).first().click();
 }
 
+/**
+ * The way INTO a collection with a pointer: its card.
+ *
+ * It used to be a dedicated `Open X` button in the card's top-right corner.
+ * That control is gone — a plain click opens the whole card now, so a 28px
+ * corner button was a second way to do the easy thing, sitting permanently over
+ * the artwork. This keeps the call sites reading the same.
+ *
+ * Matches the card's own accessible name (`Scene A (collection, 2 items)`)
+ * rather than its node id, because the id is not what a test knows.
+ */
 const drillButton = (page: Page, timelineName: string): Locator =>
-  page.getByRole("button", { name: `Open ${timelineName}`, exact: true }).first();
+  page
+    .getByRole("button", {
+      name: new RegExp(`^${timelineName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(collection`),
+    })
+    .first();
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -798,18 +839,30 @@ test.describe("graph view E2E", () => {
 
     // The selection surface is a real <button> with NO interactive content
     // inside it — nested interactive semantics are invalid HTML and read as
-    // an ambiguous a11y tree (review finding 1). The folder control and the
-    // rename editor compose as SIBLINGS via the package's item-shell seam.
+    // an ambiguous a11y tree (review finding 1). The controls that DO belong
+    // to this card compose as SIBLINGS via the package's item-shell seam.
+    const nested = surface.locator(
+      "button, [role='button'], input, textarea, select, a[href], [tabindex]",
+    );
     await expect(surface).toHaveJSProperty("tagName", "BUTTON");
-    await expect(
-      surface.locator("button, [role='button'], input, textarea, select, a[href], [tabindex]"),
-    ).toHaveCount(0);
+    await expect(nested).toHaveCount(0);
 
-    // The drill affordance is a REAL button (not a role="button" span).
-    const folder = wrapper.getByRole("button", { name: /^Open / });
-    await expect(folder).toHaveJSProperty("tagName", "BUTTON");
+    // SIBLING 1: the anchor `⋮`. It replaced the corner drill button as this
+    // card's only corner control — a plain click opens the collection now, so
+    // a 28px button that did the same thing was deleted. The `⋮` is the case
+    // that matters here anyway: it is the one control that appears on a card
+    // WHILE the card is selected, which is exactly when a nested <button>
+    // inside the surface <button> would start mattering.
+    //
+    // Ctrl/Cmd+click rather than a plain one: a plain click drills in, and a
+    // navigated-away card proves nothing about this card's structure.
+    await surface.click({ modifiers: ["ControlOrMeta"] });
+    const menu = wrapper.locator("[data-anchor-menu]");
+    await expect(menu).toHaveJSProperty("tagName", "BUTTON");
+    await expect(nested).toHaveCount(0);
 
-    // The rename editor is a REAL input, and it never lands inside the surface.
+    // SIBLING 2: the rename editor is a REAL input, and it never lands inside
+    // the surface either.
     await surface.getByText("Scene A", { exact: true }).dblclick();
     const editor = wrapper.getByRole("textbox", { name: "Timeline name" });
     await expect(editor).toHaveJSProperty("tagName", "INPUT");
@@ -865,12 +918,7 @@ test.describe("graph view E2E", () => {
     const api = await installGraphApi(page);
     await openGraph(page);
     // Drill into the child collection so it is the focused (current) crumb.
-    // The folder button is a SIBLING of the card's selection surface (a real
-    // <button> can't nest in a button), so scope at the item wrapper.
-    await strip(page, PROJECT_ID)
-      .locator(`[data-node-wrapper="${CHILD_ID}"]`)
-      .getByRole("button", { name: "Open Scene A" })
-      .click();
+    await drillButton(page, "Scene A").click();
     const trail = page.getByRole("navigation", { name: "Timeline focus path" });
     await expect(trail).toContainText("Scene A");
 
@@ -1962,7 +2010,7 @@ test.describe("graph view E2E", () => {
       await route.continue();
     });
 
-    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await drillButton(page, "Scene A").click();
     // Well inside the 2s the server response is held for.
     await expect(page.getByText("Scene A", { exact: true }).first()).toBeVisible({
       timeout: 900,
@@ -2050,12 +2098,9 @@ test.describe("graph view E2E", () => {
     // Drill-in RESETS the persistent preview clock: the layout (and with it
     // the time channel) survives navigation, but a different focused
     // timeline is a different clock — without the reset the transport would
-    // park at "long-timeline-time / short-timeline-duration". The collection
-    // card's folder button drills (the interaction model's pointer path).
-    await strip(page, PROJECT_ID)
-      .locator(`[data-node-wrapper="${CHILD_ID}"]`)
-      .getByRole("button", { name: /^Open / })
-      .click();
+    // park at "long-timeline-time / short-timeline-duration". Clicking the
+    // collection card is the pointer path in (the interaction model's).
+    await drillButton(page, "Scene A").click();
     await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`);
     await expect.poll(translateX).toBeLessThan(20);
   });
@@ -2636,10 +2681,14 @@ test.describe("graph view E2E", () => {
       .poll(() => gridOrder(page, PROJECT_ID))
       .toEqual(["bravo", "alpha", CHILD_ID, "charlie"]);
 
-    // DRILL (R7 #5): the collection card's folder button navigates.
-    const collectionWrapper = grid.locator(`[data-node-wrapper="${CHILD_ID}"]`);
+    // DRILL (R7 #5): a plain click on the collection card navigates. Scoped to
+    // the GRID, because the expanded sub-row strips carry a card for the same
+    // collection and a page-wide lookup could land on one of those instead —
+    // which would drill in without proving the grid's cards own their pixels,
+    // the thing R7 #5 is about.
+    const collectionCard = grid.locator(`[data-node-id="${CHILD_ID}"]`);
     await expect(async () => {
-      await collectionWrapper.getByRole("button", { name: /^Open / }).click();
+      await collectionCard.click();
       await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 3000 });
     }).toPass({ timeout: 15000 });
   });
@@ -2660,7 +2709,7 @@ test.describe("graph view E2E", () => {
       .toEqual(["alpha", CHILD_ID, "charlie"]);
 
     // …drill into the child, so "where it came from" and "where I am" differ…
-    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await drillButton(page, "Scene A").click();
     await expect(strip(page, PROJECT_ID)).toHaveCount(0);
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
 
@@ -2856,7 +2905,7 @@ test.describe("graph view E2E", () => {
     await expect(bravo.locator('[data-disabled="true"]')).toBeVisible();
     await expect(bravo.locator('[data-disabled-chip="self"]')).toHaveText("DISABLED");
     const disabledContent = bravo.locator('[data-disabled="true"]');
-    await expect(disabledContent).toHaveClass(/ring-amber-300\/65/);
+    await expect(disabledContent).toHaveClass(/ring-blue-500/);
     const disabledVisuals = disabledContent.locator('[data-disabled-visuals="true"]');
     await expect
       .poll(() => disabledVisuals.evaluate((element) => getComputedStyle(element).filter))
@@ -2915,6 +2964,16 @@ test.describe("graph view E2E", () => {
     // Its span is the second card's, so a press around 40% of the rail lands
     // inside it; nudge along the rail until the badge shows.
     const badge = page.getByTestId("workbench-display-disabled");
+    // The pane must be on the MANIFEST before scrubbing, not racing onto it.
+    // Without this the test passed locally and failed in CI for a reason that
+    // had nothing to do with speed: the two read models disagreed about
+    // `disabled`, and which one was live at scrub time decided the result. The
+    // fixture compiler agrees with the real one now (see compileFixtureManifest),
+    // so either model would pass — this pins the one under test.
+    await expect(page.locator("[data-preview-source]")).toHaveAttribute(
+      "data-preview-source",
+      "manifest",
+    );
     const box = (await rail.boundingBox())!;
     await expect(async () => {
       for (const fraction of [0.3, 0.35, 0.4, 0.45, 0.5]) {
@@ -3000,7 +3059,7 @@ test.describe("graph view E2E", () => {
     // though the selection is now out of view. The SELECTION survives the
     // navigation too — see the placement test below for why the paste must
     // ignore it here and append into the focused child.
-    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await drillButton(page, "Scene A").click();
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
@@ -3056,7 +3115,7 @@ test.describe("graph view E2E", () => {
     }).toPass({ timeout: 10000 });
     await selectionAction(page, "Copy");
 
-    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await drillButton(page, "Scene A").click();
     // The route change itself, not a CHILD card appearing — a sub-row strip
     // can be on screen before any navigation happens.
     await expect(strip(page, PROJECT_ID)).toHaveCount(0);
@@ -3101,7 +3160,7 @@ test.describe("graph view E2E", () => {
       .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
 
     // Paste into the child collection → bravo MOVES there, keeping its id.
-    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await drillButton(page, "Scene A").click();
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
@@ -3132,7 +3191,7 @@ test.describe("graph view E2E", () => {
 
     // Drill in — focus drops to <body> here, which is exactly why the
     // shortcut listener is window-level and not a board-subtree boundary.
-    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await drillButton(page, "Scene A").click();
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
@@ -3301,20 +3360,40 @@ test.describe("graph view E2E", () => {
     await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
   });
 
-  test("the chevron and double-click agree on the state you land in", async ({ page }) => {
-    // The chevron never had this bug — it sits inside
-    // `[data-collections-keyboard-ignore]`, so the selection surface does not
-    // select on it at all. Pinning the two routes together so they cannot
-    // drift apart again.
+  test("every pointer route into a collection agrees on the state you land in", async ({
+    page,
+  }) => {
+    // The sibling of the test above, and the reason it is a separate test: the
+    // #295 bug was one route disagreeing with another about whether drilling
+    // in leaves the collection selected behind you.
+    //
+    // This used to pin the double-click against the corner CHEVRON, which
+    // never had the bug — it sat inside `[data-collections-keyboard-ignore]`,
+    // so the selection surface never saw its clicks. That control is gone (a
+    // plain click opens the card now), and its replacement is the route most
+    // able to reintroduce the bug: the single click goes THROUGH the selection
+    // surface, so "select" and "navigate" are once again two handlers on one
+    // gesture that have to agree.
     await installGraphApi(page);
     await openGraph(page);
 
-    await strip(page, PROJECT_ID)
-      .locator(`[data-node-wrapper="${CHILD_ID}"]`)
-      .getByRole("button", { name: /^Open / })
-      .click();
+    await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).click();
     await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 5000 });
     await expect(page.locator("[data-selection-summary]")).toHaveCount(0);
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
+
+    // And the KEYBOARD route lands the same way. It is the pointerless twin of
+    // the deleted chevron — O on a focused collection — so it is what keeps
+    // "there is more than one way in" true now that the corner button is gone.
+    await page.goBack();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+    await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).focus();
+    await page.keyboard.press("o");
+    await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 5000 });
+    await expect(page.locator("[data-selection-summary]")).toHaveCount(0);
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
   });
 
   test("duplicate media ids across documents demote instead of blanking the collection", async ({
@@ -3628,7 +3707,7 @@ test.describe("graph view E2E", () => {
     // and the tool must append into the collection now open rather than plant
     // the new timeline back where the user came from (same rule as Paste).
     await strip(page, PROJECT_ID).locator('[data-node-id="charlie"]').click();
-    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await drillButton(page, "Scene A").click();
     // Wait on the PROJECT strip leaving, not on a CHILD card appearing: the
     // Scene A sub-row is expanded above, so its strip is already on the page
     // and that wait would pass without the route having changed at all —
@@ -3989,7 +4068,7 @@ test.describe("graph view E2E", () => {
     // overlay is gone), so the marker moved onto the card.
     await installGraphApi(page);
     await openGraph(page); // children timelines on
-    const cardIcon = page.getByRole("button", { name: "Open Scene A" }).first();
+    const cardIcon = drillButton(page, "Scene A");
     const rowFolder = page
       .locator('section[aria-label="Sub-timeline: Scene A"]')
       .getByRole("button", { name: "Expand" })
@@ -6271,7 +6350,7 @@ test.describe("graph view E2E", () => {
     // anchor's rect, gets nothing, and stands down rather than guessing. What
     // must NOT go with it are the actions, which is the header overflow's
     // entire job.
-    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await drillButton(page, "Scene A").click();
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
@@ -6355,7 +6434,7 @@ test.describe("graph view E2E", () => {
     // Scoped to the OPEN collection, not the whole project tree: drill in and
     // "all" means the two cards in front of you.
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Open Scene A" }).first().click();
+    await drillButton(page, "Scene A").click();
     await strip(page, CHILD_ID)
       .locator('[data-node-id="c1"]')
       .waitFor({ state: "visible", timeout: 30000 });
@@ -6634,16 +6713,22 @@ test.describe("graph view E2E", () => {
     await expect(page.locator("[data-anchor-menu='charlie']")).toBeVisible();
   });
 
-  test("the anchor chevron becomes the ⋮, and EVERY selected card keeps its badge", async ({
+  test("the ⋮ is the corner's ONLY tenant, and EVERY selected card keeps its badge", async ({
     page,
   }) => {
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
     const wrapper = (id: string) => surface.locator(`[data-node-wrapper="${id}"]`);
+    // The card's OWN buttons: the selection surface, plus whatever the corner
+    // slot is hosting. `data-anchor-menu` is excluded so the two can be counted
+    // apart below.
+    const cornerTenants = (id: string) =>
+      wrapper(id).locator("button:not([data-node-id]):not([data-anchor-menu])");
 
-    // Anchored on the COLLECTION, because it is the card kind with a chevron to
-    // morph — a clip has none, and its ⋮ simply fades in (R5.6).
+    // Anchored on the COLLECTION, because it is the card kind whose corner used
+    // to be occupied: a clip's corner was always empty until its ⋮ faded in
+    // (R5.6), so a clip could never have shown this regression.
     await surface.locator('[data-node-id="alpha"]').click();
     await surface.locator(`[data-node-id="${CHILD_ID}"]`).click({ modifiers: ["ControlOrMeta"] });
     await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
@@ -6657,15 +6742,21 @@ test.describe("graph view E2E", () => {
     await expect(wrapper(CHILD_ID).locator("[data-card-selected-badge]")).toHaveCount(1);
     await expect(page.locator("[data-card-selected-badge]")).toHaveCount(2);
 
-    // The chevron is what yields, and it yields to the a11y tree as well as to
-    // the eye — a 0-opacity button is still focusable and still announced.
-    await expect(wrapper(CHILD_ID).getByRole("button", { name: /^Open / })).toBeHidden();
+    // "Nothing competes for that corner", asserted rather than asserted-by-
+    // comment. This used to be a CROSS-FADE: the corner held a drill chevron
+    // that stayed mounted at opacity 0 while the ⋮ was up, and the test checked
+    // it was hidden from the a11y tree as well as the eye. The chevron is gone
+    // — a plain click opens the collection, so the corner button was a second
+    // way to do the easy thing — and the ⋮ has the slot to itself.
+    await expect(cornerTenants(CHILD_ID)).toHaveCount(0);
 
-    // Move the anchor away and the collection gets its chevron straight back.
+    // Move the anchor away: the collection's corner goes EMPTY rather than
+    // handing the slot back to something else.
     await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
     await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
     await expect(page.locator("[data-anchor-menu='alpha']")).toBeVisible();
-    await expect(wrapper(CHILD_ID).getByRole("button", { name: /^Open / })).toBeVisible();
+    await expect(wrapper(CHILD_ID).locator("[data-anchor-menu]")).toHaveCount(0);
+    await expect(cornerTenants(CHILD_ID)).toHaveCount(0);
   });
 
   test("a second click on the ⋮ closes its menu and keeps the selection", async ({ page }) => {

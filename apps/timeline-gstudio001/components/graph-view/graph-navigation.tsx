@@ -353,10 +353,11 @@ export function OpenKeyBoundary({
   };
 
   // Double-click-to-open (R10.5) is GONE, with the double-click drill-in it
-  // backstopped. It existed because the anchor card trades its chevron for the
-  // `⋮`, which left the one card the user was working on with no pointer route
-  // in; a plain click opens every collection now, anchor included, so there is
-  // nothing left for it to cover.
+  // backstopped. It existed because the anchor card traded its drill chevron
+  // for the `⋮`, which left the one card the user was working on with no
+  // pointer route in; a plain click opens every collection now, anchor
+  // included, so there is nothing left for it to cover. (The chevron has since
+  // been removed outright, which retires the trade as well as the backstop.)
   //
   // Removed rather than left harmlessly redundant, because it was neither.
   // Click 1 navigates and unmounts the card, so the second click of a habitual
