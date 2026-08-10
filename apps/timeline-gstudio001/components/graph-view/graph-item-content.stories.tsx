@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Decorator, Meta, StoryObj } from "@storybook/react";
 import { expect, userEvent, waitFor } from "storybook/test";
 
@@ -6,6 +6,7 @@ import type { ClipDetail } from "@storyboard/timeline-domain";
 import {
   DndCollections,
   buildGraph,
+  useCollectionsStore,
   type CollectionGhostContentComponent,
   type CollectionItemShellComponent,
   type CollectionItemShellProps,
@@ -812,7 +813,7 @@ export const AnchorControlAndCountBadge: Story = {
  *  GraphCollectionItemParts rather than GraphClipContent, so they need their
  *  own cover — a media-only implementation would leave tagged collections
  *  showing nothing at all. */
-function renderWithTags(tags: string[]) {
+function renderWithTags(tags: string[], surface: "grid" | "strip" = "strip") {
   const detail: ClipDetail = {
     alt: "A timeline",
     aspect: 16 / 9,
@@ -826,7 +827,13 @@ function renderWithTags(tags: string[]) {
   const decorator: Decorator = (Story) => (
     <DndCollections initialGraph={providerGraph}>
       <GraphDetailsProvider store={store}>
-        <div className="h-32 w-40 bg-zinc-950 p-2">
+        {/* The grid marker is what the card matches on, so a "grid" story sets
+            it here exactly as VirtualGrid does — and gets the taller box a
+            grid cell actually has, since the caption needs somewhere to go. */}
+        <div
+          {...(surface === "grid" ? { "data-virtual-grid": "story" } : {})}
+          className={surface === "grid" ? "h-52 w-64 bg-zinc-950 p-2" : "h-32 w-40 bg-zinc-950 p-2"}
+        >
           <Story />
         </div>
       </GraphDetailsProvider>
@@ -897,5 +904,244 @@ export const UntaggedCardHasNoTagRow: Story = {
   decorators: [renderWithTags([])],
   play: async ({ canvasElement }) => {
     await expect(canvasElement.querySelector("[data-clip-tags]")).toBeNull();
+  },
+};
+
+// ---------------------------------------------------------------------------
+// The GRID card's caption, and the select-mode checkbox.
+//
+// Both are surface-dependent, and the surface is signalled by a CSS ancestor
+// marker (`[data-virtual-grid]`) rather than a prop — the card renderer is
+// shared and has no idea which view it is in. So these stories set that marker
+// themselves, exactly as VirtualGrid does, and a strip story simply omits it.
+// ---------------------------------------------------------------------------
+
+/** Arms select mode from inside the provider, where the store is reachable. */
+function ArmSelectMode() {
+  const store = useCollectionsStore();
+  useEffect(() => {
+    store.setMultiSelectMode(true);
+  }, [store]);
+  return null;
+}
+
+function renderMediaCard(
+  options: Readonly<{ surface: "grid" | "strip"; tags?: string[]; selectMode?: boolean }>,
+): Decorator {
+  const { surface, tags = [], selectMode = false } = options;
+  return function MediaCardDecorator(Story) {
+    const store = createGraphDetailsStore({
+      [VIDEO_ID as string]: {
+        alt: "A video",
+        aspect: 16 / 9,
+        trackIndex: 0,
+        hydrated: false,
+        tags,
+      },
+    });
+    return (
+      <DndCollections
+        initialGraph={videoGraph}
+        components={GRAPH_VIEW_COMPONENTS}
+        keepMultiSelectModeWhenEmpty
+      >
+        <GraphDetailsProvider store={store}>
+          {selectMode ? <ArmSelectMode /> : null}
+          <VideoFrameLookAhead>
+            {/* The grid marker goes on an ANCESTOR, which is the whole point:
+                the card matches `[[data-virtual-grid]_&]` through the DOM, so
+                nothing has to be threaded down to it. */}
+            <div
+              {...(surface === "grid" ? { "data-virtual-grid": "story" } : {})}
+              className="bg-zinc-950 p-2"
+            >
+              <div style={{ width: 260, height: surface === "grid" ? 210 : 120 }}>
+                <Story />
+              </div>
+            </div>
+          </VideoFrameLookAhead>
+        </GraphDetailsProvider>
+      </DndCollections>
+    );
+  };
+}
+
+const mediaArgs = { id: VIDEO_ID, className: "h-full w-full" };
+
+/**
+ * In the GRID the chrome sits UNDER the artwork, not stamped across it.
+ *
+ * The two overlays it replaces have to go, or the card says everything twice
+ * and covers its own picture to do it.
+ */
+export const GridCardCaptionSitsUnderTheArtwork: Story = {
+  args: mediaArgs,
+  decorators: [renderMediaCard({ surface: "grid" })],
+  play: async ({ canvasElement }) => {
+    const caption = canvasElement.querySelector<HTMLElement>("[data-clip-caption]")!;
+    await expect(caption).not.toBeNull();
+    await expect(caption.getBoundingClientRect().height).toBeGreaterThan(0);
+    // Unnamed clips caption as their KIND rather than a filename (PL11-004
+    // keeps `title` absent until authored) — never an empty first line.
+    await expect(caption.textContent).toContain("Video");
+
+    // BELOW the frame, not over it. Measured, because the whole change is a
+    // geometric one and a caption that rendered on top of the artwork would
+    // still satisfy every text assertion above.
+    const artwork = canvasElement.querySelector<HTMLElement>("img")!;
+    await expect(caption.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      artwork.getBoundingClientRect().bottom - 1,
+    );
+
+    // The overlay the caption replaces is gone in this surface.
+    const kindChip = canvasElement.querySelector<HTMLElement>("[data-media-kind]")!;
+    await expect(kindChip.getBoundingClientRect().height).toBe(0);
+  },
+};
+
+/**
+ * The STRIP keeps its overlays and grows no caption.
+ *
+ * The divergence is deliberate: a strip card's width IS its duration, so a
+ * caption row is fixed overhead on every clip and unreadable on a short one.
+ * Pinned as a pair with the story above, because the two are one decision and
+ * a regression would most likely make both surfaces the same again.
+ */
+export const StripCardKeepsItsOverlays: Story = {
+  args: mediaArgs,
+  decorators: [renderMediaCard({ surface: "strip" })],
+  play: async ({ canvasElement }) => {
+    const caption = canvasElement.querySelector<HTMLElement>("[data-clip-caption]");
+    // Present in the DOM but not laid out — it is CSS-gated, not conditionally
+    // rendered, so `toBeNull` would be the wrong assertion and would pass for
+    // the wrong reason if the gate were ever removed.
+    await expect(caption?.getBoundingClientRect().height ?? 0).toBe(0);
+
+    const kindChip = canvasElement.querySelector<HTMLElement>("[data-media-kind]")!;
+    await expect(kindChip.getBoundingClientRect().height).toBeGreaterThan(0);
+    await expect(kindChip.textContent).toBe("VIDEO");
+  },
+};
+
+/**
+ * Caption tags fold into a counter, and STATUS survives the fold.
+ *
+ * The ordering is the assertion that matters. Card space runs out before tags
+ * do, so whatever sorts last is what disappears — and "approved" is not
+ * recoverable from the picture the way "night" is.
+ */
+export const CaptionTagsFoldStatusFirst: Story = {
+  args: mediaArgs,
+  decorators: [
+    renderMediaCard({ surface: "grid", tags: ["night", "approved", "scail-2", "wip"] }),
+  ],
+  play: async ({ canvasElement }) => {
+    const row = canvasElement.querySelector<HTMLElement>("[data-clip-caption-tags]")!;
+    await expect(row.dataset.clipCaptionTags).toBe("4");
+
+    const chips = Array.from(row.querySelectorAll<HTMLElement>("span[title]"));
+    // The two STATUS tags are the ones kept, though neither was stored first.
+    await expect(chips.map((chip) => chip.title)).toEqual(["approved", "wip"]);
+    for (const chip of chips) {
+      await expect(chip.getBoundingClientRect().width).toBeGreaterThan(0);
+    }
+
+    const overflow = canvasElement.querySelector<HTMLElement>(
+      "[data-clip-caption-tags-overflow]",
+    )!;
+    await expect(overflow.dataset.clipCaptionTagsOverflow).toBe("2");
+    await expect(overflow.textContent).toBe("+2");
+
+    // Colour is DERIVED, so the two status words must land in their own
+    // families rather than sharing one — that is what the dot is for.
+    const accents = chips.map((chip) =>
+      chip.querySelector("[data-tag-accent]")?.getAttribute("data-tag-accent"),
+    );
+    await expect(accents).toEqual(["ok", "progress"]);
+  },
+};
+
+/** No tags, no row — and the caption still renders its meta line. */
+export const CaptionWithoutTagsHasNoTagRow: Story = {
+  args: mediaArgs,
+  decorators: [renderMediaCard({ surface: "grid" })],
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector("[data-clip-caption-tags]")).toBeNull();
+    await expect(canvasElement.querySelector("[data-clip-caption]")).not.toBeNull();
+  },
+};
+
+/**
+ * The select-mode checkbox: present only while the mode is armed.
+ *
+ * DECORATIVE by necessity — this renders inside NodeCard's real <button>, and a
+ * button may not contain interactive content. The assertion that it is not a
+ * button is therefore a structural contract, not a style preference: making it
+ * one would eject the rest of the card out of its own box.
+ */
+export const SelectModeShowsACheckbox: Story = {
+  args: mediaArgs,
+  decorators: [renderMediaCard({ surface: "grid", selectMode: true })],
+  play: async ({ canvasElement }) => {
+    const indicator = await waitFor(() => {
+      const found = canvasElement.querySelector<HTMLElement>("[data-selection-indicator]");
+      if (!found) throw new Error("no selection indicator");
+      return found;
+    });
+    await expect(indicator.dataset.selectionIndicator).toBe("off");
+    await expect(indicator.getBoundingClientRect().width).toBeGreaterThan(0);
+    await expect(indicator.getAttribute("aria-hidden")).toBe("true");
+    await expect(indicator.querySelector("button")).toBeNull();
+
+    // ON THE ARTWORK, not on the caption below it. It moved into its own
+    // positioning box for exactly this reason, and a regression would drop it
+    // onto the caption where it would sit over the tags.
+    const artwork = canvasElement.querySelector<HTMLElement>("img")!;
+    await expect(indicator.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      artwork.getBoundingClientRect().bottom + 1,
+    );
+  },
+};
+
+/** Idle, there is no checkbox at all — it is a mode affordance, not chrome. */
+export const NoCheckboxOutsideSelectMode: Story = {
+  args: mediaArgs,
+  decorators: [renderMediaCard({ surface: "grid" })],
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector("[data-selection-indicator]")).toBeNull();
+  },
+};
+
+/**
+ * In the GRID a collection files its tags in the caption, not over its preview
+ * frames — the same split the media card makes.
+ *
+ * Pinned because the two card kinds are rendered by DIFFERENT components
+ * (collections route through the composed CollectionItem shell, media through
+ * NodeCard), so nothing structural forces them to agree. They diverged once
+ * already: media moved its tags into the caption and collections did not, which
+ * put two kinds of card in one grid filing the same thing in two places.
+ */
+export const CollectionGridTagsSitInTheCaption: Story = {
+  args: baseArgs,
+  decorators: [renderWithTags(["scail-2", "approved"], "grid")],
+  play: async ({ canvasElement }) => {
+    const caption = canvasElement.querySelector<HTMLElement>("[data-collection-caption-tags]")!;
+    await expect(caption).not.toBeNull();
+    await expect(caption.getBoundingClientRect().height).toBeGreaterThan(0);
+
+    // Status first, as everywhere else tags are shown.
+    const chips = Array.from(caption.querySelectorAll<HTMLElement>("span[title]"));
+    await expect(chips.map((chip) => chip.title)).toEqual(["approved", "scail-2"]);
+
+    // And the OVERLAY row is stood down here, or the card would say it twice.
+    const overlay = canvasElement.querySelector<HTMLElement>("[data-clip-tags]");
+    await expect(overlay?.getBoundingClientRect().height ?? 0).toBe(0);
+
+    // Below the preview frames, not on them.
+    const frame = canvasElement.querySelector<HTMLElement>("img")!;
+    await expect(caption.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      frame.getBoundingClientRect().bottom - 1,
+    );
   },
 };
