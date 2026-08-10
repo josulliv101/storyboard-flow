@@ -999,6 +999,81 @@ describe("createCollectionsStore", () => {
     expect(store.getSnapshot().interaction.multiSelectMode).toBe(false);
   });
 
+  test("keepMultiSelectModeWhenEmpty arms the mode with nothing selected", () => {
+    // The entry point the option exists for. A toolbar toggle is pressed BEFORE
+    // anything is picked, so if arming with an empty selection did not stick
+    // there would be no way to enter the mode from such a control at all — the
+    // first tap would land in the plain-select branch and, on a collection,
+    // drill in instead.
+    const store = createCollectionsStore(graphFixture(), {
+      keepMultiSelectModeWhenEmpty: true,
+    });
+    store.setMultiSelectMode(true);
+
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(true);
+    expect(selected(store)).toEqual([]);
+  });
+
+  test("keepMultiSelectModeWhenEmpty survives every way the selection ends", () => {
+    // The mirror of "the mode cannot outlive the selection": same four exits,
+    // opposite expectation. Emptying the selection while the mode is armed is
+    // ordinary here — you cleared to pick again, and the way out is the
+    // consumer's control, not a side effect of the last card leaving.
+    const store = createCollectionsStore(graphFixture(), {
+      keepMultiSelectModeWhenEmpty: true,
+    });
+    const armed = () => {
+      store.setSelection([id("x")]);
+      store.setMultiSelectMode(true);
+      expect(store.getSnapshot().interaction.multiSelectMode).toBe(true);
+    };
+
+    armed();
+    store.clearSelection();
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(true);
+
+    armed();
+    store.toggleSelected(id("x")); // toggled the last one off
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(true);
+
+    armed();
+    store.setSelection([]);
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(true);
+
+    // And the path that writes `interaction` directly rather than through
+    // setInteraction: pruning, after the selected node leaves the graph.
+    armed();
+    store.replaceGraph(
+      (() => {
+        const built = buildGraph([
+          { kind: "collection", id: "root-a", name: "A", children: [media("y")] },
+        ]);
+        if (!built.ok) throw new Error(JSON.stringify(built.error));
+        return built.value;
+      })(),
+    );
+    expect(selected(store)).toEqual([]);
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(true);
+  });
+
+  test("clearing an already-empty selection does not notify while the mode is armed", () => {
+    // The early return in `clearSelection` has to ignore an armed-but-allowed
+    // mode. Without that, every clear on an empty selection would build a fresh
+    // interaction object and re-render every subscriber for no change at all —
+    // and background-clear fires one of these on any click that misses a card.
+    const store = createCollectionsStore(graphFixture(), {
+      keepMultiSelectModeWhenEmpty: true,
+    });
+    store.setMultiSelectMode(true);
+    const listener = vi.fn();
+    store.subscribe(listener);
+
+    store.clearSelection();
+
+    expect(listener).not.toHaveBeenCalled();
+    expect(store.getSnapshot().interaction.multiSelectMode).toBe(true);
+  });
+
   test("setting the mode to its current value does not notify", () => {
     const store = createCollectionsStore(graphFixture());
     store.setSelection([id("x")]);

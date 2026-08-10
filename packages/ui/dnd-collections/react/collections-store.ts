@@ -330,6 +330,21 @@ export function createCollectionsStore(
     maxHistoryEntries?: number;
     /** Pre-commit application veto — see `CommandPolicy`. */
     commandPolicy?: CommandPolicy;
+    /**
+     * Let additive-tap mode stay armed while the selection is EMPTY.
+     *
+     * Off by default, because the mode's usual control is the anchor card's
+     * menu — a surface that exists only while something is selected, so an
+     * armed mode with nothing selected would be on, invisible, and quietly
+     * making the next taps additive (see `setInteraction`).
+     *
+     * Turn it on when the consumer gives the mode a control that is ALWAYS
+     * reachable — a toolbar toggle, say. Then "armed with nothing selected" is
+     * not a dead end but the ordinary way in: arm the mode, THEN pick. Owning
+     * that control means owning the way out of it too; nothing here will
+     * disarm the mode for you.
+     */
+    keepMultiSelectModeWhenEmpty?: boolean;
   }>
 ): CollectionsStore {
   const initialValidation = validateGraph(initialGraph);
@@ -354,6 +369,7 @@ export function createCollectionsStore(
   const changeListeners = new Set<(change: CollectionsChange) => void>();
   const onChange = options?.onChange;
   const commandPolicy = options?.commandPolicy;
+  const keepMultiSelectModeWhenEmpty = options?.keepMultiSelectModeWhenEmpty ?? false;
   const pendingChanges: CollectionsChange[] = [];
   let notificationDepth = 0;
   let emittingChanges = false;
@@ -444,7 +460,11 @@ export function createCollectionsStore(
     // outlive the selection. Its only control lives on a surface that exists
     // while something is selected, so an armed mode with an empty selection is
     // unreachable — on, invisible, and quietly making the next taps additive.
-    if (interaction.multiSelectMode && interaction.selectedIds.size === 0) {
+    //
+    // Unless the consumer says otherwise: a mode with an ALWAYS-reachable
+    // control is not unreachable when empty, and "arm it, then pick" is how
+    // such a control is used (see `keepMultiSelectModeWhenEmpty`).
+    if (!keepMultiSelectModeWhenEmpty && interaction.multiSelectMode && interaction.selectedIds.size === 0) {
       interaction = { ...interaction, multiSelectMode: false };
     }
     notify();
@@ -498,10 +518,10 @@ export function createCollectionsStore(
       };
     }
     // This path writes `interaction` directly rather than through
-    // `setInteraction`, so it repeats that function's mode invariant. Deleting
-    // the last selected card is the ordinary way to arrive here with an armed
-    // mode and nothing left to show its control.
-    if (interaction.multiSelectMode && interaction.selectedIds.size === 0) {
+    // `setInteraction`, so it repeats that function's mode invariant — opt-out
+    // included. Deleting the last selected card is the ordinary way to arrive
+    // here with an armed mode and nothing left to show its control.
+    if (!keepMultiSelectModeWhenEmpty && interaction.multiSelectMode && interaction.selectedIds.size === 0) {
       interaction = { ...interaction, multiSelectMode: false };
     }
   }
@@ -767,11 +787,18 @@ export function createCollectionsStore(
         interaction.selectedIds.size === 0 &&
         interaction.anchorId === null &&
         interaction.selectionPivotId === null &&
-        !interaction.multiSelectMode
+        // A mode that is ALLOWED to be armed while empty is not something
+        // clearing has to undo, so it must not defeat this early return
+        // either — otherwise every clear on an already-empty selection hands
+        // out a fresh interaction identity and re-renders for nothing.
+        (keepMultiSelectModeWhenEmpty || !interaction.multiSelectMode)
       ) {
         return;
       }
-      // `setInteraction` drops the mode with it (see the invariant there).
+      // `setInteraction` drops the mode with it, unless the consumer opted to
+      // keep it (see the invariant there) — in which case clearing empties the
+      // selection and LEAVES the user in select mode, ready to pick again.
+      // Getting out is then the toolbar's job, not this one's.
       setInteraction({ selectedIds: EMPTY_SELECTION, anchorId: null, selectionPivotId: null });
     },
 

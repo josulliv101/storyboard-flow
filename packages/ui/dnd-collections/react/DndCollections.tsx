@@ -143,6 +143,16 @@ export type DndCollectionsProps = Readonly<{
    */
   trimRequiresSelection?: boolean;
   /**
+   * Let additive-tap mode stay armed while the selection is EMPTY.
+   *
+   * Off by default: the mode's usual control is the anchor card's menu, which
+   * exists only while something is selected, so an armed-and-empty mode would
+   * be invisible and unreachable. Pass this when the consumer gives the mode a
+   * control that is always on screen — a toolbar toggle — which makes "arm it,
+   * then pick" the ordinary way in. The consumer then owns the way OUT too.
+   */
+  keepMultiSelectModeWhenEmpty?: boolean;
+  /**
    * Pre-commit application veto (see `CommandPolicy`). Consulted on EVERY
    * dispatch — pointer drop, keyboard move, trash, palette add — so a rule
    * the pure reducer cannot express ("that collection is still loading") is
@@ -296,6 +306,7 @@ export function DndCollections({
   openOnClick,
   deferSelection,
   trimRequiresSelection,
+  keepMultiSelectModeWhenEmpty,
   commandPolicy,
   mapDropCommand,
   onPaletteDiscard,
@@ -361,6 +372,7 @@ export function DndCollections({
     createCollectionsStore(initialGraph, {
       onChange: (change) => onChangeRef.current?.(change),
       maxHistoryEntries,
+      keepMultiSelectModeWhenEmpty,
       commandPolicy: (command, graph) => commandPolicyRef.current?.(command, graph) ?? null,
     })
   );

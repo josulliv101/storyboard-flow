@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import {
   AudioLines,
+  CircleCheck,
   ClipboardPaste,
   Command,
   EllipsisVertical,
@@ -98,7 +99,7 @@ import {
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
 import { TagFilterProvider } from "./graph-tag-filter";
-import { TagFilterControl } from "./graph-tag-filter-control";
+import { ActiveTagFilters, TagFilterControl } from "./graph-tag-filter-control";
 import { ItemDetailsProvider } from "./graph-item-details-context";
 import { GraphSaveStatus } from "./graph-save-status";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
@@ -740,6 +741,125 @@ function HeaderPasteButton({
 }
 
 /**
+ * Enter select mode — the pointer route to picking things deliberately.
+ *
+ * It earns its place because a plain click DRILLS IN now. Before that, clicking
+ * a collection selected it and this control would have been a convenience; now
+ * it is the only pointer gesture that picks a collection at all. Touch has the
+ * same problem for every kind of card, having no Ctrl to hold.
+ *
+ * The SAME store flag the anchor menu's "Add to selection by tapping" row
+ * toggles — one piece of state behind two controls, so arming it from either
+ * place behaves identically and neither can disagree about whether it is on.
+ * The menu row keeps its bare `Check`, which is a checkmark doing tick-box duty
+ * beside a label; this is the design's `CircleCheck`, which reads as a control
+ * rather than a state. The word beside it is what makes it a mode and not a verb.
+ *
+ * Rendered only while the mode is DISARMED or nothing is picked yet — once
+ * there is a selection the whole row becomes `SelectModeHeader`, which carries
+ * its own way out. So this shows its armed state (a pressed toggle you can
+ * press again) for exactly the window in which it is still on screen.
+ */
+function SelectModeButton() {
+  const store = useCollectionsStore();
+  const armed = useCollectionsSelector((s) => s.interaction.multiSelectMode);
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      data-select-mode-toggle={armed ? "on" : "off"}
+      aria-pressed={armed}
+      title={
+        armed
+          ? "Stop selecting — clicks go back to opening and trimming"
+          : "Select several items to act on them at once"
+      }
+      onClick={() => store.setMultiSelectMode(!armed)}
+      className={cn(
+        "h-8 shrink-0 gap-1.5 px-2 text-[11px] font-medium",
+        "[@media(pointer:coarse)]:h-11",
+        armed ? HEADER_TOGGLE_ACTIVE : HEADER_TOGGLE_IDLE,
+      )}
+    >
+      <CircleCheck aria-hidden className="h-4 w-4" strokeWidth={1.7} />
+      Select
+    </Button>
+  );
+}
+
+/**
+ * The header row while a selection is being assembled — the breadcrumb's place,
+ * taken over by the thing the user is actually doing.
+ *
+ * It replaces rather than joins, because the two say different things about
+ * where you are: the trail answers "which collection am I in", and in this mode
+ * the answer that matters is "what have I got". The trail comes back the moment
+ * the selection empties, which is also the moment it becomes useful again.
+ *
+ * NOT shown merely because the mode is armed. With nothing picked this would be
+ * a row of dimmed verbs and a count of zero — it says nothing, and it would
+ * take the trail away at the exact moment the user is still navigating to find
+ * what they want. The mode's armed state lives on `SelectModeButton` until
+ * there is something to show.
+ *
+ * The verbs are `SelectionCentreControls` unchanged, not a second set: the
+ * promoted actions, paste, the `⋮` fallback menu and the `✕` all behave here
+ * exactly as they do in the centre slot, and they are driven by the same action
+ * specs, so this row cannot come to disagree with the anchor card's menu about
+ * what applies. What is added is only what this mode needs — a count to say
+ * what is held, and a way out.
+ */
+function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }>) {
+  const store = useCollectionsStore();
+  const { selectionCount } = useSelectionActionState();
+
+  return (
+    <div
+      data-select-mode-header=""
+      className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-2"
+    >
+      <span
+        data-select-mode-count={selectionCount}
+        // Mono and tabular so the row does not twitch sideways as the count
+        // crosses 9 — this number changes on every tap, which is precisely the
+        // moment a reflowing toolbar is most annoying.
+        className="shrink-0 px-1 font-mono text-xs tabular-nums text-sky-200"
+      >
+        {selectionCount} selected
+      </span>
+      <SelectionCentreControls anchorName={anchorName} />
+      {/* `ml-auto`: Done sits at the far end, away from Delete. Both end the
+          gesture, only one of them destroys anything, and putting them
+          shoulder to shoulder is how a mis-click becomes a deletion. */}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        data-select-mode-done
+        title="Finish selecting"
+        // Clear THEN disarm. The store keeps the mode armed through an empty
+        // selection for this view (keepMultiSelectModeWhenEmpty), so the clear
+        // cannot disarm it out from under this and the order is only about
+        // ending in one notify rather than leaving the row briefly showing "0
+        // selected" on its way out.
+        onClick={() => {
+          store.clearSelection();
+          store.setMultiSelectMode(false);
+        }}
+        className={cn(
+          "ml-auto h-8 shrink-0 px-3 text-[11px] font-medium",
+          "[@media(pointer:coarse)]:h-11",
+          HEADER_TOGGLE_IDLE,
+        )}
+      >
+        Done
+      </Button>
+    </div>
+  );
+}
+
+/**
  * Undo/redo as ICON buttons, matching the toolbar's other ghost icon controls
  * rather than the package's generic text-label `UndoRedoControls`. App-local
  * on purpose: the icon styling is this toolbar's design, so it stays out of
@@ -947,6 +1067,26 @@ export function GraphBoard({
     anchorId === null ? null : (s.graph.nodesById.get(anchorId)?.name ?? null),
   );
 
+  // Which face the header row wears. Three conditions, and each is load-bearing:
+  //
+  //   the mode is armed  — this row belongs to select mode, nothing else.
+  //   something is held  — see SelectModeHeader: an empty selection has nothing
+  //                        to report, and taking the trail away while the user
+  //                        is still navigating to find their items is exactly
+  //                        backwards.
+  //   nothing is dragging — the ancestor crumbs ARE the "move up a level" drop
+  //                        targets (see GraphBreadcrumb), and a multi-drag out
+  //                        of a selection is precisely when someone reaches for
+  //                        them. Hiding the trail mid-drag would delete the
+  //                        drop target the user is already aiming at. The
+  //                        selection bar has nothing to offer during a drag
+  //                        anyway — DragChromeFade fades the rest of the chrome
+  //                        for the same reason.
+  const multiSelectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
+  const selectionSize = useCollectionsSelector((s) => s.interaction.selectedIds.size);
+  const isDragging = useCollectionsSelector((s) => s.interaction.isDragging);
+  const selectModeRow = multiSelectMode && selectionSize > 0 && !isDragging;
+
   return (
     <OpenKeyBoundary trashId={trashRootId}>
       {/* Spans the header AND the surfaces: the toolbar toggle sets the mode,
@@ -988,7 +1128,18 @@ export function GraphBoard({
               p-4 padding. */}
           <div
             data-graph-board-header=""
-            className="sticky z-40 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-3 border-b border-zinc-800/70 bg-zinc-950/95 py-3 backdrop-blur-sm"
+            data-header-mode={selectModeRow ? "select" : "browse"}
+            className={cn(
+              "sticky z-40 min-w-0 items-center gap-x-3 border-b border-zinc-800/70 bg-zinc-950/95 py-3 backdrop-blur-sm",
+              // The browse row is a three-column grid so the aggregate sits at
+              // the row's TRUE centre whatever the wings contain. The select row
+              // has no centre to hold — it is one group that reads left to right
+              // and ends with Done — so it is a plain flex row rather than a
+              // grid with two empty tracks.
+              selectModeRow
+                ? "flex"
+                : "grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+            )}
             style={{ top: "var(--workbench-preview-offset, 0px)" }}
           >
             {/* Seek thumbs are centered on the timeline edge and intentionally
@@ -1015,6 +1166,10 @@ export function GraphBoard({
                 beside it — a status that hides live controls is the wrong
                 shape. It stays outside DragChromeFade with the breadcrumb,
                 because a save landing mid-drag is still worth seeing. */}
+            {selectModeRow ? (
+              <SelectModeHeader anchorName={anchorName} />
+            ) : (
+              <>
             <div className="flex min-w-0 flex-1 items-center gap-3">
               {breadcrumb}
               <GraphSaveStatus />
@@ -1033,21 +1188,35 @@ export function GraphBoard({
                 toolbar onto a second line instead of pushing controls
                 off-screen. No effect when it fits. */}
             <DragChromeFade className="flex min-w-0 items-center justify-end gap-2">
+              {/* FILTER and SELECT lead the cluster, together, as the design
+                  has them. They are the two controls that change how you WORK
+                  with the board rather than what it contains or how it is
+                  drawn: one narrows the field to what you are hunting for, the
+                  other is how you then pick out of it. Reaching for them in
+                  sequence is the common path, so they sit as one pair.
+
+                  The filter used to live in the view group below, on the
+                  reasoning that it qualifies what the board shows — true, but
+                  it is also the control this row most needed to make findable,
+                  and buried among the ruler and waveform toggles it read as one
+                  more display switch. */}
+              <TagFilterControl />
+              <SelectModeButton />
+              <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               {/* The Collection tool (moved here from the icon sidebar): the
-                  view's one "add structure" action leads the cluster, fenced
-                  off from the surface/history controls to its right. */}
+                  view's one "add structure" action, fenced off from the
+                  surface/history controls to its right. */}
               <GraphAddCollectionButton />
               <div aria-hidden="true" className="h-5 w-px shrink-0 bg-zinc-700" />
               {/* The VIEW group: what the board shows. Fenced on both sides so
-                  the cluster reads as create | view | history | settings, and
-                  the fences stay put as its contents come and go — the ruler
+                  the cluster reads as work | create | view | history | settings,
+                  and the fences stay put as its contents come and go — the ruler
                   exists only in flat mode.
 
                   PREVIEW is deliberately not here. It lives in the icon rail
                   (see timeline-sidebar) because it is one of the two controls
                   worth promoting to rail scale; this row keeps the ones that
                   only qualify the board in front of you. */}
-              <TagFilterControl />
               {flatOn ? (
                 <HeaderToggle
                   active={rulerOn}
@@ -1095,6 +1264,8 @@ export function GraphBoard({
                   changed. */}
               <BoardMenuSlot itemSize={itemSize} onItemSizeChange={onItemSizeChange} />
             </DragChromeFade>
+              </>
+            )}
 
             {/* The trash drop target (right side), shown only while a card is
                 being dragged. The "move up a level" targets are the ancestor
@@ -1103,6 +1274,14 @@ export function GraphBoard({
                 provider so its droppable joins the DndContext. */}
             <BreadcrumbDropZones trashId={trashRootId} />
           </div>
+
+          {/* OUTSIDE the sticky header, deliberately. It belongs to the board
+              rather than the toolbar — it describes what you are looking at,
+              and it is the one piece of chrome whose height varies (chips wrap
+              on a narrow viewport). Inside the sticky row that variation would
+              move the surfaces underneath it every time a tag was added, and
+              the header's `top` offset is shared with the preview shell. */}
+          <ActiveTagFilters />
 
           {surface === "strip" ? (
             // The focused surface spans the card's FULL width (-mx-4 cancels

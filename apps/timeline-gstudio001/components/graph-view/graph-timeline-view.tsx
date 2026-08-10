@@ -601,36 +601,33 @@ export function GraphTimelineView({
   // registers itself into this ref.
   const openNodeRef = useRef<(nodeId: NodeId) => void>(() => {});
   const handleOpenNode = useCallback((nodeId: NodeId) => openNodeRef.current(nodeId), []);
-  // A plain click on a COLLECTION now SELECTS it (so it can be trashed with
-  // Delete like any clip); its own folder button is the only pointer path
-  // that drills in (see GraphClipContent). Duplicate-reference cards — media
-  // standing in for a twice-referenced timeline — have no such button, so a
-  // plain click still opens those. The O key opens both regardless
-  // (OpenKeyBoundary), so keyboard drill-in is unchanged.
+  // A plain click on a COLLECTION drills in — one click, no second click to
+  // wait for. Duplicate-reference cards (media standing in for a twice-
+  // referenced timeline) open the same way, which is what they always did.
+  //
+  // This is `openOnClick`'s own default, spelled out rather than omitted: the
+  // predicate is the documented seam for "which nodes open", and leaving it off
+  // to inherit `node.kind === "collection"` hides that decision in the package.
+  //
+  // SELECTING a collection is select mode's job now (see the header's Select
+  // control). That is a straight trade and worth naming: click used to select a
+  // collection so Delete could trash it, and the only pointer route in was the
+  // card's own folder button. Now click goes in, and picking collections to act
+  // on is a mode you enter deliberately — which is also the only way to pick
+  // several. Ctrl/Cmd+click still toggles one without entering the mode, and
+  // the O key still opens from the keyboard (OpenKeyBoundary).
   const openOnClick = useCallback(
-    (nodeId: NodeId) =>
+    (nodeId: NodeId, node: CollectionItemNode) =>
+      node.kind === "collection" ||
       detailsStore.get(nodeId as string)?.duplicateOfTimelineId !== undefined,
     [detailsStore],
   );
-  // Hold a COLLECTION's click-selection for the double-click window, because
-  // double-click is how a collection drills in.
-  //
-  // Without this the user watches the card select and then unselect on its way
-  // into the drill-in: click 1 selects and paints, and the dblclick handler is
-  // only reached after that, so it can undo the selection but not un-show it.
-  // Deferring is the only point at which it can be prevented rather than
-  // reversed.
-  //
-  // Collections only. Media clips have no second meaning for a double-click,
-  // so delaying their selection would be cost with nothing bought. Duplicate
-  // references are excluded too — `openOnClick` already opens those on a
-  // SINGLE click, so there is no second click to wait for.
-  const deferSelection = useCallback(
-    (nodeId: NodeId, node: CollectionItemNode) =>
-      node.kind === "collection" &&
-      detailsStore.get(nodeId as string)?.duplicateOfTimelineId === undefined,
-    [detailsStore],
-  );
+  // No `deferSelection`: it existed ONLY because a double-click drilled in, and
+  // click 1's selection had to be held back so the user never watched a card
+  // select and then unselect on its way into the collection. With a single
+  // click there is no second click to wait for, and holding one back would add
+  // SELECTION_DEFER_MS (250ms) of dead time to every collection click to buy
+  // nothing.
 
   if (boot.status === "loading") {
     return <GraphViewLoadingSkeleton />;
@@ -698,7 +695,12 @@ export function GraphTimelineView({
         dragGhostHeight={40}
         onOpenNode={handleOpenNode}
         openOnClick={openOnClick}
-        deferSelection={deferSelection}
+        // Select mode is armed from the header, which is on screen whether or
+        // not anything is selected — so the mode must survive an empty
+        // selection. Without this the store disarms it the instant it is turned
+        // on with nothing picked, and the first tap would drill in instead of
+        // selecting. Exiting is the header's job (Done / Escape).
+        keepMultiSelectModeWhenEmpty
         commandPolicy={commandPolicy}
         mapDropCommand={handleMapDropCommand}
         itemInstructions="Press O to open the focused collection, or F2 to rename it."
