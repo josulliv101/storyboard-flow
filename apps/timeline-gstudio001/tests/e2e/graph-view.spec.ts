@@ -113,7 +113,22 @@ function buildFixtureDocuments(): Map<string, FixtureDocument> {
 }
 
 /** Flatten the fixture closure the way the real preview-manifest route does
- *  (fixtures are untrimmed, so every leaf plays at rate 1). */
+ *  (fixtures are untrimmed, so every leaf plays at rate 1).
+ *
+ *  `disabled` is part of that contract and was MISSING here, which is worth
+ *  recording because of how it failed. The real compiler
+ *  (timeline-domain/playback-manifest) rides `disabled` DOWN the walk — a
+ *  disabled leaf keeps its span and is marked, and a disabled COLLECTION marks
+ *  every leaf beneath it — so the player can jump the span and a scrub can land
+ *  inside it. This mock dropped the flag entirely, so its manifest said nothing
+ *  was ever disabled.
+ *
+ *  That is invisible until the manifest is what the pane is playing. The
+ *  projection fallback derives `disabled` from the live graph and is correct,
+ *  so any test that finished before the manifest landed passed on the
+ *  projection — which is every local run. CI is slower per step, the manifest
+ *  won the race, and one test went red there and only there. A vacuous fixture,
+ *  not a flake. */
 function compileFixtureManifest(
   documents: Map<string, FixtureDocument>,
   rootId: string,
@@ -123,13 +138,22 @@ function compileFixtureManifest(
   if (!root) return null;
   type Leaf = Record<string, unknown>;
   const leaves: Leaf[] = [];
-  const walk = (documentId: string, path: string[], offset: number) => {
+  const walk = (
+    documentId: string,
+    path: string[],
+    offset: number,
+    /** True once any collection clip ABOVE this document was disabled. There is
+     *  no way back on the way down: an enabled child of a disabled parent
+     *  still does not play. */
+    inheritedDisabled: boolean,
+  ) => {
     const doc = documents.get(documentId);
     if (!doc) return;
     for (const clip of doc.clips) {
+      const clipDisabled = inheritedDisabled || clip.disabled === true;
       if (clip.kind === "collection") {
         const childId = clip.childTimelineId as string;
-        walk(childId, [...path, childId], offset + (clip.startTime as number));
+        walk(childId, [...path, childId], offset + (clip.startTime as number), clipDisabled);
         continue;
       }
       leaves.push({
@@ -142,10 +166,12 @@ function compileFixtureManifest(
         timelineDuration: clip.duration,
         sourceStart: clip.trimIn ?? 0,
         playbackRate: 1,
+        // Omitted when false, exactly as the real compiler emits it.
+        ...(clipDisabled ? { disabled: true } : {}),
       });
     }
   };
-  walk(rootId, [rootId], 0);
+  walk(rootId, [rootId], 0, false);
   const durationSeconds = root.clips.reduce(
     (duration, clip) =>
       Math.max(duration, (clip.startTime as number) + (clip.duration as number)),
@@ -2938,6 +2964,16 @@ test.describe("graph view E2E", () => {
     // Its span is the second card's, so a press around 40% of the rail lands
     // inside it; nudge along the rail until the badge shows.
     const badge = page.getByTestId("workbench-display-disabled");
+    // The pane must be on the MANIFEST before scrubbing, not racing onto it.
+    // Without this the test passed locally and failed in CI for a reason that
+    // had nothing to do with speed: the two read models disagreed about
+    // `disabled`, and which one was live at scrub time decided the result. The
+    // fixture compiler agrees with the real one now (see compileFixtureManifest),
+    // so either model would pass — this pins the one under test.
+    await expect(page.locator("[data-preview-source]")).toHaveAttribute(
+      "data-preview-source",
+      "manifest",
+    );
     const box = (await rail.boundingBox())!;
     await expect(async () => {
       for (const fraction of [0.3, 0.35, 0.4, 0.45, 0.5]) {
