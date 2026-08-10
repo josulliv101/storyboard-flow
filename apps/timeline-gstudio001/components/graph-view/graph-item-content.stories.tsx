@@ -796,10 +796,17 @@ export const AnchorControlAndCountBadge: Story = {
     expect(controls()[0]?.getAttribute("aria-label")).toBe("Actions, 2 items selected");
     expect(badges()[0]?.getAttribute("aria-hidden")).toBe("true");
 
-    // Both selected cards keep their badge, the anchor included (R5.3). v2
-    // took the anchor's away, which left it reading as the one selected card
-    // that was not quite selected.
-    expect(doc.querySelectorAll("[data-card-selected-badge]")).toHaveLength(2);
+    // R5.3 used to be checked here as "both selected cards keep their amber
+    // badge, the anchor included". That badge is gone — the ring and the
+    // checkbox already said the same thing in two other places — so what is
+    // left to assert is that the anchor is not marked as LESS selected than its
+    // companion, which is the failure R5.3 existed to prevent.
+    expect(doc.querySelectorAll("[data-card-selected-badge]")).toHaveLength(0);
+    expect(
+      Array.from(doc.querySelectorAll("[data-selected]")).map((el) =>
+        el.getAttribute("data-selected"),
+      ),
+    ).toEqual(["true", "true"]);
   },
 };
 
@@ -1104,12 +1111,14 @@ export const CaptionWithoutTagsHasNoTagRow: Story = {
 };
 
 /**
- * The select-mode checkbox: present only while the mode is armed.
+ * The select-mode checkbox: PINNED ON while the mode is armed.
  *
  * DECORATIVE by necessity — this renders inside NodeCard's real <button>, and a
  * button may not contain interactive content. The assertion that it is not a
  * button is therefore a structural contract, not a style preference: making it
- * one would eject the rest of the card out of its own box.
+ * one would eject the rest of the card out of its own box. It stays true now
+ * that hover reveals the same circle: hovering advertises that the card can be
+ * picked, and the click that picks it belongs to the card underneath.
  */
 export const SelectModeShowsACheckbox: Story = {
   args: mediaArgs,
@@ -1121,9 +1130,14 @@ export const SelectModeShowsACheckbox: Story = {
       return found;
     });
     await expect(indicator.dataset.selectionIndicator).toBe("off");
+    await expect(indicator.dataset.selectionIndicatorReveal).toBe("armed");
     await expect(indicator.getBoundingClientRect().width).toBeGreaterThan(0);
     await expect(indicator.getAttribute("aria-hidden")).toBe("true");
     await expect(indicator.querySelector("button")).toBeNull();
+    // Armed means VISIBLE without a pointer anywhere near it. Opacity rather
+    // than presence, because the hover path below shares this element and only
+    // opacity separates the two states.
+    await expect(getComputedStyle(indicator).opacity).toBe("1");
 
     // ON THE ARTWORK, not on the caption below it. It moved into its own
     // positioning box for exactly this reason, and a regression would drop it
@@ -1135,12 +1149,34 @@ export const SelectModeShowsACheckbox: Story = {
   },
 };
 
-/** Idle, there is no checkbox at all — it is a mode affordance, not chrome. */
-export const NoCheckboxOutsideSelectMode: Story = {
+/**
+ * Idle, the checkbox is RENDERED but invisible, waiting on hover.
+ *
+ * The change from "absent" to "transparent" is the whole mechanism: hover is
+ * owned by CSS so that no pointer state has to reach React, where a hover that
+ * re-rendered every card would land on the drag/INP hot path. So the old
+ * `toBeNull` is the wrong assertion now and would pass for the wrong reason if
+ * the reveal ever broke — opacity is what to measure.
+ *
+ * THE REVEAL ITSELF IS NOT TESTABLE HERE, and the first version of this story
+ * pretended otherwise. `userEvent.hover` dispatches synthetic pointer events;
+ * CSS `:hover` is a browser state driven by real pointer position, and no
+ * synthetic event sets it. The story sat at opacity 0 and failed, which was the
+ * test being wrong rather than the CSS. Real-mouse hover lives in the e2e suite
+ * ("the select checkbox appears on hover…"), which is the layer this repo keeps
+ * for trusted input.
+ */
+export const CheckboxWaitsForHoverOutsideSelectMode: Story = {
   args: mediaArgs,
   decorators: [renderMediaCard({ surface: "grid" })],
   play: async ({ canvasElement }) => {
-    await expect(canvasElement.querySelector("[data-selection-indicator]")).toBeNull();
+    const indicator = canvasElement.querySelector<HTMLElement>("[data-selection-indicator]");
+    await expect(indicator).not.toBeNull();
+    await expect(indicator!.dataset.selectionIndicatorReveal).toBe("hover");
+    await expect(getComputedStyle(indicator!).opacity).toBe("0");
+    // Transparent, NOT display:none — it has to keep its box, or the reveal
+    // would relayout the card under the pointer.
+    await expect(indicator!.getBoundingClientRect().width).toBeGreaterThan(0);
   },
 };
 
@@ -1271,5 +1307,30 @@ export const CollectionSelectModeCheckboxClearsTheMetadata: Story = {
       metadata.getBoundingClientRect().top + 1,
     );
     await expect(metadata.textContent).toContain("2 items");
+  },
+};
+
+/**
+ * The collection card's checkbox waits on hover too.
+ *
+ * Its own story rather than a second case in the media one, because the two
+ * card kinds carry DIFFERENT literal class strings
+ * (`group-hover/collection-item` vs `group-hover/media-item`). Tailwind's JIT
+ * scans source text, so a wrong or interpolated group name produces a class
+ * that is never generated and a checkbox that silently never appears — and the
+ * media story would still be green. Two kinds, two literals, two covers.
+ *
+ * Collections are the kind that needs it most: a plain click drills IN, so this
+ * circle is the only thing on the card that says it can be picked at all.
+ */
+export const CollectionCheckboxWaitsForHover: Story = {
+  args: baseArgs,
+  decorators: [renderWithTags([], "grid")],
+  play: async ({ canvasElement }) => {
+    const indicator = canvasElement.querySelector<HTMLElement>("[data-selection-indicator]");
+    await expect(indicator).not.toBeNull();
+    await expect(indicator!.dataset.selectionIndicatorReveal).toBe("hover");
+    await expect(getComputedStyle(indicator!).opacity).toBe("0");
+    await expect(indicator!.getBoundingClientRect().width).toBeGreaterThan(0);
   },
 };

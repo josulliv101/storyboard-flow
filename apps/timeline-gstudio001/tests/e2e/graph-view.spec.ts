@@ -6590,10 +6590,92 @@ test.describe("graph view E2E", () => {
     await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
   });
 
+  test("the select checkbox is revealed by a real hover, and pinned on by select mode", async ({
+    page,
+  }) => {
+    // E2E RATHER THAN A STORY, and not by preference. The reveal is CSS
+    // `:hover`, which is browser state driven by real pointer position — no
+    // synthetic event sets it, so a story using `userEvent.hover` measures
+    // opacity 0 forever and fails for a reason that has nothing to do with the
+    // component. Trusted mouse input is this suite's job.
+    //
+    // It is also the only check that the Tailwind class is REAL. The reveal is
+    // a literal `[@media(hover:hover)]:group-hover/media-item:opacity-100`;
+    // Tailwind's JIT scans source text, so a mistyped or interpolated group
+    // name yields a class that is never generated and a checkbox that silently
+    // never appears. Nothing but a computed style catches that.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const card = surface.locator('[data-node-id="alpha"]');
+    const checkbox = card.locator("[data-selection-indicator]");
+    const opacity = () =>
+      checkbox.evaluate((element) => getComputedStyle(element).opacity);
+
+    // RENDERED but transparent, with nothing selected and the pointer away. Not
+    // absent: it keeps its box so the reveal cannot relayout the card under the
+    // pointer, which is also why presence is the wrong thing to assert.
+    await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "hover");
+    await page.mouse.move(0, 0);
+    await expect.poll(opacity).toBe("0");
+
+    await card.hover();
+    await expect.poll(opacity).toBe("1");
+
+    // And away again — a checkbox left behind would read as a selection that
+    // is not there.
+    await page.mouse.move(0, 0);
+    await expect.poll(opacity).toBe("0");
+
+    // SELECT MODE pins it on with the pointer nowhere near the card: the mode
+    // needs every card to show its state at once, unpicked ones included, which
+    // a hover reveal can never do for more than one card at a time.
+    await card.click();
+    await toggleMultiSelect(page);
+    await page.mouse.move(0, 0);
+    await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "armed");
+    await expect.poll(opacity).toBe("1");
+  });
+
   // Its own context: `hasTouch` sets maxTouchPoints, which is what makes
   // Chromium report `pointer: coarse` — the query the sizing keys off.
   test.describe(() => {
     test.use({ hasTouch: true });
+
+    test("touch gets NO hover checkbox — tapping a card never leaves one stuck on", async ({
+      page,
+    }) => {
+      // The other half of the desktop-only reveal, and the reason the CSS
+      // carries an explicit `@media (hover: hover)` instead of trusting a
+      // framework default. Without the query, a tap sets `:hover` on the
+      // tapped card and Chromium LEAVES IT THERE until something else is
+      // touched — so the checkbox would sit on the last card tapped, saying
+      // "picked" about a card that is not.
+      await installGraphApi(page);
+      await openGraph(page);
+      const surface = strip(page, PROJECT_ID);
+      const card = surface.locator('[data-node-id="alpha"]');
+      const checkbox = card.locator("[data-selection-indicator]");
+      const opacity = () =>
+        checkbox.evaluate((element) => getComputedStyle(element).opacity);
+
+      // The premise, asserted first — `hasTouch` is what makes Chromium report
+      // this, and without it the checks below would pass for the wrong reason.
+      expect(await page.evaluate(() => window.matchMedia("(hover: none)").matches)).toBe(true);
+
+      await expect.poll(opacity).toBe("0");
+      await card.tap();
+      await expect(card).toHaveAttribute("data-selected", "true", { timeout: 2000 });
+      // Selected, and STILL no checkbox: on touch the ring is the whole
+      // selection signal outside select mode.
+      await expect.poll(opacity).toBe("0");
+
+      // Select mode still works here — it is a mode, not a hover affordance,
+      // and touch is exactly the input that has no other way to multi-select.
+      await toggleMultiSelect(page);
+      await expect(checkbox).toHaveAttribute("data-selection-indicator-reveal", "armed");
+      await expect.poll(opacity).toBe("1");
+    });
 
     test("touch gets 44px hit targets on every selection control", async ({ page }) => {
       await installGraphApi(page);
@@ -6735,12 +6817,17 @@ test.describe("graph view E2E", () => {
     await expect(page.locator(`[data-anchor-menu='${CHILD_ID}']`)).toBeVisible();
 
     // R5.3, and the v2 behaviour this REVERSES. The anchor used to give up its
-    // badge to make room for a pill in the same band, which left the anchor
-    // reading as the one selected card that was not quite selected. Nothing
-    // competes for that corner now, so the selection signal is consistent
-    // across the whole selection and the ⋮ alone says "anchor".
-    await expect(wrapper(CHILD_ID).locator("[data-card-selected-badge]")).toHaveCount(1);
-    await expect(page.locator("[data-card-selected-badge]")).toHaveCount(2);
+    // amber badge to make room for a pill in the same band, which left the
+    // anchor reading as the one selected card that was not quite selected.
+    //
+    // That badge is gone entirely now — the ring and the checkbox were already
+    // saying the same thing in two other places — so the rule is checked on
+    // what remains: both cards carry the selected state, and the anchor is not
+    // marked as any less selected than its companion. The `⋮` alone says
+    // "anchor".
+    await expect(page.locator("[data-card-selected-badge]")).toHaveCount(0);
+    await expect(wrapper(CHILD_ID).locator('[data-selected="true"]')).toHaveCount(1);
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
 
     // "Nothing competes for that corner", asserted rather than asserted-by-
     // comment. This used to be a CROSS-FADE: the corner held a drill chevron
@@ -6793,10 +6880,15 @@ test.describe("graph view E2E", () => {
     }
   });
 
-  test("the corner controls clear a selected clip's trim handles", async ({ page }) => {
+  test("the corner control clears a selected clip's trim handles", async ({ page }) => {
     // A trim handle's hit zone is 8px pinned to the card's edge, and the
-    // ordinary corner inset is also 8px — so the checkmark and the ⋮ sat flush
-    // against the amber handles, reading as one crowded cluster.
+    // ordinary corner inset is also 8px — so the ⋮ sat flush against the amber
+    // handles, reading as one crowded cluster.
+    //
+    // ONE control now, not two. The amber checkmark in the opposite corner had
+    // the same clearance to keep against the LEFT handle, and it is gone — so
+    // that half of this measurement went with it rather than being kept alive
+    // against an element that no longer exists.
     //
     // Measured as a GAP rather than asserted on a class, because the failure is
     // geometric: the inset, the handle width and the card's own box all feed
@@ -6806,29 +6898,23 @@ test.describe("graph view E2E", () => {
     const surface = strip(page, PROJECT_ID);
     await surface.locator('[data-node-id="alpha"]').click();
 
-    const gaps = await page.evaluate(() => {
+    const gap = await page.evaluate(() => {
       const card = document.querySelector('[data-node-id][data-selected="true"]');
       const wrap = card?.closest("[data-node-wrapper]");
       const box = (sel: string, root: ParentNode | null | undefined) =>
         root?.querySelector(sel)?.getBoundingClientRect() ?? null;
       const right = box('[data-trim-handle="right"]', wrap);
-      const left = box('[data-trim-handle="left"]', wrap);
-      const badge = box("[data-card-selected-badge]", document);
       const dots = box("[data-anchor-menu]", document);
-      return {
-        // Null when that handle does not exist (images have no left handle),
-        // which the assertions below treat as "nothing to clear".
-        beforeRightHandle: right && dots ? Math.round(right.left - dots.right) : null,
-        pastLeftHandle: left && badge ? Math.round(badge.left - left.right) : null,
-      };
+      return right && dots ? Math.round(right.left - dots.right) : null;
     });
 
+    // Not null, asserted rather than tolerated: alpha is a VIDEO and always has
+    // a right handle, so a null here means the measurement found nothing and
+    // the test would otherwise pass having checked nothing at all.
+    expect(gap).not.toBeNull();
     // Flush was 0. Anything at or above the handle's own width reads as
     // deliberate separation rather than a near-miss.
-    if (gaps.beforeRightHandle !== null) expect(gaps.beforeRightHandle).toBeGreaterThanOrEqual(6);
-    if (gaps.pastLeftHandle !== null) expect(gaps.pastLeftHandle).toBeGreaterThanOrEqual(6);
-    // At least one handle must have been found, or this asserted nothing.
-    expect(gaps.beforeRightHandle ?? gaps.pastLeftHandle).not.toBeNull();
+    expect(gap!).toBeGreaterThanOrEqual(6);
   });
 
   test("the count badge appears at 2+, and is absent at exactly 1", async ({ page }) => {

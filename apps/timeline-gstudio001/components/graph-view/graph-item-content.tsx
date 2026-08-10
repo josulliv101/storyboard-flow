@@ -590,82 +590,32 @@ function CollectionLeaderPlaceholder() {
  * interpolated `left-${n}` is a class that never gets generated — the control
  * would silently fall back to `left: auto` and sit in the wrong place.
  */
-/** Left/right inset, shared by every card kind. */
-export const CARD_CONTROL_INSET_LEFT = "left-5";
+/** Right inset, shared by every card kind. (The LEFT twin went with the amber
+ *  selected-badge — it was the only thing in that corner, and nothing has
+ *  replaced it.) */
 export const CARD_CONTROL_INSET_RIGHT = "right-5";
 /** Top inset, `top-3` (12px) rather than the `top-2` these started at: at
  *  8px the controls sat tight under the card's edge once they grew to 28px.
- *  The badge and the corner slot are TOP-ALIGNED and must move together, so
  *  `CardCornerSlot` in graph-anchor-menu carries the literal twin of this —
  *  it cannot import from here without a cycle. */
 export const CARD_CONTROL_INSET_TOP = "top-3";
 
-/**
- * The badge, stood down while select mode is armed.
- *
- * Both exist to make a multi-selection legible at a glance, and in select mode
- * the checkbox does it better: it is on every card, so it shows the UNPICKED
- * ones too, which a badge that only appears when selected cannot. Two marks for
- * one fact, in different corners and different colours, just reads as two
- * different facts.
- *
- * Its own component so neither card shell has to grow a hook for this.
- */
-function CardSelectedBadgeUnlessSelecting() {
-  const selectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
-  if (selectMode) return null;
-  return <CardSelectedBadge />;
-}
-
-function CardSelectedBadge() {
-  return (
-    <span
-      data-card-selected-badge
-      aria-hidden="true"
-      className={[
-        "pointer-events-none absolute top-3 z-20 flex items-center justify-center",
-        // NO CHIP, deliberately — this is a STATUS MARK, not a control.
-        //
-        // It has been three things, and the middle one is the instructive
-        // failure. It began as a filled amber block, which at equal measured
-        // size read as larger than its two siblings (irradiation: a bright
-        // shape on a dark ground appears to expand past its own edges). The fix
-        // for that was to give it the same dark chip the drill and overflow
-        // controls wear — which cured the size illusion and immediately caused
-        // a worse problem: it then looked exactly like the two things beside it
-        // that ARE buttons, while being `pointer-events-none`. Matching the
-        // controls' surface is matching their AFFORDANCE, and the affordance is
-        // a lie here.
-        //
-        // A bare glyph carries no surface and so promises no press. The dark
-        // halo does the work the chip used to: it is what keeps amber legible
-        // over bright artwork, without drawing a pressable-looking box.
-        //
-        // Amber stays — it is the selection colour (PL13-006), and that meaning
-        // has to survive however the mark is drawn.
-        "text-amber-300",
-        // FOUR passes, and the mix is the point. Three tight ones stack into a
-        // dense hard edge — each pass darkens what the last left translucent,
-        // which is how a blur becomes an outline — and the fourth, wider and
-        // softer, drops the artwork immediately around the mark so amber still
-        // separates from a sunlit frame.
-        //
-        // Two tight passes was the first attempt and it vanished on bright
-        // thumbnails: enough to define the glyph against mid tones, nowhere near
-        // enough against a lit sky. A single heavier blur is not the fix either
-        // — it reads as a smudge under the mark rather than an edge around it.
-        "[filter:drop-shadow(0_0_1.5px_rgb(9_9_11))_drop-shadow(0_0_1.5px_rgb(9_9_11))_drop-shadow(0_0_1.5px_rgb(9_9_11))_drop-shadow(0_0_3px_rgb(0_0_0/0.85))]",
-        CARD_CONTROL_INSET_LEFT,
-      ].join(" ")}
-    >
-      {/* size-6 and a heavy stroke, where the CONTROLS use size-5 at lucide's
-          default. Deliberately not matched: those glyphs sit inside a 28px chip
-          that lends them presence, and this one has none, so an identical glyph
-          would read as the smaller, fainter mark of the three. */}
-      <Check className="size-6" strokeWidth={3} />
-    </span>
-  );
-}
+// THE AMBER CHECK IN THE TOP-LEFT CORNER IS GONE.
+//
+// It marked a selected card, and by the end it was the third thing doing that.
+// The ring around the card says it (`ring-2 ring-blue-500`), the bottom-right
+// checkbox says it, and this said it a third time in a different corner in a
+// different colour — which reads as three different facts rather than one.
+//
+// The checkbox is the one that survives because it is the one that can say the
+// most: it is on every card, so it shows the UNPICKED ones too, which a mark
+// that only appears when selected never could.
+//
+// Worth keeping from its long comment, for whatever next needs a status mark on
+// artwork: a bare glyph with a layered drop-shadow halo (three tight passes for
+// a hard edge, one wide soft pass to drop the artwork behind it) stays legible
+// over a sunlit frame WITHOUT wearing a chip — and a chip is what made an
+// earlier version read as a button it was not.
 
 // THE SHARED CARD-CONTROL LOOK IS GONE, with the last control that wore it.
 //
@@ -883,11 +833,27 @@ function CaptionTagRow({
  *
  * Nothing is lost in select mode, because the whole card is already the toggle
  * there — the design's card does the same thing (`if (selecting) toggleSelect`),
- * so its checkbox is only ever a second way to hit the same target. What IS
- * lost is the design's hover-to-select-without-opening outside the mode, which
- * is exactly the gesture our shell cannot host. Hence: shown only while the
- * mode is armed, where it is honest about being an indicator rather than
- * offering a click that the card underneath would have handled anyway.
+ * so its checkbox is only ever a second way to hit the same target.
+ *
+ * OUTSIDE the mode it now appears on HOVER, which is the design's own
+ * behaviour. It is still `pointer-events-none`: hovering ADVERTISES that this
+ * card can be picked, and the click that picks it belongs to the card
+ * underneath (or, for a collection, to select mode — a plain click there
+ * drills). Making the circle itself clickable would nest a control inside the
+ * selection surface `<button>`, which is invalid HTML and is pinned against by
+ * the composed-card structure tests.
+ *
+ * DESKTOP ONLY, via `@media (hover: hover)`. A touch device has no hover state
+ * to reveal it with, and without the query a tap would leave the checkbox
+ * stuck on the last-tapped card — the sticky-hover bug — where it would read as
+ * a selection that is not there. The repo writes these as arbitrary variants
+ * (see the `[@media(pointer:coarse)]` sizing elsewhere) rather than trusting a
+ * framework default, so the intent survives a Tailwind upgrade.
+ *
+ * `revealOnHover` is a literal class string per card kind rather than an
+ * interpolated group name: Tailwind's JIT scans source text, so a computed
+ * `group-hover/${kind}` is a class that never gets generated and the checkbox
+ * would silently never appear.
  *
  * Two details worth keeping if this is ever restyled. The check is ALWAYS
  * rendered and only its opacity changes, so the circle never resizes as it
@@ -895,15 +861,42 @@ function CaptionTagRow({
  * a flat chip, because it sits on arbitrary artwork — a light frame and a dark
  * one both have to keep it legible.
  */
-function SelectionIndicator({ selected }: Readonly<{ selected: boolean }>) {
+/** Hover-reveal for a MEDIA card. Whole literal class names — see the note on
+ *  `revealOnHover` above. */
+const SELECT_HOVER_REVEAL_MEDIA = [
+  "opacity-0 motion-safe:transition-opacity motion-safe:duration-150",
+  "[@media(hover:hover)]:group-hover/media-item:opacity-100",
+].join(" ");
+
+/** The same, for a COLLECTION card's group. */
+const SELECT_HOVER_REVEAL_COLLECTION = [
+  "opacity-0 motion-safe:transition-opacity motion-safe:duration-150",
+  "[@media(hover:hover)]:group-hover/collection-item:opacity-100",
+].join(" ");
+
+function SelectionIndicator({
+  selected,
+  armed,
+  revealOnHover,
+}: Readonly<{
+  selected: boolean;
+  /** Select mode is on, so the checkbox is permanent rather than hover-only. */
+  armed: boolean;
+  /** Literal hover-reveal classes for THIS card kind's group. */
+  revealOnHover: string;
+}>) {
   return (
     <span
       aria-hidden="true"
       data-selection-indicator={selected ? "on" : "off"}
+      // Distinguishes "permanently shown because the mode is armed" from
+      // "revealed by the pointer", which a geometry-only assertion cannot see.
+      data-selection-indicator-reveal={armed ? "armed" : "hover"}
       className={[
         "pointer-events-none absolute right-2 bottom-2 z-20 grid size-[26px] place-items-center",
         "rounded-full border-2 backdrop-blur-sm motion-safe:transition-colors",
         selected ? "border-blue-500 bg-blue-500" : "border-white/90 bg-black/35",
+        armed ? "" : revealOnHover,
       ].join(" ")}
     >
       <Check
@@ -1079,8 +1072,18 @@ const GraphClipContent = memo(function GraphClipContent({
       {/* Bottom-RIGHT of the ARTWORK, opposite the duration, so the two never
           contend for a corner — the design makes the same split. Shown on muted
           cards too: a disabled clip is still something you might be gathering
-          up to delete. */}
-      {selectMode && <SelectionIndicator selected={selected} />}
+          up to delete.
+
+          ALWAYS RENDERED now. Select mode pins it on; otherwise it is revealed
+          by hover, on hover-capable devices only. Rendering it unconditionally
+          is what lets CSS own that, so no pointer state has to reach React —
+          a hover that re-rendered every card would land on the drag/INP hot
+          path the playhead comment above is careful about. */}
+      <SelectionIndicator
+        selected={selected}
+        armed={selectMode}
+        revealOnHover={SELECT_HOVER_REVEAL_MEDIA}
+      />
       </span>
       {/* Kind tag (R6 #7): a WORD, bottom-left. The glyph version (a 4px film
           or picture icon in the top corner) was ambiguous at small item sizes
@@ -1500,8 +1503,13 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         >
           {/* Collections get the same checkbox as media, and they are the cards
               that need it most: a plain click drills INTO a collection now, so
-              select mode is the only pointer route to picking one at all. */}
-          {selectMode && <SelectionIndicator selected={selected} />}
+              select mode is the only pointer route to picking one at all — and
+              on hover this is the only thing that says so. */}
+          <SelectionIndicator
+            selected={selected}
+            armed={selectMode}
+            revealOnHover={SELECT_HOVER_REVEAL_COLLECTION}
+          />
           {previews.length === 0 ? (
             <span
               data-empty-collection-preview
@@ -1654,13 +1662,10 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           O key (OpenKeyBoundary), and data-collections-keyboard-ignore excludes
           them from the strip's pan surface (isPannableStripSurface), so a press
           here never scrolls the strip out from under it. */}
-      {/* Every selected card keeps its badge, the anchor included (R5.3). In
-          v2 the anchor gave it up to make room for a toolbar in the same band,
-          and the missing checkmark was doing double duty as "this is the
-          anchor" — which meant the anchor read as the one selected card that
-          was not quite selected. The `⋮` and its count say "anchor" now, so the
-          selection signal can be consistent across all of them. */}
-      {selected && <CardSelectedBadgeUnlessSelecting />}
+      {/* (No selected-badge here any more — see the note by the checkbox. R5.3
+          was "every selected card keeps its badge, the anchor included", and
+          that stays true of the marks that remain: the ring is on every
+          selected card, anchor or not, so nothing reads as almost-selected.) */}
       {/* THE DRILL CONTROL IS GONE. The slot now hosts only the anchor's `⋮`.
 
           It was the one pointer route into a collection back when a plain click
@@ -1777,14 +1782,12 @@ const GraphMediaItem = memo(function GraphMediaItem({
   ...props
 }: CollectionItemShellProps) {
   const node = useCollectionsSelector((s) => s.graph.nodesById.get(props.id) ?? null);
-  // NodeCard knows whether it is selected, but keeps it inside its own shell —
-  // and the badge has to be a SIBLING of that shell, like everything else here,
-  // because a span inside the card's `<button>` would still be inside a button.
-  // A boolean selector, so this re-renders only when THIS card's selection
-  // actually flips, not on every selection change on the board.
-  const mediaSelected = useCollectionsSelector((s) =>
-    s.interaction.selectedIds.has(props.id),
-  );
+  // (A per-card `selectedIds` subscription lived here to drive the amber
+  // selected-badge, which was a SIBLING of NodeCard's shell because a span
+  // inside the card's `<button>` would still be inside a button. The badge is
+  // gone and the marks that replaced it live inside the card, where NodeCard
+  // already knows its own selection — so this shell no longer subscribes at
+  // all, and a selection change on the board re-renders one card fewer.)
   const detail = useClipDetail(props.id as string);
   // Seeded with the AUTHORED title when there is one, so re-naming edits what
   // the user wrote rather than making them delete a filename first.
@@ -1798,9 +1801,10 @@ const GraphMediaItem = memo(function GraphMediaItem({
   return (
     <div ref={sizeRef} className={["group/media-item relative", className ?? ""].join(" ")}>
       <NodeCard {...props} className="h-full w-full" />
-      {/* The anchor keeps its badge too (R5.3) — see the collection card. It
-          clears the trim handles, which a selected clip always carries. */}
-      {mediaSelected && <CardSelectedBadgeUnlessSelecting />}
+      {/* (The selected-badge that used to sit here is gone with its collection
+          twin. It was the mark that had to clear a selected clip's LEFT trim
+          handle; nothing occupies that corner now, so only the `⋮` below still
+          owes the handles clearance.) */}
       {/* A clip has no chevron to morph, so the `⋮` simply fades in (R5.6).
           No chevron is added here for symmetry. */}
       <ClipCornerSlot nodeId={props.id} width={size.width} />
