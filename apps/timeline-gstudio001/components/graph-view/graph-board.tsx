@@ -877,7 +877,13 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
         // Mono and tabular so the row does not twitch sideways as the count
         // crosses 9 — this number changes on every tap, which is precisely the
         // moment a reflowing toolbar is most annoying.
-        className="shrink-0 font-mono text-[13px] tabular-nums text-blue-400"
+        //
+        // blue-500, the SAME step as the ring around a selected card
+        // (`ring-2 ring-blue-500` in graph-item-content). This text is the
+        // count of exactly those ringed cards, so matching the ring is what
+        // ties the number to the thing it counts; blue-400 was a near-miss
+        // that read as a third accent rather than the selection colour.
+        className="shrink-0 font-mono text-[13px] tabular-nums text-blue-500"
       >
         {selectionCount} selected
       </span>
