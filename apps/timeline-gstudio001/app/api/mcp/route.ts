@@ -3,6 +3,8 @@ import { timingSafeEqual } from "node:crypto";
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 
+import { MAX_TAGS_PER_CLIP } from "@storyboard/timeline-model/tags";
+
 import { TIMELINE_APP_HTML } from "@storyboard/timeline-widget";
 
 import { listFirebaseTimelineProjects } from "@/lib/firebase-timeline-store";
@@ -340,6 +342,16 @@ const handler = createMcpHandler(
           .positive()
           .optional()
           .describe("How long it plays. Defaults to the video's full length, or 3s for a still."),
+        tags: z
+          .array(z.string())
+          .max(MAX_TAGS_PER_CLIP)
+          .optional()
+          .describe(
+            "Labels to file this clip under, for finding it again later — what generated it, " +
+              "which checkpoint, which shot, its status. Free-form, e.g. " +
+              '["scail-2", "wan2.1", "S02", "keeper"]. Duplicates, blanks and stray whitespace ' +
+              "are cleaned up, and matching ignores case.",
+          ),
       },
       async (args, extra) => {
         const uid = uidFrom(extra);

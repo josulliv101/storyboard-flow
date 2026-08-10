@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { parseNodeId, type CollectionsGraph, type NodeId } from "@storyboard/collections-core";
+import { tagsField } from "@storyboard/timeline-model/tags";
 
 import { CLOUDINARY_PROVIDER_ID } from "@/lib/assets/cloudinary-provider";
 import {
@@ -59,6 +60,10 @@ export type AttachMediaArgs = Readonly<{
   before?: string;
   position?: "start" | "end";
   durationSeconds?: number;
+  /** Labels to file this clip under — generator, checkpoint, shot, status.
+   *  Cleaned by `normalizeTags`, so a caller may pass duplicates, blanks or
+   *  odd whitespace without corrupting the document. */
+  tags?: readonly string[];
 }>;
 
 /** The app's own default on-screen time for a still. */
@@ -207,6 +212,11 @@ export async function attachMedia(
             aspect: 16 / 9,
             trackIndex: 0,
             sourceAsset: { providerId: CLOUDINARY_PROVIDER_ID, assetId: asset.pathname },
+            // Tagged at mint time so agent-uploaded media arrives filed. This
+            // is the only chance to do it automatically — a clip that lands
+            // untagged stays untagged until someone opens it by hand, which is
+            // exactly how the naming problem started.
+            ...tagsField(args.tags),
             // No poster for audio: Cloudinary would mint a still-frame jpg
             // URL for a resource that has no frames, and it renders broken.
             ...(!isAudio && asset.thumbnailUrl ? { poster: asset.thumbnailUrl } : {}),

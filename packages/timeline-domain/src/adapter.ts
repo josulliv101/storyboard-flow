@@ -29,6 +29,7 @@ import {
   CLIP_GAP_SECONDS,
   TIMELINE_LEADING_PADDING_SECONDS,
 } from "@storyboard/timeline-model/constants";
+import { tagsField } from "@storyboard/timeline-model/tags";
 import type {
   AssetSourceRef,
   CollectionTimelineClip,
@@ -74,6 +75,11 @@ export type ClipDetail = Readonly<{
   /** Which asset-provider file this media clip came from — pure provenance
    *  (the engine never reads it), round-tripped like poster. */
   sourceAsset?: AssetSourceRef;
+  /** Free-form labels for finding this clip again. Provenance like
+   *  `sourceAsset`: the engine never reads them, so they ride the side-table
+   *  rather than the graph node, and no graph command is needed to change
+   *  them. Absent means untagged; an empty list is never stored. */
+  tags?: string[];
   /** When this clip was trashed, and from where. Provenance again: the engine
    *  never reads it, so it rides the side-table rather than the graph node —
    *  the same seam `sourceAsset` uses, and for the same reason. */
@@ -164,6 +170,7 @@ function mediaDetail(clip: Exclude<TimelineClip, CollectionTimelineClip>): ClipD
     trackIndex: clip.trackIndex,
     ...(clip.poster === undefined ? {} : { poster: clip.poster }),
     ...(clip.sourceAsset === undefined ? {} : { sourceAsset: clip.sourceAsset }),
+    ...tagsField(clip.tags),
     ...(clip.trashedAt === undefined ? {} : { trashedAt: clip.trashedAt }),
     ...(clip.trashedFrom === undefined ? {} : { trashedFrom: clip.trashedFrom }),
     ...(clip.playbackStartTime === undefined ? {} : { playbackStartTime: clip.playbackStartTime }),
@@ -179,6 +186,7 @@ function collectionDetail(clip: CollectionTimelineClip, hydrated: boolean): Clip
     alt: clip.alt,
     aspect: clip.aspect,
     trackIndex: clip.trackIndex,
+    ...tagsField(clip.tags),
     ...(clip.trashedAt === undefined ? {} : { trashedAt: clip.trashedAt }),
     ...(clip.trashedFrom === undefined ? {} : { trashedFrom: clip.trashedFrom }),
     sourceClipId: clip.id,
@@ -650,6 +658,10 @@ export function graphChildrenToClips(
           ? {}
           : { playbackDuration: detail.playbackDuration }),
         ...(detail?.sourceAsset === undefined ? {} : { sourceAsset: detail.sourceAsset }),
+        // THE WRITE-BACK. Tags live only on the detail, so without this line
+        // they are dropped on every save — silently, because nothing else
+        // reads them and no type would complain.
+        ...tagsField(detail?.tags),
         ...(detail?.trashedAt === undefined ? {} : { trashedAt: detail.trashedAt }),
         ...(detail?.trashedFrom === undefined ? {} : { trashedFrom: detail.trashedFrom }),
         // Read from the NODE, not `detail`: disabling goes through a graph
@@ -738,6 +750,7 @@ export function graphChildrenToClips(
       trimIn: detail?.trimIn ?? 0,
       trimOut: detail?.trimOut ?? 0,
       ...(node.disabled ? { disabled: true } : {}),
+      ...tagsField(detail?.tags),
       ...(detail?.trashedAt === undefined ? {} : { trashedAt: detail.trashedAt }),
       ...(detail?.trashedFrom === undefined ? {} : { trashedFrom: detail.trashedFrom }),
     };

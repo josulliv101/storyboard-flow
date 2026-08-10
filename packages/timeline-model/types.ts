@@ -59,6 +59,20 @@ export type TimelineItemBase = {
    * `false`, so documents that never use the feature never grow the field.
    */
   disabled?: boolean;
+  /**
+   * Free-form labels for finding this clip again — the generator that made
+   * it, the checkpoint, the shot, its status.
+   *
+   * On the BASE rather than on the media members so a collection can be
+   * tagged too: "every take from 10 August" is the same kind of question as
+   * "every SCAIL-2 multirole take", and answering one but not the other would
+   * be an arbitrary split.
+   *
+   * Absent means untagged; an empty list is never written, so documents that
+   * do not use tags never grow the field. See {@link normalizeTags} for the
+   * cleaning rules and the caps.
+   */
+  tags?: string[];
   /** ISO instant this clip was moved to trash. Absent on every live clip —
    *  its presence IS the record that a clip is in the bin, which is why it is
    *  cleared on restore rather than left as stale metadata. */
