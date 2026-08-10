@@ -246,7 +246,11 @@ describe("applyCollectionsCommand — details-only writes", () => {
   it("leaves every other stored field on the clip intact", async () => {
     // The builder spreads the existing detail; if it did not, the clip would be
     // rebuilt without its provenance and the file would leak.
-    seed("root", [{ ...clip("a"), sourceAsset: { providerId: "cloudinary", assetId: "x/y" } }]);
+    // `clip()` is typed as the whole TimelineClip union, and a collection has no
+    // `sourceAsset` — narrow before spreading rather than casting past it.
+    const base = clip("a");
+    if (base.kind === "collection") throw new Error("fixture must be a media clip");
+    seed("root", [{ ...base, sourceAsset: { providerId: "cloudinary", assetId: "x/y" } }]);
 
     await applyCollectionsCommand(
       "root",
