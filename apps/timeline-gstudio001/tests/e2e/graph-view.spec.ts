@@ -6635,6 +6635,88 @@ test.describe("graph view E2E", () => {
     expect(await height()).toBe(browseHeight);
   });
 
+  test("in the grid the anchor's ⋮ sits in the CAPTION, not on the artwork", async ({
+    page,
+  }) => {
+    // The mockup's split: the title row is chrome (type, name, actions) and the
+    // thumbnail is content. Ours had the one remaining piece of chrome stamped
+    // across the picture, in the top-right corner.
+    //
+    // Measured as bands rather than asserted on classes, because the property
+    // is positional and three things feed it — the card's own box, the caption's
+    // height, and the offset. A class assertion would pass with the control
+    // sitting anywhere.
+    await installGraphApi(page);
+    await openGraph(page);
+    await surfaceButton(page, "grid").click();
+
+    for (const nodeId of ["alpha", CHILD_ID]) {
+      // Ctrl/Cmd+click: a plain click on the COLLECTION would drill in, and
+      // this needs the card to become the anchor while staying on screen.
+      await page
+        .locator(`[data-virtual-grid] [data-node-id="${nodeId}"]`)
+        .click({ modifiers: ["ControlOrMeta"] });
+      const geometry = await page.evaluate((id) => {
+        const card = document.querySelector(`[data-virtual-grid] [data-node-id="${CSS.escape(id)}"]`);
+        const dots = document.querySelector("[data-anchor-menu]");
+        const art = card?.querySelector("img");
+        if (!card || !dots) return null;
+        const c = card.getBoundingClientRect();
+        const d = dots.getBoundingClientRect();
+        return {
+          artworkBottom: art ? art.getBoundingClientRect().bottom : null,
+          dotsTop: d.top,
+          dotsBottom: d.bottom,
+          cardBottom: c.bottom,
+          cardRight: c.right,
+          dotsRight: d.right,
+        };
+      }, nodeId);
+      expect(geometry, `no anchor ⋮ for ${nodeId}`).not.toBeNull();
+
+      // BELOW the artwork — the assertion the old top-right position failed.
+      if (geometry!.artworkBottom !== null) {
+        expect(geometry!.dotsTop).toBeGreaterThanOrEqual(geometry!.artworkBottom - 1);
+      }
+      // …and still inside the card, not hanging off its bottom edge.
+      expect(geometry!.dotsBottom).toBeLessThanOrEqual(geometry!.cardBottom);
+      // Trailing the row, not floating mid-card.
+      expect(geometry!.cardRight - geometry!.dotsRight).toBeLessThanOrEqual(16);
+    }
+  });
+
+  test("the STRIP keeps its ⋮ on the card, where there is no caption to hold it", async ({
+    page,
+  }) => {
+    // The other half of the pair. A strip card is as narrow as its duration and
+    // grows no caption row, so the grid's placement has nowhere to go here —
+    // the same reason the kind icon and the caption tags are grid-only. Pinned
+    // together with the grid test because they are one decision, and a
+    // regression would most likely make both surfaces the same again.
+    await installGraphApi(page);
+    await openGraph(page);
+    await strip(page, PROJECT_ID).locator('[data-node-id="alpha"]').click();
+    const geometry = await page.evaluate(() => {
+      // Resolve the card through the control's OWN value rather than by walking
+      // up the DOM — `data-anchor-menu` carries the node id, and the two shells
+      // nest it differently.
+      const dots = document.querySelector("[data-anchor-menu]");
+      const id = dots?.getAttribute("data-anchor-menu") ?? "";
+      const card = document.querySelector(`[data-node-id="${CSS.escape(id)}"]`);
+      if (!dots || !card) return null;
+      return {
+        dotsTop: dots.getBoundingClientRect().top,
+        cardTop: card.getBoundingClientRect().top,
+        cardBottom: card.getBoundingClientRect().bottom,
+      };
+    });
+    expect(geometry).not.toBeNull();
+    // In the TOP half of the card — over the artwork, as it always was.
+    expect(geometry!.dotsTop - geometry!.cardTop).toBeLessThan(
+      (geometry!.cardBottom - geometry!.cardTop) / 2,
+    );
+  });
+
   test("clicking the checkbox toggles — on a collection, where the rest of the card drills", async ({
     page,
   }) => {
