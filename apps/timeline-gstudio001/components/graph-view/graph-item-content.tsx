@@ -1536,6 +1536,21 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           ].join(" ")}
         >
           <span
+            // The NAME swallows a plain click, so the card body's drill-in does
+            // not fire underneath it.
+            //
+            // Required by the single-click drill-in, not decoration: click 1 of
+            // a double-click used to be harmless here (it selected), and now it
+            // NAVIGATES — which unmounts this card before the second click can
+            // arrive, so double-click-to-rename simply stopped working. Letting
+            // the label eat the single click is what gives the gesture somewhere
+            // to happen.
+            //
+            // The cost is a small dead zone: clicking a collection's name does
+            // nothing rather than opening it. That is the right trade for a
+            // label whose advertised gesture IS rename — and the rest of the
+            // card, which is most of it, still opens on one click.
+            onClick={(event) => event.stopPropagation()}
             onDoubleClick={(event) => {
               event.stopPropagation();
               rename.begin();

@@ -388,8 +388,14 @@ async function openItemDetails(page: Page, nodeId: string): Promise<void> {
   // Asserting the selection here also means a failure says WHICH half broke,
   // rather than timing out on a rail control that only exists once something
   // is selected.
+  //
+  // MODIFIED click, because this helper is handed collections as well as media
+  // and a plain click on a collection DRILLS IN now. Ctrl/Cmd+click is the
+  // gesture that still selects one without entering select mode, and it means
+  // the same thing on both kinds — so the helper does not have to know which it
+  // was given.
   await expect(async () => {
-    await card.click();
+    await card.click({ modifiers: ["ControlOrMeta"] });
     await expect(card).toHaveAttribute("data-selected", "true", { timeout: 700 });
   }).toPass({ timeout: 10000 });
   // Edit is a MENU ROW now, not an inline button — v3 replaced the pill's icon
@@ -1086,7 +1092,9 @@ test.describe("graph view E2E", () => {
     await rightCard.click();
     await expect(rightCard.locator(".ring-inset")).toHaveCount(1);
 
-    await collectionCard.click({ position: { x: 10, y: 10 } });
+    // Modified click: a plain one drills in now, and this test is about the
+    // selected card's BORDER, so it needs the card selected and still on screen.
+    await collectionCard.click({ position: { x: 10, y: 10 }, modifiers: ["ControlOrMeta"] });
     await expect(collectionCard).toHaveClass(/ring-inset/);
   });
 
@@ -3240,35 +3248,35 @@ test.describe("graph view E2E", () => {
     }).toPass({ timeout: 10000 });
     await expect(bravoWrapper.locator("[data-trim-handle]")).toHaveCount(0);
 
-    // A collection card's BODY selects (like any clip); only its folder
-    // button drills in. Click the label strip (below the centred button) to
-    // hit the body, and confirm it selects WITHOUT navigating.
+    // A collection card's BODY now DRILLS IN — one click, no second click and
+    // no folder button needed. This reverses what this test used to pin (body
+    // selects, only the folder button drills), and the reversal is the point:
+    // the drill-in is the common intent, so it gets the common gesture.
     const collectionCard = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
     const cardBox = (await collectionCard.boundingBox())!;
     await expect(async () => {
+      // The label strip, below the centred button, so this lands on the card
+      // BODY rather than on any control it carries.
       await collectionCard.click({ position: { x: cardBox.width / 2, y: cardBox.height - 4 } });
-      await expect(collectionCard).toHaveAttribute("data-selected", "true", { timeout: 700 });
-    }).toPass({ timeout: 10000 });
-    // Query-tolerant: openGraph lands with ?surface=strip on the same path.
-    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
-
-    // Drilling in from a card that is now the ANCHOR goes through double-click.
-    // The corner chevron is deliberately absent there (R5.3): the anchor gives
-    // up its chevron to host the ⋮, so the pointer route in becomes a
-    // double-click (R10.5). On an unselected card the chevron is still
-    // the way in — that half is covered by the drill tests elsewhere.
-    const collectionWrapper = strip(page, PROJECT_ID).locator(
-      `[data-node-wrapper="${CHILD_ID}"]`,
-    );
-    await expect(collectionWrapper.getByRole("button", { name: /^Open / })).toBeHidden();
-    await expect(async () => {
-      // Double-click, because Open is NOT in the menu (R7.11) — the chevron
-      // sits on the card before selection, so selecting instead is a positive
-      // signal you did not want to drill in.
-      await strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`).dblclick();
       await page.waitForURL(`**${GRAPH_URL}/${CHILD_ID}`, { timeout: 3000 });
     }).toPass({ timeout: 15000 });
     await expect.poll(() => stripOrder(page, CHILD_ID)).toEqual(["c1", "c2"]);
+
+    // SELECTING a collection is still reachable, just no longer by a plain
+    // click: Ctrl/Cmd+click toggles one without drilling and without entering
+    // select mode. Worth pinning here, because it is the escape hatch that
+    // keeps a collection deletable now that the body navigates.
+    await page.goBack();
+    await expect
+      .poll(() => stripOrder(page, PROJECT_ID))
+      .toEqual(["alpha", "bravo", CHILD_ID, "charlie"]);
+    const backCard = strip(page, PROJECT_ID).locator(`[data-node-id="${CHILD_ID}"]`);
+    await expect(async () => {
+      await backCard.click({ modifiers: ["ControlOrMeta"] });
+      await expect(backCard).toHaveAttribute("data-selected", "true", { timeout: 700 });
+    }).toPass({ timeout: 10000 });
+    // Query-tolerant: openGraph lands with ?surface=strip on the same path.
+    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
   });
 
   test("double-clicking a collection drills in WITHOUT leaving it selected", async ({ page }) => {
@@ -6089,8 +6097,10 @@ test.describe("graph view E2E", () => {
     await selectionAction(page, /^Cut 2 items/);
     await expect(page.locator('[data-card-pending-cut="true"]')).toHaveCount(2);
 
-    // The second-to-last card is the destination.
-    await surface.locator(`[data-node-id="${CHILD_ID}"]`).click();
+    // The second-to-last card is the destination. Modified click: it is a
+    // COLLECTION, and a plain click drills into one now — this needs it
+    // selected, as the anchor the paste lands after.
+    await surface.locator(`[data-node-id="${CHILD_ID}"]`).click({ modifiers: ["ControlOrMeta"] });
     await page.getByRole("button", { name: /^Paste 2 items after/ }).click();
 
     await expect
@@ -6130,7 +6140,15 @@ test.describe("graph view E2E", () => {
     // contiguity special case — contiguity is invisible to the user, and a
     // rule that silently moved the destination because of it would read as a
     // bug. The anchor is the card the toolbar is attached to.
-    await surface.locator(`[data-node-id="${CHILD_ID}"]`).click();
+    // Drop charlie's selection first. It used to go implicitly: the plain click
+    // on the collection below REPLACED the selection before the modified click
+    // extended it. Both are modified now (a plain click on a collection drills
+    // in), and a modifier ADDS — so without this the copy source would still be
+    // selected and the scattered set would be three, not two.
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-selected="true"]')).toHaveCount(0);
+
+    await surface.locator(`[data-node-id="${CHILD_ID}"]`).click({ modifiers: ["ControlOrMeta"] });
     await surface.locator('[data-node-id="alpha"]').click({ modifiers: ["ControlOrMeta"] });
     await expect(page.locator('[data-selected="true"]')).toHaveCount(2);
 
@@ -6447,7 +6465,23 @@ test.describe("graph view E2E", () => {
     await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
   });
 
-  test("the mode cannot get stranded on with nothing to turn it off", async ({ page }) => {
+  test("the mode always has a visible control, whatever the selection", async ({ page }) => {
+    // REPLACES "the mode cannot get stranded on with nothing to turn it off".
+    //
+    // That test pinned the store invariant that additive-tap mode could not
+    // outlive the selection. The invariant existed for one reason: the mode's
+    // only control was the anchor card's `⋮` menu, which exists only while
+    // something is selected — so armed-and-empty meant armed, invisible, and
+    // silently making the next taps additive.
+    //
+    // The header's Select control falsifies that premise. It is on screen
+    // whether or not anything is selected, so the mode may now stay armed
+    // through an empty selection (`keepMultiSelectModeWhenEmpty`) — which is
+    // what makes "press Select, THEN pick" work at all.
+    //
+    // So what is pinned now is the guarantee the old invariant was protecting,
+    // stated directly: there is always a visible control, it tells the truth
+    // about the mode, and using it restores replace-clicking.
     await installGraphApi(page);
     await openGraph(page);
     const surface = strip(page, PROJECT_ID);
@@ -6455,12 +6489,23 @@ test.describe("graph view E2E", () => {
     await surface.locator('[data-node-id="alpha"]').click();
     await toggleMultiSelect(page);
 
-    // Clearing takes the `⋮` with it — and the toggle is IN its menu. Left
-    // armed, the mode would be unreachable and would silently make the next
-    // several taps additive.
+    // Clearing takes the `⋮` with it, and one of the two toggles is in that
+    // menu — the exact situation the old invariant was written for.
     await page.keyboard.press("Escape");
     await expect(anchorMenuButton(page)).toHaveCount(0);
 
+    // Deliberately NOT asserting whether Escape also disarmed the mode. It does
+    // when the key is pressed with a card focused, and does not when focus is
+    // left wherever the closing menu put it — a difference this test should not
+    // encode, because the guarantee below holds either way.
+    const headerToggle = page.locator("[data-select-mode-toggle]");
+    await expect(headerToggle).toBeVisible();
+    if ((await headerToggle.getAttribute("data-select-mode-toggle")) === "on") {
+      await headerToggle.click();
+    }
+    await expect(headerToggle).toHaveAttribute("data-select-mode-toggle", "off");
+
+    // With it off, plain clicks REPLACE rather than accumulate.
     await surface.locator('[data-node-id="bravo"]').click();
     await surface.locator('[data-node-id="charlie"]').click();
     await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
