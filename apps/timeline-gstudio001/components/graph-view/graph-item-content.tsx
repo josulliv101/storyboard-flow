@@ -725,6 +725,77 @@ function ProvenanceLabel({
   );
 }
 
+/**
+ * Below this card width the tag row is dropped entirely.
+ *
+ * ONE threshold, not a fold ladder — the same call ClipCornerSlot made
+ * (MIN_ANCHOR_CONTROL_WIDTH). Two chips plus a counter need roughly this much
+ * before they start colliding with the card's own padding, and the content root
+ * is `overflow-hidden` with no ellipsis, so an over-wide row is clipped
+ * INVISIBLY rather than degrading. Better to show nothing than a silently
+ * truncated set someone might read as complete.
+ */
+const TAG_ROW_MIN_WIDTH = 132;
+/**
+ * Chips shown before the rest fold into a +N counter, by card width.
+ *
+ * Two, not three, until the card is wide enough. MEASURED: on a 144px card the
+ * row has ~128px to work with, and three chips plus a counter want ~150px —
+ * so they were being flex-shrunk to ZERO width. Every chip still had its text
+ * content, so a `textContent` assertion passed while nothing was on screen.
+ * `shrink-0` below is what stops the collapse; this is what stops the overflow
+ * that made shrinking necessary.
+ */
+const TAGS_SHOWN_WIDE = 3;
+const TAGS_SHOWN_NARROW = 2;
+const TAG_ROW_WIDE_WIDTH = 220;
+
+/**
+ * A clip's tags, bottom-left and STACKED above the kind chip.
+ *
+ * Every other edge is taken: the title spans the top, ProvenanceLabel and the
+ * selected badge hold the top-left, the corner menu the top-right, and the
+ * duration pill and disabled chip the bottom-right.
+ *
+ * Decorative for AT — the card's own label already names the clip, and the tags
+ * are reachable through the item details panel where they can also be edited.
+ * Nothing here is interactive: this renders inside NodeCard's <button>, so an
+ * interactive child would be invalid HTML and an ambiguous a11y tree.
+ */
+function TagRow({
+  tags,
+  showAtMost,
+}: Readonly<{ tags: readonly string[]; showAtMost: number }>) {
+  const shown = tags.slice(0, showAtMost);
+  const extra = tags.length - shown.length;
+  return (
+    <span
+      aria-hidden="true"
+      data-clip-tags={tags.length}
+      className="pointer-events-none absolute bottom-8 left-2 z-10 flex max-w-[calc(100%-1rem)] items-center gap-1"
+    >
+      {shown.map((tag) => (
+        <span
+          key={tag}
+          className="max-w-[6.5rem] shrink-0 truncate rounded bg-black/75 px-1 py-0.5 text-[8px] leading-none font-semibold text-zinc-200 ring-1 ring-white/15"
+        >
+          {tag}
+        </span>
+      ))}
+      {extra > 0 && (
+        <span
+          data-clip-tags-overflow={extra}
+          // Circle at one digit, stadium beyond — `rounded-full` + a min width,
+          // the same shape AnchorCountBadge gets without special-casing digits.
+          className="min-w-[1.05rem] shrink-0 rounded-full bg-black/75 px-1 py-0.5 text-center text-[8px] leading-none font-semibold text-zinc-400 ring-1 ring-white/15"
+        >
+          +{extra}
+        </span>
+      )}
+    </span>
+  );
+}
+
 const GraphClipContent = memo(function GraphClipContent({
   id,
   node,
@@ -859,6 +930,23 @@ const GraphClipContent = memo(function GraphClipContent({
       >
         {isVideo ? "VIDEO" : isAudio ? "AUDIO" : "IMAGE"}
       </span>
+      {/* Tags, stacked above the kind chip. Shown on DISABLED cards too,
+          unlike the title: a disabled clip is exactly the one someone is
+          hunting for by tag, so hiding its labels would work against the
+          reason tags exist. Width 0 means "not measured yet" — render, or the
+          row flashes in on every mount. */}
+      {detail?.tags?.length ? (
+        cardSize.width === 0 || cardSize.width >= TAG_ROW_MIN_WIDTH ? (
+          <TagRow
+            tags={detail.tags}
+            showAtMost={
+              cardSize.width === 0 || cardSize.width >= TAG_ROW_WIDE_WIDTH
+                ? TAGS_SHOWN_WIDE
+                : TAGS_SHOWN_NARROW
+            }
+          />
+        ) : null
+      ) : null}
       {/* The clip's NAME, shown only when someone gave it one (PL11-004).
           Every clip has an `alt` — a filename, usually — so a card that
           rendered "the name" would render something on all of them, and a
@@ -1158,6 +1246,12 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         ].join(" ")}
       >
         {muted && <DisabledChip inherited={node.disabled !== true} />}
+        {/* Collections are taggable too — `tags` sits on TimelineItemBase, not
+            on the media members — and they route through THIS component rather
+            than GraphClipContent (which returns null for them at the guard
+            above). Skipping it here would ship a half-feature where a tagged
+            collection silently shows nothing. */}
+        {detail?.tags?.length ? <TagRow tags={detail.tags} showAtMost={TAGS_SHOWN_NARROW} /> : null}
         <span
           data-disabled-visuals={muted ? "true" : undefined}
           className={[
