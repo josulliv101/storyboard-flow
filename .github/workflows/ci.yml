@@ -116,22 +116,27 @@ jobs:
           APP_URL=http://127.0.0.1:3000
           ENVEOF
 
-      # GRAPH-VIEW ONLY, and that is a retreat from the first version of this
-      # job, which ran both projects on the reasoning that the servers boot
-      # either way so the second project is nearly free. It is free in TIME and
-      # was not free in signal: the `chromium` project (timeline-interactions,
-      # against Storybook) failed 30 tests on its first CI run while every
-      # graph-view test but one passed, so the job was red for reasons that had
-      # nothing to do with the change under review — which is how a new gate
-      # gets ignored and then disabled.
+      # BOTH projects again. This was narrowed to graph-view for one job run,
+      # because `chromium` contributed 29 failures that had nothing to do with
+      # any change under review — and a required check that is permanently red
+      # is how a new gate gets ignored and then disabled.
       #
-      # graph-view is also the suite that motivated this job: it drives the real
-      # app with real pointer input, and it is what caught nothing when the
-      # click grammar changed under it. Getting `chromium` green in CI is worth
-      # doing separately; it should not hold this up.
-      - name: E2E tests (graph-view)
+      # Every one of those 29 was in `timeline-interactions.spec.ts`, which
+      # drove the legacy SmoothScrollList viewport. That component (and its
+      # stories) were deleted on 2026-07-25 in "Delete the legacy timeline
+      # viewport, now that nothing reaches it"; the spec was left behind, still
+      # navigating to `ui-timeline-viewport-smoothscrolllist--*` story ids that
+      # no longer resolve and asserting on a `timeline-editor` test id that no
+      # longer exists. It could only ever be red, and nothing noticed for two
+      # weeks because e2e was not in CI at all. The spec is now deleted; its
+      # subject had been gone the whole time.
+      #
+      # What remains in `chromium` is `dnd-collections.spec.ts`, 24 tests
+      # covering the DnD package against the shared Storybook, green in 10s. It
+      # is cheap and it is real coverage, so the gate takes both.
+      - name: E2E tests
         working-directory: apps/timeline-gstudio001
-        run: npx playwright test --project=graph-view
+        run: npx playwright test
 
       # Without this a CI-only failure is undebuggable — the report carries the
       # per-test trace, the failure screenshot, and the DOM snapshot.
