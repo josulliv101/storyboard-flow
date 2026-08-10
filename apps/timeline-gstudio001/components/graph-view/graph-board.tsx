@@ -932,8 +932,13 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
         // BORDERED, unlike every other control on this row. It is the way out,
         // and the only one here that is not a verb acting on the selection —
         // an outline is what separates "leave" from "do something to these".
+        //
+        // `h-8`, matching every other header control (HEADER_SELECTION_SIZE).
+        // It was `h-9`, and that 4px was the whole reason entering select mode
+        // nudged the board down: this is the tallest thing in the row, so it
+        // alone set the header's height — 61px against the browse row's 57.
         className={cn(
-          "ml-auto h-9 shrink-0 rounded-lg border border-zinc-700 px-3.5 text-[13px] font-medium",
+          "ml-auto h-8 shrink-0 rounded-lg border border-zinc-700 px-3.5 text-[13px] font-medium",
           "[@media(pointer:coarse)]:h-11",
           "text-zinc-100 hover:border-zinc-500 hover:bg-transparent hover:text-white",
         )}
@@ -1152,13 +1157,9 @@ export function GraphBoard({
     anchorId === null ? null : (s.graph.nodesById.get(anchorId)?.name ?? null),
   );
 
-  // Which face the header row wears. Three conditions, and each is load-bearing:
+  // Which face the header row wears. Two conditions now:
   //
   //   the mode is armed  — this row belongs to select mode, nothing else.
-  //   something is held  — see SelectModeHeader: an empty selection has nothing
-  //                        to report, and taking the trail away while the user
-  //                        is still navigating to find their items is exactly
-  //                        backwards.
   //   nothing is dragging — the ancestor crumbs ARE the "move up a level" drop
   //                        targets (see GraphBreadcrumb), and a multi-drag out
   //                        of a selection is precisely when someone reaches for
@@ -1167,10 +1168,17 @@ export function GraphBoard({
   //                        selection bar has nothing to offer during a drag
   //                        anyway — DragChromeFade fades the rest of the chrome
   //                        for the same reason.
+  //
+  // There used to be a third — `selectionSize > 0` — on the reasoning that an
+  // empty selection has nothing to report, so taking the trail away while the
+  // user is still navigating to find their items was backwards. It is dropped
+  // deliberately: pressing Select is the user SAYING they are about to pick
+  // things, and a mode that shows no sign of itself until the first item lands
+  // reads as a button that did nothing. The row at zero is not empty either —
+  // it says "0 selected" and offers Done, which is the way back out.
   const multiSelectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
-  const selectionSize = useCollectionsSelector((s) => s.interaction.selectedIds.size);
   const isDragging = useCollectionsSelector((s) => s.interaction.isDragging);
-  const selectModeRow = multiSelectMode && selectionSize > 0 && !isDragging;
+  const selectModeRow = multiSelectMode && !isDragging;
 
   return (
     <OpenKeyBoundary trashId={trashRootId}>

@@ -81,11 +81,17 @@ function AnchorCountBadge({ count }: Readonly<{ count: number }>) {
         // `rounded-full` + `min-width: height` is a circle at one digit and a
         // stadium at two or more, from ONE rule (R6.6). No digit special-casing.
         "rounded-full text-[10px] font-semibold leading-none",
-        // Amber on near-black, verified against the lightest thumbnails in the
-        // library rather than a mid-tone (R6.11): the badge sits over card
-        // artwork that includes near-white content, so it carries its own
-        // opaque fill and a dark ring to hold an edge against it.
-        "bg-amber-300 text-zinc-950 ring-1 ring-zinc-950/60",
+        // SELECTION BLUE with white text — the same step as the ring around a
+        // selected card and the checkbox fill. This badge counts exactly those
+        // cards, so it should wear their colour; amber-on-near-black was left
+        // over from when amber was the selection colour and had become the only
+        // thing on the board still saying so.
+        //
+        // The opaque fill and dark ring stay, and the reason is unchanged
+        // (R6.11): the badge sits over card artwork that includes near-white
+        // content, verified against the lightest thumbnails in the library
+        // rather than a mid-tone, so it cannot rely on the artwork behind it.
+        "bg-blue-500 text-white ring-1 ring-zinc-950/60",
         // Proportional digits jitter the width as a shift-drag sweeps through
         // counts (R6.7).
         "tabular-nums",

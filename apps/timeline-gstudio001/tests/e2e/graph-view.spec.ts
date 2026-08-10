@@ -6577,17 +6577,62 @@ test.describe("graph view E2E", () => {
     // when the key is pressed with a card focused, and does not when focus is
     // left wherever the closing menu put it — a difference this test should not
     // encode, because the guarantee below holds either way.
+    //
+    // WHICH control it is now depends on the row. The select row replaces the
+    // breadcrumb the moment the mode is armed — including at zero selected —
+    // and the header's Select toggle goes with the browse row it lives in. So
+    // armed-and-empty is served by Done, and only the disarmed state shows the
+    // toggle. The guarantee is unchanged and is what this asserts: whatever the
+    // selection, SOME visible control reports the mode and turns it off.
+    const header = page.locator("[data-graph-board-header]");
     const headerToggle = page.locator("[data-select-mode-toggle]");
-    await expect(headerToggle).toBeVisible();
-    if ((await headerToggle.getAttribute("data-select-mode-toggle")) === "on") {
-      await headerToggle.click();
+    if ((await header.getAttribute("data-header-mode")) === "select") {
+      const done = page.getByRole("button", { name: "Done" });
+      await expect(done).toBeVisible();
+      await done.click();
     }
+    await expect(header).toHaveAttribute("data-header-mode", "browse");
+    await expect(headerToggle).toBeVisible();
     await expect(headerToggle).toHaveAttribute("data-select-mode-toggle", "off");
 
     // With it off, plain clicks REPLACE rather than accumulate.
     await surface.locator('[data-node-id="bravo"]').click();
     await surface.locator('[data-node-id="charlie"]').click();
     await expect(page.locator('[data-selected="true"]')).toHaveCount(1);
+  });
+
+  test("select mode takes the breadcrumb's place at the SAME height, from the first click", async ({
+    page,
+  }) => {
+    // TWO promises in one test because they are one experience: pressing
+    // Select swaps the row, and the swap must not move the board.
+    //
+    // The height half is measured, not asserted on classes. Entering the mode
+    // pushed everything down 4px — the row is sized by its tallest child, the
+    // Done button was `h-9` where every other header control is `h-8`, and
+    // nothing connected those two numbers. 61px against 57px.
+    await installGraphApi(page);
+    await openGraph(page);
+    const header = page.locator("[data-graph-board-header]");
+    const height = () =>
+      header.evaluate((element) => Math.round(element.getBoundingClientRect().height));
+
+    await expect(header).toHaveAttribute("data-header-mode", "browse");
+    const browseHeight = await height();
+
+    // ARMED WITH NOTHING SELECTED is the case that regressed: the row used to
+    // wait for `selectionSize > 0`, so pressing Select left the breadcrumb up
+    // and read as a button that did nothing. Clear the selection that arming
+    // the mode required, and the row must stay.
+    await strip(page, PROJECT_ID).locator('[data-node-id="alpha"]').click();
+    await toggleMultiSelect(page);
+    await page.keyboard.press("Escape");
+    await expect.poll(() => page.locator('[data-selected="true"]').count()).toBe(0);
+    await expect(header).toHaveAttribute("data-header-mode", "select");
+    await expect(page.locator("[data-select-mode-count]")).toHaveText("0 selected");
+
+    // Same height at zero, and the board underneath has not moved.
+    expect(await height()).toBe(browseHeight);
   });
 
   test("the select checkbox is revealed by a real hover, and pinned on by select mode", async ({
