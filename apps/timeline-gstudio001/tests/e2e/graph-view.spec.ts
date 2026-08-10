@@ -6635,6 +6635,59 @@ test.describe("graph view E2E", () => {
     expect(await height()).toBe(browseHeight);
   });
 
+  test("clicking the checkbox toggles — on a collection, where the rest of the card drills", async ({
+    page,
+  }) => {
+    // THE COLLECTION CASE IS THE POINT. A plain click on a collection card
+    // drills in, so before this the only pointer route to picking one was to
+    // enter select mode first. The checkbox is that route, and it has to work
+    // WITHOUT navigating — a toggle that also drilled would be useless.
+    await installGraphApi(page);
+    await openGraph(page);
+    const surface = strip(page, PROJECT_ID);
+    const collection = surface.locator(`[data-node-id="${CHILD_ID}"]`);
+    const checkbox = collection.locator("[data-selection-indicator]");
+
+    // Hover to reveal it, then click IT rather than the card.
+    await collection.hover();
+    await expect.poll(() => checkbox.evaluate((e) => getComputedStyle(e).opacity)).toBe("1");
+    await checkbox.click();
+
+    // Selected, and still on the project — the drill-in did not fire underneath.
+    await expect(collection).toHaveAttribute("data-selected", "true");
+    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
+    await expect(strip(page, PROJECT_ID)).toHaveCount(1);
+
+    // And it TOGGLES: a second click takes it back off, still without drilling.
+    await checkbox.click();
+    await expect(collection).not.toHaveAttribute("data-selected", "true");
+    await expect(page).toHaveURL(new RegExp(`${GRAPH_URL}(\\?.*)?$`));
+
+    // The media card's checkbox toggles the same way — one grammar, both kinds.
+    const alpha = surface.locator('[data-node-id="alpha"]');
+    await alpha.hover();
+    await alpha.locator("[data-selection-indicator]").click();
+    await expect(alpha).toHaveAttribute("data-selected", "true");
+  });
+
+  test("a hidden checkbox is not a click trap", async ({ page }) => {
+    // The checkbox is a click target now, and it is revealed by opacity rather
+    // than by mounting — so `pointer-events` has to travel with the opacity or
+    // there is an invisible toggle sitting in every card's corner. Worst on
+    // touch, where the hover gate never opens at all and the control would be
+    // permanently invisible AND permanently clickable.
+    await installGraphApi(page);
+    await openGraph(page);
+    const alpha = strip(page, PROJECT_ID).locator('[data-node-id="alpha"]');
+    const checkbox = alpha.locator("[data-selection-indicator]");
+
+    await page.mouse.move(0, 0);
+    await expect
+      .poll(() => checkbox.evaluate((e) => getComputedStyle(e).pointerEvents))
+      .toBe("none");
+    await expect.poll(() => checkbox.evaluate((e) => getComputedStyle(e).opacity)).toBe("0");
+  });
+
   test("the select checkbox is revealed by a real hover, and pinned on by select mode", async ({
     page,
   }) => {
