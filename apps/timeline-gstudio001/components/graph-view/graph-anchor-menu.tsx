@@ -277,7 +277,27 @@ export function CardCornerSlot({
       // trim handles, which only CLIPS have, but every card kind uses it: at
       // 8px on collections and 20px on clips the controls visibly jumped
       // between card kinds in the same grid.
-      className={cn("absolute right-5 top-3 z-20 flex items-center gap-1.5", className)}
+      className={cn(
+        "absolute right-5 top-3 z-20 flex items-center gap-1.5",
+        // GRID: down into the CAPTION band, trailing the name — the mockup's
+        // shape, where the title row is chrome (type, name, actions) and the
+        // thumbnail stays content. Over the artwork it was the one piece of
+        // chrome still stamped across the picture.
+        //
+        // Anchored to the card's BOTTOM rather than to the caption's top, and
+        // that is what makes one offset work for both card kinds: a media
+        // caption (name + meta/tags) and a collection caption (name + count,
+        // plus optional tags) are different heights, but both END at the card's
+        // bottom padding. Measured on a 220px grid cell: artwork ends at 247,
+        // the caption band runs 247-292, the card ends at 298 — so `bottom-3`
+        // lands inside the band on either kind.
+        //
+        // The STRIP keeps the corner. Its cards are as narrow as their duration
+        // and have no caption row to sit in, which is the same reason the kind
+        // icon and the caption tags are grid-only.
+        "[[data-virtual-grid]_&]:top-auto [[data-virtual-grid]_&]:bottom-3 [[data-virtual-grid]_&]:right-3",
+        className,
+      )}
     >
       <span className="relative grid size-6 place-items-center">
         {showMenu ? (
