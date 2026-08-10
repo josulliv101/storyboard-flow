@@ -600,6 +600,23 @@ export const CARD_CONTROL_INSET_RIGHT = "right-5";
  *  it cannot import from here without a cycle. */
 export const CARD_CONTROL_INSET_TOP = "top-3";
 
+/**
+ * The badge, stood down while select mode is armed.
+ *
+ * Both exist to make a multi-selection legible at a glance, and in select mode
+ * the checkbox does it better: it is on every card, so it shows the UNPICKED
+ * ones too, which a badge that only appears when selected cannot. Two marks for
+ * one fact, in different corners and different colours, just reads as two
+ * different facts.
+ *
+ * Its own component so neither card shell has to grow a hook for this.
+ */
+function CardSelectedBadgeUnlessSelecting() {
+  const selectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
+  if (selectMode) return null;
+  return <CardSelectedBadge />;
+}
+
 function CardSelectedBadge() {
   return (
     <span
@@ -650,47 +667,37 @@ function CardSelectedBadge() {
   );
 }
 
-/** The drill mark: CornerRightDown — turn and descend, the verb "go into this
- *  timeline". NOT a folder, despite what this was called until PL13-004: the
- *  old name read as a container mark, which is how it ended up paired with a
- *  chevron in the drill badge — two direction arrows for one act. The
- *  sidebar's FolderTree toggles whether the children tree is SHOWN, a
- *  different verb that deliberately does not share this icon. */
+// THE SHARED CARD-CONTROL LOOK IS GONE, with the last control that wore it.
+//
+// `CARD_CONTROL_CLASS` was a 28px dark square — one look, so a card read as
+// having ONE kind of control rather than a collection of one-offs. It outlived
+// its wearers: the details trigger went first, the corner drill button last
+// (a plain click opens a collection now). The `⋮` that owns this corner today
+// styles itself in graph-anchor-menu, which is also where the corner's
+// positioning lives.
+//
+// Two things it knew are still true and still needed, so they are recorded
+// where they are used rather than lost with it: the 28px control size that
+// `CARD_CONTROL_INSET_*` above tracks, and — for whatever wears this look next
+// — that `cursor-pointer` is NOT redundant on a <button> under Tailwind v4's
+// preflight, and that a hover step from `bg-zinc-950/80` has to clear
+// `zinc-900` to register over artwork at all.
+
 /**
- * The look every CARD-LEVEL control shares: a 28px square on the card's right
- * edge, dark enough to sit on artwork, always visible.
+ * The mark on the DRAG GHOST of a collection that has no frames to show.
  *
- * Shared so a card reads as having ONE kind of control rather than a collection
- * of one-offs. Before this the details trigger and the drill badge differed in
- * corner, shape, colour and reveal rule — four differences, which is why they
- * looked unrelated. Position and focus ring stay with the caller; everything
- * else is here.
+ * CornerRightDown — turn and descend. It was named `CollectionDrillGlyph` while
+ * it was the drill control's glyph, and that control is gone; this is the one
+ * place it survived, where the job is to say "the thing you are dragging is a
+ * collection", not "go into this". Kept rather than swapped for the caption's
+ * Layers: at 28px on a translucent ghost the heavier arrow reads, and the two
+ * marks are never on screen together.
  *
- * It must LOOK pressable, which took two things (PL14-002):
- *
- * - `cursor-pointer` is not redundant. Tailwind v4's preflight stopped setting
- *   it on `<button>`, so every control wearing this class fell back to the UA
- *   arrow — the one cue that says "this is a control and not a decal" was
- *   simply absent.
- * - The hover was `bg-zinc-950/80 → bg-zinc-900`: near-black onto near-black,
- *   a step too small to register over artwork. `zinc-800` is a visible change
- *   at the same neutral temperature. Deliberately NOT amber or sky — amber is
- *   the selection colour (PL13-006) and colouring a hover with it would say
- *   "selected" about a thing you are merely pointing at.
+ * NOT a folder, despite what this was called until PL13-004 — the sidebar's
+ * FolderTree toggles whether the children tree is SHOWN, a different verb that
+ * deliberately does not share an icon with anything here.
  */
-const CARD_CONTROL_CLASS = [
-  "z-20 flex size-7 shrink-0 items-center justify-center rounded",
-  "bg-zinc-950/80 text-zinc-300 shadow-sm shadow-black/40 backdrop-blur-[1px]",
-  "cursor-pointer transition-colors hover:bg-zinc-800 hover:text-zinc-50",
-].join(" ");
-
-// (The corner cluster's own positioning moved into `CardCornerSlot` in
-// graph-anchor-menu.tsx, which is what now owns that corner on both card
-// kinds. Its 8px inset is still shared with `CardSelectedBadge` in the
-// opposite corner — see the note there; the two are top-aligned and move
-// together.)
-
-function CollectionDrillGlyph({ className }: Readonly<{ className?: string }>) {
+function CollectionGhostGlyph({ className }: Readonly<{ className?: string }>) {
   return <CornerRightDown aria-hidden="true" className={className} strokeWidth={1.5} />;
 }
 
@@ -896,7 +903,7 @@ function SelectionIndicator({ selected }: Readonly<{ selected: boolean }>) {
       className={[
         "pointer-events-none absolute right-2 bottom-2 z-20 grid size-[26px] place-items-center",
         "rounded-full border-2 backdrop-blur-sm motion-safe:transition-colors",
-        selected ? "border-sky-400 bg-sky-500" : "border-white/90 bg-black/35",
+        selected ? "border-blue-500 bg-blue-500" : "border-white/90 bg-black/35",
       ].join(" ")}
     >
       <Check
@@ -1003,7 +1010,7 @@ const GraphClipContent = memo(function GraphClipContent({
         // caption row there is fixed overhead on every clip, and clip width is
         // duration, so a narrow clip has no room for one anyway.
         "[[data-virtual-grid]_&]:flex-col",
-        selected ? "ring-1 ring-inset ring-amber-300/65" : "ring-1 ring-white/15",
+        selected ? "ring-2 ring-inset ring-blue-500" : "ring-1 ring-white/15",
         rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
         // Disabled reads as MUTED, never as missing: the card keeps its slot
         // and its full width (its duration still shapes the board), it just
@@ -1352,7 +1359,7 @@ const GraphGhost = memo(function GraphGhost({ node, extraCount }: CollectionGhos
           data-empty-collection-ghost
           className="flex h-full w-full items-center justify-center"
         >
-          <CollectionDrillGlyph className="h-7 w-7 text-sky-200" />
+          <CollectionGhostGlyph className="h-7 w-7 text-sky-200" />
         </span>
       ) : (
         <span className="flex h-full w-full flex-col items-center justify-center gap-1 p-2 text-center">
@@ -1435,7 +1442,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           // `relative` so the disabled chip below can pin to this card's own
           // top-right corner rather than some ancestor's.
           "relative flex h-full w-full flex-col justify-between overflow-hidden rounded-md border border-dashed border-sky-500/40 bg-sky-500/[0.08] p-1.5",
-          selected ? "ring-1 ring-inset ring-amber-300/65" : "",
+          selected ? "ring-2 ring-inset ring-blue-500" : "",
           rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
           // No `data-disabled` twin here: SelectionSurface takes an explicit
           // prop list with no rest spread, so a hyphenated attribute passed to
@@ -1460,10 +1467,6 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         ].join(" ")}
       >
         {muted && <DisabledChip inherited={node.disabled !== true} />}
-        {/* Collections get the same checkbox as media. They are the cards that
-            need it most: a plain click drills INTO a collection now, so select
-            mode is the only pointer route to picking one at all. */}
-        {selectMode && <SelectionIndicator selected={selected} />}
         {/* Collections are taggable too — `tags` sits on TimelineItemBase, not
             on the media members — and they route through THIS component rather
             than GraphClipContent (which returns null for them at the guard
@@ -1484,13 +1487,21 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         <span
           data-disabled-visuals={muted ? "true" : undefined}
           data-filter-miss={filterMiss ? "true" : undefined}
+          // `relative`, so the checkbox below anchors to the PREVIEW FRAMES
+          // rather than to the whole card. Anchored to the card it landed on
+          // the name-and-count row underneath and truncated it ("51.8s / 5
+          // it…"), because that row is inside the selection surface too.
           className={[
-            "flex min-h-0 flex-1 gap-0.5 overflow-hidden",
+            "relative flex min-h-0 flex-1 gap-0.5 overflow-hidden",
             isDragSource ? "opacity-40" : muted ? "opacity-45" : filterMiss ? "opacity-30" : "",
             muted ? "grayscale" : "",
             "motion-safe:transition-opacity motion-safe:duration-150",
           ].join(" ")}
         >
+          {/* Collections get the same checkbox as media, and they are the cards
+              that need it most: a plain click drills INTO a collection now, so
+              select mode is the only pointer route to picking one at all. */}
+          {selectMode && <SelectionIndicator selected={selected} />}
           {previews.length === 0 ? (
             <span
               data-empty-collection-preview
@@ -1546,6 +1557,22 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
             muted ? "pr-[4.75rem]" : "pr-1 [[data-virtual-grid]_&]:pr-1.5",
           ].join(" ")}
         >
+          {/* The KIND, as an icon leading the name — the same shape the media
+              caption has ([icon] name), so the two card kinds read as one
+              family instead of two. Grid only: the strip's footer is a tight
+              one-liner where this would cost more than it says.
+
+              A LABEL, not a control. The same Layers glyph used to sit in the
+              card's top-right corner as a drill button; that button is gone
+              (a plain click opens the collection now), and the glyph earns its
+              place here by naming the card kind instead of duplicating the
+              card's own gesture. Nothing about it should ever become clickable
+              — the story below pins that. */}
+          <Layers
+            data-collection-kind
+            aria-hidden="true"
+            className="hidden size-4 shrink-0 text-zinc-400 [[data-virtual-grid]_&]:block"
+          />
           <span
             // The NAME swallows a plain click, so the card body's drill-in does
             // not fire underneath it.
@@ -1633,45 +1660,20 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
           anchor" — which meant the anchor read as the one selected card that
           was not quite selected. The `⋮` and its count say "anchor" now, so the
           selection signal can be consistent across all of them. */}
-      {selected && <CardSelectedBadge />}
-      {/* One slot, two controls: the drill chevron, and — on the anchor — the
-          `⋮` it cross-fades into (R6.2). Same corner, same inset, same size,
-          so the swap costs no layout and leaves no gap. */}
+      {selected && <CardSelectedBadgeUnlessSelecting />}
+      {/* THE DRILL CONTROL IS GONE. The slot now hosts only the anchor's `⋮`.
+
+          It was the one pointer route into a collection back when a plain click
+          SELECTED the card. The click opens it now — the whole card, not a
+          28px corner — so the button was a second way to do the easy thing,
+          sitting permanently over the artwork of every collection card. The
+          caption's Layers icon says "this is a stack of timelines" without
+          claiming to be a control.
+
+          Keyboard drill-in is unaffected: O still opens the focused collection
+          (OpenKeyBoundary), which was always the pointerless twin of this. */}
       <CardCornerSlot
         nodeId={id}
-        chevron={
-          <button
-            type="button"
-            tabIndex={-1}
-            aria-label={`Open ${displayName}`}
-            title="Open this timeline"
-            data-collections-keyboard-ignore
-            onClick={(event) => {
-              event.stopPropagation();
-              nav?.openTimeline(id);
-            }}
-            className={[
-              CARD_CONTROL_CLASS,
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
-            ].join(" ")}
-          >
-            {/* LAYERS, not a direction arrow.
-                This was a chevron, on the reasoning that the card itself says
-                "container" so the badge only had to say "enter". True as far as
-                it went, but it left the control saying nothing about WHAT it
-                opens — and a chevron is the most generic glyph in the set,
-                doing disclosure duty everywhere else in the UI. Layers names
-                the thing: a stack of timelines, which is what a collection is.
-                Still ONE glyph. An earlier version paired the arrow with
-                CornerRightDown and ended up with two direction marks saying the
-                same thing twice; pairing layers with an arrow would repeat that
-                in a new costume.
-                No `strokeWidth` — lucide's default of 2 is deliberate and a
-                story asserts it (the old CornerRightDown ran at 1.5 only
-                because it was drawn much larger). */}
-            <Layers className="size-5" aria-hidden="true" />
-          </button>
-        }
       />
 
       {/* The rename editor — a REAL input, overlaying the label row while
@@ -1798,7 +1800,7 @@ const GraphMediaItem = memo(function GraphMediaItem({
       <NodeCard {...props} className="h-full w-full" />
       {/* The anchor keeps its badge too (R5.3) — see the collection card. It
           clears the trim handles, which a selected clip always carries. */}
-      {mediaSelected && <CardSelectedBadge />}
+      {mediaSelected && <CardSelectedBadgeUnlessSelecting />}
       {/* A clip has no chevron to morph, so the `⋮` simply fades in (R5.6).
           No chevron is added here for symmetry. */}
       <ClipCornerSlot nodeId={props.id} width={size.width} />

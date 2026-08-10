@@ -10,12 +10,12 @@ import { tagAccent, type TagAccent } from "@/lib/tag-facets";
  * CSS — and the failure is silent, a dot that renders with no colour at all.
  */
 const TAG_ACCENT_DOT: Record<TagAccent, string> = {
-  place: "bg-sky-400",
+  place: "bg-blue-400",
   role: "bg-violet-400",
   source: "bg-teal-400",
   ok: "bg-emerald-400",
   progress: "bg-amber-400",
-  blocked: "bg-rose-400",
+  blocked: "bg-red-400",
 };
 
 /**

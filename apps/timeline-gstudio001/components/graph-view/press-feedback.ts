@@ -111,9 +111,11 @@ export function spawnPressFeedback(host: HTMLElement): void {
 /**
  * The card a press landed on, or null when the press does not deserve feedback.
  *
- * Controls own their own gestures and their own feedback — the chevron and the
- * `⋮` already have hover and active states, so animating the whole card
- * underneath them would claim something happened to the card when it did not.
+ * Controls own their own gestures and their own feedback — the `⋮` already has
+ * hover and active states, so animating the whole card underneath it would
+ * claim something happened to the card when it did not. (It shared this corner
+ * with a drill chevron until that button was removed; the rule is per-control,
+ * not per-corner, so nothing changed here.)
  */
 export function pressFeedbackHostFor(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) return null;

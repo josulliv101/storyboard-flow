@@ -803,32 +803,108 @@ function SelectModeButton() {
  * what they want. The mode's armed state lives on `SelectModeButton` until
  * there is something to show.
  *
- * The verbs are `SelectionCentreControls` unchanged, not a second set: the
- * promoted actions, paste, the `⋮` fallback menu and the `✕` all behave here
- * exactly as they do in the centre slot, and they are driven by the same action
- * specs, so this row cannot come to disagree with the anchor card's menu about
- * what applies. What is added is only what this mode needs — a count to say
- * what is held, and a way out.
+ * The verbs are LABELLED here, unlike the icon-only cluster in the centre slot.
+ * This row has the width for it and a different job: the centre cluster is
+ * chrome you glance at beside a count, while this row IS the mode, and a mode
+ * that has taken the breadcrumb's place should say what it can do in words.
+ * They are still driven by the same action specs, so labels, icons, and when
+ * each dims cannot drift from the anchor card's menu.
+ *
+ * No `✕` here. In the centre slot it does three jobs (cancel a cut, clear the
+ * selection, clear the clipboard); in this mode Done covers the one that
+ * matters, and the other two stay in the `⋮`. Two adjacent controls that both
+ * end the gesture is how a mis-click becomes a surprise.
  */
+const SELECT_MODE_VERBS: readonly GraphItemAction[] = ["details", "duplicate", "delete"];
+
+/** One labelled verb. Same spec data as the icon buttons, more room to say it. */
+function SelectModeVerb({
+  action,
+  state,
+}: Readonly<{ action: GraphItemAction; state: ItemActionState }>) {
+  const spec = itemActionSpec(action);
+  const label = spec.label(state);
+  const reason = spec.unavailableReason(state);
+  const disabled = spec.disabled(state);
+  const icon = createElement(spec.icon(state), { "aria-hidden": true, className: "h-4 w-4" });
+  const name = reason === null ? label : `${label}, ${reason}`;
+
+  return (
+    <button
+      type="button"
+      aria-label={name}
+      title={name}
+      // `aria-disabled`, never `disabled` (R7.7/R12.4): a disabled button is
+      // unfocusable and silent, so it can never deliver the reason it is off.
+      aria-disabled={disabled || undefined}
+      data-header-action={action}
+      onClick={() => {
+        if (disabled) return;
+        requestGraphItemAction(action);
+      }}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded px-1 py-1.5 text-[13px] transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70",
+        "[@media(pointer:coarse)]:py-3",
+        disabled
+          ? "cursor-not-allowed text-zinc-600"
+          : action === "delete"
+            ? // The one destructive verb reddens on approach rather than
+              // sitting red — permanently red reads as already-dangerous and
+              // stops being a warning.
+              "text-zinc-400 hover:text-red-400"
+            : "text-zinc-400 hover:text-zinc-100",
+      )}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
 function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }>) {
   const store = useCollectionsStore();
-  const { selectionCount } = useSelectionActionState();
+  const state = useSelectionActionState();
+  const { selectionCount } = state;
 
   return (
     <div
       data-select-mode-header=""
-      className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-2"
+      className="flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2"
     >
       <span
         data-select-mode-count={selectionCount}
         // Mono and tabular so the row does not twitch sideways as the count
         // crosses 9 — this number changes on every tap, which is precisely the
         // moment a reflowing toolbar is most annoying.
-        className="shrink-0 px-1 font-mono text-xs tabular-nums text-sky-200"
+        className="shrink-0 font-mono text-[13px] tabular-nums text-blue-400"
       >
         {selectionCount} selected
       </span>
-      <SelectionCentreControls anchorName={anchorName} />
+      {SELECT_MODE_VERBS.map((action) => (
+        <SelectModeVerb key={action} action={action} state={state} />
+      ))}
+      <HeaderPasteButton anchorName={anchorName} />
+      {/* Everything not promoted above — the SAME menu the anchor's `⋮` opens,
+          rendered from the identical definition rather than a hand-assembled
+          superset. */}
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="More selection actions"
+            data-header-selection-overflow
+            className={cn(HEADER_SELECTION_SIZE, HEADER_TOGGLE_IDLE)}
+          >
+            <EllipsisVertical aria-hidden className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="bottom" align="center" className={SELECTION_MENU_CONTENT_CLASS}>
+          <SelectionMenuItems parts={DROPDOWN_MENU_PARTS} state={state} />
+        </DropdownMenuContent>
+      </DropdownMenu>
       {/* `ml-auto`: Done sits at the far end, away from Delete. Both end the
           gesture, only one of them destroys anything, and putting them
           shoulder to shoulder is how a mis-click becomes a deletion. */}
@@ -847,10 +923,13 @@ function SelectModeHeader({ anchorName }: Readonly<{ anchorName: string | null }
           store.clearSelection();
           store.setMultiSelectMode(false);
         }}
+        // BORDERED, unlike every other control on this row. It is the way out,
+        // and the only one here that is not a verb acting on the selection —
+        // an outline is what separates "leave" from "do something to these".
         className={cn(
-          "ml-auto h-8 shrink-0 px-3 text-[11px] font-medium",
+          "ml-auto h-9 shrink-0 rounded-lg border border-zinc-700 px-3.5 text-[13px] font-medium",
           "[@media(pointer:coarse)]:h-11",
-          HEADER_TOGGLE_IDLE,
+          "text-zinc-100 hover:border-zinc-500 hover:bg-transparent hover:text-white",
         )}
       >
         Done

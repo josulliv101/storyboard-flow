@@ -629,10 +629,11 @@ export function GraphItemActionsBridge({
           break;
         }
         // No "open" case. It existed for the v2 pill, which took the anchor's
-        // chevron and had to offer its verb back; v3 keeps the chevron on every
-        // non-anchor card and drops Open from the menu entirely (R7.11) —
-        // selecting a card is a positive signal you did NOT want to drill into
-        // it. Double-click and the O key remain the ways in.
+        // drill chevron and had to offer its verb back; v3 dropped Open from
+        // the menu entirely (R7.11) — selecting a card is a positive signal you
+        // did NOT want to drill into it. The chevron itself is gone now too, so
+        // there is no borrowed verb left to return: a plain click opens any
+        // collection, and the O key is the keyboard twin.
         case "rename": {
           // Renaming is inline, at the card, and each rename site owns its own
           // editor state — so this asks the SITE to open rather than doing it
