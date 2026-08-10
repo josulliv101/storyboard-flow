@@ -44,6 +44,7 @@ import {
 } from "@storyboard/timeline-domain";
 
 import { useClipDetail, useGraphDetailsStore, useTimelineTitle } from "./graph-details-context";
+import { useTagFilterMiss } from "./graph-tag-filter";
 import { isDisabledByAncestor } from "./graph-playhead-model";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
 import { useCollectionHoverTarget } from "./graph-collection-hover";
@@ -815,6 +816,12 @@ const GraphClipContent = memo(function GraphClipContent({
   const settledFrames = useSettledFrameCount(measuredFrames);
   // Above the collection early-return below — hooks may not be conditional.
   const inheritedDisabled = useDisabledByAncestor(id);
+  // Above the collection early-return below, with the other hooks — hooks may
+  // not be conditional. A filter MISS is a SEPARATE state from disabled, so it
+  // gets its own signal and its own treatment (opacity only): `opacity-45
+  // grayscale` is already disabled's language, and a card that is both must
+  // still read as both.
+  const filterMiss = useTagFilterMiss(id as string);
   const provenance = useCardProvenance(id);
   const frameLoading = useContext(VideoFrameLoadingContext);
   // The AUTHORED name, read straight from the side table rather than from
@@ -882,10 +889,12 @@ const GraphClipContent = memo(function GraphClipContent({
     >
       <span
         data-disabled-visuals={muted ? "true" : undefined}
+        data-filter-miss={filterMiss ? "true" : undefined}
         className={[
           "relative flex h-full w-full overflow-hidden rounded-sm",
-          isDragSource ? "opacity-40" : muted ? "opacity-45" : "",
+          isDragSource ? "opacity-40" : muted ? "opacity-45" : filterMiss ? "opacity-30" : "",
           muted ? "grayscale" : "",
+          "motion-safe:transition-opacity motion-safe:duration-150",
         ].join(" ")}
       >
       {frameSrcs.length === 0 ? (
@@ -1200,6 +1209,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   const previews = useCollectionPreviewFrames(id as string, hydrated, detail?.previewItems);
   const displayName = title ?? node.name;
   const inheritedDisabled = useDisabledByAncestor(id);
+  const filterMiss = useTagFilterMiss(id as string);
   const muted = node.disabled === true || inheritedDisabled;
   // Anchor state is not read here any more: `CardCornerSlot` subscribes to it
   // itself, narrowed to this node, so an anchor moving between two OTHER cards
@@ -1254,10 +1264,12 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         {detail?.tags?.length ? <TagRow tags={detail.tags} showAtMost={TAGS_SHOWN_NARROW} /> : null}
         <span
           data-disabled-visuals={muted ? "true" : undefined}
+          data-filter-miss={filterMiss ? "true" : undefined}
           className={[
             "flex min-h-0 flex-1 gap-0.5 overflow-hidden",
-            isDragSource ? "opacity-40" : muted ? "opacity-45" : "",
+            isDragSource ? "opacity-40" : muted ? "opacity-45" : filterMiss ? "opacity-30" : "",
             muted ? "grayscale" : "",
+            "motion-safe:transition-opacity motion-safe:duration-150",
           ].join(" ")}
         >
           {previews.length === 0 ? (
