@@ -3,6 +3,7 @@ import {
   buildGraph,
   type CollectionsCommand,
   type CollectionsGraph,
+  type CollectionsPatch,
   type CommandRejection,
   type GraphNodeSpec,
 } from "@storyboard/collections-core";
@@ -62,10 +63,10 @@ const HYDRATE_ALL_LEVELS = Number.MAX_SAFE_INTEGER;
  */
 function syncRenameIntoDetails(
   details: DetailsById,
-  command: CollectionsCommand,
+  command: CollectionsCommand | null,
   graph: CollectionsGraph,
 ): DetailsById {
-  if (command.type !== "rename-node") return details;
+  if (!command || command.type !== "rename-node") return details;
   const node = graph.nodesById.get(command.nodeId);
   if (!node || node.kind !== "media") return details;
   const existing = details[command.nodeId as string];
@@ -181,9 +182,39 @@ export type CommandBuilder = (
 ) =>
   | Readonly<{
       ok: true;
-      command: CollectionsCommand;
       /**
-       * Details to park for nodes this command CREATES, merged before write-back.
+       * The graph mutation, when there is one.
+       *
+       * OMITTED for a change that only touches the detail side-table — tags,
+       * for instance. Those fields exist precisely because the engine does not
+       * model them, so there is no command that expresses the edit: the graph
+       * is genuinely unchanged and `applyCommand` is skipped. A caller
+       * omitting this MUST name the documents to rewrite in
+       * `affectedCollectionIds`, because the write set is normally derived
+       * from the patch and there is no patch.
+       *
+       * Manufacturing a no-op command instead does not work and must not be
+       * attempted: `applyRename` REJECTS a same-name rename outright
+       * (collections-core/commands.ts, `same-position`), and a command that
+       * did slip through would put a phantom entry in undo history.
+       */
+      command?: CollectionsCommand;
+      /**
+       * Collections whose stored document this change rewrites, on top of
+       * whatever the patch reports. REQUIRED when `command` is omitted.
+       *
+       * A clip's stored form lives in its PARENT's `clips` array, so a
+       * detail-only edit names exactly that parent — not its ancestors.
+       * `collectAffectedCollectionIds` walks ancestors for a `nodes-updated`
+       * patch because a trim changes a child's duration and therefore the
+       * parent's denormalized collection summary; a tag changes no summary
+       * (not `duration`, not `itemCount`, not `previewItems`), so rewriting
+       * ancestors would be pure write amplification and extra CAS conflicts.
+       */
+      affectedCollectionIds?: readonly string[];
+      /**
+       * Details to park for nodes this command CREATES OR MODIFIES, merged
+       * before write-back.
        *
        * Not optional bookkeeping: `graphChildrenToClips` reads `poster` and —
        * critically — `sourceAsset` from the details side-table, not the graph
@@ -272,23 +303,33 @@ export async function applyCollectionsCommand(
     : buildFocusedGraph(documents, rootTimelineId, HYDRATE_ALL_LEVELS);
   if (!built.ok) return { ok: false, kind: "error", message: built.error };
 
-  let command: CollectionsCommand;
+  let command: CollectionsCommand | null = null;
   let parkedDetails: DetailsById = {};
   let seeded: readonly TimelineDocument[] = [];
+  let declaredAffected: readonly string[] = [];
   if (typeof commandOrBuilder === "function") {
     const requested = commandOrBuilder(built.value.graph, built.value.details);
     if (!requested.ok) return { ok: false, kind: "error", message: requested.message };
-    command = requested.command;
+    command = requested.command ?? null;
     parkedDetails = requested.details ?? {};
     seeded = requested.newDocuments ?? [];
+    declaredAffected = requested.affectedCollectionIds ?? [];
   } else {
     command = commandOrBuilder;
   }
 
-  const applied = applyCommand(built.value.graph, command);
-  if (!applied.ok) return { ok: false, kind: "rejected", rejection: applied.error };
+  // A detail-only change has no command, so nothing is applied and the graph
+  // carries through untouched — which is what makes re-projecting the affected
+  // documents from it safe.
+  let nextGraph = built.value.graph;
+  let patch: CollectionsPatch | null = null;
+  if (command !== null) {
+    const applied = applyCommand(built.value.graph, command);
+    if (!applied.ok) return { ok: false, kind: "rejected", rejection: applied.error };
+    nextGraph = applied.value.graph;
+    patch = applied.value.patch;
+  }
 
-  const { graph: nextGraph, patch } = applied.value;
   const details = syncRenameIntoDetails(
     { ...built.value.details, ...parkedDetails },
     command,
@@ -299,8 +340,9 @@ export async function applyCollectionsCommand(
   // reports every affected collection including ancestors, but a nested
   // collection's clips live in its own document, so an ancestor's clip list is
   // unchanged by a change inside its child.
+  const patchAffected = patch === null ? [] : collectAffectedCollectionIds(nextGraph, patch);
   const affected = new Set(
-    collectAffectedCollectionIds(nextGraph, patch).filter((id) => documents[id] !== undefined),
+    [...patchAffected, ...declaredAffected].filter((id) => documents[id] !== undefined),
   );
 
   // Renaming a COLLECTION also has to retitle the collection's own document.
@@ -309,12 +351,24 @@ export async function applyCollectionsCommand(
   // name while the stored title (breadcrumb, project list) keeps the old one.
   // The in-page path does this through the bridge's `renameTimeline`.
   const retitled =
-    command.type === "rename-node" && documents[command.nodeId as string] !== undefined
+    command?.type === "rename-node" && documents[command.nodeId as string] !== undefined
       ? (command.nodeId as string)
       : null;
   if (retitled) affected.add(retitled);
 
   const affectedIds = [...affected];
+  // A DECLARED write set that survives none of the filtering is a failure, not
+  // a no-op. The empty short-circuit below is right for a patch-derived set (an
+  // ancestor above the loaded root legitimately has nothing to write), but a
+  // caller that named its documents and got silence would report success while
+  // saving nothing — the exact failure this whole path exists to remove.
+  if (affectedIds.length === 0 && declaredAffected.length > 0) {
+    return {
+      ok: false,
+      kind: "error",
+      message: `None of the collections to update (${declaredAffected.join(", ")}) are loaded documents under "${rootTimelineId}".`,
+    };
+  }
   if (affectedIds.length === 0 && seeded.length === 0) {
     return { ok: true, affectedIds: [], documents, details };
   }
@@ -329,7 +383,7 @@ export async function applyCollectionsCommand(
   const writes: TimelineBatchWrite[] = affectedIds.map((id) => {
     const document: TimelineDocument = {
       ...documents[id],
-      ...(id === retitled && command.type === "rename-node" ? { title: command.name } : {}),
+      ...(id === retitled && command?.type === "rename-node" ? { title: command.name } : {}),
       clips: graphChildrenToClips(nextGraph, details, id),
     };
     nextDocuments[id] = document;

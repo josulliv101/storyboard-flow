@@ -6,6 +6,8 @@ import {
   type NodeId,
 } from "@storyboard/collections-core";
 
+import { normalizeTags, tagsField } from "@storyboard/timeline-model/tags";
+
 import { describeDispatchRejection, toolError, toolOk } from "@/lib/webmcp/results";
 import { resolveMovePlacement, type PlacementError } from "@/lib/webmcp/placement";
 import type { ToolResult } from "@/lib/webmcp/types";
@@ -15,6 +17,7 @@ import {
   trashDocumentIdFor,
   type ApplyCommandOutcome,
 } from "./apply-command";
+import type { DetailsById } from "@storyboard/timeline-domain";
 
 // Remote (server-side) write tools. Each one translates arguments into a single
 // CollectionsCommand and hands it to `applyCollectionsCommand`, which owns the
@@ -248,6 +251,75 @@ export async function handleRenameItem(
     name,
     written: outcome.affectedIds,
   });
+}
+
+// --- set_tags ----------------------------------------------------------------
+
+export type SetTagsArgs = Readonly<{
+  timelineId: string;
+  nodeId: string;
+  tags: readonly string[];
+}>;
+
+/**
+ * Replace an item's tags — the first write that touches ONLY the detail
+ * side-table.
+ *
+ * There is no command for it, and that is correct rather than a gap: tags exist
+ * because the engine does not model them, so the graph is genuinely unchanged.
+ * The builder therefore omits `command` and names the document to rewrite
+ * instead. See CommandBuilder in apply-command.ts for why a manufactured no-op
+ * command is not an option (`applyRename` rejects a same-name rename outright).
+ *
+ * REPLACE, not merge. Add-one and remove-one both reduce to "here is the new
+ * set", which keeps the tool idempotent and lets a caller clear tags by passing
+ * `[]` — with a merge-only tool there would be no way to remove anything.
+ */
+export async function handleSetTags(
+  args: SetTagsArgs,
+  ctx: WriteContext,
+): Promise<ToolResult> {
+  const nodeId = parseNodeId(args.nodeId);
+  const tags = normalizeTags(args.tags);
+
+  const outcome = await applyCollectionsCommand(
+    args.timelineId,
+    (graph: CollectionsGraph, details) => {
+      if (!graph.nodesById.has(nodeId)) {
+        return { ok: false, message: `No node with id "${args.nodeId}".` } as const;
+      }
+      // A ROOT has no parent, so it is not a clip in anyone's document and has
+      // nowhere for tags to live. Reject rather than write into the void.
+      const parentId = graph.parentById.get(nodeId) ?? null;
+      if (parentId === null) {
+        return {
+          ok: false,
+          message: `"${args.nodeId}" is a timeline itself, not a clip inside one — tag a clip in it instead.`,
+        } as const;
+      }
+      const existing = details[nodeId as string];
+      return {
+        ok: true,
+        // Spread the WHOLE existing entry: `graphChildrenToClips` rebuilds the
+        // clip from this record, so dropping `sourceAsset`, `poster` or `alt`
+        // here would erase them from the stored clip on save.
+        details: {
+          [nodeId as string]: { ...existing, ...tagsField(tags) } as DetailsById[string],
+        },
+        // Exactly the parent — a clip is stored in its parent's `clips` array,
+        // and a tag changes no ancestor's summary.
+        affectedCollectionIds: [parentId as string],
+      } as const;
+    },
+    ctx.requesterUid,
+  );
+  if (!outcome.ok) return reportFailure(outcome);
+  return toolOk(
+    tags.length === 0
+      ? `Cleared the tags on "${args.nodeId}".`
+      : `Tagged "${args.nodeId}": ${tags.join(", ")}.`,
+    { nodeId: args.nodeId, tags, written: outcome.affectedIds },
+  );
 }
 
 // --- remove_clip -------------------------------------------------------------
