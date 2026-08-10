@@ -805,3 +805,97 @@ export const AnchorControlAndCountBadge: Story = {
     expect(doc.querySelectorAll("[data-card-selected-badge]")).toHaveLength(2);
   },
 };
+
+// ── Tags ────────────────────────────────────────────────────────────────────
+
+/** A tagged COLLECTION card. Collections route through
+ *  GraphCollectionItemParts rather than GraphClipContent, so they need their
+ *  own cover — a media-only implementation would leave tagged collections
+ *  showing nothing at all. */
+function renderWithTags(tags: string[]) {
+  const detail: ClipDetail = {
+    alt: "A timeline",
+    aspect: 16 / 9,
+    trackIndex: 0,
+    hydrated: false,
+    itemCount: 2,
+    previewItems: [ASSET_A, ASSET_B],
+    tags,
+  };
+  const store = createGraphDetailsStore({ [COLLECTION_ID]: detail });
+  const decorator: Decorator = (Story) => (
+    <DndCollections initialGraph={providerGraph}>
+      <GraphDetailsProvider store={store}>
+        <div className="h-32 w-40 bg-zinc-950 p-2">
+          <Story />
+        </div>
+      </GraphDetailsProvider>
+    </DndCollections>
+  );
+  return decorator;
+}
+
+/** A few tags render in full, in the order they were stored. */
+export const TaggedCollectionCard: Story = {
+  args: baseArgs,
+  decorators: [renderWithTags(["scail-2", "S02"])],
+  play: async ({ canvasElement }) => {
+    const row = canvasElement.querySelector<HTMLElement>("[data-clip-tags]")!;
+    await expect(row).not.toBeNull();
+    await expect(row.dataset.clipTags).toBe("2");
+    await expect(row.textContent).toBe("scail-2S02");
+    for (const chip of Array.from(row.children) as HTMLElement[]) {
+      await expect(chip.getBoundingClientRect().width).toBeGreaterThan(0);
+    }
+    // Decorative: the card's own label already names it, and nothing in here
+    // may be interactive — this subtree renders inside a selection surface.
+    await expect(row.getAttribute("aria-hidden")).toBe("true");
+    await expect(row.querySelector("button")).toBeNull();
+  },
+};
+
+/**
+ * Past three tags the rest fold into a counter.
+ *
+ * The failure this guards is INVISIBLE: the content root is `overflow-hidden`
+ * with no ellipsis, so an unbounded row is clipped with nothing to show it was
+ * clipped — a set that reads as complete but is not.
+ */
+export const ManyTagsFoldIntoACounter: Story = {
+  args: baseArgs,
+  decorators: [renderWithTags(["scail-2", "wan2.1", "S02", "keeper", "multirole"])],
+  play: async ({ canvasElement }) => {
+    const row = canvasElement.querySelector<HTMLElement>("[data-clip-tags]")!;
+    await expect(row.dataset.clipTags).toBe("5");
+    const overflow = canvasElement.querySelector<HTMLElement>("[data-clip-tags-overflow]")!;
+    await expect(overflow).not.toBeNull();
+    await expect(overflow.dataset.clipTagsOverflow).toBe("3");
+    await expect(overflow.textContent).toBe("+3");
+
+    // MEASURED, not read. The first version of this asserted `textContent` and
+    // passed while all three chips were flex-shrunk to ZERO width — text
+    // present, nothing on screen. Assert every chip actually occupies space,
+    // and that the row stays inside the card, because the card is
+    // `overflow-hidden` with no ellipsis and clips silently.
+    const chips = Array.from(row.children) as HTMLElement[];
+    for (const chip of chips) {
+      await expect(chip.getBoundingClientRect().width).toBeGreaterThan(0);
+      await expect(chip.getBoundingClientRect().height).toBeGreaterThan(0);
+    }
+    const card = canvasElement.querySelector<HTMLElement>("[data-node-id]")!;
+    const cardBox = card.getBoundingClientRect();
+    const rowBox = row.getBoundingClientRect();
+    await expect(rowBox.left).toBeGreaterThanOrEqual(cardBox.left);
+    await expect(rowBox.right).toBeLessThanOrEqual(cardBox.right + 0.5);
+  },
+};
+
+/** An untagged card grows no row at all — absence is the default everywhere
+ *  else in this model, and an empty chip strip would read as a data glitch. */
+export const UntaggedCardHasNoTagRow: Story = {
+  args: baseArgs,
+  decorators: [renderWithTags([])],
+  play: async ({ canvasElement }) => {
+    await expect(canvasElement.querySelector("[data-clip-tags]")).toBeNull();
+  },
+};

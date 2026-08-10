@@ -10,9 +10,11 @@
 .border-dashed {
   /* border-style: none !important; */
 }
-.z-10 > .truncate, .z-10 > .font-mono {
-  display: none !important;
-}
+/* NOTE: a `.z-10 > .truncate, .z-10 > .font-mono { display: none !important }`
+   rule lived here from a 2026-06-17 refactor. It was debug cruft that HID real
+   content — any overlay with `z-10` whose children truncate (a chip row, for
+   instance) rendered at zero size in Storybook while being correct in the app,
+   so the story suite reported a false negative on markup that worked. */
 
 @custom-variant dark (&:is(.dark *));
 
