@@ -23,6 +23,7 @@ import { DETAILS_HERO_FILL_CLASS, DETAILS_PANEL_HEIGHT_CLASS } from "./graph-vie
 import { useSeekedVideo } from "@/hooks/use-seeked-video";
 import { formatSeconds } from "@/lib/format-duration";
 import { InlineNameEditor, useInlineRename } from "./graph-inline-rename";
+import { TagEditor } from "./graph-tag-editor";
 import { CollectionDetailsBody } from "./graph-collection-details";
 import { ItemDisableToggle } from "./graph-item-disable-toggle";
 import { useItemDetails } from "./graph-item-details-context";
@@ -518,6 +519,20 @@ function ModalBody({ node, onClose }: Readonly<{ node: MediaNode; onClose: () =>
             <span>drag the card&apos;s edge on the strip to change how long it holds</span>
           </div>
         )}
+
+        {/* Tags. Here rather than on the card because the card's content
+            renders inside a <button>, where these remove buttons and the text
+            field would be invalid HTML — the card shows them, this edits them.
+
+            No undo: a tag change writes the detail side-table directly and
+            emits no patch, so `useScopedHistory` above never sees it. See
+            graph-tag-editor.tsx for why that is the deliberate trade. */}
+        <div className="flex flex-col gap-1.5 border-t border-white/10 pt-3">
+          <span className="font-mono text-[11px] tracking-[0.08em] text-zinc-500 uppercase">
+            Tags
+          </span>
+          <TagEditor nodeId={node.id} />
+        </div>
       </div>
     </div>,
     document.body,
