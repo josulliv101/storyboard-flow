@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { isTagFilterMiss, tagCounts, tagKey, toggleTagKey } from "./tag-facets";
+import {
+  isStatusTag,
+  isTagFilterMiss,
+  sortTagsStatusFirst,
+  tagAccent,
+  tagCounts,
+  tagKey,
+  toggleTagKey,
+} from "./tag-facets";
 
 const active = (...tags: string[]) => new Set(tags.map(tagKey));
 
@@ -72,5 +80,73 @@ describe("toggleTagKey", () => {
   it("ignores a blank tag", () => {
     const active = new Set(["keeper"]);
     expect(toggleTagKey(active, "   ")).toBe(active);
+  });
+});
+
+describe("tagAccent", () => {
+  it("recognises status by word, including inside a longer tag", () => {
+    // The whole reason status is matched as a SUBSTRING: nobody is going to
+    // register "pending-client-approval" anywhere, and it is still a status.
+    expect(tagAccent("approved")).toBe("ok");
+    expect(tagAccent("pending-client-approval")).toBe("progress");
+    expect(tagAccent("needs-color-correction")).toBe("blocked");
+    expect(tagAccent("keeper")).toBe("ok");
+  });
+
+  it("matches status case-insensitively, like the rest of tag handling", () => {
+    expect(tagAccent("  WIP  ")).toBe("progress");
+    expect(tagAccent("Locked")).toBe("blocked");
+  });
+
+  it("gives a descriptive tag a stable colour", () => {
+    // Stability is the property the whole scheme rests on — a tag that changed
+    // colour between cards would be worse than no colour at all.
+    expect(tagAccent("scail-2")).toBe(tagAccent("scail-2"));
+    expect(tagAccent("scail-2")).toBe(tagAccent("SCAIL-2"));
+    expect(["place", "role", "source"]).toContain(tagAccent("scail-2"));
+  });
+
+  it("spreads tags that share a prefix across families", () => {
+    // The reason for FNV-1a rather than a character sum: these differ in one
+    // trailing digit, and a summing hash walks them through adjacent buckets.
+    const accents = new Set(
+      ["shot-01", "shot-02", "shot-03", "shot-04", "shot-05", "shot-06"].map(tagAccent),
+    );
+    expect(accents.size).toBeGreaterThan(1);
+  });
+
+  it("never calls an ordinary word a status", () => {
+    expect(isStatusTag("exterior")).toBe(false);
+    expect(isStatusTag("wan2.1")).toBe(false);
+    // `ok` is deliberately absent from the status words — as a substring it
+    // would claim both of these.
+    expect(isStatusTag("smoke-test")).toBe(false);
+    expect(isStatusTag("look-dev")).toBe(false);
+  });
+});
+
+describe("sortTagsStatusFirst", () => {
+  it("puts status first so it survives truncation", () => {
+    expect(sortTagsStatusFirst(["exterior", "night", "approved"])).toEqual([
+      "approved",
+      "exterior",
+      "night",
+    ]);
+  });
+
+  it("keeps the original order within each class", () => {
+    // Stable, so adding one tag cannot reshuffle the chips already on a card.
+    expect(sortTagsStatusFirst(["night", "wip", "exterior", "approved"])).toEqual([
+      "wip",
+      "approved",
+      "night",
+      "exterior",
+    ]);
+  });
+
+  it("returns a new array and leaves the input alone", () => {
+    const tags = ["night", "approved"];
+    expect(sortTagsStatusFirst(tags)).not.toBe(tags);
+    expect(tags).toEqual(["night", "approved"]);
   });
 });

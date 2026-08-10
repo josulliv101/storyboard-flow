@@ -1,13 +1,14 @@
-// Immediate press feedback on a card — the acknowledgement a deferred
-// selection cannot give.
+// Immediate press feedback on a card — an acknowledgement that does not wait
+// to find out what the press meant.
 //
-// A collection's click-selection is HELD for the double-click window
-// (`SELECTION_DEFER_MS`) so an ordinary double-click never paints a selection
-// on its way into the drill-in. Correct, but it leaves a stretch where a click
-// has landed and nothing on screen has changed, and that reads as the app
-// missing the click. This fills it: the animation starts on POINTERDOWN, before
-// the selection question is even asked, so the answer to "did that register?"
-// no longer depends on what the click turns out to mean.
+// It was introduced to cover a 250ms selection hold (`SELECTION_DEFER_MS`),
+// back when a double-click drilled in and click 1's selection had to be held
+// so it never painted on the way. That hold is gone with the single-click
+// drill-in, but the gap it filled was never really about the hold: a press may
+// still resolve into a selection, a drill-in, or the start of a drag, and every
+// one of those settles some time after the finger lands. This starts on
+// POINTERDOWN, before the question is even asked, so "did that register?" never
+// depends on the answer.
 //
 // It therefore plays for EVERY press — single click, the first click of a
 // double, and the start of a drag. That is the point. Feedback conditional on
@@ -40,10 +41,11 @@ const PRESS_SCALE = 1.012;
  * Tuned by eye: 340ms read as a twitch (the swell arrived and left before the
  * eye settled on it), 640 was slower than wanted, 400 is the settled value.
  *
- * It deliberately OUTLASTS the 250ms selection hold. The two are not sequential
- * steps to be kept apart: the scale acknowledges the press, the selection
- * answers what the press meant, and letting the first still be settling when
- * the second lands reads as one continuous response rather than two events.
+ * It was tuned to OUTLAST the 250ms selection hold, so that the swell was still
+ * settling when the selection landed and the two read as one continuous
+ * response rather than two events. The hold is gone, but the value stands on
+ * the eye-tuning above — and the same overlap now covers the drill-in, which
+ * unmounts the card mid-animation and takes the animation with it.
  */
 const PRESS_MS = 400;
 

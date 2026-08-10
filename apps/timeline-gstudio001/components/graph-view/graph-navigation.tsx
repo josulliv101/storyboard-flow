@@ -298,13 +298,27 @@ export function OpenKeyBoundary({
   };
 
   /**
-   * Escape clears the selection (R4.7).
+   * Escape backs out of selecting (R4.7).
    *
    * It lives here, with the board's other card keys, because nothing else owns
    * it. The v2 pill handled Escape itself — it rendered INSIDE the card, so a
    * focused card's Escape reached it by bubbling — and deleting the pill took
    * that with it. The package does not claim the key either: its keyboard
    * controller passes a bare Escape through deliberately.
+   *
+   * It backs out of ONE thing at a time, outermost first, which is what Escape
+   * means everywhere else:
+   *
+   *   in select MODE — leave the mode, dropping whatever it collected. The mode
+   *     is the outer state; clearing the selection but staying armed would look
+   *     like nothing happened, since the row it painted is still there.
+   *   otherwise      — clear the selection, as it always did.
+   *
+   * Note the mode branch has to run even with NOTHING selected. Arming select
+   * mode and picking nothing is an ordinary place to end up (it is the state
+   * you are in the instant you press Select), and the old guard returned early
+   * on an empty selection — which would have left Escape doing nothing at all
+   * in the one state a user is most likely to want out of.
    *
    * Two things it must not do. It must not fight dnd-kit, which uses Escape to
    * CANCEL a keyboard drag — hence the isDragging guard. And it must not fire
@@ -314,13 +328,15 @@ export function OpenKeyBoundary({
    */
   const clearFromKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const { interaction } = store.getSnapshot();
-    if (interaction.isDragging || interaction.selectedIds.size === 0) return;
+    if (interaction.isDragging) return;
+    if (!interaction.multiSelectMode && interaction.selectedIds.size === 0) return;
     event.preventDefault();
     // Focus goes back to the card that was anchored, not to wherever the key
     // was pressed — the anchor is the card the user was working on, and the
     // control they may have been standing on is about to unmount.
     const anchorId = interaction.anchorId;
     store.clearSelection();
+    if (interaction.multiSelectMode) store.setMultiSelectMode(false);
     if (anchorId !== null) focusNodeWhenMounted(document.body, anchorId);
   };
 
@@ -336,58 +352,18 @@ export function OpenKeyBoundary({
     else if (event.key === "Escape") clearFromKey(event);
   };
 
-  /**
-   * Double-click opens (R10.5).
-   *
-   * Needed because the anchor card no longer has a chevron — it cross-fades
-   * into the `⋮` — so without this the one card the user is working on would be
-   * the one card with no pointer route in. The O key already covered the
-   * keyboard, and Enter could NOT be used here: the dnd-collections grammar
-   * binds it to picking a card up for a keyboard drag (Space selects, Enter
-   * grabs), and taking it would remove keyboard drag-and-drop to add a second
-   * way to do what O already does.
-   *
-   * BUBBLE phase, deliberately. The card's own label stops propagation on
-   * double-click to claim the gesture for inline rename, and that layering only
-   * works if this listener runs after the target's.
-   */
-  const openFromDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented || store.getSnapshot().interaction.isDragging) return;
-    const target = event.target as HTMLElement;
-    // Controls inside the card own their own gestures — a double-click that
-    // lands on the `⋮` or the chevron is two clicks on that control, not an
-    // instruction to drill in.
-    if (target.closest("[data-collections-keyboard-ignore]") !== null) return;
-    const id = target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
-    if (!id) return;
-    const graph = store.getSnapshot().graph;
-    const nodeId = parseNodeId(id);
-    const node = graph.nodesById.get(nodeId);
-    const opensTimeline =
-      node?.kind === "collection" || detailsStore.get(id)?.duplicateOfTimelineId !== undefined;
-    if (!opensTimeline) return;
-    event.preventDefault();
-    // BACKSTOP, not the mechanism.
-    //
-    // Click 1 on a collection no longer selects immediately — the provider's
-    // `deferSelection` holds it for the double-click window and the second
-    // click drops it, so an ordinary double-click never paints a selection at
-    // all. That is what makes the drill-in look clean; doing it here could
-    // only ever undo a selection the user had already seen.
-    //
-    // This still runs because the hold has a deadline (`SELECTION_DEFER_MS`).
-    // A deliberately slow double-click outlasts it, the selection lands, and
-    // without this the user would end up INSIDE the collection with that
-    // collection still selected: header reading "1 selected", no selected card
-    // on screen, and the header's promoted Delete armed against the container
-    // they are looking at.
-    //
-    // Clearing outright rather than restoring the prior selection is correct:
-    // an unmodified click 1 has ALREADY collapsed any multi-selection to this
-    // one card by the time dblclick runs, so there is nothing left to restore.
-    store.clearSelection();
-    nav?.openTimeline(nodeId);
-  };
+  // Double-click-to-open (R10.5) is GONE, with the double-click drill-in it
+  // backstopped. It existed because the anchor card trades its chevron for the
+  // `⋮`, which left the one card the user was working on with no pointer route
+  // in; a plain click opens every collection now, anchor included, so there is
+  // nothing left for it to cover.
+  //
+  // Removed rather than left harmlessly redundant, because it was neither.
+  // Click 1 navigates and unmounts the card, so the second click of a habitual
+  // double-click lands on whatever now occupies that spot — and this handler
+  // would have read THAT card's id and drilled a second level down, clearing
+  // the selection on its way. In select mode it would also have thrown away a
+  // selection the user was still assembling.
 
   /**
    * Acknowledge the press IMMEDIATELY, whatever the click turns out to mean.
@@ -420,7 +396,6 @@ export function OpenKeyBoundary({
       style={{ display: "contents" }}
       onKeyDown={handleKeyDown}
       onPointerDown={acknowledgePress}
-      onDoubleClick={openFromDoubleClick}
     >
       {children}
     </div>

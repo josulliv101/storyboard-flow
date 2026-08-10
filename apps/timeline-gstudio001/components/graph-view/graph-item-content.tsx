@@ -12,7 +12,14 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Check, CornerRightDown, Layers } from "lucide-react";
+import {
+  AudioWaveform,
+  Check,
+  CornerRightDown,
+  Image as ImageIcon,
+  Layers,
+  Video,
+} from "lucide-react";
 
 import {
   CollectionItem,
@@ -56,6 +63,8 @@ import { createDerivedCache } from "@/lib/derived-cache";
 import { graphClipboard } from "@/lib/graph-clipboard";
 import { graphPasteFlash } from "@/lib/graph-paste-flash";
 import { formatDuration, formatSeconds } from "@/lib/format-duration";
+import { sortTagsStatusFirst } from "@/lib/tag-facets";
+import { TagAccentDot } from "./tag-accent-dot";
 import {
   collectionPreviewFrameUrl,
   videoFrameUrls,
@@ -766,14 +775,20 @@ const TAG_ROW_WIDE_WIDTH = 220;
 function TagRow({
   tags,
   showAtMost,
-}: Readonly<{ tags: readonly string[]; showAtMost: number }>) {
-  const shown = tags.slice(0, showAtMost);
+  className = "",
+}: Readonly<{ tags: readonly string[]; showAtMost: number; className?: string }>) {
+  const shown = sortTagsStatusFirst(tags).slice(0, showAtMost);
   const extra = tags.length - shown.length;
   return (
     <span
       aria-hidden="true"
       data-clip-tags={tags.length}
-      className="pointer-events-none absolute bottom-8 left-2 z-10 flex max-w-[calc(100%-1rem)] items-center gap-1"
+      className={[
+        "pointer-events-none absolute bottom-8 left-2 z-10 flex max-w-[calc(100%-1rem)] items-center gap-1",
+        // Callers add surface-scoped variants — the media card hides this in
+        // the grid, where its tags live in the caption instead.
+        className,
+      ].join(" ")}
     >
       {shown.map((tag) => (
         <span
@@ -793,6 +808,101 @@ function TagRow({
           +{extra}
         </span>
       )}
+    </span>
+  );
+}
+
+/**
+ * The caption's tag chips — in flow, under the artwork, grid only.
+ *
+ * A separate component from the overlay `TagRow` above rather than a mode on
+ * it: that one is an absolutely-positioned stack pinned over a picture and
+ * legible against arbitrary artwork; this one sits on the card's own
+ * background in a row that has to share width with the meta line. They have
+ * different jobs and almost no shared pixels.
+ *
+ * COUNTED, not measured. The design measures every chip against the real row
+ * width so whole chips drop before any label clips — worth it there, because
+ * its cards are one size and its tags are long English phrases. Here the grid
+ * cell is a known width per item size and the row is already the widest place
+ * a tag appears, so a count gets the same answer without an off-screen mirror
+ * and a ResizeObserver on every card. The strip is where width genuinely varies
+ * with content, and the strip does not use this row at all.
+ */
+function CaptionTagRow({
+  tags,
+  showAtMost,
+}: Readonly<{ tags: readonly string[]; showAtMost: number }>) {
+  const ordered = sortTagsStatusFirst(tags);
+  const shown = ordered.slice(0, showAtMost);
+  const extra = ordered.length - shown.length;
+  return (
+    <span
+      data-clip-caption-tags={tags.length}
+      className="ml-auto flex min-w-0 shrink items-center gap-1 overflow-hidden"
+    >
+      {shown.map((tag) => (
+        <span
+          key={tag}
+          title={tag}
+          className="inline-flex max-w-[7rem] shrink-0 items-center gap-1 rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] leading-none font-medium text-zinc-300 ring-1 ring-white/10"
+        >
+          <TagAccentDot tag={tag} />
+          <span className="min-w-0 truncate">{tag}</span>
+        </span>
+      ))}
+      {extra > 0 && (
+        <span
+          data-clip-caption-tags-overflow={extra}
+          className="shrink-0 font-mono text-[10px] leading-none text-zinc-500"
+        >
+          +{extra}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The selection checkbox, bottom-right, while select mode is armed.
+ *
+ * DECORATIVE, not a control — and that is forced, not a shortcut. This renders
+ * inside NodeCard's real `<button>`, and a button may not contain interactive
+ * content: browsers auto-close the outer one at the first nested button, which
+ * ejects the rest of the card out of its own box. (The design's own notes hit
+ * the same wall and answered it by making the card a `div role="button"`, which
+ * costs hand-wiring Enter/Space and the focus ring across every card in both
+ * surfaces. Worth doing one day; not smuggled in behind a checkbox.)
+ *
+ * Nothing is lost in select mode, because the whole card is already the toggle
+ * there — the design's card does the same thing (`if (selecting) toggleSelect`),
+ * so its checkbox is only ever a second way to hit the same target. What IS
+ * lost is the design's hover-to-select-without-opening outside the mode, which
+ * is exactly the gesture our shell cannot host. Hence: shown only while the
+ * mode is armed, where it is honest about being an indicator rather than
+ * offering a click that the card underneath would have handled anyway.
+ *
+ * Two details worth keeping if this is ever restyled. The check is ALWAYS
+ * rendered and only its opacity changes, so the circle never resizes as it
+ * fills. And the ring is `border-2` on a translucent, blurred fill rather than
+ * a flat chip, because it sits on arbitrary artwork — a light frame and a dark
+ * one both have to keep it legible.
+ */
+function SelectionIndicator({ selected }: Readonly<{ selected: boolean }>) {
+  return (
+    <span
+      aria-hidden="true"
+      data-selection-indicator={selected ? "on" : "off"}
+      className={[
+        "pointer-events-none absolute right-2 bottom-2 z-20 grid size-[26px] place-items-center",
+        "rounded-full border-2 backdrop-blur-sm motion-safe:transition-colors",
+        selected ? "border-sky-400 bg-sky-500" : "border-white/90 bg-black/35",
+      ].join(" ")}
+    >
+      <Check
+        className={["size-4 text-white", selected ? "opacity-100" : "opacity-0"].join(" ")}
+        strokeWidth={3}
+      />
     </span>
   );
 }
@@ -822,6 +932,9 @@ const GraphClipContent = memo(function GraphClipContent({
   // grayscale` is already disabled's language, and a card that is both must
   // still read as both.
   const filterMiss = useTagFilterMiss(id as string);
+  // Select mode, for the checkbox below. Above the collection early-return with
+  // the other hooks — hooks may not be conditional.
+  const selectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
   const provenance = useCardProvenance(id);
   const frameLoading = useContext(VideoFrameLoadingContext);
   // The AUTHORED name, read straight from the side table rather than from
@@ -862,6 +975,16 @@ const GraphClipContent = memo(function GraphClipContent({
         isAudio || !node.src
         ? []
         : [node.src];
+  // CAPTION values (grid only — see the caption span at the end of the card).
+  const KindIcon = isVideo ? Video : isAudio ? AudioWaveform : ImageIcon;
+  // Falls back to the KIND, never to the machine name. PL11-004 keeps
+  // `detail.title` absent until someone actually names a clip, exactly so a
+  // library of filenames does not read as a rename backlog — and inventing one
+  // here would undo that. But a caption whose first line can be empty reads as
+  // broken, so the kind fills it, which is also what the artwork's chip said in
+  // the strip. "Video" rather than "VIDEO": this is a caption, not a stamp.
+  const captionName = detail?.title ?? (isVideo ? "Video" : isAudio ? "Audio" : "Image");
+  const captionSeconds = Number(mediaDurationSeconds(node)) || 0;
   return (
     <span
       ref={cardSizeRef}
@@ -873,6 +996,13 @@ const GraphClipContent = memo(function GraphClipContent({
         // the identical adjacency, so full-bleed pressed into it there too.
         // The card's outer box (and so width = duration) is unchanged.
         "relative flex h-full w-full overflow-hidden rounded-md bg-zinc-900 p-1.5",
+        // GRID STACKS: artwork on top, a real caption underneath — the shape
+        // the grid cell was already sized for (see ITEM_SIZE_DIMENSIONS, which
+        // made grid cells tall and boxy for exactly this) and the shape the
+        // collection card has always had. The strip stays one artwork box: a
+        // caption row there is fixed overhead on every clip, and clip width is
+        // duration, so a narrow clip has no room for one anyway.
+        "[[data-virtual-grid]_&]:flex-col",
         selected ? "ring-1 ring-inset ring-amber-300/65" : "ring-1 ring-white/15",
         rejected ? "ring-2 ring-red-500 motion-safe:animate-pulse" : "",
         // Disabled reads as MUTED, never as missing: the card keeps its slot
@@ -887,11 +1017,24 @@ const GraphClipContent = memo(function GraphClipContent({
       // truthy for "this card is muted".
       data-disabled={node.disabled ? "true" : inheritedDisabled ? "inherited" : undefined}
     >
+      {/* THE ARTWORK BOX — the frame, plus anything that belongs ON the frame
+          rather than on the card.
+
+          It exists to be a positioning context that is not also the dimmed one.
+          In the grid this box stops filling the card (the caption below takes
+          the rest), so anything anchored to the CARD's bottom would sit over
+          the caption; anchored here it stays on the picture, which is what it
+          means. And keeping the dimming on the inner span means the selection
+          checkbox does not fade with the artwork — a filter miss drops the
+          frame to opacity-30, and a checkbox that went with it would make the
+          selection unreadable exactly while someone is picking through a
+          filtered board. */}
+      <span className="relative flex h-full min-h-0 w-full overflow-hidden rounded-sm [[data-virtual-grid]_&]:flex-1">
       <span
         data-disabled-visuals={muted ? "true" : undefined}
         data-filter-miss={filterMiss ? "true" : undefined}
         className={[
-          "relative flex h-full w-full overflow-hidden rounded-sm",
+          "flex h-full w-full overflow-hidden rounded-sm",
           isDragSource ? "opacity-40" : muted ? "opacity-45" : filterMiss ? "opacity-30" : "",
           muted ? "grayscale" : "",
           "motion-safe:transition-opacity motion-safe:duration-150",
@@ -926,6 +1069,12 @@ const GraphClipContent = memo(function GraphClipContent({
         </span>
       )}
       </span>
+      {/* Bottom-RIGHT of the ARTWORK, opposite the duration, so the two never
+          contend for a corner — the design makes the same split. Shown on muted
+          cards too: a disabled clip is still something you might be gathering
+          up to delete. */}
+      {selectMode && <SelectionIndicator selected={selected} />}
+      </span>
       {/* Kind tag (R6 #7): a WORD, bottom-left. The glyph version (a 4px film
           or picture icon in the top corner) was ambiguous at small item sizes
           — the two lucide marks read as the same smudge — so it says which it
@@ -935,7 +1084,10 @@ const GraphClipContent = memo(function GraphClipContent({
       <span
         aria-hidden="true"
         data-media-kind={isVideo ? "video" : isAudio ? "audio" : "image"}
-        className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] leading-none font-semibold tracking-[0.08em] text-zinc-100"
+        // Hidden in the GRID, where the kind is the caption's leading icon
+        // instead. A word stamped on the artwork and an icon under it would say
+        // the same thing twice, and the word is the one that costs picture.
+        className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[11px] leading-none font-semibold tracking-[0.08em] text-zinc-100 [[data-virtual-grid]_&]:hidden"
       >
         {isVideo ? "VIDEO" : isAudio ? "AUDIO" : "IMAGE"}
       </span>
@@ -953,6 +1105,9 @@ const GraphClipContent = memo(function GraphClipContent({
                 ? TAGS_SHOWN_WIDE
                 : TAGS_SHOWN_NARROW
             }
+            // GRID puts these in the caption instead (see below), where they
+            // sit beside the meta line rather than over the picture.
+            className="[[data-virtual-grid]_&]:hidden"
           />
         ) : null
       ) : null}
@@ -967,7 +1122,11 @@ const GraphClipContent = memo(function GraphClipContent({
         <span
           aria-hidden="true"
           data-clip-title
-          className="pointer-events-none absolute inset-x-2 top-2 z-10 truncate rounded bg-black/75 px-1.5 py-0.5 text-[11px] leading-tight font-semibold text-zinc-100"
+          // Hidden in the GRID: the caption below carries the name there, which
+          // is the whole point of giving the cell room for one. Stamping it on
+          // the artwork as well would cover the picture to repeat the line
+          // directly beneath it.
+          className="pointer-events-none absolute inset-x-2 top-2 z-10 truncate rounded bg-black/75 px-1.5 py-0.5 text-[11px] leading-tight font-semibold text-zinc-100 [[data-virtual-grid]_&]:hidden"
         >
           {detail.title}
         </span>
@@ -982,6 +1141,50 @@ const GraphClipContent = memo(function GraphClipContent({
           Rides the same per-node live-trim channel as the pill. Its other
           half, the source map, is docked under the strip by the board. */}
       {trimEnabled && <TrimPanel id={id} node={node} />}
+      {/* THE CAPTION — grid only, and the point of the whole restructure.
+          Everything here used to be stamped ON the artwork: the name across the
+          top, the kind bottom-left, the tags stacked above it. That is right in
+          the strip, where a card is as wide as its clip is long and every pixel
+          of height is charged to every row. In the grid the cell is already
+          tall and boxy for this, so the picture gets to be a picture and the
+          words get a line of their own.
+
+          Two rows, following the design: identity first (what is this), then
+          data (how long, how filed). Decorative for AT — NodeCard's button
+          already names the card, which is why the overlay title it replaces was
+          aria-hidden too. */}
+      <span
+        aria-hidden="true"
+        data-clip-caption
+        className="hidden min-w-0 flex-col gap-1 pt-2 pr-0.5 pb-0.5 pl-1 [[data-virtual-grid]_&]:flex"
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          <KindIcon
+            aria-hidden="true"
+            strokeWidth={1.7}
+            className="size-3.5 shrink-0 text-zinc-400"
+          />
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-100">
+            {captionName}
+          </span>
+        </span>
+        {/* Row two is omitted ENTIRELY when it would be empty, rather than
+            rendered blank: an untagged image has neither duration nor chips,
+            and an empty row would still claim its gap and leave the caption
+            looking like it failed to load something. */}
+        {captionSeconds > 0 || detail?.tags?.length ? (
+          <span className="flex min-w-0 items-center gap-2">
+            {captionSeconds > 0 ? (
+              <span className="shrink-0 font-mono text-[11px] leading-none text-sky-300/90">
+                {formatDuration(captionSeconds)}
+              </span>
+            ) : null}
+            {detail?.tags?.length ? (
+              <CaptionTagRow tags={detail.tags} showAtMost={TAGS_SHOWN_NARROW} />
+            ) : null}
+          </span>
+        ) : null}
+      </span>
     </span>
   );
 });
@@ -1210,6 +1413,7 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
   const displayName = title ?? node.name;
   const inheritedDisabled = useDisabledByAncestor(id);
   const filterMiss = useTagFilterMiss(id as string);
+  const selectMode = useCollectionsSelector((s) => s.interaction.multiSelectMode);
   const muted = node.disabled === true || inheritedDisabled;
   // Anchor state is not read here any more: `CardCornerSlot` subscribes to it
   // itself, narrowed to this node, so an anchor moving between two OTHER cards
@@ -1256,6 +1460,10 @@ const GraphCollectionItemParts = memo(function GraphCollectionItemParts({
         ].join(" ")}
       >
         {muted && <DisabledChip inherited={node.disabled !== true} />}
+        {/* Collections get the same checkbox as media. They are the cards that
+            need it most: a plain click drills INTO a collection now, so select
+            mode is the only pointer route to picking one at all. */}
+        {selectMode && <SelectionIndicator selected={selected} />}
         {/* Collections are taggable too — `tags` sits on TimelineItemBase, not
             on the media members — and they route through THIS component rather
             than GraphClipContent (which returns null for them at the guard
