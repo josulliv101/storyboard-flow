@@ -24,6 +24,7 @@ import {
   handleMoveClip,
   handleRemoveClip,
   handleRenameItem,
+  handleSetTags,
   handleTrimClip,
   NO_LIVE_PUSH_NOTE,
 } from "@/lib/mcp/write-handlers";
@@ -247,6 +248,30 @@ const handler = createMcpHandler(
         const uid = uidFrom(extra);
         if (!uid) return errorResult(NO_IDENTITY);
         return fromToolResult(await handleRenameItem(args, { requesterUid: uid }));
+      },
+    );
+
+    server.tool(
+      "set_tags",
+      "Replace the tags on a clip or collection — labels for finding it again later, like what " +
+        "generated it, which checkpoint, which shot, or its status. This REPLACES the whole set, " +
+        "so read the current tags first if you mean to add one, and pass `[]` to clear them." +
+        NO_LIVE_PUSH_NOTE,
+      {
+        timelineId: TIMELINE_ID_FIELD,
+        nodeId: nodeIdField,
+        tags: z
+          .array(z.string())
+          .max(MAX_TAGS_PER_CLIP)
+          .describe(
+            'The complete new set, e.g. ["scail-2", "wan2.1", "S02", "keeper"]. Duplicates, ' +
+              "blanks and stray whitespace are cleaned up, and matching ignores case.",
+          ),
+      },
+      async (args, extra) => {
+        const uid = uidFrom(extra);
+        if (!uid) return errorResult(NO_IDENTITY);
+        return fromToolResult(await handleSetTags(args, { requesterUid: uid }));
       },
     );
 
