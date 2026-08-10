@@ -97,6 +97,8 @@ import {
 } from "./graph-preview";
 import { AddCollectionSlot } from "./graph-add-collection-slot";
 import { CollectionHoverProvider } from "./graph-collection-hover";
+import { TagFilterProvider } from "./graph-tag-filter";
+import { TagFilterControl } from "./graph-tag-filter-control";
 import { ItemDetailsProvider } from "./graph-item-details-context";
 import { GraphSaveStatus } from "./graph-save-status";
 import { GraphShortcuts, requestGraphShortcuts } from "./graph-shortcuts";
@@ -957,6 +959,7 @@ export function GraphBoard({
       <CollectionHoverProvider enabled={childrenShown}>
       {/* Published ABOVE the preview shell so the header aggregate and every
           time overlay inside it measure the run actually on screen. */}
+      <TagFilterProvider>
       <FlatItemsProvider items={flatItems}>
       <PreviewShell enabled={previewOn} focusedId={focusedId} channel={timeChannel}>
         {/* Outside the surface branch on purpose: the sidebar's tool buttons
@@ -1044,6 +1047,7 @@ export function GraphBoard({
                   (see timeline-sidebar) because it is one of the two controls
                   worth promoting to rail scale; this row keeps the ones that
                   only qualify the board in front of you. */}
+              <TagFilterControl />
               {flatOn ? (
                 <HeaderToggle
                   active={rulerOn}
@@ -1273,6 +1277,7 @@ export function GraphBoard({
         </div>
       </PreviewShell>
       </FlatItemsProvider>
+      </TagFilterProvider>
       </CollectionHoverProvider>
       </ItemDetailsProvider>
     </OpenKeyBoundary>

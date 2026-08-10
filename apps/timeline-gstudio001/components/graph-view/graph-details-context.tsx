@@ -41,6 +41,21 @@ export function useClipDetail(id: string): ClipDetail | undefined {
   );
 }
 
+/**
+ * The WHOLE details table.
+ *
+ * Deliberately coarse, unlike `useClipDetail`: a consumer that has to aggregate
+ * across every item (the tag filter's menu, which counts tags in use) has no
+ * single id to subscribe to, and subscribing per-id would mean knowing the ids
+ * in advance. `store.read()` returns the same object identity until a merge
+ * replaces it, so this re-renders on any detail change and not otherwise —
+ * acceptable for a control that only exists in the header.
+ */
+export function useGraphDetailsSnapshot(): Readonly<Record<string, ClipDetail | undefined>> {
+  const store = useGraphDetailsStore();
+  return useSyncExternalStore(store.subscribe, store.read, store.read);
+}
+
 /** A timeline's display NAME, read from its gateway document title — the
  *  app's source of truth for a collection's name (the chrome breadcrumb reads
  *  the same field, and the server derives parent clip titles from it).
