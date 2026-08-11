@@ -22,6 +22,22 @@ function oauthError(error: string, description: string, status = 400) {
   );
 }
 
+/**
+ * RFC 6749 §2.3.1 form-urlencodes each half before base64, so they are decoded
+ * here — but a client that skipped that step, or an unauthenticated prober,
+ * can put a bare `%` in either half, and `decodeURIComponent` THROWS on one.
+ * Unhandled it escaped the route as a 500, before client authentication, in
+ * place of the `invalid_client` 401 every other path here returns. Falling back
+ * to the raw value keeps the credential comparison the single arbiter.
+ */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 /** Client credentials may arrive as form fields or HTTP Basic. */
 function readClientCredentials(request: Request, form: URLSearchParams) {
   const basic = request.headers.get("authorization");
@@ -30,8 +46,8 @@ function readClientCredentials(request: Request, form: URLSearchParams) {
     const separator = decoded.indexOf(":");
     if (separator > 0) {
       return {
-        clientId: decodeURIComponent(decoded.slice(0, separator)),
-        clientSecret: decodeURIComponent(decoded.slice(separator + 1)),
+        clientId: safeDecode(decoded.slice(0, separator)),
+        clientSecret: safeDecode(decoded.slice(separator + 1)),
       };
     }
   }
