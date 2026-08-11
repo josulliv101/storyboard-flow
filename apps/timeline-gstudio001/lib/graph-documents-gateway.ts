@@ -642,11 +642,48 @@ export function createGraphDocumentsGateway(): GraphDocumentsGateway {
             if (dirtyIds.size > 0) scheduleFlush();
             return;
           }
-          // Non-conflict failure (5xx, 400…): surface it AND re-queue —
-          // clearing dirtyIds before the request must not permanently drop
-          // the change when the server balks. The slower retry cadence
-          // keeps a struggling server from being hammered, and re-dirtied
-          // ids ride any later unload flush.
+          // A 4xx the conflict branch did not claim is TERMINAL. The server
+          // rejected this payload on its merits — a malformed document, a bad
+          // id, a bad expectedRevision, an empty-over-non-empty write, a
+          // repeated id in one batch — so the SAME BYTES will be rejected
+          // every time.
+          //
+          // Re-queueing them span forever. Worse, the ids stayed in `dirtyIds`,
+          // so `hasPendingWrite` stayed true, so the preview's install guard
+          // refused every compiled manifest and re-polled on its own timer:
+          // two unbounded request loops on an idle tab, in every open tab,
+          // from one permanent error that waiting could never fix.
+          //
+          // So end it the way the 409 above already does — stop retrying, block
+          // further clip writes for these ids (a stale projection must not keep
+          // re-sending), and say so. `refresh()` lifts the block once the graph
+          // is rebuilt, which is the same recovery a conflict gets.
+          if (response.status >= 400 && response.status < 500) {
+            for (const write of writes) {
+              // COMPOSED, never the server's string alone. Its reason is the
+              // useful part ("Every batch write needs a valid timeline
+              // document.") but it describes the payload, not the consequence
+              // — and the consequence is the bit the user has to act on: this
+              // is not going to retry, so waiting is not a plan. Same shape as
+              // the conflict message above, for the same reason.
+              const reason =
+                result.error ?? `the server rejected it (${response.status})`;
+              setError(
+                write.document.id,
+                `"${write.document.title}" could not be saved: ${reason} Your unsaved edits to it are not being saved — reopen this timeline to continue editing.`,
+              );
+              dirtyIds.delete(write.document.id);
+              conflictedIds.add(write.document.id);
+            }
+            notify();
+            return;
+          }
+
+          // 5xx and anything else: genuinely transient, so surface it AND
+          // re-queue — clearing dirtyIds before the request must not
+          // permanently drop the change when the server balks. The slower
+          // retry cadence keeps a struggling server from being hammered, and
+          // re-dirtied ids ride any later unload flush.
           for (const write of writes) {
             setError(
               write.document.id,
