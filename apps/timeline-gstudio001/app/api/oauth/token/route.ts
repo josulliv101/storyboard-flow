@@ -1,6 +1,7 @@
 import {
   ACCESS_TOKEN_TTL_SECONDS,
   getSigningSecret,
+  grantAllowsResource,
   loadClient,
   safeEqual,
   signAccessToken,
@@ -99,8 +100,18 @@ export async function POST(request: Request) {
     if (!verifyPkce(codeVerifier, grant.codeChallenge, grant.codeChallengeMethod)) {
       return oauthError("invalid_grant", "PKCE verification failed.");
     }
+    // RFC 8707: the code was bound to a resource at /authorize, and this is
+    // where that binding is honoured. `resource` here is derived from the
+    // request, so without the comparison a code issued for one deployment
+    // could be exchanged for a token audienced at another.
+    if (!grantAllowsResource(grant.resource, resource)) {
+      return oauthError("invalid_grant", "Code was issued for a different resource.");
+    }
 
-    return issueTokens(grant.uid, grant.scope, client.clientId, origin, resource, secret);
+    // The GRANT's resource, not the request's — they are equal by the check
+    // above, and using the stored one makes it unmistakable which is
+    // authoritative.
+    return issueTokens(grant.uid, grant.scope, client.clientId, origin, grant.resource, secret);
   }
 
   if (grantType === "refresh_token") {
@@ -112,10 +123,25 @@ export async function POST(request: Request) {
     if (rotated.grant.clientId !== client.clientId) {
       return oauthError("invalid_grant", "Refresh token was issued to a different client.");
     }
+    // The half that actually bit: a refresh token bound to one resource used
+    // to mint an access token audienced at whatever the current request said,
+    // because `rotated.grant.resource` was read from storage and then dropped.
+    // Note the token has ALREADY been consumed by `rotateRefreshToken` — a
+    // refusal here is terminal for it, which is the right outcome for a
+    // presentation at the wrong resource.
+    if (!grantAllowsResource(rotated.grant.resource, resource)) {
+      return oauthError("invalid_grant", "Refresh token was issued for a different resource.");
+    }
 
     return tokenResponse(
       signAccessToken(
-        buildClaims(rotated.grant.uid, rotated.grant.scope, client.clientId, origin, resource),
+        buildClaims(
+          rotated.grant.uid,
+          rotated.grant.scope,
+          client.clientId,
+          origin,
+          rotated.grant.resource,
+        ),
         secret,
       ),
       rotated.nextToken,

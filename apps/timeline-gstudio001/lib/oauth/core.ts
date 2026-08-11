@@ -149,6 +149,32 @@ export function verifyAccessToken(
   return { ok: true, claims };
 }
 
+// --- Resource binding (RFC 8707) -------------------------------------------
+
+/**
+ * Whether a stored grant may be redeemed at the resource this request names.
+ *
+ * The grant records the resource it was issued for, and until this existed
+ * nothing read it back: `/api/oauth/token` recomputed the audience from the
+ * live request on every exchange, and `/api/mcp` recomputed the expected
+ * audience the same way. Both float with the request's Host, so the binding
+ * this file's own `aud` comment promises — "a token minted for one resource
+ * can't be replayed at another" — was not being enforced anywhere. The field
+ * was written and never read.
+ *
+ * An ABSENT binding fails. A grant that cannot say what it was issued for is
+ * not thereby issued for everything, and treating it as a wildcard would keep
+ * the hole open for the whole 30-day refresh-token lifetime. The cost is that
+ * such a grant needs one re-authorization, which is a reconnect rather than a
+ * loss.
+ */
+export function grantAllowsResource(
+  grantResource: string | undefined,
+  requestedResource: string,
+): boolean {
+  return typeof grantResource === "string" && grantResource === requestedResource;
+}
+
 // --- Client registry -------------------------------------------------------
 
 /** Just the string map these readers need — `process.env` satisfies it, and so
