@@ -958,11 +958,21 @@ export function PreviewShell({
   enabled,
   focusedId,
   channel,
+  header,
   children,
 }: Readonly<{
   enabled: boolean;
   focusedId: string;
   channel: PreviewTimeChannel;
+  /**
+   * Pinned above the preview surface — the board's breadcrumb/select row.
+   *
+   * Passed straight through to the split pane's own slot rather than rendered
+   * with `children`. React resolves context by where an element RENDERS, not
+   * where it was created, and the pane sits inside the same providers as the
+   * rest of the board — so the row keeps everything it reads today.
+   */
+  header?: React.ReactNode;
   children: React.ReactNode;
 }>) {
   const graph = useCollectionsSelector((snapshot) => snapshot.graph);
@@ -1056,6 +1066,7 @@ export function PreviewShell({
         <span data-preview-source={manifest !== null ? "manifest" : "projection"} hidden />
       ) : null}
       <WorkbenchSplitPane
+        header={header}
         // The shell and lower pane stay mounted whether the surface is open or
         // closed. That keeps the virtual strip DOM node—and therefore its
         // horizontal scroll position—alive through the preview toggle.

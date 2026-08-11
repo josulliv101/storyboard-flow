@@ -1329,12 +1329,13 @@ test.describe("graph view E2E", () => {
     await expect.poll(heightOf).toBeGreaterThan(0);
     const initial = await heightOf();
 
-    // The 16px box is the DRAG TARGET and never changes; the visible band is
-    // smaller and centred inside it (8px at desktop, 12 where it has to hold
-    // the grip), so the space above it reads as clearance under the preview.
+    // The 44px box is the DRAG TARGET and never changes; the visible band is
+    // smaller and sits just below centre inside it (8px at desktop, 12 where
+    // it has to hold the grip), so the space either side of it reads as
+    // clearance between the preview and the timeline.
     expect(
       await divider.evaluate((el) => Math.round(el.getBoundingClientRect().height)),
-    ).toBe(16);
+    ).toBe(44);
     expect(
       await divider
         .locator("[data-divider-line]")
@@ -1394,9 +1395,17 @@ test.describe("graph view E2E", () => {
     expect(naturalTop).toBeGreaterThan(0);
     await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), naturalTop + 40);
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    // Pinned BENEATH the board header, not at the viewport top: the header is
+    // the top of the sticky stack now, and the preview is offset by its
+    // measured height. Measured rather than hard-coded — the header wraps at
+    // narrow widths, so a constant here would be a viewport-dependent flake.
+    const headerHeight = await page
+      .locator("[data-graph-board-header]")
+      .evaluate((element) => element.getBoundingClientRect().height);
+    expect(headerHeight).toBeGreaterThan(0);
     await expect
       .poll(() => previewRegion.evaluate((element) => element.getBoundingClientRect().top))
-      .toBeCloseTo(0, 0);
+      .toBeCloseTo(headerHeight, 0);
     expect(await main.evaluate((element) => getComputedStyle(element).overflowY)).toBe("visible");
     expect(await main.evaluate((element) => element.scrollTop)).toBe(0);
 
@@ -2252,9 +2261,12 @@ test.describe("graph view E2E", () => {
     // smaller and centred on one fixed mid-line, so its height can differ by
     // breakpoint (8 here at desktop, 12 where it hosts the grip) with nothing
     // else moving.
-    expect(dividerBox!.height).toBe(16);
+    expect(dividerBox!.height).toBe(44);
     expect(dividerLineBox!.height).toBe(8);
-    expect(dividerLineBox!.y + dividerLineBox!.height / 2).toBeCloseTo(dividerBox!.y + 10, 0);
+    // Just BELOW centre, so there is more clearance above the band than below
+    // it — the transport overhangs far enough to crowd the preview more than
+    // the timeline, and an even split read bottom-heavy.
+    expect(dividerLineBox!.y + dividerLineBox!.height / 2).toBeCloseTo(dividerBox!.y + 24, 0);
     expect(groupBox!.width).toBe(132);
     expect(groupBox!.height).toBe(44);
     // Centered on the BAND, not on the box.
@@ -5050,8 +5062,18 @@ test.describe("graph view E2E", () => {
     // Sized to the breadcrumb row, and 16:9 from that.
     expect(frameBox.height).toBeCloseTo(band.height, 0);
     expect(frameBox.width).toBeCloseTo(Math.round((band.height * 16) / 9), 0);
-    // Placed against the CLIP: sitting just above it, not in the header band.
-    expect(frameBox.y + frameBox.height).toBeCloseTo(cardBox.y - 8, 0);
+    // Placed against the CLIP — sitting just above it, not parked in the
+    // header band — EXCEPT where that would push it off the top of the
+    // viewport, which graph-trim-panel.tsx clamps to the same 8px margin.
+    //
+    // The clamp is asserted as part of the rule rather than assumed away. It
+    // used to read `cardBox.y - 8` flat, which held only because this fixture
+    // left the frame exactly 0px of slack above the top card: a 3px layout
+    // shift anywhere above the strip flipped it, and the test then reported a
+    // trim-panel bug that did not exist. Expressing the whole rule makes it
+    // describe the behaviour instead of one viewport's arithmetic.
+    const expectedTop = Math.max(8, cardBox.y - frameBox.height - 8);
+    expect(frameBox.y).toBeCloseTo(expectedTop, 0);
     // Out-edge drag: the frame's RIGHT edge rides the clip's right edge.
     expect(frameBox.x + frameBox.width).toBeCloseTo(cardBox.x + cardBox.width, 0);
 
@@ -6805,6 +6827,94 @@ test.describe("graph view E2E", () => {
 
     // Same height at zero, and the board underneath has not moved.
     expect(await height()).toBe(browseHeight);
+  });
+
+  test("the header row sits ABOVE the preview, in browse and in select mode", async ({
+    page,
+  }) => {
+    // The row used to pin BENEATH the preview, via the offset the split pane
+    // published. Nothing asserted the order, so the only thing standing between
+    // this and a silent regression was the CSS itself.
+    //
+    // Both modes, because the select row is a different element with a
+    // different height — a stack that only holds for the browse row would put
+    // the preview through a jump every time the mode is armed.
+    await installGraphApi(page);
+    await openGraph(page);
+    const header = page.locator("[data-graph-board-header]");
+    const preview = page.getByTestId("workbench-preview-region");
+
+    // The preview has to be OPEN for there to be a stack at all.
+    await previewToggle(page).click();
+    await expect(preview).toBeVisible();
+
+    const assertStacked = async (mode: string) => {
+      await expect(header).toHaveAttribute("data-header-mode", mode);
+      // DOM order IS the stack order — the header renders in the pane's own
+      // header slot, before the surface.
+      expect(
+        await header.evaluate(
+          (element, other) => element.compareDocumentPosition(other!),
+          await preview.elementHandle(),
+        ),
+      ).toBe(4 /* DOCUMENT_POSITION_FOLLOWING */);
+      // And the surface pins to the header's measured height rather than 0,
+      // so the two touch with no overlap and no gap.
+      const headerBox = (await header.boundingBox())!;
+      const previewBox = (await preview.boundingBox())!;
+      expect(previewBox.y).toBeGreaterThanOrEqual(headerBox.y + headerBox.height - 1);
+      expect(previewBox.y).toBeLessThanOrEqual(headerBox.y + headerBox.height + 1);
+      await expect
+        .poll(() => preview.evaluate((element) => getComputedStyle(element).top))
+        .toBe(`${Math.round(headerBox.height)}px`);
+    };
+
+    await assertStacked("browse");
+
+    // The select row is a DIFFERENT element with a different height, so the
+    // offset has to follow it — a stack that only held in browse mode would
+    // jump the preview every time the mode is armed.
+    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="alpha"]'));
+    await toggleMultiSelect(page);
+    await assertStacked("select");
+  });
+
+  test("select mode keeps undo/redo, to the right of Done and fenced by a rule", async ({
+    page,
+  }) => {
+    // Arming the mode used to take undo AWAY — `GraphUndoRedo` rendered only
+    // in the browse branch — at exactly the moment a multi-select delete makes
+    // it most wanted.
+    await installGraphApi(page);
+    await openGraph(page);
+    const header = page.locator("[data-graph-board-header]");
+
+    await selectCard(strip(page, PROJECT_ID).locator('[data-node-id="alpha"]'));
+    await toggleMultiSelect(page);
+    await expect(header).toHaveAttribute("data-header-mode", "select");
+
+    const done = page.locator("[data-select-mode-done]");
+    const undo = header.getByRole("button", { name: "Undo" });
+    const redo = header.getByRole("button", { name: "Redo" });
+    await expect(undo).toBeVisible();
+    await expect(redo).toBeVisible();
+
+    // RIGHT of Done, and in reading order among themselves.
+    const doneBox = (await done.boundingBox())!;
+    const undoBox = (await undo.boundingBox())!;
+    const redoBox = (await redo.boundingBox())!;
+    expect(undoBox.x).toBeGreaterThanOrEqual(doneBox.x + doneBox.width);
+    expect(redoBox.x).toBeGreaterThanOrEqual(undoBox.x + undoBox.width);
+
+    // EXACTLY ONE rule, and it sits after Done. Done's own separation on the
+    // left is the empty space `ml-auto` opens up; a rule there too fenced it
+    // in from both sides and made the way OUT read as one more item in the
+    // verb run.
+    const rules = header.locator('[data-select-mode-header] > [aria-hidden="true"].w-px');
+    await expect(rules).toHaveCount(1);
+    const ruleBox = (await rules.first().boundingBox())!;
+    expect(ruleBox.x).toBeGreaterThanOrEqual(doneBox.x + doneBox.width);
+    expect(ruleBox.x).toBeLessThan(undoBox.x);
   });
 
   test("the grid card carries NO ⋮ — the select row holds its actions", async ({

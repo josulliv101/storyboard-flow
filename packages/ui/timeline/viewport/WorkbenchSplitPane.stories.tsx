@@ -40,6 +40,45 @@ function StickyPreviewFixture() {
   );
 }
 
+/** A consumer toolbar in the `header` slot, above the preview. */
+function StickyHeaderFixture() {
+  const [currentTime, setCurrentTime] = useState(0);
+
+  return (
+    <main className="min-h-[1600px] bg-zinc-950 p-4 text-zinc-100">
+      <WorkbenchSplitPane
+        header={
+          <div
+            data-testid="fixture-header"
+            className="flex h-14 items-center gap-3 border-b border-zinc-800 bg-zinc-950/95 px-3 text-sm"
+          >
+            Home / Scene A
+          </div>
+        }
+        surface={
+          <WorkbenchDisplaySurface
+            clips={[]}
+            currentTime={currentTime}
+            onCurrentTimeChange={setCurrentTime}
+            className="h-full rounded-b-none border-b-0"
+          />
+        }
+      >
+        <div className="grid gap-3">
+          {Array.from({ length: 18 }, (_, index) => (
+            <section
+              key={index}
+              className="grid min-h-24 place-items-center rounded-lg border border-zinc-800 bg-zinc-900/60 text-sm text-zinc-400"
+            >
+              Timeline section {index + 1}
+            </section>
+          ))}
+        </div>
+      </WorkbenchSplitPane>
+    </main>
+  );
+}
+
 const meta = {
   title: "UI/Timeline/Viewport/WorkbenchSplitPane",
   component: WorkbenchSplitPane,
@@ -96,12 +135,20 @@ export const StickyPreview: Story = {
     // only at tablet width and below (md:hidden), so presence is what this
     // story can assert without pinning the canvas width.
     expect(divider.querySelector("[data-divider-grip]")).not.toBeNull();
-    // The box is the hit target and stays 16 at every breakpoint. The visible
+    // The box is the hit target and stays 44 at every breakpoint. The visible
     // band is smaller and CENTERED on one fixed mid-line, so its height can
     // change (8 desktop / 12 coarse-pointer) without moving anything.
-    expect(dividerBox.height).toBe(16);
+    expect(dividerBox.height).toBe(44);
     expect(dividerLineBox.height).toBeLessThan(dividerBox.height);
-    expect(dividerLineBox.y + dividerLineBox.height / 2).toBeCloseTo(dividerBox.y + 10, 0);
+    expect(dividerLineBox.y + dividerLineBox.height / 2).toBeCloseTo(dividerBox.y + 24, 0);
+    // The band sits BELOW centre on purpose: more clearance above it than
+    // below. The transport is centred on the same line and overhangs the band
+    // far enough to crowd the preview above more than the timeline below, so
+    // an even split still read bottom-heavy. Asserted as an inequality rather
+    // than a number, so it survives a retune of the exact gap.
+    const above = dividerLineBox.y - dividerBox.y;
+    const below = dividerBox.y + dividerBox.height - (dividerLineBox.y + dividerLineBox.height);
+    expect(above).toBeGreaterThan(below);
     // The transport centers on the BAND, not on the padded box.
     expect(dividerLineBox.y + dividerLineBox.height / 2).toBeCloseTo(
       buttonGroupBox.y + buttonGroupBox.height / 2,
@@ -150,6 +197,58 @@ function PersistentLowerPaneFixture() {
 
 /** Opening the optional surface must not replace the lower-pane DOM node or
  * reset state owned by it, including a virtual timeline's horizontal scroll. */
+/**
+ * The `header` slot pins ABOVE the preview, and the preview pins beneath it —
+ * one sticky stack, in that order. The offset is MEASURED, so a consumer's
+ * header of any height lands the surface in the right place.
+ */
+export const StickyHeaderAbovePreview: Story = {
+  render: () => <StickyHeaderFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const header = canvas.getByTestId("workbench-header-region");
+    const preview = canvas.getByTestId("workbench-preview-region");
+
+    // DOM order is the stack order: header first, then the surface.
+    expect(header.compareDocumentPosition(preview)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+
+    // The header owns the top; the surface is offset by the header's measured
+    // height rather than a constant.
+    expect(getComputedStyle(header).top).toBe("0px");
+    const headerHeight = header.getBoundingClientRect().height;
+    expect(headerHeight).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(getComputedStyle(preview).top).toBe(`${headerHeight}px`),
+    );
+
+    // Stacked so a playhead marker (z-30) in the timeline scrolling beneath is
+    // occluded by both, and the surface never paints over the header.
+    expect(Number(getComputedStyle(header).zIndex)).toBeGreaterThan(
+      Number(getComputedStyle(preview).zIndex),
+    );
+
+    // Neither overlaps the other: the surface starts at or below the header's
+    // bottom edge.
+    const headerBox = header.getBoundingClientRect();
+    const previewBox = preview.getBoundingClientRect();
+    expect(previewBox.top).toBeGreaterThanOrEqual(headerBox.bottom - 1);
+  },
+};
+
+/** Without a `header`, nothing extra is rendered and the surface keeps the top. */
+export const NoHeaderKeepsPreviewAtTop: Story = {
+  render: () => <StickyPreviewFixture />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.queryByTestId("workbench-header-region")).toBeNull();
+    expect(
+      getComputedStyle(canvas.getByTestId("workbench-preview-region")).top,
+    ).toBe("0px");
+  },
+};
+
 export const PersistentLowerPane: Story = {
   render: () => <PersistentLowerPaneFixture />,
   play: async ({ canvasElement }) => {

@@ -133,15 +133,30 @@ const MIN_SURFACE_HEIGHT = 120;
 const MIN_TIMELINE_SPACE = 260;
 /** The divider button's full height — the DRAG HIT TARGET, and what
  *  `--workbench-preview-offset` is built from. Constant at every breakpoint
- *  (Tailwind h-4), so the band inside it can change height without moving the
- *  preview, the transport, or anything sticking below. */
-const DIVIDER_HEIGHT_PX = 16;
+ *  (Tailwind h-7), so the band inside it can change height without moving the
+ *  preview, the transport, or anything sticking below.
+ *
+ *  44 rather than 16: the band needs clear space on BOTH sides of it, and at
+ *  16 with the mid-line at 10 it had 10 above and 6 below — the surface and
+ *  the timeline crowded it from either side.
+ *
+ *  It is also the drag hit target, and a taller one is strictly easier to
+ *  grab — there is no cost here to spend against. */
+const DIVIDER_HEIGHT_PX = 44;
 /** Where the visible band's mid-line falls inside that box. The band is
  *  CENTERED on this line at every breakpoint rather than sized from the top,
  *  which is what lets it be 8px on desktop and 12px on coarse-pointer widths
  *  (where it hosts the grip) without the transport shifting. The transport is
- *  centered on the same line and may overhang the band freely. */
-const DIVIDER_BAND_CENTER_PX = 10;
+ *  centered on the same line and may overhang the band freely.
+ *
+ *  DELIBERATELY BELOW CENTRE — 24 in a 44 box, so the band gets 20 clear above
+ *  and 16 below. Optical, not arithmetic: the transport (h-11) is centred on
+ *  this same line and overhangs the band by more than the clearance either
+ *  side, so it crowds the preview above more than it crowds the timeline
+ *  below, and a mathematically even 22/22 still read bottom-heavy. It is a
+ *  constant rather than a fraction of the height for exactly that reason —
+ *  the right value is judged, not derived. */
+const DIVIDER_BAND_CENTER_PX = 24;
 
 type WorkbenchDividerTransportProps = {
   currentTime: number;
@@ -1475,6 +1490,18 @@ type WorkbenchSplitPaneProps = {
    * mounted, preserving stateful content such as a virtual strip's scroll.
    */
   surface: ReactNode | null;
+  /**
+   * Content pinned ABOVE the upper pane — a consumer's toolbar or breadcrumb
+   * row. The pane measures it and pins `surface` beneath it, so the two form
+   * one sticky stack in that order.
+   *
+   * A SLOT rather than a CSS variable the consumer publishes. The offset has
+   * to travel from whatever sits on top down to the surface, and a variable
+   * would mean this package reading something an app defines — the dependency
+   * pointing the wrong way. Owning the stack keeps the knowledge here: the
+   * pane needs only "something occupies the top", never what it is.
+   */
+  header?: ReactNode;
   children: ReactNode;
   /** Read ONCE at mount for a height carried over from a previous mount (e.g.
    *  the consumer toggled this pane off and back on). Returning a number makes
@@ -1490,11 +1517,18 @@ type WorkbenchSplitPaneProps = {
 
 export function WorkbenchSplitPane({
   surface,
+  header,
   children,
   getInitialSurfaceHeight,
   onSurfaceHeightChange,
 }: WorkbenchSplitPaneProps) {
   const hasSurface = surface !== null;
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  // MEASURED, not assumed. The header's height is whatever the consumer put
+  // there — it wraps on a narrow viewport, and it swaps between rows of
+  // different heights — so the surface's pin has to follow it live rather
+  // than sit at a constant somebody has to remember to update.
+  const [headerHeight, setHeaderHeight] = useState(0);
   // Read once, at mount. `undefined` means nothing to restore → fit instead.
   const [restoredSurfaceHeight] = useState(() => getInitialSurfaceHeight?.());
   const [surfaceHeight, setSurfaceHeight] = useState(
@@ -1511,6 +1545,23 @@ export function WorkbenchSplitPane({
   const dragStartRef = useRef<{ pointerY: number; height: number } | null>(null);
   const clampFrameRef = useRef<number | null>(null);
   const didInitialSizeRef = useRef(false);
+
+  // LAYOUT effect, so the surface is pinned at the right offset in the same
+  // frame the header first paints — measuring in a passive effect showed the
+  // surface at top 0 for a frame and then jumped it down.
+  useLayoutEffect(() => {
+    const element = headerRef.current;
+    if (!element) {
+      setHeaderHeight(0);
+      return;
+    }
+    const measure = () => setHeaderHeight(element.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [header]);
 
   const getViewportBoundaryBottom = useCallback(() => {
     const root = rootRef.current;
@@ -1712,25 +1763,45 @@ export function WorkbenchSplitPane({
       // panes at the container's width; children overflow-scroll inside it.
       className="grid min-h-0 w-full grid-cols-[minmax(0,1fr)] gap-0"
       data-testid="workbench-split-pane"
-      // The sticky preview region's height (surface + divider), published so a
-      // descendant that wants to pin BELOW it — e.g. a sticky board header —
-      // has a live offset to stick to as the divider resizes. The split pane
-      // remains mounted while closed, so publish an explicit zero then.
+      // How far down the WHOLE sticky stack reaches — header, surface and
+      // divider — published so a descendant wanting to pin below all of it has
+      // a live offset as the divider resizes. The split pane remains mounted
+      // while closed, so the surface's share is an explicit zero then; the
+      // header's is not conditional, because a header pins whether or not the
+      // upper pane is open.
       style={
         {
-          "--workbench-preview-offset": hasSurface
-            ? `${surfaceHeight + DIVIDER_HEIGHT_PX}px`
-            : "0px",
+          "--workbench-preview-offset": `${
+            headerHeight + (hasSurface ? surfaceHeight + DIVIDER_HEIGHT_PX : 0)
+          }px`,
         } as React.CSSProperties
       }
     >
+      {header === undefined ? null : (
+        <div
+          ref={headerRef}
+          // TOP of the stack, so z-50 — above the surface's z-40, which is
+          // itself above the strip's z-30 playhead overlay. Getting this
+          // wrong is not subtle: at a lower index a marker in the timeline
+          // scrolling underneath paints straight through the header.
+          className="sticky top-0 z-50 min-w-0 bg-zinc-950"
+          data-testid="workbench-header-region"
+        >
+          {header}
+        </div>
+      )}
       {hasSurface ? (
         <div
         // z-40 (above the strip's z-30 consumer overlay) so a playhead marker
         // in a timeline scrolling underneath is occluded by the sticky
         // preview, not painted over it. At z-30 the marker tied the preview
         // and, being later in the DOM, bled through into the preview area.
-        className="sticky top-0 z-40 min-w-0 overflow-visible bg-zinc-950"
+        //
+        // Pinned BENEATH the header rather than at 0 — the two are one stack,
+        // and the offset is measured because the header's height is the
+        // consumer's business, not a constant this file can know.
+        className="sticky z-40 min-w-0 overflow-visible bg-zinc-950"
+        style={{ top: headerHeight }}
         data-testid="workbench-preview-region"
       >
         {/* A seek thumb is intentionally centered on the timeline edge, so
@@ -1776,11 +1847,12 @@ export function WorkbenchSplitPane({
           aria-valuemin={MIN_SURFACE_HEIGHT}
           aria-valuenow={Math.round(surfaceHeight)}
           aria-label="Resize workbench display"
-          // h-4 = DIVIDER_HEIGHT_PX: the whole box is the drag target, and it
+          // h-11 = DIVIDER_HEIGHT_PX: the whole box is the drag target, and it
           // stays this height at every breakpoint. The visible band inside is
-          // smaller and centered, so the space above it reads as the gap under
-          // the preview without being separate padding.
-          className="group relative block h-4 w-full cursor-row-resize bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
+          // smaller and centered, so the space either side of it reads as the
+          // gap between the preview and the timeline without being separate
+          // padding on each.
+          className="group relative block h-11 w-full cursor-row-resize bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400 focus-visible:outline-offset-2"
           data-workbench-divider
           onPointerDown={handleDividerPointerDown}
           onPointerMove={handleDividerPointerMove}
