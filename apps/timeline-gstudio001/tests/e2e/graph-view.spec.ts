@@ -852,13 +852,23 @@ test.describe("graph view E2E", () => {
     const label = card.getByText("Heist Plan", { exact: true });
     const background = () =>
       label.evaluate((element) => getComputedStyle(element).backgroundColor);
+
+    // The resting value is asserted as a LITERAL rather than sampled first.
+    // Sampling was flaky and CI caught it: the rename click above leaves the
+    // pointer ON the label, so the sample landed mid-fade (`transition-colors`)
+    // and captured a transient oklab — which the settled value then never
+    // matched. Polling to a fixed transparent both waits out the transition and
+    // says what "at rest" means.
+    const TRANSPARENT = "rgba(0, 0, 0, 0)";
     await page.mouse.move(0, 0);
-    const atRest = await background();
+    await expect.poll(background).toBe(TRANSPARENT);
+
     await label.hover();
-    await expect.poll(background).not.toBe(atRest);
+    await expect.poll(background).not.toBe(TRANSPARENT);
+
     // ...and it lets go again, rather than leaving one card looking armed.
     await page.mouse.move(0, 0);
-    await expect.poll(background).toBe(atRest);
+    await expect.poll(background).toBe(TRANSPARENT);
     // And the child document — the source of truth — is persisted.
     await expect
       .poll(() => api.documents.get(CHILD_ID)?.title, { timeout: 5000 })
